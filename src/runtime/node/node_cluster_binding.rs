@@ -55,7 +55,22 @@ pub(crate) fn on_internal_message_child<'a>(
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(worker.to_js(), global);
     singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
+    // No checkpoint between two messages that waited: the first can be the primary's disconnect request, and the tick of its
+    // disconnect() would end the channel before the listener gets the second.
+    let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
+    for strong in core::mem::take(&mut singleton.messages) {
+        // The end of the channel drops the holder (`ipc_child_singleton_deinit`), and the listener can set another. So each
+        // message reads the holder again, through a pointer that LLVM cannot keep a read of across the call.
+        let holder = core::hint::black_box(CHILD_SINGLETON.get());
+        // SAFETY: only called on the single JS thread; the borrow ends with the call.
+        let Some(holder) = (unsafe { (*holder).as_mut() }) else {
+            break;
+        };
+        if let Some(message) = strong.get() {
+            holder.dispatch(message, JSValue::NULL, global)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn handle_internal_message_child(

@@ -109,32 +109,6 @@ impl InternalMsgHolder {
         Ok(())
     }
 
-    pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        debug_assert!(self.is_ready());
-        let messages = core::mem::take(&mut self.messages);
-        // `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's JS wrapper and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        for strong in messages {
-            if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
-            }
-            // strong drops here (== `strong.deinit()`)
-        }
-        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
-        Ok(())
-    }
-
     // `deinit` body only freed owned fields (Strongs, map, Vec). All of those impl Drop in
     // Rust, so no explicit Drop body is needed.
 }
@@ -850,6 +824,16 @@ fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     )
 }
 
+fn finish_disconnect_fn(global: &JSGlobalObject) -> JSValue {
+    jsc::JSFunction::create(
+        global,
+        "",
+        crate::generated_bindgen::ipc_host::Bun__IPC__finishDisconnect,
+        1,
+        Default::default(),
+    )
+}
+
 // SendHandle.deinit: all fields Drop; no explicit impl needed.
 
 #[cfg(windows)]
@@ -903,6 +887,15 @@ pub(crate) enum AckNack {
 enum ContinueSendReason {
     NewMessageAppended,
     OnWritable,
+}
+
+/// Where the owner of a channel is told that the channel closed.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum ClosedIn {
+    /// The task of the event loop.
+    Task,
+    /// The tick that a disconnect() queued, which is where node emits 'disconnect'.
+    DisconnectTick,
 }
 
 /// The transport returns the number of bytes written as an `i32`.
@@ -967,10 +960,10 @@ impl SendQueueOwner {
         }
     }
 
-    fn handle_ipc_close(self) {
+    fn handle_ipc_close(self, closed_in: ClosedIn) {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
-            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(closed_in),
             SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(),
         }
     }
@@ -1185,30 +1178,46 @@ impl SendQueue {
             // SAFETY: caller contract — the queued task owns a ref on `this`.
             let sq = unsafe { &*this };
             sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
-                log!("SendQueue#closeSocketTask");
-                sq.close_socket(CloseReason::Normal, CloseFrom::User);
-            }
-            if sq.pending_after_close.replace(false) {
-                log!("SendQueue#_onAfterIPCClosed");
-                if !sq.close_event_sent.replace(true) {
-                    let global = sq.get_global_this();
-                    if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
-                    }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                    for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
-                    }
-                    if let Some(owner) = sq.owner.get() {
-                        owner.handle_ipc_close();
-                    }
-                }
-            }
+            sq.run_pending();
         }
         // Release the task's ref; the SendQueue may be freed here.
         // SAFETY: `this` is live and owns the ref taken at schedule.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    /// Does now what the queued task would do. A pending flag means that task is still queued, and its ref keeps `self` alive through the callbacks.
+    pub(crate) fn run_pending(&self) {
+        self.close_and_report(ClosedIn::Task);
+    }
+
+    fn close_and_report(&self, closed_in: ClosedIn) {
+        if self.pending_close.replace(false) {
+            log!("SendQueue#closeSocketTask");
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if self.pending_after_close.replace(false) {
+            log!("SendQueue#_onAfterIPCClosed");
+            if !self.close_event_sent.replace(true) {
+                let global = self.get_global_this();
+                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+                    item.complete(&global);
+                }
+                // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                for item in self.queue.with_mut(std::mem::take) {
+                    item.abort_unsent(&global);
+                }
+                if let Some(owner) = self.owner.get() {
+                    owner.handle_ipc_close(closed_in);
+                }
+            }
+        }
+    }
+
+    /// The tick that `disconnect_in_tick` queued beside the task. Whichever of the two runs second finds nothing to do.
+    pub(crate) fn finish_disconnect(&self) {
+        if self.pending_close.get() {
+            self.close_and_report(ClosedIn::DisconnectTick);
+        }
     }
 
     /// `Taskable::release_unrun`: a scheduled deferred task that will never
@@ -1273,15 +1282,37 @@ impl SendQueue {
     }
 
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
-    pub(crate) fn disconnect(&self) {
+    pub(crate) fn disconnect(&self) -> JsResult<()> {
         if self.socket_is_open()
             && !self.pending_close.get()
             && self.waiting_for_ack.get().is_some()
         {
             self.close_after_flush.set(true);
-            return;
+            return Ok(());
         }
+        self.disconnect_in_tick()
+    }
+
+    /// A disconnect() takes effect. Like node's `process.nextTick(finish)`, a tick closes the channel and reports the close, so no
+    /// timer or I/O callback runs between disconnect() and 'disconnect'. The task is queued as for any close: it keeps the event
+    /// loop awake for the close, and it does the work where nothing runs the ticks first (a call in an 'unhandledRejection' listener).
+    fn disconnect_in_tick(&self) -> JsResult<()> {
+        let already_requested = self.pending_close.get();
         self.close_socket_next_tick(true);
+        if already_requested || !self.pending_close.get() {
+            return Ok(()); // this call requested no close
+        }
+        // `null` is this process: `MessageTarget` in ipc_host.bind.ts.
+        let target = match self.owner.get() {
+            Some(SendQueueOwner::Instance) => JSValue::NULL,
+            Some(owner) => owner.this_jsvalue(),
+            None => JSValue::ZERO,
+        };
+        if target.is_empty() {
+            return Ok(());
+        }
+        let global = self.get_global_this();
+        JSValue::call_next_tick_1(finish_disconnect_fn(&global), &global, target)
     }
 
     fn start_message(
@@ -1514,7 +1545,8 @@ impl SendQueue {
         match next {
             Next::Nothing => {
                 if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
-                    self.close_socket_next_tick(true);
+                    // The disconnect() that waited has returned: an exception from queueing its tick is reported, not thrown.
+                    crate::dispatch::fold(self.disconnect_in_tick());
                 }
                 self.update_ref(global);
             }

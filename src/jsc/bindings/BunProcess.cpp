@@ -196,7 +196,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" void Bun__setExitCode(void*, uint8_t);
-extern "C" void Bun__closeChildIPC(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
@@ -4240,8 +4240,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    Bun__closeChildIPC(globalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    return Bun__closeChildIPC(globalObject);
 }
 
 static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)

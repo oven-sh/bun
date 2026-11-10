@@ -17,6 +17,14 @@ export const MessageTarget = b.union({
   thisProcess: b.null,
   ignored: b.any,
 });
+/** The tick that a disconnect() queues, node's `finish`: it closes the channel of `target` and reports the close. */
+export const finishDisconnect = b.fn({
+  export: "Bun__IPC__finishDisconnect",
+  args: { target: MessageTarget },
+  capability: "js",
+});
+/** For node:child_process: whether `onDisconnect` of `subprocess` is running in that tick, where node emits 'disconnect'. */
+export const isInDisconnectTick = b.fn({ args: { subprocess: Subprocess }, returns: b.bool });
 /** What the other process sent: any value. */
 export const ReceivedMessage = b.union({ object: b.object, primitive: b.any });
 /**

@@ -12,6 +12,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
+use crate::api::bun::subprocess::{Flags as SubprocessFlags, Subprocess};
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
 
@@ -52,6 +53,30 @@ pub(crate) fn attach_windows_socket_payload(
 
 pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<'a>) {
     Process__emitErrorEvent(cx.global(), error.to_js());
+}
+
+pub(crate) fn finish_disconnect<'a>(cx: &mut JsScope<'a>, target: MessageTarget<'a>) {
+    let send_queue = match target {
+        MessageTarget::Subprocess(subprocess) => subprocess.ipc_data.get().clone(),
+        MessageTarget::ThisProcess => CHANNEL.get().map(|instance| instance.data.clone()),
+        MessageTarget::Missing | MessageTarget::Ignored(_) => None,
+    };
+    let Some(send_queue) = send_queue else {
+        return;
+    };
+    // The tick queue is draining: a checkpoint where a callback of the owner returns would run the ticks behind this one first.
+    let _entered = cx
+        .global()
+        .bun_vm()
+        .enter_event_loop_scope_without_checkpoint();
+    send_queue.finish_disconnect();
+}
+
+pub(crate) fn is_in_disconnect_tick(subprocess: &Subprocess<'static>) -> bool {
+    subprocess
+        .flags
+        .get()
+        .contains(SubprocessFlags::IN_DISCONNECT_TICK)
 }
 
 fn do_send_err(

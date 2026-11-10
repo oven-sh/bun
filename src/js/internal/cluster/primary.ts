@@ -411,7 +411,11 @@ function send(worker: ClusterWorker, message: object, handle?: object | null, cb
 Worker.prototype.disconnect = function (this: ClusterWorker) {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect!();
+  // Unlike node, the primary closes its own end. A disconnect() reports its close in the tick of the call, so this one waits for
+  // the next turn of the event loop: a 'disconnect' listener that is added a tick or a promise after this call still runs.
+  setImmediate(() => {
+    if (this.process.connected) this.process.disconnect!();
+  });
   removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;

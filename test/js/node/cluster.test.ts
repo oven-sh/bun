@@ -1078,6 +1078,160 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+// The program of node's test-cluster-dgram-2.js. The primary's disconnect closes the worker's socket, and the worker's
+// 'disconnect' follows in the same run of process.nextTick callbacks, so the interval is cleared before it can send on the
+// closed socket (ERR_SOCKET_DGRAM_NOT_RUNNING). The interval is due when the socket closes.
+test.concurrent.skipIf(isWindows)(
+  "a worker that sends on a dgram socket until 'disconnect' survives cluster.disconnect()",
+  async () => {
+    using dir = tempDir("cluster-dgram-disconnect", {
+      "main.js": `
+const cluster = require("node:cluster");
+const dgram = require("node:dgram");
+
+if (cluster.isPrimary) {
+  const socket = dgram.createSocket("udp4");
+  socket.once("message", () => {
+    socket.close();
+    cluster.disconnect();
+  });
+  socket.bind(0, "127.0.0.1", () => {
+    const worker = cluster.fork();
+    worker.on("exit", (code, signal) => console.log("worker exit", code, signal));
+    worker.send({ port: socket.address().port });
+  });
+} else {
+  const socket = dgram.createSocket("udp4");
+  socket.bind(0, "127.0.0.1");
+  process.on("message", ({ port }) => {
+    const interval = setInterval(() => socket.send("x", port, "127.0.0.1"), 1);
+    cluster.worker.on("disconnect", () => clearInterval(interval));
+    socket.on("close", () => {
+      const end = performance.now() + 10;
+      while (performance.now() < end);
+    });
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker exit 0 null", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Unlike node, the primary closes its own end of the channel after worker.disconnect(). It does so one turn of the event
+// loop later, so the worker's 'disconnect' in the primary still reaches a listener that is added after an await.
+test.concurrent(
+  "a 'disconnect' listener added a tick or a promise after worker.disconnect() runs in the primary",
+  async () => {
+    using dir = tempDir("cluster-primary-late-listener", {
+      "main.js": `
+const cluster = require("node:cluster");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  const ran = [];
+  worker.on("online", () => {
+    worker.disconnect();
+    worker.on("disconnect", () => ran.push("same tick"));
+    process.nextTick(() => worker.on("disconnect", () => ran.push("next tick")));
+    Promise.resolve().then(() => worker.on("disconnect", () => ran.push("promise")));
+  });
+  worker.on("exit", code => console.log(JSON.stringify({ ran, code })));
+} else {
+  require("node:net").createServer().listen(0, "127.0.0.1");
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ ran: ["same tick", "next tick", "promise"], code: 0 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A worker gets the primary's requests from when its channel opens, and they wait until it loads node:cluster. The first
+// here is the disconnect request. node:cluster loads in a tick that runs with no callback of the event loop on the stack,
+// where a callback that native code runs ends with a checkpoint: the tick of that process.disconnect() must not end the
+// channel before the request behind it is handled. The parent writes the channel by hand, so nothing closes the other end.
+test.concurrent.skipIf(isWindows)(
+  "a worker that loads node:cluster late handles every request that waited, a disconnect request first",
+  async () => {
+    using dir = tempDir("cluster-worker-late-load", {
+      "parent.js": `
+const fs = require("node:fs");
+const child = Bun.spawn({
+  cmd: [process.execPath, "worker.js"],
+  stdio: ["ignore", "inherit", "inherit", "pipe"],
+  env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json", NODE_UNIQUE_ID: "1" },
+});
+// An internal message of a JSON channel is "\\x02", the JSON and "\\n".
+fs.writeSync(
+  child.stdio[3],
+  '\\x02{"cmd":"NODE_CLUSTER","act":"disconnect"}\\n' + '\\x02{"cmd":"NODE_CLUSTER","act":"another"}\\n' + '"load"\\n',
+);
+child.exited.then(code => console.log("exit " + code));
+`,
+      "worker.js": `
+const log = [];
+process.on("internalMessage", message => log.push("internalMessage " + message.act));
+process.on("disconnect", () => {
+  log.push("disconnect");
+  setImmediate(() => console.log(JSON.stringify(log)));
+});
+process.on("uncaughtException", () => log.push("uncaughtException"));
+process.on("message", message => {
+  if (message !== "load") return;
+  setImmediate(() => {
+    process.nextTick(() => {
+      require("node:cluster");
+      log.push("loaded");
+    });
+    throw new Error("thrown by the test");
+  });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout:
+        JSON.stringify([
+          "uncaughtException",
+          "internalMessage disconnect",
+          "internalMessage another",
+          "loaded",
+          "disconnect",
+        ]) + "\nexit 0",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.skipIf(isWindows)("a second listen({ fd }) on an fd that a handle already owns fails with EEXIST", async () => {
   using dir = tempDir("cluster-fd-held", {
     "main.ts": `

@@ -21,6 +21,7 @@ let signals;
 function getSignals() {
   return (signals ??= require("node:os").constants.signals);
 }
+let isInDisconnectTick: ((handle: $Bindgen.Subprocess) => boolean) | undefined;
 
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -1149,6 +1150,7 @@ class ChildProcess extends EventEmitter {
   #handle: $Bindgen.Subprocess | null | undefined;
   #closesNeeded = 1;
   #closesGot = 0;
+  #disconnectCalled = false;
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1628,8 +1630,14 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
-    process.nextTick(() => this.emit("disconnect"));
+    // node emits 'disconnect' in the tick that disconnect() queued, and native code calls this in that tick.
+    // Any other close is emitted one tick later, behind the callbacks of the sends that it ended.
+    const emitsNow =
+      this.#disconnectCalled &&
+      (isInDisconnectTick ??= $bindgen("ipc_host.bind.ts", "isInDisconnectTick"))(this.#handle!);
+    if (!emitsNow) process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
+    if (emitsNow) this.emit("disconnect");
   }
   #disconnect() {
     if (!this.connected) {
@@ -1637,6 +1645,7 @@ class ChildProcess extends EventEmitter {
       return;
     }
     this.#handle!.disconnect();
+    this.#disconnectCalled = true;
     this.channel = null;
   }
 

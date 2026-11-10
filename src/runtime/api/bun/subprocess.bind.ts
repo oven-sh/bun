@@ -30,7 +30,7 @@ export const Subprocess = b.class({
   internalFields: ["exitedPromise", "ipcCallback", "onDisconnectCallback", "onExitCallback", "terminal"],
   proto: {
     connected: { getter: b.bool },
-    disconnect: {},
+    disconnect: { capability: "js", throws: true },
     exitCode: { getter: b.u8.nullable },
     exited: { getter: b.any.returning("Promise"), capability: "js", passThis: true },
     kill: { args: { signal: b.any }, capability: "js", throws: true, passThis: true },

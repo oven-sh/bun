@@ -156,14 +156,15 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
     }
 }
 
-/// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
-/// the next tick on the event loop.
+/// `process.disconnect()`: the socket closes, and 'disconnect' is emitted, in the
+/// `process.nextTick` queue of the call.
 // HOST_EXPORT(Bun__closeChildIPC, c)
-pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
+pub(crate) fn close_child_ipc(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
-        current_ipc.data().disconnect();
+        current_ipc.data().disconnect()?;
     }
+    Ok(JSValue::UNDEFINED)
 }
 
 // ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────

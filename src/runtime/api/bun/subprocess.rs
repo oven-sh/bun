@@ -226,6 +226,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// `onDisconnect` is running in the tick that a disconnect() queued (`ipc_host::is_in_disconnect_tick`).
+        const IN_DISCONNECT_TICK           = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
@@ -742,10 +744,11 @@ impl Subprocess<'_> {
         ipc_data.close_socket_next_tick(next_tick);
     }
 
-    pub(crate) fn disconnect(&self) {
+    pub(crate) fn disconnect(&self, _: &mut JsScope<'_>) -> JsResult<()> {
         if let Some(ipc_data) = self.ipc() {
-            ipc_data.disconnect();
+            ipc_data.disconnect()?;
         }
+        Ok(())
     }
 
     pub(crate) fn get_connected(&self) -> bool {
@@ -1378,7 +1381,7 @@ impl Subprocess<'_> {
         Ok(())
     }
 
-    pub(crate) fn handle_ipc_close(&self) {
+    pub(crate) fn handle_ipc_close(&self, closed_in: IPC::ClosedIn) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
@@ -1393,6 +1396,8 @@ impl Subprocess<'_> {
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
                 let event_loop = global_this.bun_vm().as_mut().event_loop();
+                let in_disconnect_tick = closed_in == IPC::ClosedIn::DisconnectTick;
+                self.update_flags(|f| f.set(Flags::IN_DISCONNECT_TICK, in_disconnect_tick));
                 // SAFETY: `event_loop` is the live VM's owned event loop,
                 // accessed on the single JS mutator thread.
                 unsafe {
@@ -1404,6 +1409,7 @@ impl Subprocess<'_> {
                         &[JSValue::TRUE],
                     )
                 };
+                self.update_flags(|f| f.remove(Flags::IN_DISCONNECT_TICK));
             }
         }
     }

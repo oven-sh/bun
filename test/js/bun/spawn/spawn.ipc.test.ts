@@ -486,3 +486,80 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+// The same tick as 'disconnect' of node:child_process, which node emits from process.nextTick in disconnect():
+// nothing that the event loop runs comes between the call and onDisconnect. The timer is due when disconnect() is called.
+it.concurrent("subprocess.disconnect() runs onDisconnect in the next tick, once", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const log = [];
+      const subprocess = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.send('ready'); process.on('disconnect', () => {});"],
+        stdio: ["ignore", "inherit", "inherit"],
+        ipc() {
+          setTimeout(() => log.push("timer"), 1);
+          const end = performance.now() + 10;
+          while (performance.now() < end);
+          subprocess.disconnect();
+          log.push("connected=" + subprocess.connected);
+          process.nextTick(() => log.push("nextTick"));
+          Promise.resolve().then(() => log.push("promise"));
+        },
+        onDisconnect(...args) {
+          log.push("onDisconnect " + JSON.stringify(args));
+        },
+      });
+      await subprocess.exited;
+      console.log(JSON.stringify(log));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify(["connected=false", "onDisconnect [true]", "nextTick", "promise", "timer"]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The close of a disconnect() is work of the event loop too: the loop comes back for it, so 'beforeExit' is emitted a second time.
+it.concurrent("subprocess.disconnect() in 'beforeExit' keeps the event loop alive for the close", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const log = [];
+      const subprocess = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.on('disconnect', () => {}); process.send('ready');"],
+        stdio: ["ignore", "inherit", "inherit"],
+        ipc() {
+          subprocess.unref();
+        },
+        onDisconnect() {
+          log.push("onDisconnect");
+        },
+      });
+      process.on("beforeExit", () => {
+        log.push("beforeExit");
+        if (subprocess.connected) subprocess.disconnect();
+      });
+      process.on("exit", () => {
+        log.push("exit");
+        require("node:fs").writeSync(1, JSON.stringify(log));
+      });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({
+    stdout: JSON.stringify(["beforeExit", "onDisconnect", "beforeExit", "exit"]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

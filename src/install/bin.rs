@@ -2036,7 +2036,7 @@ pub fn link_dependency_bins(
             string_buffer: string_buf,
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         };
-        let mut has_conflict = false;
+        let mut conflicts: Vec<Vec<u8>> = Vec::new();
         while let Ok(Some(name)) = names.next() {
             let name = normalized_bin_name(name);
             let dest = [&own_bin_dir[..], &[SEP][..], name].concat();
@@ -2048,13 +2048,13 @@ pub fn link_dependency_bins(
                     .find_map(|(i, dir)| Some((bin_owner(dir, name)?, i)))
                     .is_some_and(|(owner, owner_depth)| !is_dependency(&owner, owner_depth));
             if is_conflict {
-                has_conflict = true;
+                conflicts.push(name.to_vec());
             } else {
                 let _ = seen.put(&dest, ());
             }
         }
         target_dir.close();
-        if !has_conflict {
+        if conflicts.is_empty() {
             continue;
         }
 
@@ -2082,6 +2082,10 @@ pub fn link_dependency_bins(
         linker.link(false);
         if let Some(err) = linker.err {
             return Err(err);
+        }
+        // The target of a bin may not exist yet.
+        if (conflicts.iter()).any(|name| bin_owner(own_dir, name).is_none()) {
+            return Err(Error::Sys(bun_errno::SystemErrno::ENOENT));
         }
     }
     Ok(())

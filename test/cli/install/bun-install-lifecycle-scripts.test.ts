@@ -2267,9 +2267,9 @@ describe("the trusted set", () => {
     });
 
     test.concurrent.each([
-      ["string", "npm:dep-with-file-bin@1.0.0", "tool"],
-      ["directory", "npm:dep-with-directory-bins@1.0.0", "directory-bin-1"],
-    ])("aliased dependency with a %s bin", async (_, specifier, binName) => {
+      ["string", "npm:dep-with-file-bin@1.0.0", "tool", "file-bin"],
+      ["directory", "npm:dep-with-directory-bins@1.0.0", "directory-bin-1", "directory-bin-1"],
+    ])("aliased dependency with a %s bin", async (_, specifier, binName, expected) => {
       using ctx = await project("hoisted", {
         "package.json": {
           name: "foo",
@@ -2287,10 +2287,35 @@ describe("the trusted set", () => {
       });
       const { err, exitCode } = await bun(ctx, ["install"]);
       expect(err).not.toContain("error:");
-      const output = await textOf(ctx.packageDir, "node_modules", "native", "out.txt");
-      expect(output).toBeString();
-      expect(output).not.toContain("payload");
+      expect((await textOf(ctx.packageDir, "node_modules", "native", "out.txt"))?.trim()).toBe(expected);
       expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("does not run scripts if a bin cannot be linked", async () => {
+      using ctx = await project("hoisted", {
+        "package.json": {
+          name: "foo",
+          dependencies: { native: "file:./native", payload: "file:./payload" },
+          trustedDependencies: ["native"],
+        },
+        "native/package.json": {
+          name: "native",
+          version: "1.0.0",
+          dependencies: { "what-bin": "1.0.0" },
+          scripts: { postinstall: "what-bin" },
+        },
+        // Not a directory.
+        "native/node_modules": "",
+        "payload/package.json": { name: "payload", version: "1.0.0", bin: { "what-bin": "run.js" } },
+        "payload/run.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("../../ran.txt", "payload");\n`,
+      });
+      for (let i = 0; i < 2; i++) {
+        const { err, exitCode } = await bun(ctx, ["install"]);
+        expect(err).toContain("error: failed to link dependency bins before running scripts for native");
+        expect(await exists(join(ctx.packageDir, "node_modules", "native"))).toBeFalse();
+        expect(await exists(join(ctx.packageDir, "ran.txt"))).toBeFalse();
+        expect(exitCode).toBe(1);
+      }
     });
 
     test.concurrent("keeps bins of other dependencies", async () => {

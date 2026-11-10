@@ -730,7 +730,12 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    if (!trace && !traceWarningHelperShown) {
+    if (trace || traceWarningHelperShown) {
+      writeOut(msg);
+      return;
+    }
+    // Where the hint cannot be made, the warning is still written.
+    try {
       traceWarningHelperShown = true;
       const flag = isDeprecation ? "--trace-deprecation" : "--trace-warnings";
       const argv0 = processObject.argv0 || "node";
@@ -743,8 +748,9 @@ export function createOnWarning(
               ? $bindgen("node_path.bind.ts", "basenameWin32")
               : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0, ".exe");
       msg += `\n(Use \`${program} ${flag} ...\` to show where the warning was created)`;
+    } finally {
+      writeOut(msg);
     }
-    writeOut(msg);
   };
 }
 

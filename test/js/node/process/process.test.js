@@ -3379,6 +3379,22 @@ describe("default 'warning' listener is registered at startup", () => {
     });
   });
 
+  // process.argv0 is writable in Bun, and path.basename() throws for a name that is not a string.
+  it.concurrent("the first warning is written though its hint cannot be made", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `process.on("uncaughtException", error => console.log("caught " + error.code));
+       process.argv0 = 5;
+       process.emitWarning("first");
+       process.emitWarning("second");`,
+    ]);
+    expect({ stdout, stderr: stderr.replace(/\(node:\d+\) /g, ""), exitCode }).toEqual({
+      stdout: "caught ERR_INVALID_ARG_TYPE\n",
+      stderr: "Warning: first\nWarning: second\n",
+      exitCode: 0,
+    });
+  });
+
   // `basename(process.argv0 || 'node', '.exe')`. Each name is what path.basename() of node v26.3.0 answers for that argv0.
   it.concurrent.each([
     ["custom.exe", "custom"],

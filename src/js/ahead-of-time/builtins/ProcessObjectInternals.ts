@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 2c7458493db2590078d2c75cdaac6418af299a5ba9e7a81b9f7180de5a6dc75f.
+// Written against that file with the SHA-256 a2cf988b684990327c144af9d59cf9fc5a5c04ee8cf466a30a851291751e0c48.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -758,7 +758,12 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    if (!trace && !traceWarningHelperShown) {
+    if (trace || traceWarningHelperShown) {
+      writeOut(msg);
+      return;
+    }
+    // Where the hint cannot be made, the warning is still written.
+    try {
       traceWarningHelperShown = true;
       const flag = isDeprecation ? "--trace-deprecation" : "--trace-warnings";
       const argv0: unknown = processObject.argv0 || "node";
@@ -780,8 +785,9 @@ export function createOnWarning(
         )(argv0 as string, ".exe");
       }
       msg += `\n(Use \`${program} ${flag} ...\` to show where the warning was created)`;
+    } finally {
+      writeOut(msg);
     }
-    writeOut(msg);
   };
 }
 

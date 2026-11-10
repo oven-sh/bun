@@ -63,6 +63,44 @@ declare enum Grade {
   "node_modules/@types/bun/index.d.ts": `declare module "bun" {\n  export const version: string;\n}\n`,
 });
 
+// tsc reads the declarations of such a package, and a build reads the source. The project has not installed Bun's types.
+const packageWithAotSource = (main: string, declarations: string, source: string) => ({
+  "main.ts": main,
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { strict: true, module: "preserve", target: "esnext", moduleResolution: "bundler", noEmit: true },
+    files: ["main.ts"],
+  }),
+  "node_modules/made-up/package.json": `{ "name": "made-up", "version": "0.0.1", "exports": { ".": { "types": "./types.d.ts", "aot": "./code.ts", "default": "./code.ts" } } }\n`,
+  "node_modules/made-up/types.d.ts": declarations,
+  "node_modules/made-up/code.ts": source,
+});
+const joins = [
+  `export declare function join(first: string | number, second: number): string;\n`,
+  `export function join(first: string, second: number): string {\n  return first + ":" + second;\n}\n`,
+] as const;
+
+// Each package has a rootDir of its own, and one imports the source of the other: tsc says that the file isn't under rootDir (TS6059), which is about where it writes its output.
+const packagesWithRootDirectories = (start: string) => {
+  const config = JSON.stringify({
+    compilerOptions: {
+      strict: true,
+      module: "preserve",
+      target: "esnext",
+      moduleResolution: "bundler",
+      rootDir: "src",
+      outDir: "dist",
+    },
+    include: ["src"],
+  });
+  return {
+    ...packageWithAotSource(`import "./packages/one/src/start";\n`, ...joins),
+    "packages/one/tsconfig.json": config,
+    "packages/two/tsconfig.json": config,
+    "packages/one/src/start.ts": `import { join } from "made-up";\nimport { two } from "../../two/src/two";\n${start}`,
+    "packages/two/src/two.ts": `export const two: number = 2;\n`,
+  };
+};
+
 const rows: Record<string, Row> = {
   "a function of the program where `typeof fetch` is wanted: Bun's declarations add a member to fetch": {
     files: {
@@ -320,6 +358,83 @@ console.log(new Held().own, new Held().declared, show(Level.Own), show(3));
   "a script of a project that has Bun's types installed: a mistake of its own still stops the build": {
     files: scriptWithTypesOfBunInstalled(`const wrong: number = "text";\nconsole.log(wrong);\n`),
     errors: ["TS2322"],
+  },
+  "a package's source accepts less than its declarations: that alone stops no build": {
+    files: packageWithAotSource(`import { join } from "made-up";\nconsole.log(join(7, 1));\n`, ...joins),
+    errors: [],
+    stdout: "7:1\n",
+  },
+  "a package's source refuses the first argument, and the second is a mistake": {
+    files: packageWithAotSource(`import { join } from "made-up";\nconsole.log(join(7, "x"));\n`, ...joins),
+    errors: ["TS2345"],
+  },
+  "a package's source lacks a member, and the member's declared type is a mistake": {
+    files: packageWithAotSource(
+      `import { crate } from "made-up";\nconst text: string = crate.extra;\nconsole.log(text);\n`,
+      `export declare const crate: { weight: number; extra: number };\n`,
+      `export const crate = { weight: 1 };\n`,
+    ),
+    errors: ["TS2322"],
+  },
+  "a package's source lacks a member, and the mistake is a statement later": {
+    files: packageWithAotSource(
+      `import { crate } from "made-up";\nconst extra = crate.extra;\nconst text: string = extra;\nconsole.log(text);\n`,
+      `export declare const crate: { weight: number; extra: number };\n`,
+      `export const crate = { weight: 1 };\n`,
+    ),
+    errors: ["TS2322"],
+  },
+  "a package's source lacks an overload, and the mistake is in the file that imports the result": {
+    files: {
+      ...packageWithAotSource(
+        `import { made } from "./part";\nconst text: string = made;\nconsole.log(text);\n`,
+        `export declare function pick(value: number): number;\nexport declare function pick(value: string): string;\n`,
+        `export function pick(value: string): string {\n  return value;\n}\n`,
+      ),
+      "part.ts": `import { pick } from "made-up";\nexport const made = pick(7);\n`,
+    },
+    errors: ["TS2322"],
+  },
+  "a package's source refuses an argument beside what bun check only reports for lack of Bun's types": {
+    files: packageWithAotSource(
+      `import { join } from "made-up";\nconsole.log(join(7, 1), typeof Bun.version, typeof setTimeout(() => {}, 1).unref);\n`,
+      ...joins,
+    ),
+    errors: [],
+    stdout: "7:1 string function\n",
+  },
+  "a name that only the DOM declares is called with arguments that its declaration refuses": {
+    files: {
+      "package.json": `{ "name": "plainest" }\n`,
+      "main.ts": `if (typeof print === "function") print("a", 1);\nconsole.log("done");\n`,
+    },
+    errors: [],
+    stdout: "done\n",
+  },
+  "a package's source refuses an argument beside a file that isn't under the rootDir of its importer": {
+    files: packagesWithRootDirectories(`console.log(join(7, two));\n`),
+    errors: [],
+    stdout: "7:2\n",
+  },
+  "the same, and a mistake beside them": {
+    files: packagesWithRootDirectories(`const wrong: string = two;\nconsole.log(join(7, two), wrong);\n`),
+    errors: ["TS2322"],
+  },
+  "a package's source refuses an argument beside a mistake in a branch that never runs": {
+    files: packageWithAotSource(
+      `import { join } from "made-up";\nif (false) {\n  const wrong: number = "text";\n  console.log(wrong);\n}\nconsole.log(join(7, 1));\n`,
+      ...joins,
+    ),
+    errors: [],
+    stdout: "7:1\n",
+  },
+  "a package's source refuses an argument beside a mistake in a function that nothing calls": {
+    files: packageWithAotSource(
+      `import { join } from "made-up";\nfunction unused() {\n  const wrong: number = "text";\n  return wrong;\n}\nconsole.log(join(7, 1));\n`,
+      ...joins,
+    ),
+    errors: [],
+    stdout: "7:1\n",
   },
 };
 

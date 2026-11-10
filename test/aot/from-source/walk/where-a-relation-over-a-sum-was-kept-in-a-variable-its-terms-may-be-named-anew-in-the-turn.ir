@@ -8,8 +8,8 @@
 # -- end of source
 # Behind a branch that stands on a relation the walk narrows the relation's operands and, where an operand is a sum, BOTH TERMS OF THE SUM, each by its current name. It looks through no conversion to a boolean
 # for that: where the relation was kept in a variable, as here, no term is named on the edges, and the turn may name `m` and `k` anew as it likes: all three branches go in front of their loops.
-# RUN: compile BranchesOverConstantsBuiltInFrontOfLoops mechanisms=all
-# CHECK: statistic BranchesOverConstantsBuiltInFrontOfLoops 3
+# RUN: compile ConstantDiamondsHoisted mechanisms=all
+# CHECK: statistic ConstantDiamondsHoisted 3
 
 module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

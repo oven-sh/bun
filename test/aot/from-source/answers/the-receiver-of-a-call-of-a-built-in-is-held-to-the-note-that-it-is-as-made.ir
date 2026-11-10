@@ -6,14 +6,18 @@
 # print(main());
 # -- end of source
 # LIBRARY: own
-# A row fits by the aspects that are seen of its receiver: then() on a promise as made asks for no constructor. This promise bears a constructor of its own that counts.
-# The lie, testing=OneRowSpeaksForAllThatCallMayTake: where a call may take several rows the first alone is asked whether what it hands back is fresh, though another hands back the operand: the result is noted as made. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the cell is asked where the note is leaned on: the process stops by name.
+# An overload matches by the pristine aspects that are known of its receiver: then() on a pristine promise does not read `constructor`.
+# This promise has an own `constructor` getter that counts its calls.
+# Fault injection, testing=IgnoreAlternativeOverloads: where a call may resolve to several overloads, only the first is consulted on whether its result is fresh, although another returns the operand.
+# So the result is marked pristine.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the cell is checked where the mark is relied on, and the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 2
 # RIGHT-NEXT: exited with 0
 # RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # HARDENED: 2
 # HARDENED-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,OneRowSpeaksForAllThatCallMayTake
-# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,IgnoreAlternativeOverloads
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # LIE: crashed with

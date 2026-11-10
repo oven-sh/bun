@@ -1,0 +1,17 @@
+import { test, vi } from "bun:test";
+const runEventLoop = async count => { for (let i = 0; i < count; i++) await new Promise(done => setImmediate(done)); };
+const tryRequire = name => { try { return String(require(name).label); } catch (error) { return "threw " + (/^snapped/.test(error.message) ? error.message : error.constructor.name); } };
+test("retry while first call pends", async () => {
+  let openSpoolGate, openBobbinGate, spoolCalls = 0, bobbinCalls = 0;
+  const spoolGate = new Promise(done => (openSpoolGate = done));
+  const bobbinGate = new Promise(done => (openBobbinGate = done));
+  vi.doMock("./spool.mjs", async () => { spoolCalls++; await new Promise(() => {}); return { thread: "never" }; });
+  vi.doMock("./bobbin.mjs", async () => { bobbinCalls++; await bobbinGate; return { thread: "wound" }; });
+  console.log("the first:", tryRequire("./loom.mjs"));
+  vi.doMock("./spool.mjs", () => { spoolCalls++; throw new Error("snapped " + spoolCalls); });
+  console.log("the fresh one:", tryRequire("./shuttle.mjs"));
+  console.log("the factories were called", spoolCalls, "and", bobbinCalls, "times before anything settles");
+  openBobbinGate();
+  await runEventLoop(5);
+  console.log("the factories were called", spoolCalls, "and", bobbinCalls, "times once the other has settled");
+});

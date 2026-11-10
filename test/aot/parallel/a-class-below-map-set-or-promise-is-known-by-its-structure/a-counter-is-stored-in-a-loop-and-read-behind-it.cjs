@@ -1,6 +1,6 @@
 // A method reads a field, stores it and reads it again, 64 times a turn: the store goes behind the look, and each read sees the store in front of it.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 // COUNT: operation:operationAOTFillSiteCache = 0
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } bump() { this.n = (this.n + 1) & 1023; return this.n; } two() { return this.n + 1; } put(v) { this.n = v; } }

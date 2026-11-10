@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
 const log = [];
 const outside = JSON.parse('["a,b", "", ",", "caf\\u00e9,\\u4e2d", "\\ud83d\\ude00,\\ud83d\\ude00x", "\\ud83d,\\ude00", "\\ude00\\ud83d", "x\\ud83d"]');
 const parts = input => { let commas = 0, rest = ""; for (const ch of input) { if (ch === ",") commas++; else rest += "<" + ch + ">"; } return commas + ":" + rest; };

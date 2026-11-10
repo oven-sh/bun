@@ -1,5 +1,5 @@
 // `o.m()` where the written type names a class: who is called depends on the object's own class, on how the object was made, on what the callee does to its own name meanwhile, and the method is read in front of the arguments.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function attempt(run) { try { return String(run()); } catch (e) { return e instanceof TypeError ? "TypeError" : "other"; } }
 class Shape { area() { return 0; } name() { return "shape"; } describe() { return this.name() + ":" + this.area(); } }

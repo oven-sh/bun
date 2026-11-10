@@ -6,8 +6,8 @@
 # function levels(list, odd) { let s = 0; for (let a = 0; a < 2; a++) { let t = a; for (let b = 0; b < 2; b++) { let u = b * 0.5; for (let i = 0; i < list.length; i++) u = u + list[i]; t = t + u; } s = s + t; if (a) s = s + odd; } return s; }
 # publish(levels);
 # -- end of source
-# RUN: compile SumsAskedForNumbersInFrontOfLoops LoopsWalkedAgainWithoutAskingSums mechanisms=all
-# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 21
-# CHECK: statistic LoopsWalkedAgainWithoutAskingSums 0
+# RUN: compile SumsGuardedAsNumbers LoopsRevisitedWithoutSumGuards mechanisms=all
+# CHECK: statistic SumsGuardedAsNumbers 21
+# CHECK: statistic LoopsRevisitedWithoutSumGuards 0
 # RUN(SHELL): run-in-shell globalThis.publish = (levels) => { let asked = 0; const weighs = { valueOf() { asked++; return 5; } }; const holes = [1.5, 2.5, 3.5]; delete holes[1]; const lists = () => [[1.5, 2.5, 3.5], [1, 2, 3], ["a", 2, 3], [1, "b", 3], [1, 2, "c"], [1, weighs, 3], [1, null, 3], [1, undefined, 3], holes, [], [1, 2n, 3], new Float64Array([1.5, 2.5]), "xy"]; let told = ""; for (let turn = 0; turn < 2; turn++) for (const list of lists()) { try { const got = levels(list, turn ? "7" : 2.5); told += " " + typeof got + ":" + String(got); } catch (e) { told += " " + e.constructor.name; } } print(told + " | " + asked); };
 # SHELL: number:34.5 number:28.5 string:000a230.5a2310a230.5a232.5 string:001b31.5b311b31.5b32.5 string:003c3.5c13c3.5c2.5 number:40.5 number:20.5 number:NaN number:NaN number:4.5 TypeError number:20.5 string:000xy0.5xy10xy0.5xy2.5 string:327 string:267 string:000a230.5a2310a230.5a237 string:001b31.5b311b31.5b37 string:003c3.5c13c3.5c7 string:387 string:187 string:NaN7 string:NaN7 string:27 TypeError string:187 string:000xy0.5xy10xy0.5xy7 | 8

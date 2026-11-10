@@ -1,5 +1,5 @@
 // The same, the loop written with for-of.
-// STATISTIC: ElementsOfListsGuessedByNamesNotAskedForLayoutsThatStayWithCompiledCode >= 1
+// STATISTIC: UnescapedShapesDroppedForElements >= 1
 'use strict';
 const crates = JSON.parse('[' + Array.from({ length: 24 }, (_, i) => '{"wide":' + (i + 0.5) + ',"tall":' + (i * 0.5 + 0.25) + ',"drift":' + (i * 0.25 + 0.125) + ',"sink":0.5}').join() + ']');
 function weighOne(i) { const crate = { wide: i + 0.5, tall: i * 0.5 + 0.25, drift: i * 0.25 + 0.125, sink: 0.5 }; return crate.wide + crate.tall + crate.drift + crate.sink; }

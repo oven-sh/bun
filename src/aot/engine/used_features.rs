@@ -1,7 +1,7 @@
 use bun_sema::util::SharedSort;
 use bun_trim::{
     FeatureSet, LocaleTag, UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales,
-    WitnessIndex, features_kept_only_when_named,
+    WitnessIndex, features_retained_by_name,
 };
 
 use super::{
@@ -29,7 +29,7 @@ fn from_records(
     locales: &[LocaleUseRecord],
     text_of: &dyn Fn(TextRange) -> Vec<u8>,
 ) -> UsedFeatures {
-    let only_when_named = features_kept_only_when_named();
+    let only_when_named = features_retained_by_name();
     let mut seen = FeatureSet::EMPTY;
     let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();

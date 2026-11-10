@@ -1035,6 +1035,7 @@ impl<'s> Program<'s> {
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
+            never_checked_in_last_file: Vec::new(),
             left_out: Default::default(),
             file_with_early_error: None,
             first_early_error: Default::default(),
@@ -1801,6 +1802,8 @@ pub struct Checker<'p, 's> {
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
+    /// `never_checked` as it was when the check of the last file ended. Kept where `Files::brings_declarations`.
+    never_checked_in_last_file: Vec<(u32, u32)>,
     /// `number_name` of each index, or `NONE` if it hasn't been requested.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
     /// The numbers asked for last among the others, by their bits, each with its name.

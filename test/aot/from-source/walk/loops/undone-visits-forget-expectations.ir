@@ -1,0 +1,14 @@
+# What a visit of a loop remembers about the types it expects is forgotten when the visit is undone. If it stayed, `total + weights[place]` would be generic in every version of this loop.
+# -- source: main.cjs
+# const weights = JSON.parse("[0.5, 53.5, 106.5]"), table = JSON.parse("[7, 8, 9]");
+# function alsoRead(start) { let total = start; for (let place = 0; place < table.length; place++) total = total + weights[place]; return total + table[0]; }
+# print(alsoRead([].length + 1));
+# -- end of source
+# f1 = alsoRead
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: number @JSValue = Add {{*}}form=Numbers
+# RUN(UNDONE): compile LoopVisitsUndone SpeculationsEmitted mechanisms=all
+# UNDONE-NOT: statistic LoopVisitsUndone 0
+# UNDONE: statistic SpeculationsEmitted 7
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 168.5

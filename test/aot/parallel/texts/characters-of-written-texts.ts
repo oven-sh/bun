@@ -1,4 +1,4 @@
-// STATISTIC: LoopsOverTextsBuiltTwice >= 1
+// STATISTIC: StringForOfLoopsVersioned >= 1
 // Texts that are written string and come out of JSON, joins, slices and lies (a list, a Set, a String object, null): their characters, with breaks, returns, throws, stores and handlers in the turn.
 declare const process: { argv: string[] };
 const hide = <T>(v: T): T => [v][JSON.parse("0") as number]!;

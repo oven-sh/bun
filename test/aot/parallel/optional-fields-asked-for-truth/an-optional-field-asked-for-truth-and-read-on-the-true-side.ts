@@ -1,4 +1,4 @@
-// STATISTIC: EmptySlotsAskedForTruthAsTheyLie >= 2
+// STATISTIC: EmptySlotConversionsSkipped >= 2
 class Thing { n: number; constructor(n: number) { this.n = n; } }
 interface Links { type?: Thing; a0?: Thing; a1?: Thing; a2?: Thing; a3?: Thing; a4?: Thing; a5?: Thing; a6?: Thing; a7?: Thing; a8?: Thing; a9?: Thing; a10?: Thing; a11?: Thing; }
 class LinksObject { declare _brand: any; }

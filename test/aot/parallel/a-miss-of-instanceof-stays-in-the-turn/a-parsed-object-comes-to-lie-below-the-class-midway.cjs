@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. Midway a parsed object is laid below the prototype of the first class: it never has the shape of the class and is an instance of it from then on.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

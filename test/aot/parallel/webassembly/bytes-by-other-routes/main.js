@@ -1,5 +1,12 @@
 // The bytes of a compiled module reach WebAssembly by other routes, and with a byte changed they are another module.
 // STATISTIC: WasmFunctionsCompiled >= 22
+// STATISTIC: WasmOptimizedCopies = 22
+// STATISTIC: WasmBaselineCopies = 22
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 22
+// COUNTER in every build: WasmInstancesUsingImageCode = 10
+// COUNTER in every build: WasmInstancesInterpreted = 2
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 9
 import path from "../module-facts/m.wasm";
 import fs from "node:fs";
 const tried = f => { try { const r = f(); return typeof r === "bigint" ? r + "n" : Array.isArray(r) ? "[" + r + "]" : String(r); } catch (e) { return e instanceof WebAssembly.RuntimeError ? "RuntimeError" : e instanceof WebAssembly.LinkError ? "LinkError" : e instanceof WebAssembly.CompileError ? "CompileError" : e instanceof RangeError ? "RangeError" : e instanceof TypeError ? "TypeError" : "thrown " + String(e); } };

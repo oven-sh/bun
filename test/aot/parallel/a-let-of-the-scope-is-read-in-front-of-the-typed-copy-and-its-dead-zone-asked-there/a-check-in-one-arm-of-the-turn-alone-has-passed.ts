@@ -1,5 +1,5 @@
 // Only one arm of a condition in the turn reads the variable in front of the read that follows: the other arm reaches it unread.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 0
+// STATISTIC: CapturedVariableReadsHoisted >= 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

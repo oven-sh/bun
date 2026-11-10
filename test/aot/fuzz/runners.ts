@@ -1132,7 +1132,7 @@ export function compare(runner: Runner, program: Program, plain: Run, compiled: 
   if (run.signal)
     return failure(
       "crash",
-      `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim(),
+      `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |internal AOT error|FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim(),
     );
   if (run.timedOut) return failure("hang", run.ranOutOfMemory ? "took too much memory" : "");
   if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) {

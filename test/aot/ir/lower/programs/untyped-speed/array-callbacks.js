@@ -65,7 +65,7 @@ console.log(run(250));
 
 // GENERATED: makeOrders groupBy
 // CHECK-LABEL: function {{*}}name="makeOrders"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = Data data=[[d_1]]
@@ -101,7 +101,7 @@ console.log(run(250));
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="groupBy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|function):
 // CHECK-NEXT: v2 = PropGet v0 key="reduce"
 // CHECK-NEXT: v3 = NewClosure v1 function=[[f_3]]

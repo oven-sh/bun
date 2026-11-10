@@ -188,11 +188,11 @@ function pushPromise(socket: net.Socket, sid: number, promised: number) {
   socket.write(frame(5 /* PUSH_PROMISE */, 0x4, sid, Buffer.concat([id, request])));
 }
 
-// Node before 26.9 destroys a stream that the peer reset only after its 'finish', and a write that the reset cut
-// never finishes.
+// Node before 26.9 destroys a stream that the peer reset only after its 'finish'. Node before 26.10 never settles the
+// write that the reset cut.
 const nodeWaitsForFinish =
   typeof Bun === "undefined" &&
-  (([major, minor]) => major < 26 || (major === 26 && minor < 9))(process.versions.node.split(".").map(Number));
+  (([major, minor]) => major < 26 || (major === 26 && minor < 10))(process.versions.node.split(".").map(Number));
 
 describe("ClientHttp2Stream.close(code) event sequence after data", () => {
   async function collectEvents(port: number, code: number): Promise<string[]> {
@@ -2022,7 +2022,9 @@ describe("a file response to a stream that the peer resets with NO_ERROR", () =>
     }
   });
 
-  test("a response that is on its way reads no more of its file", async () => {
+  // Node reads the file through a FileHandle, at offsets of its own: fs.read() and the position of the descriptor
+  // show nothing there.
+  test("a response that is on its way reads no more of its file", { skip: typeof Bun === "undefined" }, async () => {
     // Each block of 64 KiB holds its own number, so one byte at the position of a descriptor tells where it is.
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "h2-reset-"));
     const file = path.join(directory, "blocks");
@@ -2031,6 +2033,24 @@ describe("a file response to a stream that the peer resets with NO_ERROR", () =>
     const block = () => {
       const byte = Buffer.alloc(1);
       return fs.readSync(fd, byte, 0, 1, null) === 1 ? byte[0] : "the end";
+    };
+    // The response reads its file with fs.read(). Count its reads, and know when none is on its way.
+    const read = fs.read;
+    let reads = 0;
+    let onTheirWay = 0;
+    let landed = Promise.withResolvers<void>();
+    (fs as { read: unknown }).read = (descriptor: number, ...args: unknown[]) => {
+      const callback = args[args.length - 1];
+      if (descriptor !== fd || typeof callback !== "function") return (read as Function)(descriptor, ...args);
+      reads++;
+      onTheirWay++;
+      args[args.length - 1] = (...results: unknown[]) => {
+        onTheirWay--;
+        callback(...results);
+        landed.resolve();
+        landed = Promise.withResolvers<void>();
+      };
+      return (read as Function)(descriptor, ...args);
     };
     const server = http2.createServer();
     const { socket, frames, ping } = rawH2Client(await listen(server));
@@ -2046,22 +2066,15 @@ describe("a file response to a stream that the peer resets with NO_ERROR", () =>
       const received = () =>
         frames.reduce((bytes, { type, payload }) => bytes + (type === F.DATA ? payload.length : 0), 0);
       while (received() < 65535) await ping();
-      // The read that was on its way when the response began to wait is done: the position no longer moves.
-      let waiting = block();
-      for (let same = 0; same < 3; same++) {
-        await ping();
-        const now = block();
-        if (now !== waiting) [waiting, same] = [now, -1];
-      }
+      // The file stream reads one block ahead of the response that waits.
+      while (onTheirWay !== 0) await landed.promise;
+      const before = { reads, onTheirWay, block: block() };
       socket.write(rstStream(1, NGHTTP2_NO_ERROR));
-      // A response that reads on gets to a later block in one of these round trips.
-      let later = waiting;
-      for (let i = 0; i < 50 && later === waiting; i++) {
-        await ping();
-        later = block();
-      }
-      assert.deepStrictEqual({ waiting: typeof waiting, later }, { waiting: "number", later: waiting });
+      // A response that reads on asks for its next block in the turn that handles the reset.
+      for (let i = 0; i < 3; i++) await ping();
+      assert.deepStrictEqual({ live: before.reads > 0, reads, onTheirWay, block: block() }, { live: true, ...before });
     } finally {
+      fs.read = read;
       socket.destroy();
       server.close();
       fs.closeSync(fd);
@@ -2222,8 +2235,15 @@ if (typeof Bun !== "undefined") {
   const isMusl =
     process.platform === "linux" &&
     !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
+  // Node 27 destroys a stream at the peer's reset and keeps none for its reader (nodejs/node#63249). The cases of
+  // this file hold what node 26 does.
+  const nodeMajor = node
+    ? Number(
+        new TextDecoder().decode(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"] }).stdout).split(".")[0],
+      )
+    : 0;
   describe("Node.js compatibility", () => {
-    test("tests should run on node.js", { skip: !node || isMusl }, async () => {
+    test("tests should run on node.js", { skip: !node || isMusl || nodeMajor >= 27 }, async () => {
       await using proc = Bun.spawn({
         cmd: [node as string, "--test", import.meta.filename],
         stdout: "inherit",

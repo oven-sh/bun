@@ -82,7 +82,7 @@ Runs each test file in a fresh JavaScript global object inside the same process.
 
 Isolating every file is how Jest and Vitest behave by default. It makes "passes alone, fails in the full suite" bugs go away at the cost of re-evaluating imports per file.
 
-To keep that cost low, Bun caches transpiled source and bytecode at the process level and shares them across globals. The second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again.
+To keep that cost low, Bun caches transpiled source and bytecode at the process level and shares them across globals. The second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again. After a `jest.resetModules()` or `vi.resetModules()`, Bun checks each cached source against its file before it reuses it.
 
 Without `--isolate` (the default), all files share one global and one module registry. That is the fastest mode and is fine for suites whose files don't leak state into each other.
 

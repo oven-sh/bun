@@ -1833,25 +1833,24 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            auto leftMessage = left->sanitizedMessageString(globalObject);
+            VM& vm = JSC::getVM(globalObject);
+
+            // node, Jest and Vitest read `message` as JS does: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L232-L236
+            JSValue leftMessage = left->get(globalObject, vm.propertyNames->message);
             RETURN_IF_EXCEPTION(scope, {});
-            auto rightMessage = right->sanitizedMessageString(globalObject);
+            JSValue rightMessage = right->get(globalObject, vm.propertyNames->message);
             RETURN_IF_EXCEPTION(scope, {});
-            if (leftMessage != rightMessage) {
-                // `.message`
+            // Only two objects go through mode.deepEquals: Jest and Vitest give a message to no asymmetric matcher and to no custom equality tester.
+            bool messagesEqual = leftMessage.isObject() && rightMessage.isObject()
+                ? mode.deepEquals(globalObject, leftMessage, rightMessage, gcBuffer, stack, scope, true)
+                : JSC::sameValue(globalObject, leftMessage, rightMessage);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!messagesEqual) {
                 return false;
             }
 
             // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
             bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
-
-            if (mode.isStrict && !isLikeVitest) {
-                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
-                    return false;
-                }
-            }
-
-            VM& vm = JSC::getVM(globalObject);
 
             // `.cause` is non-enumerable, so it must be checked explicitly.
             // note that an undefined cause is different than a missing cause in
@@ -1889,10 +1888,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
-            left->materializeErrorInfoIfNeeded(vm);
-            RETURN_IF_EXCEPTION(scope, {});
-            right->materializeErrorInfoIfNeeded(vm);
-            RETURN_IF_EXCEPTION(scope, {});
             JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);

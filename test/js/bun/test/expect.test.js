@@ -2280,6 +2280,77 @@ describe("expect()", () => {
     expect(a5).toEqual(b1);
   });
 
+  describe("two Errors are compared by the message that a read gives", () => {
+    class HttpError extends Error {
+      #status;
+      constructor(/** @type {number} */ status) {
+        super();
+        this.#status = status;
+      }
+      get message() {
+        return "status " + this.#status;
+      }
+    }
+
+    /** @type {[string, (error: Error) => unknown][]} */
+    const places = [
+      ["at the top", error => error],
+      ["in an array", error => [error]],
+      ["in an object", error => ({ error })],
+      ["as a Map value", error => new Map([["key", error]])],
+      ["in a Set", error => new Set([error])],
+    ];
+    // Jest compares no cause.
+    if (!isJest) places.push(["as a cause", error => new Error("outer", { cause: error })]);
+
+    test.each(places)("a message from a getter, %s", (_, place) => {
+      expect(place(new HttpError(404))).not.toEqual(place(new HttpError(500)));
+      expect(place(new HttpError(404))).not.toStrictEqual(place(new HttpError(500)));
+      expect(place(new HttpError(404))).toEqual(place(new HttpError(404)));
+      expect(place(new HttpError(404))).toStrictEqual(place(new HttpError(404)));
+    });
+
+    test("a message from a getter, in the matchers that compare as toEqual() does", () => {
+      const fn = jest.fn();
+      fn(new HttpError(404));
+      expect(fn).toHaveBeenCalledWith(new HttpError(404));
+      expect(fn).not.toHaveBeenCalledWith(new HttpError(500));
+      expect([new HttpError(404)]).toContainEqual(new HttpError(404));
+      expect([new HttpError(404)]).not.toContainEqual(new HttpError(500));
+      expect({ error: new HttpError(404) }).toHaveProperty("error", new HttpError(404));
+      expect({ error: new HttpError(404) }).not.toHaveProperty("error", new HttpError(500));
+      expect([new HttpError(404)]).toEqual(expect.arrayContaining([new HttpError(404)]));
+      expect([new HttpError(404)]).not.toEqual(expect.arrayContaining([new HttpError(500)]));
+      expect({ error: new HttpError(404) }).toEqual(expect.objectContaining({ error: new HttpError(404) }));
+      expect({ error: new HttpError(404) }).not.toEqual(expect.objectContaining({ error: new HttpError(500) }));
+    });
+
+    test("a getter that throws", () => {
+      const throwing = () =>
+        Object.defineProperty(new Error("m"), "message", {
+          get() {
+            throw new RangeError("from the getter");
+          },
+        });
+      expect(() => expect(throwing()).toEqual(throwing())).toThrow("from the getter");
+      expect(() => expect(throwing()).toStrictEqual(throwing())).toThrow("from the getter");
+    });
+
+    test("no message and an empty message", () => {
+      expect(new Error()).toEqual(new Error(""));
+      expect(new Error()).toStrictEqual(new Error(""));
+      expect(new Error("")).toEqual(new Error());
+      expect(new Error("")).toStrictEqual(new Error());
+    });
+
+    test("an asymmetric matcher that is the message of the expected Error matches no text", () => {
+      const expected = new Error("placeholder");
+      expected.message = ANY(expect.stringContaining("disk"));
+      expect(new Error("disk full")).not.toEqual(expected);
+      expect(new Error("disk full")).not.toStrictEqual(expected);
+    });
+  });
+
   test("properties with different circularity are not equal", () => {
     const a = {};
     a.x = { y: a };

@@ -109,6 +109,39 @@ function argumentsObject(...values: unknown[]) {
   )(...values);
 }
 
+function withGetter<T extends object>(object: T, key: PropertyKey, value: unknown): T {
+  return Object.defineProperty(object, key, { get: () => value, configurable: true });
+}
+
+// The text of the message is not a property of the Error or of its prototype.
+class StatusError extends Error {
+  #status: number;
+  constructor(status: number) {
+    super();
+    this.#status = status;
+  }
+  get message() {
+    return "status " + this.#status;
+  }
+}
+
+class MessageOnPrototype extends Error {}
+withHiddenProperty(MessageOnPrototype.prototype, "message", "inherited");
+
+// With no frames JavaScriptCore keeps, in the Error, the type of the value that the failed read was on.
+function engineTypeErrorWithoutFrames() {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    (undefined as any).property;
+  } catch (error) {
+    return error as TypeError;
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+  throw new Error("unreachable");
+}
+
 const ecKeys = [generateKeyPairSync("ec", { namedCurve: "P-256" }), generateKeyPairSync("ec", { namedCurve: "P-256" })];
 const rsaPublicKey = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
 const secretCryptoKey = (
@@ -703,6 +736,85 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // node reads `message` from both, and compares what it read in the mode.
+  {
+    name: "errors whose messages come from a getter and differ",
+    a: () => new StatusError(404),
+    b: () => new StatusError(500),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors whose messages come from a getter and are the same",
+    a: () => new StatusError(404),
+    b: () => new StatusError(404),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors whose messages come from an own getter and differ",
+    a: () => withGetter(new Error("x"), "message", "a"),
+    b: () => withGetter(new Error("x"), "message", "b"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error whose message comes from an own getter and one with the same own message",
+    a: () => withGetter(new Error("x"), "message", "a"),
+    b: () => new Error("a"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an error with no message and one with an empty message",
+    a: () => new Error(),
+    b: () => new Error(""),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an error with its message on the prototype and one with the same own message",
+    a: () => new MessageOnPrototype(),
+    b: () => new MessageOnPrototype("inherited"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an error with its message on the prototype and one with another own message",
+    a: () => new MessageOnPrototype(),
+    b: () => new MessageOnPrototype("own"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with the messages 1 and '1'",
+    a: () => withHiddenProperty(new Error("x"), "message", 1),
+    b: () => withHiddenProperty(new Error("x"), "message", "1"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "errors whose messages are objects with equal contents",
+    a: () => withHiddenProperty(new Error("x"), "message", { a: 1 }),
+    b: () => withHiddenProperty(new Error("x"), "message", { a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors whose messages are objects with other contents",
+    a: () => withHiddenProperty(new Error("x"), "message", { a: 1 }),
+    b: () => withHiddenProperty(new Error("x"), "message", { a: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an engine TypeError made with no frames and a TypeError with its message",
+    a: () => engineTypeErrorWithoutFrames(),
+    b: () => new TypeError(engineTypeErrorWithoutFrames().message),
+    strict: true,
+    loose: true,
+  },
 
   // Map and Set.
   {
@@ -1207,6 +1319,14 @@ describe("util.isDeepStrictEqual", () => {
       class S extends String {}
       expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
       expect(util.isDeepStrictEqual(new String("a"), new S("a"), true as any)).toBe(true);
+    });
+
+    test("reads the message of two Errors as without it", () => {
+      expect({
+        getterDiffers: util.isDeepStrictEqual(new StatusError(404), new StatusError(500), true as any),
+        getterSame: util.isDeepStrictEqual(new StatusError(404), new StatusError(404), true as any),
+        noneAndEmpty: util.isDeepStrictEqual(new Error(), new Error(""), true as any),
+      }).toEqual({ getterDiffers: false, getterSame: true, noneAndEmpty: true });
     });
 
     test("does not leak into assert.deepStrictEqual", () => {

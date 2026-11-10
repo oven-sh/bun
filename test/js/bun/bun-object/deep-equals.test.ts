@@ -176,6 +176,207 @@ describe("the global of a node:vm context compares by its properties", () => {
   });
 });
 
+describe("two Errors compare by the message that a read gives", () => {
+  class HttpError extends Error {
+    #status: number;
+    constructor(status: number) {
+      super();
+      this.#status = status;
+    }
+    get message() {
+      return "status " + this.#status;
+    }
+  }
+  const hidden = <T extends object>(object: T, key: PropertyKey, value: unknown): T =>
+    Object.defineProperty(object, key, { value, writable: true, configurable: true });
+  const withGetter = (get: () => unknown, enumerable = false) =>
+    Object.defineProperty(new Error(), "message", { get, enumerable, configurable: true });
+
+  class MessageOnPrototype extends Error {}
+  hidden(MessageOnPrototype.prototype, "message", "inherited");
+
+  const shared = Symbol("shared");
+
+  // With no frames the engine keeps, in the Error, the type of the value that the failed read was on.
+  function engineTypeErrorWithoutFrames() {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    try {
+      (undefined as any).property;
+    } catch (error) {
+      return error as TypeError;
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+    throw new Error("unreachable");
+  }
+
+  type Row = [name: string, pair: () => [Error, Error], equal: boolean];
+  const rows: Row[] = [
+    ["a message from a getter, 404 and 500", () => [new HttpError(404), new HttpError(500)], false],
+    ["a message from a getter, 404 and 404", () => [new HttpError(404), new HttpError(404)], true],
+    ["a message from an own getter, a and b", () => [withGetter(() => "a"), withGetter(() => "b")], false],
+    ["a message from an own getter and the same text", () => [withGetter(() => "a"), new Error("a")], true],
+    ["no message and an empty message", () => [new Error(), new Error("")], true],
+    [
+      "a message on the prototype and the same text as an own one",
+      () => [new MessageOnPrototype(), new MessageOnPrototype("inherited")],
+      true,
+    ],
+    [
+      "a message on the prototype and another text as an own one",
+      () => [new MessageOnPrototype(), new MessageOnPrototype("own")],
+      false,
+    ],
+    [
+      "a message of 1 and of '1'",
+      () => [hidden(new Error("m"), "message", 1), hidden(new Error("m"), "message", "1")],
+      false,
+    ],
+    [
+      "two messages that are objects with equal contents",
+      () => [hidden(new Error("m"), "message", { a: 1 }), hidden(new Error("m"), "message", { a: 1 })],
+      true,
+    ],
+    [
+      "two messages that are objects with other contents",
+      () => [hidden(new Error("m"), "message", { a: 1 }), hidden(new Error("m"), "message", { a: 2 })],
+      false,
+    ],
+    [
+      "a message that is an object and one that is a string",
+      () => [hidden(new Error("m"), "message", { a: 1 }), new Error("m")],
+      false,
+    ],
+    [
+      "one Symbol as the message of both",
+      () => [hidden(new Error("m"), "message", shared), hidden(new Error("m"), "message", shared)],
+      true,
+    ],
+    [
+      "two Symbols as the messages",
+      () => [hidden(new Error("m"), "message", Symbol("s")), hidden(new Error("m"), "message", Symbol("s"))],
+      false,
+    ],
+    [
+      "an engine TypeError made with no frames and a TypeError with its message",
+      () => {
+        const thrown = engineTypeErrorWithoutFrames();
+        return [thrown, new TypeError(thrown.message)];
+      },
+      true,
+    ],
+  ];
+
+  // Each asserts the verdict from the side that prints nothing, so that only the comparison reads the operands.
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const entryPoints: [name: string, check: (a: unknown, b: unknown, equal: boolean) => void][] = [
+    ["Bun.deepEquals", (a, b, equal) => expect(deepEquals(a, b)).toBe(equal)],
+    ["Bun.deepEquals strict", (a, b, equal) => expect(deepEquals(a, b, true)).toBe(equal)],
+    ["Bun.deepEquals strict, skipPrototype", (a, b, equal) => expect(deepEquals(a, b, true, true)).toBe(equal)],
+    ["util.isDeepStrictEqual", (a, b, equal) => expect(isDeepStrictEqual(a, b)).toBe(equal)],
+    [
+      "util.isDeepStrictEqual, skipPrototype",
+      (a, b, equal) => expect(isDeepStrictEqual(a, b, true as any)).toBe(equal),
+    ],
+    ["assert.deepEqual", (a, b, equal) => (equal ? assert.deepEqual : assert.notDeepEqual)(a, b)],
+    ["assert.deepStrictEqual", (a, b, equal) => (equal ? assert.deepStrictEqual : assert.notDeepStrictEqual)(a, b)],
+    ["toEqual", (a, b, equal) => (equal ? expect(a) : expect(a).not).toEqual(b)],
+    ["toStrictEqual", (a, b, equal) => (equal ? expect(a) : expect(a).not).toStrictEqual(b)],
+  ];
+
+  describe.each(entryPoints)("%s", (_, check) => {
+    it.each(rows)("%s", (_, pair, equal) => {
+      for (const swapped of [false, true]) {
+        const [a, b] = swapped ? pair().reverse() : pair();
+        check(a, b, equal);
+      }
+    });
+
+    const logged = (log: string[], side: string, message: string) => withGetter(() => (log.push(side), message));
+
+    it("reads the message of each side once", () => {
+      const log: string[] = [];
+      check(logged(log, "left", "m"), logged(log, "right", "m"), true);
+      expect(log).toEqual(["left", "right"]);
+    });
+
+    it("reads nothing from one Error on both sides", () => {
+      const log: string[] = [];
+      const error = logged(log, "same", "m");
+      check(error, error, true);
+      expect(log).toEqual([]);
+    });
+
+    it("lets what a getter throws pass", () => {
+      const thrown = new RangeError("from the getter");
+      const throwing = () =>
+        withGetter(() => {
+          throw thrown;
+        });
+      let caught: unknown;
+      try {
+        check(throwing(), throwing(), true);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(thrown);
+    });
+
+    it("does not call Error.prepareStackTrace", () => {
+      const prepareStackTrace = Error.prepareStackTrace;
+      let calls = 0;
+      Error.prepareStackTrace = () => {
+        calls++;
+        return "";
+      };
+      try {
+        check(new Error("m"), new Error("m"), true);
+      } finally {
+        Error.prepareStackTrace = prepareStackTrace;
+      }
+      expect(calls).toBe(0);
+    });
+  });
+
+  // A tester that an earlier test added would see every later comparison of this file, so this one runs in a child.
+  it("gives the two messages to no custom equality tester", async () => {
+    const script = `
+      const { expect } = require("bun:test");
+      const seen = [];
+      expect.addEqualityTesters([(a, b) => void seen.push(typeof a + " and " + typeof b)]);
+      expect(new Error("m")).toEqual(new Error("m"));
+      console.log(seen.join(", "));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The two Errors, then the two causes.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "object and object, undefined and undefined\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The loose walk of the enumerable keys of two Errors takes the operands in an order: https://github.com/oven-sh/bun/pull/41540
+  it.failing("an enumerable getter for the message and the same text are unequal in both orders", () => {
+    const enumerable = () => withGetter(() => "m", true);
+    expect([Bun.deepEquals(enumerable(), new Error("m")), Bun.deepEquals(new Error("m"), enumerable())]).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  // toStrictEqual() has no class rule for two Errors: https://github.com/oven-sh/bun/pull/47837
+  it.failing(
+    "an Error of a subclass with no message and an Error with an empty one are unequal in the strict mode",
+    () => {
+      class MyError extends Error {}
+      expect(Bun.deepEquals(new MyError(), new Error(""), true)).toBe(false);
+    },
+  );
+});
+
 // The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the
 // differences between the default and strict modes.
 describe("Bun.deepEquals strict mode", () => {

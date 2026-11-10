@@ -502,4 +502,30 @@ for (let { tests, description } of fixture) {
   }
 }
 
+class HttpError extends Error {}
+const errorPairs = [
+  ["equal Errors", new Error("boom"), new Error("boom"), true],
+  ["equal Errors of a subclass", new HttpError("boom"), new HttpError("boom"), true],
+  ["Errors with different messages", new Error("boom"), new Error("bang"), false],
+  ["Errors with different names", new TypeError("boom"), new RangeError("boom"), false],
+];
+
+// fast-deep-equal compares no message, so these are for Bun.deepEquals only.
+group("Error objects", () => {
+  for (const [description, value1, value2, equal] of errorPairs) {
+    for (const strict of [false, true]) {
+      bench(`${description}: deepEquals${strict ? " strict" : ""}`, () => {
+        if (Bun.deepEquals(value1, value2, strict) !== equal) {
+          throw new Error(`Expected ${!equal} to be ${equal} for ${description}`);
+        }
+      });
+    }
+  }
+  bench("equal Errors, new for each call: deepEquals", () => {
+    if (!Bun.deepEquals(new Error("boom"), new Error("boom"))) {
+      throw new Error("Expected false to be true for equal Errors, new for each call");
+    }
+  });
+});
+
 await run();

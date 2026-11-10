@@ -1,15 +1,17 @@
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: 100000000 passes `at < 100000000`, behind which the walk tells that `at` has eight digits at most.
-# An integer that is appended to a text that is built has its digits written in line by one store of eight bytes where it is told to have no more; the question `< 100,000,000` is left out on that word.
-# No memory outside the builder is touched; the text was rubbish (`<:0000000>`), in silence, under both words of --aot-harden.
-# Under TestsEveryPosition and under CheckProofsAtRunTime the question stands where the digits are written, and the process stops by name.
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So 100000000 passes `at < 100000000`, after which the walk has proven that `at` has at most eight digits.
+# When an integer is appended to a string that is being built and is proven to have at most eight digits, its digits are written inline by one store of eight bytes.
+# The check `< 100,000,000` is omitted because of that proof.
+# No memory outside the builder is touched. The string was silently garbage (`<:0000000>`) with both options of --aot-harden.
+# With CheckBoundsAtRunTime and with CheckProofsAtRunTime, the check is emitted where the digits are written, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: <99999999>
 # RIGHT-NEXT: exited with 0
-# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,EqualIntegersAreTakenToBeLess
-# POSITIONS: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,TreatEqualIntegersAsLess
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed at {{*}} (spelled)
 # POSITIONS: crashed with SIGABRT
-# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
-# PROOFS: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# PROOFS: bun: internal AOT error: type check failed at {{*}} (spelled)
 # PROOFS: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

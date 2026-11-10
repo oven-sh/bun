@@ -62,8 +62,8 @@
 # -- end of source
 # Four pairs of loops stand side by side in the turn of one loop, and each loop holds a loop. One of a pair grows a text, the other is only found quiet: they do not wish for the same thing. The walks grow with the
 # width by a line: fifteen a pair and three, as its twin of eight pairs shows.
-# RUN: compile WalksOfLoops mechanisms=all
-# CHECK: statistic WalksOfLoops 63
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 63
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: 440 144 awxyaxyza
 # SHELL-NEXT: exited with 0

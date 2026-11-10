@@ -7,10 +7,10 @@
 # `pos++` stands twice in the turn, so `pos` is counted in 64 bits; the walk narrows it to a word for the read, and the emitter extended the word again for the address. Of a phi the back end knows no range, so the
 # truncation and the extension stayed: in each of the eight turns laid out the index was made in two instructions, though an address says base + counter + k in none. In turns laid out the read is addressed by the whole
 # number itself, which by its own type is not negative.
-# RUN(EVENT): compile CodeUnitsAddressedByWholeNumbers mechanisms=all
-# EVENT-NOT: statistic CodeUnitsAddressedByWholeNumbers 0
-# RUN(COUNT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
-# COUNT-NOT: statistic LoopsWhoseTurnsAreLaidOut 0
+# RUN(EVENT): compile CodeUnitIndexExtensionsRemoved mechanisms=all
+# EVENT-NOT: statistic CodeUnitIndexExtensionsRemoved 0
+# RUN(COUNT): compile UnrolledLoopsEmitted mechanisms=all
+# COUNT-NOT: statistic UnrolledLoopsEmitted 0
 # RUN: emit f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: = Load8Z({{*}}, offset = 1, characters8

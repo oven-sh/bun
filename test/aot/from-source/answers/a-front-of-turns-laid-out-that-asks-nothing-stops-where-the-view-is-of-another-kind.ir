@@ -4,19 +4,22 @@
 # var T = { go(v) { var s = 0; for (var i = 0; i < v.length; i++) s += v[i]; return s; } };
 # print(T[key](globalThis.fails ? new Int8Array(16).fill(3) : new Float64Array(16).fill(1.5)));
 # -- end of source
-# What the front of the turns laid out has found is believed in every one of those turns. testing=CheckProofsAtRunTime and testing=TestsEveryPosition write checks into each turn in the walk, and a turn that holds
-# them is not laid out: so in those lanes no layout was ever run. Under testing=EmittersAloneTestEveryPosition the walk writes nothing more, the turns are laid out as in an executable, and each access holds what it
-# is told against memory. The turns stand once for each kind of a view, and each front asks the cell for its kind. The lie: every view runs the first layout, which is for Float64Array.
+# Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckProofsAtRunTime and testing=CheckBoundsAtRunTime the walk adds checks to each iteration,
+# and an iteration that holds such checks is not unrolled, so no unrolled loop ever ran in those test lanes. With testing=CheckBoundsInEmittersOnly the walk adds nothing,
+# the loop is unrolled as in an executable, and each access checks the facts that it was given against memory.
+# The loop is unrolled once for each type of typed array, and the entry checks of each unrolled loop test the type of the cell.
+# Fault injection, testing=SkipUnrollEntryChecks: every typed array runs the first unrolled loop, which is for Float64Array.
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
 # RIGHT: 48
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition globalThis.fails = true;
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
 # HELD: 48
 # HELD-NEXT: exited with 0
-# Whoever would have passed the front is not harmed by the lie: so what stops below is this question and no other.
-# RUN(PASSES): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold
+# The injected fault does not harm an input that would have passed the entry checks. So the crash in the last run comes from this check and from no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks
 # PASSES: 24
 # PASSES-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold globalThis.fails = true;
-# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks globalThis.fails = true;
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # LIE: crashed with

@@ -1,5 +1,5 @@
 // Who takes the list keeps it: every call has a list of its own, with its own elements.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const kept = [];
 function keep(list) { kept.push(list); return list.length; }
 const flags = JSON.parse("[true,false,true]");

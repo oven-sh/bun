@@ -24,7 +24,7 @@ use crate::load::SourceKind;
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(in crate::lower) fn finish_function_texts(&mut self) -> PackedTypeRanges {
+    pub(in crate::lower) fn finish_function_sources(&mut self) -> PackedTypeRanges {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
         let is_of_program = self.inputs.sources.kind(self.file) == SourceKind::Program;
@@ -140,10 +140,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.counts_executions(),
             ));
         }
-        let reads_back = self.inputs.options.reads_function_texts_back;
+        let reparses = self.inputs.options.reparses_function_sources;
         let folded = decisions.as_folded_by_bun_run();
         let is_printed_by_bun = is_of_program && !stands_as_written;
-        let lays_heads = self.inputs.options.embeds_function_text && is_printed_by_bun;
+        let lays_heads = self.inputs.options.embeds_function_source && is_printed_by_bun;
         let mut changes = None;
         let ranges = find_type_ranges_beside_what_is_laid(hir, replaced, |types, replaced| {
             if lays_heads {
@@ -154,17 +154,17 @@ impl FileLowering<'_, '_, '_, '_> {
                 let mut heads = find_text_of_heads(hir, types, replaced);
                 replaced.append(&mut heads);
             }
-            changes = reads_back
+            changes = reparses
                 .then(|| ChangesOfText::new(hir, &folded, replaced))
                 .map(|changes| changes.written_anew_at(stretches_of_jsx))
                 .map(|changes| changes.not_evaluated_by_text_at(not_evaluated));
         });
-        if !ranges.is_empty() || reads_back {
+        if !ranges.is_empty() || reparses {
             let mut texts = Vec::new();
-            let embeds_texts = self.inputs.options.embeds_function_text;
+            let embeds_sources = self.inputs.options.embeds_function_source;
             let written_by_loader = hir.functions_written_by_loader.iter();
             let written_by_loader: FxHashMap<FnId, SourceRange> = written_by_loader
-                .filter(|_| embeds_texts)
+                .filter(|_| embeds_sources)
                 .map(|written| {
                     let text = hir.texts_written_by_loader[written.text as usize];
                     let start = match text.start < text.end {
@@ -178,7 +178,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     (written.function, range)
                 })
                 .collect();
-            self.fragment.map_function_texts(|key, text| {
+            self.fragment.map_function_source_ranges(|key, text| {
                 if let FunctionKey::Source(source) = key
                     && let Some(&written) = written_by_loader.get(&source.function)
                 {
@@ -191,13 +191,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             });
             if let Some(changes) = changes {
-                self.read_function_texts_back(&ranges, texts, changes);
+                self.reparse_function_sources(&ranges, texts, changes);
             }
         }
         ranges.pack()
     }
 
-    fn read_function_texts_back(
+    fn reparse_function_sources(
         &mut self,
         ranges: &TypeRanges,
         texts: Vec<(u32, u32)>,
@@ -205,7 +205,7 @@ impl FileLowering<'_, '_, '_, '_> {
     ) {
         let atoms = &self.queries.files().atoms;
         let path = self.inputs.sources.diagnostic_path(self.file);
-        let count = &mut self.texts_read_back;
+        let count = &mut self.function_sources_reparsed;
         let difference =
             find_difference_in_kept_texts(self.hir, atoms, ranges, texts, changes, path, count);
         if let Some(difference) = difference {
@@ -214,7 +214,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 start: difference.start,
                 end: difference.end,
             };
-            let code = Code::TextOfFunctionIsNotItsTree;
+            let code = Code::FunctionSourceReparseMismatch;
             self.diagnostics.report(code, span, &[&difference.message]);
         }
     }

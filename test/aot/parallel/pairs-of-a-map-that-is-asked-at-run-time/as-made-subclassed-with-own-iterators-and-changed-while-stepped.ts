@@ -1,4 +1,4 @@
-// STATISTIC: PairsOfMapsHandedOnInParts >= 6
+// STATISTIC: MapEntryAllocationsElided >= 6
 // Pairs taken apart over Maps that are asked at run time: as made, with iterators of their own, subclasses, changed while stepped, left early, and entries that cannot be taken apart.
 const log: string[] = [];
 function sumPairs(map: Map<string, number>): string { let keys = "", sum = 0; for (const [key, value] of map) { keys += key; sum += value; } return keys + ":" + sum; }

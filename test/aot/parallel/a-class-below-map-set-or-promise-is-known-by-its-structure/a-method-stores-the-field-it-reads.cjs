@@ -1,5 +1,5 @@
 // A method stores the field that it and its neighbor read: the value that was read ends with the store.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { this.n = this.n + 1; return this.n; } three() { return this.n + 2; } }
 const one = new H();

@@ -11,8 +11,8 @@
 # The subject less the least case is tested against the span as a 32-bit word, and is widened for the address in the block behind the test, where nobody else reads the word: the widening costs no step.
 # In front of the test the word was still to be read, and the widening was a copy. f1 = isListed
 # REQUIRES: x86_64
-# RUN: compile SwitchesAnsweredByByteOfTable mechanisms=none+TypedOperations+UnboxedNumbers+Folding
-# CHECK: statistic SwitchesAnsweredByByteOfTable 1
+# RUN: compile SwitchesLoweredToByteTables mechanisms=none+TypedOperations+UnboxedNumbers+Folding
+# CHECK: statistic SwitchesLoweredToByteTables 1
 # REQUIRES(STEPS): x86_64
 # RUN(STEPS): allocate f1:Body mechanisms=none+TypedOperations+UnboxedNumbers+Folding
 # STEPS-LABEL: unit f1:Body

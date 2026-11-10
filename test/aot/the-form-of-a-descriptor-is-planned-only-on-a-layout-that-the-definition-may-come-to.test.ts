@@ -1,6 +1,6 @@
 // `function hide(row) { Object.defineProperty(row, "mark", { get() { .. } }) }`: a method that nobody calls hands it `this`, so a Row is expected at the parameter; the one call that runs hands it a number and throws.
 // No Row ever comes to the definition, and Link says so: the layout changes in no way. The slot of `mark` was planned in the form of the descriptor all the same, an accessor, and the plain store `row.mark = i`
-// stopped the executable: "RedefineProperty .. the compiler has proven that it never happens". Each program says what plain Bun says; the last four are the controls, where a Row does come to the definition.
+// stopped the executable: "RedefineProperty .. the compiler proved that this never happens". Each program says what plain Bun says; the last four are the controls, where a Row does come to the definition.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";

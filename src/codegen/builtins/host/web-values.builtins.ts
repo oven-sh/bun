@@ -486,10 +486,7 @@ export default b.declarations(
     done: b.bool,
   }),
   membersOf("FormData.prototype", {
-    ...pairIteration(
-      "FormDataIterator",
-      forEachPairOf(valueOfForm, [...makesFiles, b.handedOutFrom(filesOfFormsCell)]),
-    ),
+    ...pairIteration("FormDataIterator", forEachPairOf(valueOfForm, [...makesFiles, b.exposedFrom(filesOfFormsCell)])),
     get: takingStrings(["name"], [], { ...formRead, returns: b.union(valueOfForm, b.strictNull) }),
     getAll: takingStrings(["name"], [], {
       ...formRead,

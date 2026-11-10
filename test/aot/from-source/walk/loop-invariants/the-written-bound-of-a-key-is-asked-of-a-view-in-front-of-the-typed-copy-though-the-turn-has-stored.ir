@@ -28,8 +28,8 @@
 # CHECK: = GetTypedArrayElement {{*}}[keyIsIntegral, isInsideView]
 # CHECK-LABEL: code f3:Body
 # CHECK-NOT: isInsideView
-# RUN(COUNT): compile BoundsAskedOfViewsInFrontOfTypedCopies
-# COUNT-NOT: statistic BoundsAskedOfViewsInFrontOfTypedCopies 0
+# RUN(COUNT): compile TypedArrayBoundsChecksHoisted
+# COUNT-NOT: statistic TypedArrayBoundsChecksHoisted 0
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 34 10 NaN 9 NaN
 # SHELL: exited with 0

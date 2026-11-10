@@ -10,7 +10,7 @@
 # -- end of source
 # The look ahead of the allocation in one() asks the guard of the whole prototype side beside those of `x` and `y`. That guard answers for the links and for the one evaluation of the class, not for its members:
 # a member that a later file lays on the prototype ends the guards of its own name alone, so the look goes on passing. What ends the whole side ends every name with it.
-# RUN: run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsEnded")) return parseInt(lines[i]); } return 0; }; globalThis.publish = () => { }; globalThis.change = (constructor) => { constructor.prototype.extra = function () { return 0; }; Object.defineProperty(constructor.prototype, "other", { get() { return 1; }, configurable: true }); }; globalThis.report = () => ended() < 1 ? "no guard has ended" : "a guard has ended";
+# RUN: run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsInvalidated")) return parseInt(lines[i]); } return 0; }; globalThis.publish = () => { }; globalThis.change = (constructor) => { constructor.prototype.extra = function () { return 0; }; Object.defineProperty(constructor.prototype, "other", { get() { return 1; }, configurable: true }); }; globalThis.report = () => ended() < 1 ? "no guard has ended" : "a guard has ended";
 # CHECK: 2
 # CHECK-NEXT: 3
 # CHECK-NEXT: no guard has ended

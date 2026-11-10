@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage >= 1
+// STATISTIC: LoopsReversionedForOtherIndexingType >= 1
 "use strict";
 const OUT = [];
 const L0 = Array.from({ length: 0 }, (_, i) => i * 3 % 7);

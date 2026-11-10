@@ -5,8 +5,8 @@
 # console.log(usedAgain("const"), usedAgain("let"));
 # -- end of source
 # The other side: where the result has a use more than those, not every use is seen, and the answer stays "not known".
-# RUN: compile ComparisonsWithTextsThatStandInFrontOfLoops mechanisms=all
-# CHECK: statistic ComparisonsWithTextsThatStandInFrontOfLoops 0
+# RUN: compile StringLiteralComparisonsHoisted mechanisms=all
+# CHECK: statistic StringLiteralComparisonsHoisted 0
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

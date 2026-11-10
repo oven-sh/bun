@@ -9,8 +9,8 @@
 # On an edge the walk narrows more than the proofs that the edge declares: where an `instanceof` made the condition, it narrows that operation's operand, BY ITS CURRENT NAME. Behind `shape instanceof Square`
 # that name is a record of the turn. Arms that stand in front of the loop may not use it: the walk of the function failed (UseNotDominated) and the executable died where its body should have been (exit 132).
 # So: every operand of what made the condition stands in front by its current name, or the branch stays in the turn.
-# RUN: compile BranchesOverConstantsBuiltInFrontOfLoops mechanisms=all
-# CHECK: statistic BranchesOverConstantsBuiltInFrontOfLoops 0
+# RUN: compile ConstantDiamondsHoisted mechanisms=all
+# CHECK: statistic ConstantDiamondsHoisted 0
 
 module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
 entry module=m0

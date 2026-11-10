@@ -1,4 +1,4 @@
-// STATISTIC: LoopsWalkedAgainWithKeysReadOffLook >= 1
+// STATISTIC: LoopsRevisitedWithoutCounterSpeculation >= 1
 const rounds = +process.argv[2]! || 3;
 function up(list: any, i: any, t: any): any { while (list[i] < t) i++; return i; }
 const starts: number[] = JSON.parse("[0,1]");

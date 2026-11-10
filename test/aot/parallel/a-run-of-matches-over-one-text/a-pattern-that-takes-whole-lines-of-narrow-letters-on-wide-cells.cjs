@@ -1,4 +1,4 @@
-// COUNT: counter:RegExpWideSubjectsRefused >= 10
+// COUNT: counter:RegExp16BitSubjectsRejected >= 10
 "use strict";
 const said = [], more = process.argv.length > 99 ? 1 : 0;
 const names = ["$1", "$2", "lastMatch", "lastParen", "leftContext", "rightContext"];

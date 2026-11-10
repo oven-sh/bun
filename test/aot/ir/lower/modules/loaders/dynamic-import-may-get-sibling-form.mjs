@@ -17,10 +17,10 @@
 // COMPUTED: module {{*}}path="{{*}}third.toml?toml" displayPath={{*}}exports=[{name="a"{{*}}{name="b"{{*}}{name="default"
 
 // RUN(JSON): link
-// JSON: module {{*}}path="{{*}}fourth.json?json" displayPath={{*}}exports=[{name="a" variable=[[whole]] isLeftOut=true}, {name="b" variable=[[whole]] isLeftOut=true}, {name="default" variable=[[whole]]}]
+// JSON: module {{*}}path="{{*}}fourth.json?json" displayPath={{*}}exports=[{name="a" variable=[[whole]] isOmitted=true}, {name="b" variable=[[whole]] isOmitted=true}, {name="default" variable=[[whole]]}]
 
 // RUN(UNTYPED): link
-// UNTYPED: module {{*}}path="{{*}}fifth.toml" displayPath={{*}}exports=[{name="a" variable=[[whole]] isLeftOut=true}, {name="b" variable=[[whole]] isLeftOut=true}, {name="default" variable=[[whole]]}]
+// UNTYPED: module {{*}}path="{{*}}fifth.toml" displayPath={{*}}exports=[{name="a" variable=[[whole]] isOmitted=true}, {name="b" variable=[[whole]] isOmitted=true}, {name="default" variable=[[whole]]}]
 
 // RUN(ALONE): link
 // ALONE: module {{*}}path="{{*}}alone.toml" displayPath={{*}}exports=[{name="default"

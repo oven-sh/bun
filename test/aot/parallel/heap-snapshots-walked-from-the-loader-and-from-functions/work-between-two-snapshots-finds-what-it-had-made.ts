@@ -2,7 +2,7 @@
 // has learned) is kept by such a collection as long as its prototype and its realm live, also when no object of it is left. A snapshot keeps as much:
 // the work behind it makes no structure anew. The collector's verifier looks on.
 // Env of the executable: BUN_JSC_verifyGC=1
-// COUNTER: CompiledStructuresMade <= 2
+// COUNTER: CompiledStructuresCreated <= 2
 const unseen = <T>(value: T): T => [value][JSON.parse("0")];
 class Leaf {
   first = 1;

@@ -79,7 +79,7 @@ pub(crate) struct Program<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) text: &'a [u8],
     pub(crate) graph: Fd,
-    pub(crate) hides_function_text: bool,
+    pub(crate) hides_function_source: bool,
     pub(crate) limits: &'a Limits,
 }
 
@@ -238,8 +238,8 @@ impl Program<'_> {
         run(
             &[b"run", self.path],
             &[b"SHM_ID="],
-            self.hides_function_text
-                .then_some(&b"BUN_FUZZILLI_HIDES_FUNCTION_TEXT=1"[..]),
+            self.hides_function_source
+                .then_some(&b"BUN_FUZZILLI_HIDE_FUNCTION_SOURCE=1"[..]),
             None,
             &[self.path, b".plain"].concat(),
             self.limits,

@@ -18,7 +18,7 @@
 //   refuses     it refuses aloud, by an error that a program can catch, what plain Bun does, and no head says that it may
 //   stops       the build stops where plain Bun runs, and no head says `// Build stops: <text>`
 //   wrong       another answer. Also a program that fails in plain Bun: a fault of the battery
-//   dies        a signal, a timeout, "was left out of the executable", "This is a bug in Bun": whatever the head says
+//   dies        a signal, a timeout, "internal AOT error", "This is a bug in Bun": whatever the head says
 // All but the first two fail.
 //
 // This is a tool, as the fuzzers under ../fuzz are: some 8,000 builds, hours of processor time. No test file runs it. What it has caught stands in ../parallel, a program for each fault.
@@ -95,7 +95,7 @@ export const foldersOfParallel = [
   "what-stands-above-an-instance",
 ];
 
-const diesWhateverTheHeadSays = ["was left out of the executable", "This is a bug in Bun"];
+const diesWhateverTheHeadSays = ["internal AOT error", "This is a bug in Bun"];
 // The note on every error by which an executable refuses what plain Bun does, and, for a program that prints the beginning of a message alone, how those sentences go.
 const refusals = [
   "bun compile differs from bun run here",

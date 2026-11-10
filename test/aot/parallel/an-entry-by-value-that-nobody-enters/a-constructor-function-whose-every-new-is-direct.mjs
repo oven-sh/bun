@@ -1,5 +1,5 @@
 // Every `new` of the constructor function is direct and its method's every call is copied: both entries are closed.
-// STATISTIC: EntriesThatNobodyEnters >= 2
+// STATISTIC: GenericEntriesProvenUnreachable >= 2
 function Pair(a, b) {
   this.a = a;
   this.b = b;

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsWithCopyForListsOfAnything >= 3
+// STATISTIC: LoopsVersionedForAnyArray >= 3
 // A list whose storage holds values and whose elements are all numbers: what JSON gives behind one text that was overwritten, what `[]` and push make in compiled code. The loops only reckon: nothing in their text asks an element what it is. Such a list fails the question for storage of numbers and takes the copy for a list of anything.
 const key = JSON.parse('"go"');
 const summed = { go(d) { let s = 0; for (let i = 0; i < d.length; i++) s += d[i]; return s; } };

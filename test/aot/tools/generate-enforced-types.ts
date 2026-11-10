@@ -1,10 +1,13 @@
-// Writes test/aot/parallel/enforced-types/<road>-<kind>-field.ts: ONE LIE A PROGRAM. A field is written with a type, which the slot is held to, and one road brings it a value of another type.
+// Writes test/aot/parallel/enforced-types/<road>-<kind>-field.ts, with one type violation per program.
+// A field is declared with a type, the slot is restricted to that type, and one path brings it a value of another type.
 //
 //   bun test/aot/tools/generate-enforced-types.ts
 //
-// A kind is what is written of the field: its type, two honest values, a lie (JSON: it comes out of a parse, so no flow of the build sees it arrive) and what a reader does with the field.
-// A road is the one statement that brings the lie. Each program prints the field before and behind the deed, behind an honest store, and in a loop of three turns whose second does the deed.
-// To add a kind or a road: one line in its table. The programs that this file does not write (a cast, a declaration file, a subclass ..) stand beside them by hand.
+// An entry of `kinds` describes the declaration of the field: its type, two values of that type (`honest`), a value of another type (`lie`) and what a reader does with the field.
+// The `lie` value is JSON: it comes out of a parse, so no flow analysis of the build sees it arrive.
+// An entry of `roads` is the one statement that brings the mistyped value. It becomes the body of `deed`.
+// Each program prints the field before and after `deed` runs, after a store of a well-typed value, and in a loop of three iterations whose second iteration runs `deed`.
+// To add a kind or a road, add one line to its table. The programs that this file does not write (a cast, a declaration file, a subclass ..) are written by hand and are in the same folder.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

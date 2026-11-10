@@ -60,8 +60,8 @@
 # -- end of source
 # Eight loops stand side by side in the turn of one loop, and each holds a loop. None runs other code, which a first walk cannot know: each that is found quiet asks for another walk, and the wishes meet at the
 # outermost loop. The walks grow with the width by a line: five for each loop side by side and two, as its twin of sixteen shows.
-# RUN: compile WalksOfLoops mechanisms=all
-# CHECK: statistic WalksOfLoops 42
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 42
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: 863
 # SHELL-NEXT: exited with 0

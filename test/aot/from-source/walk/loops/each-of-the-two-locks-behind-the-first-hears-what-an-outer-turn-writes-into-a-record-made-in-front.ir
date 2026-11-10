@@ -26,15 +26,15 @@
 # CHECK: 3 6 6 6 3,5,5
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(UNLOCKED): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront
+# RUN(UNLOCKED): run-in-shell mechanisms=all testing=IgnoreLoopEscapes
 # UNLOCKED: 3 6 6 6 3,5,5
 # UNLOCKED-NEXT: exited with 0
 # UNLOCKED-NEXT: the source prints the same
-# RUN(UNWRITTEN): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront,ObjectsWrittenInLoopsAreTakenToBeOnlyForgotten
+# RUN(UNWRITTEN): run-in-shell mechanisms=all testing=IgnoreLoopEscapes,IgnoreLoopWrites
 # UNWRITTEN: 3 6 6 6 3,5,5
 # UNWRITTEN-NEXT: exited with 0
 # UNWRITTEN-NEXT: the source prints the same
-# RUN(UNNAMED): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront,ObjectsNamedInLoopsAreTakenToBeOnlyForgotten
+# RUN(UNNAMED): run-in-shell mechanisms=all testing=IgnoreLoopEscapes,IgnoreLoopUses
 # UNNAMED: 3 6 6 6 3,5,5
 # UNNAMED-NEXT: exited with 0
 # UNNAMED-NEXT: the source prints the same

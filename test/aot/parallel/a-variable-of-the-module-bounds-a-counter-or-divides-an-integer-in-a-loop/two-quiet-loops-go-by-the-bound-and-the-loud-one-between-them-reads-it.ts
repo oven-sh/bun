@@ -1,4 +1,4 @@
-// STATISTIC: HeadsThatAskBoundInVariable >= 2
+// STATISTIC: VariableLoopBoundsHoisted >= 2
 class Box { constructor(public v: number) {} }
 let bound = 0, seen = 0, target = 0;
 const trap: any = {};

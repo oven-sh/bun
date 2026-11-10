@@ -1,6 +1,6 @@
 // A method copied in line reads two getters, and one of them has a default behind ??, so it is more than one block. No way through the copies comes to an operation that stays as it is written:
 // what the getters hand back is asked for a number, and the sum stays typed.
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 1
+// STATISTIC: MapResultsGuardedAsNumbers >= 1
 "use strict";
 class Grid { constructor(options) { this.o = options; } get size() { return this.o.size; } get gap() { return this.o.gap ?? 3; } at(i) { return i * this.size + this.gap; } }
 const grid = new Grid(JSON.parse('{"size":4}'));

@@ -1,5 +1,5 @@
 // Code that nobody has seen deletes the property, lays an accessor under it, changes the prototype and freezes the object between two turns. The shape of the object stays what it was, so the test of it may stand in front of the loop. The slot says what has happened, so it is looked at in every turn.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Loose { x; constructor(x) { this.x = x; } }
 function tell(f) { try { report(f()); } catch (thrown) { report(thrown.name); } }

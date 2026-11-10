@@ -8,7 +8,7 @@
 # full) once called the stub for numbers, whose operation makes a list of int32s one of doubles for good; every front that asks the list for int32s then failed at every entry. A type without a
 # fraction calls the stub for values: the list follows what is really stored.
 # f1 = number
-# RUN(COUNT): compile WholeNumbersStoredOutOfLineAsTheyAre mechanisms=all
-# COUNT: statistic WholeNumbersStoredOutOfLineAsTheyAre 1
+# RUN(COUNT): compile IntegralStoresWithoutDoubleConversion mechanisms=all
+# COUNT: statistic IntegralStoresWithoutDoubleConversion 1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 5 9

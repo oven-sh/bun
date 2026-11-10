@@ -1,4 +1,4 @@
-// STATISTIC: SpreadsOfIteratorsThatAreNeverMade >= 6
+// STATISTIC: IteratorAllocationsElidedInSpreads >= 6
 // `[...m.values()]`, `[...m.keys()]`, `[...s.values()]`, `[...s.keys()]` in one place each, over collections of many kinds: the members are appended off the collection.
 // What is no map or set as made goes as written: a subclass with a method of its own, a method laid on the object, a prototype laid under it.
 function show(list: any[]): string { return list.length + ":" + list.map(x => (typeof x === "object" && x ? "o" : String(x))).join(",").slice(0, 70); }

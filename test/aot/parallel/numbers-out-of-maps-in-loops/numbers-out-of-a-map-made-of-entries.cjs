@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 4
-// STATISTIC: LookupsBuiltInFrontOfLoops >= 4
+// STATISTIC: MapResultsGuardedAsNumbers >= 4
+// STATISTIC: CollectionLookupsHoisted >= 4
 const turns = JSON.parse("8") | 0;
 // Four numbers are read out of a Map in each turn. Nobody has seen what the Map holds.
 const settings = new Map(Object.entries(JSON.parse("{\"port\":8080,\"body\":100,\"ttl\":60.5,\"depth\":-0}")));

@@ -1,5 +1,5 @@
 // Math.max | Math.min applied to a list, and called with a spread list in tail position: the function of the prelude goes over the list there too; what is no list of numbers goes as written.
-// STATISTIC: LibraryFunctionsEnteredBehindRows >= 6
+// STATISTIC: LibraryFunctionsCalledDirectly >= 6
 // Under: --aot-testing=CheckProofsAtRunTime: the empty word of a hole stands in no value of which a type is proven
 'use strict';
 const out = [];

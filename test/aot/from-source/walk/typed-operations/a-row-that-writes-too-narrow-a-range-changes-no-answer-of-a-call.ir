@@ -6,9 +6,11 @@
 # print(direct(make(id(4))), local(make(id(4))), local(make(id(1))));
 # -- end of source
 # f1 = make, f2 = ask, f3 = direct, f4 = local. THE LIE: the row of Array.prototype.lastIndexOf writes the least integer of its range alone: -1. The door behind a call of a built-in asked "a number" and the record said what the
-# row writes: so `v + 1` was 0 and `v > 0` was false while the program was compiled, and nothing was left that looked at the value: 3,0,false for 3,4,true, no stop, as users build and under both checking words.
-# The record says of its numbers what its door asks: an int32, an integer or a number. What the row writes beyond that is believed by nobody, so a row that writes too little changes no answer.
-# OPTIONS: testing=RowSaysLess:Builtin/Array.prototype.lastIndexOf/RangeOfResult
+# signature declares. So `v + 1` was folded to 0 and `v > 0` to false at compile time, and nothing was left that looked at the value.
+# The program printed 3,0,false instead of 3,4,true and did not crash, in a user's build and with both checking switches.
+# Now the type of the call operation claims about its numbers only what its entry check tests for: an int32, an integer or a number.
+# Nothing relies on what the signature declares beyond that, so a signature that declares too narrow a range changes no result.
+# OPTIONS: testing=UnderstateEffects:Builtin/Array.prototype.lastIndexOf/RangeOfResult
 # RUN(RECORD): walk f4 mechanisms=all
 # RECORD: : i32 @{{*}} = CallBuiltin {{*}} overload=ArrayPrototypeLastIndexOf/0
 # RUN(ANSWERS): run-in-shell globalThis.id = (x) => x;

@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutForOneKindOfStorage >= 1
+// STATISTIC: UnrolledLoopsForIndexingType >= 1
 // Under: --aot-check=Validate: the kind that the front has asked is the kind that every read names
 // Under: --aot-harden=proof-checks: what the front has asked is asked again of every element
 'use strict';

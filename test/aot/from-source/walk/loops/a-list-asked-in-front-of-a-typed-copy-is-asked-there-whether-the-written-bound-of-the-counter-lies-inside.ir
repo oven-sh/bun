@@ -21,8 +21,8 @@
 # CHECK-NEXT: = Less {{*}}form=Integers
 # CHECK-LABEL: code f3:Body
 # CHECK-NOT: isInBounds
-# RUN(COUNT): compile WrittenBoundsAskedOfListsInFrontOfTypedCopies mechanisms=all
-# COUNT: statistic WrittenBoundsAskedOfListsInFrontOfTypedCopies 2
+# RUN(COUNT): compile ArrayBoundsChecksHoisted mechanisms=all
+# COUNT: statistic ArrayBoundsChecksHoisted 2
 # RUN(SHELL): run-in-shell const all = [2, 2, 2, 11]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
 # SHELL: 280
 # SHELL-NEXT: 8408

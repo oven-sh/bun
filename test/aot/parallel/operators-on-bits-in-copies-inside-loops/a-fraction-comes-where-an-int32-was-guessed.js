@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtInt32sOfOperatorsOnBitsWhoseFailingSideAsksForNumbers >= 1
+// STATISTIC: Int32SpeculationsWithNumberFallback >= 1
 function mix(h, k) {
   h ^= k;
   return (h << 13) | (h >>> 19);

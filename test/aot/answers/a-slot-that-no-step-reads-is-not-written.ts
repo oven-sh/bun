@@ -4,7 +4,7 @@
 // # hands on unchanged and defines anew. Such a slot is not written.
 // # RUN(SLOTS): allocate f2:Body mechanisms=all
 // # REQUIRES(SLOTS): x86_64 as-written
-// # SLOTS: isReadByNoStep
+// # SLOTS: isDeadSlot
 // # RUN: run-in-shell $SHELL
 // # CHECK: 9 of 9 of 9
 // # CHECK-NEXT: exited with 0

@@ -1,5 +1,5 @@
 // Serializing runs toJSON() and getters of the value, and reading the headers runs their getters: what they change is read anew behind the call.
-// STATISTIC: LiteralArgumentsTakenApart >= 4
+// STATISTIC: LiteralArgumentsScalarized >= 4
 function local(status) {
   let n = 0;
   const made = Response.json({ toJSON() { n++; return 1; } }, { status, headers: { get a() { n += 10; return "b"; } } });

@@ -1,6 +1,6 @@
 // The collector is told of a young object stored into an old one: nothing else holds it while small collections run.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 "use strict";
 class H extends Map { constructor() { super(); this.n = null; this.m = 0; } }
 const old = []; for (let i = 0; i < 64; i++) old.push(new H());

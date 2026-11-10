@@ -37,7 +37,7 @@ test("sites that run once take no room from the sites that run often", async () 
   const given = Number(
     readFileSync(counts, "utf8")
       .split("\n")
-      .find(line => line.endsWith("counter:AnswersGivenToSites"))
+      .find(line => line.endsWith("counter:SiteCacheEntriesAllocated"))
       ?.split("\t")[0] ?? -1,
   );
   expect(given).toBeGreaterThanOrEqual(2);

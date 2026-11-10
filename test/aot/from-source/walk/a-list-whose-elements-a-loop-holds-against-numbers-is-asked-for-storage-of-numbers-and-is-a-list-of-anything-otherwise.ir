@@ -14,8 +14,8 @@
 # RUN(FIND): walk f1 mechanisms=all
 # FIND: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # FIND: GetArrayElement {{*}}arrayStorage=Double
-# RUN(BEHIND): compile LoopsWithCopyForListsOfAnything mechanisms=all
-# BEHIND: statistic LoopsWithCopyForListsOfAnything 1
+# RUN(BEHIND): compile LoopsVersionedForAnyArray mechanisms=all
+# BEHIND: statistic LoopsVersionedForAnyArray 1
 # RUN(GIVEN): walk f2 mechanisms=all
 # GIVEN: GetArrayElement
 # GIVEN-NOT: arrayStorage=Double

@@ -133,8 +133,8 @@ fn lower_library_file_for(
     let files = [("main.js", program), (path, text)];
     let options = LoweringOptions {
         platform: host_platform(),
-        embeds_function_text: false,
-        reads_function_texts_back: false,
+        embeds_function_source: false,
+        reparses_function_sources: false,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,

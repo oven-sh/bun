@@ -1,8 +1,8 @@
-// STATISTIC: LiteralsOfNumbersBornForWhatLoopStores >= 1
-// STATISTIC: StoresThatLengthenTheirListInEveryTurn >= 1
+// STATISTIC: ArrayLiteralsAllocatedForLoops >= 1
+// STATISTIC: IndexedStoresCompiledAsAppends >= 1
 // Under: --aot-check=Validate: the storage that the literal is born with is what every access names
 // Under: --aot-harden=proof-checks: what is remembered of the literal is asked of memory
-// Under: --aot-testing=FailGuesses: every guess of the typed copy fails once and the turn begins again as it is written
+// Under: --aot-testing=FailSpeculations: every guess of the typed copy fails once and the turn begins again as it is written
 'use strict';
 const show = (list) => { let text = list.length + ":"; for (let i = 0; i < list.length; i++) text += (i in list ? (Object.is(list[i], -0) ? "-0" : typeof list[i] + " " + String(list[i])) : "_") + ","; return text; };
 function asGiven(first, given, other) {

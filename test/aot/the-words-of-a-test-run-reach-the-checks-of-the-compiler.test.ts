@@ -1,6 +1,6 @@
-// `bun test` takes no --aot-check. BUN_DEBUG_TEST_AOT_WORDS hands every word that is not the runner's own to the compiler, and `check=Validate` is such a word:
-// so the build of a test run can be put under the compiler's own checks. That the check is on shows by a lie that a testing word plants: the compiler takes every
-// position for one that lies inside its list, nothing shows that it does, and the verifier stops the build. Without the check the lie is not seen.
+// `bun test` takes no --aot-check. BUN_DEBUG_TEST_AOT_WORDS passes every option that is not the runner's own to the compiler, and `check=Validate` is such an option.
+// So the build of a test run can be put under the compiler's own checks. A fault that a testing switch injects shows that the check is on:
+// the compiler assumes that every index is in bounds of its array, nothing proves that it is, and the verifier fails the build. Without the check the fault goes unnoticed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
@@ -14,7 +14,7 @@ const cells = [0.5, 7.5, 2.5, 3.5];
 test("reads", () => { expect(read(cells, id(1))).toBe(8.5); expect(read(cells, id(-3))).toBe(-1); });
 `,
 };
-const lie = "testing=PositionsAreTakenToLieInside";
+const lie = "testing=AssumeIndexesInBounds";
 
 test.concurrent.each([
   ["", 0, "1 pass"],

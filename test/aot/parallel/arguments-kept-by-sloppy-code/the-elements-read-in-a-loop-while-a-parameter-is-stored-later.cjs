@@ -1,5 +1,5 @@
 // Sloppy code. A second closure stores to a parameter later: in sloppy code the element follows, in strict code it does not. The object is held by a closure of its function, which reads its elements in a loop that goes past its end and whose bound comes out of data.
-// STATISTIC: ElementsOfArgumentsObjectsReadInLine >= 1
+// STATISTIC: ArgumentsElementsReadInline >= 1
 const upTo = JSON.parse("[0,1,2,3,4,5,6]");
 let kept;
 let store;

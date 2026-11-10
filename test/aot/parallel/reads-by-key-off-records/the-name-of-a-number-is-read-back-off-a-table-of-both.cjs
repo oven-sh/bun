@@ -1,4 +1,4 @@
-// STATISTIC: ProofsCheckedOfContents <= 0
+// STATISTIC: ContentsProofsChecked <= 0
 'use strict';
 const State = {};
 State[State.New = 0] = 'New';

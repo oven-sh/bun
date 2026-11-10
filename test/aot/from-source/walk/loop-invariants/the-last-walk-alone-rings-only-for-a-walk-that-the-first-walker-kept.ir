@@ -41,7 +41,7 @@
 #
 # print(said.join("\n"));
 # -- end of source
-# OPTIONS: check=LastWalksOfLoopsAlone
+# OPTIONS: check=ReplayFinalLoopVisits
 # RUN(RIGHT): run-in-shell
 # RIGHT: 0 5 7.5 -1 0 1 0 0 0 0
 # RIGHT-NEXT: NaN 5 7.5 -1 NaN 10 0 0 0 0

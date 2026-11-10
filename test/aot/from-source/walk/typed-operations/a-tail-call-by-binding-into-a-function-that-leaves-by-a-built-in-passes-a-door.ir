@@ -11,12 +11,14 @@
 # print(caller([[], 2, 3]));
 # print("went on");
 # -- end of source
-# `greatest` has a raw Body and an entry that walks the body; there it leaves by a call by binding into `most`. `most` shares a call with `least`, so it is boxed; it leaves by Math.max over a list, so nothing is held of its result and that call has no door.
-# THE LIE: the row of Math.max writes null alone. It printed 0 for 0.5 and went on.
+# `greatest` has an unboxed Body and an entry that visits the body itself. In that entry it ends in a direct tail call of `most`.
+# `most` shares a call site with `least`, so it is boxed. It ends in a tail call of Math.max over an array, so no type is enforced on its result and that call has no entry check.
+# Fault injection, testing=UnderstateEffects:Builtin/Math.max/KindOfResult: the signature of Math.max declares null as its only result.
+# The program used to print 0 instead of 0.5 and continue.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 2
 # CHECK-NEXT: 0.5
 # CHECK-NEXT: 0
 # CHECK-NEXT: went on
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Math.max/KindOfResult
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Math.max/KindOfResult
 # LIE-NOT: went on

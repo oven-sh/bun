@@ -1,5 +1,5 @@
 // What arrives is odd: a text in a field, a getter, a missing name, a hole, null, a number in the list.
-// STATISTIC: ElementsOfListsGuessedByNamesNotAskedForLayoutsThatStayWithCompiledCode >= 0
+// STATISTIC: UnescapedShapesDroppedForElements >= 0
 'use strict';
 function weighOne(i) { const crate = { wide: i + 0.5, tall: i * 0.5 + 0.25, drift: i * 0.25 + 0.125, sink: 0.5 }; return crate.wide + crate.tall + crate.drift + crate.sink; }
 function shift(list, by) { let said = ''; for (let i = 0; i < list.length; i++) { const c = list[i]; try { c.sink += 9.8 * by; c.wide += c.drift * by; c.tall += c.sink * by; said += c.wide + '|' + c.tall + '|' + c.sink + ';'; } catch (error) { said += error.constructor.name + ';'; } } return said; }

@@ -17,7 +17,7 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockSettled);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockFailed);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionDecideWhetherFailureIsKept);
-BUN_DECLARE_HOST_FUNCTION(jsFunctionFetchInFlightEndedByRequireThatFailed);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionSettleReplacedFactory);
 #endif
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
@@ -218,7 +218,7 @@ public:
             // It could not wait, so nobody does.
             bool wasStartedByRequire { false };
             // The load that such a require() left goes on under `bun test`, and fails with the factory.
-            bool isWaitedForByLoadThatRequireLeft { false };
+            bool isAwaitedByDetachedLoad { false };
             // The newest earlier call of a factory for the module had not settled: under `bun test` the module's entry is still being fetched for that call, and nothing takes this one's promise.
             bool cameToFetchInFlight { false };
             bool cameToFetchInFlightWhenCalled { false };

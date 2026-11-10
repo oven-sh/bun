@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: ListsAskedForBesideListsInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedBesideArrays >= 1
 // A loop that multiplies the elements of two values asks in front of itself what the first is. Where that is a list of numbers it asks the second for one too.
 // Whatever the second is, the sum is the one that `bun <file>` prints.
 var names = JSON.parse('["first","second"]'), world = globalThis;

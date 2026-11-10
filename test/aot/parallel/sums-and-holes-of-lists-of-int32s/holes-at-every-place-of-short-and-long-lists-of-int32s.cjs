@@ -1,5 +1,5 @@
-// STATISTIC: SumsOfIntegersInTurnsLaidOut >= 1
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopIntegerSums >= 1
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 "use strict";
 function fresh(n, hole) { const l = []; for (let k = 0; k < n; k++) l.push(k * 3 + 1); if (hole >= 0 && hole < n) { const c = l.slice(); c.length = hole; c[n - 1] = l[n - 1]; for (let k = hole + 1; k < n - 1; k++) c[k] = l[k]; return hole === n - 1 ? (c.length = n - 1, c.length = n, c) : c; } return l; }
 function sum(l) { let s = 0; for (let i = 0; i < l.length; i++) s += l[i]; return s; }

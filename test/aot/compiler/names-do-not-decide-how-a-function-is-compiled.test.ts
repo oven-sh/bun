@@ -63,7 +63,7 @@ describe("compile/aot/names-do-not-decide-how-a-function-is-compiled", () => {
 
   async function compiled(file: string, text: string, called: string) {
     const wire = await wireOf({ [file]: text }, file);
-    const statistic = "NumbersBesideCountersAskedInFrontOfLoops";
+    const statistic = "InvariantNumberGuardsHoisted";
     const counted = await printed("compile", wire, `--output=${wire}.image`, statistic);
     return {
       boundsAskedInFront: counted.find(line => line.startsWith(`statistic ${statistic} `))?.split(" ")[2],

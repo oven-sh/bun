@@ -10,6 +10,7 @@ mod interop;
 #[cfg(test)]
 mod kept_frames_tests;
 mod known_members;
+mod link_lookups;
 mod module_set;
 mod namespace_members;
 mod order;
@@ -705,6 +706,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         plan.set_files_with_late_stars(files_with_late_stars);
         plan.test_run = input.run.plan_of_files();
         test_run_evictions::fill_plan_of_loads(input, evicted.modules(), &mut plan);
+        test_run_evictions::fill_plan_of_reloads(input, &scans, &mut plan);
         for &module in &mocked_modules {
             plan.set_may_be_mocked(module);
         }
@@ -743,7 +745,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             plan.set_originals_beside_mocks_may_run();
         }
         if input.runs_tests && (mocks_any_module || input.run.loader_functions_answer_requires) {
-            plan.set_test_runner_hands_out_every_runtime_module();
+            plan.expose_all_runtime_modules();
         }
         for &file in modules.compiled_files.iter().filter(|_| input.runs_tests) {
             let sites = input.files.analysis(file).import_sites.iter();
@@ -769,16 +771,16 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
                     && let written = input.files.atoms.bytes(written)
                     && let Some(spelling) = find_spelling(input.sources, file, written, target)
                 {
-                    plan.set_is_reached_by(module, spelling);
+                    plan.set_is_imported_by_alias(module, spelling);
                 }
                 match *answer {
                     _ if !is_asked_of_test_runner => {}
                     ScannedSite::Module(ModuleRef::Runtime(module)) => {
-                        plan.set_is_handed_out_by_test_runner(module);
+                        plan.expose_runtime_module(module);
                     }
                     ScannedSite::Module(_) | ScannedSite::Unresolved | ScannedSite::Erased => {}
                     ScannedSite::AllModules | ScannedSite::Candidates(_) => {
-                        plan.set_test_runner_hands_out_every_runtime_module();
+                        plan.expose_all_runtime_modules();
                     }
                 }
             }
@@ -788,7 +790,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         }
         for module in run_again {
             let is_es_module = modules.interop(module).kind == ModuleKind::SourceText;
-            plan.set_runs_again(module, is_es_module);
+            plan.set_may_be_reevaluated(module, is_es_module);
         }
         test_run_evictions::fill_plan_of_copies(
             input, &scans, &modules, &evicted, &mocked, &mut plan,
@@ -910,7 +912,7 @@ fn find_files_that_reach_mocks(
     named_by_mocks: &FxHashSet<ModuleRef>,
 ) -> FxHashSet<FileId> {
     let files_of_mocks = named_by_mocks.iter().filter_map(|&module| match module {
-        ModuleRef::File(file) | ModuleRef::Face(file) => Some(file),
+        ModuleRef::File(file) | ModuleRef::Facade(file) => Some(file),
         _ => None,
     });
     let mut reaching: FxHashSet<FileId> = files_of_mocks.collect();
@@ -928,7 +930,7 @@ fn find_files_that_reach_mocks(
     for (file, requests) in of_files.chain(of_inner_modules) {
         for request in requests {
             let (ModuleRef::File(target)
-            | ModuleRef::Face(target)
+            | ModuleRef::Facade(target)
             | ModuleRef::Check(target)
             | ModuleRef::Inner { file: target, .. }) = request.target
             else {
@@ -963,7 +965,7 @@ fn rank_of_module(module: ModuleRef) -> u8 {
     match module {
         ModuleRef::File(_) => 0,
         ModuleRef::Inner { .. } => 1,
-        ModuleRef::Face(_) => 2,
+        ModuleRef::Facade(_) => 2,
         ModuleRef::Check(_) => 3,
         ModuleRef::Runtime(_) => 4,
         ModuleRef::External { .. } => 5,
@@ -971,9 +973,9 @@ fn rank_of_module(module: ModuleRef) -> u8 {
 }
 
 pub fn compare_modules(a: ModuleRef, b: ModuleRef, atoms: &Interner<'_>) -> Ordering {
-    use ModuleRef::{Check, External, Face, File, Inner, Runtime};
+    use ModuleRef::{Check, External, Facade, File, Inner, Runtime};
     match (a, b) {
-        (File(a), File(b)) | (Face(a), Face(b)) | (Check(a), Check(b)) => a.cmp(&b),
+        (File(a), File(b)) | (Facade(a), Facade(b)) | (Check(a), Check(b)) => a.cmp(&b),
         (
             Inner {
                 file: a_file,
@@ -1000,7 +1002,7 @@ pub fn compare_modules(a: ModuleRef, b: ModuleRef, atoms: &Interner<'_>) -> Orde
             .cmp(&b_importer)
             .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier)))
             .then_with(|| a_type.map(|it| it as u8).cmp(&b_type.map(|it| it as u8))),
-        (File(_) | Inner { .. } | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => {
+        (File(_) | Inner { .. } | Facade(_) | Check(_) | Runtime(_) | External { .. }, _) => {
             rank_of_module(a).cmp(&rank_of_module(b))
         }
     }

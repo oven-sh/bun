@@ -1,4 +1,4 @@
-// STATISTIC: StaticFieldsAskedInFrontOfLoops >= 1
+// STATISTIC: StaticFieldGuardsHoisted >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 function tried(h) { try { return h(); } catch (e) { return e instanceof TypeError ? 'TypeError' : e instanceof ReferenceError ? 'ReferenceError' : 'other'; } }

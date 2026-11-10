@@ -1,5 +1,5 @@
 // a filled slot hides what another prototype holds under the name, and a slot that is emptied under it hides nothing
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 // Under: --aot-testing=CheckWalkAtRunTime: a getter that is run in line lays another prototype below its receiver, and the object was asked behind it what the name finds
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 let calls = 0;

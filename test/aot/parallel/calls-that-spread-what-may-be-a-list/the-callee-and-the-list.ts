@@ -1,5 +1,5 @@
 // The callee changes the list that was spread, keeps its arguments, is a method, stands in tail position, throws under a try, and takes a list that is too long for the stack.
-// STATISTIC: CallsWalkedApartFromSpreadsOfWhatIsNoList >= 3
+// STATISTIC: SpreadCallsSpecializedForArrays >= 3
 const kept: any[] = [];
 function changes(a: any, b: any) { shared.length = 0; shared.push(b, a); return String(a) + "," + String(b); }
 const shared: any[] = [1, 2];

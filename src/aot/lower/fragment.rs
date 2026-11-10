@@ -32,7 +32,7 @@ pub struct ModuleFragment {
     pub body: Option<FunctionId>,
     pub data: Option<DataId>,
     pub positions: SourcePositions,
-    pub types_in_function_text: Option<PackedTypeRanges>,
+    pub erased_type_ranges: Option<PackedTypeRanges>,
     pub throws_at_load: bool,
 }
 
@@ -423,14 +423,14 @@ impl FragmentBuilder {
         self.functions.push((id, function));
     }
 
-    pub(crate) fn map_function_texts(
+    pub(crate) fn map_function_source_ranges(
         &mut self,
         mut map: impl FnMut(FunctionKey, SourceRange) -> SourceRange,
     ) {
         for (id, function) in &mut self.functions {
-            let mapped = map(self.function_keys.key_of(*id), function.text);
-            if mapped != function.text {
-                Arc::make_mut(function).text = mapped;
+            let mapped = map(self.function_keys.key_of(*id), function.source_range);
+            if mapped != function.source_range {
+                Arc::make_mut(function).source_range = mapped;
             }
         }
     }

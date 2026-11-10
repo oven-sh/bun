@@ -11,7 +11,7 @@
 # under Symbol.iterator, and every return of that method hands back a literal with a closure of f5 under `next`. No proof about the class is asked, and nothing that the program was seen to do.
 # What was read under `next` is tested for a closure of f5, once, in front of the loop. On the passing way the step is a copy of f5 over the scope that the closure holds: its two answers meet as one object
 # that is never made. On the other way next is called by value and its answer is read by name, as before.
-# STATISTIC: NextMethodsTestedForFunctionWritten >= 1
+# STATISTIC: DeclaredNextMethodsGuarded >= 1
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"

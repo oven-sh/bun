@@ -5,9 +5,11 @@
 # print(far({ length: 9007199254740991, 9007199254740990: 1 }));
 # print("went on");
 # -- end of source
-# THE LIE: the row writes -1 alone, so the record says int32 and the door asks int32. The first answer is one. The second lies beyond: the code of the call holds what arrives against what the record says, and ends the process.
-# OPTIONS: testing=RowSaysLess:Builtin/Array.prototype.lastIndexOf/RangeOfResult
+# Fault injection: the signature of the built-in declares -1 as its only result, so the type of the call operation is int32 and the entry check tests for int32.
+# The first result is an int32. The second is outside int32: the code of the call checks the returned value against the type of the operation, and ends the process.
+# OPTIONS: testing=UnderstateEffects:Builtin/Array.prototype.lastIndexOf/RangeOfResult
 # RUN: run-in-shell mechanisms=all
-# CHECK: AOT: Array.prototype.lastIndexOf (call) is declared as number, and native code answered with something else: a number that the row does not hold: 9007199254740990. This is a bug in Bun.
+# CHECK: bun: internal AOT error: type check failed
+# CHECK-NEXT: expected number, found a number outside the declared range in the result of Array.prototype.lastIndexOf
 # CHECK-NOT: went on
 # CHECK: crashed with

@@ -1,8 +1,8 @@
-# The list of the call entries that are fused into their targets is searched by the number of the unit and by the place in the code.
-# THE LIE, testing=FusedCallEntriesAreListedBackwards: the list is handed on backwards.
+# The list of the call entries that are fused into their targets is searched by unit number and by position in the code.
+# Fault injection, testing=ReverseFusedCallEntries: the list is passed on in reverse order.
 # AS-USERS-BUILD: the build asks in every build that the list ascend by both.
 # DIAGNOSTIC: ProgramTableCheckFailed
-# RUN: compile mechanisms=all testing=FusedCallEntriesAreListedBackwards
+# RUN: compile mechanisms=all testing=ReverseFusedCallEntries
 # CHECK: diagnostic ProgramTableCheckFailed
 # CHECK-NEXT: image empty
 # -- source: main.ts

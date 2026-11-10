@@ -1,5 +1,5 @@
 // A hole of a list is read through the prototype chain, by a spread and by apply alike: for each kind of storage (integers, doubles, boxed values) the function of the prelude asks each place whether it is filled and leaves the list to the call as written.
-// STATISTIC: LibraryFunctionsEnteredBehindRows >= 8
+// STATISTIC: LibraryFunctionsCalledDirectly >= 8
 // Under: --aot-testing=CheckProofsAtRunTime: the empty word of a hole stands in no value of which a type is proven
 'use strict';
 const out = [];

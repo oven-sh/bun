@@ -910,7 +910,15 @@ fn constructor_that_is_looked_up_at_run_time_counts_as_the_global() {
 
 #[test]
 fn written_arm_of_a_name_that_is_unknown_otherwise_is_an_entry_point() {
-    let rows: [(&str, &[&str]); 7] = [
+    let rows: [(&str, &[&str]); 9] = [
+        (
+            r#"require(require("node:path").join(process.env.CONF_FOLDER || __dirname, "conf.cjs"));"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"const load = name => require(name); load(process.env.CONF || "./conf.cjs");"#,
+            &["conf.cjs WrittenInArm"],
+        ),
         (
             r#"require(process.env.CONF || "./conf.cjs");"#,
             &["conf.cjs WrittenInArm"],

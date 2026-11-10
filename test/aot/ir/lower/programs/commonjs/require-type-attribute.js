@@ -2,13 +2,13 @@
 // OPTIONS: builtin-modules
 // ENTRY: main.js with-attribute.cjs without-attribute.cjs
 // STATISTIC: SourceFilesInferred = 3
-// STATISTIC: SourceFilesData = 2
+// STATISTIC: SourceFilesData = 1
 // CHECK-LABEL: function {{*}}name="compileBoth"
 // CHECK-LABEL: function {{*}}name="computed"
 
 // FILE: main.js
 // require(path, { type }) with a computed path asks for the file, not for the compiled module at that path, so the module does not run. Without the attribute the same kind of path runs the compiled module.
-// `bun run` answers the text of the file. An executable does not hold that text, and the call throws.
+// It answers the text of the file, under `bun run` and in an executable: every name that the path can take is known, and the type is written in place.
 globalThis.evaluated = [];
 
 const computed = name => "./" + name;

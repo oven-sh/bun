@@ -1,4 +1,4 @@
-// STATISTIC: ExactIntegersBehindNumbers >= 1
+// STATISTIC: DoublesRecomputedAsIntegers >= 1
 function byIndex(xs: number[]): number { let s = 5; for (let i = 0; i < xs.length; i++) s = (s + xs[i]) | 0; return s; }
 function forOf(xs: number[]): number { let s = 5; for (const x of xs) s = (s + x) | 0; return s; }
 const base = (): number[] => { const l: number[] = []; for (let i = 0; i < 20; i++) l.push(i + 1); return l; };

@@ -31,7 +31,7 @@ const asks: Record<string, string> = {
 test.each(Object.entries(asks))(
   "%s",
   async (_, ask) => {
-    using dir = tempDir("aot-file-behind-a-face-is-asked-for", { "main.mjs": main, "sum.cjs": sum });
+    using dir = tempDir("aot-file-behind-a-facade-is-asked-for", { "main.mjs": main, "sum.cjs": sum });
     const directory = String(dir).replaceAll("\\", "/");
     const text = `(from) => { const Module = process.getBuiltinModule("node:module"); Module._extensions[".json"] = function (made) { ${ask} made.exports = 1; }; }`;
     await Bun.write(

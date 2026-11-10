@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInTurnsOfTypedCopies >= 1
+// STATISTIC: ArraysGuardedInIterations >= 1
 function one(d, a) {
   let sum = 0;
   for (let i = 0; i < d.length; i++) sum = sum + d[i][a];

@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 0
+// STATISTIC: WalkLoopsVersioned >= 0
 'use strict';
 const shelf = new Map();
 function f(t) { let s = t & 1; for (let i = 0; i < shelf.get('rows').length; i++) s = s + shelf.get('rows')[i]; return s; }

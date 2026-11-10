@@ -24,10 +24,8 @@ async function buildAndHash(folder: string, ...command: string[]) {
   built(build);
   return {
     sha256: new Bun.CryptoHasher("sha256").update(readFileSync(app)).digest("hex"),
-    // A time is padded to a fixed width. The closing text tells the lines, which must be the same, and how fast they were compiled, which needn't.
-    output: (build.stdout + build.stderr)
-      .replace(/ *\[[\d.]+ ?m?s\]/g, "[time]")
-      .replace(/( lines?) in [\d.]+ s \([\d,]+ lines\/s\)/g, "$1 in [time]"),
+    // The times are padded to one width.
+    output: (build.stdout + build.stderr).replace(/ *\[[\d.]+ ?m?s\]/g, "[time]"),
   };
 }
 
@@ -185,6 +183,31 @@ describe.concurrent("bun compile", () => {
         const app = executable(folder, "main");
         expect(hasCompiledProgram(app)).toBe(true);
         expect(await spawned([app], "/", interpreterForbidden)).toMatchObject({
+          stdout: "42\n",
+          exitCode: 0,
+          signal: null,
+        });
+      }),
+    buildLimit,
+  );
+
+  test(
+    "the name of an installed executable writes what the path of its file writes",
+    () =>
+      slot(async () => {
+        using dir = tempDir("compile-installed-executable", {
+          "node_modules/tool/package.json": JSON.stringify({ name: "tool", main: "index.js", bin: "cli.js" }),
+          "node_modules/tool/index.js": `exports.answer = 42;\n`,
+          "node_modules/tool/cli.js": `#!/usr/bin/env node\nconsole.log(require("./index.js").answer);\n`,
+        });
+        const folder = String(dir);
+        const byName = await buildAndHash(folder, "compile", "tool");
+        const note = /^ +note  tool is node_modules.tool.cli\.js, from the package tool\n/m;
+        expect(byName.output).toMatch(note);
+        expect({ ...byName, output: byName.output.replace(note, "") }).toEqual(
+          await buildAndHash(folder, "compile", "node_modules/tool/cli.js"),
+        );
+        expect(await spawned([executable(folder, "app")], "/", interpreterForbidden)).toMatchObject({
           stdout: "42\n",
           exitCode: 0,
           signal: null,
@@ -409,9 +432,37 @@ if (process.argv[2] === "first") {
       for (const flag of ["--trim", "--explain", "--compile-in-place", "--no-compile-function-source"]) {
         expect(help).toContain(flag);
       }
+      // An eval() that the build didn't find throws with and without this flag.
+      expect(/--no-compile-function-source +(.*)/.exec(help)?.[1]).toBe(
+        "With --aot: don't embed function source code. fn.toString() returns [native code]",
+      );
     }
     if (command === "build") {
       expect(help).not.toContain("--no-script");
     }
+  });
+
+  test.each([
+    ["compile", ["compile"]],
+    ["build", ["build", "compile"]],
+    ["run", ["run"]],
+    ["test", ["test", "run"]],
+  ])("--help has every flag that docs/snippets/cli/%s.mdx lists", async (page, commands) => {
+    using dir = tempDir("compile-help-and-docs", {});
+    const takesValue = new Map<string, boolean>();
+    for (const command of commands) {
+      const { stdout, stderr } = await bun(String(dir), command, "--help");
+      for (const [, flag, value] of (stdout + stderr).matchAll(/^ +(?:-\w, )?(--[\w.-]+)(=<val>)? {2,}/gm))
+        takesValue.set(flag, value !== undefined);
+    }
+    const text = readFileSync(join(import.meta.dir, "../../../docs/snippets/cli", page + ".mdx"), "utf8");
+    const listed = [...text.matchAll(/<ParamField path="([^"]+)" type="(\w+)"/g)].flatMap(([, path, type]) =>
+      path
+        .split(/[,/ ]+/)
+        .filter(flag => flag.startsWith("--"))
+        .map(flag => ({ flag, takesValue: type !== "boolean" })),
+    );
+    expect(listed.length).toBeGreaterThan(10);
+    expect(listed.filter(({ flag, takesValue: expected }) => takesValue.get(flag) !== expected)).toEqual([]);
   });
 });

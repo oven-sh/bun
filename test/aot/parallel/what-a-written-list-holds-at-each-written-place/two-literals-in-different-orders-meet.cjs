@@ -1,4 +1,4 @@
-// STATISTIC: ReadsUnderWrittenIndexesGivenWhatIsWrittenAtThePlace >= 1
+// STATISTIC: ArrayLiteralElementReadsResolved >= 1
 "use strict";
 // `[holder, weight]` and `[weight, holder]` meet
 const odd = JSON.parse('["text", {"name": "odd"}, null, true]');

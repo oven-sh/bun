@@ -1,4 +1,4 @@
-// STATISTIC: RowsAskedForKindOfRowBesideThem >= 1
+// STATISTIC: RowsGuardedForSiblingIndexingType >= 1
 // The pairs are made by an arrow that knows nothing of x: their storage is contiguous. Two of them are read in a turn: where the first was found contiguous the second is asked for the same.
 "use strict";
 const D = JSON.parse("[" + Array.from({ length: 64 }, (_, i) => i * 3 % 17).join() + "]");

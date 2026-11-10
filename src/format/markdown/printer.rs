@@ -2201,7 +2201,7 @@ impl<'a> Printer<'a, '_> {
     fn print_list(&mut self, id: NodeId, list: &'a Node) -> Doc<'a> {
         let uses_alternate_marker = self.uses_alternate_marker(id);
         let is_git_diff_friendly = self.is_git_diff_friendly(list);
-        // Before indented code, the content has to be indented deeper than the code.
+        // Prettier's `requiredIndent`: before indented code, the content has to be indented deeper than the code.
         let min_indent = match self
             .node(list.next)
             .filter(|_| is_indented_code(self.original, self.tree, list.next))
@@ -2236,7 +2236,16 @@ impl<'a> Printer<'a, '_> {
                 false => (if uses_alternate_marker { b"* " } else { b"- " }).to_vec(),
             };
             index += 1;
-            if (list.is_aligned || (printer.is_mdx && list.checked != 0)) && list.ordered {
+            let node = printer.node(item)?;
+            // The content of an item that starts with indented code begins one space after the marker, and every
+            // further space is part of the code (CommonMark 5.2, rule 2). Prettier pads the prefix of such an item
+            // like the others: `100.  ` at a tab width of 2, so its code gains a space.
+            let starts_with_indented_code =
+                is_indented_code(printer.original, printer.tree, node.first_child);
+            if (list.is_aligned || (printer.is_mdx && list.checked != 0))
+                && list.ordered
+                && !starts_with_indented_code
+            {
                 // Prettier's `alignListPrefix`. Four or more would make it indented code.
                 let additional = (tab_width - prefix.len() % tab_width) % tab_width;
                 prefix.resize(
@@ -2245,14 +2254,17 @@ impl<'a> Printer<'a, '_> {
                 );
             }
             if prefix.len() < min_indent && !printer.is_mdx {
-                prefix.truncate(prefix.trim_ascii_end().len());
-                let trailing = (min_indent - prefix.len()).min(4);
-                prefix.resize(prefix.len() + trailing, b' ');
+                // Prettier meets it with trailing spaces first (`1.        x`), which are code for such an item. It
+                // gets leading spaces only, so its marker can stand right of the others.
+                if !starts_with_indented_code {
+                    prefix.truncate(prefix.trim_ascii_end().len());
+                    let trailing = (min_indent - prefix.len()).min(4);
+                    prefix.resize(prefix.len() + trailing, b' ');
+                }
                 let leading = (min_indent - prefix.len()).min(3);
                 prefix.splice(0..0, std::iter::repeat_n(b' ', leading));
             }
 
-            let node = printer.node(item)?;
             let (first, second) = (
                 printer.node(node.first_child),
                 printer.node(node.last_child),

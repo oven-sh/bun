@@ -181,6 +181,8 @@ FAIL prettier markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth:
 FAIL prettier markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "preserve" }
 FAIL prettier markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 100, proseWrap: "preserve" }
 FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "always" }
+FAIL prettier markdown/markdown/tab-width-4/ordered-marker-before-indented-code.md { printWidth: 80, tabWidth: 4 }
+FAIL prettier markdown/markdown/tab-width-4/ordered-marker-before-indented-code.md { printWidth: 100, tabWidth: 4 }
 FAIL prettier ts/comments/yield.ts { printWidth: 80 }
 FAIL prettier ts/comments/yield.ts { printWidth: 100 }
 FAIL oxfmt ts/quote-props/enums.ts { printWidth: 80, quoteProps: "as-needed" }
@@ -197,5 +199,5 @@ FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseW
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "always" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseWrap: "never" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "never" }
-as Prettier prints them: 1526/1570
+as Prettier prints them: 1524/1570
 as oxfmt prints them, in its flavor: 1343/1498

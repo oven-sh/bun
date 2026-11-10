@@ -115,7 +115,7 @@ globals = "vitest" # default "bun"
 
 The `--globals` flag overrides `bunfig.toml`. Write it with `=`, as in `--globals=vitest`.
 
-- With `globals = "vitest"`, the names are also properties of `globalThis`, as in Vitest. Some packages look for `globalThis.afterEach` there. Such a package registers its hook when it is first imported. Without `--isolate`, only the first test file that imports it gets the hook. Import the package from a [preload script](/test/lifecycle#global-setup-and-teardown) to get the hook in every file. A preload script runs in the project's [environment](#environment), not in one that a comment in a test file sets.
+- With `globals = "vitest"`, the names are also properties of `globalThis`, as in Vitest. Some packages look for `globalThis.afterEach` there. Such a package registers its hook when it is first imported. Without `--isolate`, only the first test file that imports it gets the hook. Import the package from a [preload script](/test/lifecycle#global-setup-and-teardown) to get the hook in every file. Without `--isolate`, a preload script runs in the project's [environment](#environment), not in one that a comment in a test file sets.
 - Imports from `"bun:test"` and `"@jest/globals"` keep those modules' behavior.
 - `true` and `false`, the values Vitest takes, are accepted and change nothing. So is `--globals` without a value.
 - If a preload script sets one of these globals itself (`globalThis.expect = chai.expect`), files that import from `"bun:test"`, `"@jest/globals"` or `"vitest"` keep the preload's value.

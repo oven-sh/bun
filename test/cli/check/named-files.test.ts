@@ -39,6 +39,10 @@ test.each([
     { "script.ts": `var declaredElsewhere: number;\nvar later = import("./main");\n` },
   ],
   [
+    "a script with a line that starts with an import on demand",
+    { "script.ts": `var declaredElsewhere: number;\nimport("./main");\n` },
+  ],
+  [
     "a JavaScript script with a comment that says required",
     {
       "tsconfig.json": JSON.stringify({

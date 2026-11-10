@@ -4400,7 +4400,7 @@ fn text_may_declare_a_global(
         && !(is_javascript(path) && has(b"require("))
 }
 
-/// True if a line of `text` starts with the word `word`.
+/// True if a line of `text` starts with the word `word`, other than in `import(..)` and `import.meta`.
 fn has_line_that_starts_with(text: &[u8], word: &[u8]) -> bool {
     let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], word) {
@@ -4412,7 +4412,10 @@ fn has_line_that_starts_with(text: &[u8], word: &[u8]) -> bool {
         let is_part_of_name = |next: &u8| {
             next.is_ascii_alphanumeric() || matches!(next, b'_' | b'$') || !next.is_ascii()
         };
-        if is_first_in_line && !text.get(from).is_some_and(is_part_of_name) {
+        if is_first_in_line
+            && !text.get(from).is_some_and(is_part_of_name)
+            && !matches!(text[from..].trim_ascii_start(), [b'(' | b'.', ..])
+        {
             return true;
         }
     }

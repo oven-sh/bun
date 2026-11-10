@@ -1,7 +1,8 @@
-import { expect, test as testAnywhere } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { test as testAnywhere } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
@@ -110,6 +111,9 @@ const envWithSystemMalloc = { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context
 /** Without the line that names the port of a default export that is served. */
 const getLines = (stdout: string) => stdout.replace(/^Started (development )?server: .*\n/gm, "");
 
+// An operator that is written with `<` or `>`, up to where its arguments begin: with `(`, or with `<` for those of a template.
+const operatorWithAngles = /\boperator(?:<=>|<<=?|>>=?|[<>]=?)(?=[(<])/y;
+
 /**
  * The name of a function, without its return type, its arguments and what follows them. A function that is written in another
  * has that one's name in front: the name of `Text::measure() const::$_0::operator()() const` is `Text::measure::$_0::operator`.
@@ -119,24 +123,32 @@ function getFunctionName(frame: string): string {
   let depth = 0;
   let name = "";
   for (let index = 0; index < frame.length; index++) {
-    if (frame[index] === "<" || frame[index] === "(") depth++;
+    operatorWithAngles.lastIndex = index;
+    const operator = operatorWithAngles.exec(frame)?.[0];
+    // The signs of an operator open and close nothing: `operator>`, `operator<<`.
+    if (operator) {
+      if (depth === 0) name += operator;
+      index += operator.length - 1;
+    } else if (frame[index] === "<" || frame[index] === "(") depth++;
     // The `>` of `->` closes nothing: `fn(u8) -> u8`.
     else if ((frame[index] === ">" && frame[index - 1] !== "-") || frame[index] === ")") depth--;
     else if (depth === 0) name += frame[index];
   }
   const words = name
     // The constraint of a function ends where a lambda that is written in the function begins.
-    .replace(/ requires .*?(?=::['$]|$)/, "")
+    .replace(/ requires .*?(?=::'|$)/, "")
     .replace(/(?: (?:const|volatile|&&?))+(?=::|$)/g, "")
     .trim()
+    // The arguments of a function of Rust stood behind `::`: `collect::<u8>`.
+    .replace(/::$/, "")
     .split(" ");
-  // `operator new`, and a conversion to a type of several words: `operator unsigned long`.
-  const operator = words.findIndex(word => /(?:^|::)operator$/.test(word));
+  // `operator new`, `operator"" _s`, and a conversion to a type of several words: `operator unsigned long`.
+  const operator = words.findIndex(word => /(?:^|::)operator(?:"")?$/.test(word));
   return words.slice(operator < 0 ? -1 : operator).join(" ");
 }
 
 // The namespaces and the crates of allocators and containers: of what allocates for the function that called it.
-const containers = /^(WTF|bmalloc|std|alloc|core|hashbrown|smallvec|__rustc)$/;
+const containers = /^(WTF|bmalloc|std|alloc|core|hashbrown|smallvec|__rustc|bun_alloc)$/;
 
 /**
  * The crate that has the code of a method of Rust, which a symbolizer writes `<Type>::method` or `<Type as Trait>::method`.
@@ -169,7 +181,8 @@ function getCrateOfMethod(method: string): string {
 /** Whether the function of a frame is an allocator or a container. The namespace or the crate of its code says it. */
 function isAllocator(frame: string): boolean {
   const name = getFunctionName(frame);
-  if (/^(malloc|calloc|realloc|posix_memalign|aligned_alloc|pas_|bmalloc_|__rust_|__rdl_)/.test(name)) return true;
+  if (/^(malloc|calloc|realloc|posix_memalign|aligned_alloc|pas_|bmalloc_|__rust_|__rdl_|OPENSSL_)/.test(name))
+    return true;
   if (/\boperator new(\[\])?$/.test(name)) return true;
   return containers.test(name.startsWith("<") ? getCrateOfMethod(name) : (/^(\w+)::/.exec(name)?.[1] ?? ""));
 }
@@ -198,9 +211,15 @@ function getCalledFunctions(record: string): string[] {
   return functions;
 }
 
-/** The first function that was called on the stack of a leak record that is neither an allocator nor a container. */
-const getAllocatedBy = (record: string) =>
-  getFunctionName(getCalledFunctions(record).find(frame => !isAllocator(frame)) ?? record);
+/**
+ * The first function that was called on the stack of a leak record that is neither an allocator nor a container. Where the
+ * stack ends before one, the last function on it. A record that no symbolizer wrote names no function, and is like no other.
+ */
+function getAllocatedBy(record: string): string {
+  const functions = getCalledFunctions(record);
+  const allocatedBy = functions.find(frame => !isAllocator(frame)) ?? functions.at(-1);
+  return allocatedBy === undefined ? record : getFunctionName(allocatedBy);
+}
 
 /** The leak records of a report, by the function that allocated. */
 function getLeakRecords(stderr: string): Map<string, string> {
@@ -300,6 +319,18 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
 `,
   ],
   [
+    "BoringSSL asked Bun for the memory, as in a debug build",
+    "BUF_MEM_reserve",
+    `Indirect leak of 404 byte(s) in 1 object(s) allocated from:
+    #0 0x0000082769a8 in malloc crtstuff.c
+    #1 0x00001038cdb0 in bun_alloc::default_alloc::malloc /workspace/bun/src/bun_alloc/lib.rs:199:22
+    #2 0x000010385e20 in OPENSSL_memory_alloc /workspace/bun/src/boringssl/lib.rs:115:5
+    #3 0x00000bf7c38d in OPENSSL_malloc /workspace/bun/build/debug/../../vendor/boringssl/crypto/mem.cc:212:18
+    #4 0x00000bf7c64f in OPENSSL_realloc /workspace/bun/build/debug/../../vendor/boringssl/crypto/mem.cc:293:12
+    #5 0x00000be8d686 in BUF_MEM_reserve /workspace/bun/build/debug/../../vendor/boringssl/crypto/buf/buf.cc:56:32
+`,
+  ],
+  [
     "a container has a constraint",
     "Zig::GlobalObject::setConsole",
     `Indirect leak of 32 byte(s) in 1 object(s) allocated from:
@@ -307,6 +338,15 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     #8 0x000007ad78cb in WTF::WeakPtrFactory<JSC::ConsoleClient, WTF::DefaultWeakPtrImpl>::initializeIfNeeded(JSC::ConsoleClient const&) const (/tmp/lane-asan/cap/line/program+0x7ad78cb) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
     #9 0x000007a992c7 in WTF::WeakPtr<JSC::ConsoleClient, WTF::DefaultWeakPtrImpl, WTF::RawPtrTraits<WTF::DefaultWeakPtrImpl>>::WeakPtr(JSC::ConsoleClient const*, WTF::EnableWeakPtrThreadingAssertions) requires !IsSmartPtr<T>::value (/tmp/lane-asan/cap/line/program+0x7a992c7) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
     #10 0x000007a838d9 in Zig::GlobalObject::setConsole(void*) (/tmp/lane-asan/cap/line/program+0x7a838d9) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
+`,
+  ],
+  [
+    "the allocator is `operator new`",
+    "app::fill",
+    `Direct leak of 24 byte(s) in 1 object(s) allocated from:
+    #0 0x5610ff066781 in operator new(unsigned long) (/tmp/cut/cut+0x121781) (BuildId: b27b2079b3e3aa84bb4ca3bf718851ea48582610)
+    #1 0x5610ff067be1 in app::fill() /tmp/cut/cut.cpp:12:20
+    #2 0x5610ff067d83 in main /tmp/cut/cut.cpp:24:5
 `,
   ],
   ["a file is in a folder with a space in its name", "app::List::makePair", recordsOfTwoFunctions[0]],
@@ -435,7 +475,7 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
   ],
   [
     "a function of Rust has a function pointer among its arguments",
-    "app::collect_with::",
+    "app::collect_with",
     `Direct leak of 37 byte(s) in 1 object(s) allocated from:
     #0 0x0000002e4a04 in malloc (/tmp/rust-methods/target/x86_64-unknown-linux-gnu/release/app+0x2e4a04) (BuildId: 5f553fe5966a1991bd5def08e2a0d660400714a5)
     #2 0x0000003358ba in __rustc::__rdl_alloc /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/alloc.rs:472:13
@@ -452,6 +492,64 @@ testAnywhere.each(writtenRecords)(
     expect(getAllocatedBy(record)).toBe(allocatedBy);
   },
 );
+
+// One record of a Bun built for debugging, cut down: with the debug information, and without. LeakSanitizer kept thirty
+// functions of its stack, and all of them are allocators and containers.
+const recordsOfAStackThatEndsInContainers = [
+  `Indirect leak of 724 byte(s) in 24 object(s) allocated from:
+    #0 0x0000082769a8 in malloc crtstuff.c
+    #1 0x00001870f27b in bmalloc::SystemHeap::malloc(unsigned long, bmalloc::FailureAction) /webkitbuild/vendor/WebKit/Source/bmalloc/bmalloc/SystemHeap.cpp:170:20
+    #15 0x000012a27e7c in WTF::fastCompactMalloc(unsigned long) /webkitbuild/vendor/WebKit/Source/WTF/wtf/FastMalloc.cpp:495:20
+    #26 0x000012fd96e3 in WTF::AtomStringImpl::add(std::span<unsigned char const, 18446744073709551615ul>) /webkitbuild/vendor/WebKit/Source/WTF/wtf/text/AtomStringImpl.cpp:298:12
+    #30 0x0000091e6c05 in WTF::AtomString WTF::makeAtomString<WTF::ASCIILiteral>(WTF::ASCIILiteral...) /root/.bun/build-cache/webkit-000c48997255272c-debug-asan/include/wtf/text/MakeString.h:156:19
+`,
+  `Indirect leak of 724 byte(s) in 24 object(s) allocated from:
+    #0 0x0000082769a8 in malloc (/tmp/olddebug/bun-debug-stripped+0x82769a8) (BuildId: e677207dab6959e8cd9ec489999ab35d3c180510)
+    #1 0x00001870f27b in bmalloc::SystemHeap::malloc(unsigned long, bmalloc::FailureAction) (/tmp/olddebug/bun-debug-stripped+0x1870f27b) (BuildId: e677207dab6959e8cd9ec489999ab35d3c180510)
+    #14 0x000012a27e7c in WTF::fastCompactMalloc(unsigned long) (/tmp/olddebug/bun-debug-stripped+0x12a27e7c) (BuildId: e677207dab6959e8cd9ec489999ab35d3c180510)
+    #25 0x000012fd96e3 in WTF::AtomStringImpl::add(std::span<unsigned char const, 18446744073709551615ul>) (/tmp/olddebug/bun-debug-stripped+0x12fd96e3) (BuildId: e677207dab6959e8cd9ec489999ab35d3c180510)
+    #29 0x0000091e6c05 in WTF::AtomString WTF::makeAtomString<WTF::ASCIILiteral>(WTF::ASCIILiteral...) (/tmp/olddebug/bun-debug-stripped+0x91e6c05) (BuildId: e677207dab6959e8cd9ec489999ab35d3c180510)
+`,
+];
+
+testAnywhere("a record whose stack ends in the containers has the name of the last function on it", () => {
+  expect(recordsOfAStackThatEndsInContainers.map(getAllocatedBy)).toEqual([
+    "WTF::makeAtomString",
+    "WTF::makeAtomString",
+  ]);
+});
+
+// A record of a small program that ran with `symbolize=0`.
+const recordWithoutFunctions = `Direct leak of 24 byte(s) in 1 object(s) allocated from:
+    #0 0x55a2c9ab3781  (/tmp/cut/cut-stripped+0x121781) (BuildId: b27b2079b3e3aa84bb4ca3bf718851ea48582610)
+    #1 0x55a2c9ab4be1  (/tmp/cut/cut-stripped+0x122be1) (BuildId: b27b2079b3e3aa84bb4ca3bf718851ea48582610)
+    #2 0x55a2c9ab4d83  (/tmp/cut/cut-stripped+0x122d83) (BuildId: b27b2079b3e3aa84bb4ca3bf718851ea48582610)
+`;
+
+testAnywhere("a record that names no function is like no other record", () => {
+  expect(getAllocatedBy(recordWithoutFunctions)).toBe(recordWithoutFunctions);
+});
+
+// Functions of small programs as a symbolizer wrote them on the stacks of leak records, and their names. The arguments of a
+// template stand right behind the signs of an operator. The last three are not written with `<` or `>`: an operator for a
+// literal, a template that has a lambda of `operator>` among its arguments, and a function whose name ends in `operator`.
+const namesOfFunctions: Record<string, string> = {
+  "app::Version::operator>(app::Version const&) const": "app::Version::operator>",
+  "app::Version::operator>=(app::Version const&) const": "app::Version::operator>=",
+  "app::Version::operator>>=(int)": "app::Version::operator>>=",
+  "app::Version::operator<<=(int)": "app::Version::operator<<=",
+  "app::Version::operator<=>(app::Version const&) const": "app::Version::operator<=>",
+  "bool app::operator<<int>(int const&, app::Version const&)": "app::operator<",
+  "int app::operator<<<int>(int const&, app::Version const&)": "app::operator<<",
+  'app::operator"" _leak(unsigned long long)': 'app::operator"" _leak',
+  "int app::apply<app::Version::operator>(app::Version const&) const::'lambda'(unsigned long)>(app::Version::operator>(app::Version const&) const::'lambda'(unsigned long)&&)::'lambda'(unsigned long)::operator()(unsigned long) const":
+    "app::apply::'lambda'::operator",
+  "int app::cooperator<(app::Mode)1>()": "app::cooperator",
+};
+
+testAnywhere("the signs of an operator are in its name, and open and close nothing", () => {
+  expect(Object.keys(namesOfFunctions).map(getFunctionName)).toEqual(Object.values(namesOfFunctions));
+});
 
 // Methods of Rust as a symbolizer wrote them: for a small program, `app`, and the last two for a debug build of Bun. The crate
 // has the code of the first ones. The others allocate for the function that called them: the language has their code, and

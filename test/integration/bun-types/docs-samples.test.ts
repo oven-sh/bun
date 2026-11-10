@@ -132,6 +132,21 @@ ${fence}ts
 const shown: number = "on purpose";
 Bun.sleep("not", "on purpose");
 ${fence}
+
+{/* type-error TS2552 */}
+
+${fence}ts
+const declaredHere = 1;
+declaredHear;
+${fence}
+
+${fence}ts
+/// <reference types="bun-types/not-a-file" />
+/// <reference types="not-on-the-page" />
+/// <reference path="./not-on-the-page.d.ts" />
+import "bun-types/not-a-file";
+import "not-on-the-page/file";
+${fence}
 `,
 );
 
@@ -160,7 +175,8 @@ let project: ReturnType<typeof tempDir> | undefined;
 let docs: { samples: Sample[]; problems: string[] }[];
 let errors: Map<Sample, SampleError[]>;
 
-// Type checks about 1,700 code blocks in this process. A debug build needs minutes for that, so it skips these tests.
+// Type checks about 1,700 code blocks in this process. That takes 10 to 30 s on a release build, which is more than
+// the default timeout of a hook, so the hook has its own. A debug build needs minutes, so it skips these tests.
 beforeAll(async () => {
   if (isDebug) return;
   project = tempDir("docs-samples", { "package.json": "{}" });
@@ -327,7 +343,8 @@ ${fence}
       `docs/judged.mdx:13:79 TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?\n    server.on("request", (request, response, ...rest) => response.end(Bun.version.toFixed(2)));`,
     ];
     const parseFails = `docs/judged.mdx:24:14 TS1005: ';' expected.\n    routes: { "/": () => new Response("ok") },`;
-    // A code block with a marker may leave out the rest of its program too: the one at line 41 passes.
+    // A code block with a marker may leave out the rest of its program too: the one at line 41 passes. So does the
+    // one at line 61, whose marker names the code that tsc prints with a suggestion.
     const markersFail = [
       "docs/judged.mdx:35: the code block parses alone, so it needs no {/* fragment */}",
       "docs/judged.mdx:48: the marker says TS2322, tsc reports nothing",
@@ -335,8 +352,14 @@ ${fence}
       `docs/judged.mdx:55:7 TS2322: Type 'string' is not assignable to type 'number'.\n    const shown: number = "on purpose";`,
       `docs/judged.mdx:56:18 TS2554: Expected 1 arguments, but got 2.\n    Bun.sleep("not", "on purpose");`,
     ];
+    // A page may reference or import what it does not show, but not a file of bun-types that does not exist.
+    const referencesFail = [
+      `docs/judged.mdx:67:23 TS2688: Cannot find type definition file for 'bun-types/not-a-file'.\n    /// <reference types="bun-types/not-a-file" />`,
+      `docs/judged.mdx:70:8 TS2882: Cannot find module or type declarations for side-effect import of 'bun-types/not-a-file'.\n    import "bun-types/not-a-file";`,
+    ];
+    const othersFail = [...markersFail, ...referencesFail];
     expect(judgedWith({})).toEqual({
-      failures: [wrongFails, ...partFails, parseFails, ...markersFail],
+      failures: [wrongFails, ...partFails, parseFails, ...othersFail],
       unused: [],
       pruned: {},
     });
@@ -347,16 +370,16 @@ ${fence}
       [keyOf(partOfAProgram)]: 'TS2307 TS2551 | import { Database } from "bun:sqlit";',
       [keyOf(doesNotParse)]: 'TS1005 | routes: { "/": () => new Response("ok") },',
     };
-    expect(judgedWith(listed)).toEqual({ failures: markersFail, unused: [], pruned: { "docs/judged.mdx": listed } });
+    expect(judgedWith(listed)).toEqual({ failures: othersFail, unused: [], pruned: { "docs/judged.mdx": listed } });
     // A listed code block may not report another code.
     expect(judgedWith({ ...listed, [keyOf(partOfAProgram)]: "TS2307 | import" }).failures).toEqual([
       "docs/judged.mdx:9: the inventory lists this code block with TS2307",
       partFails[1],
-      ...markersFail,
+      ...othersFail,
     ]);
     // An entry, or a code of one, that no code block reports has to go.
     expect(judgedWith({ ...listed, [keyOf(wrong)]: "TS2322 TS2345 | const", edited: "TS2304 | gone" })).toEqual({
-      failures: markersFail,
+      failures: othersFail,
       unused: [
         `docs/judged.mdx: ${keyOf(wrong)} (TS2322 TS2345 | const): it reports TS2322 | const port: number = "3000";`,
         "docs/judged.mdx: edited (TS2304 | gone): no code block with this key fails",
@@ -371,7 +394,7 @@ ${fence}
     const { [keyOf(wrong)]: entryOfWrong, ...others } = listed;
     const beforeTheMove = { "docs/before-the-move.mdx": { [keyOf(wrong)]: entryOfWrong }, "docs/judged.mdx": others };
     expect(judge(judged.samples, errors, beforeTheMove)).toEqual({
-      failures: markersFail,
+      failures: othersFail,
       unused: [],
       pruned: { "docs/judged.mdx": listed },
     });
@@ -379,7 +402,7 @@ ${fence}
     const copy = { ...wrong, page: "docs/copy.mdx" };
     const withTheCopy = new Map(errors).set(copy, errors.get(wrong)!);
     expect(judge([...judged.samples, copy], withTheCopy, { "docs/judged.mdx": listed }).failures).toEqual([
-      ...markersFail,
+      ...othersFail,
       wrongFails.replace("docs/judged.mdx", "docs/copy.mdx"),
     ]);
   });

@@ -87,10 +87,13 @@ export function samplesOf(page: string, text: string): { samples: Sample[]; prob
   return { samples, problems };
 }
 
-// The file or the package that a sample imports is not on the page. What the import gives the sample is `any`.
-const MODULE_NOT_ON_THE_PAGE = new Set([2307, 2688, 2732, 2792, 2875, 2882, 7016, 7026]);
-// The types declare every module of Bun and of Node.js. One that tsc cannot find is a mistake in the sample.
-const MODULE_OF_THE_RUNTIME = /^["'](bun["']|bun:|node:)/;
+// The file or the package that a sample imports or references is not on the page. What an import gives the sample is
+// `any`.
+const MODULE_NOT_ON_THE_PAGE = new Set([2307, 2688, 2732, 2792, 2875, 2882, 6053, 7016, 7026]);
+// The types declare every module of Bun and of Node.js, and bun-types has the files that a page tells its reader to
+// reference. One that tsc cannot find is a mistake in the sample. A reference directive is reported from inside its
+// quotes.
+const MODULE_OF_THE_RUNTIME = /^["']?(?:bun|bun-types|node)["':/]/;
 
 // tsc suggests a name for the first ten names of a program that it cannot find, under a code of its own. Which
 // samples get one depends on the samples before them, so both codes count as the one without a suggestion.
@@ -277,12 +280,13 @@ export function judge(samples: Sample[], errors: Map<Sample, SampleError[]>, inv
     const reported = errors.get(sample)!;
     const failing = failuresOf(reported);
     if (sample.typeErrors) {
-      // The code block may leave out the rest of its program, as one with no marker may.
-      const expected = [...new Set(sample.typeErrors.map(code => `TS${code}`))].sort();
-      const shown = reported.filter(error => sample.typeErrors!.includes(error.code) || failing.includes(error));
-      if (!Bun.deepEquals(codesOf(shown), expected)) {
+      // The code block may leave out the rest of its program, as one with no marker may. The marker may name the
+      // code that tsc prints with a suggestion.
+      const named = new Set(sample.typeErrors.map(code => WITHOUT_SUGGESTION.get(code) ?? code));
+      const shown = reported.filter(error => named.has(error.code) || failing.includes(error));
+      if (!Bun.deepEquals(codesOf(shown), [...named].map(code => `TS${code}`).sort())) {
         failures.push(
-          `${page}:${sample.line}: the marker says ${expected.join(" ")}, tsc reports ${codesOf(shown).join(" ") || "nothing"}`,
+          `${page}:${sample.line}: the marker says ${sample.typeErrors.map(code => `TS${code}`).join(" ")}, tsc reports ${codesOf(shown).join(" ") || "nothing"}`,
           ...describeErrors(sample, shown),
         );
       }

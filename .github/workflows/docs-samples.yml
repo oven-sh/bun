@@ -41,7 +41,7 @@ jobs:
   docs-samples:
     name: "Docs samples"
     runs-on: ubuntu-latest
-    # Advisory while the check is new: shows up on the PR, does not block it.
+    # Advisory while the check is new: a failure is a failed check on the PR, and the workflow run stays green.
     continue-on-error: true
     timeout-minutes: 15
     concurrency:

@@ -36,7 +36,7 @@
 //
 // A difference names the function, the first lines of the two texts that differ, and the first operation that differs in what `testaot walk` prints.
 import { afterAll, expect } from "bun:test";
-import { tempDir } from "harness";
+import { isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { generate } from "../../../bench/compiler/generate";
 import { run } from "../engine/testaot";
@@ -48,6 +48,7 @@ import { build } from "./measure";
 
 const extensions = { typed: "ts", erased: "js" } as const;
 type Dress = keyof typeof extensions;
+const dresses = Object.keys(extensions) as Dress[];
 
 interface Unit {
   /** As its program numbers it: f12:Body. */
@@ -216,8 +217,40 @@ function unitsIn(lines: string[]) {
 const folders: Disposable[] = [];
 afterAll(() => folders.forEach(folder => folder[Symbol.dispose]()));
 
+// When the work of the tests starts. bun:test has only so many tests of a file under way at a time (--max-concurrency: scripts/runner.node.ts gives this
+// file as many as the machine has processors), and a test that asked for its programs when it started would leave the long programs of the second dress
+// waiting for tests of the first to end, and the short tests behind them waiting for both, beside processors that have nothing to do.
+// So a test states what it holds of what its work makes, and the work of every test starts as soon as one of them asks for a program that takes long:
+// those programs first, the longest first, then the work of each test as the tests are written. `slot()` alone holds back what runs at once.
+// A run of nothing but tests of the small programs starts no work but theirs.
+const programsThatTakeLongest: (keyof typeof sources)[] = [
+  "inside, padded",
+  "inside, other layouts",
+  "inside",
+  "padded",
+];
+const workOfEveryTest: (() => Promise<unknown>)[] = [];
+// Work that starts together ends together, so a test may wait as long as the whole file takes. With a Bun that is built without optimization that is
+// longer than `timeLimit`: there every test starts its own work when bun:test comes to it.
+const startsEveryWorkTogether = !isDebug;
+let isEveryWorkStarted = false;
+
+function startedWithTheRest<Made>(work: () => Promise<Made>) {
+  let made: Promise<Made> | undefined;
+  // In a job of its own, so that `made` is set before the work runs: the work that starts all the others is not started by itself once more.
+  const start = () => (made ??= Promise.resolve().then(work));
+  workOfEveryTest.push(start);
+  return start;
+}
+
 const whenCompiled = new Map<string, Promise<Program>>();
-function compiled(dress: Dress, name: keyof typeof sources) {
+function compiled(dress: Dress, name: keyof typeof sources): Promise<Program> {
+  if (startsEveryWorkTogether && !isEveryWorkStarted && programsThatTakeLongest.includes(name)) {
+    isEveryWorkStarted = true;
+    // What fails is held against the tests that wait for it: until one does, a failure is nobody's.
+    for (const each of programsThatTakeLongest) for (const other of dresses) compiled(other, each).catch(() => {});
+    for (const start of workOfEveryTest) start().catch(() => {});
+  }
   const title = `${name}, ${dress}`;
   const compile = async (): Promise<Program> => {
     const folder = tempDir("aot-independence", sources[name](dress));
@@ -226,7 +259,12 @@ function compiled(dress: Dress, name: keyof typeof sources) {
     // Nothing here runs a program.
     await build(String(folder), [withProgramOutput(file), buildFlags.withoutExecutable]);
     const { lines, stderr, exitCode } = await runOn("bytes", file);
-    expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    // What `bytes` prints begins with a unit: unitsIn() would leave out whatever stands in front of the first.
+    expect({ begins: lines[0]?.split(" ")[0], stderr, exitCode }).toEqual({
+      begins: "unit",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
     return { title, file, units: unitsIn(lines) };
   };
   if (!whenCompiled.has(title)) whenCompiled.set(title, compile());
@@ -300,7 +338,6 @@ function blocksFirst(lines: string[]) {
 async function operationsOf(program: Program, keys: string[]) {
   const names = keys.map(key => program.units.get(key)!.name);
   const { lines, stderr, exitCode } = await runOn("walk", program.file, ...names);
-  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const texts = new Map<string, string[]>();
   let text: string[] = [];
   for (const line of lines) {
@@ -308,8 +345,13 @@ async function operationsOf(program: Program, keys: string[]) {
     if (name) texts.set(name, (text = []));
     text.push(line);
   }
-  return (key: string) =>
-    texts.get(program.units.get(key)!.name) ?? [`testaot walk has printed nothing of it in ${program.title}`];
+  // `walk` prints the code of every unit that it is given, and stops at one that fails: a control must not take a unit that is missing for one that differs.
+  expect({ notPrinted: names.filter(name => !texts.has(name)), stderr, exitCode }).toEqual({
+    notPrinted: [],
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+  return (key: string) => texts.get(program.units.get(key)!.name)!;
 }
 
 async function explained(programs: Pair, withOtherBytes: string[], judge: Judge) {
@@ -340,112 +382,137 @@ async function compare(programs: Pair, files: string[], judge: Judge = "operatio
   console.error(
     `INDEPENDENCE ${programs[0].title} | ${programs[1].title}: ${first.length} | ${second.length} units of ${files.join(", ")}, ${shared.length} in both, ${differences.length} differ, ${withOtherBytes.length - differences.length} same operations, other bytes`,
   );
-  return { shared, differences };
+  return { files, unitsOfEach: programs.map(program => program.units.size), shared, differences };
 }
+type Comparison = Awaited<ReturnType<typeof compare>>;
 
-async function expectSameCode(programs: Pair, files: string[], judge?: Judge) {
-  const { shared, differences } = await compare(programs, files, judge);
-  expect(shared).not.toEqual([]);
+function expectSameCode({ files, shared, differences }: Comparison) {
+  // Each of the files has units that both programs have: one of which nothing is compared would pass unseen beside the others.
+  expect(files.filter(file => !shared.some(key => fileOf(key) === file))).toEqual([]);
   expect(differences).toEqual([]);
 }
 
 const declared = without("testaot") ? test.skip : test;
 
-for (const dress of Object.keys(extensions) as Dress[]) {
+/** A test: `holds` is handed what `work` made. The work of a test that is skipped is started by nobody. */
+function declaredWithWork<Made>(
+  title: string,
+  work: () => Promise<Made>,
+  holds: (made: Made) => unknown,
+  declares = declared,
+) {
+  const start = declares === declared ? startedWithTheRest(work) : work;
+  declares(title, async () => holds(await start()), timeLimit);
+}
+
+for (const dress of dresses) {
   const fileNamed = (name: string) => `${name}.${extensions[dress]}`;
   const features = Array.from({ length: featuresAlone }, (_, index) => fileNamed(`feature${index}`));
   const feature = features.at(-1)!;
   const everyFileButMain = [...features, ...["flags", "router", "text"].map(fileNamed)];
+  const compared =
+    (first: keyof typeof sources, second: keyof typeof sources, files: string[], judge?: Judge) => async () =>
+      compare(await both(dress, first, second), files, judge);
 
   describe.concurrent(`a function compiles to the same code however large the program is: ${dress}`, () => {
-    declared(
+    declaredWithWork(
       "alone and inside a program a hundred times as large",
-      async () => expectSameCode(await both(dress, "alone", "inside"), [feature], "operations of a larger program"),
-      timeLimit,
+      compared("alone", "inside", [feature], "operations of a larger program"),
+      expectSameCode,
     );
 
-    declared(
+    declaredWithWork(
       "among all the others and on a thread that has seen nothing else",
       async () => {
         const inside = await compiled(dress, "inside");
         const units = [...inside.units].flatMap(([key, unit]) => (fileOf(key) === feature ? [unit.name] : []));
         expect(units).not.toEqual([]);
-        const { lines, stderr, exitCode } = await runOn("same-bytes-alone", inside.file, ...units);
+        return { units, ...(await runOn("same-bytes-alone", inside.file, ...units)) };
+      },
+      ({ units, lines, stderr, exitCode }) => {
         // A folded unit has no code of its own to compare. Nor has an entry of the method table under a name that no call goes through the table for:
         // the plan lists it from the calls as they are written, `testaot bytes` compiles what the plan lists, and a build compiles what some code mentions.
         const notTheSame = lines.filter(
           line => !/^f\d+:\S+ (same: |has the code of f\d+:\S+$|has no code in the whole program$)/.test(line),
         );
         expect({ notTheSame, stderr, exitCode }).toEqual({ notTheSame: [], stderr: expect.any(String), exitCode: 0 });
+        // One line for each unit, in their order: a run that ends early says nothing of the units behind.
+        expect(lines.map(line => line.split(" ")[0])).toEqual(units);
         expect(lines.some(line => / same: /.test(line))).toBe(true);
       },
-      timeLimit,
     );
 
-    declared(
+    declaredWithWork(
       "another caller of the shared helpers changes no operation of the features that call them",
-      async () => expectSameCode(await both(dress, "alone", "another caller"), features),
-      timeLimit,
+      compared("alone", "another caller", features),
+      expectSameCode,
     );
 
     // HOW MANY names the whole program mentions decides which of them have a column (chooseKeysWithColumnForNamePlan): no access is compiled by it.
-    (dress === "erased" ? declared : test.skip)(
+    declaredWithWork(
       "a file that a reader never names mentions more names than there are columns, and the reader stays as it is",
-      async () =>
-        expectSameCode(
-          await both(
-            dress,
-            "a reader of names that stand late",
-            "a reader of names that stand late beside more names than there are columns",
-          ),
-          ["reader.js"],
-        ),
-      timeLimit,
+      compared(
+        "a reader of names that stand late",
+        "a reader of names that stand late beside more names than there are columns",
+        ["reader.js"],
+      ),
+      expectSameCode,
+      dress === "erased" ? declared : test.skip,
     );
 
-    declared(
+    declaredWithWork(
       "padding that gives the plan nothing to number changes no byte",
-      async () => {
-        const programs = await both(dress, "alone", "padded");
-        expect(programs[1].units.size - programs[0].units.size).toBeGreaterThanOrEqual(paddingFunctions);
-        await expectSameCode(programs, everyFileButMain, "bytes");
+      compared("alone", "padded", everyFileButMain, "bytes"),
+      comparison => {
+        const [alone, padded] = comparison.unitsOfEach;
+        expect(padded - alone).toBeGreaterThanOrEqual(paddingFunctions);
+        expectSameCode(comparison);
       },
-      timeLimit,
     );
 
-    declared(
+    declaredWithWork(
       "the same padding changes no byte where the sets of layouts are long",
-      async () => expectSameCode(await both(dress, "inside", "inside, padded"), [feature], "bytes"),
-      timeLimit,
+      compared("inside", "inside, padded", [feature], "bytes"),
+      expectSameCode,
     );
 
-    declared(
+    declaredWithWork(
       "a thousand layouts that fit nothing change no operation",
-      async () => expectSameCode(await both(dress, "inside", "inside, other layouts"), [feature]),
-      timeLimit,
+      compared("inside", "inside, other layouts", [feature]),
+      expectSameCode,
     );
 
-    declared(
+    declaredWithWork(
       "the comparison reports a changed constant",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another limit"), [feature])).differences).not.toEqual([]),
-      timeLimit,
+      compared("alone", "another limit", [feature]),
+      ({ differences }) => {
+        const limit = Number(/area < (\d+)/.exec(sources.alone(dress)[feature])?.[1]);
+        // Each is the constant as the walk reads it: the limit in the one program, one more in the other.
+        const constant = new RegExp(
+          String.raw`\n +walk, alone, \w+: .*\binteger=${limit}\b.*\n +walk, another limit, \w+: .*\binteger=${limit + 1}\b`,
+        );
+        expect(differences).not.toEqual([]);
+        for (const difference of differences) expect(difference).toMatch(constant);
+      },
     );
 
-    declared(
+    declaredWithWork(
       "the comparison reports another type that a shared helper is handed",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another type"), features)).differences).not.toEqual([]),
-      timeLimit,
+      compared("alone", "another type", features),
+      // In each feature: all of them call the helper.
+      ({ differences }) => expect([...new Set(differences.map(fileOf))]).toEqual(features),
     );
 
-    declared(
+    declaredWithWork(
       "the comparison reports a helper that is no longer copied in line",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another helper"), features)).differences.join("\n")).toMatch(
-          /calls, another helper, \w+: Call Function Body .* "isInteger" /,
-        ),
-      timeLimit,
+      compared("alone", "another helper", features),
+      ({ differences }) => {
+        const call = /\n +calls, another helper, \w+: Call Function Body .* "isInteger" /;
+        // In each feature, and each is the call.
+        expect(differences.map(difference => (call.test(difference) ? fileOf(difference) : difference))).toEqual(
+          features,
+        );
+      },
     );
   });
 }

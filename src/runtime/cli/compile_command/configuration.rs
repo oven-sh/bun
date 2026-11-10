@@ -430,6 +430,10 @@ fn finish(
     }
 
     this_transpiler.configure_defines()?;
+    // `bun run --aot` and `bun test --aot` compile in place and choose as `bun run` and `bun test` do.
+    if !(ctx.bundler_options.aot.as_ref()).is_some_and(|aot| aot.runs_in_place) {
+        this_transpiler.options.keep_stated_jsx_development();
+    }
     this_transpiler.configure_linker();
 
     this_transpiler.options.compile_target_builtins = options::CompileTargetBuiltins::Host;

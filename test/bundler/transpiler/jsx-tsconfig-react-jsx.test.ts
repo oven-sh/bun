@@ -326,6 +326,7 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
   });
 
   const stated = "{ jsx: { development: true } }";
+  const statedAndEnv = `{ env: "inline", jsx: { development: true } }`;
   test.each<[string, string, string, Files?, Env?]>([
     ['tsconfig.json "react-jsx"', "{ jsx: {} }", prod, tsconfig("react-jsx")],
     ['tsconfig.json "react-jsx"', `{ jsx: { importSource: "shim" } }`, "shim/jsx-runtime", tsconfig("react-jsx")],
@@ -345,12 +346,39 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
     ['NODE_ENV=production, tsconfig.json "react-jsx"', stated, prod, tsconfig("react-jsx"), production],
     // A `define` hides NODE_ENV=development of the environment.
     ['NODE_ENV=development, tsconfig.json "react-jsx"', nodeEnv("test"), prod, tsconfig("react-jsx"), development],
+    // `env` makes the build read the tsconfig.json once more. What the call says stays.
     ['tsconfig.json "react-jsx"', `{ env: "inline" }`, prod, tsconfig("react-jsx")],
+    ['tsconfig.json "react-jsx"', statedAndEnv, dev, tsconfig("react-jsx")],
+    [
+      'tsconfig.json "react-jsxdev"',
+      `{ env: "PUBLIC_*", jsx: { runtime: "react-jsx" } }`,
+      prod,
+      tsconfig("react-jsxdev"),
+    ],
+    ['NODE_ENV=production, tsconfig.json "react-jsx"', statedAndEnv, prod, tsconfig("react-jsx"), production],
     ['tsconfig.json "react-jsx"', `{ env: "disable" }`, prod, tsconfig("react-jsx")],
-    // `env: "disable"` does not read the tsconfig.json a second time, so what the call says stays.
     ['tsconfig.json "react-jsx"', `{ env: "disable", jsx: { development: true } }`, dev, tsconfig("react-jsx")],
   ])("%s: Bun.build(%s) imports %s", async (_, options, expected, files = {}, env = {}) => {
     const { stdout, stderr, exitCode } = await spawned(["-e", apiBuild(options)], files, env);
+    expect({ imported: runtimesImportedBy(stdout), stderr, exitCode }).toEqual(imports(expected));
+  });
+
+  // `--env` makes `bun build` read the tsconfig.json once more too. What bunfig.toml says stays.
+  test.each<[string, string[], string, Files]>([
+    [
+      'bunfig.toml jsx = "react-jsxDEV", tsconfig.json "react-jsx"',
+      ["--env=inline"],
+      dev,
+      { ...bunfig("react-jsxDEV"), ...tsconfig("react-jsx") },
+    ],
+    [
+      'bunfig.toml jsx = "react-jsx", tsconfig.json "react-jsxdev"',
+      ["--env=PUBLIC_*"],
+      prod,
+      { ...bunfig("react-jsx"), ...tsconfig("react-jsxdev") },
+    ],
+  ])("%s: bun build %j imports %s", async (_, flags, expected, files) => {
+    const { stdout, stderr, exitCode } = await spawned(["build", "--external", "*", ...flags, "m.jsx"], files, {});
     expect({ imported: runtimesImportedBy(stdout), stderr, exitCode }).toEqual(imports(expected));
   });
 
@@ -387,19 +415,22 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
   });
 
   // A server that imports an HTML file builds the page with a second transpiler.
-  test('tsconfig.json "react-jsx": the server and the page of Bun.build() hold the production runtime', async () => {
+  test.each([
+    ["{}", "prod jsx"],
+    [statedAndEnv, "dev jsxDEV"],
+  ])('tsconfig.json "react-jsx": the server and the page of Bun.build(%s) hold %j', async (options, expected) => {
     const files = {
       "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "shim" } }),
       "server.jsx": `import page from "./index.html";\nglobalThis.s = [page, <a />];\n`,
       "index.html": `<!doctype html><html><body><script type="module" src="./m.jsx"></script></body></html>`,
     };
     const build = `
-      const { outputs } = await Bun.build({ entrypoints: ["./server.jsx"], target: "bun" });
+      const { outputs } = await Bun.build({ entrypoints: ["./server.jsx"], target: "bun", ...${options} });
       for (const output of outputs) {
         if (output.path.endsWith(".js")) console.log((await output.text()).match(/prod jsx|dev jsxDEV/)?.[0]);
       }`;
     const { stdout, stderr, exitCode } = await spawned(["-e", build], files, {});
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "prod jsx\nprod jsx\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${expected}\n${expected}\n`, stderr: "", exitCode: 0 });
   });
 
   const only = (runtime: "rt" | "dev") => ({
@@ -427,6 +458,7 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
     [stated, "dev jsxDEV"],
     [`{ jsx: { runtime: "react-jsxdev" } }`, "dev jsxDEV"],
     [nodeEnv("development"), "dev jsxDEV"],
+    [statedAndEnv, "dev jsxDEV"],
   ])('tsconfig.json "react-jsx", only ./jsx-dev-runtime: Bun.build(%s) says %j', async (options, expected) => {
     const { stdout, stderr, exitCode } = await spawned(["-e", buildAndRun(options)], only("dev"), {});
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });

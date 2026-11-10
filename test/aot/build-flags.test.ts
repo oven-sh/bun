@@ -12,6 +12,9 @@ const packages = {
   "node_modules/cond/default.js": `export default "default";`,
   "node_modules/mine/package.json": `{ "name": "mine", "version": "1.0.0", "exports": { "./jsx-runtime": "./r.js", "./jsx-dev-runtime": "./r.js" } }`,
   "node_modules/mine/r.js": `export const jsx = (t, p) => "mine:" + t + JSON.stringify(p); export const jsxs = jsx; export const jsxDEV = jsx; export const Fragment = "f";`,
+  "node_modules/told/package.json": `{ "name": "told", "version": "1.0.0", "exports": { "./jsx-runtime": "./prod.js", "./jsx-dev-runtime": "./dev.js" } }`,
+  "node_modules/told/prod.js": `export const jsx = t => "jsx " + t; export const jsxs = jsx; export const Fragment = "f";`,
+  "node_modules/told/dev.js": `export const jsxDEV = t => "jsxDEV " + t; export const Fragment = "f";`,
 };
 
 const pathsThatEndInBrackets = {
@@ -179,6 +182,17 @@ console.log(kind(() => typeof config.flag), kind(() => typeof (config.flag)), ki
     files: { ...packages, "main.jsx": `console.log(<a b="c">d</a>);` },
     prints: 'mine:a{"b":"c","children":"d"}\n',
   },
+  // `--env` makes the build read tsconfig.json once more. What bunfig.toml says about development stays.
+  "--env beside a bunfig.toml that says react-jsxDEV and a tsconfig.json that says react-jsx": {
+    flags: ["--env=inline"],
+    files: {
+      ...packages,
+      "bunfig.toml": `jsx = "react-jsxDEV"\n`,
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "told" } }`,
+      "main.jsx": `console.log(<a />);`,
+    },
+    prints: "jsxDEV a\n",
+  },
   "--compile-exec-argv": {
     flags: ["--compile-exec-argv=--smol"],
     files: { "main.ts": `console.log(JSON.stringify(process.execArgv));` },
@@ -257,7 +271,7 @@ console.log(evaluated, tools.keep("kept"));`,
 };
 
 // These change every file of the build, or what another of them asks. The others are given to one build of one program.
-const alone = /brackets|^--(format|jsx-runtime|minify|production|drop=console)/;
+const alone = /brackets|bunfig\.toml|^--(format|jsx-runtime|minify|production|drop=console)/;
 const together = Object.entries(honored).filter(([name]) => !alone.test(name));
 for (const [name] of together) delete honored[name];
 const mains = together.map(([, { files }], index) =>

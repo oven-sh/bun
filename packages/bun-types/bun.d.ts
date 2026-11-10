@@ -3709,9 +3709,6 @@ declare module "bun" {
        * `true`. `"production"`, in that `define` or in the environment, means
        * `false`. `NODE_ENV=development` in the environment means `true` when no
        * `define` sets `process.env.NODE_ENV`.
-       *
-       * With `env: "inline"` or an `env` prefix, a `tsconfig.json` that says
-       * `"react-jsx"` or `"react-jsxdev"` also goes before this option.
        */
       development?: boolean;
     };

@@ -230,14 +230,14 @@ fn is_name_in_path(expected: &LayerName, path: &LayerPath, name: &LayerName) -> 
 }
 
 /// Calls `visit` for each `@layer` name in source order, with the layers around it and whether
-/// a rule around it is a condition.
+/// a rule around it is a condition. The name is `None` for an `@layer` block with no name.
 struct LayerNameWalk<F> {
     path: LayerPath,
     conditions: u32,
     visit: F,
 }
 
-impl<F: FnMut(&LayerPath, &LayerName, bool) -> ControlFlow<()>> LayerNameWalk<F> {
+impl<F: FnMut(&LayerPath, Option<&LayerName>, bool) -> ControlFlow<()>> LayerNameWalk<F> {
     fn rules<'r, R: 'r>(
         &mut self,
         rules: impl IntoIterator<Item = &'r CssRule<R>>,
@@ -259,16 +259,16 @@ impl<F: FnMut(&LayerPath, &LayerName, bool) -> ControlFlow<()>> LayerNameWalk<F>
         match rule {
             CssRule::LayerStatement(statement) => {
                 for name in statement.names.slice() {
-                    (self.visit)(&self.path, name, self.conditions != 0)?;
+                    (self.visit)(&self.path, Some(name), self.conditions != 0)?;
                 }
                 ControlFlow::Continue(())
             }
             CssRule::LayerBlock(block) => {
                 // No other rule can name a layer inside an anonymous one.
                 let Some(name) = &block.name else {
-                    return ControlFlow::Continue(());
+                    return (self.visit)(&self.path, None, self.conditions != 0);
                 };
-                (self.visit)(&self.path, name, self.conditions != 0)?;
+                (self.visit)(&self.path, Some(name), self.conditions != 0)?;
                 let depth = self.path.len();
                 self.path.append_slice(name.v.slice());
                 let flow = self.rules(&block.rules.v);
@@ -342,6 +342,21 @@ impl<R> CssRuleList<R> {
         expected.next().is_none()
     }
 
+    /// Whether a rule, at any depth, is an `@layer` block with no name. No statement can declare
+    /// the layer of its rules.
+    #[cold]
+    pub fn has_anonymous_layer(&self) -> bool {
+        let mut walk = LayerNameWalk {
+            path: LayerPath::default(),
+            conditions: 0,
+            visit: |_: &LayerPath, name: Option<&LayerName>, _: bool| match name {
+                Some(_) => ControlFlow::Continue(()),
+                None => ControlFlow::Break(()),
+            },
+        };
+        walk.rules(&self.v).is_break()
+    }
+
     /// Whether one `@layer` statement of `names` orders the layers as these rules do, whatever
     /// conditions hold. `names` are the names that the parser found in these rules, before
     /// the minifier ran. `layers_pre_import` are in the layer order ahead of these rules.
@@ -358,7 +373,10 @@ impl<R> CssRuleList<R> {
         let mut walk = LayerNameWalk {
             path: LayerPath::default(),
             conditions: 0,
-            visit: |path: &LayerPath, name: &LayerName, conditional: bool| {
+            visit: |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
+                let Some(name) = name else {
+                    return ControlFlow::Continue(());
+                };
                 let expected = names.get(found).filter(|_| !conditional);
                 if !expected.is_some_and(|expected| is_name_in_path(expected, path, name)) {
                     return ControlFlow::Break(());
@@ -408,7 +426,10 @@ impl<R> CssRuleList<R> {
         let mut walk = LayerNameWalk {
             path: LayerPath::default(),
             conditions: 0,
-            visit: |path: &LayerPath, name: &LayerName, conditional: bool| {
+            visit: |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
+                let Some(name) = name else {
+                    return ControlFlow::Continue(());
+                };
                 let mut node = 0;
                 for segment in path.slice().iter().chain(name.v.slice()) {
                     let Some(&child) = children.get(&(node, *segment)) else {

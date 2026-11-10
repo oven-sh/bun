@@ -1084,6 +1084,33 @@ body {
     },
   });
 
+  // The style sheets of a page have one import order. The external import of the second one must not declare its
+  // layer ahead of the layer of the first one.
+  itBundled("html/LayerOfAnEarlierStylesheetBeforeExternalImport", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" />
+    <link rel="stylesheet" href="./b.css" />
+  </head>
+  <body><div class="t"></div></body>
+</html>`,
+      "/a.css": `@import "./rules.css" layer(w) screen;`,
+      "/rules.css": `.t { color: red }`,
+      "/b.css": `@import "https://example.com/ext.css" layer(v);\n@layer v { .t { color: green } }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(stylesheetOf(api, "index.html")).toBe(
+        `@import "data:text/css," layer(w) screen;@import "https://example.com/ext.css" layer(v);` +
+          `@media screen{@layer w{.t{color:red}}}@layer v{.t{color:green}}\n`,
+      );
+    },
+  });
+
   // The import orders of the two pages differ only in the names of a layer list: "x.y, z" and "x, yz".
   itBundled("html/SeparateCSSWhenLayerNamesDiffer", {
     outdir: "out/",

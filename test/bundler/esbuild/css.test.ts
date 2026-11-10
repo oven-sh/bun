@@ -2843,7 +2843,8 @@ describe("bundler", () => {
       },
       out: `@layer x;@import "https://example.com/e.css" layer(y);`,
     },
-    // Only "z" is out of its place, and nothing else declares it.
+    // "z" and "x" come before "y", as in the source files. Only an "@import" is valid ahead of an "@import" with a
+    // condition, and after it, so each one is an import of an empty style sheet.
     ConditionalImportOfACycleAheadOfAStatement: {
       files: {
         "/entry.css": /* css */ `
@@ -2856,7 +2857,7 @@ describe("bundler", () => {
           .a { c: d }
         `,
       },
-      out: `@layer x;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
+      out: `@import "data:text/css," layer(z) screen;@import "data:text/css," layer(x);@import "https://example.com/e.css" layer(y);@media screen{@layer z;}@layer x;.a{c:d}`,
     },
     // Browsers accept an "@import" behind an unknown at-rule, and it applies once.
     ImportBehindAnUnknownAtRule: {
@@ -2895,7 +2896,7 @@ describe("bundler", () => {
         `,
         "/b.css": `.b { c: d }`,
       },
-      out: `@import "https://example.com/e.css" layer(y) print;@media screen{@supports (display:grid){@layer x{.b{c:d}}}}@unknown x;.a{c:d}`,
+      out: `@import "data:text/css," layer(x) supports(display:grid) screen;@import "https://example.com/e.css" layer(y) print;@media screen{@supports (display:grid){@layer x{.b{c:d}}}}@unknown x;.a{c:d}`,
     },
     // The "url()" has an import record of its own, ahead of the one of the "@import".
     ImportBehindAnUnknownAtRuleWithAURL: {
@@ -3528,7 +3529,8 @@ describe("bundler", () => {
       },
       out: '@layer first;@import "https://example.com/e.css";@layer second{.l{c:d}}',
     },
-    // Under import conditions a list prints as a block, so it stays behind the import.
+    // Under import conditions a list prints as a block, which is not valid ahead of the import. So an import of
+    // an empty style sheet declares "wrap.inner" there, and the block stays behind the import.
     StatementUnderConditionsBeforeExternalImport: {
       files: {
         "/entry.css": `@import "./mid.css" layer(wrap) supports(display: flex);`,
@@ -3537,7 +3539,7 @@ describe("bundler", () => {
           @import "https://example.com/e.css";
         `,
       },
-      out: '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}',
+      out: '@import "data:text/css," layer(wrap.inner) supports(display:flex);@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}',
     },
     // A list here would print as a block. Only the first copy says that "a" comes before "b" in print.
     DuplicateExternalImportUnderMedia: {
@@ -3612,6 +3614,199 @@ describe("bundler", () => {
       },
       out: '@layer x;@import "https://example.com/a.css" layer(v);@import "https://example.com/a.css";@layer w{.m{color:red}}',
     },
+    // An external import with a layer must not declare it ahead of a layer that came first. On a screen "w" comes
+    // before "v". The block cannot go ahead of the import, so an import of an empty style sheet declares "w".
+    LayerOfACycleUnderMediaBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(w) screen;
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+      },
+      out: `@import "data:text/css," layer(w) screen;@import "https://example.com/ext.css" layer(v);@media screen{@layer w;}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    LayerOfAnEmptyFileUnderMediaBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./empty.css" layer(w) screen;
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/empty.css": ``,
+      },
+      out: `@import "data:text/css," layer(w) screen;@import "https://example.com/ext.css" layer(v);@media screen{@layer w;}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    LayerOfAFileUnderMediaBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w) screen;
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/f.css": `.f { color: blue }`,
+      },
+      out: `@import "data:text/css," layer(w) screen;@import "https://example.com/ext.css" layer(v);@media screen{@layer w{.f{color:#00f}}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    LayerOfAFileUnderSupportsBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w) supports(display: grid);
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/f.css": `.f { color: blue }`,
+      },
+      out: `@import "data:text/css," layer(w) supports(display:grid);@import "https://example.com/ext.css" layer(v);@supports (display:grid){@layer w{.f{color:#00f}}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    // With no condition, and no "@import" ahead of it, the layer is a statement.
+    LayerOfAFileBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/f.css": `.f { color: blue }`,
+      },
+      out: `@layer w;@import "https://example.com/ext.css" layer(v);@layer w{.f{color:#00f}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    // A statement between two "@import" rules would make the second one invalid.
+    LayerOfAFileBetweenExternalImports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/one.css" layer(a);
+          @import "./f.css" layer(w);
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/f.css": `.f { color: blue }`,
+      },
+      out: `@import "https://example.com/one.css" layer(a);@import "data:text/css," layer(w);@import "https://example.com/ext.css" layer(v);@layer w{.f{color:#00f}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    LayerOfAFileBeforeExternalImportWithABareLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "https://example.com/ext.css" layer;
+        `,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@layer w;@import "https://example.com/ext.css" layer;@layer w{.t{color:red}}`,
+    },
+    // The external style sheet can declare layers of its own inside "w".
+    SublayerOfAFileBeforeExternalImportInItsLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w.inner);
+          @import "https://example.com/ext.css" layer(w);
+        `,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@layer w.inner;@import "https://example.com/ext.css" layer(w);@layer w.inner{.t{color:red}}`,
+    },
+    // The external import declares "w" itself, at the same place.
+    LayerOfAFileBeforeExternalImportInItsSublayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "https://example.com/ext.css" layer(w.inner);
+        `,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@import "https://example.com/ext.css" layer(w.inner);@layer w{.t{color:red}}`,
+    },
+    // The second import of "f.css" has the layer of the first one.
+    LayersOfTwoFilesBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(a) screen;
+          @import "./g.css" layer(b);
+          @import "./f.css" layer(a) screen;
+          @import "https://example.com/ext.css" layer(v);
+        `,
+        "/f.css": `.f { color: blue }`,
+        "/g.css": `.g { color: blue }`,
+      },
+      out: `@import "data:text/css," layer(a) screen;@import "data:text/css," layer(b);@import "https://example.com/ext.css" layer(v);@media screen{@layer a;}@layer b{.g{color:#00f}}@media screen{@layer a{.f{color:#00f}}}`,
+    },
+    // One "@import" cannot have two media query lists. The order stays as it was.
+    LayerOfAFileUnderTwoMediaBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./mid.css" screen;
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/mid.css": `@import "./f.css" layer(w) (min-width: 1px);`,
+        "/f.css": `.f { color: blue }`,
+      },
+      out: `@import "https://example.com/ext.css" layer(v);@media screen{@media (min-width:1px){@layer w{.f{color:#00f}}}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    // Nothing ahead of the import can declare the anonymous layer, and "w" must stay behind it.
+    LayerBehindAnAnonymousLayerBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer;
+          @import "./g.css" layer(w);
+          @import "https://example.com/ext.css" layer(v);
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/f.css": `.f { color: blue }`,
+        "/g.css": `.g { color: blue }`,
+      },
+      out: `@import "https://example.com/ext.css" layer(v);@layer{.f{color:#00f}}@layer w{.g{color:#00f}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    // An external import with no layer declares none.
+    LayerOfAFileBeforeExternalImportWithNoLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "https://example.com/ext.css";
+          @layer v { .t { color: green } }
+          @layer w { .t { color: red } }
+        `,
+        "/f.css": `.f { color: blue }`,
+      },
+      out: `@import "https://example.com/ext.css";@layer w{.f{color:#00f}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+    },
+    LayerStatementOfAFileBeforeExternalImportWithNoLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./tw.css";
+          @import "https://example.com/fonts.css";
+          @layer base { .t { color: red } }
+        `,
+        "/tw.css": /* css */ `
+          @layer theme, base, components, utilities;
+          @layer base { .u { color: blue } }
+        `,
+      },
+      out: `@import "https://example.com/fonts.css";@layer theme,base,components,utilities;@layer base{.u{color:#00f}}@layer base{.t{color:red}}`,
+    },
+    // The statement is not ahead of every layer, so it does not move ahead of "z".
+    LayerOfACycleUnderMediaBeforeAStatementAndExternalImportWithNoLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(z) screen;
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css";
+          .a { c: d }
+        `,
+      },
+      out: `@import "https://example.com/e.css";@media screen{@layer z;}@layer x;.a{c:d}`,
+    },
   };
   for (const [name, { files, out }] of Object.entries(importPrologueCases)) {
     itBundled(`css/CSSImportPrologue${name}`, {
@@ -3626,6 +3821,47 @@ describe("bundler", () => {
       },
     });
   }
+
+  // The bundle is a source file too. Its import of an empty style sheet is then a file that declares "w" ahead of
+  // the external import, so the second bundle has the layers in the same order.
+  itBundled("css/CSSImportPrologueStandInBundledAgain", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./entry.css" layer(w) screen;
+        @import "https://example.com/ext.css" layer(v);
+        @layer v { .t { color: green } }
+        @layer w { .t { color: red } }
+      `,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    async onAfterBundle(api) {
+      const again = await Bun.build({ entrypoints: [api.outfile], minify: { whitespace: true }, throw: false });
+      expect(again.logs.map(log => log.message)).toEqual([]);
+      expect(await again.outputs[0].text()).toStartWith(
+        `@import "data:text/css," layer(w) screen;@import "https://example.com/ext.css" layer(v);`,
+      );
+    },
+  });
+
+  // The style sheets that a JavaScript entry point imports have one import order, so the rule holds between them.
+  itBundled("css/CSSImportPrologueLayerOfAnEarlierStyleSheetOfAJSEntryPoint", {
+    files: {
+      "/entry.js": `import "./a.css";\nimport "./b.css";`,
+      "/a.css": `@import "./rules.css" layer(w);`,
+      "/rules.css": `.t { color: red }`,
+      "/b.css": `@import "https://example.com/ext.css" layer(v);\n@layer v { .t { color: green } }`,
+    },
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe(
+          `@layer w;@import "https://example.com/ext.css" layer(v);@layer w{.t{color:red}}@layer v{.t{color:green}}\n`,
+        );
+    },
+  });
 
   // A media or container condition the parser does not know is kept as written.
   itBundled("css/GeneralEnclosedCondition", {

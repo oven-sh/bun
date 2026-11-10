@@ -1,5 +1,5 @@
 // A slot of an untyped constructor function is held to what is seen stored in it. Object.defineProperty changes the value alone.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
+// STATISTIC: FieldTypesEnforced >= 2
 function Knot(n, s) { this.n = n; this.s = s; this.self = null; this.b = false; this.d = 0.5; this.length = 3; this.stack = 0; }
 function sum(k) { var t = 0; for (var i = 0; i < 3; i++) { t += k.n; t += k.s.length; t += k.d; if (k.b) t += 1; if (k.self !== null) t += k.self.n; t += k.length; } return t; }
 function bits(k) { return (k.n | 0) + (k.n & 7) + (k.length << 1); }

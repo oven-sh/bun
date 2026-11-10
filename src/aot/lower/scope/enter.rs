@@ -165,16 +165,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match placement.storage {
                 Storage::Variable(key) => {
                     let variable = self.file.ensure_variable(key);
-                    let runs_again = self.file.inputs.modules.runs_again(self.file.file);
+                    let may_be_reevaluated =
+                        self.file.inputs.modules.may_be_reevaluated(self.file.file);
                     let is_stored_at_entry = match binding {
                         BindingRef::Symbol(_) => {
-                            runs_again || entry.find_initial(binding).is_some()
+                            may_be_reevaluated || entry.find_initial(binding).is_some()
                         }
                         BindingRef::Slot(..) => true,
                     };
                     let value = match (value, binding) {
                         (None, BindingRef::Symbol(_))
-                            if runs_again && dead_zone::has_dead_zone(self.file, binding) =>
+                            if may_be_reevaluated
+                                && dead_zone::has_dead_zone(self.file, binding) =>
                         {
                             Some(self.get_entry_absent(&mut entry))
                         }
@@ -343,8 +345,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         let key = VariableKey::EnvironmentMadeAhead(self.file.file);
-        let made = self.file.ensure_variable(key);
-        let made = self.builder.get_module_variable(made);
+        let variable = self.file.ensure_variable(key);
+        let made = self.builder.get_module_variable(variable);
         let layout = environments::environment_layout(self.file, scope);
         let ty = self.file.fragment.types.intern(Type::environment(layout));
         let variable = self.builder.create_variable(Some(ty));
@@ -358,10 +360,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         debug_assert!(self.file.scopes.has_environment(scope));
+        let made = self.builder.read_variable(environment);
         let key = VariableKey::EnvironmentMadeAhead(self.file.file);
-        let made = self.file.ensure_variable(key);
-        let environment = self.builder.read_variable(environment);
-        self.builder.put_module_variable(made, environment);
+        let variable = self.file.ensure_variable(key);
+        self.builder.put_module_variable(variable, made);
     }
 
     fn allocate_environment(

@@ -8,6 +8,6 @@
 # The innermost loop reads two lists at places that nobody has held against their lengths. The first eight turns are entered where both hold doubles and ask no kind; the second eight read both kinds
 # once in front and branch on them: whole numbers beside fractions stay in turns laid out.
 # REQUIRES: as-written
-# RUN: compile LoopsLaidOutForOneKindOfStorage KindsOfListsReadInFrontOfTurnsLaidOut mechanisms=all
-# CHECK: statistic LoopsLaidOutForOneKindOfStorage 2
-# CHECK: statistic KindsOfListsReadInFrontOfTurnsLaidOut 4
+# RUN: compile UnrolledLoopsForIndexingType UnrolledLoopStorageChecksHoisted mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 2
+# CHECK: statistic UnrolledLoopStorageChecksHoisted 4

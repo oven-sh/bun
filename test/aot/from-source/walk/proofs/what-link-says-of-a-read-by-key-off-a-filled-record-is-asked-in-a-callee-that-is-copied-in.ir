@@ -1,10 +1,10 @@
-# The read by key off a filled record stands in a callee that is copied into the loop of its caller. Under CheckProofsAtRunTime with ReadsByKeyOffFilledRecordsAreListed what Link says of it is asked in the copy too.
+# The read by key off a filled record stands in a callee that is copied into the loop of its caller. Under CheckProofsAtRunTime with CheckDictionaryReadProofs what Link says of it is asked in the copy too.
 # f2 = at, f3 = sumOf
 # RUN(PLAIN): walk f3 mechanisms=all
 # PLAIN-LABEL: code f3:Body
 # PLAIN: ElemGet
 # PLAIN-NOT: source=Contents
-# RUN(LISTED): walk f3 mechanisms=all testing=CheckProofsAtRunTime,ReadsByKeyOffFilledRecordsAreListed
+# RUN(LISTED): walk f3 mechanisms=all testing=CheckProofsAtRunTime,CheckDictionaryReadProofs
 # LISTED-LABEL: code f3:Body
 # LISTED: ElemGet
 # LISTED: CheckProof {{*}}source=Contents

@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. One element lies below a revoked Proxy: asking for its prototype throws. The walk of the chain gives way there, and the operation as it is written throws what the caller catches.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

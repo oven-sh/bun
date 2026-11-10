@@ -31,8 +31,8 @@
 # ONCE: = IsMemberAsBuilt builtin=Math {{*}}@
 # ONCE: isInLoop=true isLoopHead=true
 # ONCE-NOT: = IsMemberAsBuilt builtin=Math {{*}}@
-# RUN(COUNT): compile MembersOfBuiltinsAskedByTheirBytes
-# COUNT: MembersOfBuiltinsAskedByTheirBytes
+# RUN(COUNT): compile BuiltinMembersCheckedForReplacement
+# COUNT: BuiltinMembersCheckedForReplacement
 
 module m0 path="where-no-lock-is-laid-the-bytes-of-a-static-and-of-its-holder-are-asked-all-the-same.ts" displayPath="where-no-lock-is-laid-the-bytes-of-a-static-and-of-its-holder-are-asked-all-the-same.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

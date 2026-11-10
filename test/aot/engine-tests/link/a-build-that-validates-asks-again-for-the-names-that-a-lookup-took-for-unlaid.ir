@@ -1,8 +1,8 @@
-# Under the checking word Validate Link asks at its end, with the final facts, for everything that a lookup up the holders stood on: a name taken for unlaid, a holder taken for in sight, a member taken for a constant. Each still holds, or the node that the asker watches has been told; else the build stops by name (FlowStandsOnWhatNoLongerHolds).
+# Under the checking word Validate Link asks at its end, with the final facts, for everything that a lookup up the holders stood on: a name taken for unlaid, a holder taken for in sight, a member taken for a constant. Each still holds, or the node that the asker watches has been told; else the build stops by name (StaleFlowAssumption).
 # Here the name is taken for unlaid first and the store is found later: the call is told and asks again, so nothing stops.
 # OPTIONS: check=Validate
 # LIBRARY: own
 # PROGRAM-OF: name-added-to-a-holder-on-the-way-up-through-a-value-nobody-follows-is-not-taken-for-the-tables.ir
 # RUN: link functions mechanisms=all
-# CHECK-NOT: FlowStandsOnWhatNoLongerHolds
+# CHECK-NOT: StaleFlowAssumption
 # CHECK-NOT: function f2 unreached

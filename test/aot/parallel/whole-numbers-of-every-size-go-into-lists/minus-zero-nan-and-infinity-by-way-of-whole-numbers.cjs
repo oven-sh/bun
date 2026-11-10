@@ -1,4 +1,4 @@
-// STATISTIC: WholeNumbersStoredOutOfLineAsTheyAre >= 1
+// STATISTIC: IntegralStoresWithoutDoubleConversion >= 1
 "use strict";
 const table = []; const cache = [];
 function fresh(n) { table.length = 0; cache.length = 0; for (let k = 0; k < n; k++) { table[k] = k + 1; cache[k] = 97 + k; } }

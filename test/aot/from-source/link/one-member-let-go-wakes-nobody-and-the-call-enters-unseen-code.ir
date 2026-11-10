@@ -15,16 +15,16 @@
 # print(said());
 # -- end of source
 # One object of the family is kept where nobody sees it: whoever holds it reaches the base's prototype, so every member finds the unknown beside its fields. That does the same to the call whichever member finds it: the call enters unseen code, once, and they all go on sleeping. The check of closure wakes them and nothing grows. RED CONTROL: with porters that hear nothing it does.
-# RUN(COUNT): compile SharedCallsWhoseSilentMembersSleep SharedCallsWhoseSleepersWereWoken SleepersWokenInSharedCalls mechanisms=all
-# COUNT: statistic SharedCallsWhoseSilentMembersSleep 1
-# COUNT: statistic SharedCallsWhoseSleepersWereWoken 0
-# COUNT: statistic SleepersWokenInSharedCalls 0
+# RUN(COUNT): compile SharedCallsWithDormantMembers SharedCallsWithActivatedMembers DormantMembersActivated mechanisms=all
+# COUNT: statistic SharedCallsWithDormantMembers 1
+# COUNT: statistic SharedCallsWithActivatedMembers 0
+# COUNT: statistic DormantMembersActivated 0
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # ANSWERS: none,none,none,none,none,none,
 # ANSWERS: none,none,none,none,none,none,
 # RUN(CLOSED): closure mechanisms=all
 # CLOSED-NOT: climbs
-# RUN(DEAF): closure testing=NobodyWakesSleepersOfSharedCalls mechanisms=all
+# RUN(DEAF): closure testing=IgnoreDormantMemberUpdates mechanisms=all
 # DEAF: newest first: {{*}} climbs from nothing to primitives=0xc3ff unseen
 # DEAF: oldest first: {{*}} climbs from nothing to primitives=0xc3ff unseen
 # DEAF: scattered: {{*}} climbs from nothing to primitives=0xc3ff unseen
@@ -157,7 +157,7 @@ function f1 name="call" module=m0 position=431 flags=[HasExplicitName] length=1 
 }
 function f2 name="who" module=m0 position=364 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
-    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="who" @364
+    v2 = NewRuntimeError runtimeError=OmittedFromExecutable name="who" @364
     Throw v2 @364
 }
 function f3 name="said" module=m0 position=488 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

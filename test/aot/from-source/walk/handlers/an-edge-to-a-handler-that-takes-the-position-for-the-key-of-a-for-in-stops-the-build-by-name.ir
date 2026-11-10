@@ -2,11 +2,12 @@
 # function run(list: number[], table: any): string[] { var key: any; const seen: string[] = []; try { try { for (key in list) table[key](); } finally { seen.push(typeof key); } } catch {} return seen; }
 # console.log(run(JSON.parse("[7,8,9]"), { 0() {}, 1() { throw new Error("no"); }, 2() {} }).join());
 # -- end of source
-# The red control of the judge and of the test beside this one that holds the mend.
-# An access under the key of a for-in over a list is walked while the key is bound to its position, an int32. What a handler reads is the key, a text: plain Bun prints string.
-# An argument of a handler is never a value of its own block, so every edge that one block leads to its handler hands on the value that the head of the block named, under another name at most.
-# THE LIE, the command walk-where-handler-edges-take-stand-ins, which no build can say: the edge takes whatever the value is bound to when it is led, as it once did: that build prints number, exit 0, and no other net saw it.
-# Where Code is verified the walk holds each argument of the edge against the name at the head and stops the build by name.
-# DIAGNOSTIC: HandlerEdgeHandsOnStandIn
+# This is the failing control of the check and of the test next to this one that covers the fix.
+# An access at the key of a for-in over an array is visited while the key is bound to its index, an int32. A handler reads the key itself, a string. Plain Bun prints string.
+# An argument of a handler is never a value of its own block. So every edge from one block to its handler passes the value that was named at the head of the block, at most under another name.
+# Fault injection, the command walk-where-handler-edges-take-stand-ins, which no build can request: the edge takes whatever the value is bound to when the edge is built, as it once did.
+# That build prints number and exits with 0, and no other check caught it.
+# Where Code is verified, the walk checks each argument of the edge against the name at the head of the block and fails the build with a named internal error.
+# DIAGNOSTIC: HandlerEdgePassesPlaceholder
 # RUN: walk-where-handler-edges-take-stand-ins f1 mechanisms=all
 # CHECK: the walk of f1:Body failed

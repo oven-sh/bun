@@ -6,7 +6,7 @@
 # box[String(['k0'])] = [reach, (at) => at > 4, 8];
 # print(box.k0[0](box.k0[1], box.k0[2]));
 # -- end of source
-# STATISTIC: WalksOfLoopsUndone <= 0
+# STATISTIC: LoopVisitsUndone <= 0
 # RUN: walk f1 mechanisms=all
 # CHECK: code f1:Body
 # RUN(ANSWERS): run-in-shell mechanisms=all

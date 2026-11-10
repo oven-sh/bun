@@ -1,4 +1,4 @@
-// STATISTIC: RowsThatAreNoListsAskedForViews >= 1
+// STATISTIC: TypedArrayRowStoreRegionsGuarded >= 1
 "use strict";
 // The rows are views: the store into a row ends nothing that is known of the list of rows.
 const data = JSON.parse("[" + Array.from({ length: 6 }, (_, i) => "[" + Array.from({ length: 6 }, (_, j) => (i * 6 + j) / 4).join() + "]").join() + "]");

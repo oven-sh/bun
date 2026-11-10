@@ -1,5 +1,5 @@
 // x = left; y = right; left = 5; z = right; w = left: the look at right stands inside the stretch of left.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms >= 0
+// STATISTIC: StaticFieldGuardsReused >= 0
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

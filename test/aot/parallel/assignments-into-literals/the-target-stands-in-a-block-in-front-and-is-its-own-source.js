@@ -1,6 +1,6 @@
 // STATISTIC: OwnKeyWalksExpanded >= 1
 // The target keeps its name: only what the assignment gives back is read behind it.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 function place(n) {
   const t = { a: n, b: n + 1 };
   if (n < 0) return "none";

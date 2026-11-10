@@ -1,5 +1,5 @@
 // The typed twin: the text is proven to be a string, so no test stands in front of the scan.
-// STATISTIC: URLsLeftUnbuilt >= 1
+// STATISTIC: URLAllocationsElided >= 1
 const data: { from: number, texts: string[] } = JSON.parse('{"from":0,"texts":["https://a.example/z?d=e","https://a.example/c?d=f%20g"]}');
 function read(first: string, second: string, from: number, turns: number, call: () => void) {
   for (let i: number = from; i < turns; i = i + 1) { const kept = first; first = second; second = kept; }

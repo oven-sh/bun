@@ -1,5 +1,5 @@
 // A class below Error stores this.name, which is a member of Error.prototype too: a name that the class lists as a field does not refuse the structure.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 // COUNT: operation:operationAOTFillSiteCache = 0
 "use strict";
 const turns = +(process.argv[2] ?? 300);

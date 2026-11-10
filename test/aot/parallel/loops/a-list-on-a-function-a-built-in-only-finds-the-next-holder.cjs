@@ -1,4 +1,4 @@
-// STATISTIC: ReadsThatAskTheirSitesBuiltInFrontOfLoops >= 0
+// STATISTIC: SiteCachedReadsHoisted >= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 process.env = { ...process.env, KEPT: 'k' + q };

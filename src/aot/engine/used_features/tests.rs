@@ -369,7 +369,7 @@ fn name_read_off_unknown_value_names_its_feature_and_not_bun_build() {
     let used = features_of(&[building]);
     assert!(used.names(Feature::Bundler));
     assert!(!used.names_bun_build);
-    for feature in features_kept_only_when_named().iter() {
+    for feature in features_retained_by_name().iter() {
         assert!(
             features_of(&[found_by_name(feature)]).names(feature),
             "{feature:?}"

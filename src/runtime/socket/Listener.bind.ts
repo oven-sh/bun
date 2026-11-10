@@ -39,7 +39,7 @@ export const addServerName = b.fn({
   throws: true,
   rustPath: "crate::socket::Listener::add_server_name",
   uses: {
-    listener: table.handedOver,
+    listener: table.retainedByNativeCode,
     tls: [
       table.retained,
       table.reachableValuesStoredIn(table.nativeMemory),

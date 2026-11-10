@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtListsWhoseFailingSideAsksForViews >= 9
+// STATISTIC: ArraySpeculationsWithTypedArrayFallback >= 9
 "use strict";
 // The use writes a list of lists; the rows are Float64Array.
 function fill(grid, side, weight) {

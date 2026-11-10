@@ -17,6 +17,6 @@
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 190,1190,1190,1190,1190,1190,1190,1190,1190,207,228,235,273,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,NaN,NaN,NaN,NaN,NaN,NaN,TypeError,TypeError,TypeError,TypeError,0x123456789101112,21x89101112,28x9101112,79.5,72.5,71.5,NaN,NaN,NaN
 # RIGHT-NEXT: exited with 0
-# RUN(LANE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# RUN(LANE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
 # LANE: 190,1190,1190,1190,1190,1190,1190,1190,1190,207,228,235,273,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,NaN,NaN,NaN,NaN,NaN,NaN,TypeError,TypeError,TypeError,TypeError,0x123456789101112,21x89101112,28x9101112,79.5,72.5,71.5,NaN,NaN,NaN
 # LANE-NEXT: exited with 0

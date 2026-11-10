@@ -14,8 +14,8 @@
 # Both functions have a guard, and a slow body for what it turns away; neither slow body holds a Builtin operation. That of plain() is written straight, and so is the body of other.ts, which runs once and only stores.
 # That of tell() reads a namespace object, which the walked form takes out of a word of the instance: what lies there is what the importer was bound to. Straight code has only the question to the run time,
 # which answers the namespace of now. So the read has no straight form, and the body is walked.
-# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
 # REQUIRES(STRAIGHT): faulting-loop-polls as-written
-# STRAIGHT: statistic UnitsWrittenStraight 2
+# STRAIGHT: statistic StraightUnitsCompiled 2
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 8 8 6 6

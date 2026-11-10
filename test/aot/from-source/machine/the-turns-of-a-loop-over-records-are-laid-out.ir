@@ -1,8 +1,8 @@
 # A counted loop that reads a field off each record of a list: `s += rows[i].price`. Its turn tests a shape and reads a slot; both only read, and nothing that may stand in a turn laid out writes a field or a shape
 # word. They were not among the operations of turns laid out, so every such loop polled, counted and asked its bound in each turn: 12 instructions a turn; laid out in a row, eight turns share them.
 # f1 = guessed: the list is a parameter of a function that is handed out: ShapeTest.
-# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
-# EVENT: statistic LoopsWhoseTurnsAreLaidOut 1
+# RUN(EVENT): compile UnrolledLoopsEmitted mechanisms=all
+# EVENT: statistic UnrolledLoopsEmitted 1
 # -- source: main.cjs
 # const rows = []; for (const i of JSON.parse("[1,2,3,4,5,6,7,8,9,10,11]")) rows.push({ id: i, price: i * 2 });
 # function guessed(list) { let s = 0; for (let i = 0; i < list.length; i++) s += list[i].price; return s; }

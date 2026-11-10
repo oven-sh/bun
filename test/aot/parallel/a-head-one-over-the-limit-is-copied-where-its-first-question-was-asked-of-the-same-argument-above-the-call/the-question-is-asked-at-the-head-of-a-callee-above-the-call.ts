@@ -1,5 +1,5 @@
 // The usual way: the bits are asked at the head of a helper called above; the call stands in a copy below.
-// STATISTIC: HeadsCopiedWhoseQuestionWasAskedAbove >= 1
+// STATISTIC: PartialInlinesAfterDominatingTests >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

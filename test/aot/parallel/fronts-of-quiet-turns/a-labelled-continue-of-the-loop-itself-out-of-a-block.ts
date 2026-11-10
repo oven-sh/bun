@@ -1,5 +1,5 @@
-// STATISTIC: FrontsOfQuietTurnsThatHoldReads >= 1
-// STATISTIC: LoudTurnsLedThroughFronts >= 1
+// STATISTIC: LoopReloadBlocksEmitted >= 1
+// STATISTIC: ReloadingBackEdgesEmitted >= 1
 class Box { constructor(public list: number[], public scale: number, public limit: number) {} }
 const unseen = (x: any) => { (globalThis as any).kept = x; return (globalThis as any).kept; };
 function sum(box: Box, keys: number[], grow: (at: number) => void): number {

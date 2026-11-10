@@ -5,6 +5,6 @@
 # const make = (n: number, d: number): number[] => { const l: number[] = []; for (let i = 0; i < n; i++) l.push(i + d); return l; };
 # say(dot(make(40, 0), make(1024, 0.25))); say(dot(make(40, 0.5), make(1024, 0))); say(dot(make(40, 0), make(1024, 0)));
 # -- end of source
-# RUN(COUNT): compile KindsOfListsReadInFrontOfTurnsLaidOut mechanisms=all
+# RUN(COUNT): compile UnrolledLoopStorageChecksHoisted mechanisms=all
 # REQUIRES(COUNT): as-written
-# COUNT-NOT: statistic KindsOfListsReadInFrontOfTurnsLaidOut 0
+# COUNT-NOT: statistic UnrolledLoopStorageChecksHoisted 0

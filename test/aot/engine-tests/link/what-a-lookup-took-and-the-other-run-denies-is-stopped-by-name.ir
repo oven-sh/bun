@@ -1,9 +1,9 @@
-# THE RED CONTROL of what check=FlowFindsNoLessFromMore asks beside the tables. Bits 31 and 30 of the seed: every result of a call or a read is given anything in the run that stands for the program as it is.
+# THE RED CONTROL of what check=FlowMonotonicity asks beside the tables. Bits 31 and 30 of the seed: every result of a call or a read is given anything in the run that stands for the program as it is.
 # There nobody knows the listener that make() answers, it is called on `process`, and `process` goes out of sight. The run of the build passed `process` as in sight on the way up to `on`, and nobody told it otherwise.
 # Two stops: that one ("Process was passed as in sight and is out of sight") and the one of the tables (f2 is not reached).
 # LIBRARY: own
-# OPTIONS: testing=GiveLinkMore:3221225472 check=FlowFindsNoLessFromMore
-# STATISTIC: AnswersOfLookupsAskedAgain >= 1
-# DIAGNOSTIC: FlowFindsLessFromMore 2
+# OPTIONS: testing=WidenFlowNodes:3221225472 check=FlowMonotonicity
+# STATISTIC: BuiltinLookupAssumptionsRechecked >= 1
+# DIAGNOSTIC: FlowNotMonotonic 2
 # PROGRAM-OF: what-a-lookup-took-from-more-holds-in-the-program-as-it-is.ir
 # RUN: link functions mechanisms=all

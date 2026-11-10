@@ -1,4 +1,4 @@
-// STATISTIC: TurnsOfForOfWrittenOutByNotedLength >= 1
+// STATISTIC: RecordedLengthLoopsFullyUnrolled >= 1
 function none(n: number): string { let c = 0; for (let i = 0; i < n; i++) for (const x of []) c++; return "" + c; }
 function one(n: number): string { let c = 0, s = 0; for (let i = 0; i < n; i++) for (const x of [7]) { c++; s += x; } return c + " " + s; }
 function two(n: number): string { let c = 0, s = 0; for (let i = 0; i < n; i++) for (const x of [1, 2]) { c++; s += x; } return c + " " + s; }

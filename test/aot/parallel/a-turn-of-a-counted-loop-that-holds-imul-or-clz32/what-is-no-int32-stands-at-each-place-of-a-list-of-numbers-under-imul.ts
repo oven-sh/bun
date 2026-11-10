@@ -1,4 +1,4 @@
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 1
+// STATISTIC: UnrolledLoopsEmitted >= 1
 // The list is declared a list of numbers and its turns are laid out. One value that is no int32 stands at each of the first ten places in turn:
 // the turn that meets it leaves the turns laid out and runs again as written: nothing is summed twice, no conversion runs twice.
 function mix(list: number[]): number {

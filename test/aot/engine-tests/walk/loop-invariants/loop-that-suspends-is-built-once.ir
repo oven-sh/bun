@@ -11,7 +11,7 @@
 # RUN(ONCE): walk f1:CoroutineBody mechanisms=all
 # ONCE-NOT: frequency=Rare isLoopHead=true
 
-module m0 path="loop-that-suspends-is-built-once.ts" displayPath="loop-that-suspends-is-built-once.ts" flags=[HasTopLevelAwait, KeepsError] body=f0 namespaceLayout=L(m0)
+module m0 path="loop-that-suspends-is-built-once.ts" displayPath="loop-that-suspends-is-built-once.ts" flags=[HasTopLevelAwait, CachesEvaluationError] body=f0 namespaceLayout=L(m0)
 entry module=m0
 layout L0 kind=Instance name="Box" module=m0 position=6 constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
@@ -45,7 +45,7 @@ function f0 module=m0 kind=Module flags=[IsAsync, IsChecked] thisType={type=anyt
     v23 = Undefined @222
     Return v23 @222
 }
-function f1 name="sum" module=m0 position=64 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+function f1 name="sum" module=m0 position=64 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
   b0(v0: anything, v1: undefined|null|L0, v2: number):
     Jump -> next b1() @64
   b1():

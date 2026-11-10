@@ -1,4 +1,4 @@
-// STATISTIC: RowsAskedForViewsInTurnsOfTypedCopies = 0
+// STATISTIC: TypedArrayRowsGuardedInIterations = 0
 "use strict";
 const said = [];
 const hidden = (value) => ({ value })[JSON.parse('"value"')];

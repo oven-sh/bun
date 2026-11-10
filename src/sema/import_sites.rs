@@ -52,6 +52,7 @@ pub use parameters::{
     find_values_passed_for, is_exported,
 };
 pub(crate) use scan::collect_import_sites;
+pub use statements::find_statement_sites;
 pub(crate) use statements::is_runtime_import;
 pub(crate) use touched_exports::{
     is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
@@ -137,7 +138,7 @@ pub struct ExportedFileChanger {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct FileReadBesideCaller {
+pub struct CallerRelativeRead {
     pub function: SymbolId,
     pub place: u32,
     pub property: Option<Atom>,
@@ -145,7 +146,7 @@ pub struct FileReadBesideCaller {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct OwnUrlHanded {
+pub struct OwnUrlArgument {
     pub argument: ExprId,
     pub function: SymbolId,
     pub place: u32,
@@ -210,14 +211,15 @@ pub(crate) struct ImportScan<'s> {
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
-    pub paths_of_files_read: &'s [(ExprId, Atom)],
-    pub files_read_beside_callers: &'s [FileReadBesideCaller],
-    pub own_urls_handed: &'s [OwnUrlHanded],
+    pub module_relative_reads: &'s [(ExprId, Atom)],
+    pub caller_relative_reads: &'s [CallerRelativeRead],
+    pub known_load_names: &'s [(ExprId, Atom)],
+    pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
-    pub asked_of_other_files: &'s [(Atom, Atom)],
-    pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub asked_of_own_exports: &'s [Atom],
-    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
+    pub other_file_queries: &'s [(Atom, Atom)],
+    pub data_file_queries: &'s [(Atom, Atom)],
+    pub own_export_queries: &'s [Atom],
+    pub names_from_data_files: &'s [(Atom, ExprId, bool)],
     pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
     pub options_of_resolves_with_unread_folders: &'s [ExprId],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],

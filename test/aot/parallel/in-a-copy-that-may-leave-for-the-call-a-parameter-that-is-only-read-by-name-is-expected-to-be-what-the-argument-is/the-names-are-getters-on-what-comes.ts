@@ -1,5 +1,5 @@
 // What comes answers the two names by getters that count their calls: the callee itself is called, once, and each getter runs as often as in plain.
-// STATISTIC: ParametersOfCopiesExpectedToBeWhatArgumentsAre >= 1
+// STATISTIC: ArgumentSpeculationsPassedToInlinees >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

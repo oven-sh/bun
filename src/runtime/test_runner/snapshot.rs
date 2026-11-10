@@ -76,7 +76,7 @@ struct Entry {
     checked: bool,
     /// Its test was skipped or failed, so `remove_obsolete` keeps it even if unchecked.
     stays: bool,
-    /// `value` is of this run, not of the file.
+    /// This run wrote it, so it is not an older Bun's.
     written: bool,
 }
 
@@ -284,12 +284,17 @@ impl Snapshots {
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = Self::name_of(expect, format, hint)?;
-        // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
-        // owned `snapshot_name` (same bytes as the interned key) instead.
-        let gop = self
-            .counts
-            .get_or_put(&snapshot_name)
-            .map_err(Error::from)?;
+        // An older Bun counted the snapshots of its own name for the test. Where its entries may be, count as it did.
+        if format != Format::Bun && !self.update_snapshots && self.may_hold_entries_of_bun() {
+            let name_of_bun = Self::counted_by_bun(Self::name_of(expect, Format::Bun, hint)?);
+            self.count(expect, &name_of_bun)?;
+        }
+        let count = self.count(expect, &snapshot_name)?;
+        Ok((snapshot_name, count))
+    }
+
+    fn count(&mut self, expect: &Expect, name: &[u8]) -> Result<usize, Error> {
+        let gop = self.counts.get_or_put(name).map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
         } else {
@@ -301,9 +306,15 @@ impl Snapshots {
             && let Some(sequence) = parent.phase.sequence(buntest.get())
             && (sequence.remaining_retry_count > 0 || sequence.remaining_repeat_count > 0)
         {
-            sequence.counted_snapshots.push(snapshot_name.as_slice().into());
+            sequence.counted_snapshots.push(name.into());
         }
-        Ok((snapshot_name, count))
+        Ok(count)
+    }
+
+    /// The key of `counts` for a name in an older Bun's spelling. Names are UTF-8, so none starts with this byte.
+    fn counted_by_bun(mut name: Vec<u8>) -> Vec<u8> {
+        name.insert(0, 0xFF);
+        name
     }
 
     #[optimize(size)]
@@ -412,9 +423,9 @@ impl Snapshots {
             self.open_to_append(files)?;
         }
 
-        let (mut key, count) = self.add_count(expect, format, hint)?;
+        let (mut key, counter) = self.add_count(expect, format, hint)?;
         let mut counter_string_buf = [0u8; 32];
-        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, count);
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
         key.extend_from_slice(counter);
 
@@ -424,17 +435,18 @@ impl Snapshots {
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
         } else if format != Format::Bun
+            && !self.update_snapshots
             && let Some(file) = self._current_file.as_mut().filter(|file| file.may_hold_entries_of_bun)
         {
+            // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
-            // A test that asked for this key under the file's own name has the entry: the two spellings clash.
-            let is_of_another_test = self.counts.get(key_of_bun.as_slice()).is_some_and(|asked| *asked >= count);
+            let count_of_bun = self.counts.get(Self::counted_by_bun(key_of_bun.clone()).as_slice()).copied().unwrap_or(0);
+            let mut count_buf = [0u8; 32];
             key_of_bun.push(b' ');
-            key_of_bun.extend_from_slice(counter);
-            // An entry that this run wrote is not an older Bun's. `--update-snapshots` would rename the other test's entry.
-            if self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) && !(is_of_another_test && self.update_snapshots) {
+            key_of_bun.extend_from_slice(bun_core::fmt::int_as_bytes(&mut count_buf, count_of_bun));
+            if self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) {
                 key_in_file = Some(key_of_bun);
-                file.left_an_entry_alone |= !is_of_another_test && !self.update_snapshots;
+                file.left_an_entry_alone = true;
             }
         }
 
@@ -442,22 +454,17 @@ impl Snapshots {
             && let Some(entry) = self.values.get_mut(&key_in_file)
         {
             entry.checked = true;
-            let is_to_be_renamed = self.update_snapshots && key_in_file != key;
-            if format.matches(&entry.value, received) && !is_to_be_renamed {
+            if format.matches(&entry.value, received) {
                 self.passed += 1;
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
-                if key_in_file == key
-                    && let Some(file) = self._current_file.as_mut()
-                {
+                if let Some(file) = self._current_file.as_mut() {
                     file.left_an_entry_alone = true;
                 }
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
             }
-            if is_to_be_renamed {
-                self.values.swap_remove(&key_in_file);
-            } else if format == Format::Bun {
+            if format == Format::Bun {
                 written_by_earlier_attempt = Some(entry.value.clone());
             }
         } else if bun_core::ci_info::is_ci() && !self.update_snapshots {

@@ -8,6 +8,7 @@
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, if it imports an importer of the mock: mock.module() in a module that it imports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > mocks, mocks, plain
@@ -37,6 +38,10 @@ test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a pre
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with vi.mock(), modules the preload loaded and mocked are left as they are
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with vi.mock(), modules the preload loaded and not mocked are left as they are
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > under --isolate > with vi.mock(), modules the preload loaded and not mocked are left as they are
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, if it imports an importer of the mock: jest.doMock() in a test
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, if it imports an importer of the mock: mock.module() below its imports
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, if it imports an importer of the mock: mock.module() in a test
+test/js/bun/test/mock/mock-module.test.ts: a test file that has not mocked modules > isn't evaluated again after a later file mocks a module that it imports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > a module that was mocked after it had imported a mock: jest.doMock
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > a module that was mocked after it had imported a mock: mock.module
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > a module that was mocked after it had imported a mock: vi.doMock
@@ -85,7 +90,10 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is 
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > isn't evaluated ahead of an import that is being evaluated, or if it is the module of an earlier mock
 # The next one: a JSON file that is imported with and without `{ type: "json" }` is mocked again after vi.doUnmock(). Its importer sees the new mock in plain, the file compiled.
 test/js/bun/test/mock/mock-module.test.ts: a module imported with and without a `type` attribute is mocked, re-mocked and unmocked for both imports
-# The next one cannot pass: it counts heapStats().objectTypeCounts.ModuleRecord, and a compiled module has no ModuleRecord.
+# The next one's test files call Bun.plugin(). With a sanitizer it failed in 2 of 9 runs. Under the list of runner-suites.known.txt the build of its compiled run ends in a null read in some runs.
+~ test/js/bun/test/mock/mock-module.test.ts: a test file that has not mocked modules > isn't evaluated again after Bun.plugin() replaces a virtual module that it imports
+# The next two cannot pass: they count heapStats().objectTypeCounts.ModuleRecord, and a compiled module has no ModuleRecord.
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't keep the modules that it imported, if it imports an importer of the mock
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 # The next one cannot pass: vi.importMock(path) gets the name of a package from the list of test.each(), nothing else names that package, and --aot only runs code that was compiled.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing

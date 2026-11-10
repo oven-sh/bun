@@ -108,8 +108,12 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't keep the modules that it imported, if it imports an importer of the mock
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, if it imports an importer of the mock: mock.module() in a module that it imports
+# The next one's test files call Bun.plugin(). With a sanitizer the build of its compiled run ended in a null read in 2 of 5 runs, as 3 of 4 builds of its first file alone do.
+~ test/js/bun/test/mock/mock-module.test.ts: a test file that has not mocked modules > isn't evaluated again after Bun.plugin() replaces a virtual module that it imports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > mocks, mocks, plain

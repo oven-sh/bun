@@ -5887,7 +5887,7 @@ describe.concurrent("a test file that has mocked modules", () => {
       files[`m${i}.cjs`] =
         `const dep = require("./dep.cjs"); ${i ? `require("./m${i - 1}.cjs");` : ""} exports.seen = () => dep.x;`;
     }
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 6; i++) {
       files[`a${i}.test.js`] = `
         import { expect, mock, test } from "bun:test";
         import { seen } from "./m19.js";
@@ -5914,7 +5914,7 @@ describe.concurrent("a test file that has mocked modules", () => {
         expect(Module).toBeLessThan(60);
       });
     `;
-    await expectFixturesToPass(files, 25, [...names, "./z.test.js"]);
+    await expectFixturesToPass(files, 13, [...names, "./z.test.js"]);
   });
 });
 

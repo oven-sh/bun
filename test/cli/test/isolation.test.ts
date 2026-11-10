@@ -1582,6 +1582,25 @@ describe.concurrent("bun test --isolate=modules", () => {
     },
   );
 
+  test("the restore puts back what it can when one variable of process.env can't be put back", async () => {
+    using dir = tempDir("isolate-modules-restore-goes-on", {
+      // Where process.env refuses to be closed, every variable is put back, and b finds the same.
+      "a.test.js": `test("a", () => {
+        process.env.ISOLATION_A = process.env.ISOLATION_Z = "changed";
+        process.on("exit", () => {});
+        delete process.env.ISOLATION_M;
+        try { Object.preventExtensions(process.env); } catch {}
+      });`,
+      "b.test.js": `test("b", () => {
+        expect([process.env.ISOLATION_A, process.env.ISOLATION_Z, process.listenerCount("exit")]).toEqual(["start", "start", 0]);
+      });`,
+    });
+    // One of the two changed variables comes after the deleted one, in whichever order the variables are restored.
+    const env = { ...bunEnv, ISOLATION_A: "start", ISOLATION_M: "start", ISOLATION_Z: "start" };
+    const { stderr } = await runTests(String(dir), ["--isolate=modules"], ["./a.test.js", "./b.test.js"], env);
+    expect(stderr.match(/^\((?:pass|fail)\) [ab]/gm), stderr).toEqual(["(pass) a", "(pass) b"]);
+  });
+
   // The stack is too small for the walk over the globals. Linux only: the size that the walk needs was measured there.
   test.skipIf(!isLinux)("an error while the snapshot of the globals is taken is printed", async () => {
     using dir = tempDir("isolate-modules-snapshot-throws", { "a.test.js": `test("a", () => {});` });

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 77bad1c37fbaade523ae0927321e5309992d5e7fcd6147cc97a79835ea39c5de.
+// Written against that file with the SHA-256 6f0558fc3d8de9e5769616ad5638916a8e112daa5c4d0c200f5471d87050836d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -3196,7 +3196,9 @@ function doSendFileFD(
   // of response so check again for the HEADERS_SENT flag
   if (
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
-    this.headersSent
+    this.headersSent ||
+    // A statCheck that closed or destroyed the stream cancels the response too: respond() would throw.
+    this.closed
   ) {
     if (this[kOwnsFd] === true) tryClose(fd);
     return;
@@ -3521,7 +3523,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path: string | Buffer | URL, headers?: HeadersObject | null, options?: FileResponseOptions) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3582,7 +3584,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3699,7 +3701,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 

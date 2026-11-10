@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/typed-file-enums.test.ts": {
+    "default": 10000,
+    "asan": 40000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000

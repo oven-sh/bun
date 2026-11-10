@@ -1221,6 +1221,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                 .map(|it| it.1);
             let writes_typed_files =
                 has_typescript_entry_point && typed_files_skipped_for.is_none();
+            transpiler.options.writes_typed_files = writes_typed_files;
             let drops_source_maps =
                 writes_typed_files && config.source_map == options::SourceMapOption::None;
             if drops_source_maps {

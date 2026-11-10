@@ -2483,6 +2483,7 @@ pub mod parse_worker {
         };
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.is_library = topts.is_library;
+        opts.features.writes_typed_files = topts.writes_typed_files;
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;

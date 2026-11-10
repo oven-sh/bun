@@ -1539,7 +1539,7 @@ impl Bundle<'_> {
 struct Written<'a, 's> {
     syntax: Syntax<'a, 's>,
     types: Option<&'a ModuleTypes>,
-    /// `None` if the bundle has another text of the module than the checker read: the facts are positions in it.
+    /// `None` for a module that the type check does not cover.
     enums: Option<&'a EnumFacts>,
     type_ranges: Vec<(u32, u32)>,
     declarations: Vec<(u32, u32)>,
@@ -1662,7 +1662,6 @@ impl Written<'_, '_> {
         TypedFilesError::EnumWithoutFacts {
             path: path.to_vec(),
             name: name.to_vec(),
-            is_other_text: self.types.is_some(),
         }
     }
 
@@ -2249,7 +2248,7 @@ fn link(
             EnumOf::TopLevel(target) => Some(target),
             EnumOf::Nested(_) => None,
         });
-        queue.extend(named.chain(enums).filter_map(|target| place_of(target)));
+        queue.extend(named.chain(enums).filter_map(place_of));
     }
     let entry = bundle
         .entry_point
@@ -2614,6 +2613,8 @@ fn link(
             let Some(declared) =
                 bundle.enum_twin(module, path, &blocks, &twin, is_emitted, &is_exported)
             else {
+                let name = module.syntax.word(blocks[0]);
+                linked.enum_without_facts = Some(module.enum_without_facts(path, name));
                 continue;
             };
             linked.hoisted.extend_from_slice(&declared);
@@ -3205,6 +3206,11 @@ fn add_types(
             let read = types.enums.reads.iter().map(|read| read.end);
             declared.chain(read).all(|end| end as usize <= same)
         });
+        if let (Some(types), None) = (types, enums) {
+            return Err(TypedFilesError::EnumInOtherText {
+                path: types.path.to_vec(),
+            });
+        }
         written.push(Some(Written {
             syntax,
             types,
@@ -4808,7 +4814,7 @@ fn is_in_const_context(
                     return false;
                 };
                 let mut arguments = hir.ids(hir[call].args);
-                let Some(index) = arguments.position(|argument| is_operand(argument)) else {
+                let Some(index) = arguments.position(is_operand) else {
                     return false;
                 };
                 return is_const_argument(services, parent, index, &way);
@@ -4847,12 +4853,18 @@ fn is_const_argument(
         return false;
     };
     let parameters = services.signature_info(declared).parameters;
-    let Some(&parameter) = parameters.get(index).or(parameters.last()) else {
+    let Some(last) = parameters.len().checked_sub(1) else {
+        return false;
+    };
+    let is_rest = (services.declarations(parameters[last]).first().copied())
+        .is_some_and(|declared| services.node_hir_flags(declared).contains(Flags::REST));
+    // An argument at a rest parameter or behind it is an element of that parameter.
+    let rest = (is_rest && index >= last).then(|| Inside::Element(index - last));
+    let at = if is_rest { index.min(last) } else { index };
+    let Some(&parameter) = parameters.get(at) else {
         return false;
     };
     let mut ty = services.type_of_symbol(parameter);
-    // An argument behind the last parameter is an element of a rest parameter.
-    let rest = (index >= parameters.len()).then_some(Inside::Element(index));
     for step in rest.iter().chain(way.iter().rev()) {
         if is_const_type_variable(services, ty) {
             return true;
@@ -5295,8 +5307,10 @@ pub enum TypedFilesError {
     EnumWithoutFacts {
         path: Vec<u8>,
         name: Vec<u8>,
-        /// The type check read the file, and the bundle has another text of it.
-        is_other_text: bool,
+    },
+    /// The facts about enums are places in the text that the type check read.
+    EnumInOtherText {
+        path: Vec<u8>,
     },
     InOutput {
         path: Vec<u8>,
@@ -5328,18 +5342,17 @@ impl core::fmt::Display for TypedFilesError {
             TypedFilesError::NotNamedJavaScript { path } => {
                 write!(f, "{} is not named .js, .mjs or .cjs", BStr::new(path))
             }
-            TypedFilesError::EnumWithoutFacts {
-                path,
-                name,
-                is_other_text,
-            } => {
-                let why = match is_other_text {
-                    true => "the bundle has another text of that file than the type check read",
-                    false => "the type check of the build does not cover that file",
-                };
-                let (path, name) = (BStr::new(path), BStr::new(name));
-                write!(f, "{path} declares the enum {name}, and {why}")
-            }
+            TypedFilesError::EnumWithoutFacts { path, name } => write!(
+                f,
+                "{} declares the enum {}, and the type check of the build does not cover that file",
+                BStr::new(path),
+                BStr::new(name)
+            ),
+            TypedFilesError::EnumInOtherText { path } => write!(
+                f,
+                "{} declares or reads an enum, and the bundle has another text of that file than the type check read",
+                BStr::new(path)
+            ),
             TypedFilesError::InOutput { path, why } => write!(f, "{}: {why}", BStr::new(path)),
         }
     }

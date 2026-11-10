@@ -1364,7 +1364,7 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
-    /// `--dts`: the constant of another file's enum member is mapped to its access, where the typed file looks for it.
+    /// The constant of another file's enum member is mapped to its access, where a typed file of the build looks for it.
     pub maps_inlined_enums: bool,
     /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
     /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).

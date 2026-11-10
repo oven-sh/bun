@@ -206,6 +206,8 @@ pub mod Runtime {
         pub minify_syntax: bool,
         /// `--library` and `--dts`: the output has to type check once the types of its sources are put back.
         pub is_library: bool,
+        /// The build writes `.aot.ts` files, so a read of an enum member stays where a typed file can find it.
+        pub writes_typed_files: bool,
         pub minify_identifiers: bool,
         /// Preserve function/class names during minification (CLI: --keep-names)
         pub minify_keep_names: bool,
@@ -306,6 +308,7 @@ pub mod Runtime {
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 is_library: false,
+                writes_typed_files: false,
                 minify_identifiers: false,
                 minify_keep_names: false,
                 minify_whitespace: false,

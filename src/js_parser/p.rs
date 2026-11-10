@@ -7045,10 +7045,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // These are leaf utilities (no parse_*/visit_* deps) that block
     // handle_identifier / jsx_import / record_usage_of_runtime_require.
 
-    /// `--dts`: a read of an enum member stays as it is, so that the typed file can give it the member's type.
+    /// A read of an enum member stays as it is, so that the typed file can give it the member's type.
     #[inline]
     pub(crate) fn keeps_enum_read(&self, operand: &js_ast::ExprData) -> bool {
-        self.writes_typed_file()
+        self.options.features.writes_typed_files
             && !self.computes_enum_reads
             && matches!(operand, js_ast::ExprData::EInlinedEnum(_))
     }
@@ -7058,13 +7058,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn folds_enum_reads_of(&self, template: &E::Template) -> bool {
         let is_enum_read =
             |part: &E::TemplatePart| matches!(part.value.data, js_ast::ExprData::EInlinedEnum(_));
-        self.writes_typed_file() && template.parts().iter().any(is_enum_read)
-    }
-
-    /// No typed file is written with `--minify-identifiers`.
-    #[inline]
-    pub(crate) fn writes_typed_file(&self) -> bool {
-        self.options.features.is_library && !self.options.features.minify_identifiers
+        self.options.features.writes_typed_files && template.parts().iter().any(is_enum_read)
     }
 
     /// Whether the constants of `binary` are folded: not where an operand is a read that `keeps_enum_read` keeps.
@@ -7086,7 +7080,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "inlined enum strings must be flat, string folding appends to rope chains in place"
         );
         // The printer writes no such comment. Without a typed file, such a member is a plain constant as before.
-        if strings::contains(comment, b"*/") && !self.writes_typed_file() {
+        if strings::contains(comment, b"*/") && !self.options.features.writes_typed_files {
             return value;
         }
         // Wrap with a comment

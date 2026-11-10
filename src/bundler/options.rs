@@ -1415,6 +1415,8 @@ pub struct BundleOptions<'a> {
     pub minify_syntax: bool,
     /// See `Features::is_library` of the parser.
     pub is_library: bool,
+    /// See `Features::writes_typed_files` of the parser.
+    pub writes_typed_files: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
@@ -1653,6 +1655,7 @@ impl<'a> BundleOptions<'a> {
             minify_whitespace: self.minify_whitespace,
             minify_syntax: self.minify_syntax,
             is_library: self.is_library,
+            writes_typed_files: self.writes_typed_files,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
@@ -1915,6 +1918,7 @@ impl<'a> BundleOptions<'a> {
             minify_whitespace: false,
             minify_syntax: false,
             is_library: false,
+            writes_typed_files: false,
             minify_identifiers: false,
             keep_names: false,
             dead_code_elimination: true,

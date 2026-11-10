@@ -285,6 +285,7 @@ impl<'a> Options<'a> {
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
                 is_library: f.is_library,
+                writes_typed_files: f.writes_typed_files,
                 minify_identifiers: f.minify_identifiers,
                 minify_keep_names: f.minify_keep_names,
                 minify_whitespace: f.minify_whitespace,

@@ -4881,6 +4881,12 @@ describe.concurrent("retry delay and condition", () => {
             describe.concurrent("group", () => {
               during("skip()", context => { try { context.skip(); } catch {} });
               during("a failed expect.soft()", context => context.expect.soft(1).toBe(2));
+              let resolve;
+              during(
+                "a matcher that waits for a promise",
+                context => { context.expect(new Promise(r => { resolve = r; })).resolves.toBe(1).then(() => console.log("the matcher passed")); },
+                () => resolve(1),
+              );
               during("task.result", ({ task }) => console.log(task.result.state, task.result.retryCount));
               during("an uncaught error", () => { throw new Error("during the delay"); });
             });
@@ -4897,14 +4903,10 @@ describe.concurrent("retry delay and condition", () => {
             import { test, expect, onTestFinished } from "vitest";
             ${during}
             during("a failed expect.soft() of the module", () => expect.soft(1).toBe(2));
-            let resolve;
-            during(
-              "a matcher that waits for a promise",
-              context => { context.expect(new Promise(r => { resolve = r; })).resolves.toBe(1).then(() => console.log("the matcher passed")); },
-              () => resolve(1),
-            );
-            during("onTestFinished()", ({ task }) => onTestFinished(() => console.log("onTestFinished() in attempt", task.result.retryCount + 1)));
-            during("an uncaught error", () => { throw new Error("during the delay"); });
+            during("onTestFinished() of the module, and an uncaught error", ({ task }) => {
+              onTestFinished(() => console.log("onTestFinished() in attempt", task.result.retryCount + 1));
+              throw new Error("during the delay");
+            });
           `,
         },
         [],
@@ -4919,22 +4921,21 @@ describe.concurrent("retry delay and condition", () => {
       exitCodes: [concurrent.exitCode, sequential.exitCode],
     }).toEqual({
       concurrent: {
-        log: ["run 1"],
+        log: ["run 1", "the matcher passed"],
         results: [
           "(skip) group > skip() (attempt 2)",
           "(fail) group > a failed expect.soft() (attempt 2)",
+          "(pass) group > a matcher that waits for a promise (attempt 2)",
           "(pass) group > task.result (attempt 2)",
           "(pass) group > an uncaught error (attempt 2)",
         ],
         betweenTests: 1,
       },
       sequential: {
-        log: ["the matcher passed", "onTestFinished() in attempt 2"],
+        log: ["onTestFinished() in attempt 2"],
         results: [
           "(fail) a failed expect.soft() of the module (attempt 2)",
-          "(pass) a matcher that waits for a promise (attempt 2)",
-          "(pass) onTestFinished() (attempt 2)",
-          "(pass) an uncaught error (attempt 2)",
+          "(pass) onTestFinished() of the module, and an uncaught error (attempt 2)",
         ],
         betweenTests: 1,
       },

@@ -2542,6 +2542,7 @@ describe.concurrent("bun fmt", () => {
   });
 
   describe("YAML whose values Prettier changes", () => {
+    const longAnchor = Buffer.alloc(80, "x").toString();
     // Each row is the text, Bun's output and Prettier 3.9.9's output, which has a key with an extra line break, a
     // scalar that became a marker, a byte order mark that was the start of a key, or a key that can't be parsed.
     test.each([
@@ -2587,16 +2588,12 @@ describe.concurrent("bun fmt", () => {
       ["  a: |1\n    x\n   y\n", "a: |1\n  x\n y\n", "a: |1\n    x\n   y\n"],
       ["-   - |1\n       x\n      y\n", "- - |1\n     x\n    y\n", "- - |1\n       x\n      y\n"],
       // A `,` in a flow collection is only allowed after an entry. Prettier prints one in an empty collection that breaks.
-      [
-        `a:   &${"x".repeat(80)} {}\n`,
-        `a:\n  &${"x".repeat(80)} {\n\n  }\n`,
-        `a:\n  &${"x".repeat(80)} {\n    ,\n  }\n`,
-      ],
-      [
-        `a:   &${"x".repeat(80)} []\n`,
-        `a:\n  &${"x".repeat(80)} [\n\n  ]\n`,
-        `a:\n  &${"x".repeat(80)} [\n    ,\n  ]\n`,
-      ],
+      [`a:   &${longAnchor} {}\n`, `a:\n  &${longAnchor} {\n\n  }\n`, `a:\n  &${longAnchor} {\n    ,\n  }\n`],
+      [`a:   &${longAnchor} []\n`, `a:\n  &${longAnchor} [\n\n  ]\n`, `a:\n  &${longAnchor} [\n    ,\n  ]\n`],
+      // An empty collection with a comment in it breaks at any width. The blank line is what Prettier prints with
+      // `--trailing-comma none`.
+      ["a: {\n  # c\n}\n", "a: {\n\n    # c\n  }\n", "a: {\n    ,\n    # c\n  }\n"],
+      ["- [\n  # c\n]\n", "- [\n\n    # c\n  ]\n", "- [\n    ,\n    # c\n  ]\n"],
     ])("%j", async (before, after, byPrettier) => {
       expect(after).not.toBe(byPrettier);
       expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));

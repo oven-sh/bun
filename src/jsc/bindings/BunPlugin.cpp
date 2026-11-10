@@ -739,6 +739,8 @@ struct LoadedModule {
     // In the registry / require.cache with nothing to patch: removed so the next import loads the mock.
     bool staleESMEntry { false };
     bool staleCommonJSEntry { false };
+    // Why the registry's entries are stale: there is one for each of several import types.
+    bool hasSeveralImportTypes { false };
 };
 
 __attribute__((minsize)) static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* specifierString, LoadedModule& loaded)
@@ -747,6 +749,7 @@ __attribute__((minsize)) static void findLoadedESModule(Zig::GlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     loaded.esmNamespace = nullptr;
     loaded.staleESMEntry = false;
+    loaded.hasSeveralImportTypes = false;
 
     auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, );
@@ -761,8 +764,10 @@ __attribute__((minsize)) static void findLoadedESModule(Zig::GlobalObject* globa
     unsigned types = 0;
     for (Type type : { Type::JavaScript, Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::None })
         types += !!loader->getRegisteredMayBeNull(specifierIdent, type);
-    if (types > 1)
+    if (types > 1) {
+        loaded.hasSeveralImportTypes = true;
         return;
+    }
     if (auto* mod = entry->record()) {
         // getModuleNamespace asserts the record has progressed past linking.
         // A previous import that failed during link (e.g. unresolved binding)
@@ -3788,7 +3793,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
             loaded.commonJSModule->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original, 0);
     }
 
-    if (!overwritten && !mock->originalCommonJSExports) {
+    // Of several import types, all but a patched one were loaded as the mock: the whole file is loaded again, with what require() loaded of it.
+    if (loaded.hasSeveralImportTypes || (!overwritten && !mock->originalCommonJSExports)) {
         if (loaded.esmNamespace || loaded.staleESMEntry || loaded.commonJSModule || wasLoadedOverCompiledModule)
             evict.modules.append(specifier);
         return;
@@ -5514,6 +5520,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
         loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);
     }
+    // None of a file's several import types is patched, so neither is what require() loaded of it: the whole file is loaded again.
+    // Only from here on: above, what require() loaded says that there is a module to set aside.
+    auto leaveSeveralImportTypesUnpatched = [](LoadedModule& found) {
+        if (found.hasSeveralImportTypes)
+            found.staleCommonJSEntry |= !!std::exchange(found.commonJSModule, nullptr);
+    };
+    leaveSeveralImportTypesUnpatched(loaded);
 
     // Left for later, the body of a linked module would assign over the patch. It can't run ahead of an import whose own body is up the stack, though.
     using Status = JSC::CyclicModuleRecord::Status;
@@ -5830,13 +5843,17 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         // The factory may have evicted the module, or require()d it: `() => ({ ...require("./m"), extra })`.
         LoadedModule before = std::exchange(loaded, findLoadedModule(globalObject, specifierString));
         RETURN_IF_EXCEPTION(scope, {});
-        if (loaded.esmNamespace != before.esmNamespace) {
+        bool hasOtherCommonJSModule = before.commonJSModule && loaded.commonJSModule != before.commonJSModule;
+        // Or it loaded the module under another import type. What an earlier mock patched of it is still patched: the eviction below keeps what that mock saved for its end.
+        leaveSeveralImportTypesUnpatched(loaded);
+        bool isStillPatched = loaded.hasSeveralImportTypes && mock->patchedNamespace;
+        if (loaded.esmNamespace != before.esmNamespace && !isStillPatched) {
             mock->originalExports.clear();
             mock->originalNamespace.clear();
             if (previous)
                 mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
         }
-        if (before.commonJSModule && loaded.commonJSModule != before.commonJSModule)
+        if (hasOtherCommonJSModule)
             mock->originalCommonJSExports.clear();
 
         if (!pendingFactory && isCurrent) {
@@ -6786,6 +6803,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         if (mock->state != JSModuleMock::State::Settled)
             continue;
         LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
+        // Of several import types, the preload's mock takes back the one that it had patched. The others were loaded as the test file's mock.
+        if (loaded.hasSeveralImportTypes)
+            loaded.esmNamespace = mock->patchedNamespace.get();
         if (!scope.exception()) [[likely]]
             overrideLoadedModuleExports(globalObject, mock, loaded);
         if (scope.exception()) [[unlikely]]

@@ -6131,6 +6131,339 @@ test.concurrent(
   },
 );
 
+describe.concurrent("a module imported under two types that require() has loaded too", () => {
+  const modules = {
+    "d.json": `{"a":"real"}`,
+    "plain.js": `import d from "./d.json"; export const read = () => d.a;`,
+    "typed.js": `import d from "./d.json" with { type: "json" }; export const read = () => d.a;`,
+    "required.cjs": `const d = require("./d.json"); exports.read = () => d.a;`,
+  };
+  const helpers = `
+    const read = modules => modules.map(module => module.read());
+    const importers = async () => [await import("./plain.js"), await import("./typed.js")];
+    const factory = a => () => ({ default: { a }, a });
+  `;
+  const inFolder = (folder: string, files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([name, text]) => [`${folder}/${name}`, text]));
+
+  // Each test asserts what the next import() and require() get, and what everything reads once the mock is gone.
+  // What a binding that was held before the call reads while the module is mocked is left open.
+  test("is mocked, mocked again and unmocked for the next import() and require()", async () => {
+    const functions = ["mock.module", "jest.mock", "jest.doMock", "vi.mock"];
+    // A folder each, so that no test file finds what another one has loaded or mocked.
+    await expectFixturesToPass(
+      {
+        ...Object.assign(
+          {},
+          ...functions.map(mockModule => ({
+            ...inFolder(mockModule, {
+              ...modules,
+              "two.test.js": `
+                import { expect, jest, mock, test, vi } from "bun:test";
+                import * as plain from "./plain.js";
+                import * as typed from "./typed.js";
+                import * as required from "./required.cjs";
+                ${helpers}
+                test("both types are loaded when it is mocked", async () => {
+                  const loaded = [plain, typed, required];
+                  expect(read(loaded)).toEqual(["real", "real", "real"]);
+                  ${mockModule}("./d.json", factory("mock"));
+                  expect([read(await importers()), require("./d.json").a]).toEqual([["mock", "mock"], "mock"]);
+                  ${mockModule}("./d.json", factory("second"));
+                  expect([read(await importers()), require("./d.json").a]).toEqual([["second", "second"], "second"]);
+                  vi.doUnmock("./d.json");
+                  expect([read(loaded), read([...(await importers()), await import("./required.cjs")]), require("./d.json").a]).toEqual([["real", "real", "real"], ["real", "real", "real"], "real"]);
+                });
+              `,
+            }),
+            ...inFolder(`${mockModule}-in-factory`, {
+              ...modules,
+              "factory.test.js": `
+                import { expect, jest, mock, test, vi } from "bun:test";
+                import * as plain from "./plain.js";
+                import * as required from "./required.cjs";
+                ${helpers}
+                test("the factory loads the second type", async () => {
+                  expect(read([plain, required])).toEqual(["real", "real"]);
+                  ${mockModule}("./d.json", () => (require("./typed.js"), factory("mock")()));
+                  expect([read(await importers()), require("./d.json").a]).toEqual([["mock", "mock"], "mock"]);
+                  vi.doUnmock("./d.json");
+                  expect([read([plain, required]), read(await importers()), require("./d.json").a]).toEqual([["real", "real"], ["real", "real"], "real"]);
+                });
+              `,
+            }),
+            ...inFolder(`${mockModule}-es-module`, {
+              "m.js": `export const a = "real"; export const state = {};`,
+              "plain.js": `import { a } from "./m.js"; export const read = () => a;`,
+              "text.js": `import text from "./m.js" with { type: "text" }; export const read = () => text;`,
+              "required.cjs": `const m = require("./m.js"); exports.read = () => m.a;`,
+              "text.test.js": `
+                import { expect, jest, mock, test, vi } from "bun:test";
+                import * as plain from "./plain.js";
+                import * as text from "./text.js";
+                import * as required from "./required.cjs";
+                const read = modules => modules.map(module => module.read());
+                const load = async () => [await import("./plain.js"), await import("./text.js"), await import("./required.cjs")];
+                const source = 'export const a = "real"; export const state = {};';
+                test("an ES module that is also imported as text", async () => {
+                  expect(read([plain, text, required])).toEqual(["real", source, "real"]);
+                  ${mockModule}("./m.js", () => ({ a: "mock", default: "mock" }));
+                  expect([read(await load()), require("./m.js").a]).toEqual([["mock", "mock", "mock"], "mock"]);
+                  vi.doUnmock("./m.js");
+                  expect([read(await load()), require("./m.js").a]).toEqual([["real", source, "real"], "real"]);
+                  expect(require("./m.js").state).toBe((await import("./m.js")).state);
+                });
+              `,
+            }),
+          })),
+        ),
+        ...inFolder("required-by-the-test-file", {
+          ...modules,
+          "itself.test.js": `
+            import { expect, mock, test } from "bun:test";
+            import * as plain from "./plain.js";
+            import * as typed from "./typed.js";
+            const required = require("./d.json");
+            ${helpers}
+            test("the test file is what require()d it", async () => {
+              expect([read([plain, typed]), required.a]).toEqual([["real", "real"], "real"]);
+              mock.module("./d.json", factory("mock"));
+              expect([read(await importers()), require("./d.json").a]).toEqual([["mock", "mock"], "mock"]);
+            });
+          `,
+        }),
+        ...inFolder("commonjs-file", {
+          "c.cjs": `module.exports = { a: "real" };`,
+          "plain.js": `import c from "./c.cjs"; export const read = () => c.a;`,
+          "text.js": `import text from "./c.cjs" with { type: "text" }; export const read = () => text;`,
+          "commonjs.test.js": `
+            import { expect, mock, test, vi } from "bun:test";
+            import * as plain from "./plain.js";
+            import * as text from "./text.js";
+            const read = modules => modules.map(module => module.read());
+            const load = async () => [await import("./plain.js"), await import("./text.js")];
+            const source = 'module.exports = { a: "real" };';
+            // Nothing calls require(): the import of a CommonJS file puts it in require.cache.
+            test("a CommonJS file that is also imported as text", async () => {
+              expect(read([plain, text])).toEqual(["real", source]);
+              mock.module("./c.cjs", () => ({ a: "mock", default: { a: "mock" } }));
+              expect([read(await load()), require("./c.cjs").a]).toEqual([["mock", { a: "mock" }], "mock"]);
+              vi.doUnmock("./c.cjs");
+              expect([read(await load()), require("./c.cjs").a]).toEqual([["real", source], "real"]);
+            });
+          `,
+        }),
+        ...inFolder("vi.doMock", {
+          ...modules,
+          "kept.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import * as plain from "./plain.js";
+            import * as typed from "./typed.js";
+            import * as required from "./required.cjs";
+            ${helpers}
+            // As under one import type: what this test file has loaded stays, and the mock is for whatever loads the file next.
+            test("vi.doMock() leaves its importers as they are", async () => {
+              vi.doMock("./d.json", factory("mock"));
+              const [plainAgain, typedAgain] = await importers();
+              expect([read([plain, typed, required]), plainAgain === plain, typedAgain === typed, (await import("./d.json")).default.a]).toEqual([["real", "real", "real"], true, true, "mock"]);
+            });
+          `,
+        }),
+        ...inFolder("async-factory", {
+          ...modules,
+          "async.test.js": `
+            import { expect, mock, test } from "bun:test";
+            import * as plain from "./plain.js";
+            import * as typed from "./typed.js";
+            import * as required from "./required.cjs";
+            ${helpers}
+            test("the factory awaits", async () => {
+              expect(read([plain, typed, required])).toEqual(["real", "real", "real"]);
+              await mock.module("./d.json", async () => (await 1, factory("mock")()));
+              expect([read(await importers()), require("./d.json").a]).toEqual([["mock", "mock"], "mock"]);
+            });
+          `,
+        }),
+      },
+      functions.length * 3 + 4,
+    );
+  });
+
+  test("is mocked for the next test file's imports by that file's own mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import "./plain.js";
+          import "./typed.js";
+          import "./required.cjs";
+          test("mocks it under two types", async () => {
+            mock.module("./d.json", () => ({ default: { a: "mock of a" } }));
+            expect((await import("./plain.js")).read()).toBe("mock of a");
+          });
+        `,
+        "b.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { read } from "./plain.js";
+          test("mocks it under one type", () => {
+            expect(read()).toBe("real");
+            mock.module("./d.json", () => ({ default: { a: "mock of b" } }));
+            expect(read()).toBe("mock of b");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test("is unmocked after a second mock whose factory has loaded the second type", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as plain from "./plain.js";
+          import * as required from "./required.cjs";
+          ${helpers}
+          test("mocks it twice, then unmocks it", async () => {
+            mock.module("./d.json", factory("first"));
+            expect(plain.read()).toBe("first");
+            mock.module("./d.json", () => (require("./typed.js"), factory("second")()));
+            expect([read(await importers()), require("./d.json").a]).toEqual([["second", "second"], "second"]);
+            vi.doUnmock("./d.json");
+            expect([read([plain, required]), read(await importers()), require("./d.json").a]).toEqual([["real", "real"], ["real", "real"], "real"]);
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import * as plain from "./plain.js";
+          import * as typed from "./typed.js";
+          test("reads the original", () => {
+            expect([plain.read(), typed.read(), require("./d.json").a]).toEqual(["real", "real", "real"]);
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+});
+
+test.concurrent(
+  "a module that was mocked under one import type and unmocked under two is the original again for both",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "data/d.json": `{"a":"real"}`,
+        "data/plain.js": `import d from "./d.json"; export const read = () => d.a;`,
+        "data/typed.js": `import d from "./d.json" with { type: "json" }; export const read = () => d.a;`,
+        "data/later.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as plain from "./plain.js";
+          test("the second type is loaded while the module is mocked", async () => {
+            mock.module("./d.json", () => ({ default: { a: "mock" } }));
+            const typed = await import("./typed.js");
+            expect([plain.read(), typed.read()]).toEqual(["mock", "mock"]);
+            vi.doUnmock("./d.json");
+            const typedAgain = await import("./typed.js");
+            expect([plain.read(), typedAgain.read(), (await import("./d.json", { with: { type: "json" } })).default.a]).toEqual(["real", "real", "real"]);
+          });
+        `,
+        "module/m.js": `export const a = "real"; export const state = {};`,
+        "module/plain.js": `import { a } from "./m.js"; export const read = () => a;`,
+        "module/text.js": `import text from "./m.js" with { type: "text" }; export const read = () => text;`,
+        "module/required.cjs": `const m = require("./m.js"); exports.read = () => m.a;`,
+        "module/a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as plain from "./plain.js";
+          import * as required from "./required.cjs";
+          test("an ES module that require() has loaded too", async () => {
+            mock.module("./m.js", () => ({ a: "mock", default: "mock" }));
+            expect([plain.read(), required.read(), (await import("./text.js")).read()]).toEqual(["mock", "mock", "mock"]);
+            vi.doUnmock("./m.js");
+            expect([plain.read(), require("./m.js").a, (await import("./text.js")).read()]).toEqual(["real", "real", 'export const a = "real"; export const state = {};']);
+            expect(require("./m.js").state).toBe((await import("./m.js")).state);
+          });
+        `,
+        "module/b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the next test file gets one module from import() and require()", async () => {
+            const imported = await import("./m.js");
+            expect([imported.a, require("./m.js").a, require("./m.js").state === imported.state]).toEqual(["real", "real", true]);
+          });
+        `,
+      },
+      3,
+      ["./data/later.test.js", "./module/a.test.js", "./module/b.test.js"],
+    );
+  },
+);
+
+test.concurrent(
+  "a preload's mock is back after a test file mocked the module and loaded it under another import type",
+  async () => {
+    const nextFile = `
+      import { expect, test } from "bun:test";
+      test("gets the preload's mock", async () => {
+        expect([readInPreload(), (await import("./plain.js")).read(), (await import("./typed.js")).read()]).toEqual(["mock of the preload", "mock of the preload", "mock of the preload"]);
+      });
+      test("gets the preload's instance of a module that the file before mocked and unmocked", async () => {
+        expect(await import("./module-of-preload.js")).toBe(moduleOfPreload);
+      });
+      test("reads the original of a file that the file before mocked twice", async () => {
+        expect([readOfPreload(), requiredByPreload.a, require("./e.json") === requiredByPreload]).toEqual(["real", "real", true]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "d.json": `{"a":"real"}`,
+        "plain.js": `import d from "./d.json"; export const read = () => d.a;`,
+        "typed.js": `import d from "./d.json" with { type: "json" }; export const read = () => d.a;`,
+        "reader-of-preload.js": `import d from "./d.json"; export const read = () => d.a;`,
+        "module-of-preload.js": `export const a = "real";`,
+        "e.json": `{"a":"real"}`,
+        "reader-of-e.js": `import e from "./e.json"; export const read = () => e.a;`,
+        "typed-reader-of-e.js": `import e from "./e.json" with { type: "json" }; export const read = () => e.a;`,
+        "text.js": `import text from "./module-of-preload.js" with { type: "text" }; export const read = () => text;`,
+        "preload.js": `
+          import { mock } from "bun:test";
+          import { read } from "./reader-of-preload.js";
+          import * as moduleOfPreload from "./module-of-preload.js";
+          import { read as readOfPreload } from "./reader-of-e.js";
+          mock.module("./d.json", () => ({ default: { a: "mock of the preload" } }));
+          Object.assign(globalThis, { readInPreload: read, moduleOfPreload, readOfPreload, requiredByPreload: require("./e.json") });
+        `,
+        "a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          test("mocks the module over the preload's mock", async () => {
+            expect(readInPreload()).toBe("mock of the preload");
+            mock.module("./d.json", () => ({ default: { a: "mock of a" } }));
+            expect([readInPreload(), (await import("./typed.js")).read()]).toEqual(["mock of a", "mock of a"]);
+          });
+          test("mocks and unmocks a module that the preload loaded", async () => {
+            mock.module("./module-of-preload.js", () => ({ a: "mock", default: "mock" }));
+            expect([moduleOfPreload.a, (await import("./text.js")).read()]).toEqual(["mock", "mock"]);
+            vi.doUnmock("./module-of-preload.js");
+            expect([moduleOfPreload.a, (await import("./text.js")).read()]).toEqual(["real", 'export const a = "real";']);
+          });
+          test("mocks a file that the preload loaded twice, and the second factory loads the second type", async () => {
+            mock.module("./e.json", () => ({ default: { a: "first" }, a: "first" }));
+            expect([readOfPreload(), require("./e.json").a]).toEqual(["first", "first"]);
+            mock.module("./e.json", () => (require("./typed-reader-of-e.js"), { default: { a: "second" }, a: "second" }));
+            expect([(await import("./typed-reader-of-e.js")).read(), require("./e.json").a]).toEqual(["second", "second"]);
+          });
+        `,
+        "b.test.js": nextFile,
+        "c.test.js": nextFile,
+      },
+      9,
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+  },
+);
+
 test.concurrent(
   "a mock deleted from require.cache by user code doesn't reach the next file through its importers",
   async () => {

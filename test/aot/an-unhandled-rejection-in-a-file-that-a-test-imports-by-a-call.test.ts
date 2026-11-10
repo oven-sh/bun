@@ -70,11 +70,12 @@ test.each(["TestRunLayers:0"])(
     const plain = await runTests(folder, []);
     expect(plain.verdicts).toEqual([
       "(pass) imports a file that leaves a rejection unhandled",
-      "(fail) next",
+      "(pass) next",
       "(fail) imports a file that throws in a job",
       "(pass) last",
-      " 2 pass",
-      " 2 fail",
+      " 3 pass",
+      " 1 fail",
+      " 1 error",
     ]);
     expect(plain.errors).toEqual(["error: rejected in rejects.ts", "error: thrown in a job of throws-in-a-job.cjs"]);
     expect(await runTests(folder, ["--aot"], words)).toEqual(plain);

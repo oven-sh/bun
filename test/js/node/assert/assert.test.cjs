@@ -92,6 +92,28 @@ describe("assert.partialDeepStrictEqual", () => {
     const arr = [[]];
     assert.partialDeepStrictEqual([arr], arr);
   });
+
+  // `source` is `^\/a$` for the text `^/a$` and for the text `^\/a$`. Node compares `source`.
+  test.each([
+    ["at the top level", regExp => regExp],
+    ["as a property", regExp => ({ regExp })],
+    ["as an array element", regExp => [regExp]],
+    ["as a Map value", regExp => new Map([["key", regExp]])],
+    ["as a Map key", regExp => new Map([[regExp, 1]])],
+    ["as a Set member", regExp => new Set([regExp])],
+  ])("a RegExp %s is compared by source and flags", (_position, wrap) => {
+    assert.partialDeepStrictEqual(wrap(new RegExp("^/a$")), wrap(/^\/a$/));
+    assert.partialDeepStrictEqual(wrap(/^\/a$/), wrap(new RegExp("^/a$")));
+    assert.partialDeepStrictEqual(wrap(new RegExp("")), wrap(/(?:)/));
+    assert.partialDeepStrictEqual(wrap(new RegExp("\u2028", "g")), wrap(/\u2028/g));
+    expect(() => assert.partialDeepStrictEqual(wrap(new RegExp("^/a$")), wrap(/^\/b$/))).toThrow(assert.AssertionError);
+    expect(() => assert.partialDeepStrictEqual(wrap(new RegExp("^/a$", "i")), wrap(/^\/a$/))).toThrow(
+      assert.AssertionError,
+    );
+    expect(() => assert.partialDeepStrictEqual(wrap(new RegExp("[/]")), wrap(new RegExp("[\\/]")))).toThrow(
+      assert.AssertionError,
+    );
+  });
 });
 
 describe("AssertionError diff rendering", () => {

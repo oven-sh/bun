@@ -572,6 +572,58 @@ describe("expect()", () => {
     expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
   });
 
+  test("deepEquals regex compares the source, not the pattern text", () => {
+    // Each pair is two pattern texts with one `source`, which spells a `/` outside a class as `\/`,
+    // a line terminator as its escape and an empty pattern as `(?:)`.
+    for (const [a, b] of [
+      [new RegExp("^/a$"), /^\/a$/],
+      [new RegExp("[/]/", "g"), /[/]\//g],
+      [new RegExp("\n"), /\n/],
+      [new RegExp("\\\n"), /\n/],
+      [new RegExp("\u2028"), /\u2028/],
+      [new RegExp(""), /(?:)/],
+      [new RegExp(/^\/a$/), new RegExp("^/a$")],
+    ]) {
+      expect(a.source).toBe(b.source);
+      expect(a).toEqual(b);
+      expect(b).toEqual(a);
+      expect(a).toStrictEqual(b);
+      expect({ a }).toEqual({ a: b });
+      expect([a]).toContainEqual(b);
+      expect({ a }).toHaveProperty("a", b);
+      expect({ a, other: 1 }).toEqual(expect.objectContaining({ a: b }));
+      expect([a, 1]).toEqual(expect.arrayContaining([b]));
+      expect(new Map([[a, a]])).toEqual(new Map([[b, b]]));
+      expect(new Set([a])).toEqual(new Set([b]));
+      const fn = jest.fn();
+      fn(a);
+      expect(fn).toHaveBeenCalledWith(b);
+    }
+
+    for (const [a, b] of [
+      [new RegExp("^/a$"), /^\/b$/],
+      [new RegExp("^/a$", "i"), /^\/a$/],
+      [new RegExp("[/]"), new RegExp("[\\/]")],
+      [new RegExp("a\n"), /an/],
+      [new RegExp("a/"), new RegExp("a/b")],
+      [new RegExp(""), /(?:)a/],
+    ]) {
+      expect(a).not.toEqual(b);
+      expect(b).not.toEqual(a);
+      expect(a).not.toStrictEqual(b);
+      expect({ a }).not.toEqual({ a: b });
+      expect([a]).not.toContainEqual(b);
+      expect({ a }).not.toHaveProperty("a", b);
+      expect({ a, other: 1 }).not.toEqual(expect.objectContaining({ a: b }));
+      expect([a, 1]).not.toEqual(expect.arrayContaining([b]));
+      expect(new Map([[a, a]])).not.toEqual(new Map([[b, b]]));
+      expect(new Set([a])).not.toEqual(new Set([b]));
+      const fn = jest.fn();
+      fn(a);
+      expect(fn).not.toHaveBeenCalledWith(b);
+    }
+  });
+
   test("deepEquals and deleted properties", () => {
     var obj1 = { a: 1 };
     var obj2 = {};

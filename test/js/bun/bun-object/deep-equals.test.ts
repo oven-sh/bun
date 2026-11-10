@@ -62,6 +62,27 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, baz)).toBe(false);
   });
 
+  it("RegExps are compared by source and flags, not by pattern text", () => {
+    // `source` spells the `/` of the text `^/a$` as `\/`, a line terminator as its escape and an empty text as `(?:)`.
+    expect({
+      slash: deepEquals(new RegExp("^/a$"), /^\/a$/),
+      lineFeed: deepEquals(new RegExp("\n", "g"), /\n/g),
+      empty: deepEquals(new RegExp(""), /(?:)/),
+      nested: deepEquals({ routes: [new RegExp("^/a$")] }, { routes: [/^\/a$/] }),
+      otherSource: deepEquals(new RegExp("^/a$"), /^\/b$/),
+      otherFlags: deepEquals(new RegExp("^/a$", "i"), /^\/a$/),
+      slashInClass: deepEquals(new RegExp("[/]"), new RegExp("[\\/]")),
+    }).toEqual({
+      slash: true,
+      lineFeed: true,
+      empty: true,
+      nested: true,
+      otherSource: false,
+      otherFlags: false,
+      slashInClass: false,
+    });
+  });
+
   it("KeyObjects and CryptoKeys are compared by what they hold", () => {
     const key = (fill: number) => createSecretKey(Buffer.alloc(16, fill));
     const cryptoKey = (fill: number, extractable = true) => key(fill).toCryptoKey("AES-GCM", extractable, ["encrypt"]);
@@ -243,6 +264,63 @@ describe("Bun.deepEquals strict mode", () => {
   it.failing("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
   });
+});
+
+// Most RegExp pairs are decided at the first unit where the two pattern texts differ, with neither `source`
+// built. Each start makes a set of texts: itself, and itself followed by each piece. Every pair of a set is
+// compared, so each early answer is held against the sources in every state that one piece leaves behind.
+// The last three starts are long enough for the texts to be read eight units at a time.
+it("two RegExps are equal exactly when their source and flags are equal", () => {
+  const pieces = [
+    "/",
+    "\\/",
+    "\\\\",
+    "[/]",
+    "[\\/]",
+    "[\n]",
+    "[\\n]",
+    "\n",
+    "\\n",
+    "\\\n",
+    "n",
+    "\r",
+    "\\r",
+    "\\\r",
+    "\u2028",
+    "\\u2028",
+    "\\\u2028",
+    "\u2029",
+    "\\u2029",
+    "\\\u2029",
+    "(?:)",
+    "a",
+  ];
+  const wrong: string[] = [];
+  let pairs = 0;
+  let pairsWithOneSource = 0;
+  for (const start of ["", ...pieces, "01234", "01234567", "0123456789abcdefg"]) {
+    const texts = [start, ...pieces.map(piece => start + piece)];
+    const regExps = texts.map(text => new RegExp(text));
+    const sources = regExps.map(regExp => regExp.source);
+    for (let i = 0; i < regExps.length; i++) {
+      for (let j = 0; j < regExps.length; j++) {
+        if (i === j) continue;
+        pairs++;
+        const expected = sources[i] === sources[j];
+        if (expected) pairsWithOneSource++;
+        if (Bun.deepEquals(regExps[i], regExps[j]) !== expected) {
+          wrong.push(`${JSON.stringify(texts[i])} and ${JSON.stringify(texts[j])} should be ${expected}`);
+        }
+      }
+    }
+  }
+  expect(wrong).toEqual([]);
+  expect({ pairs, pairsWithOneSource }).toEqual({ pairs: 13156, pairsWithOneSource: 730 });
+
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  expect(deepEquals(new RegExp("^/a$"), /^\/a$/, true, true)).toBe(true);
+  expect(deepEquals(new RegExp("^/a$"), /^\/b$/, true, true)).toBe(false);
+  expect(deepEquals(new RegExp("^/a$", "g"), /^\/a$/, true, true)).toBe(false);
 });
 
 // The object fast path used to recurse into nested values while walking the

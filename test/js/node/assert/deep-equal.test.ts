@@ -42,6 +42,8 @@ class WithValue {
   a = 1;
 }
 
+class PlainRegExpSubclass extends RegExp {}
+
 const sharedConstructor = function sharedConstructor() {};
 const sharedPrototype = { p: 1 };
 
@@ -666,6 +668,100 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  // Node compares `source`. `source` spells a `/` outside a class as `\/`, a line terminator as its
+  // escape and an empty pattern as `(?:)`, so each pair here is two pattern texts with one `source`.
+  ...(
+    [
+      ["a slash", () => new RegExp("^/a$"), () => /^\/a$/],
+      ["a slash after a class", () => new RegExp("[/]/"), () => /[/]\//],
+      ["a slash after an escaped backslash", () => new RegExp("\\\\/"), () => /\\\//],
+      ["a slash in a named group", () => new RegExp("(?<n>/)"), () => /(?<n>\/)/],
+      ["a slash under the v flag", () => new RegExp("a/b", "v"), () => /a\/b/v],
+      ["a line feed", () => new RegExp("\n"), () => /\n/],
+      ["a line feed after a backslash", () => new RegExp("\\\n"), () => /\n/],
+      ["a line feed in a class", () => new RegExp("[\n]"), () => /[\n]/],
+      ["a carriage return", () => new RegExp("\r"), () => /\r/],
+      ["U+2028", () => new RegExp("\u2028"), () => /\u2028/],
+      ["U+2029", () => new RegExp("\u2029"), () => /\u2029/],
+      ["an empty pattern", () => new RegExp(""), () => /(?:)/],
+      ["a copy of a literal", () => new RegExp(/^\/a$/), () => new RegExp("^/a$")],
+      ["a structured clone", () => structuredClone(new RegExp("^/a$")), () => /^\/a$/],
+      ["a recompiled regexp", () => /x/.compile("^/a$"), () => /^\/a$/],
+      ["a subclass", () => new PlainRegExpSubclass("^/a$"), () => new PlainRegExpSubclass("^\\/a$")],
+    ] as [string, Thunk, Thunk][]
+  ).map(([name, a, b]) => ({ name: `regexps with one source: ${name}`, a, b, strict: true, loose: true })),
+  {
+    name: "regexps with one text: an escaped slash",
+    a: () => new RegExp("\\/"),
+    b: () => /\//,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "regexps with flags in another order",
+    a: () => new RegExp("a/", "gi"),
+    b: () => new RegExp("a/", "ig"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "regexps with one source and different flags",
+    a: () => new RegExp("/", "i"),
+    b: () => /\//,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps with a slash and different sources",
+    a: () => new RegExp("a/"),
+    b: () => /b\//,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps with a slash in a class, bare and escaped",
+    a: () => new RegExp("[/]"),
+    b: () => new RegExp("[\\/]"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps with a line feed and the letter n",
+    a: () => new RegExp("a\n"),
+    b: () => /an/,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps where one text starts the other",
+    a: () => new RegExp("a/"),
+    b: () => new RegExp("a/b"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an empty regexp and a non-empty one",
+    a: () => new RegExp(""),
+    b: () => /(?:)a/,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps with one source and different lastIndex",
+    a: () => Object.assign(new RegExp("/", "g"), { lastIndex: 3 }),
+    b: () => /\//g,
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "regexps with one source, one with an extra own property",
+    a: () => withExtraProperty(new RegExp("/")),
+    b: () => /\//,
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Error.
   {
@@ -742,6 +838,31 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  {
+    name: "maps keyed by regexps with one source",
+    a: () => new Map([[new RegExp("/"), 1]]),
+    b: () => new Map([[/\//, 1]]),
+    strict: true,
+    loose: true,
+  },
+  {
+    // The first key that is deep-equal is taken, whatever its value is: #34830.
+    name: "maps with two keys of one source and different values",
+    a: () =>
+      new Map([
+        [new RegExp("/"), 1],
+        [/\//, 2],
+      ]),
+    b: () =>
+      new Map([
+        [new RegExp("/"), 1],
+        [/\//, 2],
+      ]),
+    strict: true,
+    loose: true,
+    strictBug: "reports not equal",
+    looseBug: "reports not equal",
+  },
   { name: "maps of different size", a: () => new Map([[1, 1]]), b: () => new Map(), strict: false, loose: false },
   {
     name: "a map with an extra own property",
@@ -755,6 +876,13 @@ const cases: Case[] = [
     name: "sets holding deep-equal objects",
     a: () => new Set([{ a: 1 }]),
     b: () => new Set([{ a: 1 }]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "sets holding regexps with one source",
+    a: () => new Set([new RegExp("/")]),
+    b: () => new Set([/\//]),
     strict: true,
     loose: true,
   },

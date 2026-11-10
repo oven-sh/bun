@@ -415,6 +415,30 @@ const fixture = [
         equal: false,
       },
       {
+        description: "not equal RegExp objects (different pattern after a shared prefix)",
+        value1: /^\/users\/(\d+)\/posts$/,
+        value2: /^\/users\/(\d+)\/likes$/,
+        equal: false,
+      },
+      {
+        description: "not equal RegExp objects (different pattern, one given with an unescaped slash)",
+        value1: new RegExp("^/users$"),
+        value2: /^\/posts$/,
+        equal: false,
+      },
+      {
+        description: "not equal RegExp objects (different 16-bit pattern)",
+        value1: new RegExp("^/\u30e6\u30fc\u30b6\u30fc/a$"),
+        value2: new RegExp("^/\u30e6\u30fc\u30b6\u30fc/b$"),
+        equal: false,
+      },
+      {
+        description: "not equal Sets of 64 RegExp objects",
+        value1: new Set(Array.from({ length: 64 }, (_, i) => new RegExp(`^/a/${i}$`))),
+        value2: new Set(Array.from({ length: 64 }, (_, i) => new RegExp(`^/b/${i}$`))),
+        equal: false,
+      },
+      {
         description: "RegExp and string are not equal",
         value1: /foo/,
         value2: "foo",

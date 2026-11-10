@@ -139,6 +139,7 @@
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
+#include "BunRegExpEquality.h"
 #include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/AOTMembersLeftOut.h"
 #include "DOMURL.h"
@@ -1789,7 +1790,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            if (left->regExp()->key() != right->regExp()->key()) {
+            if (!Bun::regExpSourceAndFlagsEqual(left->regExp(), right->regExp())) {
                 return false;
             }
             if (mode.checkPrototypes) {

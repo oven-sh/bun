@@ -1,5 +1,5 @@
 // A store into what the same turn has made adds the name every time, and a length is no own word: neither asks its site in line.
-// STATISTIC: StoresByNameThatAskTheirSitesInLine = 0
+// STATISTIC: SiteCachedStoresEmittedInline = 0
 "use strict";
 const said = [];
 function closures(turns) { let sum = 0; for (let i = 0; i < turns; i++) { const grip = x => x + i; grip.lid = (a, b) => b; sum = (sum + grip(1) + grip.lid(0, i)) | 0; } return sum; }

@@ -26,8 +26,8 @@ describe("callees whose loops are written out, copied into loops", () => {
     const ran = await spawned([join(root, isWindows ? "main.exe" : "main")], root, bunEnv);
     expect({
       exitCode: build.exitCode,
-      constantsReadInFront: count("ConstantsOfFilesReadInFrontOfLoops"),
-      listsOfCopiesAskedInFront: count("ListsReadInLoopsOfCopiesAskedInFrontOfLoops") > 0,
+      constantsReadInFront: count("ModuleConstantReadsHoisted"),
+      listsOfCopiesAskedInFront: count("InlineeArrayGuardsHoisted") > 0,
       stdout: ran.stdout,
     }).toEqual({
       exitCode: 0,

@@ -1,5 +1,5 @@
 // A with round the loop: the name may belong to the object.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies = 0
+// STATISTIC: CapturedVariableReadsHoisted = 0
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }
 function make() {

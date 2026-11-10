@@ -1,4 +1,4 @@
-// STATISTIC: BasesInFrontOfTypedCopiesAskedForLists >= 1
+// STATISTIC: InvariantBasesGuardedAsArrays >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const parts = JSON.parse('[[1.5,2.5,3.5],{"0":1.5,"1":2.5,"2":' + q + '},"ab"]'), list = JSON.parse('[' + Array.from({ length: 40 }, (_, i) => i + 0.5).join() + ']');

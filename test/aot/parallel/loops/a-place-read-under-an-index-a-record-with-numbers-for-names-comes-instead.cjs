@@ -1,4 +1,4 @@
-// STATISTIC: ListsExpectedOfPlaces >= 1
+// STATISTIC: ArraysSpeculatedFromLocationUses >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const D = JSON.parse('{"0":1.5,"1":2,"2":"x","3":' + q + ',"length":4}'); const seen = [];

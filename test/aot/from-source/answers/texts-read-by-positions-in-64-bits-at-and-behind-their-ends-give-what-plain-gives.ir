@@ -12,8 +12,8 @@
 # f1 = starts
 # Three loops over texts by charCodeAt, the position counted in 64 bits in the first (`pos++` stands twice in its turn, and its turns are laid out): narrow and wide texts, ropes and windows of ropes, texts that end in the
 # middle of a row of eight; positions that begin at, behind and far behind the end, below nothing, at a half, at 2^31, at 2^32 + 1 and at NaN; a walk backwards: 612 answers, held by a sum over their texts and by 24 written out.
-# RUN(COUNT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
-# COUNT-NOT: statistic LoopsWhoseTurnsAreLaidOut 0
+# RUN(COUNT): compile UnrolledLoopsEmitted mechanisms=all
+# COUNT-NOT: statistic UnrolledLoopsEmitted 0
 # RUN: run-in-shell mechanisms=all
 # CHECK: 612 -441659295 0,5,8,11,12 199003 636384 0 0 199003 943370 -121816 199003 0 0 0 0,5,8,11,12,17,20,23,24,29,32,35,36 871004 590130 0 0 871004 637620 -22052 871004 0 0 0
 # CHECK-NEXT: exited with 0

@@ -5,7 +5,7 @@
 # const store = new Store(JSON.parse("[1, 2, 3, 4]"));
 # print(store.flip(), store.flip());
 # -- end of source
-# RUN(COUNT): compile ListsConvertedInFrontOfTypedCopies mechanisms=all
-# COUNT: statistic ListsConvertedInFrontOfTypedCopies 1
+# RUN(COUNT): compile ArraysConvertedToDoubleStorage mechanisms=all
+# COUNT: statistic ArraysConvertedToDoubleStorage 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 31,30,29,28 1,2,3,4

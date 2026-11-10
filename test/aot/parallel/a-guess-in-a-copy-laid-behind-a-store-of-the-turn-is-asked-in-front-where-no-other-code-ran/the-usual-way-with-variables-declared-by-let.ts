@@ -1,5 +1,5 @@
 // The usual way: three captured variables declared by let, the place stored in each turn, the letter read by a helper that calls the method itself.
-// STATISTIC: GuessesInCopiesAskedInFrontBehindStoresOfTurns >= 1
+// STATISTIC: InlineeSpeculationsHoistedPastStores >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

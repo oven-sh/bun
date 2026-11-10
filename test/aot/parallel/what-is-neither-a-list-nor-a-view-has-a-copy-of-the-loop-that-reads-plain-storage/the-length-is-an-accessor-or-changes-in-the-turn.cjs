@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // The length is a getter that counts its calls and shrinks, lies on the prototype, is a fraction, a text, NaN, negative or absent; a getter under an index changes it in the middle of the loop.
 const said = [];

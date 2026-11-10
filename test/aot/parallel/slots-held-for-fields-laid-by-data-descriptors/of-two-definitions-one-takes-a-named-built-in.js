@@ -1,6 +1,6 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable, in one of two definitions: new works, or what a variable holds. Nobody knows what the variable holds, so what arrives says nothing; the slot is held to what the maker is seen to make. The variable holds Math.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1
+// STATISTIC: FieldTypesEnforced >= 2
+// COUNTER: FieldsEvictedByTypeMismatch >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 let refusals = 0, given = null;

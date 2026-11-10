@@ -11,5 +11,5 @@
 # for (const key of ["m", "f", "t", "c"]) texts.put(key);
 # let sum = 0; for (let t = 0; t < 16; t++) sum = sum * 3 % 1000003 + numbers.depth(t) + texts.depth("cfmtz"[t % 5]) + 9; print(sum);
 # -- end of source
-# RUN(COUNT): compile LoopsBuiltForClosuresReadOutOfSlots mechanisms=all
-# COUNT: statistic LoopsBuiltForClosuresReadOutOfSlots 2
+# RUN(COUNT): compile SlotClosureLoopsVersioned mechanisms=all
+# COUNT: statistic SlotClosureLoopsVersioned 2

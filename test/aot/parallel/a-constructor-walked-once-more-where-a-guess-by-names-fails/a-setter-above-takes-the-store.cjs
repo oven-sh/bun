@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // A setter on the prototype takes `this.tall = ..` from the third turn on.
 function Plate(from) { this.wide = from.wide; this.tall = from.tall; }

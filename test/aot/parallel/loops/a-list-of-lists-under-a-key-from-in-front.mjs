@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutForOneKindOfStorage >= 1
+// STATISTIC: UnrolledLoopsForIndexingType >= 1
 "use strict";
 const said = [];
 const hidden = (value) => ({ value })[JSON.parse('"value"')];

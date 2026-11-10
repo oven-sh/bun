@@ -11,13 +11,13 @@
 # born there: the lesser of the bound and that.
 # Nothing but the loop names `cur`, so it is born behind what reckons that room, right in front of the asking, and the birth takes the room.
 # f1 = row
-# RUN(COUNT): compile RoomAskedAsFarAsAProfileMayAsk mechanisms=all
-# COUNT-NOT: statistic RoomAskedAsFarAsAProfileMayAsk 0
+# RUN(COUNT): compile ClampedCapacitiesReserved mechanisms=all
+# COUNT-NOT: statistic ClampedCapacitiesReserved 0
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = Less {{*}}
 # FORM: = NewArray
-# FORM: = ReserveArrayRoom
+# FORM: = ReserveArrayCapacity
 # FORM: isLoopHead=true
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 21704

@@ -84,14 +84,14 @@ everyWay("h", makeSettings("h"));
 
 // GENERATED: drop makeSettings get set
 // CHECK-LABEL: function {{*}}name="drop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol):
 // CHECK-NEXT: v2 = ElemDelete v0, v1
 // CHECK-NEXT: v3 = Convert v2 declared={type=boolean}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeSettings"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v2 = Integer integer=10
@@ -106,7 +106,7 @@ everyWay("h", makeSettings("h"));
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_3]]):
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_3]] field=1
 // CHECK-NEXT: v2 = CheckInitialized v1 name="made"
@@ -130,7 +130,7 @@ everyWay("h", makeSettings("h"));
 // CHECK-NEXT: Return v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="target"}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined] variableName="key"}, {type=undefined|null|[[f_4]] flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="target"}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined] variableName="key"}, {type=undefined|null|[[f_4]] flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol, v2: undefined|null|[[f_4]]):
 // CHECK-NEXT: v3 = Call v2 calleeName="make"
 // CHECK-NEXT: v4 = Builtin builtin=Object
@@ -148,7 +148,7 @@ everyWay("h", makeSettings("h"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="target"}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined] variableName="key"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="target"}, {type=undefined|null|number|string|symbol flags=[OmitsNull, OmitsUndefined] variableName="key"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol, v2: anything):
 // CHECK-NEXT: v3 = Builtin builtin=Object
 // CHECK-NEXT: v4 = Builtin builtin=ObjectDefineProperty

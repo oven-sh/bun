@@ -1,5 +1,5 @@
 // An object of a class below Error that was made with a message has an own message: the table files that name under the prototype, and the examination passes it over.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 // COUNT: operation:operationAOTFillSiteCache = 0
 "use strict";
 const turns = +(process.argv[2] ?? 300);

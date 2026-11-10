@@ -1,5 +1,5 @@
 // `{ a, ...more }` in a loop, where more is an object or undefined | null | a number | false: the ways part in front of the literal: where there is nothing to copy nothing is called, and each way walks what is left of its block.
-// STATISTIC: CopiesWalkedApartFromSourcesWithoutProperties >= 4
+// STATISTIC: ObjectSpreadsSplitOnEmptiness >= 4
 type More = { p: number; q?: string };
 function orUndefined(a: number, more: More | undefined) { const o: any = { a, ...more }; return o; }
 function orNull(a: number, more: More | null) { const o: any = { a, b: a + 1, ...more }; return o; }

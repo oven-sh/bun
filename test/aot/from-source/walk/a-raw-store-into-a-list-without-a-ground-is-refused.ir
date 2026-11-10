@@ -8,10 +8,12 @@
 # function fresh() { const made = []; for (let i = 0; i < 4; i++) made.push(9.5 + i); return made; }
 # print(halves(fresh(), 4).join(), halves(fresh(), 6).join());
 # -- end of source
-# `kept` comes from outside and the bound is not its length: in the typed copy the turn asks `key < length` itself and stores raw behind the answer. The store rests on that test.
-# THE LIE, testing=LengthsAskedInTurnsAreTakenForGiven: the turn passes its question over, and the store has no ground to rest on. The verifier of the code refuses a raw store without one wherever the library has not written it.
+# `kept` comes from outside the function, and the loop bound is not its length. So in the specialized version the iteration checks `key < length` itself and stores raw after the check.
+# The store relies on that test.
+# Fault injection, testing=SkipLengthChecks: the iteration skips its check, so the store has no evidence to rely on.
+# The code verifier rejects a raw store without such evidence, unless the library wrote the store.
 # f1 = halves
-# OPTIONS: testing=LengthsAskedInTurnsAreTakenForGiven
+# OPTIONS: testing=SkipLengthChecks
 # DIAGNOSTIC: OpcodeNotInForm f1
 # RUN: walk f1:Body mechanisms=all
 # CHECK-NOT: code f1:Body

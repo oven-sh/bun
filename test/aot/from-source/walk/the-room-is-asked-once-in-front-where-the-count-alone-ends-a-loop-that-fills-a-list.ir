@@ -17,51 +17,51 @@
 # The bound holds only for a store that stands behind the test of the head. In inHead() the store stands in the head, in front of the test, and runs once more than the count says: the room is asked in every turn, as before.
 # In inStep() it stands in the step, behind the test: asked once. In behindTurn() the test stands behind the turn, in endsLate() a second side keeps the loop going: neither is a loop that the count alone ends.
 # RUN(WRITTEN): walk f1:Body mechanisms=all
-# WRITTEN: ReserveArrayRoom
-# WRITTEN: [[room]]: {{*}} = GetArrayRoom
+# WRITTEN: ReserveArrayCapacity
+# WRITTEN: [[room]]: {{*}} = GetArrayCapacity
 # WRITTEN: LessEq {{*}}, [[room]]
 # WRITTEN: isLoopHead=true
 # WRITTEN-NOT: Less {{*}}, [[room]]
 # WRITTEN: ExtendArrayLength
 # WRITTEN-NEXT: Put{{*}}Index
 # RUN(RECKONED): walk f2:Body mechanisms=all
-# RECKONED: ReserveArrayRoom
-# RECKONED: [[room]]: {{*}} = GetArrayRoom
+# RECKONED: ReserveArrayCapacity
+# RECKONED: [[room]]: {{*}} = GetArrayCapacity
 # RECKONED: LessEq {{*}}, [[room]]
 # RECKONED: isLoopHead=true
 # RECKONED-NOT: Less {{*}}, [[room]]
 # RECKONED: ExtendArrayLength
 # RECKONED-NEXT: Put{{*}}Index
 # RUN(UPTO): walk f3:Body mechanisms=all
-# UPTO: ReserveArrayRoom
-# UPTO: [[room]]: {{*}} = GetArrayRoom
+# UPTO: ReserveArrayCapacity
+# UPTO: [[room]]: {{*}} = GetArrayCapacity
 # UPTO: LessEq {{*}}, [[room]]
 # UPTO: isLoopHead=true
 # UPTO-NOT: Less {{*}}, [[room]]
 # UPTO: ExtendArrayLength
 # UPTO-NEXT: Put{{*}}Index
 # RUN(ASKS): walk f4:Body mechanisms=all
-# ASKS-NOT: GetArrayRoom
+# ASKS-NOT: GetArrayCapacity
 # RUN(INHEAD): walk f5:Body mechanisms=all
-# INHEAD: [[room]]: {{*}} = GetArrayRoom
+# INHEAD: [[room]]: {{*}} = GetArrayCapacity
 # INHEAD-NOT: LessEq {{*}}, [[room]]
 # INHEAD: isLoopHead=true
 # INHEAD: Less {{*}}, [[room]]
 # INHEAD: ExtendArrayLength
 # INHEAD-NEXT: Put{{*}}Index
 # RUN(INSTEP): walk f6:Body mechanisms=all
-# INSTEP: [[room]]: {{*}} = GetArrayRoom
+# INSTEP: [[room]]: {{*}} = GetArrayCapacity
 # INSTEP: LessEq {{*}}, [[room]]
 # INSTEP: isLoopHead=true
 # INSTEP-NOT: Less {{*}}, [[room]]
 # INSTEP: ExtendArrayLength
 # INSTEP-NEXT: Put{{*}}Index
 # RUN(BEHINDTURN): walk f7:Body mechanisms=all
-# BEHINDTURN-NOT: GetArrayRoom
+# BEHINDTURN-NOT: GetArrayCapacity
 # RUN(ENDSLATE): walk f8:Body mechanisms=all
-# ENDSLATE-NOT: GetArrayRoom
-# RUN(COUNT): compile RoomsAskedOnceForEveryTurnThatLengthensList mechanisms=all
-# COUNT: statistic RoomsAskedOnceForEveryTurnThatLengthensList 4
+# ENDSLATE-NOT: GetArrayCapacity
+# RUN(COUNT): compile LoopCapacityGuardsEmitted mechanisms=all
+# COUNT: statistic LoopCapacityGuardsEmitted 4
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 0123012301230123012301230123012301230123 0123012 0 0 0123 0 0 12 2,3,4 0 12
 # ANSWERS-NEXT: 01230123 012301230 0 0123012 01230123 0123012 01230123 0 01230 01230123

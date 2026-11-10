@@ -270,7 +270,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.emit_static_field_test(name, binding.class, member, object)
                 }
                 _ => {
-                    let error = RuntimeErrorKind::PrivateStaticTestOfNonObject;
+                    let error = RuntimeErrorKind::StaticPrivateInNotObject;
                     let checked = self.builder.require_object(object, error);
                     self.emit_class_object_comparison(binding.class, checked)
                 }

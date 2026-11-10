@@ -5,12 +5,16 @@
 # declare function print(...values: unknown[]): void;
 # print(T[key]([1.5, 2.5, 3.5]), T[key]([1, 2, 3]), T[key]([]), T[key](Own.from([1, 2, 3]) as number[]), T[key]([1, , 3] as number[]), T[key](["a", "b"] as unknown as number[]));
 # -- end of source
-# `for (const [i, v] of list.entries())` over what is declared a list of numbers. The loop is built twice. The typed copy is entered where the list is one as made that holds numbers: it steps by index alone, the pattern takes the position and
-# the element as they are, and the sum is one of numbers. The cleanup of the pattern stands under that of the for-of, outside the loop: it is walked beside each copy. Whatever else comes takes the loop as written.
-# THE LIE, testing=PartsOfPairsAreTakenWhateverIsStepped: the pattern takes the parts whatever is stepped: for the list of a class below with `entries` of its own nothing was laid into them: a wrong answer in silence.
-# Where the walk checks its proofs the type of what is stepped is asked again, apart from the test that the lie drops: with both words the program stops by name.
-# ANOTHER LIE, testing=ListsSteppedByMethodsAreTakenToBeAsMade: where a method in sight opens the iteration the question whether the list is as made is taken to pass: the list of a class below with `entries` of its own is stepped
-# by index: a wrong answer in silence. Where the walk checks its proofs that question is asked again behind the opening, once a loop: with both words the program stops by name.
+# The program runs `for (const [i, v] of list.entries())` over a value that is declared as an array of numbers. The loop is versioned.
+# The specialized version is entered if the array is pristine and holds numbers.
+# It steps by index alone, the pattern takes the index and the element as they are, and the sum is an addition of numbers.
+# The cleanup of the pattern is nested under the cleanup of the for-of, outside the loop, and it is visited alongside each version. Any other value takes the loop as written.
+# Fault injection, testing=SkipPairGuard: the pattern takes the two parts no matter what is iterated.
+# For the array of a subclass that has `entries` of its own, nothing was stored into the parts, so the program silently prints a wrong result.
+# Where the walk checks its proofs, the type of the iterated value is tested again, separately from the guard that the fault drops. With both switches the program crashes with a named error.
+# A second fault injection, testing=AssumePristineReceivers: where a method call that the walk can see opens the iteration, the check that the array is pristine is assumed to pass.
+# The array of a subclass that has `entries` of its own is then stepped by index, and the program silently prints a wrong result.
+# Where the walk checks its proofs, that check is made again after the iteration opens, once per loop. With both switches the program crashes with a named error.
 # f1 = each
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
@@ -25,15 +29,15 @@
 # RUN(NONE): run-in-shell mechanisms=none
 # NONE: 37.5 36 0 50.5 NaN 00a10b
 # NONE-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=PartsOfPairsAreTakenWhateverIsStepped
+# RUN(LIE): run-in-shell mechanisms=all testing=SkipPairGuard
 # LIE: 37.5 36 0 NaN NaN 00a10b
 # LIE-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=PartsOfPairsAreTakenWhateverIsStepped,CheckProofsAtRunTime
-# HELD: AOT: f1 at {{*}}
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipPairGuard,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed at {{*}} (each)
 # HELD: crashed with
-# RUN(ASMADE): run-in-shell mechanisms=all testing=ListsSteppedByMethodsAreTakenToBeAsMade
+# RUN(ASMADE): run-in-shell mechanisms=all testing=AssumePristineReceivers
 # ASMADE: 37.5 36 0 36 NaN 00a10b
 # ASMADE-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=ListsSteppedByMethodsAreTakenToBeAsMade,CheckProofsAtRunTime
-# STOPPED: AOT: f1 at {{*}}
+# RUN(STOPPED): run-in-shell mechanisms=all testing=AssumePristineReceivers,CheckProofsAtRunTime
+# STOPPED: bun: internal AOT error: redundancy elimination check failed at {{*}} (each)
 # STOPPED: crashed with

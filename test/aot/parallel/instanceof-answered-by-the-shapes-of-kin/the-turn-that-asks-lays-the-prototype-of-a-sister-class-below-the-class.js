@@ -1,5 +1,5 @@
 // Object.setPrototypeOf(Dog.prototype, Cat.prototype) is written in the loop that asks, in front of the question: the dogs behind it in the same walk over the list are cats.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 const sizes = JSON.parse("[1,2,3,4,5,6]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

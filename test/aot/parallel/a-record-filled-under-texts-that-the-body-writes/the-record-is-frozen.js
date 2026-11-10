@@ -1,4 +1,4 @@
-// STATISTIC: StoresHeardUnderTextsThatBodyWrites >= 1
+// STATISTIC: StoresResolvedToLiteralKeys >= 1
 function add(a, b) { return a + b; }
 function scale(a, s) { return a * s; }
 const N = Object.freeze({ zero: 0 });

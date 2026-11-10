@@ -8,7 +8,7 @@
 # function spread(jobs: Job[]) { let sum: any = later(jobs[1]!, jobs[0]!); for (let at = 2; at < jobs.length; at++) sum += later(jobs[at]!, jobs[at - 1]!); return sum; }
 # print(spread(JSON.parse('[{"due":5},{"due":3},{"due":10}]')), spread([{ due: 1 }, { due: 4 }, { due: 9 }]), spread(eval("[{ due: 5n, x: 1 }, { due: 3n, x: 1 }, { due: 10n, x: 1 }]")));
 # -- end of source
-# RUN(COUNT): compile NumbersToldByTheirWordStraight mechanisms=all
-# COUNT: statistic NumbersToldByTheirWordStraight 1
+# RUN(COUNT): compile StraightNumberTagChecks mechanisms=all
+# COUNT: statistic StraightNumberTagChecks 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 5 8 5

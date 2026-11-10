@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedAtHeadsOfTypedTurns >= 1
+// STATISTIC: ArraysGuardedAtLoopHeaders >= 1
 // Under: --aot-harden=proof-checks: the position of every read is held against the length of its list
 'use strict';
 const n = +process.argv[2] || 3; const said = [];

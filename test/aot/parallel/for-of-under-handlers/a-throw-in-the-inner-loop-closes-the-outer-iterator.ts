@@ -1,5 +1,5 @@
 // The inner loop's head lies under the handler that closes the outer iterator. Its step goes on two ways; a throw in its turn still closes the outer iterator, once, and at the right step.
-// STATISTIC: StepsOfListsOnWaysApartUnderHandlers >= 1
+// STATISTIC: IteratorStepsThreadedUnderHandlers >= 1
 const said: string[] = [];
 function make(rows: number[][]): Iterable<number[]> {
   return { [Symbol.iterator]() { let i = 0; return { next() { said.push("next " + i); return i < rows.length ? { done: false, value: rows[i++] } : { done: true, value: undefined as any }; }, return() { said.push("return at " + i); return { done: true, value: undefined as any }; } }; } };

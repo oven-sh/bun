@@ -6950,14 +6950,16 @@ describe.concurrent("write() after end()", () => {
     });
 
     // Guard, passes without the fix too: a file response sends its own END_STREAM when the file is done.
-    it("late write during a file response does not cut the file short", async () => {
-      using dir = tempDir("http2-late-write-file", { "body.bin": Buffer.alloc(512 * 1024, "f") });
+    // Serial: the file goes out over many turns of the event loop, and the other tests of the block stretch each.
+    it.serial("late write during a file response does not cut the file short", async () => {
+      // Two windows of data, so the file is still in transit when the late write errors the stream.
+      using dir = tempDir("http2-late-write-file", { "body.bin": big });
       const result = await serve((stream, late) => {
         stream.respondWithFile(path.join(String(dir), "body.bin"), { ":status": 200 });
         // respondWithFile ends the writable side, so 'finish' comes while the file is still in transit.
         stream.on("finish", () => stream.write("late", late));
       });
-      expect(result).toEqual([["finish", ...lateWriteEvents], 512 * 1024]);
+      expect(result).toEqual([["finish", ...lateWriteEvents], big.length]);
     });
 
     // Guard, passes without the fix too: a stream that end() did not close is owed no END_STREAM,
@@ -7345,11 +7347,12 @@ describe.concurrent("write() after end()", () => {
         expect(result).toEqual([{ length: 65535, endStream: false, resets: [0] }, lateWriteEvents]);
       });
 
-      it("close() under socket backpressure sends the queued chunk ahead of the reset", async () => {
+      // Serial: it moves megabytes, and the other tests of the block would share the event loop with it.
+      it.serial("close() under socket backpressure sends the queued chunk ahead of the reset", async () => {
         // The raw client reads nothing until close() has run, so the chunk waits for the socket and not for
         // flow control. Like node, the reset does not drop that chunk.
         const closeCalled = Promise.withResolvers();
-        const chunk = Buffer.alloc(2 * 1024 * 1024, "x");
+        const chunk = Buffer.alloc(1024 * 1024, "x");
         let written = 0;
         const result = await closeThenLateWrite(
           (stream, late) => {
@@ -7357,8 +7360,10 @@ describe.concurrent("write() after end()", () => {
             (function fill() {
               stream.write(chunk);
               written += chunk.length;
-              // The socket took the whole chunk: write one more on the next turn.
-              if (stream.session.state.outboundQueueSize === 0) return setImmediate(fill);
+              // The socket took the whole chunk: write one more on the next turn. The limit ends the loop on a
+              // machine whose socket never pushes back. The reset then has nothing queued to send first.
+              if (stream.session.state.outboundQueueSize === 0 && written < 128 * chunk.length)
+                return setImmediate(fill);
               stream.close();
               stream.write("late", late);
               closeCalled.resolve();

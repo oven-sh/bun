@@ -33,8 +33,8 @@ require("node:worker_threads");
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
-const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames } = Object;
-const { ownKeys } = Reflect;
+const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames, isExtensible } = Object;
+const { ownKeys, defineProperty: tryDefineProperty } = Reflect;
 const { eventNames, rawListeners, removeListener } = process;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
@@ -140,6 +140,12 @@ function restoreProperties(object: object, properties: Properties, size: number)
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
     if (!$getByIdDirect(current, "configurable")) {
+      if (isMatcherHolder(object)) {
+        // A test file can make a matcher read-only. A delete lets it be defined again, unless the file froze the object.
+        if (!tryDefineProperty(object, key, saved) && isExtensible(object) && deleteOwnProperty(object, key))
+          defineProperty(object, key, saved);
+        continue;
+      }
       if (saved.configurable) deleteOwnProperty(object, key);
       // Some builtins have a read-only property that gives a new value each time it's read.
       else if (!$getByIdDirect(current, "writable")) continue;

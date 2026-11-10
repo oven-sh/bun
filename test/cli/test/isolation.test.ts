@@ -1645,6 +1645,11 @@ describe.concurrent("bun test --isolate=modules", () => {
       "preload.js": `
         import { expect } from "@jest/globals";
         expect.extend({ toBeOfPreload${matcher("preload")} });
+        // A flag on one of the three objects goes with the matchers, so this adds them again for each file.
+        if (!expect.isSetUp) {
+          expect.isSetUp = true;
+          expect.extend({ toBeOfGuard${matcher("preload")} });
+        }
         const { toHaveLength } = expect.prototype;
         expect.prototype.toHaveLength = function (...args) {
           globalThis.callsOfWrapper++;
@@ -1671,6 +1676,7 @@ describe.concurrent("bun test --isolate=modules", () => {
           expect(() => expect(1).toEqual(2)).toThrow("Expected: 2");
           expect(() => expect(1).toBeOfFile()).toThrow("from b");
           expect(1).toBeOfPreload();
+          expect(1).toBeOfGuard();
           expect((${typesOf})(["toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(9).fill("undefined"));
           expect(${callsOfWrapper}).toBe(1);
         });
@@ -1679,6 +1685,7 @@ describe.concurrent("bun test --isolate=modules", () => {
         test("c", () => {
           expect(() => expect(1).toEqual(2)).toThrow("Expected: 2");
           expect(1).toBeOfPreload();
+          expect(1).toBeOfGuard();
           expect((${typesOf})(["toBeOfFile", "toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(12).fill("undefined"));
           expect(${callsOfWrapper}).toBe(1);
         });
@@ -1706,14 +1713,14 @@ describe.concurrent("bun test --isolate=modules", () => {
   });
 
   test("every file finds expect as the first one did, whatever the files before it did to it", async () => {
-    // The address tells one function from another that has the same name.
+    // The address tells one function from another that has the same name. Sorted: a property that had to be deleted is put back as the last one.
     const state = `JSON.stringify([
       ...[expect, expect.prototype, Object.getPrototypeOf(expect.not)].map(holder =>
         Reflect.ownKeys(holder).map(key => {
           const { value, get, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(holder, key);
           const shown = typeof value === "function" ? /0x[0-9a-f]+/.exec(jscDescribe(value))[0] : typeof value === "object" ? "object" : String(value);
           return [String(key), shown, typeof get, writable, enumerable, configurable].join();
-        }),
+        }).sort(),
       ),
       Object.keys(expect.getState()),
     ])`;
@@ -1733,6 +1740,10 @@ describe.concurrent("bun test --isolate=modules", () => {
        Object.defineProperty(expect.prototype, "toBeNull", { get() {}, enumerable: false });`,
       `expect.setState({ left: 1 }); expect.getState().alsoLeft = 1;`,
       `expect.extend({ 0${matcher("a")} }); expect.prototype[1] = 1;`,
+      // What defineProperty() refuses to undo: read-only, and an accessor that is not configurable.
+      `for (const [holder, name] of [[expect.prototype, "toEqual"], [expect, "anything"], [Object.getPrototypeOf(expect.not), "anything"]])
+         Object.defineProperty(holder, name, { value() {}, writable: false });`,
+      `expect.extend({ toBeNil${matcher("a")} }); Object.defineProperty(expect.prototype, "toBeNil", { get() {}, configurable: false });`,
       `expect(1).not.toBe(2); expect(() => expect(1).toEqual(2)).toThrow("Expected: 2"); expect("a").toEqual(expect.not.stringContaining("b"));`,
     ];
     const files = Object.fromEntries(

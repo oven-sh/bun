@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use bun_aot::builtins::unlinked_named_values;
+use bun_aot::builtins::name_values_of_unlinked_files;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
@@ -13,8 +13,8 @@ use bun_sema::check::aot::{
     write_queries,
 };
 use bun_sema::fold::FoldInputs;
-use bun_sema::program::Files;
-use bun_sema::resolve::{AOT_CONDITION, Host};
+use bun_sema::program::{Files, ReadingNoTrees};
+use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
 use bun_sema_driver::{
@@ -23,9 +23,7 @@ use bun_sema_driver::{
 };
 
 use crate::cli::typescript_libs::BUNDLED;
-use crate::code_resolver_testing::{
-    DiskWithBuiltinModules, code_options_with_limits, fold_options_with_limits,
-};
+use crate::code_resolver_testing::{DiskWithBuiltinModules, fold_options_for_compile};
 
 const fn global_type_path(
     class: u32,
@@ -60,6 +58,7 @@ fn write_diagnostic(reported: &BuildDiagnostic, files: &Files<'_>, root: &[u8], 
     let diagnostic = &reported.diagnostic;
     match diagnostic.file {
         Some(file) => {
+            let _reading = ReadingNoTrees::begin();
             let name = files.module(file).file_name();
             out.extend_from_slice(name.strip_prefix(root).unwrap_or(name));
             out.extend_from_slice(format!(":{}", diagnostic.line).as_bytes());
@@ -104,12 +103,12 @@ pub(crate) fn describe_checker_queries(
     let limits = LimitValues::for_host();
     // Printed paths are the loader's, which are real paths.
     let mut root = host.realpath(directory);
-    let code = code_options_with_limits(&root, &limits);
+    let code = CodeOptions::bun_run(&root);
     if !root.ends_with(b"/") {
         root.push(b'/');
     }
 
-    let fold = FoldInputs::new(fold_options_with_limits(&limits), session.arena());
+    let fold = FoldInputs::new(fold_options_for_compile(), session.arena());
     let atoms = Interner::new_in(&session);
     let request = CompileRequest {
         entry_points: EntryPoints::Written(&entry_points),
@@ -121,6 +120,7 @@ pub(crate) fn describe_checker_queries(
         threads,
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
     };
 
     let loaded = match load_program(&session, &host, &request) {
@@ -130,14 +130,15 @@ pub(crate) fn describe_checker_queries(
     let files = loaded.files();
     let files_to_lower = files.compiled_files();
     let roles = decide_roles(&loaded, &host, &request, files_to_lower);
-    let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, &[]);
-    let named_values = unlinked_named_values(files, &request.atoms);
+    let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
+    let named_values = name_values_of_unlinked_files(files);
     let inputs = QueryInputs {
         roles: &roles.roles,
         checked_elsewhere: &[],
         builtin_types: &builtin_types,
         named_values: &*named_values,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),
+        limits: limits.for_queries(),
     };
     let checked = check_and_lower(
         &loaded,
@@ -147,7 +148,7 @@ pub(crate) fn describe_checker_queries(
         files_to_lower,
         &|checker, file| {
             let mut out = Vec::new();
-            checker.with_queries(file, inputs, |queries| {
+            checker.with_queries(file, &inputs, |queries| {
                 write_queries(queries, &root, &mut out)
             });
             Some(out)

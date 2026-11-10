@@ -1,13 +1,12 @@
-// The line that ends a build says how many of the program's property accesses are one load or store. They are counted in the
-// optimized program, so no count is written down here: a test says whether its program has typed and untyped accesses,
-// and computes the line from the numbers of `--explain=json`.
+// The line that ends the report of `--explain` says how many of the program's property accesses are one load or store. A build
+// without that report prints no such line. They are counted in the optimized program, so no count is written down here: a test
+// says whether its program has typed and untyped accesses, and computes the line from the numbers of `--explain=json`.
 // The read of `console.log` is one of the typed accesses, so only a program that prints nothing has none. An object that never
 // leaves its function is not allocated. So a program that is to be typed keeps its objects in an array.
+// The `No type errors` line of `bun check --aot` also gives the number of files, the number of lines and the compile speed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
-import { parseExplainLines, type ExplainNumbers } from "./explain/explain-report";
-import { countAccesses } from "./harness/build-report";
-import { slot, spawned } from "./run-programs";
+import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 type Files = Record<string, string>;
@@ -17,6 +16,19 @@ interface Program {
   /** Left out where it depends on what the optimizer removes. */
   hasTyped?: boolean;
   hasUntyped: boolean;
+}
+
+/** How each property access was compiled. Every access is counted in exactly one of the three. */
+interface AccessCounts {
+  free: number;
+  tested: number;
+  byName: number;
+}
+
+/** The first line of `--explain=json`. */
+interface ExplainNumbers {
+  accesses: AccessCounts;
+  dependencyAccesses: AccessCounts;
 }
 
 const stock = `export interface Item {
@@ -50,62 +62,14 @@ console.log(value);
 
 const savedText = `'[{"sku":"B-2","price":10,"quantity":3}]'`;
 
-const programs: Record<string, Program> = {
-  "a class and a loop": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "main.ts": `class Account {
-  constructor(
-    public id: number,
-    public balance: number,
-  ) {}
-}
-function total(accounts: Account[]): number {
-  let sum = 0;
-  for (const account of accounts) sum += account.balance;
-  return sum;
-}
-const accounts: Account[] = [];
-for (let id = 0; id < 10; id++) {
-  const account = new Account(id, id % 3);
-  accounts.push(account);
-}
-const sum = total(accounts);
-console.log(sum);
-`,
-    },
-  },
-  "objects of a class behind an any": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "main.ts": `class Account {
-  id = 1;
-  balance = 2;
-}
-const accounts: any[] = [];
-for (let id = 0; id < 10; id++) {
-  const account = new Account();
-  accounts.push(account);
-}
-let sum = 0;
-for (const account of accounts) sum += account.balance;
-console.log(sum);
-`,
-    },
-  },
-  "a JavaScript file of the program": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "helper.js": `export function describe(jobs) {
+const twoFiles = {
+  "helper.js": `export function describe(jobs) {
   let text = "";
   for (const job of jobs) text += job.id + ": " + job.state + "\\n";
   return text;
 }
 `,
-      "main.ts": `import { describe } from "./helper.js";
+  "main.ts": `import { describe } from "./helper.js";
 class Job {
   id = 1;
   state = "queued";
@@ -114,8 +78,9 @@ const jobs = [new Job(), new Job()];
 const text = describe(jobs);
 console.log(text);
 `,
-    },
-  },
+};
+
+const programs: Record<string, Program> = {
   "properties of parsed data": {
     hasUntyped: true,
     files: {
@@ -224,9 +189,9 @@ export default greeting;
   },
 };
 
-const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
 const nothingToExplain = "note: Every property access is typed. Nothing to fix.";
-const summaryLine = /^([\d.]+% of property accesses are one load: |Untyped code works, but runs slower\. Run)/;
+const summaryLine =
+  /^((Dependencies: )?[\d.]+% of property accesses are one load: |Untyped code works, but runs slower\. Run)/;
 const entryLine = /^note: \d+\. [a-z-]+: /;
 const placeInProgram = /^ +at (.*[\\/])?(main\.ts|stock\.ts|helper\.js):\d+:\d+$/;
 const buildTimeout = 300_000;
@@ -242,18 +207,22 @@ async function check(files: Files, ...flags: string[]) {
 }
 
 async function numbersOf(files: Files): Promise<ExplainNumbers> {
-  return parseExplainLines((await check(files, "--explain=json")).stdout).numbers;
+  const { stdout, summary } = await check(files, "--explain=json");
+  expect(summary).toEqual([]);
+  const numbers = stdout.split("\n").find(line => line.startsWith("{"));
+  expect(numbers).toBeDefined();
+  return JSON.parse(numbers!);
 }
 
+const countAccesses = ({ free, tested, byName }: AccessCounts) => free + tested + byName;
 const count = (number: number) => number.toLocaleString("en-US");
 
-function summaryOf({ accesses }: ExplainNumbers, hasTextReport: boolean) {
+function summaryOf({ accesses }: ExplainNumbers) {
   const [typed, total] = [accesses.free, countAccesses(accesses)];
   if (total === 0) return [];
   const tenths = Math.max(Math.floor((typed * 1000) / total), typed > 0 ? 1 : 0);
   const columns = `${count(accesses.free)} free, ${count(accesses.tested)} tested, ${count(accesses.byName)} by name`;
-  const line = `${tenths / 10}% of property accesses are one load: ${columns} (${count(total)})`;
-  return tenths < 950 && !hasTextReport ? [hint, line] : [line];
+  return [`${tenths / 10}% of property accesses are one load: ${columns} (${count(total)})`];
 }
 
 describe.concurrent("typed percentage", () => {
@@ -266,10 +235,10 @@ describe.concurrent("typed percentage", () => {
         const typed = numbers.accesses.free;
         expect({ hasTyped: typed > 0, hasUntyped: typed < countAccesses(numbers.accesses) }).toMatchObject(expected);
         expect(countAccesses(numbers.dependencyAccesses)).toBe(0);
-        expect((await check(files)).summary).toEqual(summaryOf(numbers, false));
+        if (name === Object.keys(programs)[0]) expect((await check(files)).summary).toEqual([]);
 
         const { lines, summary } = await check(files, "--explain");
-        expect(summary).toEqual(summaryOf(numbers, true));
+        expect(summary).toEqual(summaryOf(numbers));
         expect(lines.includes(nothingToExplain)).toBe(!expected.hasUntyped);
         expect({
           hasEntry: lines.some(line => entryLine.test(line)),
@@ -279,3 +248,19 @@ describe.concurrent("typed percentage", () => {
     buildTimeout,
   );
 });
+
+test(
+  "closing line",
+  () =>
+    slot(async () => {
+      const files = twoFiles;
+      const texts = Object.values(files);
+      const lineCount = texts.reduce((sum, text) => sum + text.split("\n").length - 1, 0);
+      const closingLine = new RegExp(
+        ` in ${texts.length} files, compiled ${count(lineCount)} lines in [\\d,]+\\.\\d\\d s \\([\\d,]+ lines/s\\)$`,
+      );
+      const { lines } = await check(files);
+      expect(lines.filter(line => line.includes("No type errors"))).toEqual([expect.stringMatching(closingLine)]);
+    }),
+  buildTimeout,
+);

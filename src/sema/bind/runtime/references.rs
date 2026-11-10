@@ -1,10 +1,15 @@
 use super::bits::insert_bit;
 use super::declaration_kinds::{DeclarationKind, declaration_kind, for_each_name};
-use super::direct_evals::{DirectEval, DynamicScopes, compute_dynamic_scopes, find_direct_evals};
-use super::lookup::{COMMONJS_VARIABLES, Lookup};
+use super::direct_evals::{
+    DirectEval, DynamicScopes, compute_dynamic_scopes, find_call_of_name, find_direct_evals,
+};
+use super::lookup::{COMMONJS_VARIABLES, Found, Lookup, RecentLookups};
 use super::namespace_exports::ExportedBlockBindings;
 use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
+use super::stores::{
+    is_object_of_element, is_object_of_own_member_of_arguments, is_object_of_read,
+};
 use super::type_only_code::TypeOnlyCode;
 use super::{
     Binding, CodeUnit, CommonJsVariable, FunctionFlags, RuntimeBindOptions, RuntimeInput,
@@ -12,6 +17,7 @@ use super::{
 };
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::fold::{DefinePath, DefineRoot, PathInPlace};
 use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
@@ -39,12 +45,16 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         idents,
         options,
         atoms,
+        names_in_place: input.names_in_place,
         type_only,
         direct_evals,
         first_eval_id: bound.ids.len() as u32,
         eval_symbol_ids: Vec::new(),
         references: RuntimeReferencesIn::<Growable>::default(),
         uses_arguments: Vec::new(),
+        hands_arguments_on: Vec::new(),
+        reads_elements_of_arguments: Vec::new(),
+        may_read_above_arguments: Vec::new(),
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
         has_import_meta: false,
@@ -60,6 +70,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     pass.resolve_exports();
     pass.resolve_entity_roots();
     pass.resolve_classic_jsx();
+    pass.resolve_defined_paths();
     pass.resolve_decorator_metadata();
     pass.collect_jump_targets();
     pass.finish_results();
@@ -67,6 +78,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         references,
         eval_symbol_ids,
         uses_arguments,
+        hands_arguments_on,
+        reads_elements_of_arguments,
+        may_read_above_arguments,
         has_direct_eval,
         import_meta_may_be_modified,
         has_import_meta,
@@ -76,11 +90,24 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     let names_require_or_own_path = |&(_, binding): &(ExprId, Binding)| {
         matches!(
             binding,
-            Binding::CommonJs(CommonJsVariable::Require | CommonJsVariable::Filename)
+            Binding::CommonJs(
+                CommonJsVariable::Require
+                    | CommonJsVariable::Module
+                    | CommonJsVariable::Filename
+                    | CommonJsVariable::Dirname
+            )
         )
     };
     let mut named = references.ident_bindings.iter();
     bound.runtime.may_name_own_require = has_import_meta || named.any(names_require_or_own_path);
+    let names_own_path = |&(_, binding): &(ExprId, Binding)| {
+        matches!(
+            binding,
+            Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+        )
+    };
+    let mut named = references.ident_bindings.iter();
+    bound.runtime.may_name_own_path = has_import_meta || named.any(names_own_path);
     bound.runtime.references = references;
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
@@ -95,6 +122,15 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
             CodeUnit::FieldInitializer(_) => {}
         }
     }
+    for function in hands_arguments_on {
+        bound.runtime.function_flags[function.idx()] |= FunctionFlags::HANDS_ARGUMENTS_ON;
+    }
+    for function in reads_elements_of_arguments {
+        bound.runtime.function_flags[function.idx()] |= FunctionFlags::READS_ELEMENTS_OF_ARGUMENTS;
+    }
+    for function in may_read_above_arguments {
+        bound.runtime.function_flags[function.idx()] |= FunctionFlags::MAY_READ_ABOVE_ARGUMENTS;
+    }
     for function in has_direct_eval {
         bound.runtime.function_flags[function.idx()] |= FunctionFlags::HAS_DIRECT_EVAL;
     }
@@ -105,14 +141,17 @@ fn find_arguments_variables(
     bound: &BoundBuilder,
     scopes: &RuntimeScopes,
 ) -> Vec<(PatId, Binding)> {
+    let name = known::arguments;
+    let mut variables = Vec::new();
+    if !bound.entries.iter().any(|entry| entry.0 == name) {
+        return variables;
+    }
     let lookup = Lookup {
         hir,
         bound,
         scopes,
         dynamic: DynamicScopes::default(),
     };
-    let name = known::arguments;
-    let mut variables = Vec::new();
     for scope in bound.scopes.iter() {
         let Some(local) = bound.find_in_table(scope.locals, name) else {
             continue;
@@ -137,20 +176,45 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) idents: &'a [(ExprId, ScopeId)],
     pub(super) options: RuntimeBindOptions,
     pub(super) atoms: &'a dyn Intern,
+    pub(super) names_in_place: &'a [PathInPlace<'a>],
     pub(super) type_only: TypeOnlyCode,
     pub(super) direct_evals: Vec<DirectEval>,
     pub(super) first_eval_id: u32,
     pub(super) eval_symbol_ids: Vec<u32>,
     pub(super) references: RuntimeReferencesIn<Growable>,
     pub(super) uses_arguments: Vec<CodeUnit>,
+    pub(super) hands_arguments_on: Vec<FnId>,
+    pub(super) reads_elements_of_arguments: Vec<FnId>,
+    pub(super) may_read_above_arguments: Vec<FnId>,
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
     pub(super) has_import_meta: bool,
 }
 
 impl ReferencePass<'_, '_> {
+    fn find_names_that_the_bundler_takes_out(&self) -> Vec<SymbolId> {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let imports = hir.imports.iter().filter(|import| {
+            import.spec == known::bun_bundle
+                && !import.type_only
+                && bound.parent_of_stmt(import.stmt) == Parent::File
+        });
+        let names = imports.flat_map(|import| import.named.iter());
+        names
+            .filter(|&name| !hir[name].type_only)
+            .filter_map(
+                |name| match self.lookup.find_binding(ScopeId(0), hir[name].local) {
+                    Binding::Symbol(symbol) => Some(symbol),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
     fn resolve_idents(&mut self) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let taken_out_by_bundler = self.find_names_that_the_bundler_takes_out();
+        let mut recent = RecentLookups::new(&self.lookup);
         for &(ident, scope) in self.idents {
             let ExprKind::Ident(name) = hir[ident].kind else {
                 continue;
@@ -159,14 +223,53 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             insert_bit(&mut self.references.evaluated_idents, ident.idx());
-            let found = self.lookup.find(scope, name, hir[ident].pos);
-            if found.binding != bound.default_binding(ident) {
+            let mut found = recent.find(&self.lookup, scope, name, hir[ident].pos);
+            let written = DefinePath {
+                root: DefineRoot::Global(name),
+                members: &[],
+            };
+            if found.binding == Binding::Free
+                && let Some(in_place) = self.names_in_place.iter().find(|it| it.path == written)
+                && let Some(at_hand) = self.find_name_in_place(scope, in_place, hir[ident].pos)
+            {
+                found = at_hand;
+            }
+            if let Binding::Symbol(symbol) = found.binding
+                && taken_out_by_bundler.contains(&symbol)
+                && find_call_of_name(hir, bound, ident).is_none()
+            {
+                found = Found {
+                    binding: Binding::Free,
+                    scope: ScopeId::NONE,
+                    ..found
+                };
+            }
+            if !bound.is_default_binding(ident, found.binding) {
                 self.references.ident_bindings.push((ident, found.binding));
             }
             if let Binding::Arguments(unit) = found.binding {
                 self.uses_arguments.push(unit);
+                if let CodeUnit::Function(function) = unit
+                    && !is_object_of_read(hir, bound, ident)
+                {
+                    self.hands_arguments_on.push(function);
+                }
+                if let CodeUnit::Function(function) = unit
+                    && is_object_of_element(hir, bound, ident)
+                {
+                    self.reads_elements_of_arguments.push(function);
+                }
+                if let CodeUnit::Function(function) = unit
+                    && self.options.object_prototype_takes_names
+                    && !is_object_of_own_member_of_arguments(hir, bound, ident)
+                {
+                    self.may_read_above_arguments.push(function);
+                }
             }
             let mut dynamic_scope = found.dynamic_scope;
+            if dynamic_scope.is_some() && self.lookup.find_container(found.binding).is_some() {
+                dynamic_scope = self.lookup.find_with_inside(scope, found.scope);
+            }
             if self.lookup.is_behind_eval_variables(&found, hir[ident].pos) {
                 insert_bit(
                     &mut self.references.idents_behind_eval_variables,
@@ -186,16 +289,17 @@ impl ReferencePass<'_, '_> {
     }
 
     fn is_unevaluated_ident(&self, ident: ExprId, scope: ScopeId, name: Atom) -> bool {
-        let bound = self.lookup.bound;
+        let queried = &self.lookup.bound.type_query_operands;
         name == known::empty
             || self.type_only.has_expr(ident, scope)
-            || bound.type_query_operands.binary_search(&ident).is_ok()
+            || (!queried.is_empty() && queried.binary_search(&ident).is_ok())
             || self.is_unresolved_jsx_name(ident, name)
     }
 
     fn is_unresolved_jsx_name(&self, ident: ExprId, name: Atom) -> bool {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
-        if let Parent::Expr(parent) = bound.parent_of_expr(ident)
+        if !hir.jsx.is_empty()
+            && let Parent::Expr(parent) = bound.parent_of_expr(ident)
             && parent.is_some()
             && let ExprKind::Jsx(j) = hir[parent].kind
         {
@@ -241,6 +345,15 @@ impl ReferencePass<'_, '_> {
                 self.references
                     .redeclared_commonjs_variables
                     .push((symbol, variable));
+                continue;
+            }
+            let appended = &self.lookup.scopes.appended_bindings;
+            if let Some(&(symbol, declaration)) = appended.get(&(ScopeId(0), variable.name()))
+                && declaration.kind == DeclarationKind::Var
+            {
+                self.references
+                    .redeclared_commonjs_variables
+                    .push((symbol, variable));
             }
         }
     }
@@ -275,7 +388,11 @@ impl ReferencePass<'_, '_> {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         for (index, export) in hir.exports.iter().enumerate() {
             let scope = bound.export_scope[index];
-            if export.has_module_specifier || export.type_only || scope.is_none() {
+            if export.has_module_specifier
+                || export.type_only
+                || scope.is_none()
+                || self.type_only.has_scope(scope)
+            {
                 continue;
             }
             for spec in export.items.iter().filter(|&spec| !hir[spec].type_only) {
@@ -300,7 +417,12 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             if let Some(root) = hir.texts(names).next() {
-                let binding = self.lookup.find_binding(scope, root);
+                let mut binding = self.lookup.find_binding(scope, root);
+                if binding == Binding::Free
+                    && let Some((variable, _)) = hir.find_name_of_loaded_import(root)
+                {
+                    binding = self.lookup.find_binding(scope, variable);
+                }
                 let entry = (ImportEqualsId(index as u32), binding);
                 self.references.entity_root_bindings.push(entry);
             }

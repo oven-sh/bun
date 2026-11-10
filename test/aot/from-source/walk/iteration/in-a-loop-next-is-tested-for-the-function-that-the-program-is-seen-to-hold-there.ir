@@ -1,0 +1,36 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# class Own { [Symbol.iterator]() { let i = 0; return { next: () => (i < 9 ? { done: false, value: i++ } : { done: true, value: undefined }) }; } }
+# const own = new Own(); // @ts-expect-error
+# function drain(): number { let sum = 0; for (const item of own) sum += item; return sum; } // @ts-expect-error
+# function take(): number { let sum = 0; for (let i = 0; i < 8; i++) { const [a, b] = own; sum += a + b; } return sum; }
+# sink(new Own(), drain, take);
+# -- end of source
+# f1 = drain, f2 = take, f5 = next
+# Another object of the class is handed out, so nothing is proven of `own`, of its iterator or of `next`. The reading that holds what the program itself is seen to do lists one function at the steps: f5.
+# What was read under `next` is tested for a closure of f5, once, in front of the loop. On the passing way the step is a copy of f5 over the scope that the closure holds: its two answers meet as one object
+# that is never made. On the other way next is called by value and its answer is read by name, as before.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[next]] testedType=f5
+# CHECK: isLoopHead=true
+# CHECK: Branch [[test]] ->
+# CHECK: = Call [[next]],
+# CHECK: key="done"
+# CHECK: = Narrowed [[next]], [[test]]
+# CHECK: = GetCapture {{*}}function=f5
+# CHECK: = PutEnvironmentField
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = NewObject
+# A pattern in a loop asks once for all its steps.
+# RUN(TAKE): walk f2 mechanisms=all
+# TAKE-LABEL: code f2:Body
+# TAKE: = TypeTest {{*}}testedType=f5
+# TAKE: = GetCapture {{*}}function=f5
+# TAKE: = PutEnvironmentField
+# TAKE: = PutEnvironmentField
+# The class of this file writes `next` itself, so the text speaks and what was seen is not asked: the order at the place is what is proven, what the text says, what is seen.
+# RUN(COUNT): compile NextMethodsTestedForFunctionExpected NextMethodsTestedForFunctionWritten mechanisms=all
+# COUNT: statistic NextMethodsTestedForFunctionExpected 0
+# COUNT: statistic NextMethodsTestedForFunctionWritten 3

@@ -11,7 +11,6 @@ use super::EvalContext;
 use crate::ir::generated::{EvalBinding, EvalBindingKind, EvalScopeFlags, HomeObjectKind};
 use crate::ir::{ClassSlot, StringId, ValueId, VariableKey};
 use crate::lower::captures::Capture;
-use crate::lower::member::PropertyName;
 use crate::lower::private_names::{PrivateBinding, PrivateHolder};
 use crate::lower::scope::{
     ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, environments, find_entry,
@@ -53,17 +52,22 @@ fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
     }
 }
 
-// The depth of a scope is that of its variables. A function keeps its top-level lexical declarations in an environment of their own, inside the environment of its variables: a `var` of the evaluated text that meets one of them is a SyntaxError. The variables of text evaluated among its parameters lie outside its parameters, which lie outside its variables.
 fn compute_scope_depths(file: &FileLowering<'_, '_, '_, '_>, innermost: ScopeId) -> ScopeDepths {
     let mut depths = ScopeDepths::new();
     let (mut scope, mut depth) = (innermost, 1);
-    while scope.is_some() {
+    let mut add = |scope: ScopeId| {
         depths.push((scope, depth));
         let parameter_variables = BindingRef::Slot(scope, ScopeSlot::ParameterEvalVariables);
         depth += match file.scopes.placement(parameter_variables) {
             Some(_) => 4,
             None => 2,
         };
+    };
+    while scope.is_some() {
+        add(scope);
+        if let Some(constructor_scope) = file.find_scope_of_evaluating_constructor(scope) {
+            add(constructor_scope);
+        }
         scope = file.bound.runtime_parent_scope(file.hir, scope);
     }
     depths
@@ -89,6 +93,21 @@ fn find_functions_entered_from_parameters(
     entered
 }
 
+fn name_private_functions_by_index(bindings: &mut [EvalBinding]) {
+    for (index, binding) in bindings.iter_mut().enumerate() {
+        if matches!(
+            binding.kind,
+            EvalBindingKind::PrivateMethod | EvalBindingKind::PrivateAccessor
+        ) {
+            for distance in [&mut binding.function, &mut binding.setter]
+                .into_iter()
+                .flatten()
+            {
+                *distance = index as u32 - *distance;
+            }
+        }
+    }
+}
 fn class_slot(scope: ScopeId, slot: ClassSlot) -> BindingRef {
     BindingRef::Slot(scope, ScopeSlot::Class(slot))
 }
@@ -102,7 +121,27 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // The symbol of `export default function f() {}` is named `default`, and code spells it `f`.
+    fn is_reached_without_operand(&self, symbol: SymbolId) -> bool {
+        match self.scopes.form(symbol) {
+            BindingForm::Stored => {
+                let placement = self.scopes.placement(BindingRef::Symbol(symbol));
+                placement.is_none_or(|placement| matches!(placement.storage, Storage::Variable(_)))
+            }
+            BindingForm::Import => match self.inputs.modules.import_binding(self.file, symbol) {
+                ImportBinding::Variable(_) => !self.may_be_answered_by_mock(symbol),
+                ImportBinding::Synthetic(export) => is_filled_by_loader(self, export),
+                ImportBinding::CapturedBuiltin { .. }
+                | ImportBinding::BuiltinMember { .. }
+                | ImportBinding::Unbound
+                | ImportBinding::Unused
+                | ImportBinding::Local => true,
+                _ => false,
+            },
+            BindingForm::ContainerMember { .. } | BindingForm::NotAValue => true,
+            BindingForm::Callee { .. } | BindingForm::MappedArgument { .. } => false,
+        }
+    }
+
     pub(super) fn find_spelled_name(&self, symbol: SymbolId) -> Atom {
         let data = self.bound.symbol(symbol);
         if data.name != known::default {
@@ -128,11 +167,52 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .is_some()
     }
 
+    pub(super) fn collect_bindings_of_file(
+        &mut self,
+        eval_scope: EvalScope,
+    ) -> (Vec<EvalBinding>, Vec<SymbolId>) {
+        let file_scope = module::file_scope(self.file);
+        let variables_of_evals = [ScopeSlot::EvalVariables, ScopeSlot::ParameterEvalVariables];
+        let holds_variables_of_evals = variables_of_evals.into_iter().any(|slot| {
+            let variables = BindingRef::Slot(file_scope, slot);
+            self.file.scopes.placement(variables).is_some()
+        });
+        let names = self.file.bound.ids(eval_scope.file_symbols);
+        let (listed_once, handed_over): (Vec<SymbolId>, Vec<SymbolId>) =
+            names.partition(|&symbol| {
+                !holds_variables_of_evals && self.file.is_reached_without_operand(symbol)
+            });
+        let mut record = EvalRecord {
+            lowering: self,
+            context: EvalContext {
+                flags: EvalScopeFlags::default(),
+                this_scope: None,
+                owner: CodeUnit::File,
+                class: None,
+            },
+            entered_from_parameters: FunctionScopes::new(),
+            bindings: Vec::with_capacity(listed_once.len()),
+            operands: SmallVec::new(),
+            environments: SmallVec::new(),
+            arguments_objects: SmallVec::new(),
+        };
+        for symbol in listed_once {
+            record.add_symbol(symbol, 1);
+        }
+        debug_assert!(
+            record.operands.is_empty(),
+            "what is listed once for a file needs no operand of a call"
+        );
+        record.bindings.shared_sort_by_key(|binding| binding.depth);
+        (record.bindings, handed_over)
+    }
+
     pub(super) fn collect_eval_bindings(
         &mut self,
         call: ExprId,
         eval_scope: EvalScope,
         context: EvalContext,
+        names_of_file: &[SymbolId],
     ) -> (Vec<EvalBinding>, EvalOperands) {
         let bound = self.file.bound;
         let depths = compute_scope_depths(self.file, eval_scope.scope);
@@ -147,7 +227,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             environments: SmallVec::new(),
             arguments_objects: SmallVec::new(),
         };
-        for symbol in bound.ids(eval_scope.symbols) {
+        let names_of_file = names_of_file.iter().copied();
+        for symbol in bound.ids(eval_scope.symbols).chain(names_of_file) {
             let Some(depth) = find_entry(&depths, bound.symbol_scope(symbol)) else {
                 debug_assert!(
                     false,
@@ -157,16 +238,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             record.add_symbol(symbol, depth);
         }
+        for symbol in bound.ids(eval_scope.constructor_symbols) {
+            if let Some(depth) = find_entry(&depths, bound.symbol_scope(symbol)) {
+                record.add_symbol(symbol, depth);
+            }
+        }
+        let mut from = ScopeKind::Block;
         for &(scope, depth) in &depths {
-            record.add_scope_bindings(scope, depth);
+            record.add_scope_bindings(scope, depth, from);
+            from = bound.scopes[scope.idx()].kind;
         }
         record.bindings.shared_sort_by_key(|binding| binding.depth);
+        name_private_functions_by_index(&mut record.bindings);
         (record.bindings, record.operands)
     }
 }
 
 impl EvalRecord<'_, '_, '_, '_, '_, '_> {
-    // A sloppy function keeps its parameters and `arguments` in an environment of their own. It lies inside the environment that takes the variables of a text evaluated among the parameters: a `var` of that text that meets one of them is a SyntaxError. It lies outside the environment that takes the variables of a text evaluated in the body: a `var` of that text makes a new variable.
     fn compute_parameter_depth(&self, parameter: Binding, scope: ScopeId, depth: u32) -> u32 {
         let file = &*self.lowering.file;
         let variables = BindingRef::Slot(scope, ScopeSlot::EvalVariables);
@@ -226,6 +314,10 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         let file = &*self.lowering.file;
         let import = file.inputs.modules.import_binding(file.file, symbol);
         match import {
+            ImportBinding::Variable(_) if file.may_be_answered_by_mock(symbol) => {
+                let value = self.lowering.get_import(symbol);
+                self.add_value(binding, value);
+            }
             ImportBinding::Variable(variable) => {
                 self.add_variable(binding, VariableKey::Symbol(variable));
             }
@@ -247,7 +339,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         }
     }
 
-    fn add_scope_bindings(&mut self, scope: ScopeId, depth: u32) {
+    fn add_scope_bindings(&mut self, scope: ScopeId, depth: u32, from: ScopeKind) {
         if !self.entered_from_parameters.contains(&scope) {
             let binding = create_binding(EvalBindingKind::EvalVariables, None, depth);
             self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::EvalVariables));
@@ -263,6 +355,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 let binding = create_binding(EvalBindingKind::WithObject, None, depth);
                 self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::WithObject));
             }
+            ScopeKind::Class(_) if from == ScopeKind::BaseExpression => {}
             ScopeKind::Class(class) => self.add_class_bindings(class, depth),
             ScopeKind::File => self.add_commonjs_bindings(depth),
             ScopeKind::Module(_)
@@ -384,6 +477,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         resolved: PrivateBinding,
         scope: ScopeId,
     ) {
+        let depth = binding.depth;
         let (kind, function, setter) = match resolved.members {
             PrivateMembers::AutoAccessor(member) if resolved.is_decorated => {
                 match resolved.holder {
@@ -392,14 +486,9 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                     }
                     PrivateHolder::ClassObject => {}
                 }
-                let stored_pair = class_slot(scope, ClassSlot::PrivateMethod(member));
-                let pair = self.lowering.get_stored(stored_pair);
-                let [function, setter] = [known::get, known::set].map(|name| {
-                    let key = self.lowering.file.name_key(name);
-                    let function = self.lowering.emit_get(pair, PropertyName::Constant(key));
-                    Some(self.add_value_operand(function))
-                });
-                (EvalBindingKind::PrivateAccessor, function, setter)
+                let kind = EvalBindingKind::PrivateAccessorPair;
+                let pair = self.add_private_function(kind, scope, Some(member), depth);
+                (EvalBindingKind::PrivateAccessor, pair, pair)
             }
             PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
                 match resolved.holder {
@@ -411,29 +500,48 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 return;
             }
             PrivateMembers::Method(member) => {
-                let function = self.add_private_function(scope, Some(member));
+                let kind = EvalBindingKind::PrivateFunction;
+                let function = self.add_private_function(kind, scope, Some(member), depth);
                 (EvalBindingKind::PrivateMethod, function, None)
             }
             PrivateMembers::Accessor { getter, setter } => {
-                let function = self.add_private_function(scope, getter);
-                let setter = self.add_private_function(scope, setter);
+                let kind = EvalBindingKind::PrivateFunction;
+                let function = self.add_private_function(kind, scope, getter, depth);
+                let setter = self.add_private_function(kind, scope, setter, depth);
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
         };
+        let position = self.bindings.len() as u32;
+        let distance_to = |function: Option<u32>| function.map(|function| position - function);
         self.bindings.push(EvalBinding {
             kind,
-            function,
-            setter,
+            function: distance_to(function),
+            setter: distance_to(setter),
             ..binding
         });
     }
 
-    fn add_private_function(&mut self, scope: ScopeId, member: Option<MemberId>) -> Option<u32> {
-        Some(self.add_stored_operand(class_slot(scope, ClassSlot::PrivateMethod(member?))))
+    fn add_private_function(
+        &mut self,
+        kind: EvalBindingKind,
+        scope: ScopeId,
+        member: Option<MemberId>,
+        depth: u32,
+    ) -> Option<u32> {
+        let stored = class_slot(scope, ClassSlot::PrivateMethod(member?));
+        let position = self.bindings.len() as u32;
+        self.add_stored(create_binding(kind, None, depth), stored);
+        (self.bindings.len() as u32 > position).then_some(position)
     }
 
     fn add_commonjs_bindings(&mut self, depth: u32) {
         if !self.lowering.file.is_commonjs_module() {
+            for variable in commonjs::variables_seen_by_direct_eval(self.lowering.file) {
+                let name = self.lowering.file.intern_atom(variable.name());
+                let binding = create_binding(EvalBindingKind::Variable, Some(name), depth);
+                let key = commonjs::path_variable_key(self.lowering.file, variable);
+                self.add_variable(binding, key);
+            }
             return;
         }
         if self.context.owner == CodeUnit::File {
@@ -512,7 +620,6 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     }
 }
 
-// The loader fills the variable of a name of a library module.
 fn is_filled_by_loader(file: &FileLowering<'_, '_, '_, '_>, export: SyntheticExportId) -> bool {
     let modules = file.inputs.modules;
     match modules.shape(modules.synthetic_export(export).module) {

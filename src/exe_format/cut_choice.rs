@@ -28,8 +28,13 @@ pub(crate) fn choose_cuts(model: &CutModel, removable: &[RemovableBytes]) -> Cut
         .filter_map(|piece| align_inward(piece, alignment))
         .filter(|candidate| leaves_one_piece(*candidate, &model.spans_cut_only_at_end))
         .collect();
-    cuts.sort_by_key(|candidate| (Reverse(candidate.len()), candidate.start));
-    let over_budget = cuts.split_off(max_cuts.min(cuts.len()));
+    let over_budget = match model.slot_costs {
+        None => {
+            cuts.sort_by_key(|candidate| (Reverse(candidate.len()), candidate.start));
+            cuts.split_off(max_cuts.min(cuts.len()))
+        }
+        Some(_) => take_what_slots_pay_for(model, &mut cuts),
+    };
     let uncut = (!over_budget.is_empty()).then(|| Uncut {
         reason: UncutReason::BudgetSpent,
         bytes: over_budget.iter().map(|candidate| candidate.len()).sum(),
@@ -37,6 +42,36 @@ pub(crate) fn choose_cuts(model: &CutModel, removable: &[RemovableBytes]) -> Cut
     cuts.sort_by_key(|cut| cut.start);
     let fills = compute_fills(removable, &cuts);
     CutPlan { cuts, fills, uncut }
+}
+
+/// Leaves in `cuts` what the free slots pay for, the most bytes for a slot first, and returns the rest.
+fn take_what_slots_pay_for(model: &CutModel, cuts: &mut Vec<AddressRange>) -> Vec<AddressRange> {
+    let mut priced: Vec<(AddressRange, isize)> =
+        (cuts.drain(..).map(|cut| (cut, model.slots_for(cut)))).collect();
+    let mut free_slots = model.free_slots();
+    priced.retain(|&(cut, slots)| {
+        if slots <= 0 {
+            free_slots -= slots;
+            cuts.push(cut);
+        }
+        slots > 0
+    });
+    priced.sort_by(|(a, a_slots), (b, b_slots)| {
+        let bytes_for_a_slot =
+            |cut: &AddressRange, other_slots: isize| u128::from(cut.len()) * other_slots as u128;
+        (bytes_for_a_slot(b, *a_slots).cmp(&bytes_for_a_slot(a, *b_slots)))
+            .then(a.start.cmp(&b.start))
+    });
+    let mut over_budget = Vec::new();
+    for (cut, slots) in priced {
+        if slots <= free_slots {
+            free_slots -= slots;
+            cuts.push(cut);
+        } else {
+            over_budget.push(cut);
+        }
+    }
+    over_budget
 }
 
 fn plan_without_cuts(removable: &[RemovableBytes], reason: NoCutReason, bytes: u64) -> CutPlan {
@@ -143,6 +178,7 @@ fn compute_fills(removable: &[RemovableBytes], cuts: &[AddressRange]) -> Vec<Fil
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cut_model::SlotCosts;
     use crate::image::ExecutableFormat;
 
     const PAGE: u64 = 4096;
@@ -221,6 +257,7 @@ mod tests {
             capacity: CutCapacity::from_free_slots(limits.max_cuts),
             cuttable_spans,
             spans_cut_only_at_end: Vec::new(),
+            slot_costs: None,
         };
         choose_cuts(&model, removable)
     }
@@ -606,6 +643,7 @@ mod tests {
                 range(16 * PAGE, 20 * PAGE),
             ],
             spans_cut_only_at_end: vec![range(8 * PAGE, 16 * PAGE)],
+            slot_costs: None,
         };
         let plan = choose_cuts(&model, &removable);
         assert_eq!(
@@ -619,6 +657,54 @@ mod tests {
         assert_eq!(plan.fills, [fill(9 * PAGE, 12 * PAGE, false)]);
         assert_eq!(plan.uncut, None);
         assert_tiles_input(&removable, &plan);
+    }
+
+    #[test]
+    fn cut_beside_what_is_cut_takes_fewer_slots() {
+        let spans = vec![
+            range(0, 4 * PAGE),
+            range(8 * PAGE, 12 * PAGE),
+            range(16 * PAGE, 32 * PAGE),
+        ];
+        let model = |free_slots| CutModel {
+            format: ExecutableFormat::Pe,
+            alignment: PAGE,
+            capacity: CutCapacity::Cuts(free_slots / 2),
+            cuttable_spans: spans.clone(),
+            spans_cut_only_at_end: Vec::new(),
+            slot_costs: Some(SlotCosts {
+                free_slots,
+                slots_for_a_cut: 2,
+                saved_at_ends: vec![[1, 2], [2, 2], [0, 0]],
+            }),
+        };
+        let removable = [
+            cuttable(3 * PAGE, 4 * PAGE, true),
+            cuttable(8 * PAGE, 12 * PAGE, true),
+            cuttable(17 * PAGE, 20 * PAGE, true),
+            cuttable(21 * PAGE, 23 * PAGE, true),
+        ];
+        let whole_piece = range(8 * PAGE, 12 * PAGE);
+        assert_eq!(model(0).slots_for(range(3 * PAGE, 4 * PAGE)), 0);
+        assert_eq!(model(0).slots_for(whole_piece), -2);
+        assert_eq!(model(0).slots_for(range(17 * PAGE, 20 * PAGE)), 2);
+
+        // The piece that goes whole pays for the larger of the two that stand alone.
+        let plan = choose_cuts(&model(0), &removable);
+        assert_eq!(
+            plan.cuts,
+            [
+                range(3 * PAGE, 4 * PAGE),
+                whole_piece,
+                range(17 * PAGE, 20 * PAGE)
+            ]
+        );
+        assert_eq!(plan.uncut, budget_spent(2 * PAGE));
+        assert_tiles_input(&removable, &plan);
+
+        let plan = choose_cuts(&model(2), &removable);
+        assert_eq!(plan.cuts.len(), 4);
+        assert_eq!(plan.uncut, None);
     }
 
     #[test]

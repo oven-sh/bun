@@ -168,10 +168,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            if (object->type() == JSC::CompiledObjectType)
-                object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
-            else
-                JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {
@@ -597,6 +594,11 @@ const JSC::ClassInfo CookieMapIterator::s_info = { "CookieMap Iterator"_s, &Base
 
 template<>
 const JSC::ClassInfo CookieMapIteratorPrototype::s_info = { "CookieMap Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CookieMapIteratorPrototype) };
+
+JSC::JSObject* cookieMapIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<CookieMapIterator>(globalObject.vm(), globalObject);
+}
 
 static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSCookieMap* thisObject)
 {

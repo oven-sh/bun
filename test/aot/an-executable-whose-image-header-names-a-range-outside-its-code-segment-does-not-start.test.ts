@@ -1,4 +1,4 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import {
   bunEnv,
@@ -10,13 +10,15 @@ import {
   tempDirWithBunTypes as tempDir,
 } from "harness";
 import { join } from "path";
-import { findImage, imageHeader } from "./cli/compiled-image";
+import { findImage, imageHeader, programTables } from "./cli/compiled-image";
 import { runCopy, type SpawnResult } from "./cli/edited-executable";
 import { isHardened } from "./hardened";
-import { built, spawned, withoutDebugInformation } from "./run-programs";
+import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { beforeAll, describe, test } from "./supported";
 
-// Eight classes are too many to tell apart by tests: the calls of `area` go through the image's method table, which has the last pages in front of the code to itself.
+// Eight classes are too many to tell apart by tests: the calls of `area` go through the image's method table. It begins at a page, and nothing but the
+// slot handlers lies behind it: the last page in front of the code holds those two sections alone, whatever the sizes of the others are.
 const program = `interface Shape { area(): number }
 ${Array.from("ABCDEFGH", (name, index) => `class ${name} implements Shape { constructor(public n: number) {} area(): number { return this.n * ${index + 1}; } }`).join("\n")}
 const makers = [A, B, C, D, E, F, G, H];
@@ -65,6 +67,10 @@ const { size, codeOffset, codeSize, executableSize, constantsOffset, constantsSi
 
 const headersThatContradictThemselves: Record<string, (header: Header) => void> = {
   "begins a page early": header => header.set(codeOffset, header.get(codeOffset) - imagePage),
+  "begins a page early, where the tables have a method table": header => {
+    header.set(codeOffset, header.get(codeOffset) - imagePage);
+    header.endSectionsAt(header.get(codeOffset));
+  },
   "is the tables": header => {
     header.set(executableSize, header.get(codeOffset) - imagePage);
     header.set(size, header.get(codeOffset));
@@ -79,6 +85,7 @@ const headersThatAgreeWithThemselves: Record<string, (header: Header) => void> =
   "begins a page early": header => {
     header.set(codeOffset, header.get(codeOffset) - imagePage);
     header.endSectionsAt(header.get(codeOffset));
+    header.set32(header.get32(imageHeader.sections + 8 * programTables.section) + programTables.sizeOfMethodTable, 0);
   },
   "ends a page late": header => {
     const end = header.get(executableSize) + imagePage;

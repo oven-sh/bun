@@ -1,5 +1,5 @@
 import { isWindows } from "harness";
-import { describe } from "../supported";
+import { describe } from "../with-compiler";
 import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type LinkedTree = Pick<ResolutionCase, "files" | "links">;

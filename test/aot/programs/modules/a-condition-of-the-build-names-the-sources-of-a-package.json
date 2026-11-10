@@ -1,1 +1,0 @@
-{ "build": ["--conditions=source"], "reference": "compiled" }

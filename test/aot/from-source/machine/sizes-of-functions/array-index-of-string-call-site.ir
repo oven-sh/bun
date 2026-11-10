@@ -1,0 +1,21 @@
+# f1 = find, f2 = has
+# -- source: array-index-of-string-call-site.ts
+# function find(list: string[], name: string): number { return list.indexOf(name); }
+# function has(list: string[], name: string): boolean { return list.includes(name); }
+# declare const input: any;
+# const names: string[] = [];
+# for (let i = 0; i < 8; i++) names.push("name" + i + input);
+# (globalThis as any).answer = [find(names, "" + input), has(names, "" + input)];
+# -- end of source
+# The compiler before this one: 5 instructions, 1 of them patches ; 6 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 2, unlikely or rare 1.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8
+# The compiler before this one: 5 instructions, 1 of them patches ; 6 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 2, unlikely or rare 1.
+# RUN(X64N6): steps most:8 f2 mechanisms=all-Inlining
+# REQUIRES(X64N6): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64N6-LABEL: unit f2:Body
+# X64N6-NEXT: steps: at most 8

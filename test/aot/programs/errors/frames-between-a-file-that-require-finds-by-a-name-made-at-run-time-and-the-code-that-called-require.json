@@ -1,1 +1,0 @@
-{ "entryPoints": ["./a.cjs", "./b.mjs", "./c.cjs", "./d.mjs"], "skipInShell": "it needs Bun's CommonJS modules" }

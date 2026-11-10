@@ -10,11 +10,11 @@ use bun_lint_oxlint::ast_util::{
 /// of object spread instead.
 pub struct PreferObjectSpread;
 
-const USE_SPREAD_MESSAGE: Message = Message::new(
+const USE_SPREAD_MESSAGE: &Message = &Message::new(
     "useSpreadMessage",
     "Use an object spread instead of `Object.assign` eg: `{ ...foo }`.",
 );
-const USE_LITERAL_MESSAGE: Message = Message::new(
+const USE_LITERAL_MESSAGE: &Message = &Message::new(
     "useLiteralMessage",
     "Use an object literal instead of `Object.assign`. eg: `{ foo: bar }`.",
 );
@@ -43,7 +43,7 @@ fn has_proto_property<'a>(properties: List<'a, Prop<'a>>) -> bool {
 }
 
 /// Returns the message to report for `call` if it calls `Object.assign`. It only depends on the arguments.
-fn message_for(call: Call) -> Option<Message> {
+fn message_for(call: Call) -> Option<&'static Message> {
     let args = call.args();
     if args.first()?.tag() != ExprTag::Object || args.iter().any(|it| it.tag() == ExprTag::Spread) {
         return None;
@@ -58,7 +58,7 @@ fn message_for(call: Call) -> Option<Message> {
 
 /// Returns the message oxlint reports for `call`. It doesn't follow variables: the callee has to be a literal
 /// `Object.assign` or `globalThis.Object.assign`.
-fn oxlint_message_for(call: Call) -> Option<Message> {
+fn oxlint_message_for(call: Call) -> Option<&'static Message> {
     let args = call.args();
     if get_inner_expression(args.first()?).tag() != ExprTag::Object
         || !is_method_call(call, None, Some(&["assign"]), Some(1), None)

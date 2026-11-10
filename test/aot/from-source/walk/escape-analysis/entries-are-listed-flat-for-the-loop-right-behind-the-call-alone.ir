@@ -1,0 +1,39 @@
+# `const es = kit.list(source); <a branch>; for (const [k, v] of es)`: one written call is walked more than once: the join in front of it once for each literal that a way brings (tally), the turns of the counting loop written out (firstWanted).
+# One walk finds Object.entries, another a function of the program that makes pairs, and what they give meets in front of the loop. A note keyed by the written call once said "flat" of whatever had met: pairs were read as keys and values: `x,1=y,2!`.
+# Now the loop asks the record that made its list, and the call lists flat only where the loop's open stands right behind it in its own block: here it never does.
+# f1 = byName, f2 = tally, f3 = firstWanted
+# -- source: entries-are-listed-flat-for-the-loop-right-behind-the-call-alone.ts
+# declare function print(...values: unknown[]): void;
+# type Source = { x: number; y: number };
+# function byName(o: Source): [string, number][] { return [["x", o.x], ["y", o.y]]; }
+# function tally(plain: boolean, loud: boolean, source: Source): string {
+#   let work = 0;
+#   for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   const kit = plain ? { list: Object.entries } : { list: byName };
+#   const es = kit.list(source);
+#   const mark = loud ? "!" : ".";
+#   const parts: string[] = [];
+#   for (const [k, v] of es) parts.push(k + "=" + v + mark);
+#   return parts.join(" ") + " " + work;
+# }
+# function firstWanted(wanted: number, source: Source): string {
+#   const listers = [Object.entries, byName];
+#   for (let i = 0; i < 2; i++) {
+#     const list = listers[i];
+#     const es = list(source);
+#     if (wanted === i) {
+#       const parts: string[] = [];
+#       for (const [k, v] of es) parts.push(k + "=" + v);
+#       return parts.join(" ");
+#     }
+#   }
+#   return "none";
+# }
+# print(tally(true, true, { x: 1, y: 2 }), tally(false, true, { x: 1, y: 2 }), tally(false, false, { x: 3, y: 4 }));
+# print(firstWanted(0, { x: 1, y: 2 }), firstWanted(1, { x: 1, y: 2 }), firstWanted(2, { x: 1, y: 2 }));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: x=1! y=2! 1 x=1! y=2! 1 x=3. y=4. 1
+# ANSWERS: x=1 y=2 x=1 y=2 none
+# RUN(NEVER): walk f2 f3 mechanisms=all
+# NEVER-NOT: OwnEntriesFlat

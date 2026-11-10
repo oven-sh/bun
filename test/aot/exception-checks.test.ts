@@ -1,11 +1,12 @@
 // A Bun built with assertions can ask of every call that may throw whether somebody looked for the exception behind it
 // (BUN_JSC_validateExceptionChecks=1), and aborts where nobody did. Any other Bun ignores the variable.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { built, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
+import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
-const programs: Record<string, { main: string; files: Record<string, string>; stdout: string; flags?: string[] }> = {
+const programs: Record<string, { main: string; files: Record<string, string>; stdout: string }> = {
   "async generators that hand on to each other, taken by hand and by for await": {
     main: "main.ts",
     files: {
@@ -112,21 +113,20 @@ console.log(joined.length, joined.slice(0, 24), joined.slice(-12));
     },
     stdout: "25890 0:\u20ac1\u20ac;1:1\u20ac2;2:\u20ac2\u20ac;3:2\u20ac3; 5\u20ac;2999:5\u20ac1;\n",
   },
-  "keys put together from parts that are longer than the longest key that is kept": {
+  "keys put together from parts, short, long and empty": {
     main: "main.ts",
-    flags: ["--aot-limit=MaxCachedKeyLength:2"],
     files: {
       "main.ts": `const table: Record<string, number> = {};
 function put(prefix: string, count: number): void {
   for (let i = 0; i < count; i++) table[prefix + i] = i;
 }
 put("key", 3);
-put("a-rather-longer-key-", 3);
+put("a-rather-longer-key-".repeat(4), 3);
 put("", 3);
 console.log(Object.keys(table).join());
 `,
     },
-    stdout: "0,1,2,key0,key1,key2,a-rather-longer-key-0,a-rather-longer-key-1,a-rather-longer-key-2\n",
+    stdout: `0,1,2,key0,key1,key2,${[0, 1, 2].map(i => "a-rather-longer-key-".repeat(4) + i).join()}\n`,
   },
   "a class below one whose accessor is named constructor": {
     main: "main.js",
@@ -142,16 +142,20 @@ console.log(new Below().constructor === Below, new OnlySetter().constructor);
     main: "main.js",
     files: {
       "main.js": `const decoded = text => Buffer.from(text).toString();
-console.log((0, eval)(decoded("typeof console.Console")));
+try {
+  console.log((0, eval)(decoded("typeof console.Console")));
+} catch (error) {
+  console.log(error.message.slice(0, error.message.indexOf(" because")));
+}
 `,
     },
-    stdout: "function\n",
+    stdout: "console.Console was not compiled into this executable\n",
   },
 };
 
 describe.concurrent("compile/aot/exception checks", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
-  for (const [name, { main, files, stdout, flags = [] }] of Object.entries(programs)) {
+  for (const [name, { main, files, stdout }] of Object.entries(programs)) {
     test(
       name,
       () =>
@@ -159,13 +163,7 @@ describe.concurrent("compile/aot/exception checks", () => {
           using dir = tempDir("aot-exception-checks", files);
           const root = String(dir);
           const executable = join(root, "program");
-          built(
-            await spawned(
-              [bunExe(), "build", "--compile", "--aot", ...flags, main, "--outfile", executable],
-              root,
-              bunEnv,
-            ),
-          );
+          built(await spawned([bunExe(), "build", "--compile", "--aot", main, "--outfile", executable], root, bunEnv));
           const ran = await spawned(withoutCoreDump([executable]), root, {
             ...bunEnv,
             BUN_JSC_validateExceptionChecks: "1",

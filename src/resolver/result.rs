@@ -35,47 +35,11 @@ impl Default for PathPair<'_> {
     }
 }
 
-pub(crate) struct PathPairIter<'a, 'r> {
-    index: u8,
-    ctx: &'a mut PathPair<'r>,
-}
-
-impl<'a, 'r> PathPairIter<'a, 'r> {
-    pub(crate) fn next(&mut self) -> Option<&mut crate::fs::Path<'r>> {
-        if let Some(path_) = self.next_() {
-            let p: *mut crate::fs::Path<'r> = path_;
-            // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
-            // coerced to a raw pointer so `self` can be re-borrowed for the
-            // recursive call; `p` is not dereferenced after that call, so no two
-            // live `&mut` into `self.ctx` overlap.
-            unsafe {
-                if (*p).is_disabled {
-                    return self.next();
-                }
-                return Some(&mut *p);
-            }
-        }
-        None
-    }
-
-    fn next_(&mut self) -> Option<&mut crate::fs::Path<'r>> {
-        let ind = self.index;
-        self.index = self.index.saturating_add(1);
-
-        match ind {
-            0 => Some(&mut self.ctx.primary),
-            1 => self.ctx.secondary.as_mut(),
-            _ => None,
-        }
-    }
-}
-
 impl<'r> PathPair<'r> {
-    pub(crate) fn iter(&mut self) -> PathPairIter<'_, 'r> {
-        PathPairIter {
-            ctx: self,
-            index: 0,
-        }
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut crate::fs::Path<'r>> {
+        core::iter::once(&mut self.primary)
+            .chain(&mut self.secondary)
+            .filter(|path| !path.is_disabled)
     }
 }
 
@@ -90,7 +54,7 @@ pub struct Result<'r> {
 
     pub jsx: options::jsx::Pragma,
 
-    pub package_json: Option<*const PackageJSON>,
+    pub package_json: Option<&'static PackageJSON>,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
@@ -225,24 +189,6 @@ pub enum ResultUnion<'r> {
 }
 
 impl<'r> Result<'r> {
-    /// Read-only view of the `package_json` field. It stores `Option<*const _>`
-    /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
-    /// bit-valid. Takes the `Copy` field, not `&self`, so a site that already
-    /// borrows `self` mutably (e.g. while iterating `path_pair`) can read it.
-    /// Single deref site for the ARENA-backed pointer — same invariant as
-    /// [`dir_info::DirInfo::package_json`].
-    #[inline]
-    pub(crate) fn deref_package_json(
-        ptr: Option<*const PackageJSON>,
-    ) -> Option<&'static PackageJSON> {
-        // SAFETY: ARENA — every `*const PackageJSON` stored in
-        // `Result::package_json` is interned in the resolver's process-lifetime
-        // PackageJSON cache (or a `'static` fallback-module literal); never
-        // freed while a `Result` is live (see LIFETIMES.tsv). No
-        // `&mut PackageJSON` is ever materialized concurrently with a read.
-        ptr.map(|p| unsafe { &*p })
-    }
-
     pub fn path(&mut self) -> Option<&mut crate::fs::Path<'r>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);
@@ -274,14 +220,10 @@ impl<'r> Result<'r> {
 
 pub struct DirEntryResolveQueueItem {
     pub(crate) result: allocators::Result,
-    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
-    // threadlocal `dir_info_uncached_path` buffer and are consumed before
-    // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
-    // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
-    // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
-    // safe `.slice()` instead of an open-coded raw-ptr deref.
+    /// A slice of the threadlocal `dir_info_uncached_path` buffer, so not `'static`.
     pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
-    pub(crate) safe_path: bun_ptr::RawSlice<u8>,
+    /// Empty, or a `DirEntry::dir` from the dirname store.
+    pub(crate) safe_path: &'static [u8],
     pub(crate) fd: FD,
 }
 
@@ -367,7 +309,7 @@ pub struct MatchResult {
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
-    pub(crate) package_json: Option<*const PackageJSON>,
+    pub(crate) package_json: Option<&'static PackageJSON>,
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,

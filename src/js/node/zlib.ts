@@ -19,9 +19,7 @@ const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const isArrayBufferView = ArrayBuffer.isView;
-const isAnyArrayBuffer = (b: unknown): b is ArrayBuffer | SharedArrayBuffer =>
-  b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const { Transform, finished } = require("node:stream");
@@ -82,7 +80,7 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
   engine.end(buffer);
 }
 
-const emptyOutBuffer = Buffer.alloc(0);
+const emptyOutBuffer = Buffer.from(new ArrayBuffer());
 function ignoreResult() {}
 
 function takeCallback(engine: $Node.ZlibBase): ZlibCallback {

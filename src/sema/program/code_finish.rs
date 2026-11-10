@@ -1,3 +1,4 @@
+use super::code_imports::files_of;
 use super::code_load::{CodeEntry, LoadedCode};
 use super::*;
 use crate::import_sites::ImportSpecifier;
@@ -12,6 +13,8 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
         self.remove_code_only_edges(module, arena);
         let Some(index) = self.entry_of(file) else {
             module.runs_other_code = self.typed_files_with_other_code.contains(module.path.text);
+            module.holds_code_that_never_runs =
+                self.reads_code_on_request && module.role != FileRole::TypesOnly;
             return;
         };
         let entry = &self.entries[index];
@@ -54,13 +57,14 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
                 payloads[file.idx()] = Some(payload);
             }
         }
-        let loaded = ProgramFiles {
+        CodeGraph {
+            is_compile_build: true,
             entry_points: slice_in(&entry_points, arena),
             compiled_files: slice_in(&compiled_files, arena),
             is_compiled: file_set_in(modules.len(), &compiled_files, arena),
             host_modules: sorted_set_in(host_modules, arena),
-        };
-        CodeGraph::new(loaded, session.keep(payloads))
+            host_payloads: session.keep(payloads),
+        }
     }
 
     fn remove_code_only_edges(&self, module: &mut Module<'s>, arena: &'s Arena) {
@@ -121,6 +125,8 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             jsx,
             jsx_mode: analyzed.jsx_mode,
             declared_module_type: analyzed.declared_module_type,
+            type_where_imported: analyzed.type_where_imported,
+            runs_inside_require: analyzed.runs_inside_require,
             is_package_type_module: analyzed.is_package_type_module,
             package: entry.package,
             side_effects: entry.side_effects,
@@ -145,6 +151,45 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
     }
 }
 
+pub(super) fn find_answers_so_far<'s>(
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+    code: &LoadedCode<'s, '_>,
+    target_files: &[Option<FileId>],
+) -> (Vec<CodeAnswer<'s>>, Vec<CodeAnswer<'s>>) {
+    let targets = &mut TargetFiles(target_files.iter());
+    let sites = code.analyzed.analysis.import_sites;
+    let mut written = Vec::with_capacity(sites.len());
+    for (site, resolution) in sites.iter().zip(&code.resolutions) {
+        let count = files_of(*resolution).count();
+        let waits = targets.0.as_slice()[..count].contains(&None);
+        written.push(match (waits, resolution) {
+            (false, _) => answer_of(atoms, arena, site.specifier, resolution, targets),
+            (true, SiteResolution::Constant(_)) => CodeAnswer::Erased,
+            (true, SiteResolution::Computed(_)) => CodeAnswer::Computed(&ComputedTargets::All {
+                cause: ComputedUnknown::ExternalCandidate,
+                host_modules: &[],
+            }),
+        });
+        if waits {
+            targets.0.nth(count - 1);
+        }
+    }
+    let mut implied = Vec::with_capacity(code.implied.len());
+    for resolution in &code.implied {
+        let waits = matches!(resolution, CodeResolution::File(_))
+            && targets.0.as_slice().first() == Some(&None);
+        implied.push(match waits {
+            false => constant_answer(atoms, None, resolution, targets),
+            true => {
+                targets.0.next();
+                CodeAnswer::Erased
+            }
+        });
+    }
+    (written, implied)
+}
+
 impl<'s> Files<'s> {
     pub(super) fn order_code_files(
         &self,
@@ -155,7 +200,7 @@ impl<'s> Files<'s> {
         if !self.code_graph.is_compile_build {
             return;
         }
-        let entry_points = self.code_graph.viewed().entry_points.iter().copied();
+        let entry_points = self.code_graph.entry_points.iter().copied();
         let all_files = (0..self.modules.len() as u32).map(FileId);
         let mut stack: Vec<(FileId, usize)> = Vec::new();
         for root in entry_points.chain(all_files) {
@@ -233,7 +278,8 @@ fn answer_of<'s>(
         }) => (Some(*cause), *host_modules, &[][..]),
     };
     let targets = candidate_targets(candidates, targets);
-    CodeAnswer::Computed(computed_targets(atoms, arena, cause, &targets, spellings))
+    let targets = computed_targets(atoms, arena, cause, &targets, spellings);
+    CodeAnswer::Computed(arena.alloc(targets))
 }
 
 fn candidate_targets(

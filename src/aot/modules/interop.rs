@@ -16,6 +16,7 @@ pub struct Interop {
     pub kind: ModuleKind,
     pub export_rule: SyntheticExportRule,
     pub require_result: RequireResult,
+    pub answers_loader_with_namespace: bool,
 }
 
 impl Interop {
@@ -45,7 +46,6 @@ impl Interop {
         RequireResult::Namespace,
     );
 
-    /// The callback of `__commonJS(cb)` or `__esm(fn)`: a body and no export table, whichever helper wraps it.
     pub(crate) const INNER_MODULE: Interop = Interop::new(
         ModuleKind::CommonJs,
         SyntheticExportRule::None,
@@ -61,6 +61,7 @@ impl Interop {
             kind,
             export_rule,
             require_result,
+            answers_loader_with_namespace: false,
         }
     }
 
@@ -86,7 +87,7 @@ pub(crate) fn file_interop(files: &Files<'_>, sources: &Sources, file: FileId) -
         SourceKind::RuntimeModule(module) if table::is_es_module(module) => Interop::ES_MODULE,
         SourceKind::RuntimeModule(_) => Interop::RUNTIME_SOURCE,
         SourceKind::Data => data_module_interop(files.bound(file)),
-        SourceKind::Program | SourceKind::EvaluatedText => program_file_interop(files, file),
+        SourceKind::Program => program_file_interop(files, file),
     }
 }
 

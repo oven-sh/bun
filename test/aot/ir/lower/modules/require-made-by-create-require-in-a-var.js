@@ -5,7 +5,7 @@
 // MEMBER: [[empty]] = StrictEq [[callee]], [[undefined]]
 // MEMBER-NEXT: Branch [[empty]] -> taken [[notFilled]](), notTaken [[filled]]()
 // MEMBER: [[notFilled]]():
-// MEMBER-NEXT: = Call [[callee]], -, {{*}}calleeName="load"
+// MEMBER-NEXT: = Call [[undefined]], -, {{*}}calleeName="load"
 // MEMBER: [[filled]]():
 // MEMBER-NEXT: EvaluateModule module=m
 // MEMBER-NEXT: = Boolean boolean=true
@@ -47,6 +47,8 @@
 // VALUE: Return
 
 import { createRequire } from "node:module";
+// The file has run when somebody calls one of the functions. A file that a function is the first to load may run again, and has an object.
+import "./imports/common.cjs";
 
 var load = createRequire(import.meta.url);
 var meta = import.meta.require;

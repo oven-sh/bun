@@ -2443,7 +2443,11 @@ export class EnumerationType extends NamedType {
     return ["string"];
   }
   get parameterType(): ParameterType {
-    return strictType({ type: "StringLiterals", values: this.spellings.flat() });
+    return strictType(unionType({ type: "StringLiterals", values: this.spellings.flat() }, instanceType("String")));
+  }
+  /** A String object whose characters are none of the values. */
+  get canRefuse(): boolean {
+    return true;
   }
   get resultType(): TypeSpec {
     return { type: "StringLiterals", values: this.spellings.map(([canonical]) => canonical) };
@@ -2612,10 +2616,10 @@ export class DictionaryType extends NamedType {
     );
     return { ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })), members: this.names };
   }
-  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. */
+  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. Otherwise it is still a new ordinary object: `to_js::object`, `to_js::null_prototype_object`. */
   get resultType(): TypeSpec {
     return this.holdsJSValue || this.makesObjectWithoutPrototype
-      ? { type: "Object", freshness: "Yes" }
+      ? { type: "Instance", class: "Object", freshness: "Unaliased" }
       : { type: "PlainData" };
   }
   get dependencies(): readonly Type[] {
@@ -2919,6 +2923,7 @@ export class Signature {
       "namedAsBound",
       "mutates",
       "passThis",
+      "answersThis",
       "invalidThis",
       "privateSymbol",
       "rustName",
@@ -3180,6 +3185,8 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath" | "cppS
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. */
   passThis?: boolean;
+  /** It returns its receiver: every arm of the Rust function hands back the wrapper that `passThis` passes. The thunk hands that on and holds it to nothing. */
+  answersThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";
   /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
@@ -3274,7 +3281,10 @@ export interface ConstantField {
 export type Field =
   FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
 export type StaticField =
-  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name" | "calledFromCpp">
+  | Omit<
+      FunctionField,
+      "mutates" | "passThis" | "answersThis" | "invalidThis" | "privateSymbol" | "name" | "calledFromCpp"
+    >
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
@@ -3282,7 +3292,7 @@ export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "r
   passStructure?: boolean;
 }
 
-type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedObjects"> & EntryColumns;
+type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedMembers"> & EntryColumns;
 
 export interface ClassOptions extends ClassTableColumns {
   /** Path of the Rust struct. The members are its own methods. A class with `extends` has its base's. */
@@ -3299,6 +3309,8 @@ export interface ClassOptions extends ClassTableColumns {
   overridesToJS?: boolean;
   /** JavaScript only sees a function bound to the instance. Members are called with that function as `this` and get its `boundThis`. */
   forBind?: boolean;
+  /** The struct's method that calls every native function of `proto`. It receives a pointer to the function. */
+  protoCaller?: string;
   /** Traits to bring into scope, for members that are trait methods. */
   rustTraits?: readonly string[];
   /** The prototype inherits from `Error.prototype` instead of `Object.prototype`, and its `name` is the class's. */
@@ -3317,6 +3329,8 @@ export interface ClassOptions extends ClassTableColumns {
   construct?: ConstructOptions | "illegal";
   /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
   call?: Omit<SignatureOptions, "rustPath">;
+  /** `instance(..)`, which makes `typeof instance` `"function"`. The Rust function is `call_instance`. */
+  callInstance?: Omit<SignatureOptions, "rustPath">;
   /**
    * JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each.
    * In a record each field names its type: `b.any` is what a list declares, and `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` that only hand-written C++ uses.
@@ -3372,6 +3386,7 @@ export class Method extends Signature {
   readonly hasDefaultRustName: boolean;
   readonly receiver: Receiver;
   readonly passThis: boolean;
+  readonly answersThis: boolean;
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
@@ -3411,6 +3426,11 @@ export class Method extends Signature {
     refuseReentrancy(name, isStatic, sharedThis, this.capability);
     this.receiver = memberReceiver(isStatic, sharedThis, !!options.mutates);
     this.passThis = !isStatic && !!options.passThis;
+    this.answersThis = !!options.answersThis;
+    assert(
+      !this.answersThis || (this.passThis && this.returns instanceof ClassType),
+      `${name}: answersThis takes passThis and returns: b.self`,
+    );
     this.invalidThis = options.invalidThis ?? "throw";
     this.privateSymbol = options.privateSymbol;
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
@@ -3597,12 +3617,14 @@ export class ClassType extends NamedType {
   readonly construct: Signature | null;
   readonly passStructure: boolean;
   readonly call: FunctionDefinition | null;
+  readonly callInstance: FunctionDefinition | null;
   readonly memoryCost: boolean;
   readonly estimatedSize: boolean;
   readonly overridesToJS: boolean;
   readonly final: boolean;
   readonly rustTraits: readonly string[];
   readonly forBind: boolean;
+  readonly protoCaller: string | undefined;
   readonly illegalConstructor: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
@@ -3638,6 +3660,7 @@ export class ClassType extends NamedType {
       "final",
       "overridesToJS",
       "forBind",
+      "protoCaller",
       "rustTraits",
       "prototypeBase",
       "configurable",
@@ -3647,6 +3670,7 @@ export class ClassType extends NamedType {
       "estimatedSize",
       "construct",
       "call",
+      "callInstance",
       "internalFields",
       "proto",
       "static",
@@ -3767,6 +3791,13 @@ export class ClassType extends NamedType {
     this.staticMembers = members(options.static ?? {}, true);
     assert(this.construct || !options.call, "call needs a constructor object: add construct");
     this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
+    this.callInstance = options.callInstance
+      ? (members({ callInstance: options.callInstance }, false)[0] as FunctionDefinition)
+      : null;
+    assert(
+      !(this.callInstance && (this.forBind || options.prototypeBase)),
+      "callInstance has no forBind or prototypeBase: the prototype inherits from Function.prototype",
+    );
     this.calledFromCpp = Object.entries(options.calledFromCpp ?? {}).map(
       ([name, field]) => new Method(name, { ...field, calledFromCpp: true }, false, this.sharedThis, false),
     );
@@ -3774,6 +3805,20 @@ export class ClassType extends NamedType {
       ([name, field]) => new CalledFromRustFunction(name, field),
     );
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
+    this.protoCaller = options.protoCaller === undefined ? undefined : memberRustName(options.protoCaller);
+    assert(
+      this.protoCaller === undefined ||
+        this.functions.every(
+          ({ signatures: [signature, ...overloads] }) =>
+            overloads.length === 0 &&
+            signature.capability === "js" &&
+            signature.throws &&
+            signature.returns instanceof AnyType &&
+            signature.args.every(({ type }) => type instanceof AnyType || type instanceof VariadicType),
+        ),
+      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true, returns: b.any and arguments that are b.any',
+    );
+    assert(!(this.protoCaller !== undefined && this.refCounted), "protoCaller is not for a refCounted class");
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
@@ -3843,9 +3888,14 @@ export class ClassType extends NamedType {
   get dependencies(): readonly Type[] {
     return this.base ? [this.base] : [];
   }
-  /** The prototype's and the constructor's functions, and `call`. */
+  /** The prototype's and the constructor's functions, `call` and `callInstance`. */
   get nativeFunctions(): readonly FunctionDefinition[] {
-    return [...this.functions, ...this.staticFunctions, ...(this.call ? [this.call] : [])];
+    return [
+      ...this.functions,
+      ...this.staticFunctions,
+      ...(this.call ? [this.call] : []),
+      ...(this.callInstance ? [this.callInstance] : []),
+    ];
   }
   /** Every signature that a Rust function implements. */
   get methods(): readonly Method[] {

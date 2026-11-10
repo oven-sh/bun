@@ -1,29 +1,34 @@
 use super::assets::EmbeddedFiles;
-use super::macros::MacroThread;
 use super::plugins::PluginRequests;
-use super::{assets, data_loaders, defines, native_plugins, page_bundles};
+use super::{assets, components, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
-    SourceFile,
+    ComponentFile, DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName,
+    PathsOfProgram, RefusedText, Resolution, ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
+use bun_core::ZBox;
+use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_react_compiler::Observer;
+use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
+use bun_resolver::package_names::{
+    BuildPaths, FurtherPackageName, PackageName, PathAlias, RefusedName,
+};
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema_driver::host::{from_native, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 
-#[derive(Clone)]
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
     pub module_prefix: Box<[u8]>,
@@ -147,6 +152,10 @@ impl FileFinder {
                 path: from_native(path.text),
                 required: (result.path_pair.secondary.as_ref()).map(|it| from_native(it.text)),
                 links_followed: true,
+                has_side_effects: matches!(
+                    result.primary_side_effects_data,
+                    SideEffects::HasSideEffects
+                ),
             },
         }
     }
@@ -216,15 +225,50 @@ pub(crate) fn with_test_context<R>(
 
 pub(crate) struct BundlerServices {
     context: BuildContext,
+    user_defined_names: Box<[Box<[u8]>]>,
     plugins: Option<PluginRequests>,
     embedded: EmbeddedFiles,
-    macros: MacroThread,
     /// Those that no thread holds.
     file_finders: Guarded<Vec<FileFinder>>,
+    refused_names: Guarded<Vec<RefusedName>>,
+    /// `CompiledProgram::refused_data`
+    refused_data: Guarded<Vec<u8>>,
+    files_for_file_system: Guarded<FilesForFileSystem>,
+    /// What `--asset` names, by absolute paths.
+    assets: Box<[Vec<u8>]>,
+    /// An asset below this folder is embedded under its path from the root, where the code beside it looks for it. Any other is embedded under its name alone.
+    folder_of_assets_that_keep_paths: Vec<u8>,
+    names_wanted: NamesWanted,
+    names_of_packages: Guarded<NamesOfPackages>,
+}
+
+pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
+    let rest = path.strip_prefix(folder);
+    rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
+}
+
+pub(crate) struct NamesWanted {
+    pub(crate) runs_in_place: bool,
+    pub(crate) loads_code_from_disk: bool,
+    pub(crate) root_directory: Box<[u8]>,
+}
+
+#[derive(Default)]
+pub(crate) struct NamesOfPackages {
+    pub(crate) of_entry_points_and_folders: Vec<PackageName>,
+    pub(crate) path_aliases: Vec<PathAlias>,
+    pub(crate) nearer: Vec<PackageName>,
+    pub(crate) that_lead_outside: Vec<PackageName>,
+    pub(crate) further: Vec<FurtherPackageName>,
 }
 
 impl BundlerServices {
-    pub(crate) fn new(bundle: NonNull<BundleV2<'static>>, module_prefix: &[u8]) -> BundlerServices {
+    pub(crate) fn new(
+        bundle: NonNull<BundleV2<'static>>,
+        module_prefix: &[u8],
+        user_defined_names: &[Box<[u8]>],
+        names_wanted: NamesWanted,
+    ) -> BundlerServices {
         let context = BuildContext {
             bundle,
             module_prefix: Box::from(module_prefix),
@@ -236,15 +280,73 @@ impl BundlerServices {
             .then(|| PluginRequests::new(bundle));
         BundlerServices {
             context,
+            user_defined_names: Box::from(user_defined_names),
             plugins,
             embedded: EmbeddedFiles::default(),
-            macros: MacroThread::new(),
             file_finders: Guarded::new(Vec::new()),
+            refused_names: Guarded::new(Vec::new()),
+            refused_data: Guarded::new(Vec::new()),
+            files_for_file_system: Guarded::new(FilesForFileSystem::default()),
+            assets: Box::default(),
+            folder_of_assets_that_keep_paths: Vec::new(),
+            names_wanted,
+            names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
     }
 
+    pub(crate) fn with_assets(
+        mut self,
+        assets: Box<[Vec<u8>]>,
+        folder_of_assets_that_keep_paths: Vec<u8>,
+    ) -> BundlerServices {
+        self.assets = assets;
+        self.folder_of_assets_that_keep_paths = folder_of_assets_that_keep_paths;
+        self
+    }
+
+    pub(crate) fn take_names_of_packages(&self) -> NamesOfPackages {
+        core::mem::take(&mut *self.names_of_packages.lock())
+    }
+
+    pub(crate) fn take_refused_names(&self) -> Vec<RefusedName> {
+        core::mem::take(&mut *self.refused_names.lock())
+    }
+
+    pub(crate) fn take_refused_data(&self) -> Vec<u8> {
+        core::mem::take(&mut *self.refused_data.lock())
+    }
+
+    fn is_found_by_pattern(&self, source_path: &[u8]) -> bool {
+        let files = self.files_for_file_system.lock();
+        let mut found = files.data_found_by_patterns.iter();
+        found.any(|found| &found[..] == source_path)
+    }
+
+    fn is_file_that_asset_would_bring(&self, source_path: &[u8]) -> bool {
+        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
+        let mut assets = self.assets.iter();
+        is_at_or_below(source_path, &self.folder_of_assets_that_keep_paths)
+            && !assets.any(|asset| is_at_or_below(source_path, asset))
+            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
+    }
+
+    pub(crate) fn take_files_for_file_system(&self) -> FilesForFileSystem {
+        let mut files = core::mem::take(&mut *self.files_for_file_system.lock());
+        for paths in [&mut files.data_found_by_patterns, &mut files.code_seen] {
+            paths.sort_unstable();
+            paths.dedup();
+        }
+        let key = |kept: &(Box<[u8]>, Msg)| {
+            let place = kept.1.data.location.as_ref();
+            let place = place.map(|it| (it.file.clone(), it.line, it.column));
+            (place, kept.1.data.text.clone())
+        };
+        files.warnings_if_lacking.sort_by_cached_key(key);
+        files.warnings_if_lacking.dedup_by_key(|kept| key(kept));
+        files
+    }
+
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
-        self.macros.shut_down();
         if let Some(plugins) = self.plugins {
             plugins.shut_down();
         }
@@ -252,22 +354,80 @@ impl BundlerServices {
     }
 }
 
+/// Where they lie on the disk of the build, ascending.
+#[derive(Default)]
+pub struct FilesForFileSystem {
+    /// The data files that a path made at run time may name.
+    pub data_found_by_patterns: Vec<Box<[u8]>>,
+    /// The compiled files that `node:fs` finds in the executable. Empty where there is no such data file.
+    pub code_seen: Vec<Box<[u8]>>,
+    /// With the path of a data file above: what the build says if `node:fs` won't find it in the executable. Ascending by place and text, each once.
+    pub warnings_if_lacking: Vec<(Box<[u8]>, Msg)>,
+}
+
 impl SourceProvider for BundlerServices {
+    fn work_beside_engine(&self, paths: &PathsOfProgram<'_>) {
+        let wanted = &self.names_wanted;
+        let pair = |source_path, public_path| BuildPaths {
+            source_path,
+            public_path,
+        };
+        let entry_points = paths.entry_points.iter();
+        let entry_points: Vec<BuildPaths<'_>> = entry_points
+            .map(|it| pair(&it.source_path, &it.public_path))
+            .collect();
+        let folders = paths.folders.iter();
+        let folders: Vec<BuildPaths<'_>> = folders
+            .map(|it| pair(&it.source_path, &it.public_path))
+            .collect();
+        let files = paths.program_files.iter();
+        let files: Vec<BuildPaths<'_>> = files
+            .map(|it| pair(&it.source_path, &it.public_path))
+            .collect();
+        // SAFETY: the front end has ended, so no thread resolves or loads; `build`, which owns the carrier, waits in `bun_aot::compile`.
+        let resolver = unsafe {
+            &mut (*self.context.bundle_pointer().as_ptr())
+                .transpiler
+                .resolver
+        };
+        let mut names = NamesOfPackages::default();
+        with_ast_scope(|_| {
+            // A program that runs in place asks the disk, and one entry point is loaded by nobody.
+            if !wanted.runs_in_place && entry_points.len() > 1 {
+                names.of_entry_points_and_folders =
+                    resolver.find_package_names(&entry_points, &folders);
+                names.path_aliases = resolver.find_path_aliases(&folders);
+            }
+            if !wanted.runs_in_place {
+                names.nearer = resolver.find_nearer_packages(&folders);
+                names.that_lead_outside =
+                    resolver.find_names_that_lead_outside(&files, &entry_points);
+            }
+            if wanted.loads_code_from_disk && !files.is_empty() {
+                let root = pair(&wanted.root_directory, &self.context.module_prefix);
+                names.further = resolver.find_further_package_names(&files, root);
+            }
+        });
+        *self.names_of_packages.lock() = names;
+    }
+
     fn fold_options<'s>(
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> FoldOptions<'s> {
-        defines::fold_options(self.context.options(), arena, atoms, log)
+        let options = self.context.options();
+        defines::fold_options(options, &self.user_defined_names, arena, atoms, log)
     }
 
-    fn enabled_features(&self) -> Vec<&[u8]> {
-        let flags = self.context.options().bundler_feature_flags.iter();
-        flags
-            .flat_map(|flags| flags.keys())
-            .map(|name| &**name)
-            .collect()
+    fn define(&self) -> Option<&Define> {
+        Some(&*self.context.options().define)
+    }
+
+    fn outfile(&self) -> Option<&[u8]> {
+        let resolver = &self.context.bundle().transpiler().resolver;
+        resolver.outfile_of_build()
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
@@ -291,6 +451,18 @@ impl SourceProvider for BundlerServices {
         let mut finder = idle.unwrap_or_else(create);
         let found = finder.find(search);
         self.file_finders.lock().push(finder);
+        if let FoundCode::NotFound(failure) = found
+            && failure.is_refusal_of_package_json()
+            && search.kind != CodeImportKind::EntryPoint
+        {
+            let mut directory = to_native(search.directory).to_vec();
+            posix_to_platform_in_place(&mut directory);
+            self.refused_names.lock().push(RefusedName {
+                directory,
+                specifier: search.specifier.to_vec(),
+                is_require: search.kind == CodeImportKind::Require,
+            });
+        }
         found
     }
 
@@ -300,38 +472,6 @@ impl SourceProvider for BundlerServices {
             None => WithoutServices.load(request, log)?,
         };
         native_plugins::run_before_parse(&self.context, request.module, loaded, log)
-    }
-
-    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
-        DataURL::parse(url).ok()??.decode_data().ok()
-    }
-
-    // As `Blob::constructor` takes the type and `Blob::get_loader` reads it.
-    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
-        use crate::options::LoaderExt as _;
-        use bun_http_types::MimeType;
-        let is_taken = |written: &&[u8]| {
-            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
-        };
-        let Some(written) = r#type.filter(is_taken) else {
-            return Some(Loader::from_mime_type(MimeType::NONE));
-        };
-        let kept = match MimeType::by_name_static(written) {
-            Some(known) => known.value.to_vec(),
-            None => written.to_ascii_lowercase(),
-        };
-        Some(Loader::from_mime_type(MimeType::MimeType::init(
-            &kept, false, None,
-        )))
-    }
-
-    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
-        let text = bun_core::StringView::borrow_utf8(text);
-        let href = match base {
-            None => bun_url::href_from_string(&text),
-            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
-        };
-        (!href.is_dead()).then(|| href.to_owned_slice())
     }
 
     fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
@@ -365,6 +505,38 @@ impl SourceProvider for BundlerServices {
             .collect()
     }
 
+    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
+        let url = DataURL::parse(url).ok().flatten()?;
+        url.decode_data().ok()
+    }
+
+    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
+        use crate::options::LoaderExt as _;
+        use bun_http_types::MimeType;
+        // The constructor takes no type that is empty or holds more than printable ASCII. It keeps what goes with a name that it knows, and any other in lower case.
+        let is_taken = |written: &&[u8]| {
+            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
+        };
+        let Some(written) = r#type.filter(is_taken) else {
+            return Some(Loader::from_mime_type(MimeType::NONE));
+        };
+        let kept = match MimeType::by_name_static(written) {
+            Some(known) => known.value.into_owned(),
+            None => written.to_ascii_lowercase(),
+        };
+        let kept = MimeType::MimeType::init(&kept, false, None);
+        Some(Loader::from_mime_type(kept))
+    }
+
+    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
+        let text = bun_core::StringView::borrow_utf8(text);
+        let href = match base {
+            None => bun_url::href_from_string(&text),
+            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
+        };
+        (!href.is_dead()).then(|| href.to_owned_slice())
+    }
+
     fn asset_paths_ignore_contents(&self) -> bool {
         assets::asset_paths_ignore_contents(&self.context)
     }
@@ -373,8 +545,44 @@ impl SourceProvider for BundlerServices {
         self.embedded.set_contents(&self.context, file, log)
     }
 
-    fn clear_embedded_files(&self) {
-        self.embedded.clear();
+    fn keep_where_text_is_refused(&self, refused: &RefusedText<'_>) {
+        let record = RefusedData {
+            is_syntax_error: refused.is_syntax_error,
+            message: refused.message,
+            line: refused.line,
+            column: refused.column,
+            offset: refused.offset as u32,
+            length: refused.length as u32,
+        };
+        let record = encode_refused_data(refused.path, &record);
+        self.refused_data.lock().extend_from_slice(&record);
+    }
+
+    fn keep_bytes_of_data_file(&self, source_path: &[u8]) {
+        let mut files = self.files_for_file_system.lock();
+        files.data_found_by_patterns.push(source_path.into());
+    }
+
+    fn keep_path_of_code_that_file_system_sees(&self, source_path: &[u8]) {
+        self.files_for_file_system
+            .lock()
+            .code_seen
+            .push(source_path.into());
+    }
+
+    fn is_file_that_only_asset_brings(&self, source_path: &[u8]) -> bool {
+        !self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    }
+
+    fn is_data_file_that_its_folder_may_hide(&self, source_path: &[u8]) -> bool {
+        self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    }
+
+    fn warn_if_file_system_lacks(&self, source_path: &[u8], warning: Msg) {
+        let mut files = self.files_for_file_system.lock();
+        files
+            .warnings_if_lacking
+            .push((source_path.into(), warning));
     }
 
     fn parse_data<'s>(
@@ -383,29 +591,20 @@ impl SourceProvider for BundlerServices {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         data_loaders::parse_data(&self.context, &self.embedded, file, arena, atoms, log)
     }
 
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        self.macros
-            .run_macro(&self.context, call, arena, atoms, log)
+    fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+        page_bundles::bundle_pages(&self.context, &self.embedded, pages, log)
     }
 
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        page_bundles::bundle_pages(&self.context, &self.embedded, pages, arena, atoms, log)
+    fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
+        components::compile_components(&self.context, file, observer, None, &mut Log::init())
+    }
+
+    fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {
+        components::expand_globs(&self.context, file, &mut Log::init())
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
@@ -415,7 +614,7 @@ impl SourceProvider for BundlerServices {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundlerServices, with_ast_scope, with_test_context};
+    use super::{BundlerServices, NamesWanted, with_ast_scope, with_test_context};
     use bun_aot::SourceProvider;
     use bun_aot::load::source_provider::ModuleName;
     use bun_ast::{E, Expr, ExprData, Loc};
@@ -430,8 +629,16 @@ mod tests {
         with_test_context(
             |_| {},
             |context| {
-                let services =
-                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix);
+                let services = BundlerServices::new(
+                    context.bundle_pointer(),
+                    &context.module_prefix,
+                    &[],
+                    NamesWanted {
+                        runs_in_place: true,
+                        loads_code_from_disk: false,
+                        root_directory: Box::default(),
+                    },
+                );
                 for namespace in [&b"file"[..], b"virtual"] {
                     assert!(!services.has_load_plugin(ModuleName {
                         namespace,

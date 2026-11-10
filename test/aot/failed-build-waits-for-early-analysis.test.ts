@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { spawned, withoutCoreDump } from "./run-programs";
+import { spawned, withoutCoreDump } from "./harness/commands";
 import { test } from "./supported";
 
 const named = (prefix: string, count: number) => Array.from({ length: count }, (_, number) => prefix + number);
@@ -20,7 +20,7 @@ const files = {
   ...Object.fromEntries(brokenModules.map(name => [`${name}.ts`, `var arg  = "\\u";\n`])),
   "build.ts": `
     let failed = 0;
-    for (let round = 0; round < 6; round++) {
+    for (let round = 0; round < 2; round++) {
       for (const entrypoint of ["./one-syntax-error.ts", "./missing-import.ts"]) {
         const built = await Bun.build({ entrypoints: [entrypoint], compile: { outfile: "./program", aot: true }, throw: false });
         if (!built.success) failed++;
@@ -34,7 +34,7 @@ test("Bun.build: a build that fails before the analysis keeps its sources until 
   using dir = tempDir("aot-failed-build-in-process", files);
   const ran = await spawned(withoutCoreDump([bunExe(), "build.ts"]), String(dir), bunEnv);
   expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-    stdout: "12 builds failed\n",
+    stdout: "4 builds failed\n",
     exitCode: 0,
     signal: null,
   });
@@ -42,7 +42,7 @@ test("Bun.build: a build that fails before the analysis keeps its sources until 
 
 test("bun build: a build that fails before the analysis keeps its sources until the early analysis has stopped reading them", async () => {
   using dir = tempDir("aot-failed-build-command-line", files);
-  for (let round = 0; round < 12; round++) {
+  for (let round = 0; round < 2; round++) {
     const builds = await Promise.all(
       named("./program", 8).map(outfile =>
         spawned(

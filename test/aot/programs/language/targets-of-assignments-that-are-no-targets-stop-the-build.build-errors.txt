@@ -1,2 +1,0 @@
-error: TS2364: The left-hand side of an assignment expression must be a variable or a property access.
-error: TS2701: The target of an object rest assignment must be a variable or a property access.

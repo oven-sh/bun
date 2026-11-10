@@ -5,9 +5,11 @@
   "dependencies": {
     "@koa/bodyparser": "6.1.0",
     "@koa/router": "15.7.0",
+    "@sinclair/typebox": "0.34.52",
     "elysia": "1.4.30",
     "express": "5.3.0",
     "fastify": "5.2.2",
+    "file-type": "22.2.0",
     "hono": "4.13.13",
     "koa": "3.2.1",
     "zod": "4.6.7"

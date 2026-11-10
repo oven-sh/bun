@@ -165,11 +165,8 @@ fn get_builtin_module_returns_host_modules_only() {
         CodeResolution::Erased
     );
     for other in &OTHER_RESOLUTIONS[1..] {
-        assert_eq!(
-            builtin_module_or_erased(*other),
-            CodeResolution::Erased,
-            "{other:?}"
-        );
+        let answer = builtin_module_or_erased(*other);
+        assert_eq!(answer, CodeResolution::Erased, "{other:?}");
     }
 }
 
@@ -254,7 +251,7 @@ fn site_without_attributes_has_none() {
 }
 
 #[test]
-fn constant_require_selects_loader_as_require() {
+fn require_selects_loader_as_require() {
     let pattern = ImportSpecifier::Pattern {
         prefix: known::require,
         suffix: known::empty,
@@ -271,7 +268,7 @@ fn constant_require_selects_loader_as_require() {
         );
         for specifier in [pattern, ImportSpecifier::Unknown] {
             let site = site_of(kind, specifier, ExprId::NONE);
-            assert_eq!(loader_kind(&site), CodeImportKind::Import, "{kind:?}");
+            assert_eq!(loader_kind(&site), expected, "{kind:?}");
         }
     }
 }
@@ -344,14 +341,30 @@ fn macro_statement_is_erased_without_request() {
         with_attributes(&[(known::r#type, known::r#macro)], |hir, attributes| {
             for kind in STATEMENT_KINDS {
                 let site = site_of(kind, specifier, attributes);
-                let resolution = resolve_site(context, IMPORTER, hir, &site, &[]);
+                let resolution = resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &site,
+                    &[],
+                    NamesKnown::ToTranspiler,
+                    Default::default(),
+                );
                 let erased = SiteResolution::Constant(CodeResolution::Erased);
                 assert_eq!(resolution, erased, "{kind:?}");
             }
             assert_eq!(host.code_request_count(), 0);
 
             let call = site_of(ImportSiteKind::ImportCall(ExprId(0)), specifier, attributes);
-            let resolution = resolve_site(context, IMPORTER, hir, &call, &[]);
+            let resolution = resolve_site(
+                context,
+                IMPORTER,
+                hir,
+                &call,
+                &[],
+                NamesKnown::ToTranspiler,
+                Default::default(),
+            );
             assert_eq!(
                 resolution,
                 SiteResolution::Constant(CodeResolution::File(FILE))
@@ -378,16 +391,87 @@ fn host_value_site_is_external_without_request() {
                 kind: ExternalKind::HostValue,
             });
             assert_eq!(
-                resolve_site(context, IMPORTER, hir, &host_value, &[]),
+                resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &host_value,
+                    &[],
+                    NamesKnown::ToTranspiler,
+                    Default::default()
+                ),
                 expected
             );
             assert_eq!(host.code_request_count(), 0);
 
             let expected = SiteResolution::Constant(CodeResolution::File(FILE));
             assert_eq!(
-                resolve_site(context, IMPORTER, hir, &written, &[]),
+                resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &written,
+                    &[],
+                    NamesKnown::ToTranspiler,
+                    Default::default()
+                ),
                 expected
             );
+        });
+    });
+}
+
+#[test]
+fn folded_path_into_external_package() {
+    const PATH: &[u8] = b"./node_modules/outside/m.js";
+    let outside = HostResolution::External {
+        specifier: b"outside".to_vec(),
+        kind: ExternalKind::UncompiledCode,
+    };
+    let host = StatementsHost {
+        claims: vec![("outside", outside)],
+        ..host_of(&[("/p/a.ts", ""), ("/p/node_modules/outside/m.js", "")])
+    };
+    with_context(&host, |context| {
+        let specifier = ImportSpecifier::Constant(context.atoms.intern(PATH));
+        with_attributes(&[(known::r#type, known::r#type)], |hir, folded| {
+            let ExprKind::Object(properties) = hir[folded].kind else {
+                unreachable!("with_attributes hands over an object");
+            };
+            let written = properties.iter().next().map(|property| hir[property].value);
+            let resolve = |kind, specifier_node, names| {
+                let site = ImportSite {
+                    specifier_node,
+                    ..site_of(kind, specifier, ExprId::NONE)
+                };
+                resolve_site(
+                    context,
+                    IMPORTER,
+                    hir,
+                    &site,
+                    &[],
+                    names,
+                    Default::default(),
+                )
+            };
+            let left_to_host = SiteResolution::Constant(CodeResolution::External {
+                specifier: PATH,
+                kind: ExternalKind::UncompiledCode,
+            });
+            let linked = SiteResolution::Constant(CodeResolution::File(CodeFile {
+                path: b"/p/node_modules/outside/m.js",
+                host_module: None,
+            }));
+            let written = written.expect("one property");
+            for kind in [
+                ImportSiteKind::ImportCall(ExprId(0)),
+                ImportSiteKind::Require(ExprId(0)),
+            ] {
+                let to_transpiler = NamesKnown::ToTranspiler;
+                assert_eq!(resolve(kind, folded, to_transpiler), left_to_host);
+                assert_eq!(resolve(kind, written, to_transpiler), linked);
+                assert_eq!(resolve(kind, written, NamesKnown::ToLoader), left_to_host);
+            }
         });
     });
 }
@@ -429,13 +513,27 @@ fn specifier_is_resolved_from_directory_of_importer() {
             candidates: &[plugin],
             spellings: &spellings,
         };
-        let found = resolve_pattern(context, nested, b"./plugins/", b"", import);
+        let found = resolve_pattern(
+            context,
+            nested,
+            b"./plugins/",
+            b"",
+            import,
+            Default::default(),
+        );
         assert_eq!(found, expected);
         let nothing = ComputedResolution::Candidates {
             candidates: &[],
             spellings: &[],
         };
-        let found = resolve_pattern(context, IMPORTER, b"./plugins/", b"", import);
+        let found = resolve_pattern(
+            context,
+            IMPORTER,
+            b"./plugins/",
+            b"",
+            import,
+            Default::default(),
+        );
         assert_eq!(found, nothing);
     });
 }

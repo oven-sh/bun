@@ -1,0 +1,17 @@
+# -- source: main.js
+# function letters(value) { return String(value)[Symbol.iterator](); }
+# function heir(parent) { return Object.create(parent); }
+# function first(value) { return letters(value).next().value; }
+# print(first(id("abc")), Object.getPrototypeOf(heir(id(Array.prototype))) === Array.prototype);
+# -- end of source
+# f1 = letters, f2 = heir, f3 = first. The door behind a call of a built-in asks whole kinds, the rung of the numbers and the classes that a test of an instance can ask. The rows of these two write more: StringIterator, Object:
+# the door asks `object` for both, and the record said the class all the same: in `first` the call of next() was bound to the iterator's own native function on the word of a row alone.
+# The record says what its door asks and no more.
+# RUN(LETTERS): walk f1 mechanisms=all
+# LETTERS: : object @JSValue = CallBuiltin {{*}} overload=StringPrototypeSymbolIterator/0
+# RUN(HEIR): walk f2 mechanisms=all
+# HEIR: : object @JSValue = CallBuiltin {{*}} overload=ObjectCreate/0
+# RUN(ANSWERS): run-in-shell globalThis.id = (x) => x;
+# ANSWERS: a true
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

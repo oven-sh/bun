@@ -16,6 +16,7 @@ pub(super) fn compute_arguments_objects(context: &Context<'_, '_>) -> ArgumentsO
     let mut objects = ArgumentsObjects {
         file: ArgumentsObject::None,
         functions: vec![ArgumentsObject::None; hir.fns.len()],
+        fields: Vec::new(),
     };
     for &(_, used) in &context.walk.uses {
         let BindingRef::Slot(scope, ScopeSlot::Arguments) = used else {
@@ -30,11 +31,10 @@ pub(super) fn compute_arguments_objects(context: &Context<'_, '_>) -> ArgumentsO
         match unit {
             CodeUnit::File => objects.file = created,
             CodeUnit::Function(function) => objects.functions[function.idx()] = created,
-            CodeUnit::FieldInitializer(_) => {
-                debug_assert!(false, "a field initializer has no arguments object");
-            }
+            CodeUnit::FieldInitializer(member) => objects.fields.push(member),
         }
     }
+    sort_unique(&mut objects.fields);
     objects
 }
 
@@ -53,7 +53,10 @@ pub(super) fn compute_forms(
         let unit = CodeUnit::Function(function);
         for (index, parameter) in (0..).zip(hir[function].params.iter()) {
             let symbol = bound.declared_symbol(Decl::Param(hir[parameter].pat));
-            if bound.binding_kind(symbol) == BindingKind::Parameter {
+            if bound.binding_kind(symbol) != BindingKind::Parameter {
+                continue;
+            }
+            if bound.is_mapped_argument(hir, symbol, context.input.names_lie_on_object_prototype) {
                 forms[symbol.idx()] = BindingForm::MappedArgument { unit, index };
             }
         }
@@ -84,23 +87,47 @@ pub(super) fn normalize_uses(
             normalize_binding(context, forms, user, binding)
         }
     };
-    let stored_uses = walk.uses.iter();
-    let stored_uses = stored_uses.filter_map(|&(user, used)| Some((user, normalize(user, used)?)));
-    let mut uses: Vec<(WalkedFunctionId, BindingRef)> = stored_uses.collect();
+    debug_assert!(walk.uses.is_sorted_by(|first, second| first < second));
+    let mut uses: Vec<(WalkedFunctionId, BindingRef)> = Vec::with_capacity(walk.uses.len());
+    let mut entry_captures: Vec<(WalkedFunctionId, BindingRef)> = Vec::new();
+    let mut is_in_order = true;
+    for &(user, used) in &walk.uses {
+        let is_kept = match used {
+            BindingRef::Symbol(symbol) => matches!(forms[symbol.idx()], BindingForm::Stored),
+            BindingRef::Slot(_, ScopeSlot::CommonJs(_)) => !has_mapped_wrapper_parameters,
+            BindingRef::Slot(..) => true,
+        };
+        let binding = match is_kept {
+            true => used,
+            false => {
+                let Some(binding) = normalize(user, used) else {
+                    continue;
+                };
+                is_in_order = false;
+                binding
+            }
+        };
+        if let BindingRef::Slot(scope, ScopeSlot::HomeObject) = binding
+            && let Some(function) = context.scope_functions[scope.idx()]
+        {
+            entry_captures.push((function, binding));
+        }
+        uses.push((user, binding));
+    }
     for (index, &walked) in walk.function_of_fn.iter().enumerate() {
         if arguments_objects.functions[index] == ArgumentsObject::Mapped
             && let Some(walked) = walked
         {
             let callee = BindingRef::Slot(bound.fns[index].scope, ScopeSlot::Callee);
             uses.push((walked, callee));
+            is_in_order = false;
         }
     }
     if has_mapped_wrapper_parameters {
         let callee = BindingRef::Slot(context.file_scope, ScopeSlot::Callee);
         uses.push((WalkedFunctionId::MODULE_BODY, callee));
+        is_in_order = false;
     }
-    sort_unique(&mut uses);
-
     let stored_eval_uses = walk.eval_uses.iter().filter_map(|&eval_use| {
         let binding = normalize(eval_use.function, eval_use.binding)?;
         Some(EvalUse {
@@ -111,6 +138,49 @@ pub(super) fn normalize_uses(
     let mut eval_uses: Vec<EvalUse> = stored_eval_uses.collect();
     eval_uses.shared_sort_unstable();
     eval_uses.dedup();
+    if let Some((_, eval)) = bound.runtime.eval_scopes().first()
+        && !walk.evals_under_names_of_file.is_empty()
+    {
+        let is_variable_of_module = |&symbol: &SymbolId| {
+            matches!(forms[symbol.idx()], BindingForm::Stored)
+                && context.is_module_level_scope[context.declaring_scope(symbol).idx()]
+        };
+        let (variables, others): (Vec<SymbolId>, Vec<SymbolId>) = bound
+            .ids(eval.file_symbols)
+            .partition(is_variable_of_module);
+        let mut is_body_met = vec![false; walk.functions.len()];
+        let mut uses_of_names: Vec<(WalkedFunctionId, BindingRef)> = Vec::new();
+        let mut eval_uses_of_names: Vec<EvalUse> = Vec::new();
+        for &(function, time) in &walk.evals_under_names_of_file {
+            let body = context.module_bodies[function.index()];
+            let variables = match std::mem::replace(&mut is_body_met[body.index()], true) {
+                true => &[][..],
+                false => &variables[..],
+            };
+            for &symbol in variables.iter().chain(&others) {
+                let Some(binding) = normalize(function, BindingRef::Symbol(symbol)) else {
+                    continue;
+                };
+                uses_of_names.push((function, binding));
+                eval_uses_of_names.push(EvalUse {
+                    function,
+                    binding,
+                    time,
+                });
+            }
+        }
+        sort_unique(&mut eval_uses_of_names);
+        eval_uses = merge_unique(&eval_uses, &eval_uses_of_names);
+        if is_in_order {
+            sort_unique(&mut uses_of_names);
+            uses = merge_unique(&uses, &uses_of_names);
+        } else {
+            uses.append(&mut uses_of_names);
+        }
+    }
+    if !is_in_order {
+        sort_unique(&mut uses);
+    }
 
     let walked_references = walk.function_references.iter();
     let walked_references = walked_references.filter_map(|&(user, function)| {
@@ -120,13 +190,6 @@ pub(super) fn normalize_uses(
     let mut references: Vec<(WalkedFunctionId, WalkedFunctionId)> = walked_references.collect();
     sort_unique(&mut references);
 
-    let home_objects = uses.iter().filter_map(|&(_, binding)| {
-        let BindingRef::Slot(scope, ScopeSlot::HomeObject) = binding else {
-            return None;
-        };
-        Some((context.scope_functions[scope.idx()]?, binding))
-    });
-    let mut entry_captures: Vec<(WalkedFunctionId, BindingRef)> = home_objects.collect();
     sort_unique(&mut entry_captures);
 
     NormalizedUses {
@@ -137,10 +200,23 @@ pub(super) fn normalize_uses(
     }
 }
 
+fn merge_unique<T: Ord + Copy>(mut first: &[T], mut second: &[T]) -> Vec<T> {
+    let mut merged = Vec::with_capacity(first.len() + second.len());
+    while let (Some(&of_first), Some(&of_second)) = (first.first(), second.first()) {
+        let order = of_first.cmp(&of_second);
+        merged.push(if order.is_gt() { of_second } else { of_first });
+        first = &first[usize::from(order.is_le())..];
+        second = &second[usize::from(order.is_ge())..];
+    }
+    merged.extend_from_slice(first);
+    merged.extend_from_slice(second);
+    merged
+}
+
+#[inline]
 fn compute_form(context: &Context<'_, '_>, symbol: SymbolId, kind: BindingKind) -> BindingForm {
     let (input, bound) = (context.input, context.input.bound);
     if kind == BindingKind::NoBinding {
-        // What a namespace only declares, `export declare let title: string`, is a property of its object that other code stores.
         let declares_variable = |decl: &Decl| matches!(decl, Decl::Var(_));
         let container = find_container(context, symbol)
             .filter(|&container| bound.has_runtime_value(container))

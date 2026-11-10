@@ -1,7 +1,7 @@
 use super::writer::{TreeWriter, UnsupportedNode, Written};
 use bun_ast::binding::Data as BindingData;
 use bun_ast::{Expr, G, Loc, LocRef, S, Stmt, StmtData};
-use bun_lint_react_compiler::code_generation::SymbolOrigin;
+use bun_react_compiler::SymbolOrigin;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{
     self, ExprId, ExprKind, Flags, FnKind, IdList, StmtId, StmtKind, TextRange, TypeNodeId,
@@ -16,7 +16,6 @@ enum TypeAnnotation {
 
 impl TreeWriter<'_, '_> {
     pub(super) fn write_statement_list(&mut self, statements: &[Stmt]) -> Written<IdList<StmtId>> {
-        // The compiler declares its cache before the directives of the function.
         let is_directive = |statement: &&Stmt| matches!(statement.data, StmtData::SDirective(_));
         let directives = statements.iter().filter(is_directive);
         let others = statements
@@ -205,7 +204,6 @@ impl TreeWriter<'_, '_> {
                 init,
                 kind,
                 flags: Flags::empty(),
-                // TypeScript rejects a `,` in the text after the last declaration. No node starts with one.
                 loc: TextRange { pos, end: pos },
             });
         }

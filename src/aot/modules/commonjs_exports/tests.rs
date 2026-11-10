@@ -1,435 +1,48 @@
-use super::CommonJsExports;
-use crate::modules::plan::{Member, Shape};
-use crate::modules::testing::{file_named, with_graph};
-use crate::modules::{BindInput, ModuleRef};
-use bun_sema::atom::Atom;
+use super::summary::{StoredName, summarize_file};
+use super::{
+    AliasTarget, CommonJsExports, CommonJsInput, ModuleEntries, NameEntry, scan_commonjs_modules,
+};
+use crate::compile::testing::{default_settings, with_bind_input};
+use crate::modules::module_set::collect_modules;
+use crate::modules::order::compute_order;
+use crate::modules::requests::{ScannedSite, scan_files};
+use crate::modules::testing::{
+    describe_module_ref, file_named, member_named, symbol_named, with_graph,
+};
+use crate::modules::{BindInput, Member, ModuleGraph, ModuleRef, Shape, bind_modules};
+use bstr::BStr;
+use bun_sema::atom::{Atom, known};
+use bun_sema::program::FileId;
 
-fn with_exports<R>(
-    files: &[(&str, &str)],
-    then: impl FnOnce(&CommonJsExports, &BindInput<'_, '_>) -> R,
-) -> R {
-    with_graph(files, |graph, input| then(graph.commonjs(), input))
-}
+const READS_A: &str = "const m = require('./m.cjs'); console.log(m.a);";
+const IMPORTS_A: &str = "import { a } from './m.cjs'; console.log(a);";
+const K: (&str, &str) = ("k.cjs", "exports.b = 1;");
+const MARKER: &str = "Object.defineProperty(exports, '__esModule', { value: true });";
+const ONLY_TESTED: &str = "exports.a = 1; var b = exports && 1, c = !exports, d = exports ? 1 : 2, e = exports == null; if (module.exports) console.log(b);";
 
-fn module_named(input: &BindInput<'_, '_>, name: &str) -> ModuleRef {
-    ModuleRef::File(file_named(input, name))
-}
+const BARREL: &str = "exports.a = void 0;
+var k_1 = require('./k.cjs');
+Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return k_1.b; } });
+";
 
-fn atom(input: &BindInput<'_, '_>, name: &str) -> Atom {
-    input.files.atoms.intern(name.as_bytes())
-}
-
-// What is said of `module.cjs` and of the name `a` where `main.cjs` is the entry point.
-fn ask<R>(
-    main: &str,
-    module: &str,
-    question: impl FnOnce(&CommonJsExports, ModuleRef, Atom) -> R,
-) -> R {
-    let files = [("main.cjs", main), ("module.cjs", module)];
-    with_exports(&files, |exports, input| {
-        question(exports, module_named(input, "module.cjs"), atom(input, "a"))
-    })
-}
-
-fn shape_with(main: &str, module: &str) -> Shape {
-    ask(main, module, |exports, module, _| exports.shape(module))
-}
-
-fn is_settled(main: &str, module: &str) -> bool {
-    ask(main, module, CommonJsExports::settled)
-}
-
-fn shapes_of<const N: usize>(files: &[(&str, &str)], names: [&str; N]) -> [Shape; N] {
-    with_exports(files, |exports, input| {
-        names.map(|name| exports.shape(module_named(input, name)))
-    })
-}
-
-// The shapes of `module.cjs` and of the `inner.cjs` beside it.
-fn shapes_beside(module: &str, inner: &str) -> [Shape; 2] {
-    let files = [
-        ("main.cjs", READS_A),
-        ("module.cjs", module),
-        ("inner.cjs", inner),
-    ];
-    shapes_of(&files, ["module.cjs", "inner.cjs"])
-}
-
-const READS_A: &str = "const m = require('./module.cjs'); console.log(m.a);";
-
-#[test]
-fn stores_under_constant_names_need_no_object() {
-    for module in [
-        "exports.a = 1;",
-        "module.exports.a = 1; this.b = 2; exports['c'] = 3;",
-        "exports.b = exports.a = void 0; exports.a = 1;",
-        "function later() { exports.z = 1; } exports.a = later;",
-        "if (Math.random()) exports.a = 1;",
-        "exports.a = 1; exports.a++; exports.a += 2;",
-        "var utils = exports; utils.a = 1;",
-        "exports.a = 1; if (exports) exports.b = exports.a; var c = exports && 1; var d = !exports;",
-        "exports.a = function () { return exports.a; };",
-    ] {
-        assert_eq!(shape_with(READS_A, module), Shape::Names, "{module}");
-    }
-}
-
-#[test]
-fn text_as_typescript_emits_it() {
-    let module = r#""use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Thing = exports.a = void 0;
-exports.add = add;
-function add(x, y) { return x + y; }
-exports.a = 1;
-class Thing {}
-exports.Thing = Thing;
-"#;
-    let main = "const module_1 = require('./module.cjs'); console.log((0, module_1.add)(module_1.a, 1), new module_1.Thing());";
-    let files = [("main.cjs", main), ("module.cjs", module)];
-    with_exports(&files, |exports, input| {
-        let module = module_named(input, "module.cjs");
-        assert_eq!(exports.shape(module), Shape::Names);
-        assert_eq!(exports.marker(module), Some(true));
-        for name in ["add", "a", "Thing"] {
-            assert!(exports.settled(module, atom(input, name)), "{name}");
-            assert!(exports.ignores_this(module, atom(input, name)), "{name}");
-            let member = exports.member_named(module, atom(input, name));
-            assert!(
-                matches!(member, Some(Member::Variable(_))),
-                "{name}: {member:?}"
-            );
-        }
-        // Nobody reads it.
-        assert_eq!(exports.member_named(module, atom(input, "other")), None);
-        assert_eq!(
-            exports.member_named(module, atom(input, "__esModule")),
-            Some(Member::Marker(true))
-        );
-    });
-}
-
-// A run of the body may end without the name, so an ES module that imports it has to ask.
-#[test]
-fn the_default_of_an_assignment_pattern_stores_on_some_runs() {
-    for module in [
-        "let x; [x = (exports.a = 1)] = [5];",
-        "let x; ({ x = (exports.a = 1) } = { x: 5 });",
-        "let x; ({ y: x = (exports.a = 1) } = { y: 5 });",
-        "let x; ({ y: [x = (exports.a = 1)] } = { y: [5] });",
-    ] {
-        assert!(!is_settled(READS_A, module), "{module}");
-    }
-    for module in [
-        "let x; x = exports.a = 1;",
-        "let x; [x] = [exports.a = 1];",
-        "let x; ({ x } = { x: exports.a = 1 });",
-        "[exports.a = 1] = [5];",
-    ] {
-        assert!(is_settled(READS_A, module), "{module}");
-    }
-}
-
-// Whoever holds the function calls it again behind the end of the body, and an ES importer holds what the name had at the link.
-#[test]
-fn a_function_that_is_called_where_it_is_written_may_be_called_again() {
-    for module in [
-        "(function again() { exports.a = Math.random(); exports.f = again; })();",
-        "(function again() { exports.a = Math.random(); exports.f = () => again(); })();",
-        "(function () { exports.a = Math.random(); exports.f = arguments.callee; })();",
-    ] {
-        assert!(!is_settled(READS_A, module), "{module}");
-    }
-    for module in [
-        "(function () { exports.a = Math.random(); })();",
-        "(function named() { exports.a = Math.random(); })();",
-        "(() => { exports.a = Math.random(); })();",
-    ] {
-        assert!(is_settled(READS_A, module), "{module}");
-    }
-}
-
-// The function around a default of a pattern, the test of a `case`, a computed name and what a class extends is known.
-#[test]
-fn a_this_of_a_function_is_no_mention_of_the_exports_wherever_it_stands() {
-    for module in [
-        "exports.a = 1; class C { m(o) { const { t = this.t } = o; return t; } } exports.C = C;",
-        "exports.a = 1; class C { m(o) { const [t = this.t] = o; return t; } } exports.C = C;",
-        "exports.a = 1; class C { m(o) { const { [this.k]: t } = o; return t; } } exports.C = C;",
-        "exports.a = 1; class C { m({ t = this.t }) { return t; } } exports.C = C;",
-        "exports.a = 1; class C { m(k) { switch (k) { case this.t: return 1; } } } exports.C = C;",
-        "exports.a = 1; exports.f = function () { return class extends this.Base {}; };",
-        "exports.a = 1; exports.f = function () { return class { [this.k]() {} }; };",
-        "exports.a = 1; const { b = this.a } = {};",
-        "exports.a = 1; switch (1) { case this.a: }",
-    ] {
-        assert_eq!(shape_with(READS_A, module), Shape::Names, "{module}");
-    }
-    // At the top it is the object.
-    for module in [
-        "exports.a = 1; const { b = this } = {};",
-        "exports.a = 1; switch (1) { case this: }",
-        "exports.a = 1; class C extends this {}",
-    ] {
-        assert_eq!(shape_with(READS_A, module), Shape::Value, "{module}");
-    }
-}
-
-#[test]
-fn a_function_without_this_ignores_it_beside_one_that_reads_it_in_a_default() {
-    let module = "exports.a = function () { return 1; }; exports.b = function (o) { const { t = this.t } = o; return t; };";
-    let files = [("main.cjs", READS_A), ("module.cjs", module)];
-    with_exports(&files, |exports, input| {
-        let module = module_named(input, "module.cjs");
-        assert!(exports.ignores_this(module, atom(input, "a")));
-        assert!(!exports.ignores_this(module, atom(input, "b")));
-    });
-}
-
-// Whoever the call runs finds the module without the marker.
-#[test]
-fn a_call_in_front_of_the_marker_counts_wherever_it_stands() {
-    let main = "exports.look = () => require('./module.cjs').__esModule; require('./module.cjs');";
-    for module in [
-        "switch (1) { case require('./main.cjs').look(): } exports.__esModule = true;",
-        "const { b = require('./main.cjs').look() } = {}; exports.__esModule = true;",
-        "const [b = require('./main.cjs').look()] = []; exports.__esModule = true;",
-    ] {
-        let marker = ask(main, module, |exports, module, _| exports.marker(module));
-        assert_eq!(marker, None, "{module}");
-    }
-}
-
-// `export = e` of TypeScript is the statement `module.exports = e`.
-#[test]
-fn export_equals_of_a_literal_needs_no_object() {
-    let shape_of = |module: &str| {
-        let main = "import m = require('./module'); console.log(m.a);";
-        shapes_of(&[("main.ts", main), ("module.ts", module)], ["module.ts"])[0]
-    };
-    for module in [
-        "export = { a: 1, list: [1, 2] };",
-        "function a() {} export = { a, b: a };",
-        "export = { a: 1 } as { a: number };",
-    ] {
-        assert_eq!(shape_of(module), Shape::Names, "{module}");
-    }
-    for module in [
-        "export = { a: 1, ...Math };",
-        "export = { a: 1, f() { return this.a; } };",
-        "const table = { a: 1 }; export = table;",
-    ] {
-        assert_eq!(shape_of(module), Shape::Value, "{module}");
-    }
-}
-
-#[test]
-fn the_module_looks_at_its_own_object() {
-    for module in [
-        "exports.a = 1; console.log(exports);",
-        "exports.a = 1; module.exports = { a: 2 };",
-        "module.exports = { a: 2 }; exports.a = 1;",
-        "module.exports = { a: 2 }; this.a = 1;",
-        "module.exports = { a: 2 }; module.exports = { a: 3 };",
-        "module.exports = { a: 2, ...Math };",
-        "module.exports = { a: 2, [Math.random()]: 1 };",
-        "module.exports = { get a() { return 2; } };",
-        "module.exports = { a: 2, toString() {} };",
-        "if (Math.random()) module.exports = { a: 2 };",
-        "console.log(module.exports = { a: 2 });",
-        "exports = module.exports = { a: 2 };",
-        "function set() { module.exports.a = 1; } set(); module.exports = { a: 2 };",
-        "exports.a = 1; exports = {};",
-        "exports.a = 1; exports[Math.random()] = 2;",
-        "exports.a = 1; delete exports.a;",
-        "exports.a = 1; exports.toString = 2;",
-        "exports.a = 1; exports[0] = 2;",
-        "exports.a = 1; exports.__proto__ = null;",
-        "exports.a = 1; for (const key in exports) console.log(key);",
-        "exports.a = 1; console.log(module);",
-        "exports.a = 1; eval('exports');",
-        "exports.a = 1; console.log(arguments);",
-        "exports.a = 1; var b = exports || 1;",
-        "exports.a = 1; Object.defineProperty(exports, 'b', { get() { return Math.random(); } });",
-        "exports.a = 1; Object.defineProperty(exports, 'b', { value: 1 }); exports.b = 2;",
-        "const b = 1; exports.a = 1; Object.defineProperty(exports, 'b', { get() { return b; }, writable: false });",
-        "const b = 1; exports.a = 1; Object.defineProperty(exports, 'b', { get() { return b; }, writable: undefined });",
-        "exports.a = 1; if (Math.random()) Object.defineProperty(exports, 'b', { value: 1 });",
-        "module.exports = Math.random();",
-    ] {
-        assert_eq!(shape_with(READS_A, module), Shape::Value, "{module}");
-    }
-}
-
-#[test]
-fn one_odd_module_takes_no_other_along() {
-    let main = "console.log(require('./plain.cjs').a, require('./odd.cjs').a);";
-    let files = [
-        ("main.cjs", main),
-        ("plain.cjs", "exports.a = 1;"),
-        ("odd.cjs", "exports.a = 1; console.log(exports);"),
-    ];
-    assert_eq!(
-        shapes_of(&files, ["plain.cjs", "odd.cjs", "main.cjs"]),
-        [Shape::Names, Shape::Value, Shape::Value]
-    );
-}
-
-#[test]
-fn the_five_names_and_the_scope() {
-    let needs_wrapped_body = |module: &str| {
-        ask(READS_A, module, |exports, module, _| {
-            exports.needs_wrapped_body(module)
-        })
-    };
-    for module in [
-        "exports.a = 1; module = {};",
-        "exports.a = 1; require = null;",
-        "exports.a = 1; __dirname = '';",
-        "exports.a = 1; exports = {};",
-        "exports.a = 1; eval('1');",
-        "exports.a = 1; console.log(arguments.length);",
-    ] {
-        assert!(needs_wrapped_body(module), "{module}");
-    }
-    for module in [
-        "exports.a = 1;",
-        "exports.a = 1; console.log(exports);",
-        "function f() {} exports = module.exports = f; exports.a = 1;",
-    ] {
-        assert!(!needs_wrapped_body(module), "{module}");
-    }
-}
-
-#[test]
-fn a_literal_takes_the_place_of_the_object() {
-    let module = "const b = 1; module.exports = { a: 2, b, c() { return 3; }, 'd': 4 }; module.exports.e = module.exports.a;";
-    let main = "const m = require('./module.cjs'); console.log(m.a, m.c());";
-    assert_eq!(shape_with(main, module), Shape::Names);
-    // A function declaration is called in front of the literal, wherever it is written.
-    let stored_early = "set(); module.exports = { a: 2 }; function set() { module.exports.b = 1; }";
-    assert_eq!(shape_with(READS_A, stored_early), Shape::Value);
-    let read_early =
-        "get(); module.exports = { a: 2 }; function get() { return module.exports.a; }";
-    assert_eq!(shape_with(READS_A, read_early), Shape::Names);
-    // `super` looks above the literal.
-    let with_super = "module.exports = { a() { return super.toString(); } };";
-    assert_eq!(
-        shape_with("const { a } = require('./module.cjs'); a();", with_super),
-        Shape::Value
-    );
-    // Whoever has required the module in a cycle holds the first object.
-    let in_cycle = "require('./main.cjs'); module.exports = { a: 2 };";
-    assert_eq!(shape_with(READS_A, in_cycle), Shape::Value);
-}
-
-#[test]
-fn a_module_that_hands_on_another_one() {
-    // It holds the object of the other one, like any other value.
-    let shapes = shapes_beside("module.exports = require('./inner.cjs');", "exports.a = 1;");
-    assert_eq!(shapes, [Shape::Value, Shape::Value]);
-}
-
-const BARREL: &str = r#"
-var inner_1 = require("./inner.cjs");
-exports.a = void 0;
-Object.defineProperty(exports, "a", { enumerable: true, get: function () { return inner_1.b; } });
+const EXPORT_STAR: &str = r#"var __createBinding = function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+};
+var __exportStar = function(m, o) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);
+};
 "#;
 
-#[test]
-fn a_getter_that_returns_a_name_of_another_module_is_that_name() {
-    let files = [
-        ("main.cjs", READS_A),
-        ("module.cjs", BARREL),
-        ("inner.cjs", "exports.b = 1;"),
-    ];
-    with_exports(&files, |exports, input| {
-        let [module, inner] = ["module.cjs", "inner.cjs"].map(|name| module_named(input, name));
-        assert_eq!(exports.shape(module), Shape::Names);
-        let Some(Member::Variable(id)) = exports.member_named(module, atom(input, "a")) else {
-            panic!("the name has no variable");
-        };
-        assert_eq!(exports.names_by_id[&id].0, inner);
-        assert_eq!(exports.dependents(inner), [module]);
-    });
-}
-
-#[test]
-fn a_getter_needs_the_variable_of_the_other_module() {
-    for inner in [
-        "exports.b = 1; console.log(exports);",
-        "module.exports = () => 1;",
-    ] {
-        assert_eq!(shapes_beside(BARREL, inner)[0], Shape::Value, "{inner}");
-    }
-}
-
-#[test]
-fn a_getter_needs_the_variable_of_the_module_behind_es_modules_that_hand_the_name_on() {
-    let over_es_module = BARREL.replace("inner.cjs", "between.mjs");
-    for (inner, shape) in [
-        ("exports.b = 1;", Shape::Names),
-        ("exports.b = 1; console.log(exports);", Shape::Value),
-        ("if (Math.random()) exports.b = 1;", Shape::Value),
-    ] {
-        let files = [
-            ("main.cjs", READS_A),
-            ("module.cjs", &over_es_module[..]),
-            ("between.mjs", "export * from './further.mjs';"),
-            ("further.mjs", "export { b } from './inner.cjs';"),
-            ("inner.cjs", inner),
-        ];
-        let shapes = shapes_of(&files, ["module.cjs", "inner.cjs"]);
-        assert_eq!(shapes, [shape, shape], "{inner}");
-    }
-}
-
-#[test]
-fn a_getter_is_a_name_only_where_its_module_is_loaded_before() {
-    for module in [
-        // A read in front of the `require` throws.
-        "Object.defineProperty(exports, 'a', { get() { return m.b; } }); var m = require('./inner.cjs');",
-        // The read evaluates the module.
-        "Object.defineProperty(exports, 'a', { get() { return require('./inner.cjs').b; } });",
-        "if (Math.random()) var m = require('./inner.cjs'); Object.defineProperty(exports, 'a', { get() { return m.b; } });",
-        "var m = require('./inner.cjs'); m = {}; Object.defineProperty(exports, 'a', { get() { return m.b; } });",
-        "var m = require('./inner.cjs'); Object.defineProperty(exports, 'a', { get() { return m.b; } }); exports.a = 1;",
-    ] {
-        let shapes = shapes_beside(module, "exports.b = 1;");
-        assert_eq!(shapes[0], Shape::Value, "{module}");
-    }
-}
-
-#[test]
-fn whoever_sees_a_module_half_evaluated_sees_the_definitions_run() {
-    let in_cycle = ("inner.cjs", "exports.b = 1; require('./module.cjs');");
-    let files = [("main.cjs", READS_A), ("module.cjs", BARREL), in_cycle];
-    with_exports(&files, |exports, input| {
-        let [module, inner] = ["module.cjs", "inner.cjs"].map(|name| module_named(input, name));
-        assert_eq!(exports.shape(module), Shape::Value);
-        // Plain stores are seen as they come.
-        assert_eq!(exports.shape(inner), Shape::Names);
-        assert!(!exports.settled(inner, atom(input, "b")));
-    });
-}
-
-const SWC_HELPER: &str = r#""use strict";
-Object.defineProperty(exports, "__esModule", {
-    value: true
-});
-0 && (module.exports = {
-    a: null,
-    b: null
-});
-function _export(target, all) {
+const SWC_EXPORT: &str = "function _export(target, all) {
     for(var name in all)Object.defineProperty(target, name, {
         enumerable: true,
         get: all[name]
     });
 }
-"#;
+";
 
-const SWC_NAMES: &str = r#"_export(exports, {
+const SWC_NAMES: &str = "_export(exports, {
     a: function() {
         return a;
     },
@@ -437,164 +50,1077 @@ const SWC_NAMES: &str = r#"_export(exports, {
         return b;
     }
 });
+const a = 1;
+function b() { return a; }
+";
+
+const ESBUILD_HELPERS: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __reExport = (target, mod, secondTarget) => (__copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default"));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 "#;
 
+const MARKING_HELPERS: &str = r#"var __defProp = Object.defineProperty;
+var __markAsModule = (target) => __defProp(target, "__esModule", { value: true });
+var __export = (target, all) => {
+  __markAsModule(target);
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+"#;
+
+const IMPORT_DEFAULT: &str = r#"var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };"#;
+
+const STAR_OF_K: &str = "__exportStar(require('./k.cjs'), exports);";
+const STAR_IN_LINE_OF_K: &str = r#"var _k = require('./k.cjs');
+Object.keys(_k).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (key in exports && exports[key] === _k[key]) return;
+  Object.defineProperty(exports, key, {
+    enumerable: true,
+    get: function () {
+      return _k[key];
+    }
+  });
+});"#;
+const RE_EXPORT_OF_K: &str = "__reExport(exports, require('./k.cjs'));";
+const ASSIGN_OF_K: &str = "Object.assign(exports, require('./k.cjs'));";
+const BINDING_OF_B: &str = "__createBinding(exports, require('./k.cjs'), 'b', 'a');";
+const EXPORT_OF_A: &str = "__export(exports, { a: () => a }); var a = 1;";
+const ALL_OF_K: &str = "all of k.cjs, marker unknown";
+
+fn define_a(descriptor: &str) -> String {
+    format!("Object.defineProperty(exports, 'a', {{ {descriptor} }});")
+}
+
+fn getter_of_b(attributes: &str) -> String {
+    let descriptor = format!("{attributes}get: function () {{ return k.b; }}");
+    format!("var k = require('./k.cjs'); {}", define_a(&descriptor))
+}
+
+fn with_commonjs_input<R>(
+    bind: &BindInput<'_, '_>,
+    then: impl FnOnce(&CommonJsInput<'_, '_, '_>) -> R,
+) -> R {
+    let scans = scan_files(bind);
+    let modules = collect_modules(bind, &scans);
+    let (order, _) = compute_order(bind, &scans, &modules);
+    let input = CommonJsInput {
+        bind,
+        scans: &scans,
+        modules: &modules,
+        half: &|module: ModuleRef| order.half(module),
+        half_at_link: &|module: ModuleRef| order.half_at_link(module),
+        is_prefix_root: &|file: FileId| order.is_prefix_root(file),
+    };
+    then(&input)
+}
+
+fn text_of(bind: &BindInput<'_, '_>, atom: Atom) -> String {
+    BStr::new(bind.files.atoms.bytes(atom)).to_string()
+}
+
+fn describe_stored(input: &CommonJsInput<'_, '_, '_>, file: FileId, stored: StoredName) -> String {
+    let bind = input.bind;
+    let if_skippable = match stored.statement().is_none() {
+        true => "?",
+        false => "",
+    };
+    match stored {
+        StoredName::Value { name, .. } => format!("{}{if_skippable}", text_of(bind, name)),
+        StoredName::Getter {
+            name,
+            is_enumerable: true,
+            ..
+        } => format!("get {}{if_skippable}", text_of(bind, name)),
+        StoredName::Getter { name, .. } => {
+            format!("hidden get {}{if_skippable}", text_of(bind, name))
+        }
+        StoredName::AllOf { site, .. } => match &input.scans.of(file).sites[site as usize] {
+            ScannedSite::Module(module) => {
+                format!(
+                    "all of {}{if_skippable}",
+                    describe_module_ref(bind, *module)
+                )
+            }
+            other => format!("all of {other:?}"),
+        },
+    }
+}
+
+fn describe_summary(input: &CommonJsInput<'_, '_, '_>, file: FileId) -> String {
+    let summary = summarize_file(input, file);
+    if summary.module_object_escapes {
+        return "module escapes".to_owned();
+    }
+    if summary.replaced_by.is_some() {
+        return "replaced".to_owned();
+    }
+    if summary.object_escapes {
+        return "escapes".to_owned();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let names = summary.names.iter().copied();
+    for stored in names.filter(|stored| stored.name() != Some(known::__esModule)) {
+        let line = describe_stored(input, file, stored);
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    match summary.marker {
+        Some(true) => lines.push("marker true".to_owned()),
+        Some(false) => {}
+        None => lines.push("marker unknown".to_owned()),
+    }
+    lines.join(", ")
+}
+
+fn describe_entry(bind: &BindInput<'_, '_>, entry: &NameEntry) -> String {
+    let if_skippable = match entry.created_at {
+        u32::MAX => "?",
+        _ => "",
+    };
+    let target = match entry.getter.map(|getter| getter.target) {
+        None => String::new(),
+        Some(AliasTarget::Member { module, name }) => {
+            let module = describe_module_ref(bind, module);
+            format!(" = {module} {}", text_of(bind, name))
+        }
+        Some(AliasTarget::Binding(symbol)) => {
+            format!(" = #{}", text_of(bind, bind.files.symbol(symbol).name))
+        }
+    };
+    let hidden = match entry.is_enumerable {
+        true => "",
+        false => " hidden",
+    };
+    format!(
+        "{}{if_skippable}{target}{hidden}",
+        text_of(bind, entry.name)
+    )
+}
+
+fn with_entries<R>(
+    bind: &BindInput<'_, '_>,
+    module: &str,
+    then: impl FnOnce(&ModuleEntries) -> R,
+) -> R {
+    let module = ModuleRef::File(file_named(bind, module));
+    with_commonjs_input(bind, |input| {
+        let entries = scan_commonjs_modules(input).entries();
+        let entries = entries.iter().find(|entries| entries.module == module);
+        then(entries.expect("no CommonJS module of the program"))
+    })
+}
+
+fn describe_names(bind: &BindInput<'_, '_>, module: &str) -> Option<Vec<String>> {
+    with_entries(bind, module, |entries| {
+        let names = entries.names.iter();
+        let names = names.filter(|entry| entry.name != known::__esModule);
+        let names = names.map(|entry| describe_entry(bind, entry));
+        entries.has_names.then(|| names.collect())
+    })
+}
+
+fn describe_name(bind: &BindInput<'_, '_>, module: &str, name: &str) -> Option<String> {
+    let name = bind.files.atoms.intern(name.as_bytes());
+    with_entries(bind, module, |entries| {
+        let mut named = entries.names.iter().filter(|entry| entry.name == name);
+        let first = named.next().map(|entry| describe_entry(bind, entry));
+        assert!(named.next().is_none(), "the tables list a name twice");
+        let first = first.unwrap_or_else(|| "absent".to_owned());
+        entries.has_names.then_some(first)
+    })
+}
+
+fn stored_markers(bind: &BindInput<'_, '_>) -> Vec<ModuleRef> {
+    with_commonjs_input(bind, |input| {
+        scan_commonjs_modules(input).markers_stored_from_outside()
+    })
+}
+
+fn with_module<R>(source: &str, then: impl FnOnce(&BindInput<'_, '_>) -> R) -> R {
+    let files = [("main.cjs", "require('./m.cjs');"), ("m.cjs", source), K];
+    with_bind_input(&files, &default_settings(), then)
+}
+
+fn summarize(source: &str) -> String {
+    with_module(source, |bind| {
+        let file = file_named(bind, "m.cjs");
+        with_commonjs_input(bind, |input| describe_summary(input, file))
+    })
+}
+
+struct Program<'a, 'i, 's> {
+    graph: &'a ModuleGraph,
+    input: &'a BindInput<'i, 's>,
+}
+
+fn with_program<R>(files: &[(&str, &str)], then: impl FnOnce(&Program<'_, '_, '_>) -> R) -> R {
+    with_graph(files, |graph, input| then(&Program { graph, input }))
+}
+
+fn with_required<R>(module: &str, then: impl FnOnce(&Program<'_, '_, '_>) -> R) -> R {
+    with_program(&[("main.cjs", READS_A), ("m.cjs", module), K], then)
+}
+
+fn with_imported<R>(module: &str, then: impl FnOnce(&Program<'_, '_, '_>) -> R) -> R {
+    with_program(&[("main.mjs", IMPORTS_A), ("m.cjs", module), K], then)
+}
+
+impl Program<'_, '_, '_> {
+    fn file(&self, name: &str) -> FileId {
+        file_named(self.input, name)
+    }
+
+    fn module(&self, name: &str) -> ModuleRef {
+        ModuleRef::File(self.file(name))
+    }
+
+    fn atom(&self, text: &str) -> Atom {
+        self.input.files.atoms.intern(text.as_bytes())
+    }
+
+    fn exports(&self) -> &CommonJsExports {
+        self.graph.commonjs()
+    }
+
+    fn keeps_names(&self, module: &str) -> bool {
+        let module = self.module(module);
+        let keeps_names = self.exports().has_names(module);
+        assert_eq!(self.exports().shape(module) == Shape::Names, keeps_names);
+        keeps_names
+    }
+
+    fn is_settled(&self, module: &str, name: &str) -> bool {
+        let (module, name) = (self.module(module), self.atom(name));
+        self.exports().settled(module, name)
+    }
+
+    fn marker(&self, module: &str) -> Option<bool> {
+        self.graph.marker(self.module(module))
+    }
+
+    fn describe(&self, member: Option<Member>) -> String {
+        let variable = |id| {
+            let export = self.graph.synthetic_export(id);
+            let module = describe_module_ref(self.input, export.module);
+            format!("{module} {}", text_of(self.input, export.name))
+        };
+        match member {
+            None => "nothing".to_owned(),
+            Some(Member::Variable(id)) => variable(id),
+            Some(Member::Copy(id)) => format!("copy of {}", variable(id)),
+            Some(Member::Binding(symbol)) => {
+                let module = describe_module_ref(self.input, ModuleRef::File(symbol.file));
+                let name = self.input.files.symbol(symbol).name;
+                format!("{module}#{}", text_of(self.input, name))
+            }
+            Some(Member::Undefined) => "undefined".to_owned(),
+            Some(Member::Marker(flag)) => format!("marker {flag}"),
+            Some(Member::OnObject) => "object".to_owned(),
+        }
+    }
+
+    fn member(&self, module: &str, name: &str) -> String {
+        let (module, name) = (self.module(module), self.atom(name));
+        self.describe(self.exports().member_named(module, name))
+    }
+
+    fn imported(&self, module: &str, name: &str) -> &'static str {
+        let (file, name) = (self.file(module), self.atom(name));
+        let variable = self.graph.variable_of(ModuleRef::File(file), name);
+        let variable = variable.expect("no binding asks for the name");
+        let copies = self.exports().copies(file);
+        match self.exports().imported_member(variable) {
+            Member::Variable(bound_to) if bound_to == variable => "variable",
+            Member::Copy(copy) if copy == variable && copies.contains(&copy) => "copy",
+            member => panic!("{member:?}"),
+        }
+    }
+
+    fn checked(&self, root: &str) -> Vec<String> {
+        let copies = self.exports().checked_copies(self.file(root)).iter();
+        let describe = |entry: &(_, _)| self.describe(Some(Member::Variable(entry.0)));
+        copies.map(describe).collect()
+    }
+}
+
 #[test]
-fn text_as_swc_emits_it() {
-    let module = format!("{SWC_HELPER}{SWC_NAMES}const a = 1;\nfunction b() {{ return a; }}\n");
-    let main = "const _module = require('./module.cjs'); console.log((0, _module.b)(), _module.a);";
-    let files = [("main.cjs", main), ("module.cjs", module.as_str())];
-    with_exports(&files, |exports, input| {
-        let module = module_named(input, "module.cjs");
-        assert_eq!(exports.shape(module), Shape::Names);
-        assert_eq!(exports.marker(module), Some(true));
-        for name in ["a", "b"] {
-            let member = exports.member_named(module, atom(input, name));
+fn a_store_under_a_constant_name_is_a_name() {
+    for (source, said) in [
+        ("exports.a = 1;", "a"),
+        ("module.exports.a = 1;", "a"),
+        ("exports['a'] = 1;", "a"),
+        ("exports.b = 1; exports.a = 2; exports.b = 3;", "b, a"),
+        ("exports.a = exports.b = void 0;", "b, a"),
+        (
+            "const b = 1; module.exports = { a: 1, b, 'c': 2 };",
+            "a, b, c",
+        ),
+        ("const table = { a: 1 }; module.exports = table;", "a"),
+        (
+            "module.exports = { a: 1 }; module.exports.b = module.exports.a;",
+            "a, b",
+        ),
+        ("exports.a = function () { return exports.a; };", "a"),
+        ("if (Math.random()) exports.a = 1;", "a?"),
+        ("exports.a = 1; if (Math.random()) exports.a = 2;", "a, a?"),
+        (
+            "function set() { exports.a = 1; } exports.set = set;",
+            "set, a?",
+        ),
+        (ONLY_TESTED, "a"),
+    ] {
+        assert_eq!(summarize(source), said, "{source}");
+    }
+}
+
+#[test]
+fn a_name_or_this_that_belongs_to_a_function_is_not_the_object() {
+    for source in [
+        "function f(exports) { exports.z = 1; return exports; } exports.a = f;",
+        "function f() { var exports = {}; exports.z = 1; return exports; } exports.a = f;",
+        "function f(module) { module.exports = 1; return module; } exports.a = f;",
+        "exports.a = function () { this.z = 1; return this; };",
+    ] {
+        assert_eq!(summarize(source), "a", "{source}");
+    }
+}
+
+#[test]
+fn dead_code_says_nothing() {
+    for source in [
+        "if (false) console.log(exports); exports.a = 1;",
+        "0 && (module.exports = { z: null }); exports.a = 1;",
+        "exports.a = 1; if (false) exports.z = 1;",
+    ] {
+        assert_eq!(summarize(source), "a", "{source}");
+    }
+}
+
+#[test]
+fn the_object_escapes_unless_it_is_only_accessed_by_constant_names() {
+    for source in [
+        "console.log(exports);",
+        "console.log(module.exports);",
+        "console.log(this);",
+        "this.b = 1;",
+        "exports.f = () => this;",
+        "var b = exports || 1;",
+        "var b = exports; b.c = 1;",
+        "delete exports.a;",
+        "exports.a++;",
+        "exports[Math.random()] = 1;",
+        "exports.__proto__ = null;",
+        "exports.toString = 2;",
+        "exports['0'] = 2;",
+        "for (const key in exports) console.log(key);",
+        "Object.keys(exports);",
+        "console.log({ ...exports });",
+    ] {
+        let source = format!("exports.a = 1; {source}");
+        assert_eq!(summarize(&source), "escapes", "{source}");
+    }
+    for source in [
+        "console.log(module);",
+        "Object.defineProperty(module, 'exports', { get() { return 1; } });",
+    ] {
+        assert_eq!(summarize(source), "module escapes", "{source}");
+    }
+}
+
+#[test]
+fn the_typescript_helper_preamble_does_not_let_this_escape() {
+    assert_eq!(summarize(&format!("{IMPORT_DEFAULT} exports.a = 1;")), "a");
+    assert_eq!(
+        summarize(&format!("exports.a = 1; {IMPORT_DEFAULT}")),
+        "escapes"
+    );
+}
+
+#[test]
+fn module_exports_is_replaced_by_another_value() {
+    for source in [
+        "module.exports = Math.random();",
+        "module.exports = function () {};",
+        "const table = { a: 1 }; module.exports = table; table.b = 2;",
+        "const table = { a: 1 }; console.log(1); module.exports = table;",
+        "const table = { a: 1 }, other = 2; module.exports = table;",
+        "let table = { a: 1 }; module.exports = table; table = 2;",
+        "const table = { a: 1, f() { return table; } }; module.exports = table;",
+        "module.exports = { a: 1, ...Math };",
+        "module.exports = { a: 2, toString() {} };",
+        "exports.b = 1; module.exports = { a: 1 };",
+        "module.exports = { a: 1 }; exports.b = 1;",
+    ] {
+        assert_eq!(summarize(source), "replaced", "{source}");
+    }
+}
+
+#[test]
+fn the_marker_is_true_when_the_body_stores_it_before_every_load() {
+    for (source, said) in [
+        (
+            "exports.__esModule = true; exports.a = 1;",
+            "a, marker true",
+        ),
+        (MARKER, "marker true"),
+        (
+            "Object.defineProperty(exports, '__esModule', { value: false });",
+            "marker unknown",
+        ),
+        (
+            "exports.__esModule = true; require('./k.cjs');",
+            "marker true",
+        ),
+        (
+            "require('./k.cjs'); exports.__esModule = true;",
+            "marker unknown",
+        ),
+        ("exports.__esModule = Math.random() < 1;", "marker unknown"),
+        (
+            "if (Math.random()) exports.__esModule = true;",
+            "marker unknown",
+        ),
+        (
+            "exports.__esModule = true; exports.__esModule = false;",
+            "marker unknown",
+        ),
+    ] {
+        assert_eq!(summarize(source), said, "{source}");
+    }
+}
+
+#[test]
+fn a_call_that_defines_names() {
+    let (listed, hidden) = (getter_of_b("enumerable: true, "), getter_of_b(""));
+    let marked_star = format!("exports.__esModule = true; {STAR_OF_K}");
+    for (helpers, source, said) in [
+        ("", &listed[..], "get a"),
+        ("", &hidden[..], "hidden get a"),
+        ("", &getter_of_b("enumerable: false, ")[..], "hidden get a"),
+        ("", BARREL, "get a"),
+        (SWC_EXPORT, SWC_NAMES, "get a, get b"),
+        (ESBUILD_HELPERS, EXPORT_OF_A, "get a"),
+        (EXPORT_STAR, STAR_OF_K, ALL_OF_K),
+        ("", STAR_IN_LINE_OF_K, ALL_OF_K),
+        (EXPORT_STAR, &marked_star[..], "all of k.cjs, marker true"),
+        (EXPORT_STAR, BINDING_OF_B, "get a"),
+        (ESBUILD_HELPERS, RE_EXPORT_OF_K, ALL_OF_K),
+        ("", ASSIGN_OF_K, ALL_OF_K),
+        ("", "Object.assign(exports, { a: 1 });", "a"),
+        ("", &define_a("value: 1")[..], "a"),
+        (
+            MARKING_HELPERS,
+            "__markAsModule(exports); exports.a = 1;",
+            "a, marker true",
+        ),
+        (MARKING_HELPERS, EXPORT_OF_A, "get a, marker true"),
+    ] {
+        assert_eq!(summarize(&format!("{helpers}{source}")), said, "{source}");
+    }
+}
+
+#[test]
+fn a_call_of_another_form_lets_the_object_escape() {
+    let keeps_enumerable = BARREL.replace("enumerable: true, ", "");
+    for source in [
+        &keeps_enumerable[..],
+        "Object.defineProperty(exports, Math.random(), { get() { return 1; } });",
+        "const d = { get() { return 1; } }; Object.defineProperty(exports, 'a', d);",
+        "var Object = { defineProperty() {} }; Object.defineProperty(exports, 'a', { get() { return 1; } });",
+        "if (Math.random()) Object.defineProperty(exports, 'a', { get() { return 1; } });",
+        "console.log(Object.defineProperty(exports, 'a', { get() { return 1; } }));",
+        "function __reExport(o, m) { o.z = m; } __reExport(exports, require('./k.cjs'));",
+        "__exportStar(Math, exports);",
+        "const all = { a: function () { return 1; } }; _export(exports, all);",
+        "_export = console.log; _export(exports, { a: function () { return 1; } });",
+        "function later() { _export(exports, { a: function () { return 1; } }); } later();",
+    ] {
+        let said = summarize(&format!("{EXPORT_STAR}{SWC_EXPORT}{source}"));
+        assert_eq!(said, "escapes", "{source}");
+    }
+}
+
+#[test]
+fn the_copy_esbuild_makes_gives_names_only_if_nothing_else_uses_the_copied_object() {
+    let write = |names: &str| format!("{ESBUILD_HELPERS}var all = {names}\nconst a = 1;\n");
+    let module = write("{};\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);");
+    assert_eq!(summarize(&module), "get a, marker true");
+    with_required(&module, |program| {
+        assert!(program.keeps_names("m.cjs"));
+        assert_eq!(program.marker("m.cjs"), Some(true));
+        assert_eq!(program.member("m.cjs", "a"), "m.cjs#a");
+    });
+    for names in [
+        "{};\n__export(all, { a: () => a });\nconsole.log(all);\nmodule.exports = __toCommonJS(all);",
+        "{};\n__export(all, { a: () => a });\nall.c = 1;\nmodule.exports = __toCommonJS(all);",
+        "{ c: 1 };\n__export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);",
+        "{};\nmodule.exports = __toCommonJS(all);\n__export(all, { a: () => a });",
+        "{};\nif (Math.random()) __export(all, { a: () => a });\nmodule.exports = __toCommonJS(all);",
+    ] {
+        assert_eq!(summarize(&write(names)), "replaced", "{names}");
+    }
+}
+
+#[test]
+fn the_names_a_file_reads_from_its_own_exports() {
+    let reads = |source: &str| {
+        with_module(source, |bind| {
+            let module = ModuleRef::File(file_named(bind, "m.cjs"));
+            with_commonjs_input(bind, |input| {
+                let texts = scan_commonjs_modules(input);
+                let names = texts.names_read_by_own_text();
+                let names = names.filter(|read| read.0 == module);
+                let mut names: Vec<String> = names.map(|read| text_of(bind, read.1)).collect();
+                names.sort_unstable();
+                names.dedup();
+                names
+            })
+        })
+    };
+    let source = "exports.a = 1; exports.b = exports.a; exports.c = () => module.exports.b;";
+    assert_eq!(reads(source), ["a", "b"]);
+    assert!(reads("exports.a = 1;").is_empty());
+}
+
+#[test]
+fn the_tables_list_each_name_once_in_source_order() {
+    let (listed, hidden) = (getter_of_b("enumerable: true, "), getter_of_b(""));
+    let getter_of_x = define_a("enumerable: true, get: function () { return x; }");
+    let getter_of_x = format!("{getter_of_x} const x = 1;");
+    for (source, names) in [
+        (
+            "exports.b = 1; exports.a = 2; exports.b = 3;",
+            &["b", "a"][..],
+        ),
+        ("exports.a = exports.b = void 0;", &["a", "b"][..]),
+        ("exports.__esModule = true; exports.a = 1;", &["a"][..]),
+        (
+            "exports.a = 1; if (Math.random()) exports.a = 2;",
+            &["a"][..],
+        ),
+        (&listed[..], &["a = k.cjs b"][..]),
+        (&hidden[..], &["a = k.cjs b hidden"][..]),
+        (BARREL, &["a = k.cjs b"][..]),
+        (&getter_of_x[..], &["a = #x"][..]),
+    ] {
+        let found = with_module(source, |bind| describe_names(bind, "m.cjs"));
+        assert_eq!(found.expect("the file keeps its object"), names, "{source}");
+    }
+    let source = "exports.a = 1; console.log(exports);";
+    assert_eq!(
+        with_module(source, |bind| describe_names(bind, "m.cjs")),
+        None
+    );
+}
+
+#[test]
+fn no_store_is_lost() {
+    for (helpers, source, name) in [
+        ("", "const u = module.exports; u.a = 1;", "a"),
+        ("", "module['exports'].a = 1;", "a"),
+        ("", "[exports.a] = [1];", "a"),
+        ("", "({ a: exports.a } = { a: 1 });", "a"),
+        ("", "for (exports.a of [1]);", "a"),
+        ("", "exports.a ||= 1;", "a"),
+        ("", "(function () { exports.a = 1; })();", "a"),
+        ("", "class C { static { exports.a = 1; } }", "a"),
+        ("", "Object.assign(exports, { a: 1 });", "a"),
+        ("", &define_a("value: 1")[..], "a"),
+        (
+            "",
+            "Reflect.defineProperty(exports, 'a', { value: 1 });",
+            "a",
+        ),
+        (EXPORT_STAR, BINDING_OF_B, "a"),
+        (EXPORT_STAR, STAR_OF_K, "b"),
+        (ESBUILD_HELPERS, RE_EXPORT_OF_K, "b"),
+        ("", ASSIGN_OF_K, "b"),
+    ] {
+        let source = format!("{helpers}{source}");
+        let found = with_module(&source, |bind| describe_name(bind, "m.cjs", name));
+        assert_ne!(found.as_deref(), Some("absent"), "{source}");
+    }
+}
+
+#[test]
+fn a_name_the_body_may_not_store_is_checked_at_link_time() {
+    let defined = getter_of_b("enumerable: true, ");
+    let sometimes_defined = defined.replace("; Object", "; if (Math.random()) Object");
+    for module in [
+        "exports.b = 1;",
+        "if (Math.random()) exports.a = 1;",
+        "Math.random() && (exports.a = 1);",
+        "Math.random() ? exports.a = 1 : 0;",
+        "switch (Math.random()) { case 0: exports.a = 1; }",
+        "for (const x of []) exports.a = 1;",
+        "try { g(); exports.a = 1; } catch {}",
+        "if (Math.random()) return; exports.a = 1;",
+        "globalThis.nothing?.(exports.a = 1);",
+        "exports.a &&= 1;",
+        "exports.b || (exports.a = 1);",
+        "let x; [x = (exports.a = 1)] = [5];",
+        "function set() { exports.a = 1; } exports.set = set;",
+        &sometimes_defined[..],
+    ] {
+        with_imported(module, |program| {
+            let entry = describe_name(program.input, "m.cjs", "a");
+            let is_sure = |entry: &str| entry != "a?" && entry != "absent";
             assert!(
-                matches!(member, Some(Member::Binding(_))),
-                "{name}: {member:?}"
+                !entry.as_deref().is_some_and(is_sure),
+                "{module}: {entry:?}"
+            );
+            assert!(!program.is_settled("m.cjs", "a"), "{module}");
+            assert_eq!(program.imported("m.cjs", "a"), "copy", "{module}");
+            assert_eq!(program.checked("main.mjs"), ["m.cjs a"], "{module}");
+        });
+    }
+}
+
+#[test]
+fn an_import_of_a_settled_name_is_bound_to_the_variable() {
+    for module in [
+        "exports.a = 1;",
+        "exports.a = void 0; exports.a = 1;",
+        "{ exports.a = 1; }",
+        "var b = (exports.a = 1, 2);",
+        ONLY_TESTED,
+        "exports.a = 1; if (Math.random()) exports.a = 2;",
+        "exports.a || (exports.a = 1);",
+        "module.exports = { a: 1 };",
+        "exports.a = void 0; var a; (function (a) { a[a['x'] = 0] = 'x'; })(a || (exports.a = a = {}));",
+        "var a; (function (a) { a[a['x'] = 0] = 'x'; })(a = exports.a || (exports.a = {}));",
+    ] {
+        with_imported(module, |program| {
+            assert!(program.keeps_names("m.cjs"), "{module}");
+            assert!(program.is_settled("m.cjs", "a"), "{module}");
+            assert_eq!(program.imported("m.cjs", "a"), "variable", "{module}");
+            assert_eq!(program.exports().face(program.module("m.cjs")), None);
+            assert!(program.checked("main.mjs").is_empty(), "{module}");
+        });
+    }
+}
+
+#[test]
+fn an_import_holds_a_copy_of_a_name_stored_after_the_body_ends() {
+    for module in [
+        "exports.a = 1; exports.set = () => { exports.a = 2; };",
+        "exports.a = 1; setTimeout(() => { exports.a = 2; });",
+        "exports.a = 1; class C { static set() { exports.a = 2; } } exports.C = C;",
+        "exports.a = 1; (async () => { await 0; exports.a = 2; })();",
+    ] {
+        with_imported(module, |program| {
+            let file = program.file("m.cjs");
+            assert!(!program.is_settled("m.cjs", "a"), "{module}");
+            assert_eq!(program.imported("m.cjs", "a"), "copy", "{module}");
+            let face = program.exports().face(ModuleRef::File(file));
+            assert_eq!(face, Some(ModuleRef::Face(file)), "{module}");
+            assert!(program.checked("main.mjs").is_empty(), "{module}");
+        });
+    }
+    let main = ("main.cjs", "const m = require('./m.cjs'); m.a = 2;");
+    let files = [main, ("m.cjs", "exports.a = 1;")];
+    assert!(!with_program(&files, |program| program.is_settled("m.cjs", "a")));
+}
+
+#[test]
+fn an_import_through_a_getter_holds_a_copy_of_its_own_unless_the_name_behind_it_is_settled() {
+    let main = "import { a } from './m.cjs'; import { b } from './k.cjs'; import './other.cjs'; console.log(a, b);";
+    let imported = |k: &str, other: &str| {
+        let files = [
+            ("main.mjs", main),
+            ("m.cjs", BARREL),
+            ("k.cjs", k),
+            ("other.cjs", other),
+        ];
+        with_program(&files, |program| {
+            let member = |module: &str, name: &str| {
+                let variable = program
+                    .graph
+                    .variable_of(program.module(module), program.atom(name));
+                let variable = variable.expect("no binding asks for the name");
+                program.describe(Some(program.exports().imported_member(variable)))
+            };
+            assert!(
+                program.graph.faces_behind(program.file("m.cjs")).is_empty(),
+                "{k} {other}"
+            );
+            format!("{}, {}", member("m.cjs", "a"), member("k.cjs", "b"))
+        })
+    };
+    assert_eq!(imported("exports.b = 1;", ""), "k.cjs b, k.cjs b");
+    for (k, other) in [
+        ("exports.b = 1; exports.set = () => { exports.b = 2; };", ""),
+        ("exports.b = 1;", "require('./k.cjs').b = 2;"),
+        (
+            "exports.b = 1;",
+            "exports.set = () => { require('./k.cjs').b = 2; };",
+        ),
+        ("exports.b = 1;", "console.log(require('./k.cjs'));"),
+    ] {
+        assert_eq!(
+            imported(k, other),
+            "copy of m.cjs a, copy of k.cjs b",
+            "{k} {other}"
+        );
+    }
+}
+
+#[test]
+fn names_that_may_be_absent_are_checked_in_link_order() {
+    let main = "import './first.mjs'; import { late } from './m.cjs'; console.log(late);";
+    let files = [
+        ("main.mjs", main),
+        (
+            "first.mjs",
+            "import { nope } from './m.cjs'; console.log(nope);",
+        ),
+        (
+            "m.cjs",
+            "exports.one = 1; if (Math.random()) exports.late = 2;",
+        ),
+    ];
+    with_program(&files, |program| {
+        assert_eq!(program.checked("main.mjs"), ["m.cjs nope", "m.cjs late"]);
+        assert!(program.checked("first.mjs").is_empty());
+    });
+}
+
+#[test]
+fn the_file_keeps_its_object() {
+    for module in [
+        "exports.a = 1; console.log(exports);",
+        "module.exports = Math.random();",
+        "module.exports = { a: 2, z: 1 }; module.exports = { a: 3 };",
+        "module.exports = { a: 2, [Math.random()]: 1 };",
+        "module.exports = { get a() { return 2; } };",
+        "module.exports = { a() { return super.toString(); } };",
+        "if (Math.random()) module.exports = { a: 2 };",
+        "console.log(module.exports = { a: 2 });",
+        "exports = module.exports = { a: 2 };",
+        "set(); module.exports = { a: 2 }; function set() { module.exports.b = 1; }",
+        "require('./main.cjs'); module.exports = { a: 2 };",
+        "exports.a = 1; exports = {};",
+        "exports.a = 1; eval('exports');",
+        "exports.a = 1; console.log(arguments);",
+        "exports.a = function () { return this.b; }; exports.b = 1; exports.a();",
+        "exports.a = 1; Object.defineProperty(exports, 'b', { value: 1 }); exports.b = 2;",
+        "Object.defineProperty(exports, 'a', { get() { return Math.random(); } });",
+        "const b = 1; Object.defineProperty(exports, 'a', { get() { return b; }, set(v) {} });",
+        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); exports.a; var k = require('./k.cjs');",
+        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); var k = require('./k.cjs'); exports.a;",
+        "Object.defineProperty(exports, 'a', { get() { return k.b; } }); require('./main.cjs'); var k = require('./k.cjs');",
+        "Object.defineProperty(exports, 'a', { get() { return require('./k.cjs').b; } });",
+        "if (Math.random()) var k = require('./k.cjs'); Object.defineProperty(exports, 'a', { get() { return k.b; } });",
+        "var k = require('./k.cjs'); k = {}; Object.defineProperty(exports, 'a', { get() { return k.b; } });",
+        "var k = require('./k.cjs'); Object.defineProperty(exports, 'a', { get() { return k.b; } }); exports.a = 1;",
+    ] {
+        let keeps_names = with_required(module, |program| program.keeps_names("m.cjs"));
+        assert!(!keeps_names, "{module}");
+    }
+}
+
+#[test]
+fn a_getter_written_in_front_of_the_load_is_that_name_where_nobody_asks_in_between() {
+    let module = "Object.defineProperty(exports, 'a', { get() { return k.b; } }); var k = require('./k.cjs');";
+    with_required(module, |program| {
+        assert!(program.keeps_names("m.cjs"));
+        assert_eq!(program.member("m.cjs", "a"), "k.cjs b");
+    });
+}
+
+#[test]
+fn a_getter_past_the_helper_is_a_name_of_a_file_that_says_a_fixed_marker() {
+    const BABEL_HELPER: &str =
+        "function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }";
+    let written_by_typescript = format!(
+        "{IMPORT_DEFAULT} {MARKER} var k_1 = require('./k.cjs'); Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return __importDefault(k_1).default; }} }});"
+    );
+    let written_by_babel = format!(
+        "{MARKER} Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return _k.default; }} }}); var _k = _interopRequireDefault(require('./k.cjs')); {BABEL_HELPER}"
+    );
+    let marked = format!("{MARKER} exports.default = 1;");
+    for module in [&written_by_typescript, &written_by_babel] {
+        let files = [
+            ("main.cjs", READS_A),
+            ("m.cjs", &module[..]),
+            ("k.cjs", &marked[..]),
+        ];
+        with_program(&files, |program| {
+            assert!(program.keeps_names("m.cjs"), "{module}");
+            assert!(program.keeps_names("k.cjs"), "{module}");
+            assert_eq!(program.member("m.cjs", "a"), "k.cjs default", "{module}");
+        });
+        for leaf in [
+            "exports.default = 1;",
+            "exports.__esModule = true; exports.default = 1;",
+            "module.exports = function () {};",
+        ] {
+            let files = [
+                ("main.cjs", READS_A),
+                ("m.cjs", &module[..]),
+                ("k.cjs", leaf),
+            ];
+            let keeps_names = with_program(&files, |program| program.keeps_names("m.cjs"));
+            assert!(!keeps_names, "{module} over {leaf}");
+        }
+    }
+}
+
+#[test]
+fn the_holder_handed_to_the_helper_in_ordinary_code_is_needed_as_a_value() {
+    let marked = format!("{MARKER} exports.default = 1;");
+    for module in [
+        "var k_1 = require('./k.cjs'); exports.a = __importDefault(k_1).default;",
+        "exports.a = peek(); var k_1 = require('./k.cjs'); function peek() { return __importDefault(k_1).default; }",
+        "var k_1 = require('./k.cjs'); Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return __importDefault(k_1).default; } }); exports.b = __importDefault(k_1).default;",
+    ] {
+        let module = format!("{IMPORT_DEFAULT} {MARKER} {module}");
+        let files = [
+            ("main.cjs", READS_A),
+            ("m.cjs", &module[..]),
+            ("k.cjs", &marked[..]),
+        ];
+        let keeps_names = with_program(&files, |program| program.keeps_names("k.cjs"));
+        assert!(!keeps_names, "{module}");
+    }
+}
+
+#[test]
+fn a_star_written_in_line_is_the_names_of_the_required_file() {
+    let main = "const m = require('./m.cjs'); console.log(m.b);";
+    let module = format!("{MARKER} {STAR_IN_LINE_OF_K}");
+    let marked = format!("{MARKER} exports.b = 1;");
+    let leaf = ("k.cjs", &marked[..]);
+    with_program(
+        &[("main.cjs", main), ("m.cjs", &module[..]), leaf],
+        |program| {
+            assert!(program.keeps_names("m.cjs"));
+            assert!(program.keeps_names("k.cjs"));
+            assert_eq!(program.member("m.cjs", "b"), "k.cjs b");
+        },
+    );
+    for changed in [
+        module.replace("key === \"default\"", "key === \"b\""),
+        module.replace("return _k[key];", "return _k.b;"),
+        module.replace("forEach(function (key) {", "map(function (key) {"),
+        module.replace("Object.keys(_k)", "Object.getOwnPropertyNames(_k)"),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "var _k = require('./k.cjs'); _k = {};",
+        ),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "var _k; _k = require('./k.cjs');",
+        ),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "exports.b = 2; var _k = require('./k.cjs');",
+        ),
+        module.replace(
+            "var _k = require('./k.cjs');",
+            "var Object = globalThis.Object; var _k = require('./k.cjs');",
+        ),
+        format!("{module} exports.b;"),
+        format!(
+            "{module} {}",
+            STAR_IN_LINE_OF_K.replace("var _k = require('./k.cjs');", "")
+        ),
+        STAR_IN_LINE_OF_K.to_string(),
+    ] {
+        let files = [("main.cjs", main), ("m.cjs", &changed[..]), leaf];
+        let keeps_names = with_program(&files, |program| program.keeps_names("m.cjs"));
+        assert!(!keeps_names, "{changed}");
+    }
+}
+
+#[test]
+fn export_equals_is_a_store_to_module_exports() {
+    let name_a_of = |module: &str| {
+        let main = "import m = require('./m'); console.log(m.a);";
+        with_program(&[("main.ts", main), ("m.ts", module)], |program| {
+            let name = describe_name(program.input, "m.ts", "a");
+            name.filter(|_| program.keeps_names("m.ts"))
+        })
+    };
+    for module in [
+        "export = { a: 1, list: [1, 2] };",
+        "export = { a: 1 } as { a: number };",
+    ] {
+        assert_eq!(name_a_of(module).as_deref(), Some("a"), "{module}");
+    }
+    for module in [
+        "export = { a: 1, ...Math };",
+        "export = { a: 1, f() { return this.a; } };",
+        "const table = { a: 1 }; export = table;",
+    ] {
+        assert_eq!(name_a_of(module), None, "{module}");
+    }
+}
+
+#[test]
+fn text_as_typescript_emits_it() {
+    let module = r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Thing = exports.a = exports.b = void 0;
+exports.add = add;
+const k_1 = require("./k.cjs");
+Object.defineProperty(exports, "b", { enumerable: true, get: function () { return k_1.b; } });
+function add(x, y) { return x + y; }
+exports.a = 1;
+class Thing {}
+exports.Thing = Thing;
+"#;
+    let main =
+        "const m_1 = require('./m.cjs'); console.log((0, m_1.add)(m_1.a, m_1.b), new m_1.Thing());";
+    with_program(&[("main.cjs", main), ("m.cjs", module), K], |program| {
+        let m = program.module("m.cjs");
+        assert!(program.keeps_names("m.cjs"));
+        assert!(!program.keeps_names("main.cjs"));
+        assert_eq!(program.marker("m.cjs"), Some(true));
+        assert_eq!(program.member("m.cjs", "__esModule"), "marker true");
+        assert_eq!(program.member("m.cjs", "b"), "k.cjs b");
+        for name in ["add", "a", "Thing"] {
+            assert_eq!(program.member("m.cjs", name), format!("m.cjs {name}"));
+            assert!(program.is_settled("m.cjs", name), "{name}");
+            assert!(
+                program.exports().ignores_this(m, program.atom(name)),
+                "{name}"
             );
         }
     });
 }
 
 #[test]
-fn the_helper_of_swc_defines_names_only_where_each_getter_returns_one() {
-    for names in [
-        // The literal is a value.
-        "const all = { a: function() { return a; } }; _export(exports, all);",
-        // A getter that does more than return.
-        "_export(exports, { a: function() { console.log(1); return a; } });",
-        // Not a getter: the definition throws.
-        "_export(exports, { a: 1 });",
-        "_export(exports, { a: function(x) { return a; } });",
-        "_export(exports, { ...{}, a: function() { return a; } });",
-        "_export(exports, { ['a' + '']: function() { return a; } });",
-        "_export(exports, { a: function() { return a; }, a: function() { return b; } });",
-        // Some run of the body may pass it by, or come to it twice.
-        "if (Math.random()) _export(exports, { a: function() { return a; } });",
-        "function later() { _export(exports, { a: function() { return a; } }); } later();",
-        "console.log(_export(exports, { a: function() { return a; } }));",
-        "_export(exports, { a: function() { return a; } }, 1);",
-        // The binding gets another value.
-        "_export(exports, { a: function() { return c; } }); let c = 1; c = 2;",
-    ] {
-        let module = format!("{SWC_HELPER}{names}\nconst a = 1;\nfunction b() {{ return a; }}\n");
-        assert_eq!(shape_with(READS_A, &module), Shape::Value, "{names}");
-    }
-}
-
-#[test]
-fn a_function_that_only_looks_like_the_helper_of_swc_gets_the_object() {
-    for helper in [
-        "function _export(target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: false, get: all[name] }); }",
-        "function _export(target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: true, configurable: true, get: all[name] }); }",
-        "function _export(target, all) { for (var name in all) Object.defineProperty(all, name, { enumerable: true, get: all[name] }); }",
-        "function _export(target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] }); console.log(target); }",
-        "var _export = function (target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] }); }; _export = console.log;",
-        "function _export(target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] }); } _export = console.log;",
-        "var Object = { defineProperty: console.log }; function _export(target, all) { for (var name in all) Object.defineProperty(target, name, { enumerable: true, get: all[name] }); }",
-    ] {
-        let module = format!("{helper}\n{SWC_NAMES}const a = 1;\nfunction b() {{ return a; }}\n");
-        assert_eq!(shape_with(READS_A, &module), Shape::Value, "{helper}");
-    }
-}
-
-#[test]
-fn whoever_sees_a_module_half_evaluated_finds_the_getters_that_its_head_defines() {
-    let main = "exports.look = () => require('./module.cjs').a; require('./module.cjs');";
-    let shape_of = |module: &str| shape_with(main, module);
-    let looks = "require('./main.cjs').look();\nconst a = 1;\nfunction b() { return a; }\n";
-    for head in [
-        format!("{SWC_HELPER}{SWC_NAMES}"),
-        "Object.defineProperty(exports, 'a', { enumerable: true, get: function() { return a; } });\n".to_string(),
-        "Object.defineProperty(exports, '__esModule', { value: true });\nObject.defineProperty(exports, 'b', { get() { return b; } });\nvar c = function () {}, d = [1, 'x'];\nObject.defineProperty(exports, 'a', { get() { return a; } });\n".to_string(),
-    ] {
-        assert_eq!(shape_of(&format!("{head}{looks}")), Shape::Names, "{head}");
-    }
-    for head in [
-        "console.log(1);\nObject.defineProperty(exports, 'a', { get() { return a; } });\n",
-        "Object.defineProperty(exports, 'b', { get() { return b; } });\nrequire('./main.cjs');\nObject.defineProperty(exports, 'a', { get() { return a; } });\n",
-        "Object.defineProperty(exports, 'c', { value: console.log(1) });\nObject.defineProperty(exports, 'a', { get() { return a; } });\n",
-        "var c = `${{ toString() { return require('./main.cjs').look(); } }}`;\nObject.defineProperty(exports, 'a', { get() { return a; } });\n",
-    ] {
-        assert_eq!(shape_of(&format!("{head}{looks}")), Shape::Value, "{head}");
-    }
-}
-
-#[test]
-fn looking_at_a_module_takes_those_along_whose_names_stand_for_its_names() {
-    let files = [
-        ("main.cjs", READS_A),
-        ("module.cjs", BARREL),
-        ("inner.cjs", "exports.b = 1;"),
-    ];
-    with_graph(&files, |_, input| {
-        let mut graph = crate::modules::bind_modules(input).graph;
-        let [module, inner] = ["module.cjs", "inner.cjs"].map(|name| module_named(input, name));
-        graph.look_at(inner);
-        assert_eq!(graph.commonjs().shape(inner), Shape::Value);
-        assert_eq!(graph.commonjs().shape(module), Shape::Value);
-        assert_eq!(
-            graph.commonjs().member_named(module, atom(input, "a")),
-            Some(Member::OnObject)
-        );
+fn text_as_swc_emits_it() {
+    let listed = "0 && (module.exports = {\n    a: null,\n    b: null\n});\n";
+    let module = format!("\"use strict\";\n{MARKER}\n{listed}{SWC_EXPORT}{SWC_NAMES}");
+    let main = "const _m = require('./m.cjs'); console.log((0, _m.b)(), _m.a);";
+    with_program(&[("main.cjs", main), ("m.cjs", &module[..])], |program| {
+        let file = program.file("m.cjs");
+        let is_exported = |name: &str| {
+            let symbol = symbol_named(program.input, file, name);
+            program.exports().is_exported_binding(file, symbol)
+        };
+        assert!(program.keeps_names("m.cjs"));
+        assert_eq!(program.marker("m.cjs"), Some(true));
+        for name in ["a", "b"] {
+            assert_eq!(program.member("m.cjs", name), format!("m.cjs#{name}"));
+            assert!(is_exported(name), "{name}");
+        }
+        assert!(!is_exported("_export"));
     });
 }
 
 #[test]
-fn a_name_is_settled_where_only_its_own_body_stores_it_in_order() {
-    for module in [
-        "exports.a = 1;",
-        "exports.a = void 0; exports.a = 1;",
-        "{ exports.a = 1; }",
-        "(function () { exports.a = 1; })();",
-        "var b = (exports.a = 1, 2);",
-        "if (exports.a = 1) console.log(1);",
-        // Every run stores the name, and what a run may skip it skips for good.
-        "exports.a = 1; if (Math.random()) exports.a = 2;",
-        "exports.a = 1; Math.random() && (exports.a = 2);",
-        "exports.a = 1; for (const b of [2, 3]) exports.a = b;",
-        "exports.a = 1; try { exports.a = 2; } catch {}",
-        "exports.a = 1; exports.a ||= 2;",
-        "exports.a = 1; if (Math.random()) return; exports.a = 2;",
-        "exports.a = 1; (() => { if (Math.random()) exports.a = 2; })();",
-        "exports.a || (exports.a = 1);",
-        "exports.a ?? (exports.a = 1);",
-        "var b = exports.a || (exports.a = {});",
-    ] {
-        assert!(is_settled(READS_A, module), "{module}");
-    }
-    for module in [
-        "exports.b = 1;",
-        "if (Math.random()) exports.a = 1;",
-        "Math.random() && (exports.a = 1);",
-        "Math.random() ? exports.a = 1 : 0;",
-        "for (;;) { exports.a = 1; break; }",
-        "try { exports.a = 1; } catch {}",
-        "function set() { exports.a = 1; } set();",
-        "exports.a = 1; exports.set = () => { exports.a = 2; };",
-        "if (Math.random()) return; exports.a = 1;",
-        "console?.log(exports.a = 1);",
-        "exports.a &&= 1;",
-        "exports.a && (exports.a = 1);",
-        "exports.b || (exports.a = 1);",
-        "if (Math.random()) exports.a || (exports.a = 1);",
-        "exports.a = 1; setTimeout(() => { exports.a = 2; });",
-        "exports.a = 1; class C { static set() { exports.a = 2; } } exports.C = C;",
-        "exports.a = 1; (async () => { exports.a = 2; })();",
-    ] {
-        assert!(!is_settled(READS_A, module), "{module}");
-    }
-    assert!(!is_settled(
-        "const m = require('./module.cjs'); m.a = 2;",
-        "exports.a = 1;"
-    ));
+fn a_getter_that_returns_a_name_of_another_module_is_that_name() {
+    let files = [("main.cjs", READS_A), ("m.cjs", BARREL), K];
+    with_bind_input(&files, &default_settings(), |input| {
+        let mut graph = bind_modules(input).graph;
+        let file = file_named(input, "m.cjs");
+        let [m, k] = ["m.cjs", "k.cjs"].map(|name| ModuleRef::File(file_named(input, name)));
+        let store = member_named(input, file, "a");
+        let definition = with_commonjs_input(input, |commonjs| {
+            let names = summarize_file(commonjs, file).names;
+            let is_getter = |stored: &&StoredName| matches!(stored, StoredName::Getter { .. });
+            names.iter().find(is_getter).map(StoredName::statement)
+        });
+        let definition = definition.expect("the summary lists the getter");
+
+        let program = Program {
+            graph: &graph,
+            input,
+        };
+        let exports = program.exports();
+        assert!(program.keeps_names("m.cjs") && program.keeps_names("k.cjs"));
+        assert_eq!(program.member("m.cjs", "a"), "k.cjs b");
+        let behind = exports.member_behind_getter(m, program.atom("a"));
+        assert_eq!(program.describe(behind), "k.cjs b");
+        assert_eq!(exports.member_behind_getter(k, program.atom("b")), None);
+        assert_eq!(exports.name_sources(m), [k]);
+        assert_eq!(
+            program.describe(exports.own_member(file, store)),
+            "undefined"
+        );
+        assert!(exports.erased(file, definition));
+
+        graph.look_at(k);
+        let program = Program {
+            graph: &graph,
+            input,
+        };
+        let exports = program.exports();
+        assert!(!program.keeps_names("m.cjs") && !program.keeps_names("k.cjs"));
+        assert_eq!(program.member("m.cjs", "a"), "object");
+        assert_eq!(program.describe(exports.own_member(file, store)), "object");
+        assert!(!exports.erased(file, definition));
+    });
 }
 
 #[test]
-fn a_call_through_the_object_hands_the_object_over() {
-    let ignores_this = |module: &str| ask(READS_A, module, CommonJsExports::ignores_this);
+fn a_getter_needs_the_variable_of_the_other_module() {
+    for k in [
+        "exports.b = 1; console.log(exports);",
+        "module.exports = () => 1;",
+    ] {
+        let files = [("main.cjs", READS_A), ("m.cjs", BARREL), ("k.cjs", k)];
+        assert!(
+            !with_program(&files, |program| program.keeps_names("m.cjs")),
+            "{k}"
+        );
+    }
+}
+
+#[test]
+fn a_module_seen_half_evaluated_keeps_its_object_if_it_defines_getters() {
+    let in_cycle = ("k.cjs", "exports.b = 1; require('./m.cjs');");
+    let files = [("main.cjs", READS_A), ("m.cjs", BARREL), in_cycle];
+    with_program(&files, |program| {
+        assert!(!program.keeps_names("m.cjs"));
+        assert!(program.keeps_names("k.cjs"));
+        assert!(!program.is_settled("k.cjs", "b"));
+    });
+}
+
+#[test]
+fn the_namespace_object_lacks_a_getter_that_is_not_enumerable() {
+    let member_of_namespace = |module: &str| {
+        let main = "import * as ns from './m.cjs'; console.log(ns.a);";
+        with_program(&[("main.mjs", main), ("m.cjs", module), K], |program| {
+            let main = program.file("main.mjs");
+            let access = member_named(program.input, main, "a");
+            program.describe(program.graph.member(main, access))
+        })
+    };
+    let listed = getter_of_b("enumerable: true, ");
+    assert_eq!(member_of_namespace(&listed), "k.cjs b");
+    assert_eq!(member_of_namespace(&getter_of_b("")), "nothing");
+}
+
+#[test]
+fn a_call_through_the_object_passes_it_as_this() {
+    let ignores_this = |module: &str| {
+        with_required(module, |program| {
+            let (m, a) = (program.module("m.cjs"), program.atom("a"));
+            program.exports().ignores_this(m, a)
+        })
+    };
     for module in [
         "exports.a = () => 1;",
         "exports.a = function () { return 1; };",
@@ -607,726 +1133,427 @@ fn a_call_through_the_object_hands_the_object_over() {
     for module in [
         "exports.a = function () { return this; };",
         "exports.a = function () { return () => this; };",
-        // The arrow function hands the object out.
+        "exports.a = function (o) { const { t = this.t } = o; return t; };",
+        "exports.a = function () { return eval('this'); };",
         "exports.a = () => this;",
         "exports.a = Math.random;",
         "exports.a = () => 1; exports.a = Math.random;",
         "exports.a ??= function () { return this; };",
         "[exports.a = () => 1] = [function () { return this; }];",
-    ] {
-        assert!(!ignores_this(module), "{module}");
-    }
-}
-
-#[test]
-fn the_marker() {
-    let marker = |module: &str| ask(READS_A, module, |exports, module, _| exports.marker(module));
-    for (module, expected) in [
-        ("exports.a = 1;", Some(false)),
-        ("exports.__esModule = true; exports.a = 1;", Some(true)),
-        (
-            "Object.defineProperty(exports, '__esModule', { value: true });",
-            Some(true),
-        ),
-        ("exports.__esModule = Math.random() < 1;", None),
-        ("if (Math.random()) exports.__esModule = true;", None),
-        (
-            "exports.__esModule = true; exports.__esModule = false;",
-            None,
-        ),
-        ("exports.a = 1; console.log(exports);", None),
-        // Whoever finds the module half evaluated in front of the statement finds no marker.
-        (
-            "Object.defineProperty(exports, '__esModule', { value: true }); require('./main.cjs');",
-            Some(true),
-        ),
-        (
-            "require('./main.cjs'); Object.defineProperty(exports, '__esModule', { value: true });",
-            None,
-        ),
-        // A call in a function that is only written in front of it runs later.
-        (
-            "function f() { g(); } exports.__esModule = true; require('./main.cjs');",
-            Some(true),
-        ),
-    ] {
-        assert_eq!(marker(module), expected, "{module}");
-    }
-    // Code runs without a call too.
-    for in_front in [
-        "var a = globalThis.peek;",
-        "var a = `${globalThis.peek}`;",
-        "var a = globalThis.peek + 1;",
-        "var [a] = globalThis.peek;",
-        "for (var a of globalThis.peek);",
-        "switch (1) { case g(): }",
-        "var { a = g() } = {};",
-    ] {
-        let module = format!("{in_front} exports.__esModule = true; require('./main.cjs');");
-        assert_eq!(marker(&module), None, "{module}");
-    }
-    // The helpers that TypeScript writes in front of the marker only make functions.
-    for helper in [
-        "var __importDefault = (this && this.__importDefault) || function (mod) { return mod; };",
-        "var __createBinding = (this && this.__createBinding) || (Object.create ? (function (o) { g(o); }) : (function (o) { g(o); }));",
-        "var __extends = (this && this.__extends) || (function () { var e = function (d, b) { g(d, b); }; return function (d, b) { e(d, b); }; })();",
-    ] {
-        let module = format!(
-            "'use strict'; {helper} Object.defineProperty(exports, '__esModule', {{ value: true }}); require('./main.cjs');"
-        );
-        assert_eq!(marker(&module), Some(true), "{module}");
-    }
-}
-
-#[test]
-fn an_import_of_a_settled_name_is_bound_to_the_variable() {
-    let main = "import { one, g } from './k.cjs'; console.log(one, g);";
-    let k = "exports.one = 1; exports.g = function (x) { return x; };";
-    let files = [("main.mjs", main), ("k.cjs", k)];
-    with_exports(&files, |exports, input| {
-        let k = module_named(input, "k.cjs");
-        assert_eq!(exports.shape(k), Shape::Names);
-        assert_eq!(exports.face(k), None);
-        assert_eq!(exports.check(file_named(input, "main.mjs")), None);
-    });
-}
-
-#[test]
-fn an_enum_as_typescript_emits_it_is_bound_to_the_variable() {
-    let since_3_9 = r#""use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Color = void 0;
-var Color;
-(function (Color) {
-    Color[Color["Red"] = 0] = "Red";
-})(Color || (exports.Color = Color = {}));
-"#;
-    let up_to_3_8 = r#""use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-var Color;
-(function (Color) {
-    Color[Color["Red"] = 0] = "Red";
-})(Color = exports.Color || (exports.Color = {}));
-"#;
-    for module in [since_3_9, up_to_3_8] {
-        let main = "import { Color } from './k.cjs'; console.log(Color.Red);";
-        let files = [("main.mjs", main), ("k.cjs", module)];
-        with_exports(&files, |exports, input| {
-            let k = module_named(input, "k.cjs");
-            assert_eq!(exports.shape(k), Shape::Names, "{module}");
-            assert!(exports.settled(k, atom(input, "Color")), "{module}");
-            assert_eq!(exports.face(k), None, "{module}");
-            assert_eq!(
-                exports.check(file_named(input, "main.mjs")),
-                None,
-                "{module}"
-            );
-        });
-    }
-}
-
-#[test]
-fn an_import_of_any_other_name_is_a_copy_that_the_face_takes() {
-    let main = "import { one, set } from './k.cjs'; console.log(one, set);";
-    let k = "exports.one = 1; exports.set = function () { exports.one = 2; };";
-    let files = [("main.mjs", main), ("k.cjs", k)];
-    with_exports(&files, |exports, input| {
-        let file = file_named(input, "k.cjs");
-        assert_eq!(
-            exports.face(ModuleRef::File(file)),
-            Some(ModuleRef::Face(file))
-        );
-        let [copy] = exports.copies(file) else {
-            panic!("{:?}", exports.copies(file));
-        };
-        assert_eq!(
-            exports.names_by_id.get(copy),
-            Some(&(ModuleRef::File(file), atom(input, "one")))
-        );
-        assert_eq!(exports.imported_member(*copy), Member::Copy(*copy));
-        assert!(!exports.face_captures(file));
-        // The body stores both names whenever it runs to its end.
-        assert_eq!(exports.check(file_named(input, "main.mjs")), None);
-    });
-}
-
-#[test]
-fn the_face_behind_a_star_takes_the_copy_of_a_name_of_another_file() {
-    let outer = "var inner_1 = require('./inner.cjs');\n\
-        Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return inner_1.a; } });";
-    for main in [
-        "import { a } from './barrel.mjs'; console.log(a);",
-        "import * as all from './barrel.mjs'; console.log(all.a);",
-        "export { a } from './barrel.mjs';",
-        "import { a } from './above.mjs'; console.log(a);",
-    ] {
-        let files = [
-            ("main.mjs", main),
-            ("above.mjs", "export * from './barrel.mjs';"),
-            ("barrel.mjs", "export * from './outer.cjs';"),
-            ("outer.cjs", outer),
-            ("inner.cjs", "exports.a = 1;"),
-        ];
-        with_exports(&files, |exports, input| {
-            let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| file_named(input, name));
-            let owners = exports.copies(outer).iter();
-            let owners: Vec<_> = owners.map(|copy| exports.names_by_id.get(copy)).collect();
-            let owner = (ModuleRef::File(inner), atom(input, "a"));
-            assert_eq!(owners, [Some(&owner)], "{main}");
-            // The copy is a variable of the face of the file that has the name.
-            assert!(exports.face(ModuleRef::File(inner)).is_some(), "{main}");
-        });
-    }
-}
-
-fn getter_of_a(inner: &str) -> String {
-    format!(
-        "var inner_1 = require('./{inner}');\n\
-        Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return inner_1.a; }} }});"
-    )
-}
-
-// The names that the face of `outer.cjs` copies, each with the file that has it, where a getter of `outer.cjs` returns `a` of `inner`.
-fn copies_of_outer(main: &str, inner: (&str, &str)) -> Vec<(String, bool)> {
-    let outer = getter_of_a(inner.0);
-    let files = [
-        ("main.mjs", main),
-        ("barrel.mjs", "export * from './outer.cjs';"),
-        ("outer.cjs", &outer[..]),
-        inner,
-    ];
-    with_exports(&files, |exports, input| {
-        let outer = file_named(input, "outer.cjs");
-        // `export *` looks at the namespace object, which shows the exports object as `default`.
-        let shape = match main.contains("barrel") {
-            true => Shape::Value,
-            false => Shape::Names,
-        };
-        assert_eq!(exports.shape(ModuleRef::File(outer)), shape, "{main}");
-        assert_eq!(exports.check(file_named(input, "main.mjs")), None, "{main}");
-        assert_eq!(
-            exports.face_captures(outer),
-            shape == Shape::Value,
-            "{main}"
-        );
-        let copies = exports.copies(outer).iter().map(|copy| {
-            assert_eq!(
-                exports.imported_member(*copy),
-                Member::Copy(*copy),
-                "{main}"
-            );
-            let (owner, name) = exports.names_by_id[copy];
-            let name = String::from_utf8(input.files.atoms.bytes(name).to_vec());
-            (
-                name.expect("an ASCII name"),
-                owner == ModuleRef::File(outer),
-            )
-        });
-        copies.collect()
-    })
-}
-
-const IMPORTS_OF_A: [&str; 4] = [
-    "import { a } from './outer.cjs'; console.log(a);",
-    "import * as all from './outer.cjs'; console.log(all.a);",
-    "export { a } from './outer.cjs';",
-    "import { a } from './barrel.mjs'; console.log(a);",
-];
-
-#[test]
-fn an_import_holds_what_a_getter_answered_where_the_answer_may_change() {
-    let own_copy = [("a".to_owned(), true)];
-    for inner in [
-        (
-            "inner.mjs",
-            "export let a = 1; export function set() { a = 2; }",
-        ),
-        ("inner.mjs", "export var a; a = 1;"),
-        // The getter answers `undefined`, where an import of the name from the file itself finds nothing.
-        ("inner.cjs", "exports.b = 1;"),
-        ("inner.cjs", "if (Math.random()) exports.a = 1;"),
-        (
-            "inner.cjs",
-            "exports.fill = function () { exports.a = 1; };",
-        ),
-    ] {
-        for main in IMPORTS_OF_A {
-            assert_eq!(copies_of_outer(main, inner), own_copy, "{main} {inner:?}");
-        }
-    }
-}
-
-#[test]
-fn an_import_is_bound_to_what_a_getter_returns_where_nobody_can_tell() {
-    for inner in [
-        ("inner.mjs", "export const a = 1;"),
-        ("inner.mjs", "export let a = 1;"),
-        ("inner.mjs", "export function a() {}"),
-        ("inner.mjs", "export class a {}"),
-        ("inner.cjs", "exports.a = 1;"),
-    ] {
-        for main in &IMPORTS_OF_A[..3] {
-            assert_eq!(copies_of_outer(main, inner), [], "{main} {inner:?}");
-        }
-    }
-}
-
-#[test]
-fn whoever_requires_the_file_reads_what_the_getter_returns() {
-    let main = "import { a } from './outer.cjs'; import './reader.cjs'; console.log(a);";
-    let reader = "var outer = require('./outer.cjs'); console.log(outer.a);";
-    for (inner, is_binding) in [
-        (
-            (
-                "inner.mjs",
-                "export let a = 1; export function set() { a = 2; }",
-            ),
-            true,
-        ),
-        (("inner.cjs", "exports.b = 1;"), false),
-    ] {
-        let outer = getter_of_a(inner.0);
-        let files = [
-            ("main.mjs", main),
-            ("reader.cjs", reader),
-            ("outer.cjs", &outer[..]),
-            inner,
-        ];
-        with_exports(&files, |exports, input| {
-            let outer = module_named(input, "outer.cjs");
-            let a = atom(input, "a");
-            let own = exports.ids[&(outer, a)];
-            match exports.member_named(outer, a) {
-                Some(Member::Binding(_)) => assert!(is_binding),
-                Some(Member::Variable(returned)) => {
-                    assert!(!is_binding);
-                    let owner = (module_named(input, inner.0), a);
-                    assert_eq!(exports.names_by_id.get(&returned), Some(&owner));
-                }
-                member => panic!("{member:?}"),
-            }
-            assert_eq!(
-                Some(exports.required_member(outer, own)),
-                exports.member_named(outer, a)
-            );
-        });
-    }
-}
-
-#[test]
-fn a_getter_over_an_es_module_that_holds_a_copy_keeps_its_object() {
-    let above = "var between_1 = require('./between.mjs');\n\
-        Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return between_1.a; } });";
-    let outer = getter_of_a("inner.mjs");
-    let shape_over = |inner: &str| {
-        let files = [
-            (
-                "main.mjs",
-                "import { a } from './above.cjs'; console.log(a);",
-            ),
-            ("above.cjs", above),
-            ("between.mjs", "export { a } from './outer.cjs';"),
-            ("outer.cjs", &outer[..]),
-            ("inner.mjs", inner),
-        ];
-        shapes_of(&files, ["above.cjs"])
-    };
-    assert_eq!(shape_over("export const a = 1;"), [Shape::Names]);
-    let stored = "export let a = 1; export function set() { a = 2; }";
-    assert_eq!(shape_over(stored), [Shape::Value]);
-}
-
-#[test]
-fn an_import_holds_what_a_getter_answered_where_the_link_may_find_its_binding_unfilled() {
-    let getter = "Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return _a; } });";
-    // Whether the face of `outer.cjs`, which is linked while it requires `inner.cjs`, copies `a`.
-    let copies_a = |hands_on: &str, rest: &str| {
-        let outer = format!("{getter}\n{rest}");
-        let files = [
-            (
-                "main.mjs",
-                "import { a } from './hands-on.mjs'; console.log(a);",
-            ),
-            ("hands-on.mjs", hands_on),
-            ("outer.cjs", &outer[..]),
-            ("inner.cjs", "require('./hands-on.mjs');"),
-        ];
-        with_exports(&files, |exports, input| {
-            let outer = file_named(input, "outer.cjs");
-            let own = (ModuleRef::File(outer), atom(input, "a"));
-            let mut copies = exports.copies(outer).iter();
-            copies.any(|copy| exports.names_by_id[copy] == own)
-        })
-    };
-    for hands_on in [
-        "export { a } from './outer.cjs';",
-        "export * from './outer.cjs';",
-    ] {
-        for rest in [
-            "const _a = require('./inner.cjs');",
-            "var _a = require('./inner.cjs');",
-            "require('./inner.cjs'); let _a = 1;",
-            "require('./inner.cjs'); const { _a } = { _a: 1 };",
-            "require('./inner.cjs'); class _a {}",
-        ] {
-            assert!(copies_a(hands_on, rest), "{hands_on} {rest}");
-        }
-        for rest in [
-            "require('./inner.cjs'); function _a() {}",
-            "const _a = 1; require('./inner.cjs');",
-        ] {
-            assert!(!copies_a(hands_on, rest), "{hands_on} {rest}");
-        }
-    }
-}
-
-#[test]
-fn the_namespace_object_answers_for_a_getter_that_is_not_enumerable() {
-    let hidden = "var inner_1 = require('./inner.cjs');\n\
-        Object.defineProperty(exports, 'a', { get: function () { return inner_1.a; } });";
-    let listed = getter_of_a("inner.cjs");
-    let captures = |main: &str, outer: &str| {
-        let files = [
-            ("main.mjs", main),
-            ("outer.cjs", outer),
-            ("inner.cjs", "exports.a = 1;"),
-        ];
-        with_exports(&files, |exports, input| {
-            exports.face_captures(file_named(input, "outer.cjs"))
-        })
-    };
-    let main = "import * as all from './outer.cjs'; console.log(all.a);";
-    assert!(captures(main, hidden));
-    assert!(!captures(main, &listed));
-    // Also where the file keeps its object: the build knows no variable behind a member of a built-in module.
-    let over_a_library = hidden.replace("./inner.cjs", "node:path");
-    assert!(captures(main, &over_a_library));
-    // An import statement is bound to what the getter returns, also where a listed getter would have a copy.
-    let files = [
-        ("main.mjs", IMPORTS_OF_A[0]),
-        ("outer.cjs", hidden),
-        ("inner.cjs", "if (Math.random()) exports.a = 1;"),
-    ];
-    with_exports(&files, |exports, input| {
-        let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| module_named(input, name));
-        let a = atom(input, "a");
-        assert_eq!(exports.owner_of(outer, a), Some((inner, a)));
-    });
-    for main in &IMPORTS_OF_A[..1] {
-        assert!(!captures(main, hidden), "{main}");
-    }
-}
-
-const MARKER: &str = "Object.defineProperty(exports, '__esModule', { value: true });\n";
-
-// A file with the marker and a getter for `name` that returns the `default` of `below`.
-fn getter_of_default(name: &str, attributes: &str, below: &str) -> String {
-    format!(
-        "{MARKER}var below_1 = require('./{below}');\n\
-        Object.defineProperty(exports, '{name}', {{ {attributes}get: function () {{ return below_1.default; }} }});"
-    )
-}
-
-#[test]
-fn an_import_holds_the_member_named_default_of_a_file_whose_default_is_its_value() {
-    let marked = format!("{MARKER}exports.default = 1;");
-    for (name, main) in [
-        ("default", "import a from './outer.cjs'; console.log(a);"),
-        ("a", IMPORTS_OF_A[0]),
-        ("a", IMPORTS_OF_A[2]),
-    ] {
-        let outer = getter_of_default(name, "enumerable: true, ", "inner.cjs");
-        let owners_of_copies = |inner: &str| {
-            let files = [
-                ("main.mjs", main),
-                ("outer.cjs", &outer[..]),
-                ("inner.cjs", inner),
-            ];
-            with_exports(&files, |exports, input| {
-                let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| file_named(input, name));
-                let shapes = [outer, inner].map(|file| exports.shape(ModuleRef::File(file)));
-                assert_eq!(shapes, [Shape::Names; 2], "{main}");
-                let name = atom(input, name);
-                match exports.member_named(ModuleRef::File(outer), name) {
-                    Some(Member::Variable(returned)) => {
-                        let owner = (ModuleRef::File(inner), atom(input, "default"));
-                        assert_eq!(exports.names_by_id.get(&returned), Some(&owner), "{main}");
-                    }
-                    member => panic!("{member:?}"),
-                }
-                let copies = exports.copies(outer).iter();
-                let owners = copies.map(|copy| exports.names_by_id[copy]);
-                owners.collect::<Vec<(ModuleRef, Atom)>>() == [(ModuleRef::File(outer), name)]
-            })
-        };
-        assert!(owners_of_copies("exports.default = 1;"), "{main}");
-        assert!(
-            owners_of_copies("module.exports = { default: 1 };"),
-            "{main}"
-        );
-        assert!(!owners_of_copies(&marked), "{main}");
-    }
-}
-
-#[test]
-fn a_getter_over_an_es_module_that_hands_on_the_value_of_a_file_keeps_its_object() {
-    let above = getter_of_default("a", "enumerable: true, ", "between.mjs");
-    let shape_over = |inner: &str| {
-        let files = [
-            (
-                "main.mjs",
-                "import { a } from './above.cjs'; console.log(a);",
-            ),
-            ("above.cjs", &above[..]),
-            ("between.mjs", "export { default } from './inner.cjs';"),
-            ("inner.cjs", inner),
-        ];
-        shapes_of(&files, ["above.cjs"])
-    };
-    assert_eq!(shape_over("exports.default = 1;"), [Shape::Value]);
-    let marked = format!("{MARKER}exports.default = 1;");
-    assert_eq!(shape_over(&marked), [Shape::Names]);
-}
-
-#[test]
-fn a_getter_that_is_not_enumerable_is_a_name_only_where_an_import_finds_what_it_returns() {
-    let marked = format!("{MARKER}exports.default = 1;");
-    let shape_of_outer = |name: &str, main: &str, inner: &str| {
-        let outer = getter_of_default(name, "", "inner.cjs");
-        let files = [
-            ("main.mjs", main),
-            ("outer.cjs", &outer[..]),
-            ("inner.cjs", inner),
-        ];
-        shapes_of(&files, ["outer.cjs"])
-    };
-    let main = IMPORTS_OF_A[0];
-    assert_eq!(shape_of_outer("a", main, &marked), [Shape::Names]);
-    assert_eq!(
-        shape_of_outer("a", main, "exports.default = 1;"),
-        [Shape::Value]
-    );
-    // Whoever lists the names passes over the getter, so the `default` of the file is its value.
-    let main = "import a from './outer.cjs'; console.log(a);";
-    assert_eq!(shape_of_outer("default", main, &marked), [Shape::Value]);
-}
-
-#[test]
-fn an_import_of_a_getter_that_is_not_enumerable_is_checked_where_the_file_keeps_its_object() {
-    let outer = getter_of_default("a", "", "inner.cjs");
-    let files = [
-        ("main.mjs", IMPORTS_OF_A[0]),
-        ("outer.cjs", &outer[..]),
-        ("inner.cjs", "exports.default = 1;"),
-    ];
-    with_exports(&files, |exports, input| {
-        let checked = exports.checked_copies(file_named(input, "main.mjs")).iter();
-        let checked: Vec<(ModuleRef, Atom)> =
-            checked.map(|entry| exports.names_by_id[&entry.0]).collect();
-        assert_eq!(
-            checked,
-            [(module_named(input, "outer.cjs"), atom(input, "a"))]
-        );
-    });
-}
-
-#[test]
-fn the_marker_says_nothing_to_an_importer_in_a_package_of_type_module() {
-    let inner = format!("{MARKER}exports.default = 1; exports.a = 2;");
-    let outer = getter_of_default("a", "enumerable: true, ", "inner.cjs");
-    for main in [
-        "export { default } from './inner.cjs';",
-        "import * as all from './inner.cjs'; console.log(all.default);",
-    ] {
-        let shape_in = |package: &str| {
-            let files = [
-                ("main.mjs", main),
-                ("inner.cjs", &inner[..]),
-                ("package.json", package),
-            ];
-            with_exports(&files, |exports, input| {
-                let inner = module_named(input, "inner.cjs");
-                assert_eq!(exports.marker(inner), Some(true), "{main}");
-                exports.shape(inner)
-            })
-        };
-        assert_eq!(shape_in("{}"), Shape::Names, "{main}");
-        assert_eq!(shape_in(r#"{ "type": "module" }"#), Shape::Value, "{main}");
-    }
-    // A name is bound to the variable as elsewhere, and a getter that returns the member has a copy.
-    let files = [
-        (
-            "main.mjs",
-            "import { a } from './inner.cjs'; import { a as b } from './outer.cjs'; console.log(a, b);",
-        ),
-        ("outer.cjs", &outer[..]),
-        ("inner.cjs", &inner[..]),
-        ("package.json", r#"{ "type": "module" }"#),
-    ];
-    with_exports(&files, |exports, input| {
-        let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| file_named(input, name));
-        let shapes = [outer, inner].map(|file| exports.shape(ModuleRef::File(file)));
-        assert_eq!(shapes, [Shape::Names; 2]);
-        let a = atom(input, "a");
-        let own = exports.ids[&(ModuleRef::File(inner), a)];
-        assert_eq!(exports.imported_member(own), Member::Variable(own));
-        let copies = exports.copies(outer).iter();
-        let copies: Vec<(ModuleRef, Atom)> = copies.map(|copy| exports.names_by_id[copy]).collect();
-        assert_eq!(copies, [(ModuleRef::File(outer), a)]);
-    });
-}
-
-#[test]
-fn a_name_that_may_be_absent_is_checked_once_every_file_has_run() {
-    let main = "import './first.mjs'; import { late } from './k.cjs'; console.log(late);";
-    let first = "import { nope } from './k.cjs'; console.log(nope);";
-    let k = "exports.one = 1; if (Math.random()) exports.late = 2;";
-    let files = [("main.mjs", main), ("first.mjs", first), ("k.cjs", k)];
-    with_exports(&files, |exports, input| {
-        let k = module_named(input, "k.cjs");
-        let name_of = |entry: &(_, _)| exports.names_by_id.get(&entry.0).map(|owner| owner.1);
-        let main: Vec<Option<Atom>> = exports
-            .checked_copies(file_named(input, "main.mjs"))
-            .iter()
-            .map(name_of)
-            .collect();
-        // A module is linked behind what it imports.
-        assert_eq!(main, [Some(atom(input, "nope")), Some(atom(input, "late"))]);
-        // No link starts at a file that is only imported by name.
-        assert!(
-            exports
-                .checked_copies(file_named(input, "first.mjs"))
-                .is_empty()
-        );
-        assert!(exports.face(k).is_some());
-    });
-}
-
-#[test]
-fn a_call_through_the_namespace_hands_the_namespace_over() {
-    let captures = |main: &str, k: &str| {
-        let files = [("main.mjs", main), ("k.cjs", k)];
-        with_exports(&files, |exports, input| {
-            exports.face_captures(file_named(input, "k.cjs"))
-        })
-    };
-    let calls_a = "import * as ns from './k.cjs'; console.log(ns.a());";
-    for k in [
-        "exports.a = function () { return this.b; }; exports.b = 1;",
-        "exports.a = Math.random; exports.b = 1;",
-        "Object.assign(exports, { a() { return this.b; }, b: 1 });",
-    ] {
-        assert!(captures(calls_a, k), "{k}");
-    }
-    for k in [
-        "exports.a = function () { return 1; }; exports.b = 1;",
-        "exports.a = () => 1; exports.b = 1;",
-    ] {
-        assert!(!captures(calls_a, k), "{k}");
-    }
-    let reads_this = "exports.a = function () { return this.b; }; exports.b = 1;";
-    for main in [
-        "import * as ns from './k.cjs'; console.log(ns['a']());",
-        "import * as ns from './k.cjs'; console.log(ns.a``);",
-        "import * as ns from './k.cjs'; console.log(ns.a?.());",
-    ] {
-        assert!(captures(main, reads_this), "{main}");
-    }
-    for main in [
-        "import * as ns from './k.cjs'; console.log(ns.a);",
-        "import * as ns from './k.cjs'; console.log((0, ns.a)());",
-        "import * as ns from './k.cjs'; console.log(new ns.a());",
-    ] {
-        assert!(!captures(main, reads_this), "{main}");
-    }
-    // The value of the module is called.
-    let calls_default = "import * as ns from './k.cjs'; console.log(ns.default());";
-    assert!(captures(calls_default, "exports.b = 1;"));
-}
-
-#[test]
-fn a_binding_that_a_getter_returns_is_a_variable_with_and_without_the_object() {
-    let k = "Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return a; } }); const a = 1;";
-    for (main, shape) in [
-        ("import { a } from './k.cjs'; console.log(a);", Shape::Names),
-        (
-            "import k, { a } from './k.cjs'; console.log(k, a);",
-            Shape::Value,
-        ),
-        (
-            "import * as ns from './k.cjs'; console.log(ns, ns.a);",
-            Shape::Value,
-        ),
-    ] {
-        let files = [("main.mjs", main), ("k.cjs", k)];
-        with_exports(&files, |exports, input| {
-            let file = file_named(input, "k.cjs");
-            assert_eq!(exports.shape(ModuleRef::File(file)), shape, "{main}");
-            let Some(&super::Target::Binding(symbol)) = exports
-                .targets
-                .get(&(ModuleRef::File(file), atom(input, "a")))
-            else {
-                panic!("{main}");
-            };
-            assert!(exports.is_exported_binding(file, symbol.id), "{main}");
-        });
-    }
-    // The text of the file looks at the object, so no import is bound to the binding.
-    let files = [
-        ("main.mjs", "import { a } from './k.cjs'; console.log(a);"),
-        ("k.cjs", &format!("{k} console.log(exports);")),
-    ];
-    with_exports(&files, |exports, input| {
-        let key = (module_named(input, "k.cjs"), atom(input, "a"));
-        assert_eq!(exports.targets.get(&key), None);
-    });
-}
-
-#[test]
-fn a_helper_that_marks_the_module_before_it_defines_getters() {
-    const HELPERS: &str = "var __defProp = Object.defineProperty;\nvar __markAsModule = (target) => __defProp(target, \"__esModule\", { value: true });\nvar __export = (target, all) => {\n  __markAsModule(target);\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n";
-    let ask_module = |rest: &str| {
-        let module = format!("{HELPERS}{rest}");
-        ask(READS_A, &module, |exports, module, a| {
-            let member = exports.member_named(module, a);
-            (exports.shape(module), exports.marker(module), member)
-        })
-    };
-    let (shape, marker, member) = ask_module("__export(exports, { a: () => a });\nvar a = 1;\n");
-    assert_eq!((shape, marker), (Shape::Names, Some(true)));
-    assert!(matches!(member, Some(Member::Binding(_))), "{member:?}");
-    // The property that the helper defines takes no store.
-    let (shape, marker, _) =
-        ask_module("__export(exports, { a: () => a });\nvar a = 1;\nexports.__esModule = false;\n");
-    assert_eq!((shape, marker), (Shape::Value, None));
-    // Whoever finds the module half evaluated in front of the call finds no marker.
-    let (shape, marker, _) =
-        ask_module("require('./main.cjs');\n__export(exports, { a: () => a });\nvar a = 1;\n");
-    assert_eq!((shape, marker), (Shape::Value, None));
-}
-
-#[test]
-fn nothing_is_said_of_this_where_the_text_does_not_name_every_store() {
-    let ignores_this = |module: &str| ask(READS_A, module, CommonJsExports::ignores_this);
-    for module in [
         "Object.assign(exports, { a() { return this; } });",
         "exports.a = () => 1; console.log(exports);",
     ] {
         assert!(!ignores_this(module), "{module}");
     }
-    // A getter that returns a name of a module that has only its object.
-    let files = [
-        ("main.cjs", READS_A),
+}
+
+#[test]
+fn a_call_through_the_namespace_passes_it_as_this() {
+    let captures = |a: &str| {
+        let main = "import * as ns from './m.cjs'; console.log(ns.a());";
+        let module = format!("exports.a = {a}; exports.b = 1;");
+        with_program(&[("main.mjs", main), ("m.cjs", &module[..])], |program| {
+            program.exports().face_captures(program.file("m.cjs"))
+        })
+    };
+    assert!(captures("function () { return this.b; }"));
+    assert!(captures("Math.random"));
+    assert!(!captures("function () { return 1; }"));
+}
+
+#[test]
+fn an_importer_that_sees_the_namespace_sees_the_object() {
+    for main in [
+        "import d from './m.cjs'; console.log(d);",
+        "import * as ns from './m.cjs'; console.log(ns);",
+        "import('./m.cjs').then(console.log);",
+        "export * from './m.cjs';",
+        "export * as ns from './m.cjs';",
+    ] {
+        let files = [("main.mjs", main), ("m.cjs", "exports.a = 1;")];
+        assert!(
+            !with_program(&files, |program| program.keeps_names("m.cjs")),
+            "{main}"
+        );
+    }
+}
+
+#[test]
+fn a_marker_that_the_text_does_not_settle_is_unknown() {
+    for (module, marker) in [
+        ("exports.a = 1;", Some(false)),
+        ("exports.__esModule = true; exports.a = 1;", Some(true)),
+        ("exports.mark = () => { exports.__esModule = true; };", None),
+        ("require('./main.cjs'); exports.__esModule = true;", None),
+        ("exports.a = 1; console.log(exports);", None),
+        ("module.exports = Math.random();", None),
+    ] {
+        let found = with_required(module, |program| program.marker("m.cjs"));
+        assert_eq!(found, marker, "{module}");
+    }
+}
+
+#[test]
+fn a_marker_that_another_file_stores_is_unknown() {
+    let marked = ("m.cjs", "exports.__esModule = true; exports.a = 1;");
+    let through_helper = format!(
+        "{IMPORT_DEFAULT} const m = __importDefault(require('./m.cjs')); m.__esModule = false;"
+    );
+    for main in [
+        ("main.cjs", "require('./m.cjs').__esModule = false;"),
+        ("main.cjs", "delete require('./m.cjs').__esModule;"),
         (
-            "module.cjs",
-            "var inner = require('./inner.cjs'); Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return inner.a; } });",
+            "main.cjs",
+            "Object.defineProperty(require('./m.cjs'), '__esModule', { value: false });",
         ),
         (
-            "inner.cjs",
-            "Object.assign(exports, { a() { return this; } });",
+            "main.cjs",
+            "const m = require('./m.cjs'); m.__esModule = false;",
+        ),
+        (
+            "main.ts",
+            "import m = require('./m.cjs'); m.__esModule = false;",
+        ),
+        ("main.cjs", &through_helper[..]),
+        (
+            "main.cjs",
+            "let m; m = require('./m.cjs'); m.__esModule = false;",
+        ),
+        (
+            "main.cjs",
+            "function mark(o) { o.__esModule = false; } mark(require('./m.cjs'));",
+        ),
+        (
+            "main.cjs",
+            "const m = Math.random() ? require('./m.cjs') : {}; m.__esModule = false;",
+        ),
+    ] {
+        with_program(&[main, marked], |program| {
+            let stored = stored_markers(program.input);
+            assert_eq!(stored, [program.module("m.cjs")], "{}", main.1);
+            assert_eq!(program.marker("m.cjs"), None, "{}", main.1);
+        });
+    }
+    for main in [
+        "require('./m.cjs').a = 2;",
+        "const m = require('./m.cjs'); m.a = 2;",
+        "require('./m.cjs'); const o = {}; o.__esModule = true;",
+    ] {
+        with_program(&[("main.cjs", main), marked], |program| {
+            assert!(stored_markers(program.input).is_empty(), "{main}");
+        });
+    }
+}
+
+#[test]
+fn whoever_has_the_object_may_change_the_marker() {
+    let unmarked = "exports.default = 'inner'; exports.a = 1;";
+    let marked = "exports.__esModule = true; exports.default = 'inner'; exports.a = 1;";
+    let defined = format!("{MARKER} exports.default = 'inner'; exports.a = 1;");
+    let texts = [unmarked, marked, defined.as_str()];
+    let markers_with = |main: &str, uses: &[&str]| -> Vec<[Option<bool>; 3]> {
+        let name_of = |use_number: usize, text: usize| format!("m{use_number}-{text}.cjs");
+        let numbers = (0..uses.len()).flat_map(|number| (0..3).map(move |text| (number, text)));
+        let written = numbers.clone().map(|(number, text)| {
+            let path = format!("./{}", name_of(number, text));
+            uses[number]
+                .replace('K', &path)
+                .replace('N', &format!("n{number}_{text}"))
+        });
+        let written: String = written.collect::<Vec<String>>().join("\n");
+        let names: Vec<String> = numbers
+            .clone()
+            .map(|(number, text)| name_of(number, text))
+            .collect();
+        let mut files = vec![
+            (main, written.as_str()),
+            (
+                "stamp.cjs",
+                "exports.stamp = function (o) { o.__esModule = 1; };",
+            ),
+        ];
+        files.extend(
+            names
+                .iter()
+                .zip(numbers)
+                .map(|(name, (_, text))| (name.as_str(), texts[text])),
+        );
+        with_program(&files, |program| {
+            let marker = |number: usize, text: usize| program.marker(&name_of(number, text));
+            (0..uses.len())
+                .map(|number| [0, 1, 2].map(|text| marker(number, text)))
+                .collect()
+        })
+    };
+    let takes = [
+        "{ const m = require('K'); require('./stamp.cjs').stamp(m); }",
+        "{ const box = { m: require('K') }; box.m.__esModule = 1; }",
+        "{ const m = require('K'); (0, m).__esModule = 1; }",
+        "{ const m = require('K'); (m || {}).__esModule = 1; }",
+        "{ const m = require('K'); const get = () => m; get().__esModule = 1; }",
+        "{ const m = require('K'); const other = m; other.__esModule = 1; }",
+        "{ const m = require('K'); Object.assign(m, { __esModule: 1 }); }",
+        "{ const m = require('K'); Reflect.set(m, '__esModule', 1); }",
+        "{ const m = require('K'); Object.defineProperties(m, { __esModule: { value: 1 } }); }",
+        "{ const m = require('K'); Object.setPrototypeOf(m, { __esModule: 1 }); }",
+        "{ const m = require('K'); m[process.argv[2]] = 1; }",
+        "{ const m = require('K'); delete m[process.argv[2]]; }",
+        "{ const m = require('K'); m.late = process.argv.pop; m.late(); }",
+    ];
+    for (markers, taken) in markers_with("main.cjs", &takes).iter().zip(takes) {
+        assert_eq!(*markers, [None, None, Some(true)], "{taken}");
+    }
+    let way = ["require('K'); module.children[0].exports.__esModule = 1;"];
+    assert_eq!(markers_with("main.cjs", &way), [[None, None, Some(true)]]);
+    let defaults = [
+        "import N from 'K'; globalThis.held = N;",
+        "import { default as N } from 'K'; globalThis.held = N;",
+        "import * as N from 'K'; globalThis.held = N.default;",
+        "export { default as N } from 'K';",
+    ];
+    for (markers, taken) in markers_with("main.mjs", &defaults).iter().zip(defaults) {
+        assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
+    }
+    let known = [Some(false), Some(true), Some(true)];
+    let off_answers = [
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const { default: oN } = N(require('K')); globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const { ...oN } = N(require('K')); globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const hN = N(require('K')); const { default: oN } = hN; globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const hN = N(require('K')); const { [process.argv[2]]: oN } = hN; globalThis.held = oN;",
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const oN = (N(require('K')).default ||= 1); globalThis.held = oN;",
+    ];
+    for (markers, taken) in markers_with("main.cjs", &off_answers)
+        .iter()
+        .zip(off_answers)
+    {
+        assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
+    }
+    let off_holders = [
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const mN = require('K'); const { default: oN } = N(mN); globalThis.held = oN;",
+    ];
+    for (markers, taken) in markers_with("main.cjs", &off_holders)
+        .iter()
+        .zip(off_holders)
+    {
+        assert_eq!(markers[0], None, "{taken}");
+    }
+    let off_namespaces =
+        ["import * as N from 'K'; const { default: oN } = N; globalThis.held = oN;"];
+    for (markers, taken) in markers_with("main.mjs", &off_namespaces)
+        .iter()
+        .zip(off_namespaces)
+    {
+        assert_eq!(*markers, [None, Some(true), Some(true)], "{taken}");
+    }
+    let reads = [
+        "function N(e) { return e && e.__esModule ? e : { default: e }; } const { a: oN } = N(require('K')); globalThis.held = oN;",
+    ];
+    assert_eq!(markers_with("main.cjs", &reads), [known]);
+    let leaves = [
+        "require('K');",
+        "{ const m = require('K'); if (m && typeof m.a === 'number') m.a = 2; }",
+        "{ const { a, ...rest } = require('K'); globalThis.held = [a, rest]; }",
+    ];
+    for (markers, left) in markers_with("main.cjs", &leaves).iter().zip(leaves) {
+        assert_eq!(*markers, known, "{left}");
+    }
+    let leaves = [
+        "import N from 'K'; globalThis.held = N.a;",
+        "import * as N from 'K'; globalThis.held = [N.a, N.default.a];",
+    ];
+    for (markers, left) in markers_with("main.mjs", &leaves).iter().zip(leaves) {
+        assert_eq!(*markers, known, "{left}");
+    }
+    let files = [
+        (
+            "main.cjs",
+            "require('./stores.cjs').f(); require('./returns.cjs').f(); require('./ignores.cjs').f(); globalThis.held = typeof require('./read.cjs').f;",
+        ),
+        (
+            "stores.cjs",
+            "'use strict'; exports.f = function () { this.__esModule = 1; };",
+        ),
+        (
+            "returns.cjs",
+            "'use strict'; exports.f = function () { return this; };",
+        ),
+        ("ignores.cjs", "exports.f = function () { return 1; };"),
+        (
+            "read.cjs",
+            "'use strict'; exports.f = function () { return this; };",
         ),
     ];
-    with_exports(&files, |exports, input| {
-        assert!(!exports.ignores_this(module_named(input, "module.cjs"), atom(input, "a")));
+    with_program(&files, |program| {
+        assert_eq!(program.marker("stores.cjs"), None);
+        assert_eq!(program.marker("returns.cjs"), None);
+        assert_eq!(program.marker("ignores.cjs"), Some(false));
+        assert_eq!(program.marker("read.cjs"), Some(false));
     });
+}
+
+#[test]
+fn importers_ignore_the_marker_in_a_package_of_type_module() {
+    let markers_in = |package: &str| {
+        let marked = ("m.cjs", "exports.__esModule = true; exports.a = 1;");
+        let files = [("main.mjs", IMPORTS_A), marked, ("package.json", package)];
+        with_program(&files, |program| {
+            let (m, exports) = (program.module("m.cjs"), program.exports());
+            (exports.marker(m), exports.marker_for_imports(m))
+        })
+    };
+    assert_eq!(markers_in("{}"), (Some(true), Some(true)));
+    let markers = markers_in(r#"{ "type": "module" }"#);
+    assert_eq!(markers, (Some(true), Some(false)));
+}
+
+#[test]
+fn module_exports_may_be_an_accessor() {
+    let uses_module_object = |module: &str| {
+        with_required(module, |program| {
+            let m = program.module("m.cjs");
+            let uses_it = program.exports().uses_module_object(m);
+            assert!(!uses_it || !program.keeps_names("m.cjs"), "{module}");
+            uses_it
+        })
+    };
+    for module in [
+        "Object.defineProperty(module, 'exports', { get() { return { a: 1 }; } });",
+        "exports.a = 1; console.log(module);",
+    ] {
+        assert!(uses_module_object(module), "{module}");
+    }
+    for module in [
+        "module.exports.a = 1;",
+        "module.exports = { a: 1 };",
+        "exports.a = 1; console.log(exports);",
+    ] {
+        assert!(!uses_module_object(module), "{module}");
+    }
+}
+
+#[test]
+fn a_file_that_stores_to_a_wrapper_parameter_or_exposes_its_scope_needs_a_wrapped_body() {
+    let needs_wrapped_body = |module: &str| {
+        with_required(module, |program| {
+            let m = program.module("m.cjs");
+            program.exports().needs_wrapped_body(m)
+        })
+    };
+    for module in [
+        "exports.a = 1; module = {};",
+        "exports.a = 1; require = null;",
+        "exports.a = 1; __dirname = '';",
+        "exports.a = 1; exports = {};",
+        "exports.a = 1; eval('1');",
+        "exports.a = 1; console.log(arguments.length);",
+        "exports.a = typeof module; var module = 1;",
+        "function read() { return module; } exports.a = read(); var module = 1;",
+        "var module = module.exports; module.a = 1;",
+        "if (exports.a) { var module = 1; } exports.b = typeof module;",
+        "var require; exports.a = require;",
+    ] {
+        assert!(needs_wrapped_body(module), "{module}");
+    }
+    for module in [
+        "exports.a = 1;",
+        "var module = 1; exports.a = function () { return module; };",
+        "for (var i = 0; i < 2; i++) { var module = i; exports.a = module; }",
+        "var require = 1; exports.a = require;",
+        "exports.a = 1; console.log(exports);",
+        "function f() {} exports = module.exports = f; exports.a = 1;",
+    ] {
+        assert!(!needs_wrapped_body(module), "{module}");
+    }
+}
+
+const COMMON_JS: &str = "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);\n";
+
+fn shapes_of_inner_modules(body: &str) -> Vec<Shape> {
+    let main = format!("{COMMON_JS}{body}");
+    with_graph(&[("main.mjs", main.as_str())], |graph, input| {
+        let file = file_named(input, "main.mjs");
+        let callbacks = graph.inner_modules(file).iter();
+        callbacks
+            .map(|&callback| graph.shape(ModuleRef::Inner { file, callback }))
+            .collect()
+    })
+}
+
+#[test]
+fn the_callback_of_a_bundle_is_read_as_the_body_of_a_module() {
+    for (callback, shape) in [
+        ("(exports) => { exports.x = 1; }", Shape::Names),
+        (
+            "(exports, module) => { module.exports.x = 1; }",
+            Shape::Names,
+        ),
+        (
+            "(exports, module) => { module.exports = { x: 1 }; }",
+            Shape::Names,
+        ),
+        (
+            "(exports, module) => { module.exports = Math.random(); }",
+            Shape::Value,
+        ),
+        (
+            "(exports) => { exports.x = 1; console.log(exports); }",
+            Shape::Value,
+        ),
+        ("(exports) => { var e = exports; e.x = 1; }", Shape::Value),
+        (
+            "(exports) => { if (Math.random()) return; Object.defineProperty(exports, 'x', { value: 1 }); }",
+            Shape::Value,
+        ),
+    ] {
+        let body = format!("var require_a = __commonJS({callback});\nconsole.log(require_a().x);");
+        assert_eq!(shapes_of_inner_modules(&body), [shape], "{callback}");
+    }
+}
+
+#[test]
+fn a_getter_in_a_callback_stands_for_a_name_of_another_callback() {
+    let body = "var require_b = __commonJS((exports) => { exports.b = 1; });
+var require_a = __commonJS((exports) => {
+  var b_1 = require_b();
+  Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return b_1.b; } });
+});
+console.log(require_a().a);";
+    assert_eq!(shapes_of_inner_modules(body), [Shape::Names, Shape::Names]);
+}
+
+#[test]
+fn a_marker_that_other_code_stores_on_an_inner_module_is_unknown() {
+    let marker_of_first = |body: &str| {
+        let main = format!("{COMMON_JS}{body}");
+        with_graph(&[("main.mjs", main.as_str())], |graph, input| {
+            let file = file_named(input, "main.mjs");
+            let callback = graph.inner_modules(file)[0];
+            graph.commonjs().marker(ModuleRef::Inner { file, callback })
+        })
+    };
+    let own =
+        "var require_a = __commonJS((exports) => { exports.__esModule = true; exports.x = 1; });\n";
+    assert_eq!(
+        marker_of_first(&format!("{own}console.log(require_a().x);")),
+        Some(true)
+    );
+    assert_eq!(
+        marker_of_first(&format!("{own}require_a().__esModule = false;")),
+        None
+    );
+    assert_eq!(
+        marker_of_first(&format!("{own}var a = require_a(); delete a.__esModule;")),
+        None
+    );
+    let own = format!("var require_a = __commonJS((exports) => {{ {MARKER} exports.x = 1; }});\n");
+    for body in [
+        "require_a().__esModule = false;",
+        "var a = require_a(); delete a.__esModule;",
+    ] {
+        assert_eq!(
+            marker_of_first(&format!("{own}{body}")),
+            Some(true),
+            "{body}"
+        );
+    }
 }

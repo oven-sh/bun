@@ -1,8 +1,0 @@
-{
-  "variable.imp_any_bundled.mjs": {
-    "output": "x THROWS Error ERR_MODULE_NOT_FOUND [--aot: Cannot load '<folder>/node_modules/dyn/locale/en.js': this executable can't load a module from a dynamic p]\n"
-  },
-  "variable.req_any_bundled.cjs": {
-    "output": "x THROWS Error MODULE_NOT_FOUND [--aot: Cannot load '<folder>/node_modules/dyn/locale/en.js': this executable can't load a module from a dynamic p]\ny THROWS Error MODULE_NOT_FOUND [--aot: Cannot load '<folder>/node_modules/dyn/locale/en.js': this executable can't load a module from a dynamic p]\n"
-  }
-}

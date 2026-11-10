@@ -1,0 +1,17 @@
+# The place of a key in the table of the cells of built-ins is the cell's number: the run time finds it by a search, and compiled code bears the same numbers.
+# THE LIE, testing=TwoCellsOfBuiltinsBearEachOthersNumbers: the first two keys are written in each other's places.
+# AS-USERS-BUILD: the image asks in every build that the keys ascend strictly.
+# DIAGNOSTIC: ProgramTableCheckFailed
+# RUN: compile mechanisms=all testing=TwoCellsOfBuiltinsBearEachOthersNumbers
+# CHECK: diagnostic ProgramTableCheckFailed
+# CHECK-NEXT: image empty
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function fails(depth: number): number { if (depth === 0) throw new Error("down"); return fails(depth - 1) + 1; }
+# class Thing { get answer(): number { return fails(id(1)); } static make(): Thing { return new Thing(); } }
+# async function later(): Promise<number> { return Thing.make().answer; }
+# let told = "";
+# try { told = String(Thing.make().answer); } catch (error) { told = String((error as Error).stack).split("\n").length > 1 ? "has frames" : "has none"; }
+# later().catch((error: Error) => print(told, typeof error.stack));
+# -- end of source

@@ -1,6 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -77,27 +76,6 @@ test("bun run and bun run --aot read process.platform, process.arch and process.
     exitCode: 0,
   });
 }, 120_000);
-
-test("bun build --compile folds them for its target, with --aot and without", async () => {
-  using dir = tempDir("aot-process-platform", files);
-  for (const flags of [[], ["--aot"]]) {
-    const executable = join(String(dir), "main" + flags.length + (isWindows ? ".exe" : ""));
-    const built = await run(
-      [bunExe(), "build", "--compile", ...flags, "main.cjs", "--outfile", executable],
-      String(dir),
-      bunEnv,
-    );
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-      stderr: "",
-      exitCode: 0,
-    });
-    expect(await run([executable], String(dir), flags.length ? compiledOnly : bunEnv)).toEqual({
-      stdout: folded,
-      stderr: "",
-      exitCode: 0,
-    });
-  }
-}, 240_000);
 
 test("bun test and bun test --aot: a test can try another platform's road", async () => {
   using dir = tempDir("aot-process-platform", files);

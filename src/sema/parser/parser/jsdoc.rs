@@ -220,6 +220,8 @@ struct Outer<'a> {
     dialect: CodeDialect,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
+    /// How many there were of `Stacks::stray_decorators` and of `File::stray_decorators`.
+    stray_decorators: (usize, usize),
 }
 
 /// A parse that only keeps its parse errors.
@@ -272,6 +274,29 @@ fn scan_jsdoc_comment_for_tags(mut comment: &[u8]) -> u8 {
         };
     }
     found
+}
+
+/// What `read_by_checker` answers if every `@` of `text` with the name of a tag behind it is a tag of a JSDoc comment.
+pub(crate) fn guess_what_checker_reads(text: &[u8], is_declaration_file: bool) -> u8 {
+    let (mut has_param, mut has_augments, mut has_see_or_link) = (false, false, false);
+    let mut rest = text;
+    while let Some(at) = strings::index_of_char(rest, b'@') {
+        rest = &rest[at as usize + 1..];
+        let is = |name: &[u8]| rest.starts_with(name);
+        has_param |= is(b"param") || is(b"arg");
+        has_augments |= is(b"augments") || is(b"extends");
+        has_see_or_link |= is(b"see") || is(b"link");
+    }
+    if has_param
+        && !is_declaration_file
+        && (strings::contains(text, b"arguments") || strings::contains(text, b"\\u"))
+    {
+        return flags::JSDOC_LIKE;
+    }
+    match has_augments && has_see_or_link {
+        true => flags::AUGMENTS,
+        false => 0,
+    }
 }
 
 /// Returns the `flags` that select which JSDoc comments of a TypeScript file have to be read. Only the checker reads
@@ -758,6 +783,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             mode,
             stmt: StmtId::NONE,
             attributes,
+            loaded_as: Atom::NONE,
         };
         (declaration, self.pos(), has_clause)
     }
@@ -823,6 +849,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             has_top_level_await: self.has_top_level_await,
             dialect: self.enter_typescript_dialect(),
             diagnostics: self.f.diagnostics.len(),
+            stray_decorators: (self.s.stray_decorators.len(), self.f.stray_decorators.len()),
         };
         self.lx
             .set_src(outer.src.get(..cut as usize).unwrap_or(outer.src));
@@ -855,6 +882,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.last_nullable_type = outer.last_nullable_type;
         self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;
+        // `/** @import inside (@media) */`: a decorator that no class follows becomes a statement in front of the one that is being parsed.
+        // A mistake in a comment of a JavaScript file stops nothing, so that statement would run.
+        self.s.stray_decorators.truncate(outer.stray_decorators.0);
+        self.f.stray_decorators.truncate(outer.stray_decorators.1);
         self.jsdoc.is_in_comment = false;
         match self.lx.rejection {
             None => {}

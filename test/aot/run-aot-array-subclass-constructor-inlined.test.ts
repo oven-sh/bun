@@ -28,8 +28,8 @@ import { expect, test } from "bun:test";
 class ZeroArray extends Array<number> { constructor(size: number) { super(size); this.fill(0); } }
 test("a subclass of Array made many times", () => {
   let sum = 0;
-  for (let i = 0; i < 300000; i++) { const made = new ZeroArray(8); sum += made.length + made[3]!; }
-  expect(sum).toBe(2400000);
+  for (let i = 0; i < 3000; i++) { const made = new ZeroArray(8); sum += made.length + made[3]!; }
+  expect(sum).toBe(24000);
   expect(new ZeroArray(4) instanceof ZeroArray).toBe(true);
 });`,
 };

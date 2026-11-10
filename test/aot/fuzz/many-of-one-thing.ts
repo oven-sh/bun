@@ -1,4 +1,4 @@
-import { nameOf, pickCombination, programOf } from "../generated/many-of-one-thing";
+import { nameOf, pickCombination, programOf } from "./generators/many-of-one-thing";
 import type { Random } from "./random";
 
 export function generate(random: Random): string {

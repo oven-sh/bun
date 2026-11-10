@@ -15,7 +15,7 @@ import {
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
-import { unsupported } from "../aot/run-programs";
+import { unsupported } from "../aot/harness/commands";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -327,8 +327,8 @@ describe("Bun.build", () => {
 
   // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
   // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
-  // With `aot` the compiler's own front end loads the files and runs the React Compiler on them. It takes no worker of the bundler,
-  // so none is alive during the load either.
+  // With `aot` the compiler's own front end loads the files. It parses each file that may hold components on a worker of the bundler,
+  // which runs the React Compiler as a bundle does.
   test.concurrent.each([
     { env: {}, options: {} },
     { env: { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }, options: {} },
@@ -339,7 +339,7 @@ describe("Bun.build", () => {
       const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
       for (let i = 0; i < 32; i++) {
         files[`m${i}.js`] =
-          `export function f${i}(a, b) { for (let j = 0; j < b; j++) a += j ^ ${i}; return { a, b }; }\n`;
+          `const useNumber = n => n;\nexport function f${i}(a, b) { for (let j = 0; j < b; j++) a += useNumber(j) ^ ${i}; return { a, b }; }\n`;
         files["entry.js"] += `export * from "./m${i}.js";\n`;
       }
       files["worker-teardown-fixture.ts"] = /* ts */ `
@@ -371,7 +371,7 @@ describe("Bun.build", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("compile" in options ? "false 0\n" : "true 0\n");
+      expect(stdout).toBe("true 0\n");
       expect(exitCode).toBe(0);
     },
     60_000,
@@ -2549,6 +2549,40 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
   expect(parsed.sourcesContent[0]).toBe(source);
 });
 
+test("Bun.build sees a file that was written after an earlier build listed the folder", async () => {
+  using dir = tempDir("build-sees-a-new-file", {
+    "first.js": `import "./held.js";`,
+    "held.js": ``,
+    "second.js": `import value from "./late.js"; console.log(value);`,
+  });
+  const listed = Promise.withResolvers<void>();
+  const written = Promise.withResolvers<void>();
+  const first = Bun.build({
+    entrypoints: [join(String(dir), "first.js")],
+    plugins: [
+      {
+        name: "hold",
+        setup(build) {
+          build.onLoad({ filter: /held\.js$/ }, async () => {
+            listed.resolve();
+            await written.promise;
+            return { contents: "", loader: "js" };
+          });
+        },
+      },
+    ],
+  });
+  await listed.promise;
+  writeFileSync(join(String(dir), "late.js"), "export default 1;");
+  // Queued while the first build still runs.
+  const second = Bun.build({ entrypoints: [join(String(dir), "second.js")], throw: false });
+  written.resolve();
+  expect((await first).success).toBe(true);
+  const { logs, success } = await second;
+  expect(logs.map(String)).toEqual([]);
+  expect(success).toBe(true);
+});
+
 // Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
 // own tasks, so any unrelated pool work extended the build by its full duration — a
 // node:fs read parked on a FIFO nobody writes made every later build hang forever.
@@ -2697,4 +2731,31 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
     `);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
   });
+});
+
+test("the hash in a chunk's name follows everything that the chunk reaches, through a chain and round a cycle", async () => {
+  const count = 24;
+  const files: Record<string, string> = { "apart.js": `export const value = "apart";` };
+  // The chain runs from the last file to the first, and the first closes the cycle.
+  const text = (i: number, value: number) =>
+    `export const value = ${value}; export const next = () => import("./m${i === 0 ? count - 1 : i - 1}.js");`;
+  for (let i = 0; i < count; i++) files[`m${i}.js`] = text(i, i);
+  using dir = tempDir("chunk-names-follow-what-is-reached", files);
+  const names = async () => {
+    const build = await Bun.build({
+      entrypoints: [`${dir}/m${count - 1}.js`, `${dir}/apart.js`],
+      splitting: true,
+      naming: "[name]-[hash].[ext]",
+    });
+    return build.outputs.map(output => output.path.replaceAll("\\", "/").split("/").pop()!).sort();
+  };
+  const first = await names();
+  const again = await names();
+  writeFileSync(`${dir}/m0.js`, text(0, -1));
+  const changed = await names();
+  // Besides the files in the cycle there are apart.js and a chunk of shared helpers; neither imports anything from the cycle.
+  expect(first).toHaveLength(count + 2);
+  expect(again).toEqual(first);
+  expect(first.filter(name => !changed.includes(name))).toHaveLength(count);
+  expect(changed).toContain(first.find(name => name.startsWith("apart-"))!);
 });

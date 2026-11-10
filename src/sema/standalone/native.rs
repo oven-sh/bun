@@ -213,8 +213,6 @@ mod fake_mimalloc {
     #[unsafe(no_mangle)]
     extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
-    extern "C" fn mi_option_set_default(_option: u32, _value: core::ffi::c_long) {}
-    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, 16, false) }
@@ -293,36 +291,6 @@ mod fake_mimalloc {
     ) -> *mut c_void {
         // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, align) }
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_malloc(size: usize) -> *mut c_void {
-        mi_malloc(size)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_zalloc(size: usize) -> *mut c_void {
-        mi_zalloc(size)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        mi_malloc_aligned(size, align)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        mi_zalloc_aligned(size, align)
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_must_realloc(p: *mut c_void, size: usize) -> *mut c_void {
-        // SAFETY: as for `mi_realloc`.
-        unsafe { mi_realloc(p, size) }
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_must_realloc_aligned(
-        p: *mut c_void,
-        size: usize,
-        align: usize,
-    ) -> *mut c_void {
-        // SAFETY: as for `mi_realloc_aligned`.
-        unsafe { mi_realloc_aligned(p, size, align) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
@@ -591,6 +559,22 @@ unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64)
         unsafe { out.add(word).write(marks) };
     }
 }
+/// For each byte, a bit for each kind of run that it goes on with: a name, blanks, the plain text of a string.
+static RUNS_OF_BYTE: [u8; 256] = {
+    let mut runs = [0; 256];
+    let mut c = 0u8;
+    loop {
+        let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        let is_blank = c == b'\t' || c == b' ';
+        let is_plain = c >= 0x20 && c < 0x80 && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
+        runs[c as usize] = is_name as u8 | (is_blank as u8) << 1 | (is_plain as u8) << 2;
+        if c == u8::MAX {
+            break;
+        }
+        c += 1;
+    }
+    runs
+};
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_scanner_run_stops(
@@ -605,19 +589,16 @@ unsafe extern "C" fn highway_scanner_run_stops(
     let planes =
         unsafe { core::slice::from_raw_parts_mut(out, 2 * plane_len + len.div_ceil(64) * 8) };
     for (block, chunk) in text.chunks(64).enumerate() {
-        let mut stops = [u64::MAX; 3];
+        let mut goes_on = [0u64; 3];
         for (i, &c) in chunk.iter().enumerate() {
-            let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
-            let is_blank = c == b'\t' || c == b' ';
-            let is_plain =
-                (0x20..0x80).contains(&c) && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
-            for (plane, is_in_run) in stops.iter_mut().zip([is_name, is_blank, is_plain]) {
-                *plane &= !(u64::from(is_in_run) << i);
-            }
+            let runs = u64::from(RUNS_OF_BYTE[c as usize]);
+            goes_on[0] |= (runs & 1) << i;
+            goes_on[1] |= (runs >> 1 & 1) << i;
+            goes_on[2] |= (runs >> 2) << i;
         }
-        for (plane, stops) in stops.iter().enumerate() {
+        for (plane, goes_on) in goes_on.iter().enumerate() {
             let at = plane * plane_len + block * 8;
-            planes[at..at + 8].copy_from_slice(&stops.to_le_bytes());
+            planes[at..at + 8].copy_from_slice(&(!goes_on).to_le_bytes());
         }
     }
 }
@@ -678,6 +659,21 @@ unsafe extern "C" fn highway_last_index_of_any_char(
         .iter()
         .rposition(|c| chars.contains(c))
         .unwrap_or(len)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_untidy_slash(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let path = unsafe { bytes(p, len) };
+    let is_untidy = |part: &[u8]| {
+        matches!(
+            part,
+            [b'/', ..] | [b'.'] | [b'.', b'/', ..] | [b'.', b'.'] | [b'.', b'.', b'/', ..]
+        )
+    };
+    (1..len)
+        .find(|&at| path[at - 1] == b'/' && is_untidy(&path[at..]))
+        .map_or(len, |at| at - 1)
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -1152,7 +1148,7 @@ extern "C" fn simdutf__base64_length_from_binary(len: usize, options: c_int) -> 
 }
 /// Answers simdutf's INVALID_BASE64_CHARACTER: `bun_base64::decode` then uses its own decoder.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__base64_decode_from_binary(
+extern "C" fn simdutf__base64_decode_from_binary(
     _p: *const u8,
     _len: usize,
     _out: *mut u8,
@@ -1231,6 +1227,10 @@ extern "C" fn Bun__StackCheck__initialize() {
 #[unsafe(no_mangle)]
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
+}
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ramSize() -> usize {
+    8 << 30
 }
 #[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]

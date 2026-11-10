@@ -16,12 +16,23 @@ impl Crypto {
         array: JsLocal<'a>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
-        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
-        // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
-        // all pass `as_array_buffer` but must still raise TypeMismatchError.
-        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
+        // Web IDL's conversion to an ArrayBufferView, except that a view on shared or resizable memory is taken.
+        let view = array
+            .to_js()
+            .as_array_buffer(global)
+            .filter(|view| view.typed_array_type != JSType::ArrayBuffer);
+        if view.is_none() {
+            return Err(global
+                .throw_invalid_arguments(format_args!(
+                    "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is not an ArrayBufferView."
+                ))
+                .into());
+        }
+
+        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only integer-typed views.
+        let array_buffer = view.filter(|view| {
             matches!(
-                array.to_js().js_type(),
+                view.typed_array_type,
                 JSType::Int8Array
                     | JSType::Uint8Array
                     | JSType::Uint8ClampedArray
@@ -42,7 +53,7 @@ impl Crypto {
                 .into());
         };
 
-        random_data(global, array_buffer.byte_slice_mut());
+        bun_boringssl_sys::rand_bytes(array_buffer.byte_slice_mut());
 
         Ok(array)
     }
@@ -83,25 +94,6 @@ pub(crate) fn timing_safe_equal<'a>(
     }
 
     Ok(bun_boringssl::c::constant_time_eq(buf1, buf2))
-}
-
-fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
-    const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
-    match slice.len() {
-        0 => {}
-        // 512 bytes or less we reuse from the same cache as UUID generation.
-        1..=ENTROPY_CACHE_FAST_PATH_MAX => {
-            let src = global
-                .bun_vm()
-                .as_mut()
-                .rare_data()
-                .entropy_slice(slice.len());
-            slice[..src.len()].copy_from_slice(src);
-        }
-        _ => {
-            bun_boringssl_sys::rand_bytes(slice);
-        }
-    }
 }
 
 fn encoding_from_label<'a>(heap: &JsHeap<'a>, label: &[u8]) -> bindgen::Result<'a, Encoding> {

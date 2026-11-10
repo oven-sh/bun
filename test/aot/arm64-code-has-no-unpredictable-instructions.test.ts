@@ -4,11 +4,12 @@
 // rightly on the machine that tests it and die on the next. This test reads every instruction of the functions and stubs of
 // an executable and looks for such encodings. The back end once made `str x0, [x0], #152` out of "store the address of the
 // end of a buffer at its start", which is how a text that grows in the frame of its function begins.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const programs = [
   "strings/string-builder-in-the-frame.ts",
@@ -106,7 +107,7 @@ test.skipIf(!!unsupported || process.arch !== "arm64").each(programs)(
   "no instruction of %s is left to the core",
   async name => {
     await slot(async () => {
-      const program = join(import.meta.dir, "programs", name);
+      const program = join(import.meta.dir, "parallel", name);
       using dir = tempDir("aot-arm64-unpredictable", {});
       const folder = String(dir);
       const executable = join(folder, isWindows ? "entry.exe" : "entry");

@@ -6,6 +6,10 @@ const served = 'const server = Bun.serve({ port: 0, fetch: () => new Response("[
 
 const internals = 'import { privateGlobalFunctions } from "bun:internal-for-testing";';
 
+// The form makes a File of the Blob at the first read.
+const form = 'const form = new FormData();\nform.append("text", "a");\nform.append("file", new Blob(["bytes"]));';
+const cookies = 'const cookies = new Bun.CookieMap("first=1");\ncookies.set("second", "2");\ncookies.delete("first");';
+
 /** What a handler of a server is handed. `more` are options of the server, `asked` is what the client does with `server`. */
 const handedToServer = (more: string, asked: string, start = "Bun.serve") => [
   "const { promise, resolve } = Promise.withResolvers();",
@@ -42,6 +46,17 @@ const handedToSocket = (side: "listen" | "connect", handler: string, binaryType 
     "listener.stop(true);",
     "handed",
   ].join("\n");
+/** What the `data` handler of a datagram socket is handed. */
+const handedDatagram = (binaryType: string) =>
+  [
+    "const { promise, resolve } = Promise.withResolvers();",
+    `const handlers = { data: (socket, data) => resolve(data) };`,
+    `const socket = await Bun.udpSocket({ hostname: "127.0.0.1", binaryType: "${binaryType}", socket: handlers });`,
+    'socket.send("a", socket.port, "127.0.0.1");',
+    "const handed = await promise;",
+    "socket.close();",
+    "handed",
+  ].join("\n");
 const opened = 'open(socket) {\n  socket.write("a");\n  resolve(socket);\n}';
 const told = "data: (socket, data) => resolve(data)";
 
@@ -49,8 +64,58 @@ const told = "data: (socket, data) => resolve(data)";
 const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
+const stats = (bigint: boolean) => `import { statSync } from "node:fs";\nconst stats = statSync(".", { bigint: ${bigint} });`;
+const observed = [
+  "const { promise, resolve } = Promise.withResolvers();",
+  "const observer = new PerformanceObserver(list => (observer.disconnect(), resolve(list)));",
+  'observer.observe({ entryTypes: ["mark"] });',
+  'performance.mark("fresh-results");',
+  "const list = await promise;",
+].join("\n");
+const ofJSC = (name: string, operands = "") => [`import { ${name} } from "bun:jsc";\n${name}(${operands})`];
+
 export const calls: Record<string, string[]> = {
-  "crypto > Crypto": ["crypto"],
+  // The rows under the names of the classes are the constructors'. What native code makes is judged under the methods of the binding, as node:fs hands it on.
+  "%Stats%": [`${stats(false)}\nnew stats.constructor(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)`],
+  "%BigIntStats%": [`${stats(true)}\nnew stats.constructor(1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n, 14n)`],
+  "%NodeJSFS%.prototype.statSync": [`${stats(false)}\nstats`, `${stats(true)}\nstats`],
+  "%NodeJSFS%.prototype.lstatSync": ['import { lstatSync } from "node:fs";\nlstatSync(".")', 'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })'],
+  "%NodeJSFS%.prototype.fstatSync": ['import { fstatSync } from "node:fs";\nfstatSync(0)'],
+  "%NodeJSFS%.prototype.readdirSync": ['import { readdirSync } from "node:fs";\nreaddirSync("/")', 'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })'],
+  "%NodeJSFS%.prototype.readFileSync": ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
+  "%NodeJSFS%.prototype.realpathSync": ['import { realpathSync } from "node:fs";\nrealpathSync("/", "buffer")'],
+  ...Object.fromEntries(
+    ["atime", "birthtime", "ctime", "mtime"].flatMap(name => [
+      [`%Stats%.prototype.${name} > Date`, [`${stats(false)}\nconst date = stats.${name};\ndate`]],
+      [`%BigIntStats%.prototype.${name} > Date`, [`${stats(true)}\nconst date = stats.${name};\ndate`]],
+    ]),
+  ),
+  "%Dirent%": ['import { Dirent } from "node:fs";\nnew Dirent("name", 1, "/path")'],
+  "PerformanceObserver > PerformanceObserverEntryList": [`${observed}\nlist`],
+  "PerformanceObserverEntryList.prototype.getEntries": [`${observed}\nlist.getEntries()`],
+  "PerformanceObserverEntryList.prototype.getEntriesByName": [`${observed}\nlist.getEntriesByName("fresh-results")`],
+  "PerformanceObserverEntryList.prototype.getEntriesByType": [`${observed}\nlist.getEntriesByType("mark")`],
+  "PerformanceObserver.prototype.takeRecords": ['const observer = new PerformanceObserver(() => {});\nobserver.observe({ entryTypes: ["mark"] });\nobserver.takeRecords()'],
+  // A mark and a measure have a toJSON() of their own.
+  "PerformanceEntry.prototype.toJSON": ['PerformanceEntry.prototype.toJSON.call(performance.mark("fresh-results"))'],
+  "%IntlSegmentIterator%.prototype.next > ": ['const step = new Intl.Segmenter("en").segment("ab")[Symbol.iterator]().next();\nconst value = step.value;\nvalue'],
+  "%Subprocess%.prototype.stdio": ['const child = Bun.spawn(["true"]);\nawait child.exited;\nchild.stdio'],
+  "%ResourceUsage%.prototype.messages": ['const usage = Bun.spawnSync(["true"]).resourceUsage;\nusage.messages'],
+  "%Histogram%.prototype.toJSON": ['import { createHistogram } from "node:perf_hooks";\ncreateHistogram().toJSON()'],
+  "%AttributeIterator%.prototype.next": [
+    'let step;\nnew HTMLRewriter().on("p", { element: element => void (step = element.attributes.next()) }).transform(\'<p a="b"></p>\');\nstep',
+  ],
+  "node:module._nodeModulePaths": ['import { _nodeModulePaths } from "node:module";\n_nodeModulePaths("/a/b")'],
+  "bun:jsc.generateHeapSnapshotForDebugging": ofJSC("generateHeapSnapshotForDebugging"),
+  "bun:jsc.heapStats": ofJSC("heapStats"),
+  "bun:jsc.memoryUsage": ofJSC("memoryUsage"),
+  "bun:jsc.serialize": ofJSC("serialize", "{ a: 1 }"),
+  "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
+  "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
+  "Bun.dns.getServers": ["Bun.dns.getServers()"],
+  "Performance.prototype.timing > PerformanceTiming": ["const timing = performance.timing;\ntiming"],
+  "Performance.prototype.toJSON > PerformanceTiming": ["const timing = performance.toJSON().timing;\ntiming"],
+  "PerformanceTiming.prototype.toJSON": ["performance.timing.toJSON()"],
   "Bun.serve > ServerWebSocket": [
     handedToServer(`${upgrades}, websocket: { open: resolve, message() {} }`, dials(closes)).join("\n"),
   ],
@@ -108,6 +173,7 @@ export const calls: Record<string, string[]> = {
   "Bun.stderr > Blob": ["Bun.stderr"],
   "Bun.stdin > Blob": ["Bun.stdin"],
   "Bun.stdout > Blob": ["Bun.stdout"],
+  "Bun.argv > Array": ["Bun.argv"],
   "process.argv > Array": ["process.argv"],
   "process.execArgv > Array": ["process.execArgv"],
   "AbortController.prototype.signal > AbortSignal": ["new AbortController().signal"],
@@ -120,11 +186,49 @@ export const calls: Record<string, string[]> = {
     'new Response("x").headers',
     'Response.json(1, { headers: { first: "1" } }).headers',
   ],
+  "CompressionStream.prototype.readable > ReadableStream": ['new CompressionStream("gzip").readable'],
+  "CompressionStream.prototype.writable > WritableStream": ['new CompressionStream("gzip").writable'],
+  "DecompressionStream.prototype.readable > ReadableStream": ['new DecompressionStream("gzip").readable'],
+  "DecompressionStream.prototype.writable > WritableStream": ['new DecompressionStream("gzip").writable'],
+  "TextDecoderStream.prototype.readable > ReadableStream": ["new TextDecoderStream().readable"],
+  "TextDecoderStream.prototype.writable > WritableStream": ["new TextDecoderStream().writable"],
   "TextEncoderStream.prototype.readable > ReadableStream": ["new TextEncoderStream().readable"],
   "TextEncoderStream.prototype.writable > WritableStream": ["new TextEncoderStream().writable"],
   "TransformStream.prototype.readable > ReadableStream": ["new TransformStream().readable"],
   "TransformStream.prototype.writable > WritableStream": ["new TransformStream().writable"],
+  "WritableStream.prototype.getWriter": ["new WritableStream().getWriter()"],
   "URL.prototype.searchParams > URLSearchParams": ['new URL("https://example.com/a?first=1").searchParams'],
+  "FormData.prototype.entries": [`${form}\nform.entries()`],
+  "FormData.prototype.keys": [`${form}\nform.keys()`],
+  "FormData.prototype.values": [`${form}\nform.values()`],
+  "FormData.prototype.getAll": [`${form}\nform.getAll("text")`, `${form}\nform.getAll("file")`, `${form}\nform.getAll("none")`],
+  "FormData.prototype.toJSON": [`${form}\nform.toJSON()`, "new FormData().toJSON()"],
+  "FormData.prototype.get > Blob": [`${form}\nform.get("file")`],
+  "FormData.prototype.getAll > Blob": [`${form}\nform.getAll("file")[0]`],
+  "FormData.prototype.toJSON > Blob": [`${form}\nform.toJSON().file`],
+  "FormData.prototype.forEach > Blob": [`${form}\nlet handed;\nform.forEach(value => void (handed = value));\nhanded`],
+  "%FormDataIterator%.prototype.next > Blob": [`${form}\nArray.from(form.values())[1]`],
+  "Bun.CookieMap": [
+    "new Bun.CookieMap()",
+    'new Bun.CookieMap("first=1; second=2")',
+    'new Bun.CookieMap([["first", "1"]])',
+    'new Bun.CookieMap({ first: "1" })',
+  ],
+  "Bun.CookieMap.prototype.entries": [`${cookies}\ncookies.entries()`],
+  "Bun.CookieMap.prototype.keys": [`${cookies}\ncookies.keys()`],
+  "Bun.CookieMap.prototype.values": [`${cookies}\ncookies.values()`],
+  "Bun.CookieMap.prototype.toJSON": [`${cookies}\ncookies.toJSON()`, "new Bun.CookieMap().toJSON()"],
+  "Bun.CookieMap.prototype.toSetCookieHeaders": [
+    `${cookies}\ncookies.toSetCookieHeaders()`,
+    "new Bun.CookieMap().toSetCookieHeaders()",
+  ],
+  "%BunRequest%.prototype.cookies > BunCookieMap": [
+    [...handedToServer(routeHandler, get).slice(0, -1), "handed.cookies"].join("\n"),
+  ],
+  "WebAssembly.instantiate": [
+    "WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))",
+    "WebAssembly.instantiate(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])))",
+  ],
   "WebAssembly.Memory.prototype.buffer > ArrayBuffer SharedArrayBuffer": [
     "new WebAssembly.Memory({ initial: 1 }).buffer",
     "new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }).buffer",
@@ -231,6 +335,9 @@ export const calls: Record<string, string[]> = {
   ],
   "%IntlSegments%.prototype.containing": ['new Intl.Segmenter("en").segment("ab").containing(0)'],
   "Bun.dns.getCacheStats": ["Bun.dns.getCacheStats()"],
+  "Bun.FFI.ptr": ["Bun.FFI.ptr({})", "Bun.FFI.ptr(new Uint8Array(0))"],
+  "Bun.FFI.toArrayBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toArrayBuffer(Bun.FFI.ptr(bytes), 0, 8)"],
+  "Bun.FFI.toBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toBuffer(Bun.FFI.ptr(bytes), 0, 8)"],
   "WebAssembly.Module.exports": [
     "WebAssembly.Module.exports(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11])))",
   ],
@@ -242,6 +349,7 @@ export const calls: Record<string, string[]> = {
   ],
   "Intl.RelativeTimeFormat.prototype.formatToParts": ['new Intl.RelativeTimeFormat("en").formatToParts(1, "day")'],
   "native:Bindgen:node_os.bind.ts:loadavg": ['import { loadavg } from "node:os";\nloadavg()'],
+  "native:Bindgen:node_util_binding.bind.ts:parseEnv": ['import { parseEnv } from "node:util";\nparseEnv("FIRST=1\\nSECOND=two")'],
   "native:Bindgen:node_path.bind.ts:parsePosix": ['import { posix } from "node:path";\nposix.parse("/a/b.c")'],
   "native:Bindgen:node_path.bind.ts:parseWin32": ['import { win32 } from "node:path";\nwin32.parse("C:\\\\a\\\\b.c")'],
   "native:Bindgen:socket_body.bind.ts:createSocketPair": [
@@ -250,12 +358,14 @@ export const calls: Record<string, string[]> = {
   "%CrashHandlerJscCrashHandler%.getFeatureData": [
     'import { crash_handler } from "bun:internal-for-testing";\ncrash_handler.getFeatureData()',
   ],
-  "%NodeCryptoBindingCrypto%.getHashes": ['import { getHashes } from "node:crypto";\ngetHashes()'],
   "%Generator%.prototype.throw": [
     "function* numbers() {\n  try {\n    yield 1;\n  } catch {\n    yield 2;\n  }\n}\nconst generator = numbers();\ngenerator.next();\ngenerator.throw(1)",
   ],
   "%BunRequest%.prototype.clone": [
     'let asked;\nconst server = Bun.serve({\n  port: 0,\n  routes: {\n    "/:name": request => {\n      asked = request.clone();\n      return new Response("x");\n    },\n  },\n});\nawait fetch(new URL("/a", server.url));\nawait server.stop(true);\nasked',
+  ],
+  "%BunRequest%.prototype.clone > BunCookieMap": [
+    'let asked;\nconst server = Bun.serve({\n  port: 0,\n  routes: {\n    "/:name": request => {\n      request.cookies.set("first", "1");\n      asked = request.clone().cookies;\n      return new Response("x");\n    },\n  },\n});\nawait fetch(new URL("/a", server.url));\nawait server.stop(true);\nasked',
   ],
   "%BlockList%": ['import { BlockList } from "node:net";\nnew BlockList()'],
   "%SocketAddress%": [
@@ -269,14 +379,16 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
-  "%TypedArray%": ["new Uint8Array(2)"],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
   HTMLRewriter: ["new HTMLRewriter()"],
   Iterator: ["new (class extends Iterator {})()"],
-  ShadowRealm: ["new ShadowRealm()"],
   URL: ['new URL("https://user:secret@example.com:8080/a/b?first=1#part")', 'new URL("/a", "https://example.com")'],
+  URLPattern: ['new URLPattern({ pathname: "/a/:b" })', 'new URLPattern("/a/*", "https://example.com")'],
+  "Error.prepareStackTrace > Array": [
+    'let handed;\nError.prepareStackTrace = (error, sites) => ((handed = sites), "");\nvoid new Error("x").stack;\nError.prepareStackTrace = undefined;\nhanded',
+  ],
   Worker: [
     'const worker = new Worker(URL.createObjectURL(new Blob([""], { type: "text/javascript" })));\nworker.unref();\nworker.terminate();\nworker',
   ],
@@ -328,6 +440,7 @@ export const calls: Record<string, string[]> = {
     'Bun.spawnSync({ cmd: ["echo", "aaaa"], maxBuffer: 1 })',
   ],
   "Bun.udpSocket": ["const asked = Bun.udpSocket({});\n(await asked).close();\nasked"],
+  "Bun.udpSocket > ArrayBuffer Buffer Uint8Array": ["buffer", "arraybuffer", "uint8array"].map(handedDatagram),
   "Bun.write": [
     `${temporary}\nBun.write(folder + "/a", "a")`,
     `${temporary}\nBun.write(Bun.file(folder + "/b"), new Response("b"))`,
@@ -414,9 +527,9 @@ export const families: { rows: RegExp; callee(path: string, mode: string): strin
   },
 ];
 
-/** Objects of the table whose link upwards a library module changes when it is loaded, which the compiler sees it do. */
-export const linkedByLibraryCode: Record<string, string> = {
-  "%EventEmitter%.prototype": "node:events puts it below its own EventEmitter.prototype",
+/** Names that a library module puts on an object of the table when it is loaded, which the compiler sees it do. */
+export const addedByLibraryCode: Record<string, string[]> = {
+  "%NativeZlib%.prototype": ["jsref"],
 };
 
 const ofTheEngine = "a private function of the engine's own library code: no other text can name it";
@@ -430,6 +543,22 @@ const alwaysThrows = "the constructor throws whatever it is given";
 /** Rows that are not called, by what their paths look like. */
 export const familiesNotCalled: { rows: RegExp; why: string }[] = [
   {
+    rows: /^%Expect%\.prototype\.|^bun:test\./,
+    why: "a matcher and a hook of bun:test answer in a test run alone, and this process is none",
+  },
+  {
+    rows: /^%NodeJSFS%\.prototype\./,
+    why: "only internal/fs/binding holds the object, and node:fs hands on what its methods answer: %Stats%, %BigIntStats% and %Dirent% are judged as node:fs hands them out",
+  },
+  {
+    rows: /^(native:Bindgen:(node_net_binding|socket_body)\.bind\.ts:|%NativeFunctions%\.(Node_net_binding|Socket_body)BindTs)/,
+    why: "only node:net and node:tls hold it, and hand it to nobody",
+  },
+  {
+    rows: /^(native:Bindgen:node_assert_binding\.bind\.ts:|%NativeFunctions%\.Node_assert_bindingBindTs)/,
+    why: "only internal/assert/myers_diff holds it, and hands it to nobody",
+  },
+  {
     rows: /_test\.bind\.ts:|^%NativeFunctions%\.[A-Za-z0-9_]+_testBindTs/,
     why: "it exists for the tests of the generator of bindings, and only a build with assertions has it",
   },
@@ -439,8 +568,12 @@ export const notCalled: Record<string, string> = {
   "%Expect%": alwaysThrows,
   "%ExpectTypeOf%": alwaysThrows,
   "%ServerWebSocket%": alwaysThrows,
+  "%TypedArray%": alwaysThrows,
   "%LinkTimeConstant:arrayFromFastWithoutMapFn%": ofTheEngine,
   "%LinkTimeConstant:asyncFromSyncIteratorCreate%": ofTheEngine,
+  "%AsyncFromSyncIterator%.prototype.next": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
+  "%AsyncFromSyncIterator%.prototype.return": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
+  "%AsyncFromSyncIterator%.prototype.throw": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
   "%LinkTimeConstant:iteratorHelperCreate%": ofTheEngine,
   "%LinkTimeConstant:makeTypeError%": ofTheEngine,
   "%LinkTimeConstant:newRejectedPromise%": ofTheEngine,
@@ -449,17 +582,28 @@ export const notCalled: Record<string, string> = {
   "%LinkTimeConstant:promiseResolve%": ofTheEngine,
   "%LinkTimeConstant:typedArrayFromFast%": ofTheEngine,
   "%LinkTimeConstant:wrapForValidIteratorCreate%": ofTheEngine,
-  "%CompilerHelpers%.TextEncoder_prototype_encodeInto_inRanges": ofTheCompiler,
   "%CompilerHelpers%.arrayFromLength": ofTheCompiler,
+  "%CompilerHelpers%.arrayFromList": ofTheCompiler,
+  "%CompilerHelpers%.takeFromIterable": ofTheCompiler,
+  "%PrivateGlobals%.esmRegistryEvaluatedKeys": "a private global of Bun's own library code: no other text can name it",
+  "%PrivateGlobals%.requireMap > Map": "a private global of Bun's own library code: no other text can name it",
+  "bun:jsc.bytecodeOrderStats": "it answers only where the engine was started to record the order of bytecode",
+  "bun:jsc.samplingProfilerStackTraces": "it answers only while the sampling profiler runs",
+  "node:module.enableCompileCache": "it lays a folder for a cache into the user's temporary files",
+  "PerformanceServerTiming.prototype.toJSON": "no entry of this process has a server's timing: only a fetched resource has",
   "%CompilerHelpers%.arrayOfUndefined": ofTheCompiler,
   "%CompilerHelpers%.filledArray": ofTheCompiler,
-  "%CompilerHelpers%.jsonSourceOfBody": ofTheCompiler,
+  "%CompilerHelpers%.importRejectedByLoader": ofTheCompiler,
   "%CompilerHelpers%.mappedFilledArray": ofTheCompiler,
   "%CompilerHelpers%.newResponseFromParts": ofTheCompiler,
+  "%CompilerHelpers%.newResponseOfJSONFromParts": ofTheCompiler,
   "%CompilerHelpers%.ownEntriesFlat": ofTheCompiler,
   "%CompilerHelpers%.plainQueryEntries": ofTheCompiler,
   "%CompilerHelpers%.plainQueryKeys": ofTheCompiler,
   "%CompilerHelpers%.plainQueryValues": ofTheCompiler,
+  "native:Bindgen:ffi.bind.ts:linkLibrary": ofOneModule("bun:ffi"),
+  "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
+  "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),
@@ -468,6 +612,8 @@ export const notCalled: Record<string, string> = {
   "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionCallOwnFunctionsWithoutParameters": ofOneModule(
     "ahead-of-time/internal/primordials",
   ),
+  "native:NewCppFunction:BunProcess.cpp:Process_functionWriteToStandardSink":
+    "native code hands it to a function of builtins/stdio, which hands it to nobody",
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",

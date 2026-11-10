@@ -17,6 +17,14 @@ impl TypeIdentity {
     ) -> TypeIdentity {
         TypeIdentity(description::describe_untyped_members(members))
     }
+
+    pub fn in_file(self, file: FileId) -> TypeIdentity {
+        let TypeIdentity([first, second]) = self;
+        TypeIdentity([
+            first,
+            ((u64::from(file.0) + 1) << 32) | (second & 0xFFFF_FFFF),
+        ])
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]

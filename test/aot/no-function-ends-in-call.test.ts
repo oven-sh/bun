@@ -4,15 +4,24 @@
 // is then answered wrongly. The compiler lays something behind such a call. This test reads the machine code of an executable
 // and looks for a function that ends in a call all the same. One call may stand last: the poll that a failed stack check in the
 // prologue branches to. It is told its function by the address of the call itself and returns to the prologue, never behind itself.
-import { expect, test } from "bun:test";
+// There are two such polls: one for a function that may collect, one for a function that does not.
+import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 // Methods of many lengths that are taken off their objects. Each has an entry that tests `this`, throws by a call if it is not
 // an object of the class, and goes on into the method, which is laid next: the shape that once ended in a call.
-const program = join(import.meta.dir, "programs", "typed-objects", "detached-methods-many-lengths.ts");
+const detachedMethods = join(import.meta.dir, "parallel", "typed-objects", "detached-methods-many-lengths.ts");
+// The sort of the library has small functions that do not collect. One of them has its poll last, with the next function right behind it:
+// this test took that poll for a call like any other, once a program that it builds held the sort.
+const sorts = `const values: number[] = [5, 3, 9, 1, 7, 2, 8];
+values.sort((a, b) => a - b);
+console.log(values.join());
+`;
+const pollsAtPrologue = new Set(["PollAtPrologue", "PollAtPrologueWithoutCollecting"]);
 
 function codeOf(executable: Buffer) {
   const magic = Buffer.from("BUNAOT01", "latin1");
@@ -27,12 +36,13 @@ function codeOf(executable: Buffer) {
   throw new Error("the executable holds no image of compiled code");
 }
 
-test.skipIf(!!unsupported)(
-  "no compiled function ends in a call with the next function right behind it",
-  async () => {
+test.skipIf(!!unsupported).each(["methods taken off their objects", "a sort by a function"])(
+  "no compiled function ends in a call with the next function right behind it: %s",
+  async name => {
     await slot(async () => {
-      using dir = tempDir("aot-ends-in-a-call", {});
+      using dir = tempDir("aot-ends-in-a-call", { "sorts.ts": sorts });
       const folder = String(dir);
+      const program = name === "a sort by a function" ? join(folder, "sorts.ts") : detachedMethods;
       const executable = join(folder, isWindows ? "entry.exe" : "entry");
       const mapPath = join(folder, "entry.map");
       built(
@@ -56,7 +66,7 @@ test.skipIf(!!unsupported)(
         const fields = line.split("\t");
         if (fields[0] === "F") functions.push({ start: Number(fields[2]), end: Number(fields[2]) + Number(fields[3]) });
         else if (fields[0] === "C") copiesOfStubs.push(Number(fields[1]));
-        else if (fields[0] === "T" && fields[2] !== "PollAtPrologue") stubs.push(Number(fields[1]));
+        else if (fields[0] === "T" && !pollsAtPrologue.has(fields[2])) stubs.push(Number(fields[1]));
         else if (fields[0] === "U") entries.add(Number(fields[1]));
       }
       for (const { start } of functions) entries.add(start);
@@ -73,7 +83,7 @@ test.skipIf(!!unsupported)(
               const word = code.readUInt32LE(end - 4);
               return word >>> 26 === 0x25 && entries.has(end - 4 + ((word << 6) >> 6) * 4);
             };
-      expect(functions.length).toBeGreaterThan(32);
+      expect(functions.length).toBeGreaterThan(24);
       expect(stubs.length).toBeGreaterThan(100);
       expect(functions.filter(f => starts.has(f.end) && endsInCall(f))).toEqual([]);
     });

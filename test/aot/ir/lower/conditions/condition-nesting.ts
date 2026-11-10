@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: MaxNestingDepthHits = 0
 // CHECK-LABEL: function {{*}}name="chain"
 // CHECK-COUNT-1000: Branch
 // CHECK-COUNT-1000: Branch

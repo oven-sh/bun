@@ -3,15 +3,15 @@ use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolve
 use super::{BuiltinPath, ModuleExport, SourceDialect};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::table::{
-    self, BuiltinId, BuiltinName, ExportLookup, ModuleFlags, Mutability, Platforms, Prototype,
-    RuntimeModule,
+    self, BuiltinId, BuiltinName, ExportLookup, ModuleFlags, Mutability, Platforms, RuntimeModule,
 };
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::Decl;
+use bun_sema::bind::{Decl, Parent};
 use bun_sema::hir::{ExprId, ExprKind, Flags, ImportId};
 use bun_sema::import_sites::ImportSiteKind;
+use smallvec::SmallVec;
 
-fn has_source(module: RuntimeModule) -> bool {
+pub(super) fn has_source(module: RuntimeModule) -> bool {
     table::module_data(module)
         .flags
         .contains(ModuleFlags::HAS_SOURCE)
@@ -87,7 +87,8 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::ExportStar(_) | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
                 | ImportSiteKind::ImportMetaRequire(_) | ImportSiteKind::ImportMetaResolve(_)
-                | ImportSiteKind::GetBuiltinModule(_) => {}
+                | ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_)
+                | ImportSiteKind::ImportByTestRunner(_) | ImportSiteKind::RequireByTestRunner(_) => {}
             }
         }
         if !table::exists_on(BuiltinId::BunBundle, input.platform) {
@@ -116,9 +117,13 @@ impl Resolver<'_, '_> {
             ExportLookup::Unlisted | ExportLookup::HeldByNamespace => return None,
         };
         if found == object {
+            let is_replaced = self.input.replaced.binary_search(&(object as u32)).is_ok();
             return Some(BuiltinPath {
                 id: object,
-                mutability: Mutability::AlwaysLocked,
+                mutability: match is_replaced {
+                    true => Mutability::ConstantUnlessWritten,
+                    false => Mutability::AlwaysLocked,
+                },
             });
         }
         self.path_of_member(object, Mutability::AlwaysLocked, found)
@@ -151,8 +156,7 @@ impl Resolver<'_, '_> {
         }
         self.aliases.insert(symbol, AliasSource::Known(value));
         match value.kind {
-            HolderKind::ModuleNamespace => self.output.mentioned.push(value.path.id),
-            // `finish` mentions the path of every symbol it publishes.
+            HolderKind::ModuleNamespace => self.mention(value.path.id),
             HolderKind::Object => {}
         }
         if self.is_exported(symbol)
@@ -179,11 +183,45 @@ impl Resolver<'_, '_> {
                 mutability: Mutability::ConstantUnlessWritten,
             }));
         }
-        if let Some(prototype) = self.find_prototype_asked_for(expr) {
-            return ExprState::Held(ResolvedValue::object(BuiltinPath {
-                id: prototype,
-                mutability: Mutability::ConstantUnlessWritten,
-            }));
+        let callee = match input.hir[expr].kind {
+            ExprKind::Call(call) => Some(input.hir.skip_type_assertions(input.hir[call].callee)),
+            _ => None,
+        };
+        let function = callee.and_then(|callee| mentioned_id(self.state(callee)));
+        if let (Some(callee), Some(function)) = (callee, function) {
+            if let Some(runner) = self.find_runner_that_stub_answers(callee, function) {
+                let runner = ResolvedValue::object(BuiltinPath {
+                    id: runner,
+                    mutability: Mutability::ConstantUnlessWritten,
+                });
+                return ExprState::Builtin(runner.with_side_effects());
+            }
+            if let BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf =
+                table::canonical_id(function)
+                && let ExprKind::Call(call) = input.hir[expr].kind
+                && let Some(operand) = input.hir.ids(input.hir[call].args).next()
+                && let Some(holder) = self
+                    .find_holder_that_proto_of_value_written_here_names(operand)
+                    .or_else(|| self.find_holder_above_function_written_here(operand))
+            {
+                return ExprState::Held(holder);
+            }
+            if table::canonical_id(function) == BuiltinId::ReflectGet
+                && let ExprKind::Call(call) = input.hir[expr].kind
+                && let [object, key] = input
+                    .hir
+                    .ids(input.hir[call].args)
+                    .collect::<SmallVec<[ExprId; 4]>>()[..]
+                && self.is_key_of_what_stands_above(key)
+                && let Some(holder) =
+                    self.find_holder_that_proto_of_value_written_here_names(object)
+            {
+                return ExprState::Held(holder);
+            }
+            if table::canonical_id(function) == table::canonical_id(BuiltinId::BunJest) {
+                let runner = imported_namespace_value(RuntimeModule::BunTest);
+                return ExprState::Held(runner.with_side_effects());
+            }
         }
         if input.dialect == SourceDialect::Runtime {
             return self.compute_native_call_state(expr);
@@ -191,27 +229,39 @@ impl Resolver<'_, '_> {
         ExprState::Unresolved
     }
 
-    fn find_prototype_asked_for(&self, expr: ExprId) -> Option<BuiltinId> {
-        let hir = self.input.hir;
-        let ExprKind::Call(call) = hir[expr].kind else {
-            return None;
-        };
-        let callee = mentioned_id(self.state(hir.skip_type_assertions(hir[call].callee)))?;
-        let asks_for_prototype = matches!(
-            table::canonical_id(callee),
-            BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf
-        );
-        let operand = hir
-            .ids(hir[call].args)
-            .next()
-            .filter(|_| asks_for_prototype)?;
-        let object = self
-            .value_of(operand)
-            .or_else(|| self.held_value_of(operand))?;
-        match table::entry(table::canonical_id(object.path.id)).prototype {
-            Prototype::Builtin(prototype) => Some(prototype),
-            Prototype::Unknown | Prototype::Null => None,
+    pub(super) fn compute_state_of_awaited_import(&self, promise: ExprId) -> ExprState {
+        let call = self.input.hir.skip_type_assertions(promise);
+        let module = self
+            .input
+            .targets
+            .module_at(ImportSiteKind::ImportCall(call));
+        match module.filter(|&module| !has_source(module)) {
+            Some(module) => {
+                ExprState::of_value(Some(imported_namespace_value(module).with_side_effects()))
+            }
+            None => ExprState::Unresolved,
         }
+    }
+
+    pub(super) fn is_import_awaited_at_once(&self, call: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut promise = call;
+        while let Parent::Expr(parent) = bound.parent_of_expr(promise) {
+            if hir.type_assertion_operand(parent) != Some(promise) {
+                return matches!(hir[parent].kind, ExprKind::Await(_));
+            }
+            promise = parent;
+        }
+        false
+    }
+
+    fn find_runner_that_stub_answers(&self, callee: ExprId, stub: BuiltinId) -> Option<BuiltinId> {
+        if !table::stubs_global(stub) {
+            return None;
+        }
+        let (receiver, _) = self.input.hir.member_key(callee)?;
+        let receiver = table::canonical_id(self.value_of(receiver)?.path.id);
+        (table::entry(table::canonical_id(stub)).holder == Some(receiver)).then_some(receiver)
     }
 
     #[rustfmt::skip]
@@ -219,12 +269,13 @@ impl Resolver<'_, '_> {
         let input = self.input;
         for (site, module) in input.targets.iter() {
             let namespace = table::namespace_of(module);
-            self.output.mentioned.push(namespace);
+            self.mention(namespace);
             self.output.loaded.push(namespace);
             if has_source(module) {
                 continue;
             }
             match site {
+                ImportSiteKind::ImportCall(call) if self.is_import_awaited_at_once(call) => {}
                 ImportSiteKind::ImportCall(_) | ImportSiteKind::ExportStar(_) => {
                     self.expose(table::canonical_id(namespace));
                 }
@@ -235,7 +286,7 @@ impl Resolver<'_, '_> {
                             continue;
                         }
                         if let Some(path) = self.find_named_export(namespace, item.local) {
-                            self.output.mentioned.push(path.id);
+                            self.mention(path.id);
                             self.expose(path.id);
                         }
                     }
@@ -244,7 +295,9 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::JsxPackage | ImportSiteKind::Import(_)
                 | ImportSiteKind::ImportEquals(_) | ImportSiteKind::Require(_)
                 | ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaRequire(_)
-                | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_) => {}
+                | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_)
+                | ImportSiteKind::MockModule(_) | ImportSiteKind::ImportByTestRunner(_)
+                | ImportSiteKind::RequireByTestRunner(_) => {}
             }
         }
     }

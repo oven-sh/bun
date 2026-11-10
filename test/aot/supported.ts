@@ -1,10 +1,24 @@
 // `test`, `describe` and `beforeAll` of bun:test for a file whose tests all need `--aot`. Where the Bun under test refuses the
-// flag (run-programs.ts asks it, and says so on stderr) every test is skipped, whatever is chained to it, and `beforeAll` does
+// flag (harness/compiler.ts asks it, and says so on stderr) every test is skipped, whatever is chained to it, and `beforeAll` does
 // nothing.
-import { beforeAll as beforeAllAnywhere, describe as describeAnywhere, test as testAnywhere } from "bun:test";
-import { unsupported } from "./run-programs";
+import { describe as describeAnywhere } from "bun:test";
+import { isASAN } from "harness";
+import { unsupported } from "./harness/compiler";
+import {
+  beforeAll as beforeAllAnywhere,
+  raiseDefaultTimeout,
+  raisingLimits,
+  test as testAnywhere,
+} from "./harness/default-timeout";
 
 export { unsupported };
+
+// One build takes about as long as the whole default limit of bun:test.
+raiseDefaultTimeout(120_000);
+
+// In a Bun with assertions what is read from `test` is a proxy of harness/default-timeout.ts, which calls it on the object that it was read from, whatever `this` is. Its own
+// `bind` would be read through that proxy and bind what lies behind it to the wrong object.
+const boundTo = (owner: object, method: Function) => Function.prototype.bind.call(method, owner);
 
 // bun:test refuses `.skipIf()`, `.todo` and the like on what is skipped already.
 export function alwaysSkipped<T extends object>(skipped: T): T {
@@ -14,30 +28,51 @@ export function alwaysSkipped<T extends object>(skipped: T): T {
       if (name === "skip" || name === "todo" || name === "only" || name === "failing") return self;
       const value = Reflect.get(target, name, target);
       if (name === "concurrent" || name === "serial") return alwaysSkipped(value as object);
-      return typeof value === "function" ? value.bind(target) : value;
+      return typeof value === "function" ? boundTo(target, value) : value;
     },
   });
 }
 
-export const test = unsupported ? alwaysSkipped(testAnywhere.skip) : testAnywhere;
-export const describe = unsupported ? alwaysSkipped(describeAnywhere.skip) : describeAnywhere;
+// bun:test refuses `.serial` and `.concurrent` on what is concurrent already.
+function besideOneAnother(declares: typeof testAnywhere): typeof testAnywhere {
+  const calledOnItsOwner = raisingLimits(declares, true);
+  return new Proxy(calledOnItsOwner.concurrent, {
+    get: (concurrent, name) =>
+      Reflect.get(name === "serial" || name === "concurrent" ? calledOnItsOwner : concurrent, name),
+  });
+}
+
+// With a sanitizer a case waits for one slow child after another and keeps one processor of eight busy, so the cases of a file run
+// beside one another there, as many as `--max-concurrency` says. `test.serial` is for a case that must not. AOT_CASES_AT_ONCE=1 | 0 asks for either anywhere.
+const atOnce = process.env.AOT_CASES_AT_ONCE ? process.env.AOT_CASES_AT_ONCE === "1" : isASAN;
+const declared = atOnce ? besideOneAnother(testAnywhere) : testAnywhere;
+const skippedTest = alwaysSkipped(testAnywhere.skip);
+const skippedDescribe = alwaysSkipped(describeAnywhere.skip);
+export const test = unsupported ? skippedTest : declared;
+/** `test` for a file whose cases never run beside one another. The file says why. */
+export const testOneByOne = unsupported ? skippedTest : testAnywhere;
+export const describe = unsupported ? skippedDescribe : describeAnywhere;
 export const beforeAll: typeof beforeAllAnywhere = unsupported ? () => {} : beforeAllAnywhere;
 
-const rowsNotMetYet = new WeakSet<object>();
+const rowsNotMetYet = new WeakMap<object, string>();
 
 /** Marks a row of a table for `eachRow`: it states what should be so and is not so yet, and `why` says what happens today. */
 export function gap<Row extends object>(why: string, row: Row): Row {
   if (!why) throw new Error("gap() needs a reason");
-  rowsNotMetYet.add(row);
+  rowsNotMetYet.set(row, why);
   return row;
 }
 
-/** `test.each`, but a row that is wrapped in `gap()` is listed as a todo. `bun test --todo` says which of those rows have come true. */
+/** `test.each`, but a row that is wrapped in `gap()` is declared `failing`, with its reason behind its title: it runs at every run, and is red once it has come true. */
 export function eachRow<Row extends readonly unknown[]>(rows: readonly Row[]) {
   return (title: string, body: (...row: Row) => unknown, timeout?: number) => {
     const met = rows.filter(row => !rowsNotMetYet.has(row));
-    const notMet = rows.filter(row => rowsNotMetYet.has(row));
     if (met.length) test.each(met as Row[])(title, body as (...row: unknown[]) => unknown, timeout);
-    if (notMet.length) test.todo.each(notMet as Row[])(title, body as (...row: unknown[]) => unknown, timeout);
+    for (const row of rows.filter(row => rowsNotMetYet.has(row)))
+      test.failing.each([row] as Row[])(
+        `${title}: ${rowsNotMetYet.get(row)}`,
+        body as (...row: unknown[]) => unknown,
+        timeout,
+      );
   };
 }

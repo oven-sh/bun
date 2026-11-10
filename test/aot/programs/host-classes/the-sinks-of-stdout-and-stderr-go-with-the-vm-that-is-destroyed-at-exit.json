@@ -1,8 +1,0 @@
-{
-  "env": {
-    "BUN_DESTRUCT_VM_ON_EXIT": "1",
-    "BUN_JSC_useZombieMode": "1"
-  },
-  "runWithASAN": "a build with assertions asks more on the way out",
-  "skipInShell": "it uses what Bun provides and the jsc shell does not: console, process"
-}

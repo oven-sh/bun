@@ -1,2 +1,0 @@
-eval in a worker: 2
-Function in a worker: 2

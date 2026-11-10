@@ -1,0 +1,11 @@
+# `new URLSearchParams(line + "=1").get(line); line += ..`: the construction looks ahead at the call of the method, whose argument is still bound to the builder. It passes the builder by, and the call gets a string.
+# f1 = gather
+# -- source: text-that-grows-is-the-name-asked-of-search-params.js
+# function gather(count) { let line = ""; let seen = 0; for (let i = 0; i < count; i++) { const got = new URLSearchParams(line + "=1").get(line); line += "k" + i; seen += got.length; } return line + "/" + seen; }
+# let last = ""; for (let turn = 0; turn < 30; turn++) last = gather(3);
+# print(last);
+# -- end of source
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString

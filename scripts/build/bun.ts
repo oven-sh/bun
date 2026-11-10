@@ -305,6 +305,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.debug) {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
   }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
@@ -375,6 +376,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     cxxObjects.push(object);
     if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
+  const aotNativeTestObjects = sources.aotNativeTests.map(src =>
+    cxx(n, cfg, src, { flags: cxxFlagsFull, pch: pchOut.pch, pchHeader: pchOut.wrapperHeader }),
+  );
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
@@ -457,7 +461,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
+  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -474,9 +478,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
- * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
- * bun. With a tarball that has only the linked programs it is the fetch.
+ * it; `testaot` also with the native tests that ask that table
+ * (test/aot/native). On request (`--target=jsc`). `engine-test-programs` is
+ * what test/aot runs, `jsc` and `testaot`: a default target in CI, which packs
+ * them beside bun. With a tarball that has only the linked programs it is the
+ * fetch.
  */
 function emitJscPrograms(
   n: Ninja,
@@ -484,16 +490,18 @@ function emitJscPrograms(
   deps: ReadonlyMap<DepName, ResolvedDep>,
   headersReady: string,
   builtinTableObjects: readonly string[],
+  aotNativeTestObjects: readonly string[],
 ): void {
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
+    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
     for (const { header, files } of program.pch ?? []) {
       const base = prefixes[0]?.prefix;
       const prefix = pch(n, cfg, header, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(base !== undefined && { base }),
       });
       prefixes.unshift({ prefix, files });
@@ -502,15 +510,19 @@ function emitJscPrograms(
       const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
       return cxx(n, cfg, src, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs,
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
+    objects.push(
+      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
+    );
     const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),
     );
+    if (program.name === "testaot") objects.push(...aotNativeTestObjects);
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
       libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],

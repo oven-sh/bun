@@ -25,36 +25,49 @@ struct BunAOTImageFile {
 
 struct BunAOTResult;
 
+// Rust names these functions in `extern "C"` blocks of its own, and no compiler compares the two. src/aot/engine.rs, src/aot/engine/shared.rs,
+// src/aot/standalone/engine_stubs.rs and src/jsc/compiled_program.rs list the same parameters in the same order.
+
 #if ENABLE(AOT)
 // BunAOTCompile.cpp
 extern "C" void Bun__AOT__initializeOptions(JSC::AOT::Wire::CompileOptions*);
 extern "C" size_t Bun__AOT__applyOptionWord(JSC::AOT::Wire::CompileOptions*, BunAOTBytes word, uint8_t* message, size_t capacity);
-extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies*, void (*releaseProgram)(void* owner), void* programOwner, const JSC::AOT::Wire::CompileOptions*, const JSC::AOT::HostThreadPool*);
+extern "C" BunAOTResult* Bun__AOT__compile(
+    BunAOTBytes program,
+    const JSC::AOT::ExternalFunctionBodies*,
+    void (*releaseProgram)(void* owner),
+    void (*releaseBytesOfProgram)(void* owner),
+    void* programOwner,
+    const JSC::AOT::Wire::CompileOptions*,
+    const JSC::AOT::HostThreadPool*, // Its function is still called after this has returned, and what it is handed runs then: the pool lives as long as the process.
+    size_t (*sizeOfFunctionText)(void* owner, uint32_t module),
+    void (*copyFunctionText)(void* owner, uint32_t module, uint8_t* destination));
 extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult*, JSC::AOT::Wire::ResultSection);
 extern "C" void Bun__AOT__freeResult(BunAOTResult*);
 extern "C" size_t Bun__AOT__imageAlignment();
 extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t address);
-extern "C" size_t Bun__AOT__operationCount();
-extern "C" BunAOTBytes Bun__AOT__operationName(size_t index);
-extern "C" bool Bun__AOT__isOptionalPass(JSC::AOT::Wire::PassID);
 #endif
+extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t* description, size_t size, uint8_t* message, size_t capacity);
+extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t* pattern, size_t patternSize, const uint8_t* flags, size_t flagsSize, uint8_t* message, size_t capacity);
+extern "C" uint32_t Bun__AOT__classifyRegExpLiteral(const uint8_t* pattern, size_t patternSize, const uint8_t* flags, size_t flagsSize);
+extern "C" size_t Bun__AOT__describeRegExpConstructionError(const uint8_t* pattern, size_t patternSize, const uint8_t* flags, size_t flagsSize, uint8_t* message, size_t capacity);
+extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess();
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity);
 extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, size_t capacity);
 
 // BunCompilers.cpp
 extern "C" bool Bun__AOT__hasCompiler();
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport));
 
 // BunAOTHostBindings.cpp, generated
 extern "C" void Bun__AOT__registerHostBindings();
 
 // BunAOTRuntime.cpp
 #if ENABLE(AOT)
-extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, BunAOTBytes allImages, const BunAOTImageFile* fileOrNull, const uint8_t identity[16]);
+extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16]);
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes image, JSC::AOT::Wire::AdmittedCode* admitted);
 #endif
 extern "C" BunAOTBytes Bun__AOT__imageCode();
-extern "C" void Bun__AOT__setMismatchLog(intptr_t descriptor, bool isJSON);
-extern "C" void Bun__AOT__setMismatchLogFormat(bool isJSON);
 extern "C" void Bun__AOT__setVerbose(bool isVerbose);
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address);
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset);

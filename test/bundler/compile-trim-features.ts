@@ -1,5 +1,5 @@
 import { builtinFeatureUses, readTrimTable } from "bun:internal-for-testing";
-import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import {
@@ -9,8 +9,10 @@ import {
   type FeatureName,
   type TrimFeature,
 } from "../../scripts/build/trim/features";
+import { describeFiller } from "../../scripts/build/trim/report";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
+import { declare } from "../aot/harness/capabilities";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..");
 
@@ -40,25 +42,39 @@ export function getMappedSegments(file: Buffer): Buffer[] {
     );
 }
 
+/** A floor under the number of features that an executable lacks. What Bun's own modules use hangs on the platform in places, and the counts are those of Linux. */
+export const atLeastOnLinux = (count: number): number => (isLinux ? count : 0);
+
 export const model: FeatureModel = loadFeatures(repositoryRoot);
 export const builtinEntries: BuiltinEntry[] = builtinFeatureUses();
 export const isModule = ({ kind }: BuiltinEntry): boolean => kind === "Module";
 export const isNamedFromGlobalObject = ({ kind, hasHiddenRoot }: BuiltinEntry): boolean =>
   !hasHiddenRoot && kind !== "Module" && kind !== "InternalModule" && kind !== "NativeBinding";
 
-using probe = tempDir("compile-trim-probe", { "hello.ts": 'console.log("hello world");' });
-const probed = Bun.spawnSync({
-  cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],
-  cwd: String(probe),
-  env: bunEnv,
-  stdout: "pipe",
-  stderr: "pipe",
-});
-export const trimProbe: { stderr: string; exitCode: number } = {
-  stderr: probed.stderr.toString(),
-  exitCode: probed.exitCode,
-};
-export const canTrim: boolean = !trimProbe.stderr.includes("this build of Bun doesn't support --trim");
+function readTableOfThisBun(): TrimTable | undefined {
+  try {
+    return readTrimTable(bunExe());
+  } catch (error) {
+    if (String((error as Error).message).includes("this build of Bun doesn't support --trim")) return undefined;
+    throw error;
+  }
+}
+
+const table: TrimTable | undefined = readTableOfThisBun();
+export const canTrim: boolean = table !== undefined;
+
+/** What a build with --trim says. */
+export function probeTrim(): { stderr: string; exitCode: number } {
+  using probe = tempDir("compile-trim-probe", { "hello.ts": 'console.log("hello world");' });
+  const probed = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],
+    cwd: String(probe),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return { stderr: probed.stderr.toString(), exitCode: probed.exitCode };
+}
 
 const featuresByKey = new Map<string, FeatureName>();
 for (const { name } of model.features) {
@@ -158,7 +174,6 @@ export function narrowestNameOf(feature: FeatureName): string | undefined {
   return narrowestTrimFeature(model, feature)?.name;
 }
 
-const table: TrimTable | undefined = canTrim ? readTrimTable(bunExe()) : undefined;
 if (table !== undefined && table.featuresHash !== model.hash)
   throw new Error("this Bun was linked with another list of features than src/trim/features");
 
@@ -209,7 +224,7 @@ export function describeBytesRemovedWith(feature: FeatureName, removedIndexes: r
         const kept = sets[set]!.filter(index => !removed.has(index)).map(nameOf);
         return `${cuttable} bytes that can be cut and ${fillOnly} that can only be filled go with ${sets[set]!.map(nameOf).join(", ")}; kept: ${kept.join(", ") || "none"}`;
       }),
-    `${holes.length} holes`,
+    describeFiller(holes.map(hole => hole.bytes)),
     ...holes.flatMap(({ bytes, bytesOfFeature }, index) =>
       bytesOfFeature > 0
         ? [`hole ${index + 1} by size: ${bytes} bytes, ${bytesOfFeature} of them go with ${feature}`]
@@ -253,3 +268,5 @@ export function removedOnlyWith(name: string): string[] {
   }
   return chosen.slice(1).map(each => each.name);
 }
+
+declare("a Bun that trims", () => (canTrim ? undefined : "this build of Bun doesn't support --trim"));

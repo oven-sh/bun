@@ -1,0 +1,29 @@
+"use strict";
+var __create = Object.create;
+var __getProtoOf = Object.getPrototypeOf;
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var require_gauge = __commonJS((exports) => {
+  exports.add = function (a, b) { return a + b | 0; };
+  exports.rate = 3;
+});
+var import_gauge = __toESM(require_gauge());
+function read(n) { let s = 0; for (let i = 0; i < n; i++) s = s + (import_gauge.default.rate + import_gauge.default.rate) | 0; return s; }
+function call(n) { let s = 0; for (let i = 0; i < n; i++) s = s + import_gauge.default.add(i, n) | 0; return s; }
+const turns = +(process.argv[2] ?? 50);
+console.log(read(turns), call(turns));

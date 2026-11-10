@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bstr::BStr;
+use bstr::{BStr, BString};
 use bun_builtin_sources::{Archive, VIRTUAL_ROOT};
 use bun_core::strings::index_of;
 use bun_sema::atom::Interner;
@@ -26,13 +26,12 @@ use crate::diagnostics::Diagnostic;
 use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, FunctionRole, FunctionVisibility, RuntimeFunctionEntry,
 };
-use crate::ir::{DeclaredType, Mapped, PositionFlags, StringId, TypeTable};
+use crate::ir::{DeclaredType, Mapped, PositionFlags, StringId, StringTable, TypeTable};
 use crate::load::host_platform;
 use crate::lower::{Fragment, LoweredFile, LoweringOptions};
 
 const ARRAY_PROTOTYPE: &str = "ArrayPrototype";
 const CONSOLE_OBJECT: &str = "builtins/ConsoleObject";
-const OBJECT_MODELS: &str = "models/Objects";
 
 fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) -> R) -> R {
     let session = Session::new();
@@ -44,7 +43,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(text.as_bytes());
@@ -63,6 +62,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         is_library: true,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     let names = BuiltinNames::new(&atoms);
@@ -70,11 +70,16 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         hir: &hir,
         bound: &bound,
         decisions: &analysis.decisions,
+        atoms: &atoms,
         module_format: analysis.module_format,
         targets: &ImportTargets::new(&[]),
         names: &names,
         platform: Platforms::LINUX,
         dialect: SourceDialect::Runtime,
+        replaced: &[],
+        runs_tests: false,
+        holds_language: false,
+        is_text_asked: true,
     });
     then(&LibrarySource {
         hir: &hir,
@@ -129,10 +134,12 @@ fn lower_library_file_for(
     let options = LoweringOptions {
         platform: host_platform(),
         embeds_function_text: false,
-        reports_type_mismatches: false,
+        reads_function_texts_back: false,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
+        counts_executions: false,
+        runs_tests: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");
@@ -164,16 +171,25 @@ fn array_header<'a>(fragment: &'a Fragment, export_name: &str) -> &'a Function {
     header_of(fragment, find_array_entry(fragment, export_name))
 }
 
+fn with_strings<R>(fragment: &Fragment, read: impl FnOnce(&StringTable) -> R) -> R {
+    let tables = fragment.tables.take();
+    let answer = read(&tables.strings);
+    fragment.tables.put_back(tables);
+    answer
+}
+
 fn header_named<'a>(fragment: &'a Fragment, name: &str) -> &'a Function {
-    let has_name = |id: StringId| fragment.strings.get(id) == name.as_bytes();
-    let mut functions = fragment.functions.iter().map(|(_, function)| function);
-    let found = functions.find(|function| function.name.is_some_and(has_name));
+    let found = with_strings(fragment, |strings| {
+        let has_name = |id: StringId| strings.get(id) == name.as_bytes();
+        let mut functions = fragment.functions.iter().map(|(_, function)| function);
+        functions.find(|function| function.name.is_some_and(has_name))
+    });
     found.unwrap_or_else(|| panic!("no function is named {name}"))
 }
 
-fn name_of<'a>(fragment: &'a Fragment, function: &Function) -> &'a BStr {
+fn name_of(fragment: &Fragment, function: &Function) -> BString {
     let name = function.name.expect("a library function has a name");
-    BStr::new(fragment.strings.get(name))
+    with_strings(fragment, |strings| BString::from(strings.get(name)))
 }
 
 fn is_hidden(function: &Function) -> bool {
@@ -269,9 +285,13 @@ fn directive_selects_function_form_and_without_one_it_is_method() {
 }
 
 #[test]
-fn always_inline_changes_nothing() {
+fn always_inline_is_kept_for_the_function_behind_it() {
     let directives = collect_directives("$alwaysInline;\nexport function probe() {}");
-    assert_eq!(directives, [PendingDirectives::default()]);
+    let expected = PendingDirectives {
+        is_always_inlined: true,
+        ..PendingDirectives::default()
+    };
+    assert_eq!(directives, [expected]);
 }
 
 #[test]
@@ -463,7 +483,6 @@ fn listed_export_implements_builtin() {
     }
 }
 
-// Bun's own sources are lowered with their types: what they write holds, as in the program's code.
 #[test]
 fn listed_export_checks_written_types() {
     let text = "export function at(index: number): number { return index; }";
@@ -479,15 +498,45 @@ fn listed_export_checks_written_types() {
 }
 
 #[test]
-fn type_error_leaves_expected_types() {
-    let text = "export function at(index: number): number { return \"text\"; }";
+fn unverified_types_leave_expected_parameters_alone() {
+    let text = "// @ts-nocheck\nexport function at(index: number): number { return index; }";
     let fragment = lower_array_prototype(text).fragment;
     let builtin = array_header(&fragment, "at");
     assert!(!builtin.flags.contains(FunctionFlags::IS_CHECKED));
     let number = Mapped::expected(TypeTable::NUMBER);
     let expected = DeclaredType::new(number, None, PositionFlags::default());
     assert_eq!(builtin.parameters, [expected]);
-    assert_eq!(builtin.results, [expected]);
+    assert_eq!(builtin.results, [DeclaredType::untyped()]);
+}
+
+#[test]
+fn only_recursively_private_functions_hide_what_is_written_inside_them() {
+    let text = r#"
+        $visibility = "Private";
+        export function filter() { return function insidePrivate() { return function deeper() {}; }; }
+        $linkTimeConstant;
+        export function find() { return function* insideLinkTimeConstant() {}; }
+        $visibility = "PrivateRecursive";
+        export function findIndex() { return function insideRecursive() { return function deepest() {}; }; }
+        export function at() { return function insidePublic() {}; }
+    "#;
+    let fragment = lower_array_prototype(text).fragment;
+    for (name, hidden) in [
+        ("insidePrivate", false),
+        ("deeper", false),
+        ("insideLinkTimeConstant", false),
+        ("insideRecursive", true),
+        ("deepest", true),
+        ("insidePublic", false),
+    ] {
+        assert_eq!(is_hidden(header_named(&fragment, name)), hidden, "{name}");
+    }
+    for export_name in ["filter", "find", "findIndex"] {
+        assert!(
+            is_hidden(array_header(&fragment, export_name)),
+            "{export_name}"
+        );
+    }
 }
 
 #[test]
@@ -553,12 +602,7 @@ fn only_directives_name_host_builtins() {
 }
 
 #[test]
-fn model_has_model_role() {
-    let entries = find_runtime_function(OBJECT_MODELS, "entries");
-    let fragment = lower_library_file(entries, "export function entries() {}").fragment;
-    let entry = find_entry(&fragment, entries).expect("the model is listed");
-    assert_eq!(header_of(&fragment, entry).role, FunctionRole::Model);
-
+fn library_function_has_library_role() {
     let fragment = lower_array_prototype("export function at() {}").fragment;
     assert_eq!(array_header(&fragment, "at").role, FunctionRole::Library);
 }

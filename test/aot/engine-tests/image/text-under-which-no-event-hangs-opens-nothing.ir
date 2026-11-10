@@ -1,0 +1,38 @@
+# import vm from "node:vm"; vm.read(f, "length")("return 1");        node:vm: export default { read: (subject, key) => subject[key] };
+# The control of text-that-the-program-writes-is-a-name-that-it-spells.ir: no event hangs under the text that the program writes, and a key that nobody knows finds none. So the image admits no text.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags
+# CHECK-NOT: AdmitsUnknownJavaScript
+
+layout L0 module=m1 fields=[{key="read" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] namespaceLayout=L(m0)
+module m1 path="node:vm" displayPath="node:vm" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeVm body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=NodeVm
+    v1 = PropGet v0 key="read"
+    v2 = NewClosure function=f3
+    v3 = String string="length"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="return 1"
+    v6 = Call v4, -, v5
+    Return v6
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="read" module=m1 kind=Arrow role=Library length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

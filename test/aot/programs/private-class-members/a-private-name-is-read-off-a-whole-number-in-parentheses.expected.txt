@@ -1,6 +1,0 @@
-small TypeError
-hexadecimal TypeError
-long TypeError
-asked false
-own 1
-function

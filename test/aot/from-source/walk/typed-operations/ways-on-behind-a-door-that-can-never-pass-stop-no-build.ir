@@ -1,0 +1,15 @@
+# -- source: main.js
+# let kept = null, closed = 0;
+# async function backEdge() { let turns = 0; for (const x of Object.freeze([1, 2, 3, 4])) { for (let again = 0; ; again++) { await null; turns++; if (typeof x !== "string" || again) break; kept = x.length; } } return turns; }
+# async function handler() { let caught = 0; for (const x of Object.freeze([1, 2, 3, 4])) { try { await null; if (typeof x === "string") { kept = x.length; throw new Error("no"); } } catch { caught++; } finally { closed++; } } return caught + ":" + closed; }
+# async function bothArms() { let n = 0; for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") { if (x.length > 1) kept = x.length; else kept = x.length + 1; n++; } } return n; }
+# async function behind() { let n = 0; for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") { kept = x.length; n += 100; } n++; } return n; }
+# Promise.all([backEdge(), handler(), bothArms(), behind()]).then((said) => print("SAID", said.join(" "), String(kept)));
+# -- end of source
+# What stands behind a door that can never pass: the only back edge of a loop; a throw, a catch and a finally; a join that loses every arrival, and one that loses one: five such doors.
+# A RIGHT PROGRAM: a build that verifies once stopped at these doors. It builds, and answers as the source.
+# OPTIONS: check=Validate
+# RUN(BUILDS): run-in-shell
+# BUILDS: SAID 4 0:4 0 4 null
+# BUILDS-NEXT: exited with 0
+# BUILDS-NEXT: the source prints the same

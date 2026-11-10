@@ -1,1 +1,0 @@
-{ "skipInShell": "it waits for a timer, which the jsc shell does not have" }

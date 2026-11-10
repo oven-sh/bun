@@ -1,0 +1,19 @@
+# -- source: the-halves-of-an-accessor-written-in-a-map-go-where-the-target-may-be-unseen.js
+# let hits = 0, kept = 0;
+# const accessors = { first: { get() { hits++; return this.n + 1; } }, second: { get() { return 2; }, set(v) { kept = v; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer(n) { this.n = n; }
+# const box = JSON.parse("{}"); box.w = Writer;
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer(3).first, hits, typeof kept);
+# -- end of source
+# The twin of the-halves-of-an-accessor-written-in-a-map-stay-where-the-target-is-in-sight. Nobody reads or stores `second` in this text. But the target may be an unseen object, and what such a target keeps of the map are
+# the getter and the setter: unseen code may call them. They are handed to it, so they are reached; the map is not.
+# RUN(MAP): link why-gone L3
+# MAP: why-gone L3: it has not gone
+# RUN(HALVES): link functions mechanisms=all
+# HALVES-NOT: function f3 unreached
+# HALVES-NOT: function f4 unreached
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 1 number

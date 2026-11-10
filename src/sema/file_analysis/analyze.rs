@@ -1,6 +1,6 @@
-use super::{FileAnalysis, FileInputs, FoldedAgain, has_live_top_level_await};
+use super::{AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, has_live_top_level_await};
 use crate::atom::Interner;
-use crate::bind::{BindOptions, Bound, bind};
+use crate::bind::{BindOptions, Bound, bind_below_defines};
 use crate::fold::{FoldError, FoldInputs, FoldResult, fold_file};
 use crate::hir::{File, FileKind};
 use crate::import_sites::{ImportScan, ScanInputs, collect_import_sites};
@@ -20,18 +20,19 @@ pub(super) fn run<'s>(
     debug_assert!(options.runtime.is_some());
     debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
     hir.reset_strict();
-    let mut bound = bind(hir, options, atoms, arena);
+    let names_in_place = inputs.names_in_place();
+    let mut bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
     if bound.ran_out_of_stack {
         return (bound, FileAnalysis::default());
     }
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
-    let decision = decide_format(hir, &bound, &folded, &scan, file);
-    let is_module = decision.format == ModuleFormat::Esm;
+    let decision = decide_format(hir, &bound, &folded, &scan);
+    let is_module = decision.formats.get(file.declared_module_type) == ModuleFormat::Esm;
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();
         if bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
-            bound = bind(hir, options, atoms, arena);
+            bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
             if bound.ran_out_of_stack {
                 return (bound, FileAnalysis::default());
             }
@@ -39,23 +40,35 @@ pub(super) fn run<'s>(
         }
     }
     bound.runtime.set_module_goal(is_module);
-    let analysis = create_analysis(hir, &folded, &scan, &decision, arena);
+    let analysis = create_analysis(hir, &folded, &scan, &decision, file, arena);
     (bound, analysis)
 }
 
-/// `None`: what is known now calls for more than another folding of the same tree.
 pub(super) fn run_again<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
     inputs: &FoldInputs<'s>,
     file: &FileInputs<'s>,
     previous: &FileAnalysis<'s>,
+    from: AnalyzedAgainFrom,
     atoms: &Interner<'s>,
     arena: &'s Arena,
-) -> Option<FoldedAgain<'s>> {
-    let folded = fold_file(hir, bound, inputs, file, atoms, arena);
-    // Most constants decide no branch and name no file.
-    let has_same_import_sites = previous.errors.is_empty()
+) -> Option<AnalyzedAgain<'s>> {
+    let folded = match from {
+        AnalyzedAgainFrom::Folding => fold_file(hir, bound, inputs, file, atoms, arena),
+        AnalyzedAgainFrom::ImportScan => FoldResult {
+            decisions: previous.decisions,
+            errors: previous
+                .errors
+                .split_at(previous.fold_error_count as usize)
+                .0,
+            strings_over_limit: previous.strings_over_limit,
+            asks_for_main_module: previous.asks_for_main_module,
+            imported_names: previous.imported_names,
+        },
+    };
+    let has_same_import_sites = from == AnalyzedAgainFrom::Folding
+        && previous.errors.is_empty()
         && folded.errors.is_empty()
         && previous.pending_macro_calls.is_empty()
         && previous.names_every_file_by_a_constant()
@@ -64,21 +77,20 @@ pub(super) fn run_again<'s>(
         let analysis = FileAnalysis {
             decisions: folded.decisions,
             strings_over_limit: folded.strings_over_limit,
-            relies_on_running_before_calls: folded.relies_on_running_before_calls,
             imported_names: folded.imported_names,
             ..*previous
         };
-        return Some(FoldedAgain {
+        return Some(AnalyzedAgain {
             analysis,
             has_same_import_sites,
         });
     }
     let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
-    let decision = decide_format(hir, bound, &folded, &scan, file);
-    let is_same_tree =
-        decision.format == previous.module_format && scan.pending_macro_calls.is_empty();
-    is_same_tree.then(|| FoldedAgain {
-        analysis: create_analysis(hir, &folded, &scan, &decision, arena),
+    let decision = decide_format(hir, bound, &folded, &scan);
+    let is_same_tree = decision.formats.get(file.declared_module_type) == previous.module_format
+        && scan.pending_macro_calls.is_empty();
+    is_same_tree.then(|| AnalyzedAgain {
+        analysis: create_analysis(hir, &folded, &scan, &decision, file, arena),
         has_same_import_sites,
     })
 }
@@ -88,14 +100,11 @@ fn decide_format<'s>(
     bound: &Bound<'s>,
     folded: &FoldResult<'s>,
     scan: &ImportScan<'s>,
-    file: &FileInputs<'s>,
 ) -> FormatDecision {
-    let declared = file.declared_module_type;
-    let decisions_of_bun_run = folded.decisions.as_folded_by_bun_run();
-    let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan, declared);
+    let decisions_of_bun_run = folded.decisions.as_folded_under_minify_syntax();
+    let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan);
     match decision.error {
-        // `bun run` refuses the file. A build that removes what is wrong with it compiles it.
-        Some(_) => decide_module_format(hir, bound, &folded.decisions, scan, declared),
+        Some(_) => decide_module_format(hir, bound, &folded.decisions, scan),
         None => decision,
     }
 }
@@ -105,27 +114,47 @@ fn create_analysis<'s>(
     folded: &FoldResult<'s>,
     scan: &ImportScan<'s>,
     decision: &FormatDecision,
+    file: &FileInputs<'s>,
     arena: &'s Arena,
 ) -> FileAnalysis<'s> {
     FileAnalysis {
         decisions: folded.decisions,
-        module_format: decision.format,
+        module_format: decision.formats.get(file.declared_module_type),
+        module_formats: decision.formats,
         has_esm_syntax: file_esm_syntax(hir) != EsmSyntax::None,
         import_sites: scan.sites,
         alternatives: scan.alternatives,
         paths_from_own_directory: scan.paths_from_own_directory,
         answers_of_resolvers: scan.answers_of_resolvers,
+        names_of_workers: scan.names_of_workers,
+        paths_of_changed_files: scan.paths_of_changed_files,
+        paths_of_files_read: scan.paths_of_files_read,
+        files_read_beside_callers: scan.files_read_beside_callers,
+        own_urls_handed: scan.own_urls_handed,
+        exported_file_changers: scan.exported_file_changers,
+        asked_of_other_files: scan.asked_of_other_files,
+        asked_of_data_files: scan.asked_of_data_files,
+        asked_of_own_exports: scan.asked_of_own_exports,
+        names_out_of_data_files: scan.names_out_of_data_files,
+        names_resolved_from_listed_folders: scan.names_resolved_from_listed_folders,
+        options_of_resolves_with_unread_folders: scan.options_of_resolves_with_unread_folders,
+        keys_stored_in_caches: scan.keys_stored_in_caches,
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,
         imports_used_only_in_dead_code: scan.imports_used_only_in_dead_code,
         imports_used_without_a_read: scan.imports_used_without_a_read,
         pending_macro_calls: scan.pending_macro_calls,
-        has_live_top_level_await: has_live_top_level_await(hir, &folded.decisions),
+        has_live_top_level_await: has_live_top_level_await(
+            hir,
+            &folded.decisions.as_folded_under_minify_syntax(),
+        ),
         errors: join_errors(folded.errors, scan.errors, decision.error, arena),
+        fold_error_count: folded.errors.len() as u32,
         strings_over_limit: folded.strings_over_limit,
-        relies_on_running_before_calls: folded.relies_on_running_before_calls,
+        asks_for_main_module: folded.asks_for_main_module,
         imported_names: folded.imported_names,
         requires_of_other_files: scan.requires_of_other_files,
+        paths_given_to_create_require: scan.paths_given_to_create_require,
         sites_by_kind: scan.sites_by_kind,
         first_call_site: scan.first_call_site,
     }

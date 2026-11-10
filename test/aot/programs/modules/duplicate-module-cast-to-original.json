@@ -1,3 +1,0 @@
-{
-  "skipInShell": "a file is reached only through require() in TypeScript, which takes the bundler to find"
-}

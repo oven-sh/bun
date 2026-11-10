@@ -1,11 +1,11 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}simple-catch-parameter"
+// CHECK: module [[entry]] path="{{*}}simple-catch-parameter.js"
 // CHECK: evalscope [[scope]] {{*}}{name="error" kind=SimpleCatchParameter depth=[[depth]] layout=[[layout]] field=[[field]] operand=[[operand]]}
 // CHECK: function [[simple]] name="simple" module=[[entry]]
 // CHECK: = DirectEval {{*}}evalScope=[[scope]]
 
 // RUN(PATTERN): link
-// PATTERN: module [[entry]] path="{{*}}simple-catch-parameter"
+// PATTERN: module [[entry]] path="{{*}}simple-catch-parameter.js"
 // PATTERN: evalscope [[scope]] {{*}}{name="message" depth=[[depth]] layout=[[layout]] field=[[field]] operand=[[operand]]}
 // PATTERN: function [[pattern]] name="pattern" module=[[entry]]
 // PATTERN: = DirectEval {{*}}evalScope=[[scope]]

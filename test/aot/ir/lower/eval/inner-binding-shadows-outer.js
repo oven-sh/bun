@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}inner-binding-shadows-outer"
+// CHECK: module [[entry]] path="{{*}}inner-binding-shadows-outer.js"
 // CHECK: evalscope [[scope]] {{*}}bindings=[{name="a" kind=Constant operand=0}
 // CHECK-NOT: {name="a"
 // CHECK: function [[f]] name="f" module=[[entry]]

@@ -10,6 +10,7 @@ use bun_options_types::context::ContextData;
 use bun_paths::resolve_path::platform_to_posix_in_place;
 use bun_sema::json::Json;
 use bun_sema::resolve::AOT_CONDITION;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::typed_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
@@ -100,7 +101,7 @@ fn add_documents(project_directory: &[u8], output_files: &mut Vec<OutputFile>) {
             names.push(name.to_vec());
         }
     }
-    names.sort();
+    names.shared_sort();
     for name in names {
         if let Ok(bytes) = bun_sys::File::read_from(directory.fd, &name) {
             output_files.push(asset_output_file(name, bytes));
@@ -167,7 +168,7 @@ fn find_exported_files(
     if let [only] = &mut exported[..] {
         only.subpath = b".".to_vec();
     }
-    exported.sort_by(|a, b| a.subpath.cmp(&b.subpath));
+    exported.shared_sort_by(|a, b| a.subpath.cmp(&b.subpath));
     exported
 }
 
@@ -571,7 +572,7 @@ pub(super) fn write_package_json(
     }
 
     let mut paths: Vec<Vec<u8>> = output_files.iter().map(posix_dest_path).collect();
-    paths.sort();
+    paths.shared_sort();
     let mut files = E::Array::default();
     for path in &paths {
         files.push(&arena, json.string(path)).unwrap_or_oom();

@@ -4,7 +4,6 @@ import { bindingOf, type Open } from "../native-contract/host-instances";
 import { Unavailable } from "./instances";
 
 const noop = () => {};
-const millisecondsToBeCalled = 2000;
 
 // A method of the class is replaced for as long as it takes the library to call it on an instance.
 function receiverOf(prototypePath: string, method: string, provoke: () => unknown): Open {
@@ -12,18 +11,18 @@ function receiverOf(prototypePath: string, method: string, provoke: () => unknow
     const prototype: object = bindingOf(realm, prototypePath);
     const descriptor = Reflect.getOwnPropertyDescriptor(prototype, method);
     if (typeof descriptor?.value !== "function") throw new Unavailable(`${prototypePath} has no method ${method}`);
-    const { promise, resolve, reject } = Promise.withResolvers<object>();
-    const timer = setTimeout(reject, millisecondsToBeCalled, new Unavailable(`nobody called ${prototypePath}.${method}`));
+    let receiver: object | undefined;
     const replacement = function (this: object, ...args: unknown[]) {
-      resolve(this);
+      receiver ??= this;
       return Reflect.apply(descriptor.value, this, args);
     };
     Reflect.defineProperty(prototype, method, { ...descriptor, value: replacement });
     try {
+      // The library calls it before this settles. No clock decides: on a busy machine every step is late.
       await provoke();
-      return { value: await promise, close: noop };
+      if (receiver === undefined) throw new Unavailable(`${prototypePath}.${method} was not called`);
+      return { value: receiver, close: noop };
     } finally {
-      clearTimeout(timer);
       Reflect.defineProperty(prototype, method, descriptor);
     }
   };
@@ -81,6 +80,18 @@ function openQuery(adapter: "postgres" | "mysql"): Open {
   };
 }
 
+// What bun:ffi is handed for `new JSCallback(..)`, before it lays it below a prototype of its own.
+const openCallbackOfFFI: Open = realm => {
+  const value = bindingOf(realm, "native:Bindgen:ffi.bind.ts:makeCallback")({ args: [], returns: "void" }, noop);
+  return { value, close: () => value.close() };
+};
+
+// The function pointer is never called.
+const openLibraryOfFFI: Open = realm => {
+  const value = bindingOf(realm, "native:Bindgen:ffi.bind.ts:linkLibrary")({ never: { ptr: 8, args: [], returns: "void" } });
+  return { value, close: () => value.close() };
+};
+
 export const openersOfWhatTheLibraryHolds: Open[] = [
   receiverOf("%ParsedShellScript%.prototype", "setEnv", () => void Bun.$`true`.env({})),
   sourceOf("Blob", () => new Blob(["text"]).stream()),
@@ -90,4 +101,6 @@ export const openersOfWhatTheLibraryHolds: Open[] = [
   openMySQLConnection,
   openQuery("postgres"),
   openQuery("mysql"),
+  openCallbackOfFFI,
+  openLibraryOfFFI,
 ];

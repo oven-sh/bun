@@ -1,1 +1,0 @@
-exports.deeper = globalThis.seen;

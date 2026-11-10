@@ -1,29 +1,29 @@
-mod names;
-mod strings;
-mod types;
-
-use super::definitions::{empty_layout, synthetic_export_variable};
-use super::state::ExportWriter;
+use super::definitions::empty_layout;
 use super::testing::{
-    TestUnit, application_file, create_runtime_function, find_file, finish_unit, forward,
-    in_application, link_sources, link_sources_in, link_units, number_everything, path_source,
-    reverse, test_class_key, test_function_key, test_variable_key, unit_in, with_lowered_units,
-    with_test_files,
+    TaskState, TestUnit, application_file, create_runtime_function, find_file, forward,
+    in_application, link_sources, link_sources_in, link_units, reverse, test_class_key,
+    test_function_key, test_object_type_key, test_variable_key, unit_in, units_in_tasks,
+    with_lowered_units, with_lowered_units_without_bun_modules, with_test_files,
 };
 use super::*;
-use crate::builtins::RuntimeModule;
-use crate::ir::generated::{ModuleKind, TypeSite, TypeSiteKind};
-use crate::ir::{FunctionId, Id, ModuleId, TypeSiteId, TypeTable, print_program};
-use crate::lower::{Fragment, FragmentBuilder, ModuleFragment};
+use crate::builtins::{BuiltinClass, RuntimeFunction, RuntimeModule};
+use crate::ir::generated::{
+    Data, DataMember, DataNode, EvalBinding, EvalScope, Field, FieldFlags, Layout, ModuleKind,
+    Variable,
+};
+use crate::ir::{
+    DeclaredType, FunctionId, FunctionKey, Id, Mapped, ModuleId, PositionFlags, PropertyKey, Type,
+    print_program,
+};
+use crate::lower::Fragment;
 use crate::modules::ModuleRef;
 use bun_sema::program::FileId;
+use std::sync::Arc;
 
-const PROGRAM: [(&str, &str); 8] = [
+const PROGRAM: [(&str, &str); 6] = [
     (
         "main.ts",
-        r#"/// <reference path="./bun-declarations.d.ts" />
-import { checkPoint } from "./checks.ts";
-import { Circle, createUnitCircle } from "./circle.ts";
+        r#"import { Circle, createUnitCircle } from "./circle.ts";
 import { scale } from "./legacy.cjs";
 import { createOrigin, type Point } from "./point.ts";
 import settings from "./settings.json";
@@ -32,28 +32,14 @@ import { Shape } from "./shape.ts";
 const shapes: Shape[] = [
   new Shape(createOrigin()),
   createUnitCircle(),
-  new Circle(checkPoint({ x: 2, y: 3 }), settings.radius),
+  new Circle({ x: 2, y: 3 }, settings.radius),
 ];
 let total = 0;
 for (const shape of shapes) {
   total += shape.area();
 }
-export const center: Point = read<Point>({ x: scale(total), y: 0 });
+export const center: Point = { x: scale(total), y: 0 };
 export const label: string = settings.label;
-"#,
-    ),
-    (
-        "bun-declarations.d.ts",
-        "declare function read<T>(value: unknown): T;\n",
-    ),
-    (
-        "checks.ts",
-        r#"/// <reference path="./bun-declarations.d.ts" />
-import type { Point } from "./point.ts";
-
-export function checkPoint(value: unknown): Point {
-  return read<Point>(value);
-}
 "#,
     ),
     (
@@ -122,6 +108,10 @@ const PATH_IMPORTER: [(&str, &str); 1] = [(
 
 const UNUSED_RUNTIME_FUNCTION: u32 = 1 << 30;
 
+const TEXTS: [&[u8]; 4] = [b"of main", b"of first", b"of second", b"shared"];
+
+const TEXT_UNIQUE_TO_VISIT: &[u8] = b"thrown away";
+
 fn link_replaced_entry(
     create_fragment: impl FnOnce(FileId) -> Fragment,
 ) -> (Result<Linked, Vec<LinkError>>, FileId) {
@@ -139,30 +129,178 @@ fn find_program_id<K: PartialEq, I: Id>(keys: &[K], key: K) -> Option<I> {
     keys.iter().position(|other| *other == key).map(I::new)
 }
 
-fn read_counter(linked: &Linked, statistic: StatisticId) -> u64 {
-    let counts = linked.counters.counts().iter();
-    let counts = counts.filter(|(id, _)| *id == statistic);
-    counts.map(|&(_, count)| count).sum()
+#[derive(PartialEq, Debug)]
+struct Outcome {
+    text: String,
+    functions: Vec<ProgramFunctionKey>,
+    strings: Vec<Vec<u8>>,
+    property_keys: Vec<PropertyKey>,
+    types: Vec<Type>,
+}
+
+fn outcome_of(linked: Result<Linked, Vec<LinkError>>) -> Outcome {
+    let Linked { program, keys, .. } = linked.expect("the program links");
+    assert_eq!(program.functions.len(), keys.functions.len());
+    let strings = &program.strings;
+    Outcome {
+        text: print_program(&program),
+        functions: keys.functions,
+        strings: strings.ids().map(|id| strings.get(id).to_vec()).collect(),
+        property_keys: program.property_keys.as_slice().to_vec(),
+        types: program.types.types().to_records(),
+    }
+}
+
+fn count_sets_of_tables(units: &[LinkUnit]) -> usize {
+    let sets = units.iter().map(|unit| Arc::as_ptr(&unit.shared));
+    let mut sets: Vec<_> = sets.collect();
+    sets.sort_unstable();
+    sets.dedup();
+    sets.len()
+}
+
+fn map_beginning_at<T: Copy, I: Id, const COUNT: usize>(
+    items: [T; COUNT],
+    first: usize,
+    mut make: impl FnMut(T) -> I,
+) -> [I; COUNT] {
+    let mut made = [I::default(); COUNT];
+    for index in (first..COUNT).chain(0..first) {
+        made[index] = make(items[index]);
+    }
+    made
+}
+
+fn name_records_of_every_file(unit: &mut TestUnit, files: [FileId; 3]) {
+    let own = files.iter().position(|&file| file == unit.file);
+    let own = own.expect("the unit is of one of the files");
+    let (next, module) = ((own + 1) % files.len(), unit.module);
+    let [main, first, second] = files.map(|file| test_class_key(file.0, 0));
+    let layout_keys = [
+        main,
+        first,
+        second,
+        test_object_type_key(1),
+        test_object_type_key(2),
+    ];
+
+    let fragment = &mut unit.fragment;
+    let texts = map_beginning_at(TEXTS, own, |text| fragment.strings.intern(text));
+    let keys = map_beginning_at(texts, own, |text| {
+        fragment.property_keys.intern(PropertyKey::from_text(text))
+    });
+    let layouts = map_beginning_at(layout_keys, own, |key| fragment.declare_layout(key));
+    let types = map_beginning_at(layouts, own, |layout| {
+        fragment.types.intern(Type::layout(layout))
+    });
+    let functions = map_beginning_at(files, own, |file| {
+        fragment.declare_function(test_function_key(file.0, 0))
+    });
+    let variables = map_beginning_at(files, own, |file| {
+        fragment.declare_variable(test_variable_key(file.0, 0))
+    });
+    let modules = map_beginning_at(files, own, |file| {
+        fragment.declare_module(ModuleRef::File(file))
+    });
+    let list = Type::class(BuiltinClass::Array, &[types[own]]);
+    let list = fragment.types.intern(list);
+    let literal = fragment.types.intern(Type::string_literal(texts[own]));
+    let private_key = PropertyKey::from_private_name(texts[3], layouts[next]);
+    let private_key = fragment.property_keys.intern(private_key);
+
+    let holds = |ty| DeclaredType::new(Mapped::checked(ty), None, PositionFlags::default());
+    let field = |key, ty| Field {
+        key: Some(key),
+        declared: holds(ty),
+        flags: FieldFlags::IS_REQUIRED,
+        ..Field::default()
+    };
+    let class = Layout {
+        name: Some(texts[own]),
+        module: Some(module),
+        base: layouts[..files.len()].get(own + 1).copied(),
+        fields: vec![field(keys[own], list)],
+        ..empty_layout(&layout_keys[own])
+    };
+    fragment.define_layout(layouts[own], class);
+    let shared = Layout {
+        fields: vec![field(keys[3], types[own])],
+        ..empty_layout(&layout_keys[3])
+    };
+    fragment.define_object_type(layouts[3], shared, None);
+    fragment.add_supertype(layouts[3], layouts[4]);
+    fragment
+        .family_facts
+        .record_conversion(types[own], types[3]);
+    let variable = Variable {
+        name: Some(texts[own]),
+        module,
+        declared: holds(literal),
+        ..Variable::default()
+    };
+    fragment.define_variable(variables[own], variable);
+
+    let value = DataNode::String { value: texts[own] };
+    let root = match own {
+        1 => {
+            let (layout, key) = (layouts[3], keys[3]);
+            let members = vec![DataMember { key, value }];
+            DataNode::Object { layout, members }
+        }
+        _ => value,
+    };
+    let data = fragment.add_data(Data {
+        root,
+        module: Some(module),
+    });
+    let binding = EvalBinding {
+        name: Some(texts[next]),
+        layout: Some(layouts[next]),
+        variable: Some(variables[next]),
+        ..EvalBinding::default()
+    };
+    let scope = fragment.add_eval_scope(EvalScope {
+        bindings: vec![binding],
+        ..EvalScope::default()
+    });
+
+    unit.define_function(0, |builder| {
+        let text = builder.string(texts[own]);
+        let read = builder.get_module_variable(variables[next]);
+        builder.type_test(read, list);
+        builder.prop_get(read, private_key, false, false);
+        builder.new_object(layouts[next], &[], None, &[]);
+        builder.data(data);
+        builder.record_require(modules[next], modules[own], None, false, false);
+        builder.direct_eval(scope, text, read, None, &[]);
+    });
+    unit.define_body(|builder| {
+        for function in functions {
+            builder.call_direct(function, &[]);
+        }
+    });
+}
+
+fn add_records_unique_to_visit(unit: &mut TestUnit) {
+    let file = unit.file.0;
+    let fragment = &mut unit.fragment;
+    let text = fragment.strings.intern(TEXT_UNIQUE_TO_VISIT);
+    fragment.property_keys.intern(PropertyKey::from_text(text));
+    fragment.types.intern(Type::string_literal(text));
+    fragment.declare_layout(test_class_key(file, 1));
+    fragment.declare_variable(test_variable_key(file, 1));
+    fragment.add_data(Data::default());
+    fragment.add_eval_scope(EvalScope::default());
+    unit.define_function(1, |_| {});
 }
 
 #[test]
 fn units_are_ordered_by_project_and_file() {
-    with_lowered_units(&PATH_IMPORTER, |mut units, projects| {
+    with_lowered_units(&PATH_IMPORTER, |mut units, _| {
         units.reverse();
-        let ordered = order_units(units, projects).expect("every compiled file has one unit");
+        let ordered = order_units(units);
         let files: Vec<ProgramFile> = ordered.iter().map(|unit| unit.file).collect();
         assert!(files.is_sorted_by(|first, second| first < second));
-        let is_reached = |file: &ProgramFile| {
-            !projects
-                .get(file.project)
-                .unreached_files
-                .contains(&file.file)
-        };
-        let reached_files: Vec<ProgramFile> = compiled_files(projects)
-            .into_iter()
-            .filter(is_reached)
-            .collect();
-        assert_eq!(files, reached_files);
         for project in ProjectId::ALL {
             assert!(
                 files.iter().any(|file| file.project == project),
@@ -173,104 +311,90 @@ fn units_are_ordered_by_project_and_file() {
 }
 
 #[test]
-fn missing_unit_is_reported_with_its_project() {
-    with_lowered_units(&PATH_IMPORTER, |mut units, projects| {
-        let removed_files = [
-            application_file(find_file(projects, "main.js")),
-            path_source(projects),
-        ];
-        units.retain(|unit| !removed_files.contains(&unit.file));
-        let errors = link_units(units, projects, &forward).err();
-        let errors = errors.expect("a compiled file without a unit does not link");
-        let missing_files: Vec<ProgramFile> = errors
-            .iter()
-            .map(|error| match error {
-                LinkError::MissingUnit { file } => *file,
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(missing_files, removed_files);
-    });
-}
-
-#[test]
-fn repeated_and_uncompiled_units_are_reported() {
-    let files = [
-        ("main.js", "import './types.d.ts';\n"),
-        ("types.d.ts", "export declare const x: number;\n"),
-    ];
-    with_lowered_units(&files, |mut units, projects| {
-        let mut added_files = ["main.js", "types.d.ts"].map(|name| find_file(projects, name));
-        units.extend(added_files.map(|file| finish_unit(projects, FragmentBuilder::new(file))));
-        let errors = order_units(units, projects).err();
-        let errors = errors.expect("each compiled file has exactly one unit");
-        let conflicts: Vec<(ProgramKey, [ProgramFile; 2])> = errors
-            .iter()
-            .map(|error| match error {
-                LinkError::ConflictingDefinitions { key, files } => (*key, *files),
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        added_files.sort_unstable();
-        let expected = added_files.map(|file| {
-            let file = application_file(file);
-            (ProgramKey::Module(ProgramModule::File(file)), [file, file])
-        });
-        assert_eq!(conflicts, expected);
-    });
-}
-
-#[test]
 fn unit_order_does_not_change_the_program() {
     let reorders: [fn(&mut Vec<LinkUnit>); 3] = [
         |_| {},
         |units| units.reverse(),
         |units| units.rotate_left(3),
     ];
-    let texts = reorders.map(|reorder| {
+    let outcomes = reorders.map(|reorder| {
         with_lowered_units(&PROGRAM, |mut units, projects| {
             reorder(&mut units);
-            let linked = link_units(units, projects, &forward);
-            print_program(&linked.expect("the program links").program)
+            outcome_of(link_units(units, projects, &forward))
         })
     });
-    assert_eq!(texts[1], texts[0]);
-    assert_eq!(texts[2], texts[0]);
+    assert_eq!(outcomes[1], outcomes[0]);
+    assert_eq!(outcomes[2], outcomes[0]);
 }
 
 #[test]
 fn task_order_does_not_change_the_program() {
-    let print = |in_parallel: InParallel<'_>| {
-        let linked = link_sources_in(&PROGRAM, in_parallel);
-        print_program(&linked.expect("the program links").program)
-    };
-    assert_eq!(print(&reverse), print(&forward));
+    let link_in = |in_parallel: InParallel<'_>| outcome_of(link_sources_in(&PROGRAM, in_parallel));
+    assert_eq!(link_in(&reverse), link_in(&forward));
 }
 
 #[test]
-fn keys_and_names_follow_program_ids() {
-    let Linked {
-        program,
-        names,
-        keys,
-        ..
-    } = link_sources(&PROGRAM).expect("the program links");
-    assert_eq!(keys.functions.len(), program.functions.len());
-    assert_eq!(keys.layouts.len(), program.layouts.len());
-    assert_eq!(keys.variables.len(), program.variables.len());
-    assert_eq!(keys.modules.len(), program.modules.len());
-    for (index, function) in program.functions.iter().enumerate() {
-        let id = FunctionId::new(index);
-        let name = function
-            .name
-            .map_or(&b""[..], |name| program.strings.get(name));
-        assert_eq!(names.function_name(id), name);
-        assert_eq!(names.function_module(id), Some(function.module));
-    }
-    for (index, module) in program.modules.iter().enumerate() {
-        let path = program.strings.get(module.display_path);
-        assert_eq!(names.module_path(ModuleId::new(index)), path);
-    }
+fn sharing_of_tables_does_not_change_the_program() {
+    with_test_files(|projects, files| {
+        let [main, first, second] = files;
+        let link_in_tasks = |tasks: &[&[FileId]], in_parallel: InParallel<'_>| {
+            let units = units_in_tasks(projects, tasks, |unit| {
+                name_records_of_every_file(unit, files)
+            });
+            assert_eq!(count_sets_of_tables(&units), tasks.len());
+            outcome_of(link_units(units, projects, in_parallel))
+        };
+        let under_one_set = link_in_tasks(&[&[main, first, second]], &forward);
+        let mut files_in_order = files;
+        files_in_order.sort_unstable();
+        let functions_in_order = files_in_order.map(|file| {
+            let keys = [test_function_key(file.0, 0), FunctionKey::ModuleBody(file)];
+            keys.map(in_application)
+        });
+        assert_eq!(under_one_set.functions, functions_in_order.concat());
+        let other_groupings: [&[&[FileId]]; 4] = [
+            &[&[main], &[first], &[second]],
+            &[&[main, second], &[first]],
+            &[&[second, first, main]],
+            &[&[second], &[first, main]],
+        ];
+        for tasks in other_groupings {
+            assert_eq!(link_in_tasks(tasks, &forward), under_one_set, "{tasks:?}");
+            assert_eq!(link_in_tasks(tasks, &reverse), under_one_set, "{tasks:?}");
+        }
+    });
+}
+
+#[test]
+fn visit_that_is_thrown_away_leaves_nothing_in_the_program() {
+    with_test_files(|projects, files| {
+        let [main, first, second] = files;
+        let fill = |unit: &mut TestUnit| name_records_of_every_file(unit, files);
+        let units = units_in_tasks(projects, &[&[main, first], &[second]], fill);
+        let expected = outcome_of(link_units(units, projects, &forward));
+
+        let mut task = TaskState::new();
+        let mut visit = |file: FileId, is_committed: bool| {
+            let mut unit = TestUnit::new_in(file, &mut task);
+            fill(&mut unit);
+            if !is_committed {
+                add_records_unique_to_visit(&mut unit);
+            }
+            unit.finish_in(&mut task)
+        };
+        let committed = [main, first].map(|file| visit(file, true));
+        let thrown_away = visit(second, false);
+        let tables = thrown_away.tables.take();
+        assert!(tables.strings.find(TEXT_UNIQUE_TO_VISIT).is_some());
+        thrown_away.tables.put_back(tables);
+        drop((thrown_away, task));
+
+        let to_unit = |fragment| unit_in(projects, ProjectId::Application, fragment);
+        let mut units = Vec::from(committed.map(to_unit));
+        units.extend(units_in_tasks(projects, &[&[second]], fill));
+        assert_eq!(count_sets_of_tables(&units), 2);
+        assert_eq!(outcome_of(link_units(units, projects, &forward)), expected);
+    });
 }
 
 #[test]
@@ -288,100 +412,14 @@ fn units_of_both_projects_link() {
     let record = &program.modules[path.index()];
     assert_eq!(record.kind, ModuleKind::RuntimeSource);
     assert!(record.body.is_some());
-    assert_eq!(linked.names.module_origin(path), ModuleOrigin::Runtime);
-    let ProgramModule::File(source) = linked.keys.modules[path.index()] else {
-        panic!("{:?}", linked.keys.modules[path.index()]);
+    let ProgramModule::File(source) = linked.modules[path.index()] else {
+        panic!("{:?}", linked.modules[path.index()]);
     };
     assert_eq!(source.project, ProjectId::Runtime);
 
     let entry = program.entries[0].module;
-    assert_eq!(linked.names.module_origin(entry), ModuleOrigin::Program);
     let targets = program.modules[entry.index()].requests.iter();
     assert!(targets.map(|request| request.target).eq([path]));
-}
-
-const RETAINED_AND_DROPPED_SITE_POSITIONS: [u32; 2] = [4242, 4343];
-
-fn create_fragment_with_dropped_definitions(file: FileId) -> Fragment {
-    let mut unit = TestUnit::new(file);
-    let module = unit.module;
-    let name = unit.fragment.strings.intern(b"variable");
-    let mut bodies = Vec::new();
-    for (index, position) in (0..).zip(RETAINED_AND_DROPPED_SITE_POSITIONS) {
-        let class_key = test_class_key(file.0, index);
-        let layout = unit.fragment.declare_layout(class_key);
-        unit.fragment
-            .define_layout(layout, empty_layout(&class_key));
-        let variable = unit
-            .fragment
-            .declare_variable(test_variable_key(file.0, index));
-        let definition = synthetic_export_variable(name, module, ExportWriter::Loader);
-        unit.fragment.define_variable(variable, definition);
-        let site = unit.fragment.add_type_site(TypeSite {
-            module,
-            position,
-            kind: TypeSiteKind::Assertion,
-            text: None,
-        });
-        bodies.push(unit.define_function(index, |builder| {
-            builder.new_object(layout, &[], None, &[]);
-            let value = builder.get_module_variable(variable);
-            builder.check(value, TypeTable::NUMBER, Some(site));
-        }));
-    }
-    let called = bodies[0];
-    unit.define_body(|builder| {
-        builder.call_direct(called, &[]);
-    });
-    unit.finish()
-}
-
-#[test]
-fn dropped_definitions_have_no_program_ids() {
-    let (linked, file) = link_replaced_entry(create_fragment_with_dropped_definitions);
-    let linked = linked.expect("the program links");
-    let keys = &linked.keys;
-    let has_definitions_of = |index| {
-        let function = in_application(test_function_key(file.0, index));
-        let layout = in_application(test_class_key(file.0, index));
-        let variable = in_application(test_variable_key(file.0, index));
-        let variable = ProgramVariableKey::Declared(variable);
-        [
-            keys.functions.contains(&function),
-            keys.layouts.contains(&layout),
-            keys.variables.contains(&variable),
-        ]
-    };
-    assert_eq!(has_definitions_of(0), [true; 3]);
-    assert_eq!(has_definitions_of(1), [false; 3]);
-
-    let entry = linked.program.entries[0].module;
-    let sites = linked.program.type_sites.iter();
-    let positions: Vec<u32> = sites
-        .filter(|site| site.module == entry)
-        .map(|site| site.position)
-        .collect();
-    assert_eq!(positions, [RETAINED_AND_DROPPED_SITE_POSITIONS[0]]);
-}
-
-#[test]
-fn dropped_functions_are_counted() {
-    let link_with_unused_functions = |count: u32| {
-        let (linked, _) = link_replaced_entry(|file| {
-            let mut unit = TestUnit::new(file);
-            for function in 0..count {
-                unit.define_function(function, |_| {});
-            }
-            unit.define_body(|_| {});
-            unit.finish()
-        });
-        let linked = linked.expect("the program links");
-        read_counter(&linked, StatisticId::FunctionsDroppedByLink)
-    };
-    assert_eq!(
-        link_with_unused_functions(2),
-        link_with_unused_functions(0) + 2
-    );
 }
 
 #[test]
@@ -404,7 +442,7 @@ fn link_keeps_enclosing_runtime_function_ids() {
         let enclosing_functions = [None, Some(second), Some(first), Some(second)];
         let definitions = fragment.functions.iter_mut();
         for ((_, function), enclosing) in definitions.zip(enclosing_functions) {
-            std::sync::Arc::make_mut(function).enclosing_runtime_function = enclosing;
+            Arc::make_mut(function).enclosing_runtime_function = enclosing;
         }
         fragment
     });
@@ -432,94 +470,67 @@ fn link_keeps_enclosing_runtime_function_ids() {
     );
 }
 
-#[test]
-fn conflicting_and_undefined_keys_are_reported_together() {
-    let (linked, file) = link_replaced_entry(|file| {
-        let mut unit = TestUnit::new(file);
-        let undefined = unit.fragment.declare_function(test_function_key(file.0, 1));
-        unit.define_body(|builder| {
-            builder.call_direct(undefined, &[]);
-        });
-        unit.define_function(2, |_| {});
-        let mut fragment = unit.finish();
-        let repeated = fragment.functions.last().cloned();
-        fragment.functions.extend(repeated);
-        fragment
-    });
-    let errors = linked.err().expect("the program does not link");
-    let [
-        LinkError::ConflictingDefinitions {
-            key: conflicting_key,
-            files,
-        },
-        LinkError::UndefinedFunction {
-            key: undefined_key,
-            referenced_in,
-        },
-    ] = errors.as_slice()
-    else {
-        panic!("{errors:?}");
-    };
-    let file_in_program = application_file(file);
-    let [undefined, repeated] =
-        [1, 2].map(|function| in_application(test_function_key(file.0, function)));
-    assert_eq!(*conflicting_key, ProgramKey::Function(repeated));
-    assert_eq!(*files, [file_in_program; 2]);
-    assert_eq!(*undefined_key, undefined);
-    assert_eq!(*referenced_in, file_in_program);
+const SYNTAX_TREE: [(&str, &str); 3] = [
+    (
+        "main.ts",
+        r#"import { Kind, type Name, type Pair, type Punctuation, type Token } from "./types.ts";
+import { count, start, width } from "./reads.ts";
+const name: Name = { kind: Kind.Name, pos: 0, end: 1, text: "a" };
+const dot: Punctuation<Kind.Dot> = { kind: Kind.Dot, pos: 1, end: 2 };
+const comma: Token<Kind.Comma> = { kind: Kind.Comma, pos: 2, end: 3 };
+const pair: Pair = { kind: Kind.Pair, pos: 0, end: 3, left: name, dot, right: name };
+export const total: number =
+  width(dot, dot, comma, { kind: Kind.Comma, pos: 4, end: 5 }) + count({ kind: Kind.List, pos: 0, end: 9, items: [name] }, pair, name) + start(pair);
+"#,
+    ),
+    (
+        "types.ts",
+        r#"export const enum Kind { Dot, Comma, Name, List, Pair }
+export interface Node { readonly kind: Kind; pos: number; end: number }
+export interface Token<K extends Kind> extends Node { readonly kind: K }
+export interface Punctuation<K extends Kind> extends Token<K> {}
+export interface Name extends Node { readonly kind: Kind.Name; text: string }
+export interface List extends Node { readonly kind: Kind.List; items: Name[]; comma?: Punctuation<Kind.Comma> }
+export interface Pair extends Node { readonly kind: Kind.Pair; left: Name; dot: Token<Kind.Dot>; right: Name | Pair }
+export type AnyNode = Name | List | Pair | Token<Kind.Dot> | Punctuation<Kind.Dot> | Token<Kind.Comma> | Punctuation<Kind.Comma>;
+"#,
+    ),
+    (
+        "reads.ts",
+        r#"import { Kind, type AnyNode, type List, type Name, type Pair, type Punctuation, type Token } from "./types.ts";
+export function width(dot: Punctuation<Kind.Dot>, same: Token<Kind.Dot>, comma: Token<Kind.Comma>, other: Punctuation<Kind.Comma>): number {
+  return dot.end - same.pos + comma.end - other.pos;
 }
+export function count(list: List, pair: Pair, name: Name): number {
+  return list.items.length + pair.left.text.length + pair.dot.pos + name.end + (list.comma ? list.comma.pos : 0);
+}
+export function start(node: AnyNode): number {
+  return node.kind === Kind.Pair ? node.left.pos : node.pos;
+}
+"#,
+    ),
+];
 
 #[test]
-fn number_everything_gives_shared_keys_one_id() {
-    with_test_files(|projects, [shared_file, first_file, second_file]| {
-        let create_type_site = |module| TypeSite {
-            module,
-            ..TypeSite::default()
-        };
-        let shared_key = test_function_key(shared_file.0, 0);
-        let shared_module = ModuleRef::File(shared_file);
-        let mut first = FragmentBuilder::new(first_file);
-        let first_function = first.declare_function(shared_key);
-        let first_module = first.declare_module(shared_module);
-        first.add_type_site(create_type_site(first_module));
-        let mut second = FragmentBuilder::new(second_file);
-        let own_function = second.declare_function(test_function_key(second_file.0, 0));
-        let second_function = second.declare_function(shared_key);
-        let own_module = second.declare_module(ModuleRef::File(second_file));
-        let second_module = second.declare_module(shared_module);
-        second.add_type_site(create_type_site(second_module));
-        let units = [first, second].map(|fragment| {
-            let fragment = fragment.finish(ModuleFragment::default());
-            unit_in(projects, ProjectId::Application, fragment)
-        });
-
-        let unit_ids = number_everything(&units);
-
-        let [first_ids, second_ids] = unit_ids.as_slice() else {
-            panic!("{} units are numbered", unit_ids.len());
-        };
-        let shared_function = first_ids.functions[first_function.index()];
-        assert!(shared_function.is_some());
-        assert_eq!(
-            second_ids.functions[second_function.index()],
-            shared_function
-        );
-        assert_ne!(second_ids.functions[own_function.index()], shared_function);
-        let [first_program_module, second_program_module] =
-            [0, 1].map(|id| Some(ModuleId::new(id)));
-        assert_eq!(
-            first_ids.modules[first_module.index()],
-            first_program_module
-        );
-        assert_eq!(
-            second_ids.modules[second_module.index()],
-            first_program_module
-        );
-        assert_eq!(
-            second_ids.modules[own_module.index()],
-            second_program_module
-        );
-        assert_eq!(first_ids.type_sites, [Some(TypeSiteId::new(0))]);
-        assert_eq!(second_ids.type_sites, [Some(TypeSiteId::new(1))]);
-    });
+fn in_which_order_a_file_has_defined_its_layouts_changes_nothing() {
+    let print_linked = |reverses_definitions: bool| {
+        with_lowered_units_without_bun_modules(&SYNTAX_TREE, |mut units, projects| {
+            let mut has_layout_with_two_definitions = false;
+            for unit in units.iter_mut().filter(|_| reverses_definitions) {
+                let definitions = &mut unit.layout_definitions;
+                has_layout_with_two_definitions |=
+                    definitions.windows(2).any(|pair| pair[0].0 == pair[1].0);
+                let last = definitions.len() as u32;
+                definitions.reverse();
+                unit.object_types.reverse();
+                for (of_definition, _) in &mut unit.object_types {
+                    *of_definition = last - 1 - *of_definition;
+                }
+            }
+            assert_eq!(has_layout_with_two_definitions, reverses_definitions);
+            let linked = link_units(units, projects, &forward);
+            print_program(&linked.expect("the program links").program)
+        })
+    };
+    assert_eq!(print_linked(false), print_linked(true));
 }

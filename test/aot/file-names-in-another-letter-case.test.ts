@@ -4,8 +4,8 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { spawned, withoutDebugInformation } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
-import { spawned, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
 
 const folder = String(tempDir("aot-file-names-in-another-letter-case", {}));

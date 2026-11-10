@@ -3,12 +3,12 @@ const { throwNotImplemented } = require("internal/shared");
 var timersPromisesValue;
 
 export default {
-  setTimeout,
-  clearTimeout,
-  setInterval,
-  setImmediate,
-  clearInterval,
-  clearImmediate,
+  setTimeout: globalThis.setTimeout,
+  clearTimeout: globalThis.clearTimeout,
+  setInterval: globalThis.setInterval,
+  setImmediate: globalThis.setImmediate,
+  clearInterval: globalThis.clearInterval,
+  clearImmediate: globalThis.clearImmediate,
   get promises() {
     return (timersPromisesValue ??= require("node:timers/promises"));
   },

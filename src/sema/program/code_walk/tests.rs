@@ -4,7 +4,7 @@ use super::*;
 use crate::program::code_test_host::{
     EMBEDDED_FILE_LOADER, HostEvent, StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
 };
-use crate::resolve::{CodeHost, HostResolution};
+use crate::resolve::{CodeHost, CodeResolution, HostResolution, SiteResolution};
 
 const GRAPH: &[(&str, &str)] = &[
     (
@@ -318,6 +318,62 @@ fn host_looks_once_at_a_file_that_is_folded_again() {
 }
 
 #[test]
+fn import_is_followed_when_the_host_asks_for_it() {
+    const FILES: &[(&str, &str)] = &[
+        (
+            "/main.ts",
+            "import \"./first\"\nimport \"./never\"\nimport \"./late\"",
+        ),
+        ("/first.ts", "import \"./second\"\nimport \"./never\""),
+        ("/second.ts", ""),
+        ("/late.ts", ""),
+        ("/never.ts", ""),
+        ("/implied.ts", ""),
+        ("/declared.d.ts", ""),
+    ];
+    let host = StatementsHost {
+        implied: vec![(
+            "/main.ts",
+            vec![
+                HostResolution::Path(b"/implied.ts".into()),
+                HostResolution::Path(b"/declared.d.ts".into()),
+            ],
+        )],
+        followed_on_request: Some(&[
+            ("/main.ts", "/main.ts", "/first.ts"),
+            ("/first.ts", "/first.ts", "/second.ts"),
+            ("/second.ts", "/main.ts", "/late.ts"),
+        ]),
+        ..host_of(FILES)
+    };
+    let walked = walk(&host, &["/main.ts"]);
+    assert_eq!(
+        walked.paths(),
+        [
+            "/second.ts",
+            "/first.ts",
+            "/late.ts",
+            "/declared.d.ts",
+            "/main.ts"
+        ]
+    );
+    assert_eq!(walked.entry("/main.ts").targets, [1, 2, 3]);
+    assert_eq!(walked.entry("/first.ts").targets, [0]);
+    let events = host.events();
+    for path in ["/never.ts", "/implied.ts"] {
+        assert_eq!(count(&events, &read(path)), 0, "{path}");
+    }
+    with_code_files(&host, &["/main.ts"], |files| {
+        let code = find_entry(files, "/main.ts").code.lock();
+        let code = code.as_ref().expect("the file has code");
+        let erased = SiteResolution::Constant(CodeResolution::Erased);
+        let is_erased: Vec<bool> = code.resolutions.iter().map(|&it| it == erased).collect();
+        assert_eq!(is_erased, [false, true, false]);
+        assert_eq!(code.implied.len(), 1);
+    });
+}
+
+#[test]
 fn import_in_folded_code_is_not_loaded() {
     let host = host_of(&[
         (
@@ -420,6 +476,155 @@ fn no_file_waits_behind_a_read_by_plugin() {
             assert_eq!(count(&events, &read(path)), 1, "{path}");
             assert_eq!(count(&events, &parsed(path)), 1, "{path}");
         }
+    }
+}
+
+#[test]
+fn early_loaders_go_on_while_each_waiting_file_has_a_sleeper() {
+    let mut state = WalkState {
+        in_progress: 1,
+        ..Default::default()
+    };
+    assert!(state.has_idle_threads());
+    state.to_read.push_back(0);
+    assert!(!state.has_idle_threads());
+    state.asleep = 1;
+    assert!(state.has_idle_threads());
+    state.own_to_read.push_back(1);
+    assert!(!state.has_idle_threads());
+    state.asleep = 2;
+    assert!(state.has_idle_threads());
+    state.ready.push_back((2, Cow::Borrowed(&b""[..])));
+    assert!(!state.has_idle_threads());
+    state.asleep = 3;
+    state.in_progress = 0;
+    assert!(!state.has_idle_threads());
+}
+
+#[test]
+fn each_unit_of_work_wakes_a_sleeper_that_takes_it() {
+    const SLEEPERS: usize = 4;
+    #[derive(Default)]
+    struct Counts {
+        asleep: usize,
+        units: usize,
+        taken: usize,
+    }
+    let counts = Guarded::new(Counts::default());
+    let sleepers = Condvar::new();
+    let is_reached_in_time = |is_reached: &dyn Fn(&Counts) -> bool| {
+        let began = Instant::now();
+        while !is_reached(&counts.lock()) {
+            if began.elapsed() > Duration::from_secs(30) {
+                return false;
+            }
+            std::thread::yield_now();
+        }
+        true
+    };
+    let give = |units: usize| {
+        counts.lock().units += units;
+        notify_for_work(&sleepers, units, SLEEPERS);
+    };
+    let mut two_were_taken = false;
+    std::thread::scope(|scope| {
+        for _ in 0..SLEEPERS {
+            scope.spawn(|| {
+                let mut counts = counts.lock();
+                counts.asleep += 1;
+                while counts.units == 0 {
+                    sleepers.wait_guarded(&mut counts);
+                }
+                counts.units -= 1;
+                counts.taken += 1;
+            });
+        }
+        if is_reached_in_time(&|counts| counts.asleep == SLEEPERS) {
+            give(0);
+            give(2);
+            two_were_taken = is_reached_in_time(&|counts| counts.taken == 2);
+        }
+        give(SLEEPERS);
+    });
+    assert!(two_were_taken);
+    assert_eq!(counts.lock().taken, SLEEPERS);
+}
+
+#[test]
+fn time_without_files_for_plugins_lies_between_an_answer_and_the_next_file() {
+    let at = Duration::from_millis;
+    let mut times = PluginReadTimes::default();
+    times.note_queued(at(10));
+    times.note_queued(at(20));
+    times.note_answered(at(15), at(30));
+    times.note_answered(at(30), at(50));
+    times.note_queued(at(90));
+    times.note_answered(at(95), at(100));
+    assert_eq!(times.queued, Some((at(10), at(90))));
+    assert_eq!(times.last_answer, at(100));
+    assert_eq!(times.without_files, at(40));
+    assert_eq!(times.waited, at(40));
+}
+
+#[test]
+fn every_file_of_a_wide_graph_is_loaded_on_many_threads() {
+    const FILES: usize = 200;
+    let text_of = |index: usize| {
+        let next = index + 1..FILES.min(index + 4);
+        let imports: Vec<String> = next.map(|it| format!("import \"./file-{it}\"")).collect();
+        imports.join("\n")
+    };
+    let files: Vec<(&'static str, &'static str)> = (0..FILES)
+        .map(|index| {
+            let path: &'static str = format!("/file-{index}.ts").leak();
+            let text: &'static str = text_of(index).leak();
+            (path, text)
+        })
+        .collect();
+    let files: &'static [(&'static str, &'static str)] = files.leak();
+    for threads in [1, 2, 16, 64] {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let host = StatementsHost {
+                threads,
+                ..host_of(files)
+            };
+            let walked = walk(&host, &["/file-0.ts"]);
+            let _ = sender.send(walked.entries.len());
+        });
+        let loaded = receiver.recv_timeout(Duration::from_secs(30));
+        assert_eq!(loaded, Ok(FILES), "{threads} threads");
+    }
+}
+
+#[test]
+fn file_with_many_imports_is_walked_alike_on_any_number_of_threads() {
+    const IMPORTS: usize = 300;
+    let imports = (0..IMPORTS).map(|it| format!("import \"./file-{it}\""));
+    let imports: Vec<String> = imports.collect();
+    let main: &'static str = imports.join("\n").leak();
+    let mut files: Vec<(&'static str, &'static str)> = vec![("/main.ts", main)];
+    files.extend((0..IMPORTS).map(|index| {
+        let path: &'static str = format!("/file-{index}.ts").leak();
+        (path, "")
+    }));
+    let files: &'static [(&'static str, &'static str)] = files.leak();
+    let walk_on = |threads: usize| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let host = StatementsHost {
+                threads,
+                ..host_of(files)
+            };
+            let _ = sender.send(walk(&host, &["/main.ts"]));
+        });
+        receiver.recv_timeout(Duration::from_secs(30))
+    };
+    let alone = walk_on(1);
+    let count = alone.as_ref().map(|walked| walked.entries.len());
+    assert_eq!(count.ok(), Some(IMPORTS + 1));
+    for threads in [2, 16, 64] {
+        assert_eq!(walk_on(threads), alone, "{threads} threads");
     }
 }
 
@@ -686,6 +891,35 @@ fn package_depth_is_lowest_of_all_ways() {
     assert_eq!(depth_of("/node_modules/pkg/c.js"), 0);
 }
 
+#[test]
+fn entry_point_that_is_only_evaluated_text_begins_where_a_package_does() {
+    let host = StatementsHost {
+        evaluated_texts: &["/node_modules/pkg/job.js"],
+        ..host_of(&[
+            (
+                "/main.ts",
+                "import \"pkg\"\nimport \"./node_modules/pkg/by_path.js\"",
+            ),
+            (
+                "/node_modules/pkg/job.js",
+                "import \"./alone.js\"\nimport \"./index.js\"\nimport \"./by_path.js\"\nimport \"nested\"",
+            ),
+            ("/node_modules/pkg/alone.js", ""),
+            ("/node_modules/pkg/index.js", ""),
+            ("/node_modules/pkg/by_path.js", ""),
+            ("/node_modules/nested/index.js", ""),
+        ])
+    };
+    let walked = walk(&host, &["/main.ts", "/node_modules/pkg/job.js"]);
+    let depth_of = |path: &str| walked.entry(path).package_depth;
+    assert_eq!(depth_of("/main.ts"), 0);
+    assert_eq!(depth_of("/node_modules/pkg/job.js"), 1);
+    assert_eq!(depth_of("/node_modules/pkg/alone.js"), 1);
+    assert_eq!(depth_of("/node_modules/pkg/index.js"), 1);
+    assert_eq!(depth_of("/node_modules/pkg/by_path.js"), 0);
+    assert_eq!(depth_of("/node_modules/nested/index.js"), 2);
+}
+
 fn entry_with_targets(targets: Vec<u32>) -> CodeEntry<'static, 'static> {
     CodeEntry {
         key: LoadKey {
@@ -716,7 +950,12 @@ fn package_depths(edges: &[&[(u32, bool)]], entry_points: &[u32]) -> Vec<u32> {
     let steps: Vec<Vec<bool>> = (edges.iter())
         .map(|edges| edges.iter().map(|edge| edge.1).collect())
         .collect();
-    compute_package_depths(&mut entries, entry_points, &steps);
+    compute_package_depths(
+        &StatementsHost::default(),
+        &mut entries,
+        entry_points,
+        &steps,
+    );
     entries.iter().map(|entry| entry.package_depth).collect()
 }
 

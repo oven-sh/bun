@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Disallows useless `default` cases in `switch` statements.
 pub struct NoUselessSwitchCase;
 
-const NO_USELESS_SWITCH_CASE: Message = Message::new("", "Useless case in switch statement.");
-const REMOVE_THIS_CASE: Message = Message::new("", "Remove this case.");
+const NO_USELESS_SWITCH_CASE: &Message = &Message::new("", "Useless case in switch statement.");
+const REMOVE_THIS_CASE: &Message = &Message::new("", "Remove this case.");
 
 impl Rule for NoUselessSwitchCase {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-switch-case", Kind::Suggestion).has_suggestions();

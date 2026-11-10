@@ -1,402 +1,341 @@
-// `--explain` and the percentage in the last line of a build are one account:
-//   100% means that the report has no entry, and less than 100% that it has one;
-//   an access has one cause, so together the entries count what is missing from 100%;
-//   the fix that an entry suggests removes the entry, and the percentage reaches 100%. Parsed data is the exception: the
-//   function that checks it still reads an unknown object, so its entry stays (`notYet` says so);
-//   the text, the JSON and the last line of the build say the same;
-//   an entry that says why its guard is there gives a reason that the compiler recorded.
-// `cases` has a program per cause (before) and the same program fixed as the entry says (after).
+// `bun compile --explain`, `bun check --aot --explain` and `aotExplain` give one report. Its text, its JSON and its closing
+// lines say the same, an entry stands at the line that an untyped value comes from, and asking for it changes nothing of
+// what is built. The wording of single entries is tested beside the code that writes it: src/aot/report.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
-import { basename, join } from "path";
-import {
-  parseExplainLines,
-  type ExplainCause,
-  type ExplainNumbers,
-  type ExplainReport,
-} from "./explain/explain-report";
-import {
-  accessColumns,
-  accessCountKeys,
-  countAccesses,
-  levels,
-  type AccessColumn,
-  type AccessCounts,
-} from "./harness/build-report";
-import { slot, spawned } from "./run-programs";
+import { mkdirSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
+import { join } from "path";
+import { slot, spawned, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 type Files = Record<string, string>;
 
-interface Case {
+interface AccessCounts {
+  byName: number;
+  tested: number;
+  free: number;
+  testedSlotOnly: number;
+  provenWithoutAnyTest: number;
+}
+
+interface Numbers {
+  accesses: AccessCounts;
+  dependencyAccesses: AccessCounts;
+  calls: { unknown: number; guarded: number; proven: number };
+  causes: number;
+}
+
+interface Place {
+  file: string;
+  line: number;
+  column: number;
+}
+
+interface Wording {
   reason: string;
-  family: ExplainCause["family"];
+  message: string;
+  fix: string;
+  url: string;
+}
+
+interface Cause extends Place, Wording {
+  rank: number;
+  inDependency: boolean;
+  source: string;
+  accesses: number;
+  dependencyAccesses: number;
+  calls: number;
+  operators: number;
+  inLoops: number;
+  function: string;
   types: string[];
-  /** The line of `before` that the entry names. */
-  at: string;
-  before: string;
-  after: string;
-  /** What the report says of `before` today, where that is not yet what the page says. */
-  notYet?: string;
+  family: "unproven-type" | "unknown-code";
+  why: Wording | null;
 }
 
-const counterProgram = (field: string, setup: string, operation: string, read: string) => `class Counter {
-  ${field}
+interface Report {
+  stdout: string;
+  /** What stderr holds, but for empty lines and the line that ends `bun check`. */
+  lines: string[];
+  numbers: Numbers;
+  causes: Cause[];
 }
 
-${setup}const first = new Counter();
-const counters = [first];
-for (let i = 0; i < 2; i++) counters.push(new Counter());
-${operation}
-
-let sum = 0;
-for (const counter of counters) sum += ${read};
-console.log(sum);
-`;
-
-const boxProgram = (declaration: string, call: string) => `interface Box {
-  width: number;
-  height: number;
-}
-
-${declaration}
-
-const boxes: Box[] = [];
-for (let side = 1; side <= 3; side++) boxes.push({ width: side, height: side + 1 });
-${call}
-
-let area = 0;
-for (const box of boxes) area += box.width * box.height;
-console.log(area);
-`;
-
-const itemProgram = (loop: string) => `interface Item {
-  sku: string;
-  price: number;
-}
-
-const items: Item[] = [{ sku: "A-1", price: 2.5 }];
-${loop}
-
-let sum = 0;
-for (const item of items) sum += item.price;
-console.log(sum);
-`;
-
-const runtimeKey = "const key = String(Date.now());\n";
-const extras = runtimeKey + "const extras = new Map<string, number>();\n";
-
-const cases: Record<string, Case> = {
-  "parsed data is read": {
-    reason: "unknown-object",
-    family: "unknown-code",
-    types: [],
-    at: `const config = JSON.parse('{"host":"localhost","port":3000}');`,
-    before: `const config = JSON.parse('{"host":"localhost","port":3000}');
-const address = config.host + ":" + config.port;
-console.log(address);
-`,
-    after: `interface Config {
-  host: string;
-  port: number;
-}
-
-function readConfig(value: unknown): Config {
-  if (typeof value !== "object" || value === null) throw new Error("config: not an object");
-  const { host, port } = value as Record<string, unknown>;
-  if (typeof host !== "string") throw new Error("config: host must be a string");
-  if (typeof port !== "number") throw new Error("config: port must be a number");
-  return { host, port };
-}
-
-const config = readConfig(JSON.parse('{"host":"localhost","port":3000}'));
-const address = config.host + ":" + config.port;
-console.log(address);
-`,
-    notYet: "the reads of config are free, and readConfig's own read of the parsed object keeps the entry",
-  },
-  "parsed data reaches a type": {
-    reason: "unknown-object",
-    family: "unknown-code",
-    types: ["Item"],
-    at: `for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(item);`,
-    before: itemProgram(`for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(item);`),
-    after: itemProgram(`function readItem(value: unknown): Item {
-  if (typeof value !== "object" || value === null) throw new Error("item: not an object");
-  const { sku, price } = value as Record<string, unknown>;
-  if (typeof sku !== "string") throw new Error("item: sku must be a string");
-  if (typeof price !== "number") throw new Error("item: price must be a number");
-  return { sku, price };
-}
-for (const item of JSON.parse('[{"sku":"B-2","price":10}]')) items.push(readItem(item));`),
-    notYet: "the read of item.price is free, and readItem's own read of the parsed object keeps the entry",
-  },
-  "an object is passed to code from new Function()": {
-    reason: "passed-to-untyped-code",
-    family: "unknown-code",
-    types: ["Box"],
-    at: "for (const box of boxes) publish(box);",
-    before: boxProgram(
-      `const publish = new Function("box", process.argv[2] ?? "");`,
-      "for (const box of boxes) publish(box);",
-    ),
-    after: boxProgram(
-      `const publish = new Function("width", "height", process.argv[2] ?? "");`,
-      "for (const box of boxes) publish(box.width, box.height);",
-    ),
-    notYet: "an entry for each read, at the line of the read and not at the line that passes the object",
-  },
-  "a field is deleted": {
-    reason: "field-deleted",
-    family: "mutation",
-    types: ["Counter"],
-    at: "delete (first as any).count;",
-    before: counterProgram("count: number | undefined = 0;", "", "delete (first as any).count;", "counter.count ?? 0"),
-    after: counterProgram("count: number | undefined = 0;", "", "first.count = undefined;", "counter.count ?? 0"),
-  },
-  "a computed key is deleted": {
-    reason: "computed-key-delete",
-    family: "mutation",
-    types: ["Counter"],
-    at: "delete (first as any)[key];",
-    before: counterProgram("count = 0;", runtimeKey, "delete (first as any)[key];", "counter.count"),
-    after: counterProgram("count = 0;", extras, "extras.delete(key);", "counter.count"),
-    notYet: "the entry says field-deleted",
-  },
-  "a computed key is stored": {
-    reason: "computed-key-store",
-    family: "mutation",
-    types: ["Counter"],
-    at: "(first as any)[key] = 1;",
-    before: counterProgram("count = 0;", runtimeKey, "(first as any)[key] = 1;", "counter.count"),
-    after: counterProgram("count = 0;", extras, "extras.set(key, 1);", "counter.count"),
-    notYet: "the entry says property-added",
-  },
-  "a prototype is changed": {
-    reason: "prototype-changed",
-    family: "mutation",
-    types: ["Counter"],
-    at: "Object.setPrototypeOf(first, null);",
-    before: counterProgram("count = 0;", "", "Object.setPrototypeOf(first, null);", "counter.count"),
-    after: counterProgram("count = 0;", "", "", "counter.count"),
-    notYet: "no entry: a field of the object itself stays one load under another prototype",
-  },
-};
-
-const page = join(import.meta.dir, "../../docs/compiler/explain.mdx");
-const wordingSource = join(import.meta.dir, "../../src/aot/report/wording.rs");
-const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
-const columnLabels: Record<AccessColumn, string> = { free: "free", tested: "tested", byName: "by name" };
-const columnDescriptions: Record<AccessColumn, string> = {
-  free: "free: one load or store at a fixed offset",
-  tested: "tested: a test of its own, then a load or store at a fixed offset",
-  byName: "by name: looked up by name",
-};
-const printedColumns = accessColumns.toReversed();
-const maxShownCauses = 20;
+const env = { ...bunEnv, NO_COLOR: "1" };
 const buildTimeout = 300_000;
+const maxShownCauses = 20;
+const textAndJSON = ["--explain", "--explain=json"];
+const membersOfCause =
+  "rank reason file line column inDependency source message fix url accesses dependencyAccesses calls operators " +
+  "inLoops function types family why";
 
-async function check(files: Files, flag: string) {
+const pagePath = join(import.meta.dir, "..", "..", "docs", "compiler", "explain.mdx");
+const page = readFileSync(pagePath, "utf8").replaceAll("\r\n", "\n");
+/** The text of the page's first code block in `language`. */
+const firstBlock = (language: string) => page.match(new RegExp("^```" + language + "\\b.*\\n([^]*?)^```$", "m"))![1]!;
+const example: Files = { "main.ts": firstBlock("ts") };
+
+const parts = [0, 1, 2];
+const parsingLine = `export const settings = JSON.parse('{ "panel": { "size": 3, "title": "a" } }');`;
+const readers: Files = {
+  "settings.ts": parsingLine + "\n",
+  "main.ts":
+    `import { settings } from "./settings";\n` +
+    parts.map(part => `import { size as size${part}, title as title${part} } from "./part${part}";\n`).join("") +
+    parts.map(part => `console.log(size${part}(), title${part}(settings));\n`).join(""),
+  ...Object.fromEntries(
+    parts.map(part => [
+      `part${part}.ts`,
+      `import { settings } from "./settings";
+export function size() {
+  return settings.panel.size;
+}
+export function title(from: any) {
+  return from.panel.title;
+}
+`,
+    ]),
+  ),
+};
+
+const readsOutsideLoops = 12;
+const fewReadsInLoop: Files = {
+  "main.ts": `const cold = JSON.parse('{ "field0": 1 }');
+const hot = JSON.parse('{ "x": 1, "y": 2 }');
+${Array.from({ length: readsOutsideLoops }, (_, index) => `console.log(cold.field${index});\n`).join("")}
+let total = 0;
+for (let i = 0; i < 1000; i++) total += hot.x + hot.y;
+console.log(total);
+`,
+};
+
+// An object that never leaves its function is not allocated, so the objects are kept in an array.
+const typed: Files = {
+  "main.ts": `class Account {
+  constructor(
+    public id: number,
+    public balance: number,
+  ) {}
+}
+
+function total(accounts: Account[]): number {
+  let sum = 0;
+  for (const account of accounts) sum += account.balance;
+  return sum;
+}
+
+const accounts: Account[] = [];
+for (let id = 0; id < 10; id++) accounts.push(new Account(id, id % 3));
+console.log(total(accounts));
+`,
+};
+
+const withDependency: Files = {
+  "main.ts": `import { portOf } from "reads-config";\nconsole.log(portOf('{"port":3000}'));\n`,
+  "node_modules/reads-config/package.json": JSON.stringify({
+    name: "reads-config",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    types: "index.d.ts",
+  }),
+  "node_modules/reads-config/index.js": `export function portOf(text) {\n  return JSON.parse(text).port;\n}\n`,
+  "node_modules/reads-config/index.d.ts": `export declare function portOf(text: string): number;\n`,
+};
+
+const buildScript = `const result = await Bun.build({
+  entrypoints: ["./main.ts"],
+  compile: { aot: true, outfile: "./from-build", aotExplain: ["text", "json"] },
+});
+const logs = result.logs.map(log => ({ level: log.level, texts: [log.message, ...log.notes.map(note => note.message)] }));
+console.log(JSON.stringify(logs));
+`;
+
+// Classes that escape to a callee that the compiler does not know, and a proxy of an instance that arrives at their reads
+// beside whatever such a callee hands in.
+const escaping = `
+const hand = typeof handedIn === "function" ? handedIn : (...all) => console.log(typeof all[0] === "string" ? all[1]() : all.length);
+class State { constructor() { this.length = 0; this.buffer = []; } }
+class Stream {
+  constructor() { this._state = new State(); }
+  get size() { return this._state.length; }
+  push(chunk) { const state = this._state; state.buffer.push(chunk); state.length += chunk.length; return state.length < 16; }
+}
+hand(Stream, State);
+const made = () => new Stream();
+hand("a proxy of a stream", () => { const proxy = new Proxy(made(), {}); return proxy.size + " " + proxy.push("a") + " " + proxy.size; });
+`;
+
+// One entry for each set of reports that the engine can be asked for.
+const reportFlags: Record<string, string[]> = {
+  nothing: [],
+  causes: textAndJSON,
+  guards: ["--explain=guards"],
+  allocations: ["--explain=allocations"],
+};
+
+const linesOf = (text: string) =>
+  text
+    .split("\n")
+    .map(line => line.trimEnd())
+    .filter(line => line !== "");
+
+async function run(files: Files, ...operands: string[]): Promise<Report> {
   using dir = tempDirWithBunTypes("aot-explain", files);
-  const command = [bunExe(), "check", "--aot", "--no-pretty", flag, "main.ts"];
-  const { stdout, stderr, exitCode, signal } = await spawned(command, String(dir), { ...bunEnv, NO_COLOR: "1" });
-  const said = exitCode === 0 ? "" : stdout + stderr;
-  expect({ exitCode, signal, said }).toEqual({ exitCode: 0, signal: null, said: "" });
-  expect(stderr).toEndWith("\n");
-  const lines = stderr.split("\n").slice(0, -1);
-  return { stdout, lines: lines.filter(line => !line.includes("No type errors")) };
+  const { stdout, stderr, exitCode, signal } = await spawned([bunExe(), ...operands], String(dir), env);
+  const output = exitCode === 0 ? "" : stdout + stderr;
+  expect({ exitCode, signal, output }).toEqual({ exitCode: 0, signal: null, output: "" });
+  const [numbers, ...causes] = linesOf(stdout)
+    .filter(line => line.startsWith("{"))
+    .map(line => JSON.parse(line));
+  const lines = linesOf(stderr)
+    .filter(line => !line.includes("No type errors"))
+    .map(line => (/^ +at /.test(line) ? line.replaceAll("\\", "/") : line));
+  return { stdout, lines, numbers, causes };
 }
 
-async function explain(files: Files): Promise<ExplainReport> {
-  const { stdout, lines } = await check(files, "--explain=json");
-  return { ...parseExplainLines(stdout), summary: lines };
-}
+const check = (files: Files, ...flags: string[]) => run(files, "check", "--aot", "--no-pretty", ...flags, "main.ts");
+const compile = (files: Files, ...flags: string[]) => run(files, "compile", "./main.ts", ...flags);
 
-const sum = (numbers: number[]) => numbers.reduce((total, number) => total + number, 0);
 const count = (number: number) => number.toLocaleString("en-US");
 const counted = (number: number, one: string, many: string) => `${count(number)} ${number === 1 ? one : many}`;
-const countAll = countAccesses;
-const typed = (accesses: AccessCounts) => accesses.free;
-const untyped = (accesses: AccessCounts) => countAll(accesses) - typed(accesses);
-const urlOf = (code: string) => `https://bun.com/docs/compiler/explain#${code}`;
+const sum = (causes: Cause[], of: (cause: Cause) => number) => causes.reduce((total, cause) => total + of(cause), 0);
+const all = ({ byName, tested, free }: AccessCounts) => byName + tested + free;
+const untyped = ({ byName, tested }: AccessCounts) => byName + tested;
+const lineOf = ({ file, line }: Place) => `${file}:${line}`;
+const at = ({ file, line, column }: Place) => `   at ${file}:${line}:${column}`;
 
-function percentOf(accesses: AccessCounts) {
-  return Math.max(Math.floor((typed(accesses) * 1000) / countAll(accesses)), typed(accesses) > 0 ? 1 : 0) / 10;
+function closingLine(label: string, accesses: AccessCounts) {
+  const tenths = Math.max(Math.floor((accesses.free * 1000) / all(accesses)), accesses.free > 0 ? 1 : 0);
+  const columns = `${count(accesses.free)} free, ${count(accesses.tested)} tested, ${count(accesses.byName)} by name`;
+  return `${label}${tenths / 10}% of property accesses are one load: ${columns} (${count(all(accesses))})`;
 }
 
-function columnsLine(label: string, accesses: AccessCounts) {
-  const counts = printedColumns.map(column => `${count(accesses[column])} ${columnLabels[column]}`).join(", ");
-  return `${label}${percentOf(accesses)}% of property accesses are one load: ${counts} (${count(countAll(accesses))})`;
-}
+const closingLines = ({ accesses, dependencyAccesses }: Numbers) => [
+  ...(all(dependencyAccesses) > 0 ? [closingLine("Dependencies: ", dependencyAccesses)] : []),
+  ...(all(accesses) > 0 ? [closingLine("", accesses)] : []),
+];
 
-function summaryOf({ accesses, dependencyAccesses }: ExplainNumbers, hasTextReport: boolean) {
-  const hasAccesses = countAll(accesses) > 0;
+/** The lines of the text report that the JSON decides, in the order in which they are printed. */
+function linesDecidedBy(causes: Cause[]) {
+  if (causes.length === 0) return ["note: Every property access is typed. Nothing to fix."];
   return [
-    ...(hasAccesses && percentOf(accesses) < 95 && !hasTextReport ? [hint] : []),
-    ...(countAll(dependencyAccesses) > 0 ? [columnsLine("Dependencies: ", dependencyAccesses)] : []),
-    ...(hasAccesses ? [columnsLine("", accesses)] : []),
+    `note: Untyped code works, but runs slower. ${counted(causes.length, "cause", "causes")}:`,
+    ...causes
+      .slice(0, maxShownCauses)
+      .flatMap(cause => [
+        `note: ${cause.rank}. ${cause.reason}: ${cause.message}`,
+        ...(cause.line > 0 ? [at(cause)] : []),
+        ...(cause.inLoops > 0
+          ? [`note: ${counted(cause.inLoops, "of these runs in a loop", "of these run in a loop")}`]
+          : []),
+        ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
+        `note: fix: ${cause.fix}`,
+        `note: ${cause.url}`,
+      ]),
   ];
 }
 
-function shareOf(cause: ExplainCause, numbers: ExplainNumbers) {
-  const inDependencies = untyped(numbers.dependencyAccesses);
-  if (cause.inDependency) {
-    const total = counted(inDependencies, "untyped access", "untyped accesses");
-    return `${count(cause.dependencyAccesses)} of ${total} in dependencies`;
-  }
-  const inProgram = `${count(cause.accesses)} of ${counted(untyped(numbers.accesses), "untyped access", "untyped accesses")}`;
-  if (cause.dependencyAccesses === 0) return inProgram;
-  return `${inProgram}, and ${count(cause.dependencyAccesses)} of ${count(inDependencies)} in dependencies`;
-}
-
-function entryOf(cause: ExplainCause, numbers: ExplainNumbers) {
-  return [
-    `note: ${cause.rank}. ${cause.reason}: ${cause.message}`,
-    ...(cause.line ? [`   at ${basename(cause.file)}:${cause.line}:${cause.column}`] : []),
-    `note: ${shareOf(cause, numbers)}`,
-    ...(cause.function ? [`note: in function '${cause.function}'`] : []),
-    ...(cause.types.length ? [`note: types: '${cause.types.join("', '")}'`] : []),
-    ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
-    `note: fix: ${cause.fix}`,
-    `note: ${cause.url}`,
-  ];
-}
-
-/** Of a program that is one file, main.ts. */
-function detailsOf({ accesses }: ExplainNumbers) {
-  if (countAll(accesses) === 0) return [];
-  const counts = printedColumns.map(column => count(accesses[column]));
-  const width = Math.max(...counts.map(text => text.length));
-  const ratio = `${percentOf(accesses)}% typed (${count(typed(accesses))} of ${count(countAll(accesses))})`;
-  return [
-    "note: All property accesses, including dependencies:",
-    ...printedColumns.map((column, index) => `  ${counts[index]!.padStart(width)}  ${columnDescriptions[column]}`),
-    ...(untyped(accesses) > 0 ? ["Files with the most untyped accesses:", `  main.ts  ${ratio}`] : []),
-  ];
-}
-
-function textOf({ numbers, causes }: ExplainReport) {
-  const heading = `note: Untyped code works, but runs slower. ${counted(causes.length, "cause", "causes")}:`;
-  const nothing = "note: Every property access is typed. Nothing to fix.";
-  return [
-    ...(causes.length
-      ? [heading, ...causes.slice(0, maxShownCauses).flatMap(cause => entryOf(cause, numbers))]
-      : [nothing]),
-    ...detailsOf(numbers),
-    ...summaryOf(numbers, true),
-  ];
-}
-
-/** The lines of the text report, but for the source lines it shows, the count of calls and the limits that the build hit. */
-function expectText(lines: string[], report: ExplainReport) {
-  const expected = textOf(report);
-  const withoutFolders = lines.map(line => line.replace(/^( +at ).*[\\/]/, "$1"));
-  expect(withoutFolders.filter(line => expected.includes(line))).toEqual(expected);
-  expect(lines.at(-1)).toBe(expected.at(-1));
-}
-
-function expectOneAccount({ numbers, causes, summary }: ExplainReport) {
-  expect(summary).toEqual(summaryOf(numbers, false));
+/** An access has one cause, so together the entries count what is missing from 100%. */
+function expectCountsToAgree({ lines, numbers, causes }: Report) {
   expect(numbers.causes).toBe(causes.length);
   expect(causes.map(cause => cause.rank)).toEqual(causes.map((_, index) => index + 1));
-  expect(sum(causes.map(cause => cause.accesses))).toBe(untyped(numbers.accesses));
-  expect(sum(causes.map(cause => cause.dependencyAccesses))).toBe(untyped(numbers.dependencyAccesses));
+  expect(sum(causes, cause => cause.accesses)).toBe(untyped(numbers.accesses));
+  expect(sum(causes, cause => cause.dependencyAccesses)).toBe(untyped(numbers.dependencyAccesses));
   for (const cause of causes) {
-    expect(cause.accesses + cause.dependencyAccesses + cause.calls + cause.operators).toBeGreaterThan(0);
+    const operations = cause.accesses + cause.dependencyAccesses + cause.calls + cause.operators;
+    expect(operations).toBeGreaterThan(0);
+    expect(cause.inLoops).toBeLessThanOrEqual(operations);
     if (cause.accesses > 0) expect(cause.inDependency).toBe(false);
-    expect(cause.fixedByThisAlone).toBeLessThanOrEqual(
-      cause.accesses + cause.dependencyAccesses + cause.calls + cause.operators,
-    );
-    expect(cause.message).not.toBeEmpty();
-    expect(cause.fix).not.toBeEmpty();
-    expect(cause.url).toBe(urlOf(cause.reason));
-    if (!cause.why) continue;
-    expect(cause.why.reason).not.toBe("unclassified");
-    expect(cause.why.message).not.toBeEmpty();
-    expect(cause.why.fix).not.toBeEmpty();
-    expect(cause.why.url).toBe(urlOf(cause.why.reason));
+    for (const { reason, url } of cause.why ? [cause, cause.why] : [cause]) {
+      expect(url).toBe(`https://bun.com/docs/compiler/explain#${reason}`);
+      expect(page).toContain(`\n### ${reason}\n`);
+    }
   }
+  const decided = linesDecidedBy(causes);
+  expect(lines.filter(line => decided.includes(line))).toEqual(decided);
+  const closing = closingLines(numbers);
+  expect(lines.slice(lines.length - closing.length)).toEqual(closing);
+}
+
+async function explain(files: Files) {
+  const report = await check(files, ...textAndJSON);
+  expectCountsToAgree(report);
+  return report;
 }
 
 describe.concurrent("--explain", () => {
-  for (const [name, { notYet }] of Object.entries(cases)) if (notYet) test.todo(`${name} (${notYet})`);
-
-  test.each(Object.keys(cases).filter(name => !cases[name]!.notYet))(
-    "%s",
-    name =>
+  test(
+    "the example in the docs prints what the docs show",
+    () =>
       slot(async () => {
-        const { reason, family, types, at, before, after } = cases[name]!;
-        const broken = await explain({ "main.ts": before });
-        expectOneAccount(broken);
-        expect(untyped(broken.numbers.accesses)).toBeGreaterThan(0);
-        expect(broken.causes.filter(cause => cause.reason === reason)).toEqual([
-          expect.objectContaining({
-            file: "main.ts",
-            line: before.split("\n").indexOf(at) + 1,
-            source: at,
-            inDependency: false,
-            types,
-            family,
-          }),
-        ]);
+        const [command, ...operands] = firstBlock("bash").trim().split(" ");
+        expect(command).toBe("bun");
+        const { lines } = await run(example, ...operands);
+        expect(lines.join("\n")).toContain(linesOf(firstBlock("txt")).join("\n"));
+      }),
+    buildTimeout,
+  );
 
-        expectText((await check({ "main.ts": before }, "--explain")).lines, broken);
-
-        const fixed = await explain({ "main.ts": after });
-        expectOneAccount(fixed);
-        expect(fixed.causes.map(cause => cause.reason)).toEqual([]);
+  // Both commands run the same build, and `bun check --aot` writes no executable. Their stdout differs: `bun compile`
+  // says there what it wrote.
+  test(
+    "bun check --aot --explain prints what bun compile --explain prints",
+    () =>
+      slot(async () => {
+        const comparedParts = ({ lines, numbers, causes }: Report) => ({ lines, numbers, causes });
+        const checked = await check(readers, ...textAndJSON);
+        expect(checked.causes).not.toBeEmpty();
+        expect(comparedParts(checked)).toEqual(comparedParts(await compile(readers, ...textAndJSON)));
       }),
     buildTimeout,
   );
 
   test(
-    "a program without a cause",
+    "=json prints the numbers, then an object per cause, and no text",
     () =>
       slot(async () => {
-        const files = { "main.ts": cases["a field is deleted"]!.after };
-        const report = await explain(files);
-        expect(typed(report.numbers.accesses)).toBeGreaterThan(0);
-        expectText((await check(files, "--explain")).lines, report);
-      }),
-    buildTimeout,
-  );
-
-  test(
-    "=json prints the numbers, then an object per cause",
-    () =>
-      slot(async () => {
-        const { stdout } = await check({ "main.ts": cases["parsed data reaches a type"]!.before }, "--explain=json");
-        const [numbers, ...causes] = stdout.split("\n").filter(line => line.startsWith("{"));
-        expect(Object.keys(JSON.parse(numbers!))).toEqual(["accesses", "dependencyAccesses", "calls", "causes"]);
-        for (const key of ["accesses", "dependencyAccesses"])
-          expect(Object.keys(JSON.parse(numbers!)[key])).toEqual([...accessCountKeys]);
-        expect(Object.keys(JSON.parse(numbers!).calls)).toEqual([...levels]);
+        const { lines, numbers, causes } = await check(example, "--explain=json");
+        expect(lines).toEqual([]);
+        expect(Object.keys(numbers)).toEqual(["accesses", "dependencyAccesses", "calls", "causes"]);
+        for (const accesses of [numbers.accesses, numbers.dependencyAccesses])
+          expect(Object.keys(accesses)).toEqual(["byName", "tested", "free", "testedSlotOnly", "provenWithoutAnyTest"]);
+        expect(Object.keys(numbers.calls)).toEqual(["unknown", "guarded", "proven"]);
         expect(causes).not.toBeEmpty();
-        for (const cause of causes) {
-          expect(Object.keys(JSON.parse(cause))).toEqual([
-            "rank",
-            "reason",
-            "limit",
-            "file",
-            "line",
-            "column",
-            "inDependency",
-            "source",
-            "message",
-            "fix",
-            "url",
-            "accesses",
-            "dependencyAccesses",
-            "calls",
-            "operators",
-            "fixedByThisAlone",
-            "estimatedPercent",
-            "function",
-            "types",
-            "family",
-            "why",
-          ]);
-        }
+        for (const cause of causes) expect(Object.keys(cause).join(" ")).toBe(membersOfCause);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a cause in a loop comes first",
+    () =>
+      slot(async () => {
+        const { causes } = await explain(fewReadsInLoop);
+        const ofAccesses = causes.filter(cause => cause.accesses > 0);
+        expect(
+          ofAccesses.map(cause => ({ line: lineOf(cause), accesses: cause.accesses, isInLoop: cause.inLoops > 0 })),
+        ).toEqual([
+          { line: "main.ts:17", accesses: 1, isInLoop: true },
+          { line: "main.ts:17", accesses: 1, isInLoop: true },
+          ...Array.from({ length: readsOutsideLoops }, (_, index) => ({
+            line: `main.ts:${index + 3}`,
+            accesses: 1,
+            isInLoop: false,
+          })),
+        ]);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a typed program has no cause and is 100% typed",
+    () =>
+      slot(async () => {
+        const { lines, numbers, causes } = await explain(typed);
+        expect(causes).toEqual([]);
+        expect(numbers.accesses.free).toBeGreaterThan(0);
+        expect(lines.at(-1)).toStartWith("100% of property accesses are one load: ");
       }),
     buildTimeout,
   );
@@ -405,69 +344,68 @@ describe.concurrent("--explain", () => {
     "an access in a dependency counts for the dependencies",
     () =>
       slot(async () => {
-        const report = await explain({
-          "main.ts": `import { portOf } from "reads-config";\nconst port = portOf('{"port":3000}');\nconsole.log(port);\n`,
-          "node_modules/reads-config/package.json": JSON.stringify({
-            name: "reads-config",
-            version: "1.0.0",
-            type: "module",
-            main: "index.js",
-            types: "index.d.ts",
-          }),
-          "node_modules/reads-config/index.js": `export function portOf(text) {\n  return JSON.parse(text).port;\n}\n`,
-          "node_modules/reads-config/index.d.ts": `export declare function portOf(text: string): number;\n`,
+        const { numbers, causes } = await explain(withDependency);
+        expect({
+          inProgram: untyped(numbers.accesses),
+          inDependencies: untyped(numbers.dependencyAccesses),
+          ofAccesses: causes.filter(cause => cause.dependencyAccesses > 0).map(lineOf),
+        }).toEqual({
+          inProgram: 0,
+          inDependencies: 1,
+          ofAccesses: ["node_modules/reads-config/index.js:2"],
         });
-        expectOneAccount(report);
-        expect(untyped(report.numbers.accesses)).toBe(0);
-        expect(report.causes).toEqual([
-          expect.objectContaining({
-            file: "node_modules/reads-config/index.js",
-            line: 2,
-            inDependency: true,
-            accesses: 0,
-            dependencyAccesses: 1,
-          }),
-        ]);
       }),
     buildTimeout,
   );
 
   test(
-    "what is left out is counted, with the flag that prints it",
+    "aotExplain adds what the command prints to the logs of Bun.build",
     () =>
       slot(async () => {
-        const parts = Array.from({ length: 25 }, (_, index) => index);
-        const files: Files = {
-          "main.ts":
-            parts.map(part => `import { read${part} } from "./part${part}";\n`).join("") +
-            `const sum = ${parts.map(part => `read${part}('{"n":1}')`).join(" + ")};\nconsole.log(sum);\n`,
-        };
-        for (const part of parts) {
-          const head = `export function read${part}(text: string): number {`;
-          files[`part${part}.ts`] = `${head}\n  return JSON.parse(text).n;\n}\n`;
-        }
-        const { lines } = await check(files, "--explain");
-        const report = await explain(files);
-        expectOneAccount(report);
-        expect(lines).toContain(`note: Untyped code works, but runs slower. ${report.causes.length} causes:`);
-        expect(lines.filter(line => /^note: \d+\. [a-z-]+: /.test(line))).toHaveLength(maxShownCauses);
-        expect(lines).toContain(
-          `note: ${report.causes.length - maxShownCauses} more causes not shown. Use --explain=json to print all of them, one JSON object per line.`,
-        );
-        const ofAccesses = report.causes.filter(cause => cause.accesses > 0);
-        expect(ofAccesses.map(cause => cause.file).sort()).toEqual(parts.map(part => `part${part}.ts`).sort());
+        const { stdout } = await run({ ...example, "build.ts": buildScript }, "build.ts");
+        const printed = await compile(example, ...textAndJSON);
+        const logs: { level: string; texts: string[] }[] = JSON.parse(stdout);
+        const isJSON = ({ texts }: { texts: string[] }) => texts[0]!.startsWith("{");
+        expect([...new Set(logs.map(log => log.level))]).toEqual(["verbose"]);
+        expect(logs.filter(isJSON).map(log => JSON.parse(log.texts[0]!))).toEqual([printed.numbers, ...printed.causes]);
+        const notes = logs.filter(log => !isJSON(log)).flatMap(log => log.texts);
+        const text = notes.flatMap(note => linesOf(`note: ${note}`));
+        expect(text).not.toBeEmpty();
+        expect(printed.lines.filter(line => text.includes(line))).toEqual(text);
       }),
     buildTimeout,
   );
 
-  test("every code has a section on the page that the entries link to", async () => {
-    const headings = [...(await Bun.file(page).text()).matchAll(/^### ([a-z-]+)$/gm)].map(match => match[1]!);
-    const wording = await Bun.file(wordingSource).text();
-    const codes = [...wording.matchAll(/^ +UnprovenCause::\w+ => "([a-z-]+)",$/gm)].map(match => match[1]!);
-    const guardCodes = [...wording.matchAll(/^ +IllTypedCause::\w+ => \(\n +"([a-z-]+)",$/gm)].map(match => match[1]!);
-    expect(codes.length).toBeGreaterThan(10);
-    expect(guardCodes.length).toBeGreaterThan(10);
-    expect(headings.toSorted()).toEqual([...new Set([...codes, ...guardCodes])].toSorted());
-    for (const { reason } of Object.values(cases)) expect(codes).toContain(reason);
-  });
+  // To say where a value came from, the analysis keeps more than a build needs, and the compiler takes notes as it goes.
+  // Neither may decide what is built.
+  test(
+    "asking for a report changes no byte of the executable",
+    async () => {
+      using dir = tempDir("aot-explain-bytes", { "program.js": escaping });
+      const root = String(dir);
+      const templateFlags = withoutDebugInformation();
+      const names = Object.keys(reportFlags);
+      const hashes = await Promise.all(
+        names.map(name =>
+          slot(async () => {
+            // An executable holds its own name, so all have one name, each in a folder of its own.
+            const executable = join(root, name, isWindows ? "program.exe" : "program");
+            mkdirSync(join(root, name));
+            const flags = [...templateFlags, ...reportFlags[name]!, "--outfile", executable];
+            const built = await spawned([bunExe(), "compile", "./program.js", ...flags], root, env);
+            return built.exitCode === 0 && !built.signal
+              ? new Bun.CryptoHasher("sha256").update(await Bun.file(executable).bytes()).digest("hex")
+              : `exit code ${built.exitCode} ${built.signal ?? ""} ${built.stderr.slice(0, 600)}`;
+          }),
+        ),
+      );
+      expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(
+        Object.fromEntries(
+          names.map((name, index) => [name, hashes[index] === hashes[0] ? "the same" : hashes[index]]),
+        ),
+      ).toEqual(Object.fromEntries(names.map(name => [name, "the same"])));
+    },
+    buildTimeout,
+  );
 });

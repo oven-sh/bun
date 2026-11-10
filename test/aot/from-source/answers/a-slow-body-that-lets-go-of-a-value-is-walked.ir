@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function id(x: any): any;
+# class Tag { n = 1; m = 2; }
+# function make(): number[] { return [1, 2, 3]; }
+# function use(list: number[] | null): number { return list ? list.length : 0; }
+# function letsGo(tag: Tag): number { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; let list: number[] | null = make(); work += use(list); list = null; return work + use(list); }
+# function plain(tag: Tag): number { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return work; }
+# print(letsGo(new Tag()), letsGo(id({ n: 1, m: 2 })), plain(new Tag()), plain(id({ n: 1, m: 2 })));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# Both functions have a guard, and a slow body for what it turns away; neither slow body holds a Builtin operation. That of plain() is written straight.
+# That of letsGo() holds a ReleaseHint, at `list = null`. Straight code keeps each value in a word of the frame and does not know which read of it is the last, so it has no form for the hint:
+# the body is walked, and the list is let go while the function still runs.
+# RUN(HINT): print
+# HINT: ReleaseHint
+# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# REQUIRES(STRAIGHT): faulting-loop-polls as-written
+# STRAIGHT: statistic UnitsWrittenStraight 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 9 9 6 6

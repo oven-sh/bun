@@ -17,7 +17,7 @@ fn evaluated_text_form(id: BuiltinId) -> Option<EvaluatedTextForm> {
 }
 
 impl Resolver<'_, '_> {
-    fn constant_text(&self, argument: ExprId) -> Option<Atom> {
+    pub(super) fn constant_text(&self, argument: ExprId) -> Option<Atom> {
         let input = self.input;
         let constant = match input.decisions.constant(input.hir, argument) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {

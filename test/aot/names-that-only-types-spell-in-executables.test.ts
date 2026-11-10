@@ -1,11 +1,13 @@
 // Types are erased from a program. A name or a text that only a type spells leaves nothing in an executable built with --aot,
 // unless something outside the program can bring it in and the executable has to know it then.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { buildFlags, compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, eachRow, test } from "./supported";
 
 // No name is part of another one: the executable stores a text that is part of another text only once.
@@ -103,7 +105,13 @@ describe.each([
 
   beforeAll(async () => {
     const flags = [buildFlags.withoutFunctionSource, ...flagsOfBuild];
-    built(await spawned([bunExe(), ...compileCommand, ...flags, "./main.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [bunExe(), ...compileCommand, ...withoutDebugInformation, ...flags, "./main.ts", "--outfile", executable],
+        folder,
+        bunEnv,
+      ),
+    );
     bytes = readFileSync(executable);
   }, 300_000);
 

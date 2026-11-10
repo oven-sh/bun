@@ -1,9 +1,10 @@
 // The sampling profiler's tier breakdown has a row for compiled code: a sample whose top frame is a compiled function counts as "AOT".
 // Plain Bun has no such row.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { test as testCompiled } from "./supported";
 
 // The inner loop is int32 arithmetic with no calls, so nearly every sample has its pc in hot() itself.
@@ -45,6 +46,7 @@ function parseReport(run: Awaited<ReturnType<typeof spawned>>) {
   };
 }
 
+// Both cases call profile() of bun:jsc, and Bun's own cases on it are declared `todo` on the Windows machines of CI: test/js/bun/jsc/bun-jsc.test.ts. So are these.
 testCompiled.todoIf(isBuildKite && isWindows)(
   "samples of a compiled function count as AOT",
   async () => {

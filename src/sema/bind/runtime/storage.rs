@@ -18,7 +18,7 @@ enum ImplicitReferenceOrder {
 
 fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceOrder {
     let is_fragment = match reference.kind {
-        ImplicitReferenceKind::JsxFactory => false,
+        ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::DefinedPath => false,
         ImplicitReferenceKind::JsxFragment => true,
         ImplicitReferenceKind::DecoratorMetadata(recorded) => {
             return ImplicitReferenceOrder::DecoratorMetadata(recorded);
@@ -33,7 +33,15 @@ fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceO
     }
 }
 
-fn sort_by_key<T, K: Ord>(list: &mut [T], mut key: impl FnMut(&T) -> K) {
+#[inline]
+fn sort_by_key<T, K: Ord>(list: &mut [T], key: impl FnMut(&T) -> K) {
+    if list.len() > 1 {
+        sort_several_by_key(list, key);
+    }
+}
+
+#[inline(never)]
+fn sort_several_by_key<T, K: Ord>(list: &mut [T], mut key: impl FnMut(&T) -> K) {
     if !list.is_sorted_by_key(&mut key) {
         list.shared_sort_by_key(key);
     }
@@ -45,12 +53,19 @@ trait Stored<'s, T> {
 
 impl<'s, T: Copy> Stored<'s, T> for Fixed<'s, T> {
     fn from_growable(mut list: Vec<T>, arena: &'s Arena) -> Self {
+        if list.is_empty() {
+            return Fixed::default();
+        }
         copy_to_arena(&mut list, arena)
     }
 }
 
 impl<'s, T> Stored<'s, T> for ArenaFew<'s, T> {
+    #[inline]
     fn from_growable(list: Vec<T>, arena: &'s Arena) -> Self {
+        if list.is_empty() {
+            return ArenaFew::default();
+        }
         few_to_arena(list, arena)
     }
 }
@@ -107,7 +122,11 @@ define_tables! {
             file_uses_arguments: bool,
             import_meta_may_be_modified: bool,
             may_name_own_require: bool,
+            may_name_own_path: bool,
+            may_require_get_members: std::sync::OnceLock<bool>,
+            lets_made_requires_out_of_sight: std::sync::OnceLock<bool>,
             hoists_top_level_variables: bool,
+            jsx_paths: [Option<crate::atom::Atom>; 2],
             first_appended_symbol: u32,
             appended_symbol_end: u32,
         }
@@ -125,6 +144,7 @@ define_tables! {
         }
         lists {
             strict_scopes: S::List<u64>,
+            variables_stored_by_functions_of_blocks: S::List<u64>,
             function_flags: S::List<FunctionFlags>,
         }
     }
@@ -138,6 +158,9 @@ define_tables! {
         maps {
             declared_symbols: S::Few<(Decl, SymbolId)>,
             inner_class_symbols: S::Few<(ClassId, SymbolId)>,
+            own_bindings_of_decorated_classes: S::Few<(SymbolId, SymbolId)>,
+            container_parameters: S::Few<(ScopeId, SymbolId)>,
+            names_taken_from_imports: S::Few<(SymbolId, SymbolId)>,
             own_scopes: S::List<(StmtId, ScopeId)>,
         }
         sorted {
@@ -152,6 +175,7 @@ define_tables! {
             symbol_scopes: S::List<ScopeId>,
             scope_units: S::List<CodeUnit>,
             valueless_symbols: S::List<u64>,
+            bound_without_export: S::Few<u64>,
             binding_kinds: S::List<BindingKind>,
             early_redeclarations: S::Few<EarlyRedeclaration>,
             parameters_with_function_of_body: S::Few<u64>,
@@ -178,7 +202,6 @@ define_tables! {
             implicit_references: S::Few<ImplicitReference> = implicit_reference_order,
         }
         lists {
-            // For each run of `IDENTS_IN_RUN` expression ids, how many entries of `ident_bindings` lie in front of it. One more at the end.
             ident_binding_runs: S::List<u32>,
             evaluated_idents: S::List<u64>,
             eval_visible_symbols: S::List<u64>,

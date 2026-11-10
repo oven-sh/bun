@@ -1,0 +1,39 @@
+# -- source: main.js
+# function Shape(name) { this.name = name; this.id = 0; }
+# function Box(w, h) { Shape.call(this, "box"); this.w = w; this.h = h; }
+# function fill(count) { var sum = 0; for (var i = 0; i < count; i++) { if (i === 5) change(Shape, Box); var made = new Box(i, 2); last = made; sum += made.w + made.h + made.id + made.name.length; } return sum; }
+# Object.setPrototypeOf(Box.prototype, Shape.prototype);
+# var last;
+# publish(Shape, Box);
+# print(fill(10));
+# print(Object.keys(last).join());
+# print(report());
+# -- end of source
+# f3 = fill
+# The body of Box begins with `Shape.call(this, "box")`, and the body of Shape is two stores. Behind the guard that says what a read of `call` off Shape finds, the four stores are the first things that happen to the new object,
+# so the allocation lists all four, behind one look that stands ahead of it. Where the look fails no object has been made, and the construction runs as written.
+# RUN(LOOK): walk f3 mechanisms=all
+# LOOK: AreMembersUnchanged conditions=[{{*}}side=Static key="call"
+# LOOK: = NewObject -, {{*}}fields=[0, 1, 2, 3]
+# RUN: run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.change = () => { }; globalThis.report = () => globalThis.hits;
+# CHECK: 95
+# CHECK-NEXT: name,id,w,h
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+# In the run OWNCALL a `call` of its own lies on Shape from turn five on.
+# RUN(OWNCALL): run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.change = (shape) => { shape.call = function (self) { globalThis.hits += Object.keys(self).length + 1; self.name = "other"; self.id = 1; }; }; globalThis.report = () => globalThis.hits;
+# OWNCALL: 110
+# OWNCALL-NEXT: name,id,w,h
+# OWNCALL-NEXT: 5
+# OWNCALL-NEXT: exited with 0
+# In the run SETTER an accessor lies under `id` above every Box from turn five on.
+# RUN(SETTER): run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.change = (shape) => { Object.defineProperty(shape.prototype, "id", { get() { return 10; }, set(value) { globalThis.hits++; }, configurable: true }); }; globalThis.report = () => globalThis.hits;
+# SETTER: 145
+# SETTER-NEXT: name,w,h
+# SETTER-NEXT: 5
+# SETTER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.hits = 0; globalThis.publish = () => { }; globalThis.change = (shape) => { shape.call = function (self) { globalThis.hits += Object.keys(self).length + 1; self.name = "other"; self.id = 1; }; }; globalThis.report = () => globalThis.hits;
+# CHECKED: 110
+# CHECKED-NEXT: name,id,w,h
+# CHECKED-NEXT: 5
+# CHECKED-NEXT: exited with 0

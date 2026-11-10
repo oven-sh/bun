@@ -1,0 +1,16 @@
+# -- source: a-name-read-off-what-is-one-literal-or-a-number-outside-a-loop-stays-a-closed-read.cjs
+# 'use strict';
+# var S = 0;
+# function fill() { S = { BEGIN: 1, TEXT: 2, END: 3 }; }
+# function told(state) { switch (state) { case S.BEGIN: return 1; case S.TEXT: return 20; case S.END: return 300; default: return 4000; } }
+# fill(); print(told(1), told(2), told(3), told(9));
+# -- end of source
+# The twin of a-name-read-off-what-is-one-literal-or-a-number-asks-the-cell: the same labels, in no loop. A test of the cell with the slot's read behind it and the closed read beside it is bytes for time, and those are spent in loops
+# alone: here each label stays the closed read that it was. (Asked everywhere, the second try at every such read also cost the build of a large program 0.22 G for nothing.)
+# f1 = fill, f2 = told
+# RUN(READ): walk f2 mechanisms=all
+# REQUIRES(READ): as-written
+# READ: PropGet {{*}} key="TEXT"
+# READ-NOT: GetSlot
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 1 20 300 4000

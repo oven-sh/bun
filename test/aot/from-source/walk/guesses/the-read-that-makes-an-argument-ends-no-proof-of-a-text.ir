@@ -1,0 +1,17 @@
+# `source.text.charCodeAt(source.position)`: the text is read, then the method, then the position, then comes the call. The read of the position may run a getter, which ends the proof of a shape.
+# That the text is a string it cannot end: a primitive stays what it is whatever runs, and nothing asks whether it is as its class makes it. So the stretch of the guess goes on to the call, and the code of the row stands in line.
+# It ended at the read: the method was read by name and called by value, once a character.
+# -- source: scan.ts
+# type Source = { text: string; position: number };
+# export function scan(source: Source): number {
+#   let spaces = 0;
+#   for (source.position = 0; source.position < source.text.length; source.position++) if (source.text.charCodeAt(source.position) === 32) spaces++;
+#   return spaces;
+# }
+# const source: Source = { text: "the quick brown fox", position: 0 };
+# (globalThis as any).source = source;
+# console.log(String(scan(source)));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=string
+# CHECK: = GetStringCodeUnit

@@ -1,0 +1,29 @@
+# A field in a form of its own (read-only, hidden, an accessor) keeps every object of its layout from being copied word by word: the copy has the name in the plain form, or not at all.
+# An object that is filled by key is a map, and maps are copied. One definition somewhere in the program sent every spread of every such map to the run time, also of those that never got the name.
+# So the name is no field there. It lies beside the slots with the names that the keys bring, and only the object that has it is copied by a call.
+# Where every name is written the field stays as it was: the definition fills its slot without a call.
+# -- source: a-name-defined-in-a-form-of-its-own-on-an-object-filled-by-key.js
+# function filled(names) { const made = {}; for (const name of names) made[name] = 1; return made; }
+# function grown(names) { const made = { first: 1 }; for (const name of names) made[name] = 1; return made; }
+# function listed() { return { only: 1 }; }
+# const maps = [Object.defineProperty(filled(["a"]), "fixed", { value: 1, enumerable: true, writable: false }), Object.defineProperty(grown(["a"]), "fixed", { value: 2, enumerable: false, writable: true })];
+# const record = Object.defineProperty(listed(), "fixed", { value: 3, enumerable: true, writable: false });
+# grown(["b"]).plain = 4;
+# console.log(String(maps[0].fixed), String(maps[1].fixed), String(record.fixed), Object.keys({ ...filled(["c"]) }).join(), Object.keys({ ...grown(["d"]) }).join());
+# -- end of source
+# RUN: link fields layouts mechanisms=all
+# CHECK-NOT: field L0.
+# CHECK: field L2.0 "first"
+# CHECK-NEXT: field L2.1 "plain" appended
+# CHECK-NEXT: field L3.0 "only"
+# CHECK-NEXT: field L3.1 "fixed" appended proven=i32 writers-known form=read-only.not-configurable.
+# CHECK: layout L0 {{*}} filled-under-computed-keys
+# CHECK: layout L2 {{*}} filled-under-computed-keys
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 OrdinaryObject
+# PLAN: layout L2 CompiledObject
+# PLAN-NEXT: slot 0 "first"
+# PLAN-NEXT: slot 1 "plain" appended
+# PLAN: layout L3 CompiledObject
+# PLAN-NEXT: slot 0 "only"
+# PLAN-NEXT: slot 1 "fixed" appended

@@ -1,4 +1,0 @@
-first runs
-second begins
-the entry point runs {"name":"first"} {}
-second ends main

@@ -43,6 +43,7 @@ bun_http_types.workspace = true
 bun_parsers.workspace = true
 bun_io.workspace = true
 bun_js_parser.workspace = true
+bun_react_compiler = { path = "../react_compiler" }
 bun_js_printer.workspace = true
 bun_ast.workspace = true
 bun_ptr.workspace = true
@@ -73,3 +74,5 @@ bun_aot_compiler = { package = "bun_aot", path = "../aot", features = ["test_sup
 
 [features]
 default = []
+# What only tests of other crates use.
+test_support = []

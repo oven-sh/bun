@@ -1,136 +1,111 @@
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ImportBinding, ModuleExport};
 use super::graph::{FileRow, StoredSiteAnswer};
-use super::interop::{ImportPhase, ModuleKind, RequireResult};
+use super::imports::NamedMember;
+use super::interop::{ImportPhase, Interop, ModuleKind, RequireResult};
 use bun_sema::atom::known;
 use bun_sema::bind::SymbolId;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
-use bun_sema::util::{FxHashMap, FxHashSet};
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum LoadedValue {
-    Namespace,
-    RequireResult,
-    Nothing,
-}
-
-fn loaded_value(site: ImportSiteKind) -> LoadedValue {
-    match site {
-        ImportSiteKind::ImportCall(_) => LoadedValue::Namespace,
-        ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::GetBuiltinModule(_) => LoadedValue::RequireResult,
-        _ => LoadedValue::Nothing,
-    }
-}
-
-// An import or export statement links names to variables of the module. Every other site asks a loader, which answers with a value or with a path that a loader takes.
-fn links_names_alone(site: ImportSiteKind) -> bool {
-    match site {
-        ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_) => true,
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::ImportEquals(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::Require(_)
-        | ImportSiteKind::RequireResolve(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => false,
-    }
-}
+use core::ops::Range;
 
 struct DataModule {
-    is_required_as_namespace: bool,
-    is_namespace_reached: bool,
-    // Whatever names the module in the files of the program is a statement that links names to its variables.
-    is_linked_by_names_alone: bool,
-}
-
-impl DataModule {
-    fn load(&mut self, site: ImportSiteKind) {
-        self.is_linked_by_names_alone &= links_names_alone(site);
-        self.is_namespace_reached |= match loaded_value(site) {
-            LoadedValue::Namespace => true,
-            LoadedValue::RequireResult => self.is_required_as_namespace,
-            LoadedValue::Nothing => false,
-        };
-    }
-
-    fn reach_namespace(&mut self) {
-        self.is_linked_by_names_alone = false;
-        self.is_namespace_reached = true;
-    }
+    row: usize,
+    marks: Range<usize>,
+    keeps_every_name: bool,
 }
 
 struct ExportReads {
-    modules: FxHashMap<FileId, DataModule>,
-    read_symbols: FxHashSet<Sym>,
+    place_by_file: Vec<Option<u32>>,
+    modules: Vec<DataModule>,
+    is_read: Vec<bool>,
+    every_module_keeps_every_name: bool,
+}
+
+fn own_variable(file: FileId, export: &ModuleExport) -> Option<SymbolId> {
+    match export.binding {
+        ExportBinding::Variable(variable) if variable.file == file => Some(variable.id),
+        _ => None,
+    }
+}
+
+fn answers_require_with_namespace(interop: Interop) -> bool {
+    interop.require_result != RequireResult::DefaultExport || interop.answers_loader_with_namespace
 }
 
 impl ExportReads {
-    fn new(files: &[FileRow]) -> ExportReads {
-        let mut modules = FxHashMap::default();
-        for parts in files {
-            if parts.interop.kind == ModuleKind::Data && !parts.exports.is_empty() {
-                let is_required_as_namespace =
-                    parts.interop.require_result == RequireResult::Namespace;
-                let data_module = DataModule {
-                    is_required_as_namespace,
-                    is_namespace_reached: parts.is_library,
-                    is_linked_by_names_alone: !parts.is_library,
-                };
-                modules.insert(parts.file, data_module);
+    fn new(rows: &[FileRow]) -> ExportReads {
+        let file_count = rows.iter().map(|row| row.file.idx() + 1).max().unwrap_or(0);
+        let mut reads = ExportReads {
+            place_by_file: vec![None; file_count],
+            modules: Vec::new(),
+            is_read: Vec::new(),
+            every_module_keeps_every_name: false,
+        };
+        for (index, row) in rows.iter().enumerate() {
+            if row.interop.kind != ModuleKind::Data || row.exports.is_empty() {
+                continue;
             }
+            let exports = row.exports.iter();
+            let variables = exports.filter_map(|export| own_variable(row.file, export));
+            let mark_count = variables.map(|it| it.0 as usize + 1).max().unwrap_or(0);
+            let first_mark = reads.is_read.len();
+            reads.is_read.resize(first_mark + mark_count, false);
+            reads.place_by_file[row.file.idx()] = Some(reads.modules.len() as u32);
+            reads.modules.push(DataModule {
+                row: index,
+                marks: first_mark..first_mark + mark_count,
+                keeps_every_name: row.is_library
+                    || row.is_left_to_loader
+                    || row.has_dynamic_names
+                    || row.reaches_mock
+                    || answers_require_with_namespace(row.interop),
+            });
         }
-        ExportReads {
-            modules,
-            read_symbols: FxHashSet::default(),
+        reads
+    }
+
+    fn find(&self, file: FileId) -> Option<usize> {
+        let place = self.place_by_file.get(file.idx()).copied().flatten();
+        place.map(|place| place as usize)
+    }
+
+    fn read_variable(&mut self, variable: Sym) {
+        let Some(place) = self.find(variable.file) else {
+            return;
+        };
+        let marks = self.modules[place].marks.clone();
+        if let Some(mark) = self.is_read[marks].get_mut(variable.id.0 as usize) {
+            *mark = true;
         }
     }
 
-    fn read_symbol(&mut self, symbol: Sym) {
-        if self.modules.contains_key(&symbol.file) {
-            self.read_symbols.insert(symbol);
+    fn keep_every_name(&mut self, file: FileId) {
+        if let Some(place) = self.find(file) {
+            self.modules[place].keeps_every_name = true;
         }
     }
 
-    fn find(&mut self, module: ModuleRef) -> Option<&mut DataModule> {
+    fn ask_for_every_name(&mut self, module: ModuleRef) {
         match module {
-            ModuleRef::File(file) => self.modules.get_mut(&file),
-            _ => None,
+            ModuleRef::File(file) => self.keep_every_name(file),
+            ModuleRef::Inner { .. }
+            | ModuleRef::Face(_)
+            | ModuleRef::Check(_)
+            | ModuleRef::Runtime(_)
+            | ModuleRef::External { .. } => {}
         }
     }
 
-    fn load(&mut self, module: ModuleRef, site: ImportSiteKind) {
-        if let Some(data_module) = self.find(module) {
-            data_module.load(site);
-        }
-    }
-
-    fn reach_namespace(&mut self, module: ModuleRef) {
-        if let Some(data_module) = self.find(module) {
-            data_module.reach_namespace();
-        }
-    }
-
-    fn add_import(&mut self, binding: ImportBinding) {
+    fn add_binding(&mut self, binding: ImportBinding) {
         match binding {
-            ImportBinding::Variable(symbol) => self.read_symbol(symbol),
+            ImportBinding::Variable(variable) => self.read_variable(variable),
             ImportBinding::Namespace {
                 module,
                 phase: ImportPhase::Defer,
             }
-            | ImportBinding::NamespaceRead { module, .. } => self.reach_namespace(module),
-            ImportBinding::Exports { module } => {
-                if let Some(data_module) = self.find(module) {
-                    data_module.is_linked_by_names_alone = false;
-                }
-            }
+            | ImportBinding::NamespaceRead { module, .. }
+            | ImportBinding::Exports { module } => self.ask_for_every_name(module),
             ImportBinding::Namespace {
                 phase: ImportPhase::Evaluation,
                 ..
@@ -147,106 +122,123 @@ impl ExportReads {
 
     fn add_export(&mut self, exporter: FileId, export: &ModuleExport) {
         match export.binding {
-            ExportBinding::Variable(symbol) if symbol.file != exporter => self.read_symbol(symbol),
+            ExportBinding::Variable(variable) if variable.file != exporter => {
+                self.read_variable(variable);
+            }
             ExportBinding::Variable(_) | ExportBinding::Synthetic(_) => {}
             ExportBinding::Namespace { module, .. } | ExportBinding::Indirect { module, .. } => {
-                self.reach_namespace(module);
+                self.ask_for_every_name(module);
             }
         }
     }
 
-    fn add_site(&mut self, parts: &FileRow, site: ImportSiteKind, answer: &StoredSiteAnswer) {
-        match answer {
-            StoredSiteAnswer::Module(module) => self.load(*module, site),
-            StoredSiteAnswer::AllModules => {
-                self.modules.values_mut().for_each(|it| it.load(site));
-            }
-            StoredSiteAnswer::Candidates(range) => {
-                for spelled in &parts.spellings[range.start as usize..range.end as usize] {
-                    self.load(spelled.module, site);
+    fn add_site(&mut self, site: ImportSiteKind, answer: &StoredSiteAnswer) {
+        match site {
+            ImportSiteKind::ExportStar(_) => {
+                if let StoredSiteAnswer::Module(module) = answer {
+                    self.ask_for_every_name(*module);
                 }
             }
-            StoredSiteAnswer::Failed(_) | StoredSiteAnswer::Erased => {}
+            ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::MockModule(_)
+            | ImportSiteKind::ImportByTestRunner(_)
+            | ImportSiteKind::RequireByTestRunner(_) => match answer {
+                StoredSiteAnswer::Module(module) => self.ask_for_every_name(*module),
+                StoredSiteAnswer::AllModules | StoredSiteAnswer::Candidates(_) => {
+                    self.every_module_keeps_every_name = true;
+                }
+                StoredSiteAnswer::Failed(_) | StoredSiteAnswer::Erased => {}
+            },
+            ImportSiteKind::JsxRuntime
+            | ImportSiteKind::JsxPackage
+            | ImportSiteKind::Import(_)
+            | ImportSiteKind::ExportFrom(_)
+            | ImportSiteKind::ImportEquals(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::RequireResolve(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+            | ImportSiteKind::ImportMetaResolve(_)
+            | ImportSiteKind::GetBuiltinModule(_) => {}
         }
     }
 
-    fn add_file(&mut self, parts: &FileRow) {
-        for &(_, binding) in &parts.imports {
-            self.add_import(binding);
+    fn add_row(&mut self, row: &FileRow) {
+        for &(_, binding) in &row.imports {
+            self.add_binding(binding);
         }
-        for &(_, binding) in &parts.members {
-            self.add_import(binding);
+        for &(_, binding) in &row.members {
+            self.add_binding(binding);
         }
-        for &(_, binding) in &parts.jsx {
-            self.add_import(binding);
+        for &(_, member) in &row.named_members {
+            match member {
+                NamedMember::Binding(binding) => self.add_binding(binding),
+                NamedMember::Fixed(_) => {}
+            }
+        }
+        for &(_, binding) in &row.jsx {
+            self.add_binding(binding);
             if let ImportBinding::Namespace { module, .. } = binding {
-                self.reach_namespace(module);
+                self.ask_for_every_name(module);
             }
         }
-        for &module in &parts.namespace_values {
-            self.reach_namespace(module);
+        for &module in &row.namespace_values {
+            self.ask_for_every_name(module);
         }
-        for export in &parts.exports {
-            self.add_export(parts.file, export);
+        for required in &row.required_names {
+            self.ask_for_every_name(required.module);
         }
-        for (site, answer) in &parts.sites {
-            self.add_site(parts, *site, answer);
+        for &(file, _) in &row.names_searched_behind_stars {
+            self.keep_every_name(file);
         }
-    }
-
-    fn is_unread(&self, module: FileId, export: &ModuleExport) -> Option<SymbolId> {
-        match export.binding {
-            ExportBinding::Variable(symbol)
-                if export.name != known::default
-                    && symbol.file == module
-                    && !self.read_symbols.contains(&symbol) =>
-            {
-                Some(symbol.id)
-            }
-            _ => None,
+        for export in &row.exports {
+            self.add_export(row.file, export);
+        }
+        for (site, answer) in &row.sites {
+            self.add_site(*site, answer);
         }
     }
 }
 
-pub(super) fn remove_unread_data_exports(files: &mut [FileRow]) {
-    let mut reads = ExportReads::new(files);
+pub(super) fn remove_unread_data_exports(rows: &mut [FileRow]) {
+    let mut reads = ExportReads::new(rows);
     if reads.modules.is_empty() {
         return;
     }
-    for parts in files.iter() {
-        reads.add_file(parts);
-    }
-    for parts in files {
-        match reads.modules.get(&parts.file) {
-            Some(data_module) => {
-                parts.is_data_linked_by_names_alone = data_module.is_linked_by_names_alone;
-                if data_module.is_namespace_reached {
-                    continue;
-                }
-            }
-            None => continue,
+    for row in rows.iter() {
+        reads.add_row(row);
+        if reads.every_module_keeps_every_name {
+            return;
         }
-        let module = parts.file;
-        let kept_symbols: FxHashSet<SymbolId> = parts
-            .exports
-            .iter()
-            .filter(|export| reads.is_unread(module, export).is_none())
-            .filter_map(|export| match export.binding {
-                ExportBinding::Variable(symbol) if symbol.file == module => Some(symbol.id),
-                _ => None,
-            })
-            .collect();
+    }
+    let ExportReads {
+        modules,
+        mut is_read,
+        ..
+    } = reads;
+    for module in modules.iter().filter(|module| !module.keeps_every_name) {
+        let row = &mut rows[module.row];
+        let file = row.file;
+        let is_read = &mut is_read[module.marks.clone()];
+        let exports = row.exports.iter();
+        let asked_of_every_namespace = [known::default, known::then, known::__esModule];
+        let kept = exports.filter(|export| asked_of_every_namespace.contains(&export.name));
+        for variable in kept.filter_map(|export| own_variable(file, export)) {
+            is_read[variable.0 as usize] = true;
+        }
         let mut unread_exports = Vec::new();
-        let exports = &mut parts.exports;
-        exports.retain(|export| match reads.is_unread(module, export) {
-            Some(symbol) if !kept_symbols.contains(&symbol) => {
-                unread_exports.push(symbol);
-                false
-            }
-            Some(_) | None => true,
-        });
+        let mut names_left_out = Vec::new();
+        row.exports
+            .retain(|export| match own_variable(file, export) {
+                Some(variable) if !is_read[variable.0 as usize] => {
+                    unread_exports.push(variable);
+                    names_left_out.push(export.name);
+                    false
+                }
+                Some(_) | None => true,
+            });
+        row.names_left_out = names_left_out;
         unread_exports.sort_unstable();
         unread_exports.dedup();
-        parts.unread_exports = unread_exports;
+        row.unread_exports = unread_exports;
     }
 }

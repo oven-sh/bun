@@ -85,14 +85,10 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let mut usage_info = Rusage::default();
     let process_pid: *mut c_void = process.process_handle;
     type WinTime = bun_sys::windows::FILETIME;
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut starttime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut exittime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut kerneltime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut usertime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut starttime: WinTime = bun_core::ffi::zeroed();
+    let mut exittime: WinTime = bun_core::ffi::zeroed();
+    let mut kerneltime: WinTime = bun_core::ffi::zeroed();
+    let mut usertime: WinTime = bun_core::ffi::zeroed();
     // We at least get process times
     // SAFETY: FFI call with valid out-pointers
     if unsafe {
@@ -542,10 +538,8 @@ impl PosixSpawnResult {
 
                     // The spawn fails below. Kill first: a child that waits on a pipe this process holds would block wait4 forever.
                     _ => {
-                        // SAFETY: `self.pid` is the un-reaped child posix_spawn just returned.
-                        unsafe {
-                            libc::kill(self.pid, libc::SIGKILL);
-                        }
+                        // `self.pid` is the un-reaped child posix_spawn just returned.
+                        crate::ffi::kill(self.pid, libc::SIGKILL);
                         let _ = posix_spawn::wait4(self.pid, 0, None);
                     }
                 }

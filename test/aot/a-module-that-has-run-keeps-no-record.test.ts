@@ -2,10 +2,11 @@ import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // What the loader makes to load, link and run an ES module of the program goes when no graph is being loaded any more:
-// a program holds no more of it behind four hundred modules than behind forty.
+// behind a hundred and twenty modules a program holds a handful of records.
 const counts = `
 import { heapStats } from "bun:jsc";
 const turn = () => new Promise(resolve => setTimeout(resolve, 1));
@@ -50,6 +51,58 @@ async function later(index: number) {
 for (let index = 0; index < ${n}; index++) sum += await later(index);
 `,
     files: feature,
+    sum: sumOfAll,
+  },
+  "one import() after the other, of modules above one that awaits": {
+    entry: n => `
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./above${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: i => ({
+      [`above${i}.ts`]: `import { low } from "./waits${i}.ts";\nexport function run() { return low; }\n`,
+      [`waits${i}.ts`]: `await null;\nexport const low = ${i};\n`,
+    }),
+    sum: sumOfAll,
+  },
+  "one import() after the other, of cycles with a member that awaits": {
+    entry: n => `
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./ring${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: i => ({
+      [`ring${i}.ts`]: `import { back } from "./back${i}.ts";\nexport function run() { return back(); }\nexport const own = ${i};\n`,
+      [`back${i}.ts`]: `import { own } from "./ring${i}.ts";\nawait null;\nexport function back() { return own; }\n`,
+    }),
+    sum: sumOfAll,
+  },
+  "one import() after the other, behind a load that came to a module whose imports another load had listed": {
+    entry: n => `
+const long = import("./long.ts");
+const short = import("./short.ts");
+sum += (await long).one + (await short).two;
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./feature${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: feature,
+    shared: {
+      "long.ts": `import { first } from "./first.ts";\nexport const one = first;\n`,
+      "first.ts": `import { second } from "./second.ts";\nexport const first = second;\n`,
+      "second.ts": `import { third } from "./third.ts";\nexport const second = third;\n`,
+      "third.ts": `import { met } from "./met.ts";\nexport const third = met;\n`,
+      "short.ts": `import { met } from "./met.ts";\nexport const two = met;\n`,
+      "met.ts": `import { deep } from "./deep.ts";\nexport const met = deep;\n`,
+      "deep.ts": `import file from "./file.cjs";\nexport const deep = file.zero;\n`,
+      "file.cjs": `module.exports = { zero: 0 };\n`,
+    },
     sum: sumOfAll,
   },
   "every import() at once, of modules that share an import": {
@@ -138,42 +191,41 @@ for (const [name, shape] of Object.entries(shapes)) {
   test(
     name,
     async () => {
-      for (const n of [40, 400]) {
-        const files: Record<string, string> = { "counts.ts": counts, ...shape.shared };
-        for (let i = 0; i < n; i++) Object.assign(files, shape.files(i));
-        files["main.ts"] =
-          `import { counts } from "./counts.ts";\nlet sum = 0;\nconst before = await counts();\n${shape.entry(n)}\nconsole.log(sum);\nconsole.log(before);\nconsole.log(await counts());\n`;
-        using dir = tempDir("aot-records-of-modules-that-have-run", files);
-        const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-        const built = await run(
-          [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
-          String(dir),
-        );
-        expect({
-          stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
-          exitCode: built.exitCode,
-        }).toEqual({ stderr: [], exitCode: 0 });
-        const ran = await run([executable], String(dir));
-        expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-        const [sum, before, after] = ran.stdout.trim().split("\n");
-        expect(Number(sum)).toBe(shape.sum(n));
-        // The entry point waits at an await of its own, so it has a record. The bounds leave room for what the last graphs made.
-        const [records, entries, promises] = after!.split(" ").map(Number);
-        const promisesBefore = Number(before!.split(" ")[2]);
-        expect({
-          n,
-          records: records! <= 12,
-          entries: entries! <= 12,
-          promises: promises! <= promisesBefore + 40,
-          after,
-        }).toEqual({
-          n,
-          records: true,
-          entries: true,
-          promises: true,
-          after,
-        });
-      }
+      const n = 120;
+      const files: Record<string, string> = { "counts.ts": counts, ...shape.shared };
+      for (let i = 0; i < n; i++) Object.assign(files, shape.files(i));
+      files["main.ts"] =
+        `import { counts } from "./counts.ts";\nlet sum = 0;\nconst before = await counts();\n${shape.entry(n)}\nconsole.log(sum);\nconsole.log(before);\nconsole.log(await counts());\n`;
+      using dir = tempDir("aot-records-of-modules-that-have-run", files);
+      const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+        String(dir),
+      );
+      expect({
+        stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+        exitCode: built.exitCode,
+      }).toEqual({ stderr: [], exitCode: 0 });
+      const ran = await run([executable], String(dir));
+      expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const [sum, before, after] = ran.stdout.trim().split("\n");
+      expect(Number(sum)).toBe(shape.sum(n));
+      // The entry point waits at an await of its own, so it has a record. The bounds leave room for what the last graphs made.
+      const [records, entries, promises] = after!.split(" ").map(Number);
+      const promisesBefore = Number(before!.split(" ")[2]);
+      expect({
+        n,
+        records: records! <= 12,
+        entries: entries! <= 12,
+        promises: promises! <= promisesBefore + 40,
+        after,
+      }).toEqual({
+        n,
+        records: true,
+        entries: true,
+        promises: true,
+        after,
+      });
     },
     240_000,
   );

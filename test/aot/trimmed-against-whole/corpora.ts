@@ -237,7 +237,7 @@ export function documentedExamples(): Program[] {
 }
 
 export function aotPrograms(): Program[] {
-  const root = join(repository, "test/aot/programs");
+  const root = join(repository, "test/aot/parallel");
   const found: string[] = [];
   const walk = (folder: string) => {
     const entries = readdirSync(folder, { withFileTypes: true }).sort((one, other) => (one.name < other.name ? -1 : 1));

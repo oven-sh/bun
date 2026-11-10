@@ -6,18 +6,20 @@ import own from "../js/tsconfig.json";
 import "./builtin-parser";
 import {
   type EngineFunctions,
+  findModuleHeldInPart,
   functionFiles,
   functionIds,
   helperModules,
   locate,
+  locateFirstText,
   moduleList,
   nativeStartIndex,
   sourceFiles,
   specifierOf,
 } from "./builtins-manifest-model";
-import { encodeNumbers, moveBundledNamesToSecondText } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
-import { define, globalsToPrefix } from "./replacements";
+import { rangesSeenByEveryFile } from "./part-seen-by-every-file";
+import { define, globalsToPrefix, nativeFunctions, nativeGlobals } from "./replacements";
 
 const output = process.argv[3];
 const archive = process.argv[4]?.startsWith("--") ? undefined : process.argv[4];
@@ -27,7 +29,6 @@ const flagValue = (flag: string) =>
     .find(argument => argument.startsWith(flag))
     ?.slice(flag.length);
 const engineFunctions = flagValue("--engine-functions=");
-const bundledNamesOfModules = flagValue("--bundled-names-of-modules=");
 const bundledHelpers = flagValue("--bundled-helpers=");
 const evaluatedModules = flagValue("--evaluated-modules=");
 if (
@@ -35,12 +36,11 @@ if (
   !output ||
   output.startsWith("--") ||
   !engineFunctions ||
-  !bundledNamesOfModules ||
   !bundledHelpers ||
   (archive && !evaluatedModules)
 ) {
   console.error(
-    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --bundled-names-of-modules=<bundled_names_of_modules.txt> --evaluated-modules=<InternalModuleRegistryConstants.bin> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
+    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --evaluated-modules=<InternalModuleRegistryConstants.bin> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
   );
   process.exit(1);
 }
@@ -60,10 +60,12 @@ const fixed: Record<string, string> = {
   "process.env.NODE_ENV": '"production"',
 };
 for (const [key, value] of Object.entries({ ...define, ...fixed })) {
-  if (globalsToPrefix.includes(key)) continue;
+  if (globalsToPrefix.includes(key) || value.startsWith("__intrinsic__natives.")) continue;
   const name = key.startsWith("__intrinsic__") ? "$" + key.slice("__intrinsic__".length) : key;
   lines.push(`define\t${name}\t${canonicalJSON(name, value)}`);
 }
+for (const name of nativeFunctions) lines.push(`native\t${name}\tname`);
+for (const name of nativeGlobals) lines.push(`native\t${name}\tname-or-member`);
 
 for (let id = 0; id < moduleList.length; id++) {
   const file = moduleList[id];
@@ -155,27 +157,22 @@ for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
 }
 
-// The positions of each module stand behind its id and their length.
-const bundledPositions: Uint8Array[] = [];
-for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
-  const [kind, file, encoded] = line.split("\t");
-  if (line === "") continue;
-  if (kind !== "positions") {
-    // The names are those of the text that was bundled.
-    const bundled = path.join(import.meta.dir, "../js", file);
-    if (locate(file) === bundled) lines.push(line);
-    else
-      lines.push(
-        ...moveBundledNamesToSecondText(
-          [line],
-          fs.readFileSync(locate(file), "utf8"),
-          fs.readFileSync(bundled, "utf8"),
-        ),
-      );
-    continue;
-  }
-  const positions = Buffer.from(encoded, "base64");
-  bundledPositions.push(encodeNumbers([moduleList.indexOf(file), positions.length]), positions);
+// What `declare global` and `declare module "name"` add is seen by files that do not name the file, so every build reads it:
+// the part of the file that these declarations lead to, and the rest once a file that is read names the file.
+for (const [file, text] of [
+  ...[...sourceFiles, ...functionFiles].map((file): [string, string] => [file, fs.readFileSync(locate(file), "utf8")]),
+  ...engineTexts,
+]) {
+  if (!/^\s*declare\s+(global\b|module\s*["'])/m.test(text)) continue;
+  const { seen, asked } = rangesSeenByEveryFile(file, text);
+  lines.push(`declares-for-every-file\t${file}\t${seen.join(" ")}\t${asked.join(" ") || "-"}`);
+}
+
+for (const file of sourceFiles) {
+  const whole = findModuleHeldInPart(fs.readFileSync(locate(file), "utf8"));
+  if (whole === undefined) continue;
+  if (!sourceFiles.includes(whole)) throw new Error(`${file} holds a part of ${whole}: no such module`);
+  lines.push(`part\t${file}\t${whole}`);
 }
 
 const manifest = lines.join("\n") + "\n";
@@ -274,13 +271,20 @@ if (archive) {
     file,
     fs.readFileSync(locate(file)),
   ]);
+  // For a testing word: what `bun run` evaluates, of each module that has a second text for the compiler.
+  const firstTexts = "first-texts/";
+  for (const file of [...sourceFiles, ...functionFiles]) {
+    const first = locateFirstText(file);
+    if (first !== undefined) files.push([firstTexts + file, fs.readFileSync(first)]);
+  }
+  const moduleOf = (name: string) =>
+    sourceFiles.indexOf(name.startsWith(firstTexts) ? name.slice(firstTexts.length) : name);
   for (const helper of helperModules) files.push([helper.path, fs.readFileSync(helper.source ?? bundledHelpers)]);
   files.push(["private.d.ts", Buffer.from(listOfModules.rest)]);
   for (const [file, text] of listOfModules.listings) files.push([file, Buffer.from(text)]);
   for (const [file, text] of engineTexts) files.push([file, Buffer.from(text)]);
   files.push(["tsconfig.json", Buffer.from(mergeTsconfig())]);
   files.push(...declarationsOfRuntime());
-  files.push(["positions", Buffer.concat(bundledPositions)]);
   files.push(["manifest", Buffer.from(manifest)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
   // The installed types of node:zlib do not list `pledgedSrcSize`, with which the frame says how long its text is.
@@ -292,7 +296,7 @@ if (archive) {
     };
     return zstdCompressSync(text, options);
   };
-  const frames = files.map(([name, text]) => compress(text, evaluated[sourceFiles.indexOf(name)]));
+  const frames = files.map(([name, text]) => compress(text, evaluated[moduleOf(name)]));
   // The list of the files, compressed, stands behind its length. Its offsets count from where it ends.
   const records = Buffer.alloc(files.length * recordLength);
   let offset = 0;
@@ -304,7 +308,7 @@ if (archive) {
     records.writeUInt32LE(offset, record + 1 + nameLength);
     records.writeUInt32LE(frames[i].length, record + 1 + nameLength + 4);
     // One more than the id of the module whose evaluated text the file follows on.
-    records.writeUInt32LE(sourceFiles.indexOf(name) + 1, record + 1 + nameLength + 8);
+    records.writeUInt32LE(moduleOf(name) + 1, record + 1 + nameLength + 8);
     offset += frames[i].length;
   }
   const list = compress(records);

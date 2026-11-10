@@ -162,4 +162,38 @@ function level16(count) {
 level1(process.argv.length);
 `,
     ),
+    ...family(
+      `getters-of-a-buffer-that-an-emitter-hands-to-a-listener-are-read-under-computed-keys.js	An emitter hands a buffer to a listener	const emitter = new (process.getBuiltinModule("node:events"))(); emitter.on("x", show); emitter.emit("x", Buffer.from("abc"));
+getters-of-a-buffer-that-random-bytes-hands-to-its-callback-are-read-under-computed-keys.js	crypto.randomBytes hands a buffer to its callback	process.getBuiltinModule("node:crypto").randomBytes(4, (error, bytes) => show(bytes));
+getters-of-a-buffer-that-gzip-hands-to-its-callback-are-read-under-computed-keys.js	zlib.gzip hands a buffer to its callback	process.getBuiltinModule("node:zlib").gzip("abc", (error, bytes) => show(bytes));
+getters-of-a-buffer-that-a-stream-hands-to-a-listener-are-read-under-computed-keys.js	A stream hands a buffer to a listener	process.getBuiltinModule("node:stream").Readable.from([Buffer.from("abc")]).on("data", show);
+getters-of-a-buffer-that-a-function-nobody-knows-hands-back-are-read-under-computed-keys.js	A function that nobody knows hands a buffer back	show(globalThis[process.argv[5] ?? "Object"](Buffer.from("abc")));`,
+      (
+        a,
+        b,
+      ) => `// ${a}, and nobody knows the keys under which it is read. Two of them name accessors of Buffer.prototype whose getters are written in JavaScript.
+// Reading an accessor calls its getter: each read answers what plain Bun answers.
+const keys = [
+  ["par", "ent"],
+  ["off", "set"],
+  ["byte", "Length"],
+].map(parts => parts.join(""));
+const describe = value => (typeof value === "object" ? Object.prototype.toString.call(value) : String(value));
+function show(buffer) {
+  for (const key of keys) {
+    const { [key]: taken } = buffer;
+    console.log(key, describe(buffer[key]), describe(Reflect.get(buffer, key)), describe(taken));
+  }
+}
+${b}
+`,
+    ),
+    ...family(
+      `getters-of-a-buffer-that-an-emitter-hands-to-a-listener-are-read-under-computed-keys.json
+getters-of-a-buffer-that-random-bytes-hands-to-its-callback-are-read-under-computed-keys.json
+getters-of-a-buffer-that-gzip-hands-to-its-callback-are-read-under-computed-keys.json
+getters-of-a-buffer-that-a-stream-hands-to-a-listener-are-read-under-computed-keys.json
+getters-of-a-buffer-that-a-function-nobody-knows-hands-back-are-read-under-computed-keys.json`,
+      () => `{ "skipInShell": "it asks for objects of the host, which the jsc shell does not provide" }\n`,
+    ),
   });

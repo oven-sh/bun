@@ -73,7 +73,7 @@ pub enum BaselinePosition {
 impl BaselinePosition {
     fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"baseline" => Ok(BaselinePosition::First),
@@ -163,7 +163,7 @@ impl JustifyContent {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifyContent::Left { overflow }),
@@ -330,7 +330,7 @@ impl JustifySelf {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifySelf::Left { overflow }),
             b"right" => Ok(JustifySelf::Right { overflow }),
@@ -493,7 +493,7 @@ impl JustifyItems {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifyItems::Left { overflow }),
@@ -551,12 +551,12 @@ pub enum LegacyJustify {
 impl LegacyJustify {
     fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"legacy" => {
                 let inner_location = input.current_source_location();
-                let inner_ident = input.expect_ident_cloned()?;
+                let inner_ident = input.expect_ident()?;
                 crate::match_ignore_ascii_case! { inner_ident, {
                     b"left" => Ok(LegacyJustify::Left),
                     b"right" => Ok(LegacyJustify::Right),

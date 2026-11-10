@@ -1,6 +1,6 @@
 use crate::atom::Atom;
 use crate::hir::{ClassId, ExprId, FnId, MemberId, ParamId, TypeParamId};
-use crate::program::FileId;
+use crate::program::{FileId, Sym};
 use crate::types::{EnumValue, SigId, TypeId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -10,33 +10,78 @@ pub enum GaveUp {
     ErrorType,
     FlowAnalysisDisabled,
     UnreachedNode,
+    OutOfStack,
 }
 
 impl GaveUp {
-    pub const COUNT: usize = 4;
+    pub const COUNT: usize = 5;
     #[cfg(test)]
     pub const ALL: [GaveUp; GaveUp::COUNT] = [
         GaveUp::Unresolved,
         GaveUp::ErrorType,
         GaveUp::FlowAnalysisDisabled,
         GaveUp::UnreachedNode,
+        GaveUp::OutOfStack,
     ];
 
     pub(super) fn is_function_of_key(self) -> bool {
         match self {
-            GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled => false,
+            GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled | GaveUp::OutOfStack => false,
             GaveUp::ErrorType | GaveUp::UnreachedNode => true,
         }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[repr(u8)]
+pub enum QueryLimit {
+    ConstructorParentsFollowed,
+    FunctionsGivenThis,
+    TermsReadForProduct,
+    DeclaredSignatureDepth,
+}
+
+impl QueryLimit {
+    pub const COUNT: usize = 4;
+    pub const ALL: [QueryLimit; QueryLimit::COUNT] = [
+        QueryLimit::ConstructorParentsFollowed,
+        QueryLimit::FunctionsGivenThis,
+        QueryLimit::TermsReadForProduct,
+        QueryLimit::DeclaredSignatureDepth,
+    ];
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct QueryLimits(pub [u64; QueryLimit::COUNT]);
+
+impl QueryLimits {
+    #[inline]
+    pub fn get(&self, limit: QueryLimit) -> u64 {
+        self.0[limit as usize]
+    }
+}
+
+impl Default for QueryLimits {
+    fn default() -> QueryLimits {
+        QueryLimits(QueryLimit::ALL.map(|limit| match limit {
+            QueryLimit::ConstructorParentsFollowed => 64,
+            QueryLimit::FunctionsGivenThis => 32,
+            QueryLimit::TermsReadForProduct => 16,
+            QueryLimit::DeclaredSignatureDepth => 3,
+        }))
     }
 }
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct QueryStatistics {
     pub asked: u64,
+    pub limit_hits: [u32; QueryLimit::COUNT],
     pub gave_up: [u32; GaveUp::COUNT],
     pub members_gave_up: [u32; GaveUp::COUNT],
-    /// See `Checker::closed_cycle_count`.
     pub closed_cycles: u32,
+    pub union_members_compared: u64,
+    pub types_inferred: u64,
+    pub usages_walked: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -47,6 +92,7 @@ pub enum WrittenType {
 }
 
 impl WrittenType {
+    #[inline]
     pub fn written(self) -> Option<TypeId> {
         match self {
             WrittenType::Written(ty) => Some(ty),
@@ -54,6 +100,7 @@ impl WrittenType {
         }
     }
 
+    #[inline]
     pub(super) fn from_result(result: Result<TypeId, GaveUp>) -> WrittenType {
         match result {
             Ok(ty) => WrittenType::Written(ty),
@@ -61,6 +108,7 @@ impl WrittenType {
         }
     }
 
+    #[inline]
     pub(super) fn and_then(
         self,
         next: impl FnOnce(TypeId) -> Result<TypeId, GaveUp>,
@@ -81,6 +129,7 @@ pub struct PositionTypes {
 }
 
 impl PositionTypes {
+    #[inline]
     pub(super) fn unwritten(checked: CheckedType) -> PositionTypes {
         PositionTypes {
             written: WrittenType::Unwritten,
@@ -127,13 +176,6 @@ impl EnumConstant {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct TypeDisplayName {
-    pub text: Vec<u8>,
-    pub file: FileId,
-    pub position: u32,
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum MemberName {
     String(Atom),
@@ -141,13 +183,21 @@ pub enum MemberName {
     Private(Atom),
 }
 
-/// The call `Symbol(description)` that makes the symbol of a `const`.
+impl MemberName {
+    #[inline]
+    pub(super) fn atom(self) -> Atom {
+        let (MemberName::String(name) | MemberName::Symbol(name) | MemberName::Private(name)) =
+            self;
+        name
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SymbolCreation {
     pub file: FileId,
-    /// Which of the calls of the file it is.
     pub call_number: u32,
     pub description: Option<Atom>,
+    pub is_registered: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -169,7 +219,6 @@ pub struct ObjectMember {
     pub is_readonly: bool,
 }
 
-/// An `ObjectMember` for whoever does not ask what was written.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CheckedMember {
     pub name: MemberName,
@@ -177,6 +226,20 @@ pub struct CheckedMember {
     pub checked: CheckedType,
     pub is_optional: bool,
     pub is_readonly: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct MemberTypedOtherwise {
+    pub kind_in_base: ObjectMemberKind,
+    pub checked: TypeId,
+    pub in_base: TypeId,
+    pub is_method_above: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct MethodsAbove {
+    pub(super) class: Sym,
+    pub count: usize,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -225,6 +288,12 @@ pub struct SignatureParameter {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct WrittenParameter {
+    pub written: WrittenType,
+    pub is_rest: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SignatureShape<'c> {
     pub declaration: Option<FunctionRef>,
     pub this_type: PositionTypes,
@@ -248,11 +317,9 @@ impl ClassDeclaration {
     }
 }
 
-/// What a class or a constructor function inherits from.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ClassParent {
     Declared(ClassDeclaration),
-    /// A class or a function of Bun's own modules, where the program is another one. Its file is one of theirs.
     Library(ClassDeclaration),
 }
 
@@ -273,15 +340,22 @@ pub struct ClassMember {
     pub types: PositionTypes,
     pub is_static: bool,
     pub is_optional: bool,
+    pub is_made_at_birth: bool,
+    pub form: MemberForm,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct MemberForm {
+    pub is_read_only: bool,
+    pub is_not_enumerable: bool,
+    pub is_not_configurable: bool,
 }
 
 pub struct ClassShape<'c> {
     pub declaration: ClassDeclaration,
     pub members: &'c [ClassMember],
-    /// The names that stores put into the prototype object, also where `members` lists the name as a field of the instances.
     pub names_stored_in_prototype: &'c [MemberName],
     pub has_computed_instance_name: bool,
-    pub has_computed_static_name: bool,
 }
 
 #[cfg(test)]
@@ -304,7 +378,11 @@ mod tests {
             .collect();
         assert_eq!(
             not_memoized,
-            [GaveUp::Unresolved, GaveUp::FlowAnalysisDisabled]
+            [
+                GaveUp::Unresolved,
+                GaveUp::FlowAnalysisDisabled,
+                GaveUp::OutOfStack
+            ]
         );
     }
 

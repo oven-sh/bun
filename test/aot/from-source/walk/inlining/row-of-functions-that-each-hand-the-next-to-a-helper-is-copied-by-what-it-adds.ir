@@ -1,0 +1,28 @@
+# -- source: row-of-functions-that-each-hand-the-next-to-a-helper-is-copied-by-what-it-adds.js
+# function each(list, visit) { let n = 0; for (let i = 0; i < list.length; i++) n += visit(list[i]); return n; }
+# function a0(x) { return x.length; }
+# function a1(x) { return each(x, a0) + 1; }
+# function a2(x) { return each(x, a1) + 1; }
+# function a3(x) { return each(x, a2) + 1; }
+# function a4(x) { return each(x, a3) + 1; }
+# function a5(x) { return each(x, a4) + 1; }
+# function a6(x) { return each(x, a5) + 1; }
+# function a7(x) { return each(x, a6) + 1; }
+# function a8(x) { return each(x, a7) + 1; }
+# function a9(x) { return each(x, a8) + 1; }
+# function a10(x) { return each(x, a9) + 1; }
+# function a11(x) { return each(x, a10) + 1; }
+# function a12(x) { return each(x, a11) + 1; }
+# let nest = [1]; for (let i = 0; i < 12; i++) nest = [nest];
+# print(a12(nest), a12(nest));
+# -- end of source
+# If a helper and its callback were copied at every depth, each function of a row that hands the next one to a helper would hold all the functions behind it: N bodies of N levels
+# what helpers and their callbacks add is counted at the call that the unit's own body writes. Behind three times what a callee in a loop gets, the helper is called
+# RUN: walk f14 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f13 {{*}}parent=1
+# CHECK: CallDirect {{*}} function=f1
+# RUN(NEVER): walk f14 mechanisms=all
+# NEVER-NOT: callee=f3 {{*}}
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

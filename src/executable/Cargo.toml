@@ -16,7 +16,7 @@ aot = ["dep:bun_aot"]
 without_aot = ["dep:bun_aot_absent"]
 
 [dependencies]
-bun_aot = { workspace = true, features = ["linked_names"], optional = true }
+bun_aot = { workspace = true, features = ["linked_names", "linked_archive"], optional = true }
 bun_aot_absent = { workspace = true, optional = true }
 bun_runtime = { path = "../runtime" }
 

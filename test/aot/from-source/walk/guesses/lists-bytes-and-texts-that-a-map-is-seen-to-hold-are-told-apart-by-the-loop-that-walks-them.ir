@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# const M = new Map([["a", JSON.parse("[1, 5, 3]")], ["b", new Uint8Array(3)], ["c", "xxx"]]);
+# function f() { const l = M.get("a"); let m = -1; for (let i = 0; i < l.length; i++) if (l[i] > m) m = l[i]; return m; }
+# globalThis.keep = f;
+# print(f());
+# -- end of source
+# The map is seen to hold bytes and a text; of what JSON.parse gives nothing is seen, and that is what comes. Expected to be bytes, the list failed the one test and the loop ran closed.
+# What a map is seen to hold is expected where it is objects of the program. A list, bytes or a text is told apart in front of the loop that walks it, whatever was seen. f1 = f
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = TypeTest {{*}}testedType=Array
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5
+# ANSWERS-NEXT: exited with 0

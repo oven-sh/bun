@@ -1,17 +1,17 @@
 use bun_sema::bind::{Bound, ClassOwner, PrivateMembers, PrivateName};
 use bun_sema::hir::{
-    self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, Member, MemberId, MemberKind, ModifierId,
-    ParamId, PatKind, PropKey, Span, StmtKind,
+    self, ClassId, ExprId, Flags, FnId, Member, MemberId, MemberKind, ModifierId, PropKey, Span,
 };
-use bun_sema::resolve::TranspileSettings;
+use bun_sema::program::{CompiledModule, FileId};
 use smallvec::{SmallVec, smallvec};
 
 use super::{
     ClassElement, ClassPlan, ClassTransform, FieldSemantics, FieldValue, InitializerCall,
-    InjectionPoint,
+    InjectionPoint, KeyThatHoldsDecorators, PrintedForEachObject,
 };
 use crate::ir::ClassSlot;
 use crate::lower::decorators::{self, InitializerLists};
+use crate::modules::KnownObjects;
 
 pub(in crate::lower) fn runtime_members(
     hir: &hir::File<'_>,
@@ -37,8 +37,12 @@ pub(in crate::lower) fn has_decorators(hir: &hir::File<'_>, modifiers: Span<Modi
     decorators_of(hir, modifiers).next().is_some()
 }
 
-pub(in crate::lower) fn is_declaration_only(node: Member) -> bool {
+pub(in crate::lower) fn is_declaration_only(hir: &hir::File<'_>, member: MemberId) -> bool {
+    let node = hir[member];
+    let is_legacy = hir.has_typescript_semantics() && hir.legacy_decorators;
+    let is_private = matches!(node.key, PropKey::Private(_));
     node.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
+        && (is_legacy || is_private || !hir::has_runtime_member(hir, member))
 }
 
 pub(in crate::lower) fn is_auto_accessor(hir: &hir::File<'_>, member: MemberId) -> bool {
@@ -50,14 +54,31 @@ pub(in crate::lower) fn is_derived_class(hir: &hir::File<'_>, class: ClassId) ->
     hir[class].extends.is_some()
 }
 
-// No property of the class object holds this value, so each evaluation of the class needs a location of its own for it.
 pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     node.kind == MemberKind::Property
         && node.flags.contains(Flags::STATIC)
-        && !is_declaration_only(node)
+        && !is_declaration_only(hir, member)
         && (node.flags.contains(Flags::ACCESSOR)
             || matches!(hir.runtime_member_key(member), PropKey::Private(_)))
+}
+
+pub(in crate::lower) fn brand_is_of_methods(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    class: ClassId,
+) -> bool {
+    let has_private_method = bound.runtime.is_computed()
+        && bound
+            .private_names_of_class(class)
+            .any(|(_, name)| !name.is_static && !matches!(name.members, PrivateMembers::Field(_)));
+    has_private_method
+        || runtime_members(hir, class).any(|member| {
+            let node = hir[member];
+            is_auto_accessor(hir, member)
+                && !node.flags.contains(Flags::STATIC)
+                && !is_declaration_only(hir, member)
+        })
 }
 
 pub(in crate::lower) fn has_instance_brand(
@@ -74,7 +95,7 @@ pub(in crate::lower) fn has_instance_brand(
             let node = hir[member];
             is_auto_accessor(hir, member)
                 && !node.flags.contains(Flags::STATIC)
-                && !is_declaration_only(node)
+                && !is_declaration_only(hir, member)
         })
 }
 
@@ -135,26 +156,51 @@ fn has_computed_field_key(hir: &hir::File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     node.kind == MemberKind::Property
         && !node.flags.contains(Flags::ACCESSOR)
-        && !is_declaration_only(node)
+        && !is_declaration_only(hir, member)
         && matches!(hir.runtime_member_key(member), PropKey::Computed(_))
 }
 
-fn find_injection_point(hir: &hir::File<'_>, class: ClassId, constructor: FnId) -> InjectionPoint {
-    let FnBody::Block(statements) = hir[constructor].body else {
-        return InjectionPoint::Start;
+pub(in crate::lower) fn find_fields_under_signed_members(
+    members: KnownObjects<'_, '_>,
+    file: FileId,
+) -> Vec<MemberId> {
+    let hir = members.files.hir(file);
+    if hir.enums.is_empty() {
+        return Vec::new();
+    }
+    let classes = (0..hir.classes.len() as u32).map(ClassId);
+    let fields = classes.flat_map(|class| runtime_members(hir, class));
+    fields
+        .filter(|&member| match hir.runtime_member_key(member) {
+            PropKey::Computed(key) => members.find_signed_member_in_place(file, key).is_some(),
+            _ => false,
+        })
+        .collect()
+}
+
+fn has_key_folded_by_bun_run(
+    hir: &hir::File<'_>,
+    compiled: &CompiledModule<'_>,
+    member: MemberId,
+) -> bool {
+    let PropKey::Computed(key) = hir.runtime_member_key(member) else {
+        return false;
     };
+    let (decisions, key) = (&compiled.analysis.decisions, hir.skip_type_assertions(key));
+    match compiled.settings.bun_run_assigns_class_fields {
+        true => decisions.is_string_or_number_under_minify_syntax(hir, key),
+        false => decisions.is_string_or_number_in_bun_run(hir, key),
+    }
+}
+
+fn find_injection_point(hir: &hir::File<'_>, class: ClassId, constructor: FnId) -> InjectionPoint {
     if !is_derived_class(hir, class) {
         return InjectionPoint::Start;
     }
-    for statement in hir.ids(statements) {
-        if let StmtKind::Expr(expression) = hir[statement].kind
-            && let ExprKind::Call(call) = hir[expression].kind
-            && matches!(hir[hir[call].callee].kind, ExprKind::Super)
-        {
-            return InjectionPoint::AfterSuperCall(expression);
-        }
+    match hir::find_super_call_statement(hir, constructor) {
+        Some((_, call)) => InjectionPoint::AfterSuperCall(call),
+        None => InjectionPoint::Start,
     }
-    InjectionPoint::Start
 }
 
 fn create_field_element(hir: &hir::File<'_>, member: MemberId, value: FieldValue) -> ClassElement {
@@ -234,7 +280,7 @@ fn plan_elements(
         let node = hir[member];
         match node.kind {
             MemberKind::StaticBlock => plan.static_elements.push(ClassElement::StaticBlock(member)),
-            MemberKind::Property if is_declaration_only(node) => {}
+            MemberKind::Property if is_declaration_only(hir, member) => {}
             MemberKind::Property if node.flags.contains(Flags::STATIC) => {
                 push_defined_field(hir, lists, &mut plan.static_elements, member);
             }
@@ -262,7 +308,6 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
     let is_at_injection_point = plan.field_semantics == FieldSemantics::Assign
         || (transform == ClassTransform::Standard && !has_defined_field);
     if !is_at_injection_point {
-        // The extra initializers of a decorated field run with the field behind it, and those of the last field in the constructor.
         if let Some(&last @ ClassElement::RunInitializers { .. }) = plan.instance_elements.last() {
             plan.instance_elements.pop();
             plan.injected_elements.push(last);
@@ -274,6 +319,16 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
         plan.instance_elements.remove(0);
         plan.this_binding_elements.insert(0, ClassElement::Brand);
     }
+    let is_assigned =
+        |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
+    if plan.field_semantics == FieldSemantics::Assign
+        && !plan.instance_elements.is_empty()
+        && plan.instance_elements.iter().all(is_assigned)
+    {
+        let assigned = std::mem::take(&mut plan.instance_elements);
+        plan.injected_elements.splice(0..0, assigned);
+        return;
+    }
     if plan.instance_elements.is_empty() {
         plan.initializer_call = InitializerCall::AtThisBinding;
         std::mem::swap(&mut plan.instance_elements, &mut plan.this_binding_elements);
@@ -283,24 +338,26 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
 pub(super) fn plan_class(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
-    settings: &TranspileSettings,
+    compiled: &CompiledModule<'_>,
+    fields_under_signed_members: &[MemberId],
     class: ClassId,
 ) -> ClassPlan {
     let transform = compute_class_transform(hir, bound, class);
     let is_asked_to_assign = hir.has_typescript_semantics()
-        && settings.use_define_for_class_fields == Some(false)
+        && compiled.settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard;
-    // A field under a computed key stays a field, and with it every other field of the class. A parameter property is no field.
-    let has_computed_instance_key = runtime_members(hir, class).any(|member| {
-        has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
+    let keeps_fields = runtime_members(hir, class).any(|member| {
+        has_computed_field_key(hir, member)
+            && !hir[member].flags.contains(Flags::STATIC)
+            && !has_key_folded_by_bun_run(hir, compiled, member)
+            && !fields_under_signed_members.contains(&member)
     });
-    let field_semantics = if is_asked_to_assign && !has_computed_instance_key {
+    let field_semantics = if is_asked_to_assign && !keeps_fields {
         FieldSemantics::Assign
     } else {
         FieldSemantics::Define
     };
-    let constructor = runtime_members(hir, class)
-        .find(|&member| hir.runtime_member_kind(member) == MemberKind::Constructor);
+    let constructor = hir::find_runtime_constructor(hir, class);
     let mut plan = ClassPlan {
         transform,
         field_semantics,
@@ -312,18 +369,14 @@ pub(super) fn plan_class(
         instance_elements: Vec::new(),
         injected_elements: Vec::new(),
         static_elements: Vec::new(),
+        elements_behind_class: Vec::new(),
         decorations: Vec::new(),
         instance_method_initializers: None,
         initializer_list_count: 0,
     };
     if let Some(constructor) = plan.constructor {
         plan.injection_point = find_injection_point(hir, class, constructor);
-        let is_property = |parameter: &ParamId| {
-            let node = hir[*parameter];
-            node.flags.contains(Flags::PARAMETER_PROPERTY)
-                && matches!(hir[node.pat].kind, PatKind::Ident(_))
-        };
-        plan.parameter_properties = hir[constructor].params.iter().filter(is_property).collect();
+        plan.parameter_properties = hir::parameter_properties(hir, constructor).collect();
     }
     let no_lists = InitializerLists::default();
     let declares = !is_asked_to_assign;
@@ -368,13 +421,174 @@ fn find_member_slot(
     }
 }
 
-pub(crate) fn class_slots(
+pub(in crate::lower) fn fields_evaluated_in_constructor(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
-    settings: &TranspileSettings,
+    compiled: &CompiledModule<'_>,
+    fields_under_signed_members: &[MemberId],
+    class: ClassId,
+) -> SmallVec<[MemberId; 4]> {
+    let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
+    let injected = plan.injected_elements.iter();
+    let fields = injected.filter_map(|element| match *element {
+        ClassElement::AssignedField { member } => Some(member),
+        _ => None,
+    });
+    fields.collect()
+}
+
+pub(in crate::lower) fn is_printed_as_getter_and_setter(
+    hir: &hir::File<'_>,
+    member: MemberId,
+) -> bool {
+    is_auto_accessor(hir, member) && !matches!(hir.runtime_member_key(member), PropKey::Private(_))
+}
+
+fn find_what_standard_decorators_print(
+    hir: &hir::File<'_>,
+    class: ClassId,
+) -> PrintedForEachObject {
+    let of_objects =
+        || runtime_members(hir, class).filter(|&member| !hir[member].flags.contains(Flags::STATIC));
+    let is_decorated = |member: MemberId| has_decorators(hir, hir[member].modifiers);
+    let is_kept_outside_the_object = |member: MemberId| {
+        let is_private = matches!(hir.runtime_member_key(member), PropKey::Private(_));
+        is_printed_as_getter_and_setter(hir, member) || (is_private && is_decorated(member))
+    };
+    let runs_before_first_field = of_objects().any(|member| {
+        let is_field = hir[member].kind == MemberKind::Property && !is_auto_accessor(hir, member);
+        is_decorated(member) && !is_field
+    });
+    let mut printed = PrintedForEachObject {
+        stands_at_statement: runs_before_first_field,
+        ..PrintedForEachObject::default()
+    };
+    let (mut waits_for_field, mut has_field) = (false, false);
+    for member in of_objects().filter(|&member| hir[member].kind == MemberKind::Property) {
+        if is_kept_outside_the_object(member) {
+            waits_for_field = true;
+            printed.stands_at_statement = true;
+            continue;
+        }
+        let takes_what_waits = waits_for_field || (runs_before_first_field && !has_field);
+        if takes_what_waits && !is_decorated(member) && hir[member].init.is_none() {
+            printed.fields_given_a_value.push(member);
+        }
+        has_field = true;
+        waits_for_field = is_decorated(member);
+        printed.stands_at_statement |= waits_for_field;
+    }
+    printed.makes_constructor = waits_for_field || (runs_before_first_field && !has_field);
+    printed
+}
+
+pub(in crate::lower) fn find_keys_that_hold_decorators(
+    hir: &hir::File<'_>,
+    class: ClassId,
+    fields_given_a_value: &[MemberId],
+) -> SmallVec<[KeyThatHoldsDecorators; 2]> {
+    let is_decorated = |member: MemberId| has_decorators(hir, hir[member].modifiers);
+    let key_of = |member: MemberId| hir.runtime_member_key(member);
+    let is_private = |member: MemberId| matches!(key_of(member), PropKey::Private(_));
+    let is_kept_outside_the_class = |member: MemberId| {
+        let has_same_name = |&other: &MemberId| key_of(other) == key_of(member);
+        let mut of_same_name = runtime_members(hir, class).filter(has_same_name);
+        is_private(member) && of_same_name.any(is_decorated)
+    };
+    let mut keys = SmallVec::<[KeyThatHoldsDecorators; 2]>::new();
+    let mut waiting = SmallVec::<[MemberId; 2]>::new();
+    let mut stands_behind_text_of_class = true;
+    for member in runtime_members(hir, class) {
+        let node = hir[member];
+        let kind = hir.runtime_member_kind(member);
+        let is_static = node.flags.contains(Flags::STATIC);
+        if is_private(member) && is_decorated(member) {
+            waiting.push(member);
+        }
+        if !is_private(member) && !matches!(kind, MemberKind::Constructor | MemberKind::StaticBlock)
+        {
+            keys.push(KeyThatHoldsDecorators {
+                member: Some(member),
+                lists: waiting.len() + usize::from(is_decorated(member)),
+                private_members: core::mem::take(&mut waiting),
+                stands_behind_text_of_class,
+            });
+        }
+        let is_storage =
+            is_kept_outside_the_class(member) || is_printed_as_getter_and_setter(hir, member);
+        stands_behind_text_of_class = match kind {
+            MemberKind::Property if is_storage && is_static => {
+                is_decorated(member) || node.init.is_none()
+            }
+            MemberKind::Property if is_storage => {
+                !is_private(member) || stands_behind_text_of_class
+            }
+            MemberKind::Property if node.init.is_none() => {
+                is_decorated(member) || fields_given_a_value.contains(&member)
+            }
+            MemberKind::Property => is_static && is_decorated(member),
+            _ => is_kept_outside_the_class(member) && stands_behind_text_of_class,
+        };
+    }
+    match keys.last_mut() {
+        Some(last) => {
+            last.lists += waiting.len();
+            last.private_members.extend(waiting);
+        }
+        None => keys.push(KeyThatHoldsDecorators {
+            member: None,
+            lists: waiting.len(),
+            private_members: waiting,
+            stands_behind_text_of_class,
+        }),
+    }
+    keys.retain(|key| key.lists > 0);
+    keys
+}
+
+pub(in crate::lower) fn find_what_is_printed_for_each_object(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    compiled: &CompiledModule<'_>,
+    fields_under_signed_members: &[MemberId],
+    class: ClassId,
+) -> PrintedForEachObject {
+    let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
+    let is_assigned =
+        |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
+    let moves_fields = plan.injected_elements.iter().any(is_assigned);
+    let is_instance_field = |member: MemberId| {
+        let node = hir[member];
+        node.kind == MemberKind::Property && !node.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
+    };
+    let printed = match plan.transform {
+        ClassTransform::Standard => find_what_standard_decorators_print(hir, class),
+        _ if plan.field_semantics == FieldSemantics::Assign => PrintedForEachObject {
+            makes_constructor: runtime_members(hir, class).any(is_instance_field),
+            ..PrintedForEachObject::default()
+        },
+        ClassTransform::Legacy => PrintedForEachObject {
+            makes_constructor: moves_fields,
+            stands_at_statement: moves_fields && plan.constructor.is_none(),
+            ..PrintedForEachObject::default()
+        },
+        ClassTransform::None => PrintedForEachObject::default(),
+    };
+    PrintedForEachObject {
+        written_constructor: plan.constructor,
+        makes_constructor: printed.makes_constructor && plan.constructor.is_none(),
+        ..printed
+    }
+}
+
+pub(in crate::lower) fn class_slots(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    compiled: &CompiledModule<'_>,
+    fields_under_signed_members: &[MemberId],
     class: ClassId,
 ) -> SmallVec<[ClassSlot; 4]> {
-    let plan = plan_class(hir, bound, settings, class);
+    let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
     let mut slots: SmallVec<[ClassSlot; 4]> = smallvec![ClassSlot::ClassObject];
     if has_instance_brand(hir, bound, class) {
         slots.push(ClassSlot::ClassToken);

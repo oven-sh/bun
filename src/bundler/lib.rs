@@ -1,5 +1,6 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
+#![cfg_attr(any(test, feature = "test_support"), feature(linkage))]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
@@ -9,7 +10,7 @@ use bun_aot_compiler as _;
 #[cfg(test)]
 use bun_sema_standalone as _;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test_support"))]
 mod native_test_shims;
 
 pub mod error;
@@ -132,6 +133,7 @@ pub mod HTMLImportManifest;
 pub mod HTMLScanner;
 pub mod aot;
 pub mod cache;
+pub mod css_module_graph;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
 pub mod output_file;
@@ -435,7 +437,7 @@ bun_dispatch::link_interface! {
         fn eval_source() -> Option<*const bun_ast::Source<'static>>;
         // The path of the entry module, `None` when there is none (`bun bake`).
         fn main() -> Option<&'static [u8]>;
-        fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
+        fn read_dir_info_package_json(dir: &[u8]) -> Option<&'static bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;

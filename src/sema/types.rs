@@ -9,18 +9,21 @@ use crate::local::{HashIndex, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
-use crate::util::memory::{OWN, Placeholder, Placeholders, Segmented};
+use crate::util::memory::{AppendVec, OWN, Placeholder, Placeholders, Segmented};
 use crate::util::{
-    FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, spread_in_window,
-    spread_of,
+    FxHashMap, FxHashSet, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedSlots, fx_hash,
+    spread_in_window, spread_of,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
+use bun_sort_by_number::SortByNumber;
 use bun_threading::Guarded;
 use smallvec::SmallVec;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 use std::hint::cold_path;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
+use std::marker::PhantomData;
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 /// A list that's stored once, as one exactly sized block in the arena of the thread that built it.
 /// It's as wide as `Box<[T]>`. Dropping it frees the block, on any thread.
@@ -854,6 +857,9 @@ pub enum InstantiationExpression {
     TypeNode(FileId, TypeNodeId),
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub struct ConstructedBy(pub Option<(FileId, FnId)>);
+
 /// The members of an object type.
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Shape<'s> {
@@ -913,6 +919,7 @@ pub struct Shape<'s> {
     /// call, and for the `getWidenedTypeOfObjectLiteral` of such a type: the pattern's file and
     /// position.
     pub pattern_at: Option<(FileId, u32)>,
+    pub constructed_by: ConstructedBy,
     /// `t.mapper` of a type that `getObjectTypeInstantiation` instantiates no matter what its members
     /// mention, because it has the symbol of an object literal (`getSpreadType`,
     /// `getWidenedTypeOfObjectLiteral`), `ObjectFlagsObjectRestType` or
@@ -928,10 +935,10 @@ pub struct Shape<'s> {
 #[repr(C)]
 pub struct Listed<'s> {
     /// This field and the next five are documented on `Shape`.
-    pub props: List<'s, Prop<'s>>,
-    pub call: List<'s, SigId>,
-    pub construct: List<'s, SigId>,
-    pub index: List<'s, IndexInfo>,
+    pub props: ListedItems<'s, Prop<'s>>,
+    pub call: ListedItems<'s, SigId>,
+    pub construct: ListedItems<'s, SigId>,
+    pub index: ListedItems<'s, IndexInfo>,
     /// `TypeId::UNRESOLVED` means none.
     properties_of: TypeId,
     pub literal: Literalness,
@@ -939,24 +946,140 @@ pub struct Listed<'s> {
     pub has_symbol_declared_at: bool,
     /// True if the `Shape` was plain (`Shape::is_plain`).
     is_plain: bool,
+    /// True if the lists belong to a `Shape` that's stored elsewhere (`Listed::lent_by`).
+    is_lent: bool,
+}
+
+const _: () = assert!(size_of::<Listed<'static>>() == 72);
+
+/// One of the lists of a `Listed`, as wide as a `List`.
+pub struct ListedItems<'s, T>(NonNull<[T]>, PhantomData<List<'s, T>>);
+
+// SAFETY: it's used as a `List<T>` or as a `&[T]`.
+unsafe impl<T: Send + Sync> Send for ListedItems<'_, T> {}
+// SAFETY: as above.
+unsafe impl<T: Sync> Sync for ListedItems<'_, T> {}
+
+impl<'s, T> ListedItems<'s, T> {
+    #[inline]
+    fn own(list: List<'s, T>) -> Self {
+        // SAFETY: the pointer of a box isn't null.
+        ListedItems(
+            unsafe { NonNull::new_unchecked(list.into_raw()) },
+            PhantomData,
+        )
+    }
+
+    fn lent(list: &[T]) -> Self {
+        ListedItems(NonNull::from(list), PhantomData)
+    }
+
+    /// # Safety
+    /// `self` was made by `own` and isn't used again.
+    unsafe fn free(&mut self) {
+        // SAFETY: caller contract.
+        drop(unsafe { List::from_raw(self.0.as_ptr()) });
+    }
+}
+
+impl<T> std::ops::Deref for ListedItems<'_, T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        // SAFETY: the list is the `Listed`'s own, or outlives it (`Listed::lent_by`).
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<'v, T> IntoIterator for &'v ListedItems<'_, T> {
+    type Item = &'v T;
+    type IntoIter = std::slice::Iter<'v, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for ListedItems<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self[..].fmt(f)
+    }
+}
+
+impl Drop for Listed<'_> {
+    fn drop(&mut self) {
+        if self.is_lent {
+            return;
+        }
+        // SAFETY: `From<Shape>` made all four with `own`.
+        unsafe {
+            self.props.free();
+            self.call.free();
+            self.construct.free();
+            self.index.free();
+        }
+    }
 }
 
 impl<'s> From<Shape<'s>> for Listed<'s> {
     fn from(shape: Shape<'s>) -> Listed<'s> {
         Listed {
             is_plain: shape.is_plain(),
-            props: shape.props.into(),
-            call: shape.call.into(),
-            construct: shape.construct.into(),
-            index: shape.index.into(),
+            props: ListedItems::own(shape.props.into()),
+            call: ListedItems::own(shape.call.into()),
+            construct: ListedItems::own(shape.construct.into()),
+            index: ListedItems::own(shape.index.into()),
             properties_of: shape.properties_of.unwrap_or(TypeId::UNRESOLVED),
             literal: shape.literal,
             has_symbol_declared_at: shape.symbol_declared_at.is_some(),
+            is_lent: false,
         }
     }
 }
 
 impl<'s> Listed<'s> {
+    /// `Listed::from` without a copy of the lists.
+    ///
+    /// # Safety
+    /// `shape` stays where it is, unchanged, for as long as the result is used.
+    pub unsafe fn lent_by(shape: &Shape<'_>) -> Listed<'s> {
+        // SAFETY: caller contract.
+        let shape: &Shape<'s> = unsafe { &*std::ptr::from_ref(shape).cast() };
+        Listed {
+            is_plain: shape.is_plain(),
+            props: ListedItems::lent(&shape.props),
+            call: ListedItems::lent(&shape.call),
+            construct: ListedItems::lent(&shape.construct),
+            index: ListedItems::lent(&shape.index),
+            properties_of: shape.properties_of.unwrap_or(TypeId::UNRESOLVED),
+            literal: shape.literal,
+            has_symbol_declared_at: shape.symbol_declared_at.is_some(),
+            is_lent: true,
+        }
+    }
+
+    /// `props`, `call`, `construct` and `index` of a copy, to change them.
+    #[allow(clippy::type_complexity)]
+    pub fn lists_mut(
+        &mut self,
+    ) -> (
+        &mut [Prop<'s>],
+        &mut [SigId],
+        &mut [SigId],
+        &mut [IndexInfo],
+    ) {
+        assert!(!self.is_lent);
+        // SAFETY: the lists are its own, and four different blocks.
+        unsafe {
+            (
+                self.props.0.as_mut(),
+                self.call.0.as_mut(),
+                self.construct.0.as_mut(),
+                self.index.0.as_mut(),
+            )
+        }
+    }
+
     #[inline]
     pub fn properties_of(&self) -> Option<TypeId> {
         (self.properties_of != TypeId::UNRESOLVED).then_some(self.properties_of)
@@ -1072,6 +1195,7 @@ impl<'s> Shape<'s> {
             single_signature_arguments: None,
             has_no_instantiable_symbol: false,
             pattern_at: None,
+            constructed_by: ConstructedBy(None),
             mapper: MapperId::IDENTITY,
         }
     }
@@ -1100,6 +1224,7 @@ impl<'s> Shape<'s> {
             single_signature_arguments,
             has_no_instantiable_symbol,
             pattern_at,
+            constructed_by,
             mapper,
         } = self;
         let flags = [
@@ -1121,6 +1246,7 @@ impl<'s> Shape<'s> {
             && properties_of.is_none()
             && single_signature_arguments.is_none()
             && pattern_at.is_none()
+            && constructed_by.0.is_none()
             && *mapper == MapperId::IDENTITY
     }
 }
@@ -1149,6 +1275,21 @@ impl SigParam {
     }
 }
 
+/// Synthesized. `this` is its `this` type. The first entry of `of` is the signature it's a clone
+/// of, whose declaration it shares. With more than one entry, `of` is `Signature.composite`
+/// (`createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`) and `is_union` is
+/// `composite.isUnion`. Then `ret` is `TypeId::UNRESOLVED`, and `sig_return` resolves it from
+/// their return types.
+#[derive(PartialEq, Eq, Hash, Debug)]
+pub struct SynthSig<'s> {
+    pub type_params: List<'s, TypeId>,
+    pub params: List<'s, SigParam>,
+    pub ret: TypeId,
+    pub this: Option<TypeId>,
+    pub of: List<'s, SigId>,
+    pub is_union: bool,
+}
+
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum SigData<'s> {
     /// As declared, with `mapper` applied.
@@ -1173,24 +1314,17 @@ pub enum SigData<'s> {
         func: FnId,
         mapper: MapperId,
     },
-    /// Synthesized. `this` is its `this` type. The first entry of `of` is the signature it's a clone
-    /// of, whose declaration it shares. With more than one entry, `of` is `Signature.composite`
-    /// (`createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`) and `is_union` is
-    /// `composite.isUnion`. Then `ret` is `TypeId::UNRESOLVED`, and `sig_return` resolves it from
-    /// their return types.
-    Synth {
-        type_params: List<'s, TypeId>,
-        params: List<'s, SigParam>,
-        ret: TypeId,
-        this: Option<TypeId>,
-        of: List<'s, SigId>,
-        is_union: bool,
-    },
+    Synth(&'s SynthSig<'s>),
     /// `sig` with the return type `ret`: a construct signature of an intersection that contains
     /// mixin constructors (`cloneSignature` with `resolvedReturnType` set). `sig` is never one of
     /// these itself.
-    WithReturn { sig: SigId, ret: TypeId },
+    WithReturn {
+        sig: SigId,
+        ret: TypeId,
+    },
 }
+
+const _: () = assert!(size_of::<SigData<'static>>() == 24);
 
 /// `TypeFlags`, with the same values as in types.go, because `CompareTypes` orders types of different kinds by them.
 pub mod tf {
@@ -1442,25 +1576,44 @@ pub enum TypeKey<'a> {
 
 impl Hash for TypeKey<'_> {
     /// Hashes what `#[derive(Hash)]` hashes for the `TypeData`: the discriminant, then the fields.
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         use std::mem::discriminant;
-        let given = discriminant(&TypeArguments::default());
+        const NO_CONSTITUENTS: Constituents<'static> =
+            ShortList::Inline(0, [TypeId::BLANK; INLINE_CONSTITUENTS]);
+        const NO_TYPE_ARGUMENTS: TypeArguments<'static> =
+            TypeArguments::Given(ShortList::Inline(0, [TypeId::BLANK; INLINE_TYPE_ARGUMENTS]));
+        const GIVEN: &TypeArguments<'static> = &NO_TYPE_ARGUMENTS;
+        const UNION: &TypeData<'static> = &TypeData::Union(NO_CONSTITUENTS);
+        const INTERSECTION: &TypeData<'static> = &TypeData::Intersection(NO_CONSTITUENTS);
+        const REF: &TypeData<'static> = &TypeData::Ref {
+            target: Sym {
+                file: FileId::BLANK,
+                id: crate::bind::SymbolId(0),
+            },
+            args: NO_TYPE_ARGUMENTS,
+        };
+        const NO_DECLARATIONS: Declarations<'static> = ShortList::Inline(
+            0,
+            [<(FileId, FnId) as BlankItem>::BLANK; INLINE_DECLARATIONS],
+        );
+        const FNS: &TypeData<'static> = &TypeData::Fns {
+            decls: NO_DECLARATIONS,
+            mapper: MapperId::IDENTITY,
+        };
+        let given = discriminant(GIVEN);
         match *self {
             TypeKey::Data(data) => data.hash(state),
             TypeKey::Union(members) => {
-                discriminant(&TypeData::Union(ShortList::empty())).hash(state);
+                discriminant(UNION).hash(state);
                 members.hash(state);
             }
             TypeKey::Intersection(members) => {
-                discriminant(&TypeData::Intersection(ShortList::empty())).hash(state);
+                discriminant(INTERSECTION).hash(state);
                 members.hash(state);
             }
             TypeKey::Ref { target, args } => {
-                let empty = TypeData::Ref {
-                    target,
-                    args: TypeArguments::default(),
-                };
-                discriminant(&empty).hash(state);
+                discriminant(REF).hash(state);
                 target.hash(state);
                 given.hash(state);
                 args.hash(state);
@@ -1482,16 +1635,17 @@ impl Hash for TypeKey<'_> {
                 readonly.hash(state);
             }
             TypeKey::Fns { decls, mapper } => {
-                let empty = TypeData::Fns {
-                    decls: ShortList::empty(),
-                    mapper,
-                };
-                discriminant(&empty).hash(state);
+                discriminant(FNS).hash(state);
                 decls.hash(state);
                 mapper.hash(state);
             }
         }
     }
+}
+
+#[inline]
+fn are_same_items<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+    a.len() == b.len() && (0..a.len()).all(|at| a[at] == b[at])
 }
 
 impl TypeKey<'_> {
@@ -1506,7 +1660,7 @@ impl TypeKey<'_> {
                     target: data_target,
                     args: TypeArguments::Given(list),
                 },
-            ) => target == *data_target && *args == **list,
+            ) => target == *data_target && are_same_items(args, &list[..]),
             (
                 TypeKey::Tuple {
                     elems,
@@ -1525,7 +1679,7 @@ impl TypeKey<'_> {
                     decls: list,
                     mapper: data_mapper,
                 },
-            ) => mapper == *data_mapper && *decls == **list,
+            ) => mapper == *data_mapper && are_same_items(decls, &list[..]),
             _ => false,
         }
     }
@@ -1738,7 +1892,40 @@ pub struct TypeRecord<'s> {
 
 const _: () = assert!(size_of::<TypeRecord<'static>>() <= 64);
 
-type MapperRecord<'s> = (Mapping<'s>, ObjectFlags);
+enum MapperRecord<'s> {
+    Inline(u8, ObjectFlags, [(TypeId, TypeId); 3]),
+    Spilled(ObjectFlags, List<'s, (TypeId, TypeId)>),
+}
+
+const _: () = assert!(size_of::<MapperRecord<'static>>() == 32);
+
+impl<'s> MapperRecord<'s> {
+    #[inline]
+    fn new(pairs: Mapping<'s>, flags: ObjectFlags) -> Self {
+        match pairs {
+            ShortList::Inline(len, pairs) => MapperRecord::Inline(len, flags, pairs),
+            ShortList::Spilled(pairs) => MapperRecord::Spilled(flags, pairs),
+        }
+    }
+
+    #[inline]
+    fn pairs(&self) -> &[(TypeId, TypeId)] {
+        match self {
+            MapperRecord::Inline(len, _, pairs) => &pairs[..usize::from(*len)],
+            MapperRecord::Spilled(_, pairs) => {
+                cold_path();
+                pairs
+            }
+        }
+    }
+
+    #[inline]
+    fn flags(&self) -> ObjectFlags {
+        match self {
+            MapperRecord::Inline(_, flags, _) | MapperRecord::Spilled(flags, _) => *flags,
+        }
+    }
+}
 
 const _: () = assert!(LOCAL == OWN);
 
@@ -1820,12 +2007,12 @@ mod fact {
     pub(super) const HAS_GENERIC_ARGUMENTS: u8 = 1 << 6;
 }
 
-/// A type's `TypeRecord::summary` and its `Rank`. Two per cache line.
+/// A type's `TypeRecord::summary` and the place of its `Rank`. Four per cache line.
 ///
 /// The fields are atomic because `set` writes to a `Summary` that `TypeStore::reserve_ids` has already added to the
 /// shared table. `Relaxed` is enough for the fields `set` writes, because a thread only gets a type's id through
 /// something that orders the creator's earlier writes before the read (see `AppendVec`). The rank is written later, by
-/// any thread. See `set_rank`.
+/// any thread. See `Types::set_rank`.
 struct Summary {
     flags: AtomicU32,
     /// See `Types::member_flags`. The top three bits aren't type flags (see `HAS_FRESH_LITERAL`).
@@ -1838,28 +2025,24 @@ struct Summary {
     /// creation. See `fact` for the bits and `Types::add_facts` for what may be stored here. Facts
     /// learned about a task-local type aren't published with it.
     facts: AtomicU8,
-    /// The three `Rank` fields.
-    height: AtomicU32,
-    last_syntax: AtomicU64,
-    content: AtomicU64,
+    /// 0 if the rank hasn't been computed, else one more than its index in `TypeStore::ranks`, or in `OwnStore::ranks`
+    /// for a task-local type.
+    rank: AtomicU32,
 }
 
-const _: () = assert!(size_of::<Summary>() == 32);
+const _: () = assert!(size_of::<Summary>() == 16);
 
 impl Summary {
     /// The type has no rank yet.
     #[inline]
     fn new(summary: TypeSummary) -> Summary {
-        let rank = Rank::NONE;
         Summary {
             flags: AtomicU32::new(summary.flags),
             member_flags: AtomicU32::new(summary.member_flags),
             object_flags: AtomicU16::new(summary.object_flags.bits()),
             class: AtomicU8::new(summary.class as u8),
             facts: AtomicU8::new(summary.facts()),
-            height: AtomicU32::new(rank.height),
-            last_syntax: AtomicU64::new(rank.last_syntax),
-            content: AtomicU64::new(rank.content),
+            rank: AtomicU32::new(0),
         }
     }
 
@@ -1872,26 +2055,34 @@ impl Summary {
         self.class.store(summary.class as u8, order);
         self.facts.store(summary.facts(), order);
     }
+}
 
-    /// Returns `None` if the rank hasn't been computed.
+#[derive(Copy, Clone)]
+pub struct SummaryOfType<'p>(&'p Summary);
+
+impl SummaryOfType<'_> {
     #[inline]
-    fn rank(&self) -> Option<Rank> {
-        match self.height.load(Ordering::Acquire) {
-            0 => None,
-            height => Some(Rank {
-                height,
-                last_syntax: self.last_syntax.load(Ordering::Relaxed),
-                content: self.content.load(Ordering::Relaxed),
-            }),
-        }
+    pub fn flags(self) -> u32 {
+        self.0.flags.load(Ordering::Relaxed)
     }
 
-    /// Any thread may call this at any time, because every thread computes the same rank for a type. The height is
-    /// stored last, so a thread that reads it also reads the rest.
-    fn set_rank(&self, rank: Rank) {
-        self.last_syntax.store(rank.last_syntax, Ordering::Relaxed);
-        self.content.store(rank.content, Ordering::Relaxed);
-        self.height.store(rank.height, Ordering::Release);
+    #[inline]
+    pub fn object_flags(self) -> ObjectFlags {
+        ObjectFlags::from_bits_retain(self.0.object_flags.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn is_plain_object(self) -> bool {
+        self.0.member_flags.load(Ordering::Relaxed) & IS_PLAIN_OBJECT != 0
+    }
+
+    /// Returns `ObjectFlagsCouldContainTypeVariables`, or `None` if
+    /// `ObjectFlagsCouldContainTypeVariablesComputed` isn't set.
+    #[inline]
+    pub fn could_contain_type_variables(self) -> Option<bool> {
+        let facts = self.0.facts.load(Ordering::Relaxed);
+        (facts & fact::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED != 0)
+            .then_some(facts & fact::COULD_CONTAIN_TYPE_VARIABLES != 0)
     }
 }
 
@@ -1928,6 +2119,7 @@ const IS_MAPPED_TYPE: u32 = 1 << 31;
 
 impl TypeRecord<'_> {
     /// `member_flags_of` must return a constituent's `Summary::member_flags`.
+    #[inline]
     fn summary(&self, member_flags_of: impl Fn(TypeId) -> u32) -> TypeSummary {
         TypeSummary {
             flags: self.flags,
@@ -1968,6 +2160,7 @@ impl TypeRecord<'_> {
         }
     }
 
+    #[inline]
     fn instantiation_class(&self) -> InstantiationClass {
         let is_changed =
             ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
@@ -2002,10 +2195,11 @@ impl Record for List<'_, IndexComponent> {
 
 impl Record for MapperRecord<'_> {
     fn is_same(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.pairs() == other.pairs()
     }
+    #[inline]
     fn hole() -> Self {
-        (Mapping::empty(), ObjectFlags::empty())
+        MapperRecord::new(Mapping::empty(), ObjectFlags::empty())
     }
 }
 
@@ -2013,6 +2207,7 @@ impl Record for SigData<'_> {
     fn is_same(&self, other: &Self) -> bool {
         self == other
     }
+    #[inline]
     fn hole() -> Self {
         SigData::WithReturn {
             sig: SigId(u32::MAX),
@@ -2025,6 +2220,7 @@ impl Record for TypeRecord<'_> {
     fn is_same(&self, other: &Self) -> bool {
         self.created == other.created
     }
+    #[inline]
     fn hole() -> Self {
         TypeRecord {
             created: (TypeData::Intrinsic(Intrinsic::Unresolved), None),
@@ -2101,6 +2297,7 @@ impl<'s, V: Record> Interned<'s, V> {
     ///
     /// The index lookup and insert run under the shard's lock, so if two threads race on the same key, one adds its id
     /// and the other thread finds it. The losing thread's record stays in its slot, and nothing refers to it.
+    #[inline]
     fn publish_record(&self, spread: u64, id: Placeholder<'s>, record: V) -> u32 {
         let (id, stored_record) = (id.index(), self.items.replace(id, record));
         (self.index).find_or_add(
@@ -2160,6 +2357,69 @@ impl Bits {
             self.0.resize(index / 64 + 1, 0);
         }
         self.0[index / 64] |= 1 << (index % 64);
+    }
+}
+
+struct IdSet {
+    words_of_runs: LocalVec<Cell<u32>>,
+    words: LocalVec<Cell<u64>>,
+}
+
+impl IdSet {
+    const IDS_PER_RUN: u32 = 1024;
+    const WORDS_PER_RUN: u32 = Self::IDS_PER_RUN / u64::BITS;
+
+    fn new() -> IdSet {
+        IdSet {
+            words_of_runs: LocalVec::new(),
+            words: LocalVec::new(),
+        }
+    }
+
+    #[inline]
+    fn word_in_run(id: u32) -> u32 {
+        id % Self::IDS_PER_RUN / u64::BITS
+    }
+
+    #[inline]
+    fn has(&self, id: u32) -> bool {
+        let run = id / Self::IDS_PER_RUN;
+        if run >= self.words_of_runs.len() {
+            return false;
+        }
+        match self.words_of_runs.get(run).get() {
+            0 => false,
+            after_first_word => {
+                let word = (self.words).get(after_first_word - 1 + Self::word_in_run(id));
+                word.get() >> (id % u64::BITS) & 1 != 0
+            }
+        }
+    }
+
+    fn set(&self, id: u32) {
+        let run = id / Self::IDS_PER_RUN;
+        while self.words_of_runs.len() <= run {
+            self.words_of_runs.push(Cell::new(0));
+        }
+        let after_first_word = self.words_of_runs.get(run);
+        if after_first_word.get() == 0 {
+            after_first_word.set(self.words.len() + 1);
+            for _ in 0..Self::WORDS_PER_RUN {
+                self.words.push(Cell::new(0));
+            }
+        }
+        let word = (self.words).get(after_first_word.get() - 1 + Self::word_in_run(id));
+        word.set(word.get() | 1 << (id % u64::BITS));
+    }
+
+    fn clear(&mut self) {
+        self.words_of_runs.clear();
+        self.words.clear();
+    }
+
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        self.words_of_runs.len() == 0 && self.words.len() == 0
     }
 }
 
@@ -2260,7 +2520,16 @@ impl Destination<'_> {
 /// All task-local records: atoms, lists of index components, mappers, signatures, types. A field of
 /// `Task`. No other task sees it. A record that the task publishes is created in the shared store
 /// instead, and these are dropped with the task.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub struct OwnStore<'s> {
+    types: Own<'s, TypeRecord<'s>>,
+    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
+    /// task can reference a node or a symbol of such a file. If it's empty, nothing is bound.
+    unimported_files: Bits,
+    /// Files the task has visited, indexed by `FileId`.
+    visited_files: Bits,
     /// Arena of the thread that runs the task. Records and their lists are allocated from it, and
     /// the lists may be published.
     arena: &'s Arena,
@@ -2268,26 +2537,22 @@ pub struct OwnStore<'s> {
     components: Own<'s, List<'s, IndexComponent>>,
     mappers: Own<'s, MapperRecord<'s>>,
     sigs: Own<'s, SigData<'s>>,
-    types: Own<'s, TypeRecord<'s>>,
-    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
-    /// task can reference a node or a symbol of such a file. If it's empty, nothing is bound.
-    unimported_files: Bits,
+    summaries: TaskRecords<'s, Summary>,
+    /// See `Summary::rank`.
+    ranks: LocalVec<Rank, &'s Arena>,
+    /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
+    /// `Sharing::Publishes`.
+    ids: [Cell<Placeholders<'s>>; ID_POOLS],
+    /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
+    /// through another record. Indexed by id.
+    of_visited_files: [IdSet; 5],
+    /// Number of ids the task has used for published records, by kind.
+    published: [Cell<u32>; 5],
+    sharing: Sharing,
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: Cell<bool>,
     /// See `Types::as_first_request`.
     first_request: Cell<FirstRequest>,
-    sharing: Sharing,
-    /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
-    /// `Sharing::Publishes`.
-    ids: [Cell<Placeholders<'s>>; ID_POOLS],
-    /// Number of ids the task has used for published records, by kind.
-    published: [Cell<u32>; 5],
-    /// Files the task has visited, indexed by `FileId`.
-    visited_files: Bits,
-    /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
-    /// through another record. Indexed by id.
-    of_visited_files: [RefCell<Bits>; 5],
-    summaries: TaskRecords<'s, Summary>,
 }
 
 impl<'s> OwnStore<'s> {
@@ -2304,6 +2569,7 @@ impl<'s> OwnStore<'s> {
             sigs: Own::new_in(arena, Some(published.sigs.items)),
             types: Own::new_in(arena, Some(published.types.items)),
             summaries,
+            ranks: LocalVec::new_in(arena),
             unimported_files: Bits(Vec::new()),
             has_unresolved_names: Cell::new(false),
             first_request: Cell::new(FirstRequest::NONE),
@@ -2311,7 +2577,7 @@ impl<'s> OwnStore<'s> {
             ids: Default::default(),
             published: Default::default(),
             visited_files: Bits(Vec::new()),
-            of_visited_files: std::array::from_fn(|_| RefCell::new(Bits(Vec::new()))),
+            of_visited_files: std::array::from_fn(|_| IdSet::new()),
         }
     }
 
@@ -2353,6 +2619,7 @@ impl<'s> OwnStore<'s> {
             visited_files,
             of_visited_files,
             summaries,
+            ranks,
         } = self;
         atoms.clear();
         components.clear();
@@ -2360,6 +2627,7 @@ impl<'s> OwnStore<'s> {
         sigs.clear();
         types.clear();
         summaries.clear();
+        ranks.clear();
         unimported_files.0.clear();
         has_unresolved_names.set(false);
         first_request.set(FirstRequest::NONE);
@@ -2368,7 +2636,7 @@ impl<'s> OwnStore<'s> {
         *published = Default::default();
         visited_files.0.clear();
         for records in of_visited_files {
-            records.get_mut().0.clear();
+            records.clear();
         }
     }
 
@@ -2391,6 +2659,7 @@ impl<'s> OwnStore<'s> {
             visited_files,
             of_visited_files,
             summaries,
+            ranks,
         } = self;
         let has_no_ids = |ids: &Cell<Placeholders<'s>>| {
             let taken = ids.take();
@@ -2404,6 +2673,7 @@ impl<'s> OwnStore<'s> {
             && sigs.is_like_new()
             && types.is_like_new()
             && summaries.len() == 0
+            && ranks.len() == 0
             && unimported_files.0.is_empty()
             && !has_unresolved_names.get()
             && first_request.get() == FirstRequest::NONE
@@ -2411,7 +2681,7 @@ impl<'s> OwnStore<'s> {
             && ids.iter().all(has_no_ids)
             && published.iter().all(|count| count.get() == 0)
             && visited_files.0.is_empty()
-            && (of_visited_files.iter()).all(|records| records.borrow().0.is_empty())
+            && of_visited_files.iter().all(IdSet::is_like_new)
     }
 
     /// Call this before the task visits `file`.
@@ -2423,6 +2693,11 @@ impl<'s> OwnStore<'s> {
     /// references `file` is bound.
     pub fn add_unimported_file(&mut self, file: FileId) {
         self.unimported_files.set(file.0 as usize);
+    }
+
+    #[inline]
+    fn has_unimported_files(&self) -> bool {
+        !self.unimported_files.0.is_empty()
     }
 
     /// True if nothing has been created.
@@ -2523,6 +2798,7 @@ fn intern_record<'s, V: Record, K>(
 pub type Mapping<'s> = ShortList<(TypeId, TypeId), 3, List<'s, (TypeId, TypeId)>>;
 
 /// The results of one pass over a mapper's pairs.
+#[derive(Copy, Clone)]
 struct Survey {
     /// The mapper's lookup hash. Its window is the youngest type's window.
     spread: u64,
@@ -2556,7 +2832,9 @@ fn survey(pairs: &[(TypeId, TypeId)]) -> Survey {
 /// Returns the window of the youngest of `types`.
 #[inline]
 fn window_of_youngest(types: &[TypeId]) -> Option<Window> {
-    types.iter().map(|it| it.0).max().map(Window::of_type)
+    let (first, rest) = types.split_first()?;
+    let youngest = rest.iter().fold(first.0, |youngest, it| youngest.max(it.0));
+    Some(Window::of_type(youngest))
 }
 
 /// Returns the window of `mapper`. An instantiation is younger than what it instantiates, and so is its mapper. With
@@ -2606,7 +2884,7 @@ impl Windowed for SigData<'_> {
                 window_of_mapper(mapper, || window_of_symbol(class))
             }
             SigData::WithReturn { ret, .. } => Window::of_type(ret.0),
-            SigData::Synth { .. } => Window::of_hash(self),
+            SigData::Synth(_) => Window::of_hash(self),
         }
     }
 }
@@ -2614,6 +2892,14 @@ impl Windowed for SigData<'_> {
 impl Windowed for TypeData<'_> {
     #[inline]
     fn window(&self) -> Window {
+        self.window_by(|| fx_hash(self))
+    }
+}
+
+impl TypeData<'_> {
+    /// `hash` returns `fx_hash(self)`.
+    #[inline]
+    fn window_by(&self, hash: impl Fn() -> u64) -> Window {
         let list =
             |types: &[TypeId]| window_of_youngest(types).unwrap_or_else(|| Window::of_type(0));
         match self {
@@ -2628,7 +2914,9 @@ impl Windowed for TypeData<'_> {
             TypeData::Cond {
                 file, node, mapper, ..
             } => window_of_mapper(*mapper, || Window::of_file_index(file.0, node.0)),
-            TypeData::Anon { mapper, .. } => window_of_mapper(*mapper, || Window::of_hash(self)),
+            TypeData::Anon { mapper, .. } => {
+                window_of_mapper(*mapper, || Window::of_hashed(hash()))
+            }
             TypeData::Fns { decls, mapper } => window_of_functions(decls, *mapper),
             TypeData::Union(members) | TypeData::Intersection(members) => list(members),
             TypeData::Tuple {
@@ -2646,7 +2934,7 @@ impl Windowed for TypeData<'_> {
             | TypeData::StringMapping { ty: operand, .. }
             | TypeData::EvolvingArray(operand) => Window::of_type(operand.0),
             TypeData::StringLit { value, .. } => Window::of_atom(value.0),
-            _ => Window::of_hash(self),
+            _ => Window::of_hashed(hash()),
         }
     }
 }
@@ -2656,6 +2944,16 @@ impl Windowed for OwnedTypeKey<'_> {
     fn window(&self) -> Window {
         self.0.window()
     }
+}
+
+/// `spread_in_window(created)`. The data, whose hash may decide on the window, is hashed once: a property of a union of n
+/// types lists n properties.
+fn spread_of_owned_key(created: &OwnedTypeKey) -> u64 {
+    let mut hasher = FxHasher::default();
+    created.0.hash(&mut hasher);
+    let hash_of_data = hasher.finish();
+    created.1.hash(&mut hasher);
+    spread_of(created.0.window_by(|| hash_of_data), hasher.finish())
 }
 
 /// Returns the same window as the `OwnedTypeKey` with this key.
@@ -2702,7 +3000,7 @@ windowed_by! {
 fn put_in_order(pairs: &mut [(TypeId, TypeId)]) -> usize {
     // The sort must be stable, so that which of two pairs for the same parameter is kept doesn't
     // depend on the other ids.
-    pairs.sort_by_key(|pair| pair.0.arrival_order());
+    pairs.sort_by_u32(|pair| pair.0.arrival_order());
     let mut kept = 0;
     for at in 0..pairs.len() {
         if kept == 0 || pairs[kept - 1].0 != pairs[at].0 {
@@ -2725,6 +3023,8 @@ pub struct TypeStore<'s> {
     types: Interned<'s, TypeRecord<'s>>,
     /// Arena-allocated, like `Interned::items`.
     summaries: &'s PublishedRecords<'s, Summary>,
+    /// Arena-allocated too. See `Summary::rank`.
+    ranks: &'s AppendVec<Rank, &'s Session>,
     sigs: Interned<'s, SigData<'s>>,
     mappers: Interned<'s, MapperRecord<'s>>,
     components: Interned<'s, List<'s, IndexComponent>>,
@@ -2895,6 +3195,7 @@ impl<'s> TypeStore<'s> {
             session,
             types: Interned::new_in(session),
             summaries: session.arena().alloc(summaries),
+            ranks: session.arena().alloc(AppendVec::new_in(session)),
             sigs: Interned::new_in(session),
             mappers: Interned::new_in(session),
             components: Interned::new_in(session),
@@ -2904,7 +3205,7 @@ impl<'s> TypeStore<'s> {
             spare_ids: Guarded::default(),
         };
         // The identity mapper comes first, because a type's flags include its mapper's.
-        let no_pairs = (Mapping::empty(), ObjectFlags::empty());
+        let no_pairs = MapperRecord::new(Mapping::empty(), ObjectFlags::empty());
         assert_eq!(
             store.mappers.add(survey(&[]).spread, no_pairs),
             MapperId::IDENTITY.0
@@ -2999,7 +3300,7 @@ impl<'s> TypeStore<'s> {
     #[inline]
     fn next_id(&self, kind: Kind, class: usize, own: &OwnStore<'s>) -> Placeholder<'s> {
         let pool = kind as usize + class;
-        let mut ids = own.ids[pool].take();
+        let mut ids = own.ids[pool].replace(Placeholders::default());
         if ids.is_empty() {
             ids = self.reserve_ids(kind, pool);
         }
@@ -3146,6 +3447,11 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     #[inline]
+    pub fn summary(&self, id: TypeId) -> SummaryOfType<'p> {
+        SummaryOfType(self.own.summaries.get_layered(id.0))
+    }
+
+    #[inline]
     pub fn flags(&self, id: TypeId) -> u32 {
         (self.own.summaries.get_layered(id.0).flags).load(Ordering::Relaxed)
     }
@@ -3231,15 +3537,6 @@ impl<'p, 's> Types<'p, 's> {
         self.facts(id) & fact::IS_MODULE_OBJECT != 0
     }
 
-    /// Returns `ObjectFlagsCouldContainTypeVariables`, or `None` if
-    /// `ObjectFlagsCouldContainTypeVariablesComputed` isn't set.
-    #[inline]
-    pub fn could_contain_type_variables(&self, id: TypeId) -> Option<bool> {
-        let facts = self.facts(id);
-        (facts & fact::COULD_CONTAIN_TYPE_VARIABLES_COMPUTED != 0)
-            .then_some(facts & fact::COULD_CONTAIN_TYPE_VARIABLES != 0)
-    }
-
     /// See `add_facts`.
     #[inline]
     pub fn set_could_contain_type_variables(&self, id: TypeId, could_contain: bool) {
@@ -3310,8 +3607,7 @@ impl<'p, 's> Types<'p, 's> {
         }
         let id = self.published.next_id(kind, class, self.own);
         if record.is_of_visited_file(self.own) {
-            let mut records = self.own.of_visited_files[kind as usize].borrow_mut();
-            records.set(id.index() as usize);
+            self.own.of_visited_files[kind as usize].set(id.index());
         }
         Destination::Published(id)
     }
@@ -3448,7 +3744,7 @@ impl<'p, 's> Types<'p, 's> {
             // the parameter, not to the contents of its mapper.
             TypeData::TypeParam(_, _, enclosing_mapper) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
-                    | (self.mapper_record(*enclosing_mapper).1 & ObjectFlags::HAS_UNRESOLVED)
+                    | (self.mapper_flags(*enclosing_mapper) & ObjectFlags::HAS_UNRESOLVED)
             }
             TypeData::ThisParam(_)
             | TypeData::Marker(
@@ -3463,8 +3759,10 @@ impl<'p, 's> Types<'p, 's> {
             // `getPropagatingFlagsOfTypes(types, TypeFlagsNullable)`
             TypeData::Union(t) | TypeData::Intersection(t) => {
                 t.iter().fold(ObjectFlags::empty(), |f, &t| {
-                    let object_flags = self.object_flags(t);
-                    if self.flags(t) & tf::NULLABLE != 0 {
+                    let summary = self.own.summaries.get_layered(t.0);
+                    let object_flags = summary.object_flags.load(Ordering::Relaxed);
+                    let object_flags = ObjectFlags::from_bits_retain(object_flags);
+                    if summary.flags.load(Ordering::Relaxed) & tf::NULLABLE != 0 {
                         f | object_flags.difference(ObjectFlags::PROPAGATING_FLAGS)
                     } else {
                         f | object_flags
@@ -3475,21 +3773,22 @@ impl<'p, 's> Types<'p, 's> {
                 TypeArguments::Given(actual) => all(actual),
                 // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` doesn't
                 // set any propagating flags.
-                TypeArguments::Deferred(deferred) => (self.mapper_record(deferred.mapper).1)
-                    .difference(ObjectFlags::PROPAGATING_FLAGS),
+                TypeArguments::Deferred(deferred) => {
+                    (self.mapper_flags(deferred.mapper)).difference(ObjectFlags::PROPAGATING_FLAGS)
+                }
             },
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(.., object_flags, _),
                 mapper,
             } => {
                 let stored = ObjectFlags::CONTAINS_WIDENING_TYPE | ObjectFlags::NON_INFERRABLE_TYPE;
-                (self.mapper_record(*mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS)
+                (self.mapper_flags(*mapper)).difference(ObjectFlags::PROPAGATING_FLAGS)
                     | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
                     | (*object_flags & stored)
             }
             // The mapper is omitted at creation unless the origin has enclosing type parameters.
             TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => {
-                let type_arguments = self.mapper_record(*mapper).1;
+                let type_arguments = self.mapper_flags(*mapper);
                 let mut flags = type_arguments.difference(ObjectFlags::PROPAGATING_FLAGS);
                 let non_inferrable =
                     ObjectFlags::NON_INFERRABLE_TYPE | ObjectFlags::NON_INFERRABLE_BY_ALIAS;
@@ -3506,7 +3805,7 @@ impl<'p, 's> Types<'p, 's> {
                 flags
             }
             TypeData::Cond { mapper, .. } => {
-                (self.mapper_record(*mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS)
+                (self.mapper_flags(*mapper)).difference(ObjectFlags::PROPAGATING_FLAGS)
             }
             TypeData::Synth(shape) => {
                 let is_plain = matches!(
@@ -3535,7 +3834,7 @@ impl<'p, 's> Types<'p, 's> {
                         }
                         property_flags |= type_flags;
                     }
-                    flags |= self.mapper_record(p.mapper).1;
+                    flags |= self.mapper_flags(p.mapper);
                     if let Some(key) = self.separate_key(p) {
                         flags |= self.object_flags(key);
                     }
@@ -3548,7 +3847,7 @@ impl<'p, 's> Types<'p, 's> {
                     flags |= self.sig_flags(s);
                 }
                 flags |=
-                    (self.mapper_record(shape.mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS);
+                    (self.mapper_flags(shape.mapper)).difference(ObjectFlags::PROPAGATING_FLAGS);
                 let non_inferrable =
                     ObjectFlags::NON_INFERRABLE_TYPE | ObjectFlags::NON_INFERRABLE_BY_ALIAS;
                 flags.remove(non_inferrable);
@@ -3605,14 +3904,14 @@ impl<'p, 's> Types<'p, 's> {
         match self.sig(sig) {
             SigData::Decl { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. }
-            | SigData::Construct { mapper, .. } => self.mapper_record(*mapper).1,
-            SigData::Synth {
+            | SigData::Construct { mapper, .. } => self.mapper_flags(*mapper),
+            SigData::Synth(SynthSig {
                 params,
                 ret,
                 this,
                 of,
                 ..
-            } => {
+            }) => {
                 let mut flags = params
                     .iter()
                     .fold(self.object_flags(*ret), |f, p| f | self.object_flags(p.ty));
@@ -3812,9 +4111,10 @@ impl<'p, 's> Types<'p, 's> {
         let mut waiting: SmallVec<[TypeId; 16]> = SmallVec::new();
         waiting.push(whole);
         while let Some(next) = waiting.pop() {
-            let mut mentioned = Mentioned {
+            let mut mentioned = Mentioned::<false> {
                 types: *self,
                 found: SmallVec::new(),
+                bytes_of_texts: 0,
             };
             visit_type_as_content(&self.record(next).created, &mut mentioned);
             for id in mentioned.found {
@@ -3830,9 +4130,51 @@ impl<'p, 's> Types<'p, 's> {
         false
     }
 
+    pub fn nesting_size(&self, id: TypeId) -> usize {
+        let mut size = 0usize;
+        let mut entered: FxHashSet<TypeId> = FxHashSet::from_iter([id]);
+        let mut waiting: SmallVec<[TypeId; 16]> = smallvec::smallvec![id];
+        while let Some(next) = waiting.pop() {
+            let created = &self.record(next).created;
+            if let TypeData::NumberLit { bits, .. } = created.0 {
+                size = size.saturating_add(f64::from_bits(bits).abs() as usize);
+            }
+            let mut mentioned = Mentioned::<true> {
+                types: *self,
+                found: SmallVec::new(),
+                bytes_of_texts: 0,
+            };
+            visit_type_as_content(created, &mut mentioned);
+            size = size.saturating_add(mentioned.found.len() + mentioned.bytes_of_texts);
+            let found = mentioned.found.into_iter();
+            waiting.extend(found.filter(|&id| entered.insert(id)));
+        }
+        size
+    }
+
+    /// Returns `None` if the rank hasn't been computed.
+    #[inline]
+    fn known_rank(&self, id: TypeId) -> Option<Rank> {
+        match (self.own.summaries.get_layered(id.0).rank).load(Ordering::Acquire) {
+            0 => None,
+            place if id.0 & LOCAL != 0 => Some(*self.own.ranks.get(place - 1)),
+            place => Some(*self.published.ranks.get(place - 1)),
+        }
+    }
+
+    /// Any thread may call this at any time, because every thread computes the same rank for a type. The place is
+    /// stored last, so a thread that reads it also reads the rank.
+    fn set_rank(&self, id: TypeId, rank: Rank) {
+        let index = match id.0 & LOCAL != 0 {
+            true => self.own.ranks.push(rank),
+            false => self.published.ranks.push(rank),
+        };
+        (self.own.summaries.get_layered(id.0).rank).store(index + 1, Ordering::Release);
+    }
+
     #[inline]
     fn rank(&self, id: TypeId) -> Rank {
-        match self.own.summaries.get_layered(id.0).rank() {
+        match self.known_rank(id) {
             Some(rank) => rank,
             None => self.rank_on_first_use(id),
         }
@@ -3851,7 +4193,7 @@ impl<'p, 's> Types<'p, 's> {
             // Every type has flags. An id that's reserved but not used yet doesn't, and it has no rank.
             let known = match summary.flags.load(Ordering::Relaxed) {
                 0 => Some(Rank::NONE),
-                _ => summary.rank(),
+                _ => self.known_rank(next),
             };
             if let Some(known) = known {
                 last = known;
@@ -3859,7 +4201,7 @@ impl<'p, 's> Types<'p, 's> {
                 continue;
             }
             match self.rank_of_type(&self.record(next).created) {
-                Ok(rank) => summary.set_rank(rank),
+                Ok(rank) => self.set_rank(next, rank),
                 Err(mentioned) => unranked.extend(mentioned),
             }
         }
@@ -4017,7 +4359,9 @@ impl<'p, 's> Types<'p, 's> {
             |own| &own.types,
             (spread, key),
             |(data, provenance)| {
-                data.is_bound(self.own) || provenance.is_some_and(|it| it.is_bound(self.own))
+                self.own.has_unimported_files()
+                    && (data.is_bound(self.own)
+                        || provenance.is_some_and(|it| it.is_bound(self.own)))
             },
             |(data, provenance)| {
                 data.mentions_own() || provenance.is_some_and(|it| it.mentions_own())
@@ -4063,10 +4407,12 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     fn intern_new(&self, created: OwnedTypeKey<'s>) -> TypeId {
+        let spread = spread_of_owned_key(&created);
+        debug_assert_eq!(spread, spread_in_window(&created));
         TypeId(intern_record(
             (&self.published.types, self.own),
             |own| &own.types,
-            (spread_in_window(&created), created),
+            (spread, created),
             |created| created.is_bound(self.own),
             |created| created.mentions_own(),
             |record, created| record.created == *created,
@@ -4149,10 +4495,14 @@ impl<'p, 's> Types<'p, 's> {
         loop {
             match self.sig(sig) {
                 SigData::WithReturn { sig: inner, .. } => sig = *inner,
-                SigData::Synth { of, .. } if !of.is_empty() => sig = of[0],
+                SigData::Synth(SynthSig { of, .. }) if !of.is_empty() => sig = of[0],
                 _ => return sig,
             }
         }
+    }
+
+    pub fn intern_synth_sig(&self, synth: SynthSig<'s>) -> SigId {
+        self.intern_sig(SigData::Synth(self.own.arena.alloc(synth)))
     }
 
     pub fn intern_sig(&self, mut data: SigData<'s>) -> SigId {
@@ -4207,12 +4557,11 @@ impl<'p, 's> Types<'p, 's> {
         if pairs.is_empty() {
             return MapperId::IDENTITY;
         }
-        let found = survey(&pairs);
-        if found.is_in_order {
-            return self.mapper_in_order(&pairs, &found);
+        if !survey(&pairs).is_in_order {
+            let len = put_in_order(&mut pairs);
+            pairs.truncate(len);
         }
-        let len = put_in_order(&mut pairs);
-        self.mapper_in_order(&pairs[..len], &survey(&pairs[..len]))
+        self.mapper_of(&pairs)
     }
 
     /// The same for borrowed pairs. Doesn't allocate for sorted pairs whose mapper already exists.
@@ -4222,15 +4571,22 @@ impl<'p, 's> Types<'p, 's> {
         }
         let found = survey(pairs);
         if found.is_in_order {
-            return self.mapper_in_order(pairs, &found);
+            return self.mapper_in_order(pairs, found);
         }
+        self.mapper_of_unordered(pairs)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn mapper_of_unordered(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::from_slice(pairs);
         let len = put_in_order(&mut pairs);
-        self.mapper_in_order(&pairs[..len], &survey(&pairs[..len]))
+        self.mapper_of(&pairs[..len])
     }
 
     /// `found` is `survey(pairs)`.
-    fn mapper_in_order(&self, pairs: &[(TypeId, TypeId)], found: &Survey) -> MapperId {
+    #[inline]
+    fn mapper_in_order(&self, pairs: &[(TypeId, TypeId)], found: Survey) -> MapperId {
         MapperId(intern_record(
             (&self.published.mappers, self.own),
             |own| &own.mappers,
@@ -4238,26 +4594,26 @@ impl<'p, 's> Types<'p, 's> {
             // Only a task-local type can be bound.
             |pairs| found.mentions_own && pairs.is_bound(self.own),
             |_| found.mentions_own,
-            |record, pairs| *record.0 == **pairs,
+            |record, pairs| are_same_items(record.pairs(), pairs),
             |pairs, _, is_bound| {
                 let flags =
                     (pairs.iter()).fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1));
                 let pairs = Mapping::copy_from_slice_in(pairs, self.own.arena);
                 let home = self.destination_of(Kind::Mapper, 0, &pairs, is_bound);
-                ((pairs, flags), home)
+                (MapperRecord::new(pairs, flags), home)
             },
         ))
     }
 
     #[inline]
     pub fn mapping(&self, id: MapperId) -> &'p [(TypeId, TypeId)] {
-        &self.mapper_record(id).0
+        self.mapper_record(id).pairs()
     }
 
     /// Returns the flags of the types that `id` maps to.
     #[inline]
     pub fn mapper_flags(&self, id: MapperId) -> ObjectFlags {
-        self.mapper_record(id).1
+        self.mapper_record(id).flags()
     }
 
     #[inline]
@@ -4316,6 +4672,11 @@ pub trait Visitor {
     fn handle(&mut self, handle: u32) {
         self.plain(&handle);
     }
+    /// True if nothing that is still to come changes what the visitor has found.
+    #[inline]
+    fn is_done(&self) -> bool {
+        false
+    }
 }
 
 /// A value that can reference an atom, a list of index components, a mapper, a signature or a type:
@@ -4327,6 +4688,7 @@ pub trait Follow {
 
     /// True if it references a node or symbol of a file the task has visited, or a record published by this task that
     /// does.
+    #[inline]
     fn is_of_visited_file(&self, own: &OwnStore) -> bool {
         let mut visitor = IsOfVisitedFile {
             own,
@@ -4338,10 +4700,14 @@ pub trait Follow {
 
     /// True if it references a node or a symbol of a file that nothing imports, or a task-local
     /// record that does. Such a value is never published.
+    #[inline]
     fn is_bound(&self, own: &OwnStore) -> bool {
-        if own.unimported_files.0.is_empty() {
-            return false;
-        }
+        own.has_unimported_files() && self.is_bound_to_unimported_file(own)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn is_bound_to_unimported_file(&self, own: &OwnStore) -> bool {
         let mut visitor = IsBound {
             own,
             is_bound: false,
@@ -4454,6 +4820,9 @@ impl<T: Follow> Follow for [T] {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         visitor.plain(&self.len());
         for it in self {
+            if visitor.is_done() {
+                return;
+            }
             it.visit(visitor);
         }
     }
@@ -4466,6 +4835,12 @@ impl<T: Follow + ?Sized> Follow for ArenaBox<'_, T> {
 }
 
 impl<T: Follow> Follow for ArenaVec<'_, T> {
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        self[..].visit(visitor);
+    }
+}
+
+impl<T: Follow> Follow for ListedItems<'_, T> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         self[..].visit(visitor);
     }
@@ -4658,6 +5033,15 @@ follow_enum!(InstantiationExpression {
     InstantiationExpression::Expr(a, b) => (a, b),
     InstantiationExpression::TypeNode(a, b) => (a, b),
 });
+impl Follow for ConstructedBy {
+    #[inline]
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        if let Some(function) = self.0 {
+            function.visit(visitor);
+        }
+    }
+}
+
 follow_struct!(Shape<'_> {
     symbol_declared_at,
     symbol,
@@ -4679,6 +5063,7 @@ follow_struct!(Shape<'_> {
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
+    constructed_by,
     mapper
 });
 follow_struct!(Listed<'_> {
@@ -4689,7 +5074,8 @@ follow_struct!(Listed<'_> {
     properties_of,
     literal,
     has_symbol_declared_at,
-    is_plain
+    is_plain,
+    is_lent
 });
 follow_struct!(SigParam {
     name,
@@ -4703,7 +5089,7 @@ follow_enum!(SigData<'_> {
     SigData::Decl { file, func, mapper } => (file, func, mapper),
     SigData::DefaultConstruct { class, base, mapper } => (class, base, mapper),
     SigData::Construct { class, file, func, mapper } => (class, file, func, mapper),
-    SigData::Synth { type_params, params, ret, this, of, is_union } => (type_params, params, ret, this, of, is_union),
+    SigData::Synth(SynthSig { type_params, params, ret, this, of, is_union }) => (type_params, params, ret, this, of, is_union),
     SigData::WithReturn { sig, ret } => (sig, ret),
 });
 follow_struct!(Provenance<'_> {
@@ -4776,6 +5162,7 @@ clone_in_is_copy!(
     IndexInfo,
     SigParam,
     Literalness,
+    ConstructedBy,
     InstantiationExpression,
     DeferredTypeArguments,
     InstantiationKey,
@@ -4955,25 +5342,47 @@ clone_in_struct!(Shape {
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
+    constructed_by,
     mapper
 });
-clone_in_struct!(Listed {
-    props,
-    call,
-    construct,
-    index,
-    properties_of,
-    literal,
-    has_symbol_declared_at,
-    is_plain
-});
+impl CloneIn for Listed<'_> {
+    type In<'t> = Listed<'t>;
+    fn clone_in<'t>(&self, arena: &'t Arena) -> Listed<'t> {
+        Listed {
+            props: ListedItems::own(self.props.clone_in(arena)),
+            call: ListedItems::own(self.call.clone_in(arena)),
+            construct: ListedItems::own(self.construct.clone_in(arena)),
+            index: ListedItems::own(self.index.clone_in(arena)),
+            properties_of: self.properties_of,
+            literal: self.literal,
+            has_symbol_declared_at: self.has_symbol_declared_at,
+            is_plain: self.is_plain,
+            is_lent: false,
+        }
+    }
+}
 clone_in_enum!(SigData {
     Decl { file, func, mapper },
     DefaultConstruct { class, base, mapper },
     Construct { class, file, func, mapper },
-    Synth { type_params, params, ret, this, of, is_union },
+    Synth(synth),
     WithReturn { sig, ret },
 });
+clone_in_struct!(SynthSig {
+    type_params,
+    params,
+    ret,
+    this,
+    of,
+    is_union
+});
+
+impl CloneIn for &SynthSig<'_> {
+    type In<'t> = &'t SynthSig<'t>;
+    fn clone_in<'t>(&self, arena: &'t Arena) -> &'t SynthSig<'t> {
+        arena.alloc((**self).clone_in(arena))
+    }
+}
 clone_in_struct!(Provenance {
     alias,
     origin,
@@ -4999,9 +5408,8 @@ struct IsOfVisitedFile<'a, 's> {
 impl IsOfVisitedFile<'_, '_> {
     #[inline]
     fn id(&mut self, kind: Kind, id: u32) {
-        if id & LOCAL == 0 {
-            let records = self.own.of_visited_files[kind as usize].borrow();
-            self.is_of_visited_file |= records.has(id as usize);
+        if id & LOCAL == 0 && !self.is_of_visited_file {
+            self.is_of_visited_file = self.own.of_visited_files[kind as usize].has(id);
         }
     }
 }
@@ -5027,10 +5435,15 @@ impl Visitor for IsOfVisitedFile<'_, '_> {
     }
     #[inline]
     fn file(&mut self, file: FileId) {
-        self.is_of_visited_file |= self.own.visited_files.has(file.0 as usize);
+        self.is_of_visited_file =
+            self.is_of_visited_file || self.own.visited_files.has(file.0 as usize);
     }
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.is_of_visited_file
+    }
 }
 
 /// See `Follow::is_bound`.
@@ -5065,6 +5478,10 @@ impl Visitor for IsBound<'_, '_> {
     }
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.is_bound
+    }
 }
 
 /// See `Follow::mentions_own`.
@@ -5095,6 +5512,10 @@ impl Visitor for MentionsOwn {
     fn file(&mut self, _: FileId) {}
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+    #[inline]
+    fn is_done(&self) -> bool {
+        self.0
+    }
 }
 
 /// A multiply-and-fold hash of a record's content, independent of the task that created it.
@@ -5190,12 +5611,13 @@ fn visit_type_as_content<V: Hashing>(created: &OwnedTypeKey, content: &mut V) {
 }
 
 /// Collects the types a key mentions, directly or through a mapper, a signature or a component list.
-struct Mentioned<'p, 's> {
+struct Mentioned<'p, 's, const MEASURES_TEXTS: bool> {
     types: Types<'p, 's>,
     found: SmallVec<[TypeId; 8]>,
+    bytes_of_texts: usize,
 }
 
-impl Hashing for Mentioned<'_, '_> {
+impl<const MEASURES_TEXTS: bool> Hashing for Mentioned<'_, '_, MEASURES_TEXTS> {
     fn unordered<T: Follow>(&mut self, items: &[T]) {
         for item in items {
             item.visit(self);
@@ -5203,8 +5625,12 @@ impl Hashing for Mentioned<'_, '_> {
     }
 }
 
-impl Visitor for Mentioned<'_, '_> {
-    fn atom(&mut self, _: Atom) {}
+impl<const MEASURES_TEXTS: bool> Visitor for Mentioned<'_, '_, MEASURES_TEXTS> {
+    fn atom(&mut self, atom: Atom) {
+        if MEASURES_TEXTS {
+            self.bytes_of_texts += self.types.text(atom).len();
+        }
+    }
     fn components(&mut self, id: ComponentsId) {
         self.types.components(id).visit(self);
     }
@@ -5277,7 +5703,9 @@ impl Hashing for Ranking<'_, '_> {
             sum = sum.wrapping_add(one.content.0);
             self.height = self.height.max(one.height);
             self.last_syntax = self.last_syntax.max(one.last_syntax);
-            self.unranked.extend(one.unranked);
+            if !one.unranked.is_empty() {
+                self.unranked.extend(one.unranked);
+            }
         }
         self.content.add(items.len() as u64);
         self.content.add(sum);
@@ -5305,7 +5733,7 @@ impl Visitor for Ranking<'_, '_> {
     }
     #[inline]
     fn ty(&mut self, id: TypeId) {
-        let Some(rank) = self.types.own.summaries.get_layered(id.0).rank() else {
+        let Some(rank) = self.types.known_rank(id) else {
             self.unranked.push(id);
             return;
         };
@@ -5392,6 +5820,7 @@ impl Visitor for KeyWriter<'_, '_> {
 
 impl<'s> OwnStore<'s> {
     /// Returns the number of task-local records of each kind, in `KINDS` order.
+    #[inline]
     pub(crate) fn lengths(&self) -> [usize; 5] {
         [
             self.atoms.records.len() as usize,
@@ -5406,11 +5835,8 @@ impl<'s> OwnStore<'s> {
     /// two results to tell whether a computation created a record.
     #[inline]
     pub(crate) fn created(&self) -> [usize; 5] {
-        let mut created = self.lengths();
-        for (count, published) in created.iter_mut().zip(&self.published) {
-            *count += published.get() as usize;
-        }
-        created
+        let own = self.lengths();
+        std::array::from_fn(|kind| own[kind] + self.published[kind].get() as usize)
     }
 }
 

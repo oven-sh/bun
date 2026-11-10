@@ -1,4 +1,0 @@
-import { Color } from "./color";
-export function read() {
-  return [Color.Red, Color.Green, Color.Blue, Color["Green"], Color.Long].join();
-}

@@ -119,6 +119,9 @@ impl Checker<'_, '_> {
         sym: Sym,
         decls: &[(FileId, Decl)],
     ) {
+        if self.symbols_with_identical_type_parameters.contains(&sym) {
+            return;
+        }
         // `getClassOrInterfaceDeclarationsOfSymbol`. Each with its `declaration.Name()`, which is nil for
         // `export default class {}`.
         let lists: Vec<(FileId, Span<TypeParamId>, Option<u32>)> = decls
@@ -172,6 +175,9 @@ impl Checker<'_, '_> {
                     }
                 }
             }
+        }
+        if identical {
+            self.symbols_with_identical_type_parameters.insert(sym);
         }
         if !identical {
             for l in lists.iter().filter(|l| l.0 == file) {
@@ -266,7 +272,8 @@ impl Checker<'_, '_> {
                     && !self.are_declaration_flags_identical(d, own)
             })
         } else {
-            self.check_type_of_secondary_declaration(symbol, value_declaration, own, at, name);
+            let declared = (value_declaration, own);
+            self.check_type_of_secondary_declaration(symbol, declared, at, name);
             !self.are_declaration_flags_identical(own, value_declaration)
         };
         if differs {
@@ -279,8 +286,7 @@ impl Checker<'_, '_> {
     fn check_type_of_secondary_declaration(
         &mut self,
         symbol: Sym,
-        value_declaration: (FileId, Decl),
-        node: (FileId, Decl),
+        (value_declaration, node): ((FileId, Decl), (FileId, Decl)),
         at: (FileId, u32, u32),
         name: Arg<'_>,
     ) {
@@ -313,9 +319,8 @@ impl Checker<'_, '_> {
             related.map(|(start, end)| self.new_diagnostic((of, start, end), 6203, &[name]));
         let code = if is_property { 2717 } else { 2403 };
         let args = [name, Arg::Type(t), Arg::Type(declaration_type)];
-        self.error_at(at, code, &args)
-            .related_information
-            .extend(related);
+        let diagnostic = self.error_at(at, code, &args);
+        diagnostic.related_information.extend(related);
     }
 
     /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. For `symbol.ValueDeclaration`

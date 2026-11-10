@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { spawned } from "./run-programs";
+import { spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -64,7 +64,6 @@ describe.concurrent("the aot condition", () => {
   test.each([
     ["bun run --aot", ["run", "--aot", "./main.ts"]],
     ["bun --aot", ["--aot", "./main.ts"]],
-    ["bun run --aot-log-type-mismatches", ["run", "--aot-log-type-mismatches", "./main.ts"]],
   ])("%s runs the file that it names", async (_, command) => {
     using dir = tempDir("aot-condition", files);
     expect(await run(String(dir), bunExe(), ...command)).toMatchObject({ printed: honored, exitCode: 0 });
@@ -82,13 +81,14 @@ describe.concurrent("the aot condition", () => {
     using dir = tempDir("aot-condition", {
       ...files,
       "node_modules/shapes/index.aot.ts": `export const which: number = 1;\n`,
-      "main.ts": `import { which } from "shapes";\nexport const text: string = which;\n`,
+      "main.ts": `import { which } from "shapes";\nexport const count: number = which;\n`,
     });
+    // The declarations of the package say `string`. An error stops a build only where `bun check` reports one too, so the row is right by the file that is compiled and wrong by the declarations.
     const checked = await run(String(dir), bunExe(), "check", "--aot", "--no-pretty", "./main.ts");
-    expect(checked.printed + checked.stderr).toContain("TS2322");
-    expect(checked.exitCode).not.toBe(0);
+    expect(checked.printed + checked.stderr).not.toContain("TS2322");
+    expect(checked.exitCode).toBe(0);
     const plain = await run(String(dir), bunExe(), "check", "--no-pretty", "./main.ts");
-    expect(plain.printed + plain.stderr).not.toContain("TS2322");
+    expect(plain.printed + plain.stderr).toContain("TS2322");
   });
 
   test("bun run ignores it", async () => {

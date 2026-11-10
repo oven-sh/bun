@@ -1,28 +1,16 @@
 use bun_sema::bind::Binding;
 use bun_sema::check::aot::{
-    GaveUp, MemberLookup, ObjectMemberKind, PositionTypes, ShapeKind, WrittenType,
+    GaveUp, MemberLookup, ObjectOrigin, PositionTypes, ShapeKind, WrittenType,
 };
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 use smallvec::{SmallVec, smallvec};
 
-use super::edges::Construct;
 use super::patterns::find_tuple_elements;
-use crate::ir::generated::TypeSiteKind;
-use crate::ir::{LayoutId, ValueId};
-use crate::lower::positions::SiteOrigin;
+use crate::ir::{TypeId, ValueId};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression};
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum FoundKind {
-    Field,
-    Accessor,
-    IndexSignature,
-    Contents,
-}
 
 #[derive(Copy, Clone)]
 struct FoundMember {
-    kind: FoundKind,
     types: PositionTypes,
     is_optional: bool,
 }
@@ -30,15 +18,10 @@ struct FoundMember {
 fn classify_lookup(lookup: Result<MemberLookup, GaveUp>) -> Option<FoundMember> {
     match lookup {
         Ok(MemberLookup::Member(member)) => Some(FoundMember {
-            kind: match member.kind {
-                ObjectMemberKind::Field | ObjectMemberKind::Method => FoundKind::Field,
-                _ => FoundKind::Accessor,
-            },
             types: member.types,
             is_optional: member.is_optional,
         }),
         Ok(MemberLookup::Index(signature)) => Some(FoundMember {
-            kind: FoundKind::IndexSignature,
             types: signature.types,
             is_optional: false,
         }),
@@ -53,10 +36,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let memo = &mut self.types.conversions.written_expressions;
         memo.insert(access, written);
         found
-    }
-
-    pub(super) fn find_declared_member_type(&mut self, access: ExprId) -> Option<CheckerTypeId> {
-        self.resolve_member(access)?.types.checked.ok()
     }
 
     fn resolve_member(&mut self, access: ExprId) -> Option<FoundMember> {
@@ -79,23 +58,16 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn look_up_element(&mut self, object: ExprId, index: ExprId) -> Option<FoundMember> {
+        let written = self.find_written_type(object)?;
         if !self.has_number_type(index) {
             return None;
         }
-        let written = self.find_written_type(object);
-        // Under a constant index the read of a tuple is a reference, which is converted to the type of that one element.
         let is_any_element = expression::find_constant(self, index).is_none();
-        let written = written.and_then(|ty| find_contents_type(self, ty, is_any_element));
-        let checked = self.queries.expression_type(object).ok();
-        let checked = checked.and_then(|ty| find_contents_type(self, ty, is_any_element));
-        if written.is_none() && checked.is_none() {
-            return None;
-        }
+        let written = find_contents_type(self, written, is_any_element)?;
         Some(FoundMember {
-            kind: FoundKind::Contents,
             types: PositionTypes {
-                written: written.map_or(WrittenType::Unwritten, WrittenType::Written),
-                checked: checked.ok_or(GaveUp::Unresolved),
+                written: WrittenType::Written(written),
+                checked: Err(GaveUp::Unresolved),
             },
             is_optional: false,
         })
@@ -132,6 +104,52 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
         true
+    }
+
+    fn is_added_by_an_interface_to_what_it_extends(&mut self, read: ExprId) -> bool {
+        let Some((receiver, MemberKey::Name(name))) = self.hir.member_key(read) else {
+            return false;
+        };
+        let Ok(ty) = self.queries.expression_type(receiver) else {
+            return false;
+        };
+        let Ok(present) = self.queries.without_nullish(ty) else {
+            return false;
+        };
+        let ObjectOrigin::Symbol(interface) = self.queries.object_origin(present) else {
+            return false;
+        };
+        let bases = self
+            .queries
+            .declared_base_types(interface)
+            .unwrap_or_default();
+        !bases.is_empty()
+            && bases.iter().all(|&base| {
+                !matches!(
+                    self.queries.find_member(base, name),
+                    Ok(MemberLookup::Member(_))
+                )
+            })
+    }
+
+    fn find_objects_expected_of_member_read(&mut self, object: ExprId) -> Option<TypeId> {
+        if !self.is_checked() {
+            return None;
+        }
+        let mut read = object;
+        while let ExprKind::NonNull(operand) = self.hir[read].kind {
+            read = operand;
+        }
+        if !self.is_added_by_an_interface_to_what_it_extends(read) {
+            return None;
+        }
+        let checked = self.queries.expression_type(object);
+        let written = WrittenType::Unwritten;
+        let expected = self
+            .create_member_position(PositionTypes { written, checked })
+            .ty;
+        let names_layouts = !self.fragment.types.get(expected).layouts.is_empty();
+        names_layouts.then_some(expected)
     }
 
     pub(super) fn find_written_type(&mut self, expression: ExprId) -> Option<CheckerTypeId> {
@@ -172,22 +190,6 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => None,
         }
     }
-
-    // A store goes into the slot of whatever object the receiver is, so the types of the receiver say what the slot holds.
-    fn note_views_of_receiver(&mut self, access: ExprId) {
-        let Some((object, _)) = self.hir.member_key(access) else {
-            return;
-        };
-        let Ok(receiver) = self.queries.expression_type(object) else {
-            return;
-        };
-        let mapped = self.map_type_at(receiver, self.hir[object].pos).ty;
-        let views: SmallVec<[LayoutId; 4]> =
-            SmallVec::from_slice(&self.fragment.types.get(mapped).layouts);
-        for layout in views {
-            self.note_view(layout);
-        }
-    }
 }
 
 fn find_contents_type(
@@ -208,6 +210,17 @@ fn find_contents_type(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn claim_member_read_like_an_object(
+        &mut self,
+        object: ExprId,
+        value: ValueId,
+    ) -> ValueId {
+        match self.file.find_objects_expected_of_member_read(object) {
+            Some(expected) => super::expect_type(self, value, expected),
+            None => value,
+        }
+    }
+
     pub(crate) fn convert_to_member(
         &mut self,
         access: ExprId,
@@ -217,54 +230,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(found) = self.file.look_up_member(access) else {
             return value;
         };
-        self.file.note_views_of_receiver(access);
-        if matches!(found.kind, FoundKind::Accessor) && found.types.written.written().is_none() {
+        let (types, is_optional) = (found.types, found.is_optional);
+        let Some(position) = self
+            .file
+            .find_int32_position(types, types.written, is_optional)
+        else {
             return value;
-        }
-        let kind = match found.kind {
-            FoundKind::Field | FoundKind::Accessor => TypeSiteKind::Field,
-            FoundKind::IndexSignature | FoundKind::Contents => TypeSiteKind::Element,
         };
-        let origin = SiteOrigin {
-            kind,
-            position: self.file.hir[access].pos,
-        };
-        let position = self.file.create_position(found.types, origin);
-        let position = match found.is_optional {
-            true => self.file.add_undefined(position),
-            false => position,
-        };
-        self.describe_int32_flow(position, super::Int32Subject::Member(access), source);
+        self.describe_int32_flow_into_member(position, access, source);
         super::convert(self, value, position, source)
-    }
-
-    // The slot of a field holds what the type of the field says, and an accessor returns what its getter was converted to.
-    pub(crate) fn claim_member_read(&mut self, access: ExprId, value: ValueId) -> ValueId {
-        if !self.file.is_checked() {
-            return value;
-        }
-        let Some(found) = self.file.look_up_member(access) else {
-            return value;
-        };
-        let construct = match found.kind {
-            FoundKind::Field | FoundKind::Accessor => return value,
-            FoundKind::Contents => Construct::ContentsRead,
-            FoundKind::IndexSignature => Construct::IndexSignatureRead,
-        };
-        let types = PositionTypes {
-            written: WrittenType::Unwritten,
-            ..found.types
-        };
-        let origin = SiteOrigin {
-            kind: TypeSiteKind::Element,
-            position: self.file.hir[access].pos,
-        };
-        let position = self.file.create_position(types, origin);
-        // The checker leaves out the `undefined` of a name that the object lacks, and programs read such names all the time.
-        let position = match found.kind {
-            FoundKind::IndexSignature => self.file.add_undefined(position),
-            FoundKind::Field | FoundKind::Accessor | FoundKind::Contents => position,
-        };
-        self.convert_read(value, position, construct)
     }
 }

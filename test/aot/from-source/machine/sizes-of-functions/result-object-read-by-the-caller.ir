@@ -1,0 +1,19 @@
+# f2 = check
+# -- source: result-object-read-by-the-caller.ts
+# type Division = { quotient: number; remainder: number };
+# function divide(a: number, b: number): Division {
+#   return { quotient: Math.floor(a / b), remainder: a % b };
+# }
+# function check(a: number, b: number): number {
+#   const division = divide(a, b);
+#   return division.quotient * b + division.remainder;
+# }
+# declare const input: any;
+# (globalThis as any).answer = check(+input, +input);
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:9 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 9

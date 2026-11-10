@@ -2,12 +2,14 @@
 mod tests;
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use bstr::BStr;
+use bun_builtin_sources::Manifest;
 use bun_sema::atom::Interner;
 use bun_sema::resolve::{
     CodeHost, CodeImportKind, CodeParseRequest, CodeRequest, ExternalKind, FinishedFile, Host,
-    HostPayload, HostResolution, ModuleDetection, ParsedCode, ScriptKind,
+    HostPayload, HostResolution, ModuleDetection, ParsedCode, ParsedFile, ScriptKind,
 };
 use bun_sema::session::Arena;
 use bun_sema_driver::host::{Disk, to_native};
@@ -15,11 +17,13 @@ use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 use bun_threading::Guarded;
 
 use crate::builtins::{BuiltinNames, Platforms};
+use crate::compile::runtime_reach::{LoadInput, ReachWhileLoading};
 use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
+use crate::load::host::log_steps_of_load;
 use crate::load::is_host_path;
 use crate::load::loaders::loader_by_name;
 use crate::load::runtime_modules::{RuntimeFileKind, RuntimeModules, RuntimeResolution};
@@ -30,8 +34,13 @@ pub(crate) struct RuntimeHost<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub replaced_builtins: &'a [u32],
+    pub unlocked_builtins: &'a Arc<[u32]>,
     pub messages: &'a LoadMessages,
     pub unreadable: Guarded<Vec<Vec<u8>>>,
+    pub manifest: &'static Manifest,
+    pub reach: Option<ReachWhileLoading<'a>>,
+    pub reads_types: bool,
 }
 
 impl RuntimeHost<'_> {
@@ -70,6 +79,10 @@ impl RuntimeHost<'_> {
 impl Host for RuntimeHost<'_> {
     delegate_host_services_to_disk!(disk);
 
+    fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
+        log_steps_of_load("library: ")
+    }
+
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         match is_host_path(path) {
             true => self.runtime_modules.read(path),
@@ -83,6 +96,19 @@ impl Host for RuntimeHost<'_> {
         }
         let text = self.runtime_modules.read(path);
         text.unwrap_or_else(|| self.record_unreadable(path))
+    }
+
+    fn is_seen_in_part(&self, path: &[u8]) -> bool {
+        is_host_path(path) && self.runtime_modules.is_seen_in_part(path)
+    }
+
+    fn read_part_seen_by_every_file(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        let text = self.runtime_modules.read_part_seen_by_every_file(path);
+        text.unwrap_or_else(|| self.record_unreadable(path))
+    }
+
+    fn is_seen_by_every_file(&self, path: &[u8], position: u32) -> bool {
+        self.runtime_modules.is_seen_by_every_file(path, position)
     }
 
     fn is_file(&self, path: &[u8]) -> bool {
@@ -148,6 +174,10 @@ impl CodeHost for RuntimeHost<'_> {
         }
     }
 
+    fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
+        !self.reads_types || self.runtime_modules.is_seen_only_by_name(path)
+    }
+
     fn parse_code<'s>(
         &self,
         arena: &'s Arena,
@@ -162,7 +192,7 @@ impl CodeHost for RuntimeHost<'_> {
             experimental_decorators: request.options.experimental_decorators,
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
         };
         let source = ParsedSource::new(self.source_kind(path), loader_by_name(path));
         ParsedCode {
@@ -180,8 +210,35 @@ impl CodeHost for RuntimeHost<'_> {
         let input = BuiltinUseInput {
             names: self.builtin_names,
             platform: self.platform,
+            replaced: self.replaced_builtins,
+            runs_tests: false,
+            holds_language: self.reach.is_none(),
+            is_text_asked: self.reach.is_some(),
         };
         let source = parsed_source_mut(payload);
-        builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)
+        let answers =
+            builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source);
+        if !self.unlocked_builtins.is_empty() {
+            source.builtins.unlock(Arc::clone(self.unlocked_builtins));
+        }
+        answers
+    }
+
+    fn follows_imports_on_request(&self) -> bool {
+        self.reach.is_some()
+    }
+
+    fn choose_imports_to_follow(&self, files: &[ParsedFile<'_, '_>]) -> Vec<(u32, Vec<u8>)> {
+        let Some(reach) = &self.reach else {
+            return Vec::new();
+        };
+        let input = LoadInput {
+            runtime_modules: self.runtime_modules,
+            manifest: self.manifest,
+            names: self.builtin_names,
+            platform: self.platform,
+        };
+        let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| self.parallel(count, work);
+        reach.choose_imports(&input, files, &in_parallel)
     }
 }

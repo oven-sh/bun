@@ -1,0 +1,18 @@
+# the climb is only compared, so the copy under the keys of a loop writes on nothing of the engine
+# -- source: main.js
+# function init(instance) {
+#   const own = Object.getPrototypeOf(instance);
+#   console.log(String(own === Made.prototype));
+#   const proto = Made.prototype;
+#   for (const key in proto) {
+#     instance[key] = proto[key];
+#   }
+# }
+# function Made() {
+#   init(this);
+# }
+# console.log(typeof new Made());
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup called ObjectGetPrototypeOf
+# CHECK-NOT: lookup let-go

@@ -38,14 +38,12 @@ impl Default for Case<'_> {
 }
 
 fn default_options<'a>(log: &mut Log) -> BundleOptions<'a> {
-    let file_system = Fs::FileSystem::init(None).ok().expect("file system");
+    Fs::FileSystem::init(None).ok().expect("file system");
     let transform = api::TransformOptions {
         target: Some(api::Target::bun),
         ..Default::default()
     };
-    // SAFETY: `FileSystem::init` returns the process-lifetime instance, and tests do not keep this borrow.
-    let file_system = unsafe { &mut *file_system };
-    BundleOptions::from_api(file_system, log, transform)
+    BundleOptions::from_api(log, transform)
         .ok()
         .expect("default options")
 }
@@ -101,14 +99,15 @@ fn options_about_what_can_be_removed_are_passed_on() {
             result.expect("options").removable
         })
     };
-    let plain = convert_removable(|_| {});
+    // The options of the harness are those of `bun run`, which minifies syntax.
+    let plain = convert_removable(|options| options.minify_syntax = false);
     assert_eq!(plain, RemovableOptions::default());
     let ignoring = convert_removable(|options| options.ignore_dce_annotations = true);
     assert!(ignoring.ignores_pure_annotations && !ignoring.jsx_has_side_effects);
     let with_side_effects = convert_removable(|options| options.jsx.side_effects = true);
     assert!(with_side_effects.jsx_has_side_effects && !with_side_effects.ignores_pure_annotations);
     let minifying = convert_removable(|options| options.minify_syntax = true);
-    assert_eq!(minifying, plain);
+    assert!(minifying.is_told_to_minify_syntax && !minifying.has_no_bundle);
 }
 
 #[test]
@@ -177,7 +176,6 @@ fn default_options_convert() {
             );
             assert_eq!(options.load.loaders, default_loaders());
             assert_eq!(options.load.project_root, b"/project");
-            assert!(options.load.runs_macros);
             assert!(!options.load.omits_builtin_modules);
             assert!(!options.load.runs_tests);
             assert_eq!(options.paths.module_prefix, b"/$bunfs/root/");
@@ -382,6 +380,14 @@ fn symbolic_link_option_is_copied() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn ignoring_annotations_ignores_declared_side_effects() {
+    assert!(!convert_code(|_| {}).ignores_declared_side_effects);
+    let ignoring = convert_code(|options| options.ignore_dce_annotations = true);
+    assert!(ignoring.ignores_declared_side_effects);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn written_configuration_path_is_absolute() {
     assert_eq!(convert_code(|_| {}).tsconfig_override, None);
     let code = convert_code(|options| {
@@ -389,13 +395,6 @@ fn written_configuration_path_is_absolute() {
     });
     let expected = b"/project/config/tsconfig.build.json".to_vec();
     assert_eq!(code.tsconfig_override, Some(expected));
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn computed_candidate_limit_stays_default() {
-    let default_limit = CodeOptions::bun_run(b"/project").max_computed_candidates;
-    assert_eq!(convert_code(|_| {}).max_computed_candidates, default_limit);
 }
 
 #[test]
@@ -445,12 +444,8 @@ fn node_env_decides_jsx_development() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn macros_and_react_compiler_follow_options() {
-    let load = convert_load(|options| {
-        options.no_macros = true;
-        options.react_compiler = ReactCompilerMode::Ssr;
-    });
-    assert!(!load.runs_macros);
+fn react_compiler_follows_option() {
+    let load = convert_load(|options| options.react_compiler = ReactCompilerMode::Ssr);
     assert_eq!(load.react_compiler, ReactCompilerMode::Ssr);
     assert_eq!(
         convert_load(|_| {}).react_compiler,
@@ -613,6 +608,68 @@ fn single_entry_point_directory_is_root() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn root_does_not_lie_inside_node_modules() {
+    let cases: [(&[u8], &[u8], &[u8]); 5] = [
+        (
+            b"node_modules/kit/dist/main.mjs",
+            b"/project",
+            b"node_modules/kit/dist/main.mjs",
+        ),
+        (
+            b"node_modules/main.mjs",
+            b"/project",
+            b"node_modules/main.mjs",
+        ),
+        (
+            b"apps/x/node_modules/a/node_modules/kit/main.mjs",
+            b"/project/apps/x",
+            b"node_modules/a/node_modules/kit/main.mjs",
+        ),
+        (
+            b"not_node_modules/kit/main.mjs",
+            b"/project/not_node_modules/kit",
+            b"main.mjs",
+        ),
+        (
+            b"/node_modules/kit/main.mjs",
+            b"/node_modules/kit",
+            b"main.mjs",
+        ),
+    ];
+    for (entry_point, root_directory, name) in cases {
+        let paths = convert_paths(&[entry_point], |_| {});
+        assert_eq!(paths.root_directory, root_directory);
+        assert_eq!(paths.entry_point_names[0], name);
+    }
+}
+
+#[test]
+fn root_right_under_a_root_of_the_file_system_stays_an_absolute_path() {
+    let cases: [(&str, &str); 9] = [
+        ("/node_modules/kit", "/node_modules/kit"),
+        ("/project/node_modules/kit", "/project"),
+        (r"C:\node_modules\kit", r"C:\node_modules\kit"),
+        ("C:/node_modules/kit", "C:/node_modules/kit"),
+        (r"C:\project\node_modules\kit", r"C:\project"),
+        (
+            r"\\server\share\node_modules\kit",
+            r"\\server\share\node_modules\kit",
+        ),
+        (
+            r"\\server\share\project\node_modules\kit",
+            r"\\server\share\project",
+        ),
+        (r"\\?\C:\node_modules\kit", r"\\?\C:\node_modules\kit"),
+        (r"\\?\C:\project\node_modules\kit", r"\\?\C:\project"),
+    ];
+    for (directory, root_directory) in cases {
+        let widened = widen_out_of_packages(directory.as_bytes().to_vec());
+        assert_eq!(widened, root_directory.as_bytes(), "{directory}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
     let cases: [(&[&[u8]], &[u8]); 6] = [
         (&[b"src/a.ts", b"lib/b.ts"], b"/project"),
@@ -725,16 +782,43 @@ fn embedded_names_are_those_of_bundle() {
         "/project/src/workers/w.ts",
         "/project/src/data.mjs",
         "/project/src/c.cjs",
+        "/project/src/page.html",
+        "/project/src/page.css",
     ];
+    let others = ["workers/w.js", "data.js", "c.js", "page.html", "page.css"];
     let (names, _) = embedded_names(&entry_points, |_| {});
     assert_eq!(
         names,
-        Some(byte_lists(&["main.js", "workers/w.js", "data.js", "c.js"]))
+        Some(byte_lists(&[&["main.js"], &others[..]].concat()))
     );
     let (names, _) = embedded_names(&entry_points, set_root_and_compile_name);
+    assert_eq!(names, Some(byte_lists(&[&["app"], &others[..]].concat())));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn first_script_starts_the_program() {
+    let order = |entry_points: &[&[u8]]| {
+        let case = Case {
+            entry_points,
+            ..Case::default()
+        };
+        convert(
+            case,
+            |_| {},
+            |result, log| (result.map(|it| it.entry_points), errors(log)),
+        )
+    };
     assert_eq!(
-        names,
-        Some(byte_lists(&["app", "workers/w.js", "data.js", "c.js"]))
+        order(&[b"a.css", b"b.html", b"x.js", b"y.ts"]),
+        (
+            Some(byte_lists(&["x.js", "a.css", "b.html", "y.ts"])),
+            Vec::new()
+        )
+    );
+    assert_eq!(
+        order(&[b"a.css", b"b.html"]),
+        (None, vec!["No output files to bundle".to_string()])
     );
 }
 

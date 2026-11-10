@@ -2,14 +2,16 @@ use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
 use crate::atom::{Atom, known};
-use crate::bind::{BindingInitializer, Bound, CommonJsVariable};
+use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, SymbolId};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
-    ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
+    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_arguments, call_site_kind,
+    find_imported_export, is_process, names_own_file, settled_symbol,
 };
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 use bun_core::strings;
 use smallvec::SmallVec;
+use std::cell::RefCell;
 
 #[derive(Copy, Clone)]
 enum Part {
@@ -74,6 +76,68 @@ impl<'s> Folder<'_, 's> {
             .starts_at_own_directory
     }
 
+    pub(super) fn note_path_written_from_own_directory(&mut self, e: ExprId, end: Atom) {
+        if !ends_in_name_with_extension(self.atoms.bytes(end)) {
+            return;
+        }
+        let path = self.collect_prefix(e, Nesting::Outermost);
+        if path.is_whole_value && path.starts_at_own_directory {
+            let path = self.atoms.intern(&path.text);
+            self.paths_written_from_own_directory.push((e, path));
+        }
+    }
+
+    pub(super) fn starts_with_whole_path_made_by_call(&self, argument: ExprId) -> bool {
+        let hir = self.hir;
+        let mut start = argument;
+        let mut is_joined = false;
+        loop {
+            start = hir.skip_type_assertions(start);
+            let first_part = match hir[start].kind {
+                ExprKind::Ident(_) | ExprKind::Dot { .. } if self.names_own_directory(start) => {
+                    return is_joined;
+                }
+                ExprKind::Template { exprs } => {
+                    let first_text = hir.ids(hir.template_texts(exprs)).next();
+                    let is_first = first_text.is_none_or(|text| self.atoms.bytes(text).is_empty());
+                    hir.ids(exprs).next().filter(|_| is_first)
+                }
+                ExprKind::Binary { op: BinOp::Add, .. } => {
+                    self.collect_addends(start).first().copied()
+                }
+                ExprKind::Ident(_) => self.find_const_initializer(start),
+                ExprKind::Call(call)
+                    if self.is_dirname_of_own_file(hir[call])
+                        || self.asks_for_working_directory(hir[call]) =>
+                {
+                    return true;
+                }
+                ExprKind::Call(call) => match self.find_path_joining_call(hir[call]) {
+                    Some(function) if function == known::resolve => return true,
+                    Some(_) => {
+                        is_joined = true;
+                        hir.ids(hir[call].args).next()
+                    }
+                    None => None,
+                },
+                _ => None,
+            };
+            let Some(first_part) = first_part else {
+                return false;
+            };
+            start = first_part;
+        }
+    }
+
+    fn asks_for_working_directory(&self, call: Call) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        matches!(call.chain, Chain::No)
+            && call.args.len() == 0
+            && matches!(hir.member_key(hir.skip_type_assertions(call.callee)), Some((object, MemberKey::Name(name)))
+                if self.atoms.bytes(name) == b"cwd"
+                    && is_process(hir, bound, object, &[known::globalThis, known::global]))
+    }
+
     fn expand(&self, e: ExprId) -> Expansion {
         let hir = self.hir;
         let e = hir.skip_type_assertions(e);
@@ -87,9 +151,17 @@ impl<'s> Folder<'_, 's> {
                 Expansion::OwnDirectory
             }
             ExprKind::Ident(_) => match self.find_const_initializer(e) {
-                Some(initializer) => Expansion::Parts(vec![Part::Expr(initializer)]),
+                Some(initializer) => match hir[hir.skip_type_assertions(initializer)].kind {
+                    ExprKind::Call(call) if self.is_dirname_of_own_file(hir[call]) => {
+                        Expansion::OwnDirectory
+                    }
+                    _ => Expansion::Parts(vec![Part::Expr(initializer)]),
+                },
                 None => Expansion::Unknown,
             },
+            ExprKind::Call(call) if self.is_dirname_of_own_file(hir[call]) => {
+                Expansion::OwnDirectory
+            }
             ExprKind::Call(call) => self.expand_call(hir[call]),
             ExprKind::Cond { .. } => Expansion::Alternatives(self.collect_alternatives(e)),
             _ => Expansion::Unknown,
@@ -117,6 +189,16 @@ impl<'s> Folder<'_, 's> {
             Some(_) => false,
             None => self.find_loader_name(e) == Some(CommonJsVariable::Dirname),
         }
+    }
+
+    fn is_dirname_of_own_file(&self, call: Call) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let function =
+            find_export_of_module(hir, bound, call.callee, &|_| None, &is_path_specifier);
+        matches!(call.chain, Chain::No)
+            && call.args.len() == 1
+            && function == Some(known::meta_dirname)
+            && names_own_file(hir, bound, hir.id_at(call.args, 0))
     }
 
     fn collect_alternatives(&self, conditional: ExprId) -> Vec<ExprId> {
@@ -175,7 +257,31 @@ impl<'s> Folder<'_, 's> {
         Expansion::Parts(parts)
     }
 
+    fn expand_encoded_text(&self, call: Call) -> Option<Expansion> {
+        let hir = self.hir;
+        let callee = hir.skip_type_assertions(call.callee);
+        let ExprKind::Ident(name) = hir[callee].kind else {
+            return None;
+        };
+        let (_, encode) = *ENCODERS.iter().find(|it| it.0 == self.atoms.bytes(name))?;
+        let is_global =
+            self.bound.binding(callee) == Binding::Free && self.has_static_lookup(callee);
+        if !is_global || call.chain != Chain::No {
+            return None;
+        }
+        let text = self.collect_prefix(hir.ids(call.args).next()?, Nesting::InAlternative);
+        if !text.is_whole_value {
+            return None;
+        }
+        let encoded = Constant::String(self.atoms.intern(&encode(&text.text)?));
+        self.has_followed_path_call.set(true);
+        Some(Expansion::Known(Primitive::Constant(encoded)))
+    }
+
     fn expand_call(&self, call: Call) -> Expansion {
+        if let Some(encoded) = self.expand_encoded_text(call) {
+            return encoded;
+        }
         let last_argument = self.hir.ids(call.args).next_back();
         match (last_argument, self.find_path_joining_call(call)) {
             (Some(last_argument), Some(function)) => {
@@ -491,7 +597,11 @@ impl<'s> Folder<'_, 's> {
     }
 }
 
-/// What `path.join` or `path.resolve` makes of the texts that follow the folder of the file.
+pub fn ends_in_name_with_extension(text: &[u8]) -> bool {
+    let name = text.rsplit(|&byte| byte == b'/').next().unwrap_or(text);
+    matches!(strings::last_index_of_char(name, b'.'), Some(dot) if dot != 0 && dot + 1 != name.len())
+}
+
 #[derive(Default)]
 pub(crate) struct PathBelowFolder {
     segments: Vec<Vec<u8>>,
@@ -499,7 +609,6 @@ pub(crate) struct PathBelowFolder {
 }
 
 impl PathBelowFolder {
-    /// `None`: the text leads somewhere else.
     pub(crate) fn push(&mut self, text: &[u8], is_join: bool) -> Option<()> {
         if !is_join && text.starts_with(b"/") || strings::contains_char(text, b'\\') {
             return None;
@@ -523,7 +632,6 @@ impl PathBelowFolder {
         self.segments.first().is_some_and(|first| first == b"..")
     }
 
-    /// `/lib/a.js`
     pub(crate) fn write(&self, is_join: bool, is_followed: bool) -> Vec<u8> {
         let mut written = Vec::new();
         for segment in &self.segments {
@@ -537,16 +645,81 @@ impl PathBelowFolder {
     }
 }
 
-/// `join` or `resolve`, where `callee` is that function of `node:path`. `find_constant` answers with what folding makes of an expression.
-pub(crate) fn find_path_joining_function(
+fn find_path_joining_function(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
 ) -> Option<Atom> {
+    let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
+    find_export_of_module(hir, bound, callee, find_constant, &is_path_specifier).filter(joins_paths)
+}
+
+pub fn find_export_of_path_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    named: ExprId,
+) -> Option<Atom> {
+    let find_written_text = |text: ExprId| match hir[hir.skip_type_assertions(text)].kind {
+        ExprKind::String(text) => Some(Constant::String(text)),
+        _ => None,
+    };
+    find_export_of_module(hir, bound, named, &find_written_text, &is_path_specifier)
+}
+
+pub(crate) fn find_export_of_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+) -> Option<Atom> {
+    find_export_of_module_with(hir, bound, callee, find_constant, is_module, None)
+}
+
+pub(crate) fn find_export_of_module_with(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+    known: Option<&MembersBehindNames>,
+) -> Option<Atom> {
+    let members = walk_to_module(hir, bound, callee, find_constant, is_module, false, known)?;
+    match members[..] {
+        [member] => Some(member),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MembersBehindNames(RefCell<FxHashMap<SymbolId, Option<SmallVec<[Atom; 4]>>>>);
+
+pub(crate) fn find_members_below_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+    follows_awaited_imports: bool,
+) -> Option<SmallVec<[Atom; 4]>> {
+    let follows = follows_awaited_imports;
+    walk_to_module(hir, bound, callee, find_constant, is_module, follows, None)
+}
+
+fn walk_to_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+    follows_awaited_imports: bool,
+    known: Option<&MembersBehindNames>,
+) -> Option<SmallVec<[Atom; 4]>> {
     let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
+    let mut came_by: Vec<(SymbolId, usize)> = Vec::new();
     let mut e = callee;
-    let is_path_module = loop {
+    let is_export = loop {
         e = hir.skip_type_assertions(e);
         match hir[e].kind {
             ExprKind::Dot {
@@ -567,7 +740,23 @@ pub(crate) fn find_path_joining_function(
                 let Some(symbol) = settled_symbol(hir, bound, e) else {
                     break false;
                 };
-                match bound.binding_initializer(hir, symbol) {
+                let initializer = bound.binding_initializer(hir, symbol);
+                let goes_on = matches!(
+                    initializer,
+                    BindingInitializer::Expression(source)
+                    | BindingInitializer::PatternProperty { source, .. } if source < e
+                );
+                if goes_on && let Some(known) = known {
+                    match known.0.borrow().get(&symbol) {
+                        Some(Some(rest)) => {
+                            pending_members.extend(rest.iter().copied());
+                            break true;
+                        }
+                        Some(None) => break false,
+                        None => came_by.push((symbol, pending_members.len())),
+                    }
+                }
+                match initializer {
                     BindingInitializer::Expression(source) if source < e => e = source,
                     BindingInitializer::PatternProperty { source, path } if source < e => {
                         pending_members.extend(path.iter().rev().copied());
@@ -579,30 +768,44 @@ pub(crate) fn find_path_joining_function(
                             break false;
                         };
                         pending_members.extend(export);
-                        break is_path_specifier(specifier);
+                        break is_module(specifier);
                     }
                     _ => break false,
                 }
             }
             ExprKind::Call(call) => {
-                break is_path_module_request(hir, bound, e, hir[call], find_constant);
+                break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
+            }
+            ExprKind::Await(awaited) if follows_awaited_imports => {
+                let awaited = hir.skip_type_assertions(awaited);
+                let specifier = match call_site_kind(hir, bound, awaited) {
+                    Some(ImportSiteKind::ImportCall(_)) => call_site_arguments(hir, bound, awaited)
+                        .and_then(|arguments| hir.ids(arguments).next())
+                        .and_then(find_constant),
+                    _ => None,
+                };
+                break matches!(specifier, Some(Constant::String(text)) if is_module(text));
             }
             _ => break false,
         }
     };
-    let joins_paths = |member: Atom| member == known::join || member == known::resolve;
-    match pending_members[..] {
-        [member] if is_path_module && joins_paths(member) => Some(member),
-        _ => None,
+    if let Some(known) = known {
+        let mut known = known.0.borrow_mut();
+        for (symbol, pending) in came_by {
+            let rest = is_export.then(|| pending_members[pending..].iter().copied().collect());
+            known.insert(symbol, rest);
+        }
     }
+    is_export.then_some(pending_members)
 }
 
-fn is_path_module_request(
+fn is_module_request(
     hir: &File<'_>,
     bound: &Bound<'_>,
     request: ExprId,
     call: Call,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
 ) -> bool {
     let returns_exports = match call_site_kind(hir, bound, request) {
         Some(
@@ -619,13 +822,16 @@ fn is_path_module_request(
             | ImportSiteKind::ImportEquals(_)
             | ImportSiteKind::ImportCall(_)
             | ImportSiteKind::RequireResolve(_)
-            | ImportSiteKind::ImportMetaResolve(_),
+            | ImportSiteKind::ImportMetaResolve(_)
+            | ImportSiteKind::MockModule(_)
+            | ImportSiteKind::ImportByTestRunner(_)
+            | ImportSiteKind::RequireByTestRunner(_),
         )
         | None => false,
     };
     let argument = hir.ids(call.args).next();
     returns_exports
-        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_path_specifier(text))
+        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_module(text))
 }
 
 fn is_path_specifier(specifier: Atom) -> bool {
@@ -636,7 +842,7 @@ fn is_segment_boundary(byte: u8) -> bool {
     matches!(byte, b'/' | b'\\' | b':')
 }
 
-fn trim_to_last_segment(text: &mut Vec<u8>) -> bool {
+pub(crate) fn trim_to_last_segment(text: &mut Vec<u8>) -> bool {
     match text.iter().rposition(|&byte| is_segment_boundary(byte)) {
         Some(boundary) => {
             text.drain(..=boundary);

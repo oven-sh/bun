@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow using the `delete` operator on computed key expressions.
 pub struct NoDynamicDelete;
 
-const DYNAMIC_DELETE: Message =
-    Message::new("dynamicDelete", "Do not delete dynamically computed property keys.");
+const DYNAMIC_DELETE: &Message =
+    &Message::new("dynamicDelete", "Do not delete dynamically computed property keys.");
 
 fn is_acceptable_index_expression(property: Expr) -> bool {
     match property.kind() {

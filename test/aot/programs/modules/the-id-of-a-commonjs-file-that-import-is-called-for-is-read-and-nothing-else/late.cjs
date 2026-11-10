@@ -1,1 +1,0 @@
-exports.id = module.id;

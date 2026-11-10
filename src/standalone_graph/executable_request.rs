@@ -7,8 +7,10 @@ use bun_sys::Fd;
 use crate::StandaloneModuleGraph::{
     CompileResult, CompileTarget, Flags, RuntimeOptions, to_bytes, to_executable,
 };
-use crate::compiled_program::{CompiledProgramInput, EntryPointPathPointers, append_record};
-use crate::executable_file::{ImageRange, ImageSymbols};
+use crate::compiled_program::{
+    CompiledProgramInput, EntryPointPathPointers, ImagePlace, append_record,
+};
+use crate::executable_file::{ImageRange, ImageSymbols, PayloadParts};
 
 pub struct GraphRequest<'a> {
     pub target: &'a CompileTarget,
@@ -48,8 +50,8 @@ pub struct ExecutableOutcome {
 
 /// What `to_executable` takes and gives beyond a bundled program. The default adds nothing.
 #[derive(Default)]
-pub struct ExecutableAdditions<'a> {
-    pub compiled_program: Option<&'a CompiledProgramInput<'a>>,
+pub struct ExecutableAdditions<'a, 'p> {
+    pub compiled_program: Option<&'a mut CompiledProgramInput<'p>>,
     pub trim: Option<&'a bun_trim::TrimPlan>,
     /// Filled once the copy of the executable is written. Meaningful if the result is `Success`.
     pub details: ExecutableDetails,
@@ -63,7 +65,6 @@ pub(crate) struct GraphBytes {
 
 pub(crate) struct InjectionAdditions<'a> {
     pub(crate) has_code: bool,
-    pub(crate) image: Option<ImageRange>,
     pub(crate) symbols: Option<ImageSymbols<'a>>,
     pub(crate) has_symbols: bool,
     build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
@@ -71,10 +72,11 @@ pub(crate) struct InjectionAdditions<'a> {
     trim_summary: Option<bun_trim::TrimSummary>,
 }
 
-impl<'a> ExecutableAdditions<'a> {
+impl<'a> ExecutableAdditions<'a, '_> {
     pub(crate) fn for_injection(&self, image: Option<ImageRange>) -> InjectionAdditions<'a> {
         let symbols = self
             .compiled_program
+            .as_deref()
             .filter(|program| !program.symbols.is_empty())
             .zip(image)
             .map(|(program, image)| ImageSymbols {
@@ -83,7 +85,6 @@ impl<'a> ExecutableAdditions<'a> {
             });
         InjectionAdditions {
             has_code: self.compiled_program.is_some(),
-            image,
             symbols,
             has_symbols: false,
             build_id: None,
@@ -95,10 +96,17 @@ impl<'a> ExecutableAdditions<'a> {
 
 impl InjectionAdditions<'_> {
     /// `payload` is what the executable gets, with the image as the compiler made it.
-    pub(crate) fn name_executable(&mut self, payload: &[u8]) {
+    pub(crate) fn name_executable(&mut self, payload: &PayloadParts<'_>) {
         self.build_id = self
             .has_code
-            .then(|| bun_exe_format::build_id::compute(payload));
+            .then(|| bun_exe_format::build_id::compute_of_parts(&payload.slices()));
+    }
+
+    /// A line of the stage log, which a build without compiled code does not have.
+    pub(crate) fn log_part(&self, name: &str) {
+        if self.has_code {
+            bun_aot::statistics::log_part_outside_stages(name);
+        }
     }
 
     pub(crate) fn write_build_id(&mut self, template: &mut [u8]) {
@@ -179,7 +187,15 @@ pub(crate) fn append_compiled_program_record(
     append_record(builder, program, image, paths, &file_indices)
 }
 
+#[cfg(test)]
 pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphBytes> {
+    graph_bytes_with_image(request, ImagePlace::InGraph)
+}
+
+fn graph_bytes_with_image(
+    request: &GraphRequest<'_>,
+    place: ImagePlace,
+) -> crate::Result<GraphBytes> {
     to_bytes(
         request.target,
         request.module_prefix,
@@ -189,25 +205,50 @@ pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphByte
         request.flags,
         request.runtime_options,
         request.compiled_program.as_ref(),
+        place,
     )
 }
 
-/// `[u64 LE length][graph]`: what the section of an executable holds.
-pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
-    let graph = graph_bytes(request)?;
+/// The length of the graph and the graph, in slices that follow one another. The image is not copied: its slice is where the engine left it.
+pub fn with_graph_slices<R>(
+    request: &GraphRequest<'_>,
+    take: impl FnOnce(&[&[u8]]) -> R,
+) -> crate::Result<R> {
+    let graph = graph_bytes_with_image(request, ImagePlace::OutsideGraph)?;
     if graph.bytes.is_empty() {
         return Err(crate::Error::CorruptedCompiledProgram);
     }
-    let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
-    bytes.extend_from_slice(&(graph.bytes.len() as u64).to_le_bytes());
-    bytes.extend_from_slice(&graph.bytes);
-    Ok(bytes)
+    let length = (graph.bytes.len() as u64).to_le_bytes();
+    let program = request.compiled_program.as_ref();
+    Ok(match (graph.image, program) {
+        (Some(range), Some(program)) => {
+            let (front, others) = graph.bytes.split_at(range.offset as usize);
+            let rest = &others[range.length as usize..];
+            take(&[&length, front, &*program.image, rest])
+        }
+        _ => take(&[&length, &graph.bytes]),
+    })
+}
+
+pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
+    with_graph_slices(request, |slices| {
+        let mut bytes: Vec<u8> = Vec::with_capacity(slices.iter().map(|slice| slice.len()).sum());
+        for slice in slices {
+            // SAFETY: the list has room for every slice, and no slice lies in it.
+            unsafe {
+                let end = bytes.as_mut_ptr().add(bytes.len());
+                bun_core::copy_in_parallel(end, slice.as_ptr(), slice.len());
+                bytes.set_len(bytes.len() + slice.len());
+            }
+        }
+        bytes
+    })
 }
 
 pub fn write_executable(request: &mut ExecutableRequest<'_>) -> crate::Result<ExecutableOutcome> {
-    let graph = &request.graph;
+    let graph = &mut request.graph;
     let mut additions = ExecutableAdditions {
-        compiled_program: graph.compiled_program.as_ref(),
+        compiled_program: graph.compiled_program.as_mut(),
         trim: request.trim,
         details: ExecutableDetails::default(),
     };

@@ -1,1 +1,0 @@
-{"entryPoints": ["./web-worker.ts", "./node-worker.ts", "./outer-worker.ts", "./inner-worker.ts", "./box-worker.ts"], "skipInShell": "needs Workers"}

@@ -168,15 +168,17 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
             const auto& compiledFrame = frame.compiledFrame();
-            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.calleeLiesInFrame ? 2 : 0) | 1;
+            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.hasCalleeInFrame ? 2 : 0) | 1;
         }
 #endif
         auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
         if (functionWithOtherName == function)
             return false;
 #if ENABLE(AOT)
-        if (frame.isCompiledFrame() && JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
-            return true;
+        if (frame.isCompiledFrame()) {
+            if (JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
+                return true;
+        }
 #endif
         if (!nameOfCaller)
             nameOfCaller = Zig::functionName(vm, callerObject);
@@ -511,6 +513,13 @@ String sourceURL(const JSC::AOT::SourcePosition& position)
         return JSC::AOT::sourceURLOf(position.source);
     return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
 }
+
+String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
+{
+    if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+        return JSC::AOT::compilerHelpersModule;
+    return sourceURL(position);
+}
 #endif
 
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
@@ -526,7 +535,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 #if ENABLE(AOT)
     if (frame.isCompiledFrame()) [[unlikely]] {
         auto position = frame.compiledPosition();
-        return position ? sourceURL(*position) : String();
+        return position ? sourceURL(frame.compiledFrame(), *position) : String();
     }
 #endif
 
@@ -633,7 +642,9 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
 static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
-    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
+    if (frame.isAsyncFrame() || frame.compiledFrame().isAtFailedTailCall)
+        return description.name(vm);
+    return description.stackTraceName(vm, frame.callee(), frame.compiledFrame().hasCalleeInFrame);
 }
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
@@ -644,7 +655,8 @@ static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& fr
     auto codeType = frame.codeType();
     if (flags && (codeType == JSC::CodeType::FunctionCode || codeType == JSC::CodeType::EvalCode)) {
         *flags |= static_cast<unsigned int>(codeType == JSC::CodeType::EvalCode ? FunctionNameFlags::Eval : FunctionNameFlags::Function);
-        if (frame.isBuiltinFunction())
+        // As below: only a frame that has its function object is marked.
+        if (frame.isBuiltinFunction() && !frame.compiledFrame().isAtFailedTailCall)
             *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
     }
 

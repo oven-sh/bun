@@ -41,6 +41,10 @@ fn splat_byte_all(
     Ok(())
 }
 
+pub(crate) fn has_only_html_entry_points(entry_points: &[Box<[u8]>]) -> bool {
+    !entry_points.is_empty() && entry_points.iter().all(|path| path.ends_with(b".html"))
+}
+
 pub(crate) struct BuildCommand;
 
 impl BuildCommand {
@@ -87,7 +91,9 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {
-            if !user_requested_browser_target {
+            if !(user_requested_browser_target
+                && has_only_html_entry_points(&ctx.args.entry_points))
+            {
                 return super::compile_command::CompileCommand::exec(ctx);
             }
             ctx.bundler_options.aot = None;
@@ -214,7 +220,7 @@ impl BuildCommand {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
-                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
@@ -823,7 +829,7 @@ impl BuildCommand {
         let mut compiler_options = Vec::new();
         if writes_typed_files {
             let request = super::compile_command::TypedOutputs {
-                working_directory: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                working_directory: bun_resolver::fs::FileSystem::get().top_level_dir(),
                 outdir: &ctx.bundler_options.outdir,
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,

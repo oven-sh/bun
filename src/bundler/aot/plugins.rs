@@ -4,7 +4,7 @@ use bun_aot::load::source_provider::{
 use bun_ast::{Kind, Loader, Log, Msg, Range};
 use bun_core::strings;
 use bun_ptr::{ParentRef, detach_lifetime};
-use bun_sema::util::{FxHashMap, ShardedMap};
+use bun_sema::util::{FxHashMap, ShardedMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use core::ptr::NonNull;
 use std::borrow::Cow;
@@ -178,7 +178,7 @@ impl PluginRequests {
         // SAFETY: the caller owns the carrier, and no other thread has it yet.
         let carrier = unsafe { bundle.as_ref() };
         debug_assert!(carrier.completion.is_some());
-        let working_directory = carrier.transpiler().fs().top_level_dir();
+        let working_directory = Fs::FileSystem::get().top_level_dir();
         let in_memory_files = carrier.file_map.into_iter();
         let in_memory_files =
             in_memory_files.flat_map(|files| in_memory_files_by_path(files, working_directory));
@@ -313,7 +313,8 @@ impl PluginRequests {
             return Vec::new();
         }
         self.drain_defer_promises();
-        deferred.sort_unstable_by(|left, right| left.pending.name().cmp(&right.pending.name()));
+        deferred
+            .shared_sort_unstable_by(|left, right| left.pending.name().cmp(&right.pending.name()));
         deferred
             .into_iter()
             .map(|entry| self.finish_deferred_load(entry, log))
@@ -422,7 +423,7 @@ impl PluginRequests {
 }
 
 // The compiler writes `C:/a/b.ts`. The bundler tells a plugin `C:\a\b.ts`, and a filter may be written for that.
-fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
+pub(super) fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
     if !is_windows || !strings::contains_char(path, b'/') {
         return Cow::Borrowed(path);
     }

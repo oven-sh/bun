@@ -1,22 +1,23 @@
-use crate::bind::Parent;
+use crate::bind::{FnOwner, MemberOwner, Parent};
 use crate::check::errors_declaration_emit::is_reserved_word;
-use crate::check::spans::{is_word_at, skip_trivia};
+use crate::check::errors_type_nodes::has_parse_diagnostics;
+use crate::check::spans::{line_end, skip_trivia};
 use crate::check::*;
-use bun_core::strings::contains_char;
 use smallvec::SmallVec;
 
 impl Checker<'_, '_> {
-    /// TypeScript's own syntax in places where `bun run` reports a syntax error.
     pub(super) fn check_typescript_syntax_early_errors(&mut self, file: FileId) {
         if self.hir(file).is_js {
             return;
         }
         self.check_parameter_early_errors(file);
+        self.check_signature_early_errors(file);
+        self.check_type_member_early_errors(file);
+        self.check_jsdoc_type_early_errors(file);
         self.check_enum_member_early_errors(file);
         self.check_this_container_early_errors(file);
     }
 
-    /// `export { if }`, `export { "a" }`: without `from` the name on the left is a reference.
     pub(super) fn check_local_export_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         for export in hir.exports.iter() {
@@ -39,26 +40,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `declare a;`: TypeScript's parser reads the name `declare` and then another statement, and leaves it to whoever reads the declaration to
-    /// say that no `;` stands between them. `bun run` takes a decorated class for a declaration.
-    pub(super) fn check_end_of_declare(&mut self, file: FileId, e: ExprId) {
-        let hir = self.hir(file);
-        let (text, start) = (&hir.text, hir[e].pos as usize);
-        if hir.is_js
-            || !matches!(hir[e].kind, ExprKind::Ident(_))
-            || !is_word_at(text, start, b"declare")
-        {
-            return;
-        }
-        let end = start + b"declare".len();
-        let next = skip_trivia(text, end);
-        let is_ended = matches!(text.get(next), None | Some(b';' | b'}' | b'@'))
-            || (text.get(end..next)).is_some_and(|between| contains_char(between, b'\n'));
-        if !is_ended && !is_parenthesized(hir, e) {
-            self.early_grammar_error_at((file, next as u32, 0), 1005, &[Arg::Text(";")]);
-        }
-    }
-
     fn check_parameter_early_errors(&mut self, file: FileId) {
         let hir = self.hir(file);
         for function in hir.fns.iter().filter(|it| has_body_node(it)) {
@@ -76,7 +57,6 @@ impl Checker<'_, '_> {
             for p in this_parameter.into_iter().chain(function.params.iter()) {
                 self.check_parameter_syntax(file, kind, p);
             }
-            // Only a first parameter of that name is a type.
             for p in function.params.iter() {
                 if matches!(hir[hir[p].pat].kind, PatKind::Ident(known::this))
                     && kind != FnKind::Arrow
@@ -113,6 +93,93 @@ impl Checker<'_, '_> {
         self.early_grammar_error_on_node(file, p, code, &[]);
     }
 
+    fn check_signature_early_errors(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for (index, function) in hir.fns.iter().enumerate() {
+            if has_body_node(function) || function.kind == FnKind::IndexSignature {
+                continue;
+            }
+            let owner = bound.fns[index].owner;
+            let is_in_class = matches!(owner, FnOwner::Member(m) if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)));
+            let is_in_type = matches!(owner, FnOwner::Type(_) | FnOwner::Member(_)) && !is_in_class;
+            let last = function.params.len().saturating_sub(1);
+            for (place, p) in function.params.iter().enumerate() {
+                let parameter = &hir[p];
+                let is_rest = parameter.flags.contains(Flags::REST);
+                let mut modifiers = hir.param_modifiers(p).iter().map(|it| hir[it].kind);
+                let has_keyword = modifiers
+                    .clone()
+                    .any(|it| matches!(it, ModifierKind::Keyword(_)));
+                let code = if has_keyword && (is_in_type || function.kind != FnKind::Constructor) {
+                    2369
+                } else if !is_in_class
+                    && modifiers.any(|it| matches!(it, ModifierKind::Decorator(_)))
+                {
+                    1206
+                } else if parameter.default.is_some() && is_rest {
+                    1048
+                } else if parameter.default.is_some() && is_in_type {
+                    match parameter.flags.contains(Flags::OPTIONAL) {
+                        true => 1015,
+                        false => 2371,
+                    }
+                } else if is_rest && place != last && !is_in_type {
+                    1014
+                } else {
+                    continue;
+                };
+                if !has_parse_diagnostics(hir) {
+                    self.error(file, p, code, &[]).class = DiagnosticClass::EarlyError;
+                }
+            }
+        }
+    }
+
+    fn check_jsdoc_type_early_errors(&mut self, file: FileId) {
+        let hir = self.hir(file);
+        if hir.rare_syntax & rare::JSDOC_TYPE == 0 {
+            return;
+        }
+        for (index, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::JSDoc {
+                kind, is_postfix, ..
+            } = node.kind
+            else {
+                continue;
+            };
+            let ty = TypeNodeId(index as u32);
+            let is_read_over = is_postfix
+                && (kind != JSDocTypeKind::Nullable
+                    || hir.tuple_elems.iter().any(|element| element.written == ty));
+            if !is_read_over {
+                self.report_jsdoc_type(file, ty, DiagnosticClass::EarlyError);
+            }
+        }
+    }
+
+    fn check_type_member_early_errors(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for (index, member) in hir.members.iter().enumerate() {
+            let initializer = match bound.member_owner[index] {
+                MemberOwner::Interface(_) => 1246,
+                MemberOwner::TypeLiteral(_) => 1247,
+                MemberOwner::Class(_) => {
+                    if member.kind == MemberKind::IndexSignature && member.ty.is_none() {
+                        let at = (file, member.start, member.loc.end);
+                        self.early_grammar_error_at(at, 1021, &[]);
+                    }
+                    continue;
+                }
+                MemberOwner::None => continue,
+            };
+            self.check_private_name_in_signature(file, MemberId(index as u32));
+            if member.init.is_some() {
+                let at = self.span_of_initializer(file, member.init, None);
+                self.early_grammar_error_at(at, initializer, &[]);
+            }
+        }
+    }
+
     fn check_enum_member_early_errors(&mut self, file: FileId) {
         let hir = self.hir(file);
         for declaration in hir.enums.iter() {
@@ -120,13 +187,14 @@ impl Checker<'_, '_> {
                 continue;
             }
             let mut names: SmallVec<[Atom; 16]> = SmallVec::new();
+            let mut listed: crate::util::FxHashSet<Atom> = Default::default();
             for member in declaration.members.iter().map(|member| &hir[member]) {
                 let first = hir.text.get(member.pos as usize).copied();
                 let code = match first {
                     Some(b'[') => 1164,
                     Some(b'#') => 18024,
                     Some(b'0'..=b'9' | b'.') => 2452,
-                    _ if names.contains(&member.name) => 2300,
+                    _ if crate::util::is_listed(&names, &mut listed, member.name) => 2300,
                     _ => {
                         names.push(member.name);
                         continue;
@@ -139,7 +207,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `this` right in the body of a namespace or in the initializer of an enum member.
     fn check_this_container_early_errors(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.enums.is_empty() && hir.modules.is_empty() {
@@ -159,7 +226,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// A statement of TypeScript that may only stand right in a file or right in a namespace.
     pub(super) fn check_typescript_statement_position(&mut self, file: FileId, s: StmtId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = bound.parent_of_stmt(s);
@@ -178,7 +244,6 @@ impl Checker<'_, '_> {
                 ModuleName::Global => 2670,
             },
             StmtKind::ImportEquals(_) if !is_module_element => 1232,
-            // What runs is a constant of that name.
             StmtKind::ImportEquals(import)
                 if hir[import].name == known::let_
                     && matches!(hir[import].target, ImportEqualsTarget::Require(_))
@@ -199,12 +264,9 @@ impl Checker<'_, '_> {
     fn has_line_break_after_name(&self, file: FileId, name: u32) -> bool {
         let text = &self.hir(file).text;
         let end = self.end_of_name_at(file, name) as usize;
-        let next = skip_trivia(text, end);
-        text.get(end..next)
-            .is_some_and(|between| contains_char(between, b'\n'))
+        line_end(text, end) < skip_trivia(text, end)
     }
 
-    /// `import`, `export .. from`, `export {}` and `export default` in the body of a namespace.
     pub(super) fn check_module_syntax_in_namespace(&mut self, file: FileId, s: StmtId, code: u32) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Module(m) = bound.parent_of_stmt(s) else {

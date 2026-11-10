@@ -102,10 +102,30 @@ const compilerFlags = [
   "-DBUN_HARDENED=1",
   "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
-function patchesOfAllocator(cfg: Config): string[] {
-  const patches = mimalloc.patches ?? [];
-  return typeof patches === "function" ? patches(cfg) : patches;
-}
+const namesAllocatorReads = (cfg: Config) =>
+  everyFlagOf(cfg)
+    .allocator.find(define => define.startsWith("MI_GETENV_ALLOWED="))
+    ?.slice("MI_GETENV_ALLOWED=".length)
+    .split(",");
+// Written out a second time on purpose: a name that prints, writes a file or changes what is checked does not get in by one edit.
+const namesOfSizesAndPace = [
+  "mimalloc_allow_thp",
+  "mimalloc_arena_eager_commit",
+  "mimalloc_arena_purge_mult",
+  "mimalloc_arena_reserve",
+  "mimalloc_generic_collect",
+  "mimalloc_minimal_purge_size",
+  "mimalloc_page_full_retain",
+  "mimalloc_purge_decommits",
+  "mimalloc_purge_delay",
+  "mimalloc_purge_holes",
+  "mimalloc_purge_holes_eager_zero",
+  "mimalloc_purge_holes_full_every",
+  "mimalloc_purge_holes_large_floor",
+  "mimalloc_purge_holes_large_floor_epochs",
+  "mimalloc_purge_holes_min_interval",
+  "mimalloc_scavenger",
+];
 
 const rustFlags = [
   "-Crelocation-model=pie",
@@ -129,17 +149,7 @@ test("--hardened=on gives every C and C++ source, every crate and the link its m
   expect(flags.rust).toEqual(expect.arrayContaining(rustFlags));
   expect(flags.link).toEqual(expect.arrayContaining(linkFlags));
   expect(flags.allocator).toContain("MI_SECURE=1");
-  expect(patchesOfAllocator(cfg)).toContain("patches/mimalloc/secure-guard-pages-are-protected.patch");
-  expect(patchesOfAllocator(cfg)).toContain("patches/mimalloc/environment-sets-sizes-and-pace-only.patch");
-});
-
-test("only a build with the ahead-of-time compiler patches what the allocator does in every free", () => {
-  using dir = tempDir("build-allocator-patches", {});
-  const forCompiler = ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"];
-  const withCompiler = patchesOfAllocator(linuxConfig({ aot: true }, String(dir)));
-  const withoutCompiler = patchesOfAllocator(linuxConfig({ aot: false }, String(dir)));
-  expect(withCompiler).toEqual(expect.arrayContaining(forCompiler));
-  expect(withoutCompiler).toEqual(withCompiler.filter(patch => !forCompiler.includes(patch)));
+  expect(namesAllocatorReads(cfg)).toEqual(namesOfSizesAndPace);
 });
 
 test("a build without --hardened has none of them", () => {
@@ -150,7 +160,7 @@ test("a build without --hardened has none of them", () => {
   const all = Object.values(flags).flat();
   for (const flag of [...compilerFlags, ...rustFlags, ...linkFlags, "MI_SECURE=1"]) expect(all).not.toContain(flag);
   expect(flags.c).toContain("-fno-stack-protector");
-  expect(patchesOfAllocator(cfg)).not.toContain("patches/mimalloc/environment-sets-sizes-and-pace-only.patch");
+  expect(namesAllocatorReads(cfg)).toBeUndefined();
 });
 
 test("only --require-mdwe=off lets a hardened build's executables start on a kernel without PR_SET_MDWE", () => {
@@ -164,19 +174,18 @@ test("only --require-mdwe=off lets a hardened build's executables start on a ker
 
 test("only --lock-environment=off lets tests steer a hardened build by the environment", () => {
   using dir = tempDir("build-hardened-flags-environment", {});
-  const patch = "patches/mimalloc/environment-sets-sizes-and-pace-only.patch";
   const locked = linuxConfig({ hardened: true }, String(dir));
   expect(everyFlagOf(locked).rust).toContain("--cfg=bun_locked_environment");
   expect(everyFlagOf(locked).cxx).toContain("-DBUN_LOCKED_ENVIRONMENT=1");
   // What the first compiles calls a function of each of the other two.
-  expect(patchesOfAllocator(locked)).toContain(patch);
+  expect(namesAllocatorReads(locked)).toEqual(namesOfSizesAndPace);
   for (const cfg of [
     linuxConfig({ hardened: true, lockEnvironment: false }, String(dir)),
     linuxConfig({}, String(dir)),
   ]) {
     expect(everyFlagOf(cfg).rust).not.toContain("--cfg=bun_locked_environment");
     expect(everyFlagOf(cfg).cxx).not.toContain("-DBUN_LOCKED_ENVIRONMENT=1");
-    expect(patchesOfAllocator(cfg)).not.toContain(patch);
+    expect(namesAllocatorReads(cfg)).toBeUndefined();
   }
   expect(() => linuxConfig({ lockEnvironment: true }, String(dir))).toThrow(
     "lockEnvironment=true requires hardened=true",
@@ -265,6 +274,20 @@ test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the 
   }
 });
 
+// -mtune keeps the fortified wrappers out of line: it is left out where the build is hardened. WebKit's .github/scripts/lanes.mjs does the same.
+test("a hardened build for arm64 names no processor to tune for", () => {
+  using dir = tempDir("build-hardened-flags-tune", {});
+  const tunes = (cfg: Config) =>
+    Object.values(everyFlagOf(cfg)).flatMap(list => list.filter(flag => /^-(mtune|Ztune-cpu)=/.test(flag)));
+  const hardened = linuxConfig({ hardened: true, arch: "aarch64" }, String(dir));
+  expect(tunes(hardened)).toEqual([]);
+  for (const list of [everyFlagOf(hardened).c, everyFlagOf(hardened).dependencyCxx]) {
+    expect(list).toContain("-D_FORTIFY_SOURCE=2");
+    expect(list).toContain("-march=armv8-a+crc");
+  }
+  expect(tunes(linuxConfig({ arch: "aarch64" }, String(dir)))).toContain("-mtune=ampere1");
+});
+
 test("--hardened=on is refused where nothing can be hardened", () => {
   using dir = tempDir("build-hardened-flags-refused", {});
   for (const partial of [
@@ -284,7 +307,7 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"];
+const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"] as const;
 
 test("the libraries that never call back into JavaScript keep their arrays on a second stack", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});
@@ -295,7 +318,7 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
     expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
     expect(safeStackFlags(off, name)).toEqual([]);
   }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"])
+  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"] as const)
     expect(safeStackFlags(on, name)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");

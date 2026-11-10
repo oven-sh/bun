@@ -360,6 +360,7 @@ public:
         }
     }
 
+    /* Completes a response whose bytes the caller already wrote (bodyLength of them are body), with the uncork and close gate internalEnd() ends on. */
     void finishResponseInCorkBuffer(size_t bodyLength) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;

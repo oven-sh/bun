@@ -5201,12 +5201,18 @@ describe("requests pipelined in one read", () => {
             if (len[0] < 156) throw new Error("tcp_info has no tcpi_data_segs_in: " + len[0] + " bytes");
             return new DataView(info.buffer).getUint32(152, true);
           }
-          const request = path => "GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
-          async function run(options, paths = ["/", "/", "/", "/", "/", "/", "/", "/"]) {
+          // A response to HEAD and a 304 end with their head.
+          async function run(
+            options,
+            paths = ["/", "/", "/", "/", "/", "/", "/", "/"],
+            { method = "GET", headers = "", status = "200 OK" } = {},
+          ) {
+            const request = path => method + " " + path + " HTTP/1.1\\r\\nHost: x\\r\\n" + headers + "\\r\\n";
+            const lastBytes = method === "HEAD" || status !== "200 OK" ? "\\r\\n\\r\\n" : "hello";
             const server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...options });
             const done = Promise.withResolvers();
             let reply = "";
-            const responses = () => reply.split("HTTP/1.1 200 OK").length - 1;
+            const responses = () => reply.split("HTTP/1.1 " + status).length - 1;
             const socket = await Bun.connect({
               hostname: "127.0.0.1",
               port: server.port,
@@ -5216,7 +5222,7 @@ describe("requests pipelined in one read", () => {
                 },
                 data(socket, chunk) {
                   reply += chunk.toString("latin1");
-                  if (responses() === paths.length && reply.endsWith("hello")) done.resolve();
+                  if (responses() === paths.length && reply.endsWith(lastBytes)) done.resolve();
                 },
                 error(socket, error) {
                   done.reject(error);
@@ -5279,6 +5285,22 @@ describe("requests pipelined in one read", () => {
               { routes: { "/static": new Response("hello"), "/js": () => new Response("hello") } },
               ["/static", "/static", "/static", "/js", "/static", "/static", "/js", "/static"],
             ),
+            // The same for responses without a body.
+            fetchHead: await run({ fetch: () => new Response("hello") }, undefined, { method: "HEAD" }),
+            staticHead: await run({ routes: { "/": new Response("hello") } }, undefined, { method: "HEAD" }),
+            mixedHead: await run(
+              { routes: { "/static": new Response("hello"), "/js": () => new Response("hello") } },
+              ["/static", "/static", "/static", "/js", "/static", "/static", "/js", "/static"],
+              { method: "HEAD" },
+            ),
+            fetch304: await run({ fetch: () => new Response(null, { status: 304 }) }, undefined, {
+              status: "304 Not Modified",
+            }),
+            static304: await run(
+              { routes: { "/": new Response("hello", { headers: { ETag: '"v1"' } }) } },
+              undefined,
+              { headers: 'If-None-Match: "v1"\\r\\n', status: "304 Not Modified" },
+            ),
             tooLarge: await runTooLarge(),
           }));
         `,
@@ -5293,6 +5315,11 @@ describe("requests pipelined in one read", () => {
         route: { responses: 8, segments: 8 },
         static: { responses: 8, segments: 1 },
         mixed: { responses: 8, segments: 5 },
+        fetchHead: { responses: 8, segments: 8 },
+        staticHead: { responses: 8, segments: 1 },
+        mixedHead: { responses: 8, segments: 5 },
+        fetch304: { responses: 8, segments: 8 },
+        static304: { responses: 8, segments: 1 },
         tooLarge: { statuses: ["HTTP/1.1 100 Continue", "HTTP/1.1 413 Request Entity Too Large"], segments: 1 },
       },
       exitCode: 0,

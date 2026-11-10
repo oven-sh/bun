@@ -398,6 +398,25 @@ for (const expectation of ["100-continue", "something-else"]) {
   });
 }
 
+// Node corks the socket in res.write() until the next tick, so a destroy() in the same turn drops that chunk:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L994-L997
+test("res.destroy() drops the chunk that res.write() queued in the same turn", async () => {
+  const server = http.createServer((req, res) => {
+    res.write("sent");
+    setImmediate(() => {
+      res.write("dropped");
+      res.destroy();
+    });
+  });
+  await withServer(server, async port => {
+    const socket = send(port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", () => {});
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    await once(socket, "close");
+    assert.strictEqual(received.slice(received.indexOf("\r\n\r\n") + 4), "4\r\nsent\r\n");
+  });
+});
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExeAtLeast } = await import("harness");

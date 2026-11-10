@@ -3535,6 +3535,7 @@ impl bun_io::Write for ExpectedText<'_> {
 }
 
 /// What `JestPrettyFormat::print_snapshot` threw.
+#[derive(Copy, Clone)]
 pub(crate) struct PrintError {
     pub(crate) error: JsError,
     /// A snapshot serializer threw it, and not the value.

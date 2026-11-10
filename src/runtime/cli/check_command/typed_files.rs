@@ -365,8 +365,7 @@ pub(crate) fn typed_files_for_build(
         &found.declarations_while_checked,
         &newest_lib,
     );
-    // `export {}` makes what a file without imports and exports declares local. Where the typed files have errors with it,
-    // they are written, and judged, without it.
+    // `export {}` makes what a script declares local. With errors, the typed files are written and judged without it.
     if first_error(&report).is_some()
         && found.empty_exports > 0
         && let Ok(plain) = build_typed_files(outdir, &outputs, modules, &emitted_modules, false)

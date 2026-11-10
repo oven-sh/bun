@@ -4001,8 +4001,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             self.insertions
                 .add(first.start, Order::Line, std::mem::take(&mut self.hoisted));
         }
-        // `// @bun` in front of a bundle says that its text runs as it is written, as an ES module. The typed file is TypeScript:
-        // it goes without those bytes, and `export {}` says that it is a module if no export of the bundle does.
+        // With `// @bun` in front, Bun runs a file as it is written. A typed file is TypeScript: it goes without those bytes.
         let mark = find_transpiled_mark_alone(javascript);
         let mut text = self
             .insertions
@@ -4011,6 +4010,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             return Err(TypedFilesError::NoFinalLineBreak);
         }
         text.extend_from_slice(&self.hoisted);
+        // `// @bun` also said that the bundle is an ES module. `export {}` says it where no export of the bundle does.
         let mut statements = output_file.ids(output_file.body);
         let has_empty_export = mark.is_some()
             && self.adds_empty_export

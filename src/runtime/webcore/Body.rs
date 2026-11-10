@@ -910,9 +910,8 @@ impl Value {
         Ok(stream_value)
     }
 
-    /// True for a `body` init that [`from_js`](Self::from_js) reads by reference
-    /// (stream, buffer, FormData, URLSearchParams, Blob, Image, Array of parts).
-    /// The fetch spec extracts it after the other init members are converted.
+    /// A `body` init that [`from_js`](Self::from_js) reads by reference, so the
+    /// fetch spec extracts it after the other init members are converted.
     pub fn is_extracted_by_reference(value: JSValue) -> bool {
         if !value.is_cell() || value.is_string() {
             return false;

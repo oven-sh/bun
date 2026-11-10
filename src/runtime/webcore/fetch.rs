@@ -1023,9 +1023,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // headers: Headers | undefined;
     //
-    // Converted here. A Blob or FormData Content-Type is applied after the
-    // body is extracted (#2264).
-    //
     // Holds the +1 from `create_from_js` until the headers are applied.
     let mut created_headers: Option<HeadersRef> = None;
     // Roots a borrowed `Headers` wrapper across the body extraction, which can run JS.
@@ -1165,6 +1162,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Err(jsc::JsError::Thrown);
     }
 
+    // A Blob or FormData Content-Type is applied after the body is extracted (#2264).
     if let Some(headers_) = fetch_headers {
         // `headers_` points to a live FetchHeaders (either JS-owned or
         // refcounted via `created_headers` above). `FetchHeaders` is

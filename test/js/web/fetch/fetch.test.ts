@@ -4360,21 +4360,23 @@ describe("fetch() extracts a by-reference body after init.headers is read", () =
       port: 0,
       fetch: async req => new Response(`${req.headers.get("x-test")}:${await req.text()}`),
     });
-    const response = await fetch(server.url, {
-      method: "POST",
-      get headers() {
-        return new Headers({ "x-test": "1" });
-      },
-      body: [
-        {
-          toString() {
-            Bun.gc(true);
-            return "a=1";
-          },
+    for (let i = 0; i < 16; i++) {
+      const response = await fetch(server.url, {
+        method: "POST",
+        get headers() {
+          return new Headers({ "x-test": "1" });
         },
-      ] as unknown as BodyInit,
-    });
-    expect(await response.text()).toBe("1:a=1");
+        body: [
+          {
+            toString() {
+              Bun.gc(true);
+              return "a=1";
+            },
+          },
+        ] as unknown as BodyInit,
+      });
+      expect(await response.text()).toBe("1:a=1");
+    }
   });
 
   it("an invalid header rejects before a locked stream body is checked", async () => {
@@ -4382,6 +4384,6 @@ describe("fetch() extracts a by-reference body after init.headers is read", () =
     stream.getReader();
     await expect(
       fetch("http://127.0.0.1:1/", { method: "POST", body: stream, headers: { "a b": "1" } }),
-    ).rejects.toThrow(/header/i);
+    ).rejects.toThrow("Invalid header name: 'a b'");
   });
 });

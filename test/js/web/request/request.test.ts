@@ -220,6 +220,14 @@ describe("RequestInit body is extracted after the other members are read (#48468
     expect(await request.text()).toBe("a=2");
   });
 
+  test("DataView with a byte offset", async () => {
+    const bytes = new TextEncoder().encode("xa=1y");
+    const request = requestWithMutatingGetter(new DataView(bytes.buffer, 1, 3), () => {
+      bytes[3] = "2".charCodeAt(0);
+    });
+    expect(await request.text()).toBe("a=2");
+  });
+
   test("a detached Uint8Array is empty", async () => {
     const bytes = new TextEncoder().encode("a=1");
     const request = requestWithMutatingGetter(bytes, () => {
@@ -294,7 +302,7 @@ describe("RequestInit body is extracted after the other members are read (#48468
 
   test("an invalid URL throws before the body is extracted", () => {
     expect(() => new Request("not a url", { method: "POST", body: new ReadableStream(), keepalive: true })).toThrow(
-      /Invalid URL/,
+      `Failed to construct 'Request': Invalid URL "not a url"`,
     );
   });
 
@@ -303,6 +311,6 @@ describe("RequestInit body is extracted after the other members are read (#48468
     stream.getReader();
     expect(
       () => new Request("https://example.com/", { method: "POST", body: stream, headers: { "a b": "1" } }),
-    ).toThrow(/header/i);
+    ).toThrow("Invalid header name: 'a b'");
   });
 });

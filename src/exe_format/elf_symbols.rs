@@ -189,8 +189,7 @@ impl TailBuilder {
         tail
     }
 
-    /// Over the old table when it ends the file, and over the old names too when only padding parts them from it,
-    /// so that a re-compile writes the same bytes. Else behind the file. Bytes that no section names stay.
+    /// Over the old table when it ends the file, and the old names when only padding parts them. Else behind the file.
     fn start(file_size: u64, ehdr: &Elf64_Ehdr, sections: &SectionTable) -> u64 {
         let headers = &sections.headers;
         let table_end = ehdr.e_shoff.saturating_add(headers.len() as u64);
@@ -384,8 +383,7 @@ fn find_pointer_word(
     })
 }
 
-/// `.bun.pointer` names the word that `.bun` left when it moved onto the payload, so that GNU `strip` keeps it.
-/// `Ok(None)`: the file has the section.
+/// `.bun.pointer` names the word that `.bun` left when it moved onto the payload. `Ok(None)`: the file has it.
 fn pointer_section(
     read: &mut impl FnMut(u64, &mut [u8]) -> bool,
     sections: &SectionTable,
@@ -413,8 +411,7 @@ fn pointer_section(
     }))
 }
 
-/// A tail that adds `.bun.pointer`. `Ok(None)` when the file has it. `Err` when the word is not found, or the
-/// file is not one that a tail can be made for.
+/// A tail that adds `.bun.pointer`. `Ok(None)`: the file has it. `Err`: the word is not found.
 pub fn pointer_tail(
     file_size: u64,
     mut read: impl FnMut(u64, &mut [u8]) -> bool,

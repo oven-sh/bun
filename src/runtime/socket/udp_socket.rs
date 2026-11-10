@@ -332,7 +332,6 @@ pub(crate) struct UDPSocketConfig {
     /// `socket.bind({ fd })` and cluster-shared sockets.
     fd: Option<i32>,
     pub(crate) binary_type: BinaryType,
-    pub(crate) shared_fd: bool,
 }
 
 impl Default for UDPSocketConfig {
@@ -344,7 +343,6 @@ impl Default for UDPSocketConfig {
             flags: 0,
             fd: None,
             binary_type: BinaryType::Buffer,
-            shared_fd: false,
         }
     }
 }
@@ -408,16 +406,11 @@ impl UDPSocketConfig {
             }
         };
 
-        let shared_fd = options
-            .fast_get(global_this, bun_jsc::BuiltinName::sharedFd)?
-            .is_some_and(|v| v.to_boolean());
-
         let mut config = Self {
             hostname,
             port,
             flags,
             fd,
-            shared_fd,
             ..Default::default()
         };
 
@@ -565,7 +558,22 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
+    /// `Bun.udpSocket()`. It has no API that gives a socket it creates to another process.
     pub(crate) fn udp_socket(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+        Self::open(cx, options, uws::udp::RecvMode::Batch)
+    }
+
+    /// `Bun.udpSocket()` for node:dgram. Node takes no datagram ahead of a 'message' listener, so
+    /// one that closes the socket leaves the rest queued for a process that shares the descriptor.
+    pub(crate) fn dgram_socket(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+        Self::open(cx, options, uws::udp::RecvMode::One)
+    }
+
+    fn open(
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
+        recv_mode: uws::udp::RecvMode,
+    ) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
         let cx = &cx.js_thread();
         let options = options.to_js();
@@ -669,7 +677,6 @@ impl UDPSocket {
                 on_close,
                 on_recv_error,
                 fd,
-                config.shared_fd,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )
@@ -683,6 +690,7 @@ impl UDPSocket {
                 hostname_z.as_ptr(),
                 config.port,
                 config.flags,
+                recv_mode,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )

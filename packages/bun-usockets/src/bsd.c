@@ -154,7 +154,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
     if (max_packets > LIBUS_UDP_RECV_COUNT) max_packets = LIBUS_UDP_RECV_COUNT;
 #if defined(_WIN32)
-    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+    for (int i = 0; i < max_packets; i++) {
         while (1) {
             socklen_t addr_len = sizeof(struct sockaddr_storage);
             ssize_t ret = recvfrom(fd, recvbuf->buf + (size_t) i * LIBUS_UDP_MAX_SIZE,
@@ -175,7 +175,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
             break;
         }
     }
-    return LIBUS_UDP_RECV_COUNT;
+    return max_packets;
 #elif defined(__APPLE__)
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
@@ -205,16 +205,16 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
 #endif
 }
 
-void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen) {
+void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen, int max_packets) {
 #if defined(_WIN32)
     recvbuf->buf = databuf;
     recvbuf->buflen = databuflen;
 #else
     // assert(databuflen > LIBUS_UDP_MAX_SIZE * LIBUS_UDP_RECV_COUNT);
-    memset(recvbuf, 0, sizeof(struct udp_recvbuf));
-    for (size_t i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
-        recvbuf->iov[i].iov_base = (char*)databuf + i * LIBUS_UDP_MAX_SIZE;
+    for (int i = 0; i < max_packets; i++) {
+        recvbuf->iov[i].iov_base = (char*)databuf + (size_t) i * LIBUS_UDP_MAX_SIZE;
         recvbuf->iov[i].iov_len = LIBUS_UDP_MAX_SIZE;
+        memset(&recvbuf->addr[i], 0, sizeof(recvbuf->addr[i]));
 
         struct msghdr mh = {};
         memset(&mh, 0, sizeof(struct msghdr));
@@ -225,6 +225,7 @@ void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t da
         mh.msg_control = recvbuf->control[i];
         mh.msg_controllen = sizeof(recvbuf->control[i]);
         recvbuf->msgvec[i].msg_hdr = mh;
+        recvbuf->msgvec[i].msg_len = 0;
     }
 #endif
 }

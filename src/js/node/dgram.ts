@@ -155,6 +155,11 @@ const UV_ECANCELED: number = $bindgen("node_util_binding.bind.ts", "ecanceledErr
 // request is counted until its callback runs. Only Node's own tests use it.
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
+// Bun.udpSocket() with a socket that takes one datagram per receive call, as uv__udp_recvmsg does:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/udp.c#L285-L362
+const dgramSocketFn = $bindgen("udp_socket.bind.ts", "dgramSocket") as (
+  options: object,
+) => Promise<$Node.UDPSocketHandle>;
 const getFdFn = $bindgen("udp_socket.bind.ts", "getFd") as (socket: $Node.UDPSocketHandle) => number;
 // Read-only query of the process-wide DGRAM_FDS registry the native layer
 // already maintains, so bind({ fd }) can synchronously report EEXIST like
@@ -909,9 +914,7 @@ function startBunSocket(
         },
       },
     };
-    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
-    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
-    (Bun.udpSocket(udpOptions) as Promise<$Node.UDPSocketHandle>).$then(
+    dgramSocketFn(udpOptions).$then(
       (socket: $Node.UDPSocketHandle) => {
         if (!state.handle) {
           // Closed while the bind was in flight.

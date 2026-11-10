@@ -63,6 +63,13 @@ export const udpSocket = b.fn({
   returns: b.any,
   rustPath: "crate::socket::udp_socket::UDPSocket::udp_socket",
 });
+/** `udpSocket` for node:dgram: the socket takes one datagram per receive call, as libuv does. */
+export const dgramSocket = b.fn({
+  ...js,
+  args: { options: b.any },
+  returns: b.any,
+  rustPath: "crate::socket::udp_socket::UDPSocket::dgram_socket",
+});
 
 export const connect = b.fn({
   args: { socket: UDPSocket, host: b.string.loose, port: b.i32 },

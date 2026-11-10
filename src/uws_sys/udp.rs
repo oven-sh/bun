@@ -13,6 +13,17 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
+/// `enum us_udp_recv_mode_t`: how many datagrams one receive call takes out of the kernel queue.
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum RecvMode {
+    /// One. Nothing is taken ahead of `data_cb`: when it closes the socket, every other datagram
+    /// is still queued for whoever else holds the descriptor.
+    One = 0,
+    /// Up to `LIBUS_UDP_RECV_COUNT`. The ones `data_cb` does not consume are gone.
+    Batch = 1,
+}
+
 impl Socket {
     pub fn create(
         loop_: *mut Loop,
@@ -23,6 +34,7 @@ impl Socket {
         host: *const c_char,
         port: c_ushort,
         options: c_int,
+        recv_mode: RecvMode,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
     ) -> *mut Socket {
@@ -38,6 +50,7 @@ impl Socket {
                 host,
                 port,
                 options,
+                recv_mode,
                 match err {
                     Some(e) => std::ptr::from_mut::<c_int>(e),
                     None => core::ptr::null_mut(),
@@ -49,6 +62,7 @@ impl Socket {
 
     /// Adopts an already created (and usually bound) UDP socket descriptor
     /// instead of creating a new one. See `us_create_udp_socket_from_fd`.
+    /// The socket is [`RecvMode::One`].
     pub fn create_from_fd(
         loop_: *mut Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
@@ -56,7 +70,6 @@ impl Socket {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         fd: c_int,
-        shared: bool,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
     ) -> *mut Socket {
@@ -75,7 +88,6 @@ impl Socket {
                 close_cb,
                 recv_error_cb,
                 fd_native,
-                shared as c_int,
                 err.map_or(core::ptr::null_mut(), core::ptr::from_mut),
                 user_data,
             )
@@ -205,6 +217,7 @@ unsafe extern "C" {
         host: *const c_char,
         port: c_ushort,
         options: c_int,
+        recv_mode: RecvMode,
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;
@@ -237,7 +250,6 @@ unsafe extern "C" {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         fd: LIBUS_SOCKET_DESCRIPTOR,
-        shared: c_int,
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;

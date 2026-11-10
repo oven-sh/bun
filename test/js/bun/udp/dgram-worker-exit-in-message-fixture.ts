@@ -1,5 +1,5 @@
 // Worker side of "process.exit() from the first 'message' of a multi-packet
-// batch". The remaining on_data iterations, the drain, and any recv error of
+// batch". The on_data calls for the rest of it, the drain, and any recv error of
 // the SAME poll dispatch then run with a TerminationException pending; each
 // native callback must bail instead of re-entering JS (which aborts a debug
 // build on JSC's assertNoException).

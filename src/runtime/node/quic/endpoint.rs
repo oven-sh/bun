@@ -1353,6 +1353,7 @@ impl QuicEndpoint {
             cfg.host.as_ptr().cast(),
             cfg.port,
             0,
+            uws::udp::RecvMode::Batch,
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );

@@ -219,7 +219,20 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
+/* How many datagrams one receive call takes out of the kernel queue of a UDP socket. A socket
+ * keeps its mode for life. */
+enum us_udp_recv_mode_t {
+    /* One, as libuv does. Nothing is taken ahead of data_cb, so when data_cb closes the socket
+     * (or the process exits in it) every other datagram is still queued for whoever else holds
+     * the descriptor. */
+    LIBUS_UDP_RECV_ONE = 0,
+    /* Up to LIBUS_UDP_RECV_COUNT. data_cb gets them together: the ones it does not consume are
+     * gone, no other holder of the descriptor can read them. For a socket that only this
+     * process reads. */
+    LIBUS_UDP_RECV_BATCH = 1,
+};
+
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, enum us_udp_recv_mode_t recv_mode, int *err, void *user);
 
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
@@ -236,8 +249,9 @@ LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 
 /* Adopts an already created (and usually already bound) UDP socket descriptor
  * instead of creating a new one. The fd is made non-blocking and the standard
- * receive-path options are applied. Returns null with *err set on failure. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
+ * receive-path options are applied. Returns null with *err set on failure.
+ * The socket is LIBUS_UDP_RECV_ONE: who else holds the descriptor is not known. */
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);

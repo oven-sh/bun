@@ -263,6 +263,39 @@ describe.skipIf(isWindows)("cluster", () => {
   }, 40_000);
 });
 
+// A second process cannot hold a dgram socket on Windows: adopting a descriptor reports ENOTSUP.
+describe.skipIf(isWindows)("a socket that two processes read", () => {
+  // Node reads one datagram per recvmsg(). A reader that stops inside a 'message' listener has
+  // taken that one datagram, and the other process gets every datagram that was queued behind it.
+  test.concurrent.each([
+    ["child.send(message, socket), the sender closes", "send-sender-closes"],
+    ["child.send(message, socket), a receiver closes", "send-receiver-closes"],
+    ["child.send(message, socket), a receiver calls process.exit()", "send-receiver-exits"],
+    ["child.send(message, socket) and close() in one listener", "send-then-close"],
+    ["bind({ fd }) of an inherited descriptor", "fd"],
+    ["Bun.udpSocket({ fd }) of an inherited descriptor", "fd-udpSocket"],
+  ])(
+    "a reader that stops in its listener takes one datagram: %s",
+    async (_, variant) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "dgram-shared-socket-fixture.mjs"), variant],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        closer: ["0"],
+        counter: Array.from({ length: 31 }, (_, i) => String(i + 1)),
+      });
+      expect(exitCode).toBe(0);
+    },
+    // Each case is three processes: about 2 s alone in a debug build, 5 s when all six run at once.
+    30_000,
+  );
+});
+
 describe("after close()", () => {
   // Node throws ERR_SOCKET_DGRAM_NOT_RUNNING from these methods once the
   // socket is closed. They must not surface an internal TypeError instead.
@@ -917,8 +950,8 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
 
 // A worker that calls process.exit() from the FIRST 'message' of a batch
 // leaves a TerminationException pending for the rest of that poll dispatch:
-// the remaining on_data iterations, the drain, and any recv error must all
-// bail instead of re-entering JS. On a debug build, removing any of those
+// the on_data calls for the rest of the batch, the drain, and any recv error
+// must all bail instead of re-entering JS. On a debug build, removing any of those
 // native has_exception guards turns this into a JSC assertNoException abort.
 test("a worker exiting from its first 'message' of a batch does not crash", async () => {
   const worker = new Worker(path.join(import.meta.dir, "dgram-worker-exit-in-message-fixture.ts"));
@@ -931,8 +964,8 @@ test("a worker exiting from its first 'message' of a batch does not crash", asyn
   const sender = await Bun.udpSocket({ connect: { port, hostname: "127.0.0.1" }, socket: { error() {} } });
   const exited = new Promise<number>(resolve => worker.once("exit", resolve));
   const burst = new Array(16).fill("x");
-  // Keep bursting until the worker exits: one 16-packet sendMany arrives as a
-  // single recvmmsg batch, so 'message' #1 exits with 15 siblings pending.
+  // Keep bursting until the worker exits: one 16-packet sendMany is queued
+  // together, so 'message' #1 exits with 15 siblings left for the same dispatch.
   // Bounded so a worker that never exits cannot leave an orphaned flood
   // running into the rest of the file after the test times out.
   let stop = false;

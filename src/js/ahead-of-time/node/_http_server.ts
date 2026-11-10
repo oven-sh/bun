@@ -3646,6 +3646,9 @@ function bearAsking(
   res._keepAliveTimeout = 0;
   res._onPendingData = nop;
   res[kErrored] = null;
+  res[kWritableFinished] = false;
+  res[kEndCallbacks] = null;
+  res[kFlushError] = null;
   res[kHighWaterMark] = nativeHighWaterMark!;
   res[kRejectNonStandardBodyWrites] = nativeRejectsBodyWrites;
   res[kLenientValidation] = undefined;

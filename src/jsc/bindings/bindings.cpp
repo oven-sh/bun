@@ -6025,9 +6025,9 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
-// `ownKeysOnly`: the keys of the object itself that `ownKeys` names, and no key of its prototypes.
-template<bool ownKeysOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters, Bun::OwnKeys ownKeys = Bun::OwnKeys::All)
+// `ownKeysOnly`: the keys of the object itself and none of its prototypes. `nonIndexedOnly`: of those, no index key and no `length`, for an Array.
+template<bool nonIndexedOnly, bool ownKeysOnly = nonIndexedOnly>
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -6240,8 +6240,13 @@ restart:
         const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
 
         while (iterating && (iterating == object || !endsPrototypeWalk(globalObject, iterating)) && prototypeCount++ < 5) {
-            if (ownKeysOnly && ownKeys == Bun::OwnKeys::Named) {
+            if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+            } else if constexpr (ownKeysOnly) {
+                if (Bun::printsIndexKeysAsContent(iterating->type()))
+                    iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+                else
+                    iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
                 iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, isOtherGlobal ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
             }
@@ -6255,9 +6260,8 @@ restart:
                 if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
                     continue;
 
-                if constexpr (ownKeysOnly) {
-                    // Where the index keys are elements, `length` is their count.
-                    if (ownKeys == Bun::OwnKeys::Named && property == propertyNames->length) {
+                if constexpr (nonIndexedOnly) {
+                    if (property == propertyNames->length) {
                         continue;
                     }
                 }
@@ -6366,9 +6370,15 @@ restart:
     JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, false);
 }
 
-extern "C" void JSC__JSValue__forEachOwnProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, Bun::OwnKeys keys, bool callGetters, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, callGetters, keys);
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, false);
+}
+
+// The own keys of an object. No index key where those print as its content: an Array, a typed array, a String object.
+extern "C" void JSC__JSValue__forEachOwnProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, bool callGetters, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<false, true>(JSValue0, globalObject, arg2, iter, callGetters);
 }
 
 extern "C" void JSC__JSValue__forEachPropertyCallingOwnGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))

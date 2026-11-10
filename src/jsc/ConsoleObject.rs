@@ -8,7 +8,6 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
-use crate::js_value::OwnKeys;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
@@ -3003,6 +3002,11 @@ pub mod formatter {
         }
     }
 
+    /// The rule of every property walk on the text of a key: none that is spelled `constructor` prints, a symbol too.
+    fn is_listed_key(key: &EncodedSlice) -> bool {
+        !key.eq_ascii(b"constructor")
+    }
+
     /// Where the writer is when the first own key of a value prints, which decides what goes around the keys.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Opens {
@@ -3264,7 +3268,7 @@ pub mod formatter {
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            if key.eq_ascii(b"constructor") {
+            if !is_listed_key(key) {
                 return None;
             }
             if ctx.formatter.failed {
@@ -3637,8 +3641,35 @@ pub mod formatter {
 
         /// Whether `print_own_keys` can have a key of `value` to list: one read of its Structure.
         #[inline]
-        fn has_own_keys(&self, value: JSValue, keys: OwnKeys) -> bool {
-            !self.is_snapshot && value.has_own_keys_to_list(keys)
+        fn has_own_keys(&self, value: JSValue) -> bool {
+            !self.is_snapshot && value.has_own_keys_to_list()
+        }
+
+        /// Whether `print_own_keys` lists a key of `value`, by a walk of all of them. For the marker past the depth limit, where no key prints.
+        #[cold]
+        #[inline(never)]
+        fn lists_an_own_key(&self, value: JSValue) -> JsResult<bool> {
+            extern "C" fn found(
+                _: &JSGlobalObject,
+                listed: *mut c_void,
+                key: &EncodedSlice,
+                _: JSValue,
+                _: bool,
+                _: bool,
+            ) {
+                if is_listed_key(key) {
+                    // SAFETY: `listed` is the `bool` below, which outlives the walk.
+                    unsafe { *listed.cast::<bool>() = true };
+                }
+            }
+            let mut listed = false;
+            value.for_each_own_property(
+                self.global_this,
+                false,
+                (&raw mut listed).cast::<c_void>(),
+                found,
+            )?;
+            Ok(listed)
         }
 
         /// For a printer whose tag `print_as_prelude` does not record. `None`: `[Circular]` is written. `Some(keyed)`: own keys follow.
@@ -3647,9 +3678,8 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            keys: OwnKeys,
         ) -> Option<bool> {
-            if !self.has_own_keys(value, keys) {
+            if !self.has_own_keys(value) {
                 return Some(false);
             }
             self.own_keys_follow_unless_circular::<C>(writer_, value)
@@ -3677,11 +3707,10 @@ pub mod formatter {
             keyed: bool,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            keys: OwnKeys,
             opens: Opens,
         ) -> JsResult<()> {
             if keyed {
-                self.print_own_keys_one_level_down::<C>(writer_, value, keys, opens)?;
+                self.print_own_keys_one_level_down::<C>(writer_, value, opens)?;
             }
             Ok(())
         }
@@ -3692,7 +3721,6 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            keys: OwnKeys,
             opens: Opens,
         ) -> JsResult<bool> {
             let prev_quote_strings = self.quote_strings;
@@ -3702,7 +3730,7 @@ pub mod formatter {
             self.depth = self.depth.saturating_add(1);
             let _i = defer_decrement!(self.indent);
             let _d = defer_decrement!(self.depth);
-            self.print_own_keys::<C>(writer_, value, keys, opens)
+            self.print_own_keys::<C>(writer_, value, opens)
         }
 
         /// Lists the own enumerable keys of `value` behind its text and closes what `opens` opened. Returns whether a key printed.
@@ -3711,7 +3739,6 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            keys: OwnKeys,
             opens: Opens,
         ) -> JsResult<bool> {
             let single_line = self.single_line;
@@ -3732,7 +3759,6 @@ pub mod formatter {
             };
             let walked = value.for_each_own_property(
                 global_this,
-                keys,
                 call_getters,
                 (&raw mut iter).cast::<c_void>(),
                 PropertyIteratorCtx::<C>::for_each,
@@ -3931,14 +3957,8 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            // The index keys of a `String` object are its characters.
-            let keys = if js_type == jsc::JSType::RegExpObject {
-                OwnKeys::All
-            } else {
-                OwnKeys::Named
-            };
-            if self.has_own_keys(value, keys) {
-                return self.print_keyed_string_object::<C>(writer_, value, js_type, keys);
+            if self.has_own_keys(value) {
+                return self.print_keyed_string_object::<C>(writer_, value, js_type);
             }
             self.print_string::<C>(writer_, value, js_type)
         }
@@ -3950,13 +3970,12 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
-            keys: OwnKeys,
         ) -> JsResult<()> {
             let Some(keyed) = self.own_keys_follow_unless_circular::<C>(writer_, value) else {
                 return Ok(());
             };
             self.print_string::<C>(writer_, value, js_type)?;
-            self.list_own_keys::<C>(keyed, writer_, value, keys, Opens::Block)
+            self.list_own_keys::<C>(keyed, writer_, value, Opens::Block)
         }
 
         #[inline(never)]
@@ -4235,7 +4254,7 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let Some(keyed) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                let Some(keyed) = self.own_keys_follow::<C>(writer_, value) else {
                     return Ok(());
                 };
                 let mut writer = WrappedWriter {
@@ -4261,13 +4280,7 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    return self.list_own_keys::<C>(
-                        keyed,
-                        writer_,
-                        value,
-                        OwnKeys::All,
-                        Opens::Block,
-                    );
+                    return self.list_own_keys::<C>(keyed, writer_, value, Opens::Block);
                 }
 
                 writer.add_for_new_line(number_name.length() + number_value.length() + 4);
@@ -4281,7 +4294,7 @@ pub mod formatter {
                 if writer.failed {
                     self.failed = true;
                 }
-                return self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::Block);
+                return self.list_own_keys::<C>(keyed, writer_, value, Opens::Block);
             }
 
             let num = value.as_number();
@@ -4647,7 +4660,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let Some(keyed) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+            let Some(keyed) = self.own_keys_follow::<C>(writer_, value) else {
                 return Ok(());
             };
             let mut writer = WrappedWriter {
@@ -4684,7 +4697,7 @@ pub mod formatter {
             if writer.failed {
                 self.failed = true;
             }
-            self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::AfterContent)?;
+            self.list_own_keys::<C>(keyed, writer_, value, Opens::AfterContent)?;
             if writer_.write_all(b" }").is_err() {
                 self.failed = true;
             }
@@ -4711,7 +4724,7 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let Some(keyed) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                let Some(keyed) = self.own_keys_follow::<C>(writer_, value) else {
                     return Ok(());
                 };
                 let mut writer = WrappedWriter {
@@ -4736,13 +4749,7 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    return self.list_own_keys::<C>(
-                        keyed,
-                        writer_,
-                        value,
-                        OwnKeys::All,
-                        Opens::Block,
-                    );
+                    return self.list_own_keys::<C>(keyed, writer_, value, Opens::Block);
                 }
                 writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
                 writer.print(format_args!(
@@ -4754,7 +4761,7 @@ pub mod formatter {
                 if writer.failed {
                     self.failed = true;
                 }
-                return self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::Block);
+                return self.list_own_keys::<C>(keyed, writer_, value, Opens::Block);
             }
             if value.to_boolean() {
                 writer.add_for_new_line(4);
@@ -4799,7 +4806,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             let mut keyed = false;
             if js_type == jsc::JSType::JSDate {
-                let Some(follow) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                let Some(follow) = self.own_keys_follow::<C>(writer_, value) else {
                     return Ok(());
                 };
                 keyed = follow;
@@ -4845,7 +4852,7 @@ pub mod formatter {
                 if writer.failed {
                     self.failed = true;
                 }
-                return self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::Block);
+                return self.list_own_keys::<C>(keyed, writer_, value, Opens::Block);
             }
 
             writer.print(format_args!("{str}"));
@@ -4862,13 +4869,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            // `named`: a named key to list. A snapshot lists none, and neither does an arguments object.
+            // `named`: no elements, and an enumerable named property to print. A snapshot has none.
             let (len, named) = match value.array_length_and_named_keys() {
                 Some((len, named)) => (u64::from(len), named && !self.is_snapshot),
-                None => (
-                    value.get_length(self.global_this)?,
-                    !js_type.is_arguments() && self.has_own_keys(value, OwnKeys::Named),
-                ),
+                None => (value.get_length(self.global_this)?, false),
             };
             if (len != 0 || named) && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
@@ -5123,41 +5127,36 @@ pub mod formatter {
                         && (self.always_newline_scope || self.good_time_for_a_new_line());
                     let single_line = self.single_line;
                     let global_this = self.global_this;
-                    if named {
-                        let call_getters = self.call_own_getters;
-                        let first = i as usize;
-                        let mut iter = PropertyIteratorCtx::<C> {
-                            formatter: self,
-                            writer: writer_,
-                            always_newline,
-                            single_line,
-                            opens: if len == 0 {
-                                Opens::EmptyArray
-                            } else {
-                                Opens::AfterEntry
-                            },
-                            broke_line: false,
-                            parent: value,
-                            i: first,
-                        };
-                        value.for_each_own_property(
-                            global_this,
-                            OwnKeys::Named,
-                            call_getters,
-                            (&raw mut iter).cast::<c_void>(),
-                            PropertyIteratorCtx::<C>::for_each,
-                        )?;
-                        let listed = iter.i != first;
-                        was_good_time = was_good_time || iter.broke_line;
-                        if self.failed {
-                            return Ok(());
+                    let first = i as usize;
+                    let mut iter = PropertyIteratorCtx::<C> {
+                        formatter: self,
+                        writer: writer_,
+                        always_newline,
+                        single_line,
+                        opens: if len == 0 {
+                            Opens::EmptyArray
+                        } else {
+                            Opens::AfterEntry
+                        },
+                        broke_line: false,
+                        parent: value,
+                        i: first,
+                    };
+                    value.for_each_property_non_indexed(
+                        global_this,
+                        (&raw mut iter).cast::<c_void>(),
+                        PropertyIteratorCtx::<C>::for_each,
+                    )?;
+                    let listed = iter.i != first;
+                    was_good_time = was_good_time || iter.broke_line;
+                    if self.failed {
+                        return Ok(());
+                    }
+                    if len == 0 && !listed {
+                        if writer_.write_all(b"[]").is_err() {
+                            self.failed = true;
                         }
-                        if len == 0 && !listed {
-                            if writer_.write_all(b"[]").is_err() {
-                                self.failed = true;
-                            }
-                            return Ok(());
-                        }
+                        return Ok(());
                     }
                     writer = WrappedWriter {
                         ctx: writer_,
@@ -5276,7 +5275,7 @@ pub mod formatter {
             let map_name = if is_weak { "WeakMap" } else { "Map" };
 
             if length == 0 {
-                if self.has_own_keys(value, OwnKeys::All) {
+                if self.has_own_keys(value) {
                     return self
                         .print_keyed_empty_collection::<C>(writer_, value, map_name, is_weak);
                 }
@@ -5354,7 +5353,7 @@ pub mod formatter {
             value: JSValue,
             after_entry: bool,
         ) -> JsResult<bool> {
-            if !self.has_own_keys(value, OwnKeys::All) {
+            if !self.has_own_keys(value) {
                 return Ok(false);
             }
             let opens = if after_entry {
@@ -5362,7 +5361,7 @@ pub mod formatter {
             } else {
                 Opens::AtEntryStart
             };
-            self.print_own_keys::<C>(writer_, value, OwnKeys::All, opens)
+            self.print_own_keys::<C>(writer_, value, opens)
         }
 
         /// A `Map` or `Set` with no entries that can have own keys: `Map(0) { key: 1 }`, or its marker past the depth limit.
@@ -5376,7 +5375,12 @@ pub mod formatter {
             is_weak: bool,
         ) -> JsResult<()> {
             if self.depth > self.max_depth {
-                return self.print_depth_exceeded_marker::<C>(writer_, name);
+                // No key prints past the limit. The marker is for one that would: the Structure knows a named key, the walk any other.
+                if value.has_named_key_to_list() || self.lists_an_own_key(value)? {
+                    return self.print_depth_exceeded_marker::<C>(writer_, name);
+                }
+                let _ = write!(writer_, "{name} {{}}");
+                return Ok(());
             }
             let _ = writer_.write_all(name.as_bytes());
             let opens = if is_weak {
@@ -5384,7 +5388,7 @@ pub mod formatter {
             } else {
                 Opens::EmptyCollection
             };
-            self.print_own_keys_one_level_down::<C>(writer_, value, OwnKeys::All, opens)?;
+            self.print_own_keys_one_level_down::<C>(writer_, value, opens)?;
             Ok(())
         }
 
@@ -5476,7 +5480,7 @@ pub mod formatter {
             }
 
             if length == 0 {
-                if self.has_own_keys(value, OwnKeys::All) {
+                if self.has_own_keys(value) {
                     return self
                         .print_keyed_empty_collection::<C>(writer_, value, set_name, is_weak);
                 }
@@ -6303,13 +6307,7 @@ pub mod formatter {
             if self.is_snapshot {
                 return self.print_typed_array_in_snapshot(writer_, value, js_type);
             }
-            // The index keys of a typed array are its elements.
-            let keys = if matches!(js_type, jsc::JSType::ArrayBuffer | jsc::JSType::DataView) {
-                OwnKeys::All
-            } else {
-                OwnKeys::Named
-            };
-            let Some(keyed) = self.own_keys_follow::<C>(writer_, value, keys) else {
+            let Some(keyed) = self.own_keys_follow::<C>(writer_, value) else {
                 return Ok(());
             };
             let mut writer = WrappedWriter {
@@ -6335,7 +6333,7 @@ pub mod formatter {
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                return self.list_own_keys::<C>(keyed, writer_, value, keys, Opens::Block);
+                return self.list_own_keys::<C>(keyed, writer_, value, Opens::Block);
             }
 
             // `ArrayBuffer.typed_array_type` is `JSType` in the Rust
@@ -6356,13 +6354,7 @@ pub mod formatter {
             if slice.is_empty() {
                 if keyed {
                     writer.print(format_args!("({}) [", array_buffer.len));
-                    return self.list_own_keys::<C>(
-                        true,
-                        writer_,
-                        value,
-                        keys,
-                        Opens::EmptyBrackets,
-                    );
+                    return self.list_own_keys::<C>(true, writer_, value, Opens::EmptyBrackets);
                 }
                 writer.print(format_args!("({}) []", array_buffer.len));
                 return Ok(());
@@ -6375,7 +6367,7 @@ pub mod formatter {
             if writer.failed {
                 self.failed = true;
             }
-            self.list_own_keys::<C>(keyed, writer_, value, keys, Opens::AfterContent)?;
+            self.list_own_keys::<C>(keyed, writer_, value, Opens::AfterContent)?;
             if writer_.write_all(b" ]").is_err() {
                 self.failed = true;
             }

@@ -2137,25 +2137,55 @@ describe("the own keys of a value that is not a plain object", () => {
       expect(Bun.inspect(itself, { depth: 0 })).toBe(withKeyAs("extra: [Circular]"));
     });
 
-    it.skipIf(hasElements)("lists an index key and a key that is named length", () => {
-      const own = { value: 0, enumerable: true, writable: true, configurable: true };
+    const own = { value: 0, enumerable: true, writable: true, configurable: true };
+
+    it.skipIf(hasElements)("lists an index key", () => {
       expect(Bun.inspect(Object.defineProperty(make(), "7", own))).toBe(withKeyAs('"7": 0'));
+    });
+
+    // A String object has a `length` of its own, which cannot change.
+    it.skipIf(kind.startsWith("String object"))("lists a key that is named length", () => {
       expect(Bun.inspect(Object.defineProperty(make(), "length", own))).toBe(withKeyAs("length: 0"));
     });
 
     it("prints as before when no key is listed", () => {
-      const deleted = keyed(make());
-      delete deleted.extra;
-      const hidden = Object.defineProperty(make(), "extra", { value: 1 });
-      const named = keyed(make(), { constructor: 1, [Symbol("constructor")]: 2 });
-      const privately = new PrivateField(make());
-      for (const value of [deleted, hidden, named, privately]) {
-        expect(Bun.inspect(value)).toBe(text);
-        // The line of the array is over 80 columns behind the value. Where it breaks is the same.
-        const around = value => Bun.inspect(["a".repeat(70), value, 1, 2, 3]);
-        expect(around(value)).toBe(around(make()));
-      }
-      expect(Bun.inspect({ value: make() }, { depth: 0 })).toBe(
+      // A typed array that has elements throws for some of these. Then the value is a new one.
+      const made = change => {
+        const value = make();
+        try {
+          change(value);
+        } catch {
+          return make();
+        }
+        return value;
+      };
+      const values = {
+        deleted: made(value => delete keyed(value).extra),
+        hidden: made(value => Object.defineProperty(value, "extra", { value: 1 })),
+        named: made(value => keyed(value, { constructor: 1, [Symbol("constructor")]: 2 })),
+        privately: new PrivateField(make()),
+        // Each of these leaves the storage of an index key, or the Structure of another kind of object.
+        deletedIndex: made(value => Reflect.set(value, 7, 1) && delete value[7]),
+        hiddenIndex: made(value => Reflect.defineProperty(value, 7, { value: 1, configurable: true })),
+        frozen: made(Object.freeze),
+        frozenThatRefusedAKey: made(value => Reflect.set(Object.freeze(value), 7, 1)),
+        sealed: made(Object.seal),
+        notExtensible: made(Object.preventExtensions),
+        emptied: made(value => {
+          for (let i = 0; i < 128; i++) value["key" + i] = i;
+          for (let i = 0; i < 128; i++) delete value["key" + i];
+        }),
+      };
+      // The line of the array is over 80 columns behind the value. Where it breaks is the same.
+      const around = value => Bun.inspect(["a".repeat(70), value, 1, 2, 3]);
+      const pastTheDepthLimit = value => Bun.inspect({ value }, { depth: 0 });
+      const printed = value => [Bun.inspect(value), around(value), pastTheDepthLimit(value)];
+      const expected = Object.fromEntries(Object.keys(values).map(name => [name, printed(make())]));
+      expect(Object.fromEntries(Object.entries(values).map(([name, value]) => [name, printed(value)]))).toEqual(
+        expected,
+      );
+      expect(expected.deleted[0]).toBe(text);
+      expect(expected.deleted[2]).toBe(
         `{\n  value: ${pastDepth === text || text.includes("\n") ? pastDepth : text},\n}`,
       );
     });
@@ -2244,6 +2274,73 @@ describe("the own keys of a value that is not a plain object", () => {
       id = 7;
     }
     expect(Bun.inspect(new Task(() => {}))).toBe("Promise { <pending>, id: 7 }");
+    // The header has the number of elements. The `length` is a key like the other.
+    class Packet extends Uint8Array {
+      length = 5;
+      name = "packet";
+    }
+    expect(Bun.inspect(new Packet(2))).toBe('Uint8Array(2) [ 0, 0, length: 5, name: "packet" ]');
+  });
+
+  // The printer reads `size` as the number of entries, also of a WeakSet. A subclass that counts and iterates prints them.
+  it("prints the entries of a WeakSet that counts and iterates, as before", () => {
+    class Listed extends WeakSet {
+      #values = [];
+      add(value) {
+        this.#values.push(value);
+        return super.add(value);
+      }
+      get size() {
+        return this.#values.length;
+      }
+      [Symbol.iterator]() {
+        return this.#values[Symbol.iterator]();
+      }
+    }
+    const set = new Listed().add({ name: "a" });
+    expect(Bun.inspect(set, { compact: true })).toBe('WeakSet(1) { { name: "a" } }');
+    expect(Bun.inspect(keyed(set), { compact: true })).toBe('WeakSet(1) { { name: "a" }, extra: 1 }');
+  });
+
+  // The keys of these three are in a table of the engine and not in the Structure.
+  it("lists a key of the prototype of a wrapper class", () => {
+    const [string, number, boolean] = require("node:vm").runInNewContext(
+      "[String.prototype, Number.prototype, Boolean.prototype]",
+    );
+    const print = () => [string, number, boolean].map(value => Bun.inspect(value));
+    expect(print()).toEqual(['""', "[Number: 0]", "[Boolean: false]"]);
+    for (const value of [string, number, boolean]) value.extra = 1;
+    expect(print()).toEqual(['"" { extra: 1 }', "[Number: 0] { extra: 1 }", "[Boolean: false] { extra: 1 }"]);
+  });
+
+  // The marker says that the value has more to print. An array or a collection with nothing to print has no marker.
+  it("prints the marker of the depth limit only for a key that prints", () => {
+    const pastTheDepthLimit = value => Bun.inspect({ value }, { depth: 0 });
+    const unlisted = { constructor: 1, [Symbol("constructor")]: 2 };
+    let calls = 0;
+    const getter = { get: () => ++calls, enumerable: true };
+    expect({
+      map: pastTheDepthLimit(keyed(new Map())),
+      mapWithAGetter: pastTheDepthLimit(Object.defineProperty(new Map(), "extra", getter)),
+      mapWithAnIndexGetter: pastTheDepthLimit(Object.defineProperty(new Map(), "7", getter)),
+      mapWithAnIndexKey: pastTheDepthLimit(keyed(new Map(), { 7: 1 })),
+      mapWithNoKeyThatPrints: pastTheDepthLimit(keyed(new Map(), unlisted)),
+      setWithNoKeyThatPrints: pastTheDepthLimit(keyed(new Set(), unlisted)),
+      weakMapWithNoKeyThatPrints: pastTheDepthLimit(keyed(new WeakMap(), unlisted)),
+      array: pastTheDepthLimit(keyed([])),
+      arrayWithNoKeyThatPrints: pastTheDepthLimit(keyed([], unlisted)),
+    }).toEqual({
+      map: "{\n  value: [Map ...],\n}",
+      mapWithAGetter: "{\n  value: [Map ...],\n}",
+      mapWithAnIndexGetter: "{\n  value: [Map ...],\n}",
+      mapWithAnIndexKey: "{\n  value: [Map ...],\n}",
+      mapWithNoKeyThatPrints: "{\n  value: Map {},\n}",
+      setWithNoKeyThatPrints: "{\n  value: Set {},\n}",
+      weakMapWithNoKeyThatPrints: "{\n  value: WeakMap {},\n}",
+      array: "{\n  value: [Array ...],\n}",
+      arrayWithNoKeyThatPrints: "{\n  value: [],\n}",
+    });
+    expect(calls).toBe(0);
   });
 
   it("lists index keys, then string keys in the order of their creation, then symbols", () => {
@@ -2376,8 +2473,8 @@ describe("the own keys of a value that is not a plain object", () => {
     expect(message(Object.defineProperty(new Date(0), "total", total))).toContain(
       "Received: 1970-01-01T00:00:00.000Z { total: 5 }",
     );
-    expect(message(Object.defineProperty([], "total", total))).toContain("Received: [ total: 5 ]");
-    expect(message(Object.defineProperty([1], "total", total))).toContain("Received: [ 1, total: 5 ]");
+    // The array printer has the walk that it had.
+    expect(message(Object.defineProperty([1], "total", total))).toContain("Received: [ 1, total: [Getter] ]");
   });
 
   // These print as before. Node.js and `util.inspect` list the key of each. A row moves to `kinds` when its printer does.
@@ -2391,6 +2488,11 @@ describe("the own keys of a value that is not a plain object", () => {
     ["Map iterator", () => new Map([[1, 2]]).entries(), "extra: 1"],
     ["Set iterator", () => new Set([1]).values(), "extra: 1"],
     ["Timeout", () => { const timer = setTimeout(() => {}, 0); clearTimeout(timer); return timer; }, "extra: 1"],
+    ["Immediate", () => { const immediate = setImmediate(() => {}); clearImmediate(immediate); return immediate; }, "extra: 1"],
+    // #36514. A generator object prints as `JSON.stringify` prints it.
+    ["generator object", () => (function* () {})(), "extra: 1"],
+    // #30373. The printer reads `size` as the number of entries and iterates.
+    ["WeakMap with a size that is not 0", () => new WeakMap(), "size: 2", { size: 2 }],
     // The index key of a String object that is no character.
     ["String object with an index key past its text", () => new String("s"), '"7": 1', { 7: 1 }],
     // #38937

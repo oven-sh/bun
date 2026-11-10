@@ -140,6 +140,16 @@ describe("Bun.inspect", () => {
     );
   });
 
+  // The walk of the named keys of an array checks the stack of the engine. On one line the levels above print no indentation.
+  it("stack overflow is thrown when it should be for arrays", () => {
+    let array: unknown = [1];
+    for (let i = 0; i < 16 * 1024; i++) {
+      array = [array];
+    }
+
+    expect(() => Bun.inspect(array, { depth: Infinity, compact: true })).toThrow("Maximum call stack size exceeded.");
+  });
+
   // The value of an own key is one level deeper, in each printer that lists own keys.
   it.each([
     ["Map", (inner: unknown) => Object.assign(new Map(), { inner })],

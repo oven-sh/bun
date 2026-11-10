@@ -4,12 +4,11 @@
 
 namespace Bun {
 
-// Which own keys JSC__JSValue__forEachOwnProperty passes on. This enum must match OwnKeys in src/jsc/JSValue.rs.
-enum class OwnKeys : uint8_t {
-    // No index key: an Array, a typed array and a String object print those as their elements.
-    Named = 0,
-    All = 1,
-};
+// True if the console formatter prints the index keys of such an object as its content: the elements of an Array or a typed array, the text of a String object.
+inline bool printsIndexKeysAsContent(JSC::JSType type)
+{
+    return type == JSC::ArrayType || type == JSC::DerivedArrayType || JSC::isTypedArrayType(type) || type == JSC::StringObjectType || type == JSC::DerivedStringObjectType;
+}
 
 JSC::Structure* createUtilInspectOptionsStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 

@@ -1593,6 +1593,14 @@ pub mod formatter {
         };
     }
 
+    /// First line of an `#[inline(never)]` function that runs only where `is_snapshot` is set, which only
+    /// `bun:test` does: `--trim` leaves the function out of an executable that has no test runner.
+    macro_rules! only_in_snapshots {
+        ($function:path) => {
+            bun_removable_features::removable_definition!(Test, $function)
+        };
+    }
+
     /// What `bun:test` adds to [`Formatter::is_snapshot`]. The `Formatter` is on the stack, which roots the values.
     #[derive(Clone, Copy)]
     pub struct Snapshot<'a> {
@@ -1628,6 +1636,59 @@ pub mod formatter {
                 same_as_older_bun: true,
                 output_length: None,
             }
+        }
+    }
+
+    impl Snapshot<'_> {
+        #[inline(never)]
+        fn name_of_class(
+            &mut self,
+            global_this: &JSGlobalObject,
+            value: JSValue,
+        ) -> JsResult<BunString> {
+            only_in_snapshots!(Self::name_of_class);
+            // Older versions printed a mock function, `URL` and the like as `[class Function]`.
+            let was_function = value.js_type() == jsc::JSType::InternalFunction
+                && value
+                    .get_class_info_name()
+                    .is_some_and(|name| name != b"Function");
+            if was_function && self.like_older_bun.is_some() {
+                return Ok(BunString::static_("Function"));
+            }
+            self.same_as_older_bun &= !was_function;
+            value.get_class_name(global_this)
+        }
+
+        #[inline(never)]
+        fn name_of_function(global_this: &JSGlobalObject, value: JSValue) -> JsResult<BunString> {
+            only_in_snapshots!(Self::name_of_function);
+            if value.is_placeholder_for_omitted_builtin() {
+                value.get_name(global_this)
+            } else {
+                value.get_name_property(global_this)
+            }
+        }
+
+        #[inline(never)]
+        fn element_of(global_this: &JSGlobalObject, array: JSValue, i: u32) -> JsResult<JSValue> {
+            only_in_snapshots!(Self::element_of);
+            array.get_index(global_this, i)
+        }
+
+        /// `Name ` in front of the `{` of an object that is no plain `Object`.
+        #[inline(never)]
+        fn write_class_name(
+            writer: &mut dyn bun_io::Write,
+            global_this: &JSGlobalObject,
+            value: JSValue,
+            has_properties: bool,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::write_class_name);
+            let class_name = value.get_class_name(global_this)?;
+            if !(class_name.eq_ascii(b"Object") || (has_properties && class_name.is_empty())) {
+                let _ = write!(writer, "{class_name} ");
+            }
+            Ok(())
         }
     }
 
@@ -3053,6 +3114,27 @@ pub mod formatter {
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
+        #[inline(never)]
+        fn for_each_in_snapshot(&mut self, value: JSValue) -> JsResult<()> {
+            only_in_snapshots!(Self::for_each_in_snapshot);
+            let global_this = self.formatter.global_this;
+            let ctx = (&raw mut *self).cast::<c_void>();
+            if self.formatter.snapshot.like_older_bun.is_some() {
+                return value.for_each_property_ordered_with_non_enumerable(
+                    global_this,
+                    ctx,
+                    Self::for_each,
+                );
+            }
+            let is_same = value.for_each_property_ordered_calling_getters(
+                global_this,
+                ctx,
+                Self::for_each,
+            )?;
+            self.formatter.snapshot.same_as_older_bun &= is_same;
+            Ok(())
+        }
+
         pub(crate) fn handle_first_property(
             &mut self,
             global_this: &JSGlobalObject,
@@ -3083,10 +3165,7 @@ pub mod formatter {
                 if self.formatter.indent == 0 {
                     let _ = self.writer.write_all(b"\n");
                 }
-                let class_name = value.get_class_name(global_this)?;
-                if !class_name.is_empty() && !class_name.eq_ascii(b"Object") {
-                    let _ = write!(self.writer, "{class_name} ");
-                }
+                Snapshot::write_class_name(self.writer, global_this, value, true)?;
             }
             self.formatter.indent += 1;
             self.formatter.depth += 1;
@@ -3304,10 +3383,12 @@ pub mod formatter {
     }
 
     /// What `is_snapshot` prints in front of an object's class name: its `Symbol.toStringTag`.
+    #[inline(never)]
     fn get_to_string_tag_name(
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
+        only_in_snapshots!(get_to_string_tag_name);
         let is_name = |name: &bun_core::String| !name.is_empty() && !name.eq_ascii(b"Object");
         let name_str = value.get_name_property(global_this)?;
         if is_name(&name_str) {
@@ -3833,6 +3914,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             str: &BunString,
         ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_quoted_string_in_snapshot);
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3875,6 +3957,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             str: &BunString,
         ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_string_object_in_snapshot);
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4148,6 +4231,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_error_in_snapshot);
             let class_name = value.get_class_name(self.global_this)?;
             let message = match value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
                 Some(message) => message.to_bun_string(self.global_this)?,
@@ -4188,17 +4272,7 @@ pub mod formatter {
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
             let printable = if self.is_snapshot {
-                // Older versions printed a mock function, `URL` and the like as `[class Function]`.
-                let was_function = value.js_type() == jsc::JSType::InternalFunction
-                    && value
-                        .get_class_info_name()
-                        .is_some_and(|name| name != b"Function");
-                if was_function && self.snapshot.like_older_bun.is_some() {
-                    BunString::static_("Function")
-                } else {
-                    self.snapshot.same_as_older_bun &= !was_function;
-                    value.get_class_name(self.global_this)?
-                }
+                self.snapshot.name_of_class(self.global_this, value)?
             } else {
                 value.get_name(self.global_this)?
             };
@@ -4279,11 +4353,7 @@ pub mod formatter {
             }
             // `func_name` is "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
             let (printable, func_name) = if self.is_snapshot {
-                let printable = if value.is_placeholder_for_omitted_builtin() {
-                    value.get_name(self.global_this)?
-                } else {
-                    value.get_name_property(self.global_this)?
-                };
+                let printable = Snapshot::name_of_function(self.global_this, value)?;
                 (printable, BunString::EMPTY)
             } else {
                 let printable = value.get_name(self.global_this)?;
@@ -4597,7 +4667,7 @@ pub mod formatter {
             let is_snapshot = self.is_snapshot;
             let get_element = |i: u32| {
                 if is_snapshot {
-                    value.get_index(global_this, i)
+                    Snapshot::element_of(global_this, value, i)
                 } else {
                     value.get_direct_index(global_this, i)
                 }
@@ -5749,7 +5819,6 @@ pub mod formatter {
             let ordered_properties = self.ordered_properties;
             let call_own_getters = self.call_own_getters;
             let is_snapshot = self.is_snapshot;
-            let like_older_bun = self.snapshot.like_older_bun.is_some();
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5760,19 +5829,8 @@ pub mod formatter {
                 i: 0,
             };
 
-            if like_older_bun {
-                value.for_each_property_ordered_with_non_enumerable(
-                    global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
-                )?;
-            } else if is_snapshot {
-                let is_same = value.for_each_property_ordered_calling_getters(
-                    global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
-                )?;
-                iter.formatter.snapshot.same_as_older_bun &= is_same;
+            if is_snapshot {
+                iter.for_each_in_snapshot(value)?;
             } else if ordered_properties {
                 value.for_each_property_ordered(
                     global_this,
@@ -5864,10 +5922,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             if iter_i == 0 {
                 if self.is_snapshot {
-                    let class_name = value.get_class_name(self.global_this)?;
-                    if !class_name.eq_ascii(b"Object") {
-                        let _ = write!(writer_, "{class_name} ");
-                    }
+                    Snapshot::write_class_name(writer_, self.global_this, value, false)?;
                     let _ = writer_.write_all(b"{}");
                 } else if value.is_callable() {
                     let tag = if value.is_class(self.global_this) {
@@ -5968,7 +6023,21 @@ pub mod formatter {
 
             writer.print(format_args!("({}) [ ", array_buffer.len));
 
-            Self::write_typed_array::<C>(&mut writer, js_type, slice, None);
+            use jsc::JSType as T;
+            match js_type {
+                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, slice),
+                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, slice),
+                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, slice),
+                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, slice),
+                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, slice),
+                T::Float16Array => Self::write_typed_array::<bun_core::f16, C>(&mut writer, slice),
+                T::Float32Array => Self::write_typed_array::<f32, C>(&mut writer, slice),
+                T::Float64Array => Self::write_typed_array::<f64, C>(&mut writer, slice),
+                T::BigInt64Array => Self::write_typed_array::<i64, C>(&mut writer, slice),
+                T::BigUint64Array => Self::write_typed_array::<u64, C>(&mut writer, slice),
+                // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                _ => Self::write_typed_array::<u8, C>(&mut writer, slice),
+            }
 
             writer.write_all(b" ]");
             if writer.failed {
@@ -5985,6 +6054,7 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_typed_array_in_snapshot);
             let is_buffer = js_type == jsc::JSType::Uint8Array
                 && value.get_class_name(self.global_this)?.eq_ascii(b"Buffer");
             let array_buffer = value.as_array_buffer(self.global_this).unwrap();
@@ -6010,8 +6080,24 @@ pub mod formatter {
             }
             if !slice.is_empty() {
                 self.indent += 1;
-                let element_indent = indent_width!(self);
-                Self::write_typed_array::<false>(&mut writer, js_type, slice, Some(element_indent));
+                let indent = indent_width!(self);
+                use jsc::JSType as T;
+                match js_type {
+                    T::Int8Array => Self::write_lines_of::<i8>(&mut writer, slice, indent),
+                    T::Int16Array => Self::write_lines_of::<i16>(&mut writer, slice, indent),
+                    T::Uint16Array => Self::write_lines_of::<u16>(&mut writer, slice, indent),
+                    T::Int32Array => Self::write_lines_of::<i32>(&mut writer, slice, indent),
+                    T::Uint32Array => Self::write_lines_of::<u32>(&mut writer, slice, indent),
+                    T::Float16Array => {
+                        Self::write_lines_of::<bun_core::f16>(&mut writer, slice, indent)
+                    }
+                    T::Float32Array => Self::write_lines_of::<f32>(&mut writer, slice, indent),
+                    T::Float64Array => Self::write_lines_of::<f64>(&mut writer, slice, indent),
+                    T::BigInt64Array => Self::write_lines_of::<i64>(&mut writer, slice, indent),
+                    T::BigUint64Array => Self::write_lines_of::<u64>(&mut writer, slice, indent),
+                    // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                    _ => Self::write_lines_of::<u8>(&mut writer, slice, indent),
+                }
                 self.indent -= 1;
                 writer.write_all(b"\n");
                 writer.write_indent(indent_width!(self));
@@ -6034,52 +6120,29 @@ pub mod formatter {
             Ok(())
         }
 
-        /// `snapshot_indent`: print each element on a line of its own at that indent.
+        /// Each element of a typed array on a line of its own.
+        fn write_lines_of<N: TypedArrayElement>(
+            writer: &mut WrappedWriter<'_>,
+            bytes: &[u8],
+            indent: u32,
+        ) {
+            for element in bun_core::Unaligned::<N>::slice_of(bytes) {
+                writer.write_all(b"\n");
+                writer.write_indent(indent);
+                writer.print(format_args!("{},", element.get()));
+            }
+        }
+
         // associated fn (no `&mut self`) so callers can pass a
         // `WrappedWriter` that already borrows `&mut self.estimated_line_length`
         // without tripping E0499. The only `self` use was `print_comma`, which
         // `WrappedWriter` mirrors.
-        fn write_typed_array<const C: bool>(
-            writer: &mut WrappedWriter<'_>,
-            js_type: jsc::JSType,
-            bytes: &[u8],
-            snapshot_indent: Option<u32>,
-        ) {
-            use jsc::JSType as T;
-            let write = match js_type {
-                T::Int8Array => Self::write_typed_array_of::<i8, C>,
-                T::Int16Array => Self::write_typed_array_of::<i16, C>,
-                T::Uint16Array => Self::write_typed_array_of::<u16, C>,
-                T::Int32Array => Self::write_typed_array_of::<i32, C>,
-                T::Uint32Array => Self::write_typed_array_of::<u32, C>,
-                T::Float16Array => Self::write_typed_array_of::<bun_core::f16, C>,
-                T::Float32Array => Self::write_typed_array_of::<f32, C>,
-                T::Float64Array => Self::write_typed_array_of::<f64, C>,
-                T::BigInt64Array => Self::write_typed_array_of::<i64, C>,
-                T::BigUint64Array => Self::write_typed_array_of::<u64, C>,
-                // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                _ => Self::write_typed_array_of::<u8, C>,
-            };
-            write(writer, bytes, snapshot_indent);
-        }
-
-        fn write_typed_array_of<N: TypedArrayElement, const C: bool>(
+        fn write_typed_array<N: TypedArrayElement, const C: bool>(
             writer: &mut WrappedWriter<'_>,
             bytes: &[u8],
-            snapshot_indent: Option<u32>,
         ) {
             // `Unaligned`: an ArrayBuffer over foreign memory (bun:ffi, N-API) starts anywhere.
             let slice = bun_core::Unaligned::<N>::slice_of(bytes);
-
-            if let Some(indent) = snapshot_indent {
-                for element in slice {
-                    writer.write_all(b"\n");
-                    writer.write_indent(indent);
-                    writer.print(format_args!("{},", element.get()));
-                }
-                return;
-            }
-
             // Only the per-element `Display` differs by `N`; the loop is shared.
             Self::write_typed_array_elements::<C>(
                 writer,
@@ -6132,11 +6195,38 @@ pub mod formatter {
             value: JSValue,
             global_this: &'a JSGlobalObject,
         ) -> JsResult<()> {
+            if self.is_snapshot {
+                return self.format_in_snapshot::<ENABLE_ANSI_COLORS>(
+                    result,
+                    writer,
+                    value,
+                    global_this,
+                );
+            }
             let prev_global_this = self.global_this;
             let _restore = defer_restore!(self.global_this, prev_global_this);
             self.global_this = global_this;
 
-            let mut result = result;
+            if let TagPayload::CustomFormattedObject(obj) = result.tag {
+                self.custom_formatted_object = obj;
+            }
+            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+        }
+
+        /// [`Self::format`], with [`Snapshot::printer`] asked first.
+        #[inline(never)]
+        fn format_in_snapshot<const C: bool>(
+            &mut self,
+            mut result: TagResult,
+            writer: &mut dyn bun_io::Write,
+            value: JSValue,
+            global_this: &'a JSGlobalObject,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::format_in_snapshot::<C>);
+            let prev_global_this = self.global_this;
+            let _restore = defer_restore!(self.global_this, prev_global_this);
+            self.global_this = global_this;
+
             if let Some(print) = self.snapshot.printer
                 && print(self, writer, &mut result.tag, value)?
             {
@@ -6146,7 +6236,7 @@ pub mod formatter {
             if let TagPayload::CustomFormattedObject(obj) = result.tag {
                 self.custom_formatted_object = obj;
             }
-            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+            self.print_as::<C>(result.tag.tag(), writer, value, result.cell)
         }
 
         /// Format a single value into `writer`, propagating a JS exception

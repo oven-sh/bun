@@ -47,10 +47,10 @@ static Zig::SourceProvider* findProvider(JSC::VM& vm, const WTF::String& key, co
     return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
 }
 
-// WebCore::clientData() without its type check, which findProvider() has made by then.
+// Called after findProvider(), whose WebCore::clientData() has checked vm.clientData's type: only builds with assertions check it again.
 static ALWAYS_INLINE uint32_t isolationCacheGeneration(JSC::VM& vm)
 {
-    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->isolationCacheGeneration;
+    return uncheckedDowncast<WebCore::JSVMClientData>(vm.clientData)->isolationCacheGeneration;
 }
 
 // For callers that must not read a file: an entry that lookup() would first check against its file counts as absent.
@@ -69,7 +69,7 @@ static COLD NEVER_INLINE Zig::SourceProvider* revalidate(JSC::VM& vm, const WTF:
     case ResolvedSourceValidatorKind::NotAFile:
         canReuse = true;
         break;
-    // Cached before the first resetModules() of the process, when no validator is taken.
+    // No validator was taken: the source was read before this VM's first resetModules(), or the stat of its file failed, or it depends on disk in a way no validator records.
     case ResolvedSourceValidatorKind::None:
         break;
     case ResolvedSourceValidatorKind::Stamp:

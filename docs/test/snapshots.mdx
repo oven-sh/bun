@@ -327,7 +327,9 @@ Inline snapshots don't record which runner wrote them, so Bun accepts a match in
 
 The rule for a file that does not parse is Bun's own: Jest replaces such a file in every run that updates it, and Vitest 5 never replaces it.
 
-Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them. An inline snapshot written that way also passes when its value can no longer be printed, for example when an accessor throws in a test from `"vitest"`. `--update-snapshots` cannot rewrite that snapshot, so the test fails with the accessor's error. To update it, import `test` from `"bun:test"`.
+Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them. In a `.snap` file of Jest or Vitest whose keys are still in that runner's order, only an entry with `[native code]` for an accessor passes this way.
+
+A snapshot written that way also passes when its value can no longer be printed, for example when an accessor throws. `pretty-format` calls the accessor, so this applies to an inline snapshot in a test from `"vitest"` and to a `.snap` file in Jest's or Vitest's format. `--update-snapshots` cannot rewrite that snapshot: the test fails with the accessor's error, and the snapshot stays as it is. To update an inline snapshot, import `test` from `"bun:test"`. To update a `.snap` file, change its first line to `// Bun Snapshot v1, https://bun.sh/docs/test/snapshots` and run `bun test --update-snapshots`. Bun's format prints an accessor that throws as `[native code]`.
 
 ## Best Practices
 

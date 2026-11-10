@@ -1,0 +1,95 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`what Jest wrote 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`what Jest wrote 2`] = `"message"`;
+
+exports[`an own getter 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`a getter in a nested object 1`] = `
+{
+  "nested": [
+    {
+      "bad": [native code],
+      "ok": 1,
+    },
+  ],
+}
+`;
+
+exports[`with property matchers 1`] = `
+{
+  "bad": [native code],
+  "ok": Any<Number>,
+}
+`;
+
+exports[`with a hint: the hint 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`in a describe an own getter 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`two calls and one that prints 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`two calls and one that prints 2`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`two calls and one that prints 3`] = `"the third of the test"`;
+
+exports[`a toJSON that throws 1`] = `
+{
+  "a": 1,
+  "toJSON": [Function: toJSON],
+}
+`;
+
+exports[`a boxed symbol 1`] = `
+{
+  "boxed": Symbol {},
+}
+`;
+
+exports[`a thrown error whose cause getter throws 1`] = `"outer"`;
+
+exports[`a thrown error whose cause has a message getter that throws 1`] = `"outer"`;
+
+exports[`a promise 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`a promise 2`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;

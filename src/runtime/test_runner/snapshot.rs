@@ -443,6 +443,82 @@ impl Snapshots {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
     }
 
+    /// True if an older Bun can have written `saved`. The order of the keys says so for a whole file. In a file whose keys
+    /// are in order, the text says so: only an older Bun printed an accessor as `[native code]`.
+    pub(crate) fn may_be_of_bun(&self, saved: &[u8]) -> bool {
+        self.may_hold_entries_of_bun() || Self::has_accessor_of_bun(saved)
+    }
+
+    fn has_accessor_of_bun(saved: &[u8]) -> bool {
+        strings::contains(saved, b": [native code],\n")
+    }
+
+    /// Appends `counter` to `key`, the name of a snapshot in `format`. Returns the key that the file has the snapshot
+    /// under: `key`, or the key in Bun's format. `whatever_the_order` looks for the latter in every file of Jest or Vitest.
+    #[inline(always)]
+    fn key_in_file(
+        &self,
+        expect: &Expect,
+        format: Format,
+        hint: &[u8],
+        key: &mut Vec<u8>,
+        counter: usize,
+        whatever_the_order: bool,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        let mut counter_string_buf = [0u8; 32];
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
+        key.push(b' ');
+        key.extend_from_slice(counter);
+
+        let mut key_in_file = None;
+        if self.values.contains(key.as_slice()) {
+            key_in_file = Some(key.clone());
+        } else if format != Format::Bun && (whatever_the_order || self.may_hold_entries_of_bun()) {
+            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
+            key_of_bun.push(b' ');
+            key_of_bun.extend_from_slice(counter);
+            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
+        }
+        Ok(key_in_file)
+    }
+
+    /// The entry that the next call of the running test with `hint` takes: its key in the file and a copy of its text.
+    /// Counts and marks nothing.
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn next_entry(&self, expect: &Expect, format: Format, hint: &[u8]) -> Option<(Vec<u8>, Box<[u8]>)> {
+        let mut key = Self::name_of(expect, format, hint).ok()?;
+        let counter = self.counts.get(key.as_slice()).copied().unwrap_or(0) + 1;
+        let key_in_file = self.key_in_file(expect, format, hint, &mut key, counter, true).ok()??;
+        let saved = self.values.get(&key_in_file)?.value.clone();
+        Some((key_in_file, saved))
+    }
+
+    /// `entry` is what `next_entry` returned, and an older Bun wrote it for a value that can't be printed now. The call
+    /// takes its number and the entry stays unchecked, so a file that holds it keeps its order. `--update-snapshots`
+    /// can't print the value either: the entry stays, whatever the result of its test is.
+    /// Returns false if the next call no longer takes `entry`: what printed the value once more took a snapshot too.
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn keep_entry_of_older_bun(
+        &mut self,
+        expect: &Expect,
+        format: Format,
+        hint: &[u8],
+        entry: &(Vec<u8>, Box<[u8]>),
+    ) -> Result<bool, Error> {
+        if self.next_entry(expect, format, hint).as_ref() != Some(entry) {
+            return Ok(false);
+        }
+        if self.update_snapshots
+            && let Some(kept) = self.values.get_mut(&entry.0)
+        {
+            kept.stays = true;
+        }
+        self.add_count(expect, format, hint)?;
+        Ok(true)
+    }
+
     pub(crate) fn match_or_write(
         &mut self,
         files: &FileList,
@@ -453,20 +529,7 @@ impl Snapshots {
         let format = self.format_of(files, expect)?;
 
         let (mut key, counter) = self.add_count(expect, format, hint)?;
-        let mut counter_string_buf = [0u8; 32];
-        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
-        key.push(b' ');
-        key.extend_from_slice(counter);
-
-        let mut key_in_file = None;
-        if self.values.contains(&key) {
-            key_in_file = Some(key.clone());
-        } else if format != Format::Bun && self.may_hold_entries_of_bun() {
-            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
-            key_of_bun.push(b' ');
-            key_of_bun.extend_from_slice(counter);
-            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
-        }
+        let key_in_file = self.key_in_file(expect, format, hint, &mut key, counter, false)?;
 
         // What the entry holds before this call: the value of the file, or a value that this run wrote.
         let (mut is_of_the_file, mut is_of_this_run) = (false, false);
@@ -665,6 +728,27 @@ impl Snapshots {
 
     /// Sets `stays` on the entries of every test that did not run to the end, and on the entries of the hooks unless every test and hook did.
     fn keep_entries_of_tests(values: &mut StringArrayHashMap<Entry>, file: &File, buntest: &BunTest) -> Ran {
+        let ran = Self::keep_entries_named(values, file, buntest, file.may_hold_entries_of_bun);
+        // In a file whose keys are in order, only the text of an entry says that an older Bun wrote into it. An entry that
+        // is about to go can then be under Bun's key for a test that did not run to the end.
+        let is_going = |entry: &Entry| !entry.checked && !entry.stays;
+        let is_of_bun = |entry: &Entry| !entry.checked && Self::has_accessor_of_bun(&entry.value);
+        if file.may_hold_entries_of_bun
+            || !values.values().iter().any(is_going)
+            || !values.values().iter().any(is_of_bun)
+        {
+            return ran;
+        }
+        Self::keep_entries_named(values, file, buntest, true)
+    }
+
+    /// `keys_of_bun` also takes the names that Bun's format gives the tests.
+    fn keep_entries_named(
+        values: &mut StringArrayHashMap<Entry>,
+        file: &File,
+        buntest: &BunTest,
+        keys_of_bun: bool,
+    ) -> Ran {
         let mut results: Vec<(*const ExecutionEntry, TestResult)> = Vec::with_capacity(buntest.execution.sequences.len());
         let mut all_ran_to_the_end = true;
         for sequence in &buntest.execution.sequences {
@@ -681,7 +765,7 @@ impl Snapshots {
 
         // An older Bun wrote its own keys into the files of the other two.
         let formats = [file.format, Format::Bun];
-        let formats = &formats[..if file.may_hold_entries_of_bun && file.format != Format::Bun { 2 } else { 1 }];
+        let formats = &formats[..if keys_of_bun && file.format != Format::Bun { 2 } else { 1 }];
         // Vitest counts a todo, and a `test.fails` that throws, as tests that ran, and removes their entries.
         let is_vitest = file.format == Format::Vitest;
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();

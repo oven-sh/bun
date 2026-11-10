@@ -884,6 +884,28 @@ pub(crate) enum Received {
     Thrown(JSValue),
 }
 
+/// Where a snapshot matcher finds the text that an earlier run saved.
+#[derive(Copy, Clone)]
+enum SavedIn<'a> {
+    /// The argument of an inline matcher, without its indentation.
+    Argument(Option<&'a [u8]>),
+    /// The entry of the `.snap` file that the call takes.
+    File { hint: &'a [u8], format: SnapshotFormat },
+}
+
+/// What `Expect::value_to_snapshot` threw.
+struct DeriveError {
+    error: JsError,
+    /// No older Bun made the read that threw. This is what an older Bun took for the value.
+    older: Option<JSValue>,
+}
+
+impl From<JsError> for DeriveError {
+    fn from(error: JsError) -> Self {
+        DeriveError { error, older: None }
+    }
+}
+
 unsafe extern "C" {
     safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
     safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
@@ -980,7 +1002,11 @@ impl Expect {
         ))
     }
 
-    fn value_to_snapshot(global_this: &JSGlobalObject, received: Received, format: SnapshotFormat) -> JsResult<JSValue> {
+    fn value_to_snapshot(
+        global_this: &JSGlobalObject,
+        received: Received,
+        format: SnapshotFormat,
+    ) -> Result<JSValue, DeriveError> {
         let thrown = match received {
             Received::Value(value) => return Ok(value),
             Received::Thrown(thrown) => thrown,
@@ -993,15 +1019,33 @@ impl Expect {
         }
     }
 
-    /// Mirrors `_toThrowErrorMatchingSnapshot` in jest-snapshot.
+    /// What Jest's format takes of a thrown value.
     #[cold]
     #[optimize(size)]
-    fn message_with_causes(global_this: &JSGlobalObject, thrown: JSValue) -> JsResult<JSValue> {
+    fn message_with_causes(global_this: &JSGlobalObject, thrown: JSValue) -> Result<JSValue, DeriveError> {
         if !thrown.is_object() {
             return Ok(JSValue::UNDEFINED);
         }
+        // The one read that an older Bun made too, and only of an error.
+        let message = match thrown.get(global_this, "message") {
+            Ok(message) => message.unwrap_or(JSValue::UNDEFINED),
+            Err(error) => {
+                return Err(DeriveError { error, older: (!thrown.is_any_error()).then_some(JSValue::UNDEFINED) });
+            }
+        };
+        Self::with_causes(global_this, thrown, message).map_err(|error| {
+            // What `get_truthy` leaves of the message in Bun's arm of `value_to_snapshot`.
+            let is_shown = thrown.is_any_error()
+                && !message.is_empty_or_undefined_or_null()
+                && !(message.is_string() && !message.to_boolean());
+            DeriveError { error, older: Some(if is_shown { message } else { JSValue::UNDEFINED }) }
+        })
+    }
+
+    /// Mirrors `_toThrowErrorMatchingSnapshot` in jest-snapshot.
+    #[optimize(size)]
+    fn with_causes(global_this: &JSGlobalObject, thrown: JSValue, message: JSValue) -> JsResult<JSValue> {
         const MAX_CAUSES: usize = 100;
-        let message = thrown.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED);
         let Some(mut cause) = thrown.get(global_this, "cause")? else {
             return Ok(message);
         };
@@ -1152,17 +1196,12 @@ impl Expect {
         // Trimmed before the print, so `print_threw` has the text to compare.
         let mut buf = vec![0u8; result.map_or(0, <[u8]>::len)];
         let saved = result.map(|saved_value| Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf));
-        let value = Self::value_to_snapshot(global_this, received, format)?;
-        let shown = this.with_property_matchers(global_this, value, property_matchers, fn_name)?;
-        let printed = if format.is_pretty_format() { value } else { shown };
-        let same_as_older_bun =
-            match JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, &mut pretty_value, format) {
-                Ok(same_as_older_bun) => same_as_older_bun,
-                Err(thrown) => {
-                    let saved = saved.as_ref().map(|trim_res| trim_res.trimmed);
-                    return this.print_threw(global_this, thrown, saved, received, shown, property_matchers);
-                }
-            };
+        let saved_in = || SavedIn::Argument(saved.as_ref().map(|trim_res| trim_res.trimmed));
+        let Some((shown, same_as_older_bun)) =
+            this.print_for_snapshot(global_this, received, property_matchers, &mut pretty_value, fn_name, format, saved_in)?
+        else {
+            return Ok(JSValue::UNDEFINED);
+        };
         this.count_inline_snapshot(global_this, runner)?;
 
         let mut start_indent: Option<Box<[u8]>> = None;
@@ -1271,32 +1310,54 @@ impl Expect {
         Ok(())
     }
 
-    /// The print threw. What an older Bun saved can still match: it called no getter at a key and no `toJSON`.
+    /// The value can't be derived or printed. What an older Bun saved can still match: it called no getter at a key and no
+    /// `toJSON`. `older` is what it derived. `Ok` is a call that has passed.
     #[cold]
     #[optimize(size)]
     fn print_threw(
         &self,
         global_this: &JSGlobalObject,
         thrown: PrintError,
-        saved: Option<&[u8]>,
-        received: Received,
+        saved_in: SavedIn<'_>,
+        older: Received,
         shown: JSValue,
         property_matchers: Option<JSValue>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let PrintError { error, is_of_serializer } = thrown;
-        // `--update-snapshots` has to print the value, and no older Bun ran a snapshot serializer.
-        let runner = Jest::runner().filter(|runner| !runner.snapshots.update_snapshots && !is_of_serializer);
-        let (Some(runner), Some(saved)) = (runner, saved) else { return Err(error) };
+        // No older Bun ran a snapshot serializer.
+        let Some(runner) = Jest::runner().filter(|_| !is_of_serializer) else { return Err(error) };
         if !matches!(error, JsError::Thrown) || global_this.has_pending_termination_exception() {
             return Err(error);
         }
+        let entry = match saved_in {
+            SavedIn::Argument(_) => None,
+            SavedIn::File { hint, format } => runner.snapshots.next_entry(self, format, hint),
+        };
+        let saved = match (saved_in, &entry) {
+            (SavedIn::Argument(Some(saved)), _) => saved,
+            (SavedIn::File { .. }, Some((_, saved))) if runner.snapshots.may_be_of_bun(saved) => &**saved,
+            _ => return Err(error),
+        };
         let exception = global_this.take_exception(error);
-        if !Self::was_written_by_another(&[], true, global_this, received, shown, property_matchers, saved)? {
-            return Err(global_this.throw_value(exception));
+        if Self::was_written_by_another(&[], true, global_this, older, shown, property_matchers, saved)? {
+            let (update, total) = (runner.snapshots.update_snapshots, runner.snapshots.total);
+            let is_kept = match (saved_in, &entry) {
+                (SavedIn::File { hint, format }, Some(entry)) => runner
+                    .snapshots
+                    .keep_entry_of_older_bun(self, format, hint, entry)
+                    .map_err(|err| self.throw_snapshot_error(global_this, &err, b""))?,
+                _ => self.count_inline_snapshot(global_this, runner).map(|()| true)?,
+            };
+            if update {
+                // `--update-snapshots` has to print the value, so the call fails. It has its number all the same, so
+                // that the calls after it keep their keys.
+                runner.snapshots.total = total;
+            } else if is_kept {
+                runner.snapshots.passed += 1;
+                return Ok(());
+            }
         }
-        self.count_inline_snapshot(global_this, runner)?;
-        runner.snapshots.passed += 1;
-        Ok(JSValue::UNDEFINED)
+        Err(global_this.throw_value(exception))
     }
 
     #[cold]
@@ -1312,14 +1373,16 @@ impl Expect {
     ) -> JsResult<bool> {
         for format in or_older_bun.then_some(None).into_iter().chain(formats.iter().copied().map(Some)) {
             let is_it = (|| {
-                let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
+                let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))
+                    .map_err(|thrown| thrown.error)?;
                 let Some(format) = format else {
                     // Older Bun wrote the matchers into the object in place, which didn't stick for getters or frozen objects.
                     return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)
                         || JestPrettyFormat::did_older_bun_print(global_this, value, saved)?);
                 };
                 let mut printed: Vec<u8> = Vec::new();
-                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format)?;
+                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format)
+                    .map_err(|thrown| thrown.error)?;
                 Ok(printed == saved)
             })();
             match is_it {
@@ -1366,21 +1429,37 @@ impl Expect {
         Ok(shown)
     }
 
-    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
-    #[optimize(size)]
-    pub(crate) fn match_and_fmt_snapshot(
+    /// Derives and prints what a snapshot matcher compares. Returns the value with `property_matchers` substituted in, and
+    /// `print_snapshot`'s result. `None` is a call that has passed without a print: see `print_threw`.
+    #[inline(always)]
+    fn print_for_snapshot<'a>(
         &self,
         global_this: &JSGlobalObject,
-        value: JSValue,
+        received: Received,
         property_matchers: Option<JSValue>,
         pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
         format: SnapshotFormat,
-    ) -> JsResult<(JSValue, bool)> {
+        saved_in: impl FnOnce() -> SavedIn<'a>,
+    ) -> JsResult<Option<(JSValue, bool)>> {
+        let value = match Self::value_to_snapshot(global_this, received, format) {
+            Ok(value) => value,
+            Err(DeriveError { error, older: Some(older) }) => {
+                let older = Received::Value(older);
+                return self.print_threw(global_this, error.into(), saved_in(), older, JSValue::UNDEFINED, None).map(|()| None);
+            }
+            Err(DeriveError { error, older: None }) => return Err(error),
+        };
         let shown = self.with_property_matchers(global_this, value, property_matchers, fn_name)?;
         let printed = if format.is_pretty_format() { value } else { shown };
-        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format)?;
-        Ok((shown, same_as_older_bun))
+        match JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format) {
+            Ok(same_as_older_bun) => Ok(Some((shown, same_as_older_bun))),
+            Err(thrown) => {
+                // An older Bun derived what Bun's format derives.
+                let older = if format.is_pretty_format() { received } else { Received::Value(value) };
+                self.print_threw(global_this, thrown, saved_in(), older, shown, property_matchers).map(|()| None)
+            }
+        }
     }
 
     #[optimize(size)]
@@ -1398,14 +1477,17 @@ impl Expect {
             Ok(format) => format,
             Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
-        let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
-            self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
+        let saved_in = || SavedIn::File { hint, format };
+        let Some((shown, same_as_older_bun)) =
+            self.print_for_snapshot(global_this, received, property_matchers, &mut pretty_value, fn_name, format, saved_in)?
+        else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
         match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
-                if runner.snapshots.may_hold_entries_of_bun()
+                if runner.snapshots.may_be_of_bun(&saved)
                     && Self::was_written_by_another(
                         &[],
                         !same_as_older_bun || property_matchers.is_some(),

@@ -1,0 +1,58 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`a, what Jest wrote 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`b, an own getter 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`c, with property matchers 1`] = `
+{
+  "bad": [native code],
+  "ok": Any<Number>,
+}
+`;
+
+exports[`d, in a describe an own getter 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`e, with a hint: the hint 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`f, two calls and one that prints 1`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`f, two calls and one that prints 2`] = `
+{
+  "bad": [native code],
+  "ok": 1,
+}
+`;
+
+exports[`f, two calls and one that prints 3`] = `"the third of the test"`;
+
+exports[`g, a getter that returns 1`] = `
+{
+  "good": [native code],
+  "ok": 1,
+}
+`;

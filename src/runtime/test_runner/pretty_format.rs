@@ -3548,12 +3548,6 @@ impl From<JsError> for PrintError {
     }
 }
 
-impl From<PrintError> for JsError {
-    fn from(thrown: PrintError) -> Self {
-        thrown.error
-    }
-}
-
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.

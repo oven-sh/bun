@@ -53,6 +53,13 @@ static ALWAYS_INLINE uint32_t isolationCacheGeneration(JSC::VM& vm)
     return static_cast<WebCore::JSVMClientData*>(vm.clientData)->isolationCacheGeneration;
 }
 
+// For callers that must not read a file: an entry that lookup() would first check against its file counts as absent.
+static Zig::SourceProvider* peekProvider(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+{
+    auto* provider = findProvider(vm, key, pluginContents);
+    return provider && provider->m_cacheGeneration == isolationCacheGeneration(vm) ? provider : nullptr;
+}
+
 // The first lookup of an entry since isolationCacheGeneration moved: it stays only if its file is still what it was made from.
 static COLD NEVER_INLINE Zig::SourceProvider* revalidate(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
 {
@@ -94,8 +101,10 @@ void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::Sourc
 {
     if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource || provider.m_fromEarlierGeneration)
         return;
+    auto* clientData = WebCore::clientData(vm);
     provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
-    WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
+    provider.m_cacheGeneration = clientData->isolationCacheGeneration;
+    clientData->isolationSourceProviderCache.set(key, &provider);
 }
 
 const IsolatedInternalModule* IsolatedModuleCache::lookupInternalModule(JSC::VM& vm, uint32_t id)
@@ -114,17 +123,8 @@ void IsolatedModuleCache::insertInternalModule(JSC::VM& vm, uint32_t id, const J
 
 void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
-    if (!lookup(vm, key, pluginContents))
+    if (!peekProvider(vm, key, pluginContents))
         insert(vm, key, provider, pluginContents);
-}
-
-void IsolatedModuleCache::dropForReset(JSC::VM& vm, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps)
-{
-    auto* clientData = WebCore::clientData(vm);
-    clientData->isolationSourceProviderCache.removeIf([&](auto& entry) {
-        return !keeps(entry.key, *static_cast<Zig::SourceProvider*>(entry.value.get()));
-    });
-    Bun__VM__didResetModules(clientData->bunVM);
 }
 
 void IsolatedModuleCache::didReset(JSC::VM& vm)
@@ -163,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsolatedModuleCacheSourceType, (JSC::JSGlobal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* provider = IsolatedModuleCache::lookup(vm, key);
+    auto* provider = peekProvider(vm, key, nullptr);
     if (!provider)
         return JSC::JSValue::encode(JSC::jsNull());
     switch (provider->sourceType()) {

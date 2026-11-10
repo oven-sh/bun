@@ -308,6 +308,10 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+    // Goes up at each resetModules(), and once more when a test file that reset ends. A cached source of another generation is checked against its file.
+    uint32_t isolationCacheGeneration { 0 };
+    // Whether the running test file has called resetModules().
+    bool isolationCacheWasResetInFile { false };
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;

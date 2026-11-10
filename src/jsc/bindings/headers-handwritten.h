@@ -122,6 +122,13 @@ typedef struct ErrorableString {
 } ErrorableString;
 static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
 struct bun_ModuleInfoDeserialized;
+// What ResolvedSource::validator holds. Mirrored by `ValidatorKind` in src/jsc/ResolvedSource.rs.
+enum class ResolvedSourceValidatorKind : uint8_t {
+    None = 0,
+    Stamp = 1,
+    Content = 2,
+    NotAFile = 3,
+};
 // Every BunString here is owned by whichever frame holds the struct (see
 // ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
 // with `transferToWTFString()`, which leaves the field empty.
@@ -131,6 +138,8 @@ typedef struct ResolvedSource {
     bool isCommonJSModule;
     // The transpile was dispatched before a jest.resetModules() or vi.resetModules() that ran since, or for a test file that is over, so IsolatedModuleCache must not cache it.
     bool from_earlier_generation;
+    // How IsolatedModuleCache checks this source against its file after a resetModules(). None until a reset has armed the VM.
+    ResolvedSourceValidatorKind validator_kind;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
@@ -159,8 +168,10 @@ typedef struct ResolvedSource {
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
+    // Stamp: a number made from the file's dev, ino, size, mtime and ctime. Content: a hash of the text that was read.
+    uint64_t validator;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, from_earlier_generation) == 49 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 144 && offsetof(ResolvedSource, from_earlier_generation) == 49 && offsetof(ResolvedSource, validator_kind) == 50 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104 && offsetof(ResolvedSource, validator) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -189,7 +200,7 @@ public:
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
     }
 };
-static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 152 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
 typedef struct SystemError {

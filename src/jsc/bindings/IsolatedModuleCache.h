@@ -4,7 +4,6 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Strong.h>
-#include <wtf/ScopedLambda.h>
 
 namespace Zig {
 class GlobalObject;
@@ -77,11 +76,8 @@ public:
     // For callers that run some time after their lookup, or without one: the
     // answer of the transpiler's thread, which another fetch of the key may
     // have preceded, and Module._extensions[".js"] called by a program. The
-    // provider that is cached for the key stays.
+    // provider that is cached for the key stays, unless lookup() would check it against its file first: this reads no file.
     static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
-
-    // For resetModules(): evicts every entry that `keeps` doesn't claim. What a transpile that is out brings back is not cached either.
-    static void dropForReset(JSC::VM&, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps);
 
     // For resetModules(): drops nothing. From here on, lookup() checks each entry against its file before it returns it again.
     static void didReset(JSC::VM&);
@@ -94,7 +90,7 @@ public:
 };
 
 // bun:internal-for-testing — returns the cached provider's sourceType name
-// for a resolved specifier, or null when not cached.
+// for a resolved specifier, or null when it's not cached or lookup() would check it against its file first.
 JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Zig::GlobalObject* globalObject);
 
 } // namespace Bun

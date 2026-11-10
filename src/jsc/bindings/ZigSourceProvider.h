@@ -53,10 +53,14 @@ public:
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
     bool m_fromEarlierGeneration { false };
-    // Set by vi.resetModules() once it has kept this source, which it asks about at every call.
-    bool m_isExternalizedByVitest { false };
+    // What m_validator holds.
+    ResolvedSourceValidatorKind m_validatorKind { ResolvedSourceValidatorKind::None };
     // Set by IsolatedModuleCache::insert() and compared by lookup().
     uint64_t m_madeFromHash { 0 };
+    // IsolatedModuleCache's generation when it inserted this source or last found its file unchanged. It stays before m_validator so that 4-byte and 1-byte fields declared before it pack with it.
+    uint32_t m_cacheGeneration { 0 };
+    // What IsolatedModuleCache compares with the file once m_cacheGeneration is not the cache's: a number made from the file's stat, or a hash of its text.
+    uint64_t m_validator { 0 };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
@@ -69,6 +73,8 @@ private:
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_fromEarlierGeneration(resolvedSource.from_earlier_generation)
+        , m_validatorKind(resolvedSource.validator_kind)
+        , m_validator(resolvedSource.validator)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {
@@ -81,6 +87,10 @@ private:
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;
 };
+// WTF's reference count is larger with assertions, so only a build without them is held to mimalloc's 256-byte size class.
+#if !ASSERT_ENABLED
+static_assert(sizeof(SourceProvider) <= 256, "Zig::SourceProvider is over mimalloc's 256-byte size class");
+#endif
 
 } // namespace Zig
 

@@ -5371,6 +5371,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
         if (derived)
             derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     }
+    Bun::IsolatedModuleCache::didFinishFile(JSC::getVM(globalObject));
 }
 
 // `bun test --isolate=modules`: the global object is kept, but realms the finished file created from it are retired.
@@ -5382,6 +5383,7 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
         if (derived)
             derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     }
+    Bun::IsolatedModuleCache::didFinishFile(JSC::getVM(globalObject));
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

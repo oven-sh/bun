@@ -4,6 +4,7 @@ use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
+use crate::js::ast_nodes::statement_after;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
@@ -105,9 +106,28 @@ pub(crate) fn write_function<'a>(
                 }
             ]
         );
+    } else if f.options().semicolons.is_as_needed() && block_follows_declaration(func) {
+        write!(f, ";");
     } else {
         write!(f, OptionalSemicolon);
     }
+}
+
+/// `function f(): void;⏎{}`: without the `;`, the block is the body of `f`. Prettier and oxfmt print
+/// `function f(): void⏎{}` with `semi: false`.
+fn block_follows_declaration(func: Func<'_>) -> bool {
+    let statement = match func.owner() {
+        Node::Stmt(statement) => statement,
+        // `export default function f(): void;`
+        Node::Expr(e) => match e.parent() {
+            Node::Stmt(statement) if matches!(statement.kind(), StmtKind::ExportDefault(_)) => {
+                statement
+            }
+            _ => return false,
+        },
+        _ => return false,
+    };
+    statement_after(statement).is_some_and(|next| next.tag() == StmtTag::Block)
 }
 
 /// Prettier's `isIifeCalleeOrTaggedTemplateExpressionTag`.

@@ -938,6 +938,44 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // Prettier 3.9.9 and oxfmt 0.72.0 print `function f(): void⏎{}` with `semi: false`, and the block is the body of
+  // `f`. A `declare function` then no longer parses.
+  test.each(["prettier", "oxfmt"])(
+    "--no-semi keeps the `;` after a function declaration without a body when a block follows: %s",
+    async flavor => {
+      const cases: Record<string, [source: string, printed: string]> = {
+        "overload.ts": ["function f(): void;\n{ a() }\n", "function f(): void;\n{\n  a()\n}\n"],
+        "declare.ts": ["declare function f(): void;\n{ a() }\n", "declare function f(): void;\n{\n  a()\n}\n"],
+        "export.ts": ["export function f(): void;\n{ a() }\n", "export function f(): void;\n{\n  a()\n}\n"],
+        "default.ts": [
+          "export default function f(): void;\n{ a() }\n",
+          "export default function f(): void;\n{\n  a()\n}\n",
+        ],
+        "comment.ts": ["function f(): void; // c\n{ a() }\n", "function f(): void; // c\n{\n  a()\n}\n"],
+        "empty-statement.ts": ["function f(): void;\n;\n{ a() }\n", "function f(): void;\n{\n  a()\n}\n"],
+        "block.ts": ["{\n  function f(): void;\n  { a() }\n}\n", "{\n  function f(): void;\n  {\n    a()\n  }\n}\n"],
+        "namespace.ts": [
+          "namespace N {\n  function f(): void;\n  { a() }\n}\n",
+          "namespace N {\n  function f(): void;\n  {\n    a()\n  }\n}\n",
+        ],
+        "case.ts": [
+          "switch (a) {\n  case 1:\n    function f(): void;\n    { a() }\n}\n",
+          "switch (a) {\n  case 1:\n    function f(): void;\n    {\n      a()\n    }\n}\n",
+        ],
+        // Before anything else, the `;` goes, as in Prettier.
+        "implementation.ts": [
+          "function f(): void;\nfunction f() {}\nexport function g(): void;\nexport function g() {}\n",
+          "function f(): void\nfunction f() {}\nexport function g(): void\nexport function g() {}\n",
+        ],
+      };
+      const names = Object.keys(cases);
+      const files = Object.fromEntries(names.map(name => [name, cases[name][0]]));
+      const printed = Object.fromEntries(names.map(name => [name, cases[name][1]]));
+      const result = await formatChecked(files, ["--no-semi", `--flavor=${flavor}`], { reads: names });
+      expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+    },
+  );
+
   test("in TypeScript, never ends a line with something that looks like type arguments", async () => {
     // Prettier 3.9.9 prints `a <\n  b >\n  c;`, which parses as `a<b>; c;`.
     const files = { "a.ts": "a < b > c;\n", "b.js": "a < b > c;\n" };

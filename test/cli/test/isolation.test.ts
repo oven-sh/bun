@@ -3232,9 +3232,7 @@ describe.concurrent("the SourceProvider cache checks a source against its file a
   describe.each([".js", ".custom"])("a require.extensions handler for %s that was set before the reset", extension => {
     // Without a flag no source is kept, and the handler is called. It has to be called for a source that was kept too.
     const noFlag = ["no flag", [], {}] as const;
-    // Each test has a text of its own. An assignment to require.extensions that runs a second time from the same place
-    // does not reach the loader, with or without a flag, so one test body that ran for both would set no handler in
-    // its second run.
+    // One test text per API: a statement's second assignment to require.extensions does not always reach the loader.
     const resetsWith = (api: "jest" | "vi") => `
       test("${api}.resetModules()", () => {
         const loads = (globalThis.loads = []);

@@ -221,6 +221,11 @@ pub(crate) struct File {
     /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
     /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
     may_hold_entries_of_bun: bool,
+    /// Without `--update-snapshots`, an entry was found under Bun's key, or differs from what its test prints in the
+    /// file's format. That entry stays as it is, so it may be an older Bun's.
+    left_an_entry_alone: bool,
+    /// How many entries the file had. Without `--update-snapshots` they stay where they are, and the run's own come after them.
+    loaded: usize,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -241,17 +246,19 @@ fn snapshot_file_path(files: &FileList, file_id: FileId, buf: &mut [u8]) -> Opti
     Some((dir_path, dir_len, pos - 1))
 }
 
-/// jest-snapshot's `printBacktickString`.
+/// jest-snapshot's `printBacktickString`. A carriage return is written as `\r`, as Vitest writes it:
+/// the character itself is read back as a line feed.
 #[optimize(size)]
 fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'`');
     let mut rest = text;
-    while let Some(i) = strings::index_of_any(rest, b"`\\$") {
+    while let Some(i) = strings::index_of_any(rest, b"`\\$\r") {
         out.extend_from_slice(&rest[..i]);
-        if rest[i] != b'$' || rest.get(i + 1) == Some(&b'{') {
-            out.push(b'\\');
+        match rest[i] {
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'$' if rest.get(i + 1) != Some(&b'{') => out.push(b'$'),
+            byte => out.extend_from_slice(&[b'\\', byte]),
         }
-        out.push(rest[i]);
         rest = &rest[i + 1..];
     }
     out.extend_from_slice(rest);
@@ -376,7 +383,15 @@ impl Snapshots {
             self.file_buf = Vec::new();
         }
         let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
+        self._current_file = Some(File {
+            id: file_id,
+            format,
+            file: None,
+            dirty: false,
+            may_hold_entries_of_bun,
+            left_an_entry_alone: false,
+            loaded: self.values.len(),
+        });
         Ok(format)
     }
 
@@ -411,11 +426,17 @@ impl Snapshots {
         let mut key_in_file = None;
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
-        } else if format != Format::Bun && self.may_hold_entries_of_bun() {
+        } else if format != Format::Bun
+            && let Some(file) = self._current_file.as_mut().filter(|file| file.may_hold_entries_of_bun)
+        {
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
             key_of_bun.push(b' ');
             key_of_bun.extend_from_slice(counter);
-            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
+            // An entry that this run added is not an older Bun's. `--update-snapshots` moves entries, so it takes any.
+            if self.values.get_index(&key_of_bun).is_some_and(|at| self.update_snapshots || at < file.loaded) {
+                key_in_file = Some(key_of_bun);
+                file.left_an_entry_alone |= !self.update_snapshots;
+            }
         }
 
         if let Some(key_in_file) = key_in_file
@@ -428,6 +449,9 @@ impl Snapshots {
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
+                if let Some(file) = self._current_file.as_mut() {
+                    file.left_an_entry_alone = true;
+                }
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
             }
             if is_to_be_renamed {
@@ -720,8 +744,10 @@ impl Snapshots {
         let keys = self.values.keys();
         // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
-        // Unchecked entries may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
-        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(|entry| !entry.checked);
+        // An entry that no test asked for, or that its test left alone, may be an older Bun's.
+        // Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
+        let stays_as_it_is = file.may_hold_entries_of_bun
+            && (file.left_an_entry_alone || self.values.values().iter().any(|entry| !entry.checked));
         for (i, key) in keys.iter().enumerate() {
             let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
             order.insert(at, i);

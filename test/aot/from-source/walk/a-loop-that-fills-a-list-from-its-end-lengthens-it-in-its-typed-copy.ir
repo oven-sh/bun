@@ -11,7 +11,7 @@
 # In again() nobody knows how long the list is: it is stored into as before, and its length stays read once in front.
 # In seen() the raise writes the heap of lengths alone: kind, pointer and room stay known from in front, and `a.length` is read in the turn, on either side of the store.
 # RUN(FILL): walk f1:Body mechanisms=all
-# FILL: [[room]]: {{*}} = GetArrayRoom
+# FILL: [[room]]: {{*}} = GetArrayCapacity
 # FILL: LessEq {{*}}, [[room]]
 # FILL: isLoopHead=true
 # FILL-NOT: GetArrayLength
@@ -21,7 +21,7 @@
 # RUN(AGAIN): walk f2:Body mechanisms=all
 # AGAIN-NOT: ExtendArrayLength
 # RUN(SEEN): walk f3:Body mechanisms=all
-# SEEN: GetArrayRoom
+# SEEN: GetArrayCapacity
 # SEEN: isLoopHead=true
 # SEEN: GetArrayLength
 # SEEN: ExtendArrayLength

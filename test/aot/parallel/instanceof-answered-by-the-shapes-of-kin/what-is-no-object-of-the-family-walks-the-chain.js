@@ -1,5 +1,5 @@
 // Beside the kin: primitives, a plain record, a list, a function, an object made by Object.create below the class, a proxy over a cat, an object of a class made twice.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}
 class Dog extends Animal {}

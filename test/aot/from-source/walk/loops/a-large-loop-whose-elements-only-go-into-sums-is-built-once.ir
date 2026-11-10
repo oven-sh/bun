@@ -3,7 +3,7 @@
 # function join(d) { let s = ""; for (let i = 0; i < d.length; i++) { s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; } return s.length; }
 # print(join(JSON.parse('["a", "bc"]')));
 # -- end of source
-# RUN(COUNT): compile LoopsBuiltTwice mechanisms=all
-# COUNT: statistic LoopsBuiltTwice 0
+# RUN(COUNT): compile WalkLoopsVersioned mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 0
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 120

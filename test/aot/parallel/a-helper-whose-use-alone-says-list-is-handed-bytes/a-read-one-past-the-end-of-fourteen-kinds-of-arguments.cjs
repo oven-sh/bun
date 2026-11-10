@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 1
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 1
 // In a file without types `d[i]` and `d.length` say "a list of numbers". What comes may as well be a Uint8Array or a Buffer: the loop asks in front which of the three it is.
 var key = JSON.parse('"go"');
 var T = { go(d) { var h = 7; for (var i = 0; i <= d.length; i++) h = h * 31 + d[i]; return h; } };

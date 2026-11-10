@@ -40,7 +40,7 @@ export default b.declarations(
   // The loader asks what is registered with it first, under every name that the build has not followed, and answers with the module that the plugin makes.
   marked("RunsCodeWithLoader", ["Bun.plugin"]),
   // functionGetProtectedObjects() in src/jsc/modules/BunJSCModule.h: every protected cell and every strong root that is an object.
-  marked("HandsOutWhatNativeCodeHolds", ["bun:jsc.getProtectedObjects"]),
+  marked("ExposesNativeRoots", ["bun:jsc.getProtectedObjects"]),
   marked("HoldsLoader", [
     "%ModuleRequire%.cache",
     "%ModuleRequirePrototype%.cache",
@@ -110,7 +110,7 @@ export default b.declarations(
   // expect() answers an Expect. A matcher answers undefined, a promise of it, or an object of one of the runner's classes: expect.bind.ts.
   // spyOn() and mock() answer a mock function: JSMockFunction in JSMockFunction.cpp. What lies below mock is not marked: mock.module() goes to the loader.
   // The mark on a class stands for all that lies below it.
-  marked("HandsOutNoOtherHostObject", [
+  marked("ExposesOnlyDescribedObjects", [
     "bun:test.test",
     "bun:test.xtest",
     "bun:test.describe",

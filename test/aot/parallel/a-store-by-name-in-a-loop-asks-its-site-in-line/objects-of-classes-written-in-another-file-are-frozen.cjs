@@ -1,5 +1,5 @@
 // A compiled object says in its own words that it is frozen: its structure does not.
-// STATISTIC: StoresByNameThatAskTheirSitesInLine >= 1
+// STATISTIC: SiteCachedStoresEmittedInline >= 1
 "use strict";
 const { every, Coffer, Locker, through } = require("./lib-classes-that-list-the-name.cjs");
 function fill(crates, turns, given) { let sum = 0; for (let i = 0; i < turns; i++) { const crate = crates[i % crates.length]; crate.lid = given === undefined ? i : given; sum = (sum + i) | 0; } return sum; }

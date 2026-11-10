@@ -71,8 +71,8 @@ test("a name with a part added in each of 10 branches is one of 1024 texts", asy
 });
 
 test("a name with a part added in each of 24 branches does not hold the build up", async () => {
-  // The two builds run side by side: a crowded machine holds both up alike.
-  const [withOne, withMany] = await Promise.all(
+  // Both builds run at the same time, so a busy machine slows them equally.
+  const [oneBranchTime, manyBranchesTime] = await Promise.all(
     [1, 24].map(async count => {
       using dir = tempDir("many-written-paths", {
         "main.mjs": withBranches(count),
@@ -89,5 +89,5 @@ test("a name with a part added in each of 24 branches does not hold the build up
       return performance.now() - started;
     }),
   );
-  expect(withMany).toBeLessThan(5 * withOne + 5_000);
+  expect(manyBranchesTime).toBeLessThan(5 * oneBranchTime + 5_000);
 });

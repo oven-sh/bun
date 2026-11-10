@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 0
+// STATISTIC: WalkLoopsVersioned >= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 function make(first) { return class { #rows = [first, 2.5, q]; get rows() { return this.#rows; } static sum(o, t) { let s = t & 1; for (let i = 0; i < o.#rows.length; i++) s = s + o.#rows[i] * 2; return s; } }; }

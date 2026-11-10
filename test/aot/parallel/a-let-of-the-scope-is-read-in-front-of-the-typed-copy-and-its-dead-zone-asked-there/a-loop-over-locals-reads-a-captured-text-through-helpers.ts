@@ -1,5 +1,5 @@
 // The counter and the bound are locals; only the text is captured.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 1
+// STATISTIC: CapturedVariableReadsHoisted >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

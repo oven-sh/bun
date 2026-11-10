@@ -4,7 +4,7 @@
 # function count(values, most) { let found = 0; for (let at = 0; at < most; at = (at + 1) | 0) if (values[at] > 2) found = (found + 1) | 0; return found; }
 # print(count([1, 2, 3, 4, 5], [].length + 5));
 # -- end of source
-# STATISTIC: WalksOfLoopsUndone <= 2
+# STATISTIC: LoopVisitsUndone <= 2
 # RUN: walk f1 mechanisms=all
 # CHECK: code f1:Body
 # RUN(ANSWERS): run-in-shell mechanisms=all

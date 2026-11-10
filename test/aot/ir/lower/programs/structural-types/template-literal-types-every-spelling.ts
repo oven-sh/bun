@@ -86,7 +86,7 @@ attempt("written out", () => {
 
 // GENERATED: make pixels isOn isId remember
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = String string="id-"
 // CHECK-NEXT: v2 = ToString v0
@@ -95,7 +95,7 @@ attempt("written out", () => {
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="pixels"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v2 = PropGet v1 key="parseFloat" [isFreeName]
@@ -104,7 +104,7 @@ attempt("written out", () => {
 // CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number}}, {declared={type=number}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isOn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"is-false"|"is-true" flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"is-false"|"is-true" flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|"is-false"|"is-true"):
 // CHECK-NEXT: v1 = String string="is-true"
 // CHECK-NEXT: v2 = StrictEq v0, v1
@@ -112,7 +112,7 @@ attempt("written out", () => {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isId"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = PropGet v0 key="startsWith"
 // CHECK-NEXT: v2 = String string="id-"
@@ -150,7 +150,7 @@ attempt("written out", () => {
 // CHECK-NEXT: Return v28
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="remember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: number):
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="table"

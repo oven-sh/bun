@@ -1,4 +1,4 @@
-// STATISTIC: HoldersOnlyMeasuredByHeadsGuessedToBeLists >= 1
+// STATISTIC: ArraysSpeculatedFromLoopBounds >= 1
 "use strict";
 // The read of the length throws in the first turn of the outer loop, behind what stands in front of it; with no points it is never reached.
 const spots = JSON.parse('[[0.5,1.5],[2.25,0.75],[3.5,3.25],[1.125,2.5],[4.75,0.25],[2.5,2.5]]');

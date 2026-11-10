@@ -9,11 +9,11 @@
 # and the rest behind the turns laid out, were asked "are four left" once a layout: eight times for a view. All layouts of a row hold the same number of turns: too few for one are too few for all: they go straight to the
 # loop as written. Only a failed question for the kind, and a turn that is left, lead to the next front. A call over 4 doubles 181 > 155 instructions, over 12 Int16 252 > 235; no kernel of 48 slower by more than x1.002.
 # Eight layouts: the rest of seven passes the others by.
-# RUN: compile LayoutsWhoseRestGoesStraightToLoopAsWritten mechanisms=all
-# CHECK: statistic LayoutsWhoseRestGoesStraightToLoopAsWritten 7
+# RUN: compile UnrolledLoopRemaindersShared mechanisms=all
+# CHECK: statistic UnrolledLoopRemaindersShared 7
 # No turn over a view is ever left for the next front (no hole, no store that changes a kind): a front is come to from the front before it alone, where the count was asked. So the first front asks it for all eight.
-# RUN(ONCE): compile LayoutsBehindCountAskedOnce mechanisms=all
-# ONCE: statistic LayoutsBehindCountAskedOnce 7
+# RUN(ONCE): compile UnrolledLoopTripChecksReused mechanisms=all
+# ONCE: statistic UnrolledLoopTripChecksReused 7
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33
 # ANSWERS-NEXT: exited with 0

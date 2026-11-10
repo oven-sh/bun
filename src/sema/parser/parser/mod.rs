@@ -412,6 +412,7 @@ pub(crate) fn run<'a>(
     };
     let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
+    let ignore_comments = lx.ignore_comments;
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.declared = declared;
@@ -431,6 +432,7 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
+    f.ignore_comments = ignore_comments;
     if !options.ignores_pure_comments {
         pure_calls::mark_pure_calls(&mut f, text);
     }

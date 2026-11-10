@@ -1,6 +1,6 @@
 // A handler stands round the turn, round the loops, or behind them as a cleanup, and reads what the turn held; a text grows between the two stores. Whatever arm the turn takes, the handler sees what was written and the text grows once.
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 1
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 1
+// STATISTIC: RowStoreRegionsGuarded >= 1
+// STATISTIC: RowStoreRegionsGuarded >= 1
 "use strict";
 function pushed(...values) { const row = []; for (const value of values) row.push(value); return row; }
 function rows() { return pushed(pushed(0.5, 1.5, 2.5, 3.5), pushed(4.5, 5.5, 6.5, 7.5), pushed(8.5, 9.5, 10.5, 11.5)); }

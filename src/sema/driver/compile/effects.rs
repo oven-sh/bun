@@ -352,7 +352,15 @@ impl ProgramOrigins<'_, '_> {
         })
     }
 
-    pub(super) fn apply_effects(&self, mut diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {
+    pub(super) fn apply_effects(&self, diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {
+        self.apply_effects_to_check(diagnostics, false)
+    }
+
+    pub(super) fn apply_effects_to_check(
+        &self,
+        mut diagnostics: Vec<Diagnostic>,
+        keeps_dependency_errors: bool,
+    ) -> Vec<BuildDiagnostic> {
         let _reading = ReadingNoTrees::begin();
         crate::sort_and_deduplicate(&mut diagnostics);
         let with_effects = diagnostics.into_iter().filter_map(|mut diagnostic| {
@@ -363,7 +371,16 @@ impl ProgramOrigins<'_, '_> {
             let is_for_lack_of_bun_types = self.is_for_lack_of_bun_types(origin, &diagnostic);
             let names_missing_type_library = !matches!(self.bun_types, BunTypes::Installed)
                 && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
-            let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
+            let effect_by_origin = effect_of(origin, diagnostic.class, diagnostic.category);
+            let is_kept_for_dependency = keeps_dependency_errors
+                && origin == FileOrigin::DependencySource
+                && effect_by_origin == Effect::WithdrawsTrust
+                && diagnostic.file.is_some();
+            let effect = match if is_kept_for_dependency {
+                Effect::StopsBuild
+            } else {
+                effect_by_origin
+            } {
                 Effect::Dropped => return None,
                 Effect::StopsBuild | Effect::Warns if self.is_in_jsdoc_comment(&diagnostic) => {
                     return None;
@@ -419,6 +436,10 @@ impl ProgramOrigins<'_, '_> {
                 | Effect::Warns
                 | Effect::WithdrawsTrust
                 | Effect::InternalError) => effect,
+            };
+            let effect = match is_kept_for_dependency {
+                true => Effect::WithdrawsTrust,
+                false => effect,
             };
             Some(BuildDiagnostic { diagnostic, effect })
         });

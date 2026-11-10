@@ -1,6 +1,6 @@
 // As a bundler lays a module: a wrapper that runs once, classes in it, a method that reads what the wrapper holds. The record of the class cannot make that method, so the definition lays it and every member behind it.
 // The run time has to take what the definition lays for what the record says: no guard of a name ends at the class's own definition.
-// COUNT: counter:ClassGuardBitsEnded = 0
+// COUNT: counter:ClassGuardBitsInvalidated = 0
 function init() {
   const table = { step: 3 };
   class A { a: number; constructor(a: number) { this.a = a; } m(): number { return this.a + table.step; } k(): number { return 1; } }

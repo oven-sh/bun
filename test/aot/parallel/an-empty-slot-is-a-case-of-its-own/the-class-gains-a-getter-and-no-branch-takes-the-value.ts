@@ -1,4 +1,4 @@
-// STATISTIC: EmptySlotsTakenAsCases = 1
+// STATISTIC: EmptySlotCasesEmitted = 1
 interface Part { id: number }
 class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
 interface Whole extends Kind { part: Part; label: string }

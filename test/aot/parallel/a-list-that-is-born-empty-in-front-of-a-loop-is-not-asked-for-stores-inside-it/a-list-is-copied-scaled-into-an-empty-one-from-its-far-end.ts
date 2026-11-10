@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 const rounds = Number(process.argv[2] ?? 3);
 function scaled(source: any, by: number): any {
   const count = source.length;

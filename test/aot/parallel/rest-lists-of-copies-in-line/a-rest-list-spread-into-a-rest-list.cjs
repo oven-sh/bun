@@ -1,5 +1,5 @@
 // outer(...r) spreads its list into inner(...s), which hands its own on to who changes it; outer reads its list behind: it is another list and has not changed.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 function change(list) { list.push("more"); list[0] = "changed"; return list.length; }
 const flags = JSON.parse("[true,false,true]");
 function inner(flag, ...s) { if (!flag) return s.length; return change(s); }

@@ -1,4 +1,4 @@
-// STATISTIC: BoxedReadsInLoopsWithAnArmForDoubles >= 2
+// STATISTIC: BoxedReadsWithDoublePath >= 2
 // What reckons with the two reads stands behind a test. An operand there runs code that stores a text in the list of fractions: the read behind it finds another storage, and so does the next turn of the loop.
 const made = () => JSON.parse("[0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5]");
 function Grid() { this.cells = null; this.counts = false; }

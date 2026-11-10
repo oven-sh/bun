@@ -31,7 +31,7 @@ mod parameters;
 mod pattern;
 mod positions;
 mod private_names;
-mod quoted_text;
+mod quoted_source;
 mod said_types;
 mod scope;
 mod statement;
@@ -74,7 +74,7 @@ pub struct LoweredFile {
     pub diagnostics: DiagnosticBuffer,
     pub queries: QueryStatistics,
     pub known_helpers: KnownHelpersLowered,
-    pub texts_read_back: u64,
+    pub function_sources_reparsed: u64,
     pub written_function_names: Vec<u8>,
 }
 
@@ -141,7 +141,7 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.function_key(function) {
             FunctionKey::ModuleBody(_) => self.lower_module_body(function),
             FunctionKey::WrappedModuleBody(_) => self.lower_wrapped_body(function),
-            FunctionKey::FaceBody(_) => self.lower_face_body(function),
+            FunctionKey::FacadeBody(_) => self.lower_facade_body(function),
             FunctionKey::CheckBody(_) => self.lower_check_body(function),
             FunctionKey::Instantiation(_) => self.lower_instantiation(function),
             FunctionKey::Source(source) => lower_source_body(self, function, source.function),

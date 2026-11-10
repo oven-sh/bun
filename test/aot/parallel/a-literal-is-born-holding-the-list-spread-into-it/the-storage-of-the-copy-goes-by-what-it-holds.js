@@ -1,6 +1,6 @@
 // A list whose storage is one of values and that holds whole numbers alone (a slice of a mixed list, a concat, what a map gave) is spread in a loop: the copy is read by loops over numbers, stored into,
 // pushed onto with a whole number, a fraction, a text; a whole number comes late, early or never among the values. Each answer is held against plain Bun's.
-// STATISTIC: LiteralsBornHoldingTheListSpreadRightBehind >= 3
+// STATISTIC: ArrayLiteralsAllocatedFromSpread >= 3
 const turns = JSON.parse("4");
 function copies(given) { const made = []; for (let i = 0; i < turns; i++) made.push([...given]); return made; }
 function grown(given, more) { const made = []; for (let i = 0; i < turns; i++) made.push([...given, more]); return made; }

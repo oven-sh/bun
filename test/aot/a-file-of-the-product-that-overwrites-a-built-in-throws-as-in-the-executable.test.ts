@@ -506,9 +506,8 @@ test("a", () => {
 });`,
     said: "SAID TypeError2,TypeError2,TypeError2,TypeError2,TypeError2,TypeError2,8,8",
   },
-  // What docs/compiler/debugging.mdx names as still taken, held to its word: the first stays on the stack and is refused; of the next two nothing is running when the store happens; of the
-  // last two nothing is running when node:vm is handed the text: one has left, so the text is the test's that called it, the other is a timer's. Whoever mends one of them changes the page
-  // with this line.
+  // Which of these stores are still accepted: the first stays on the stack and is refused; of the next two nothing is running when the store happens; of the
+  // last two nothing is running when node:vm is handed the text: one has left, so the text is the test's that called it, the other is a timer's.
   "anything but this: nothing of the product is running when the store happens, or when node:vm is handed the text": {
     product: `
 import vm from "node:vm";

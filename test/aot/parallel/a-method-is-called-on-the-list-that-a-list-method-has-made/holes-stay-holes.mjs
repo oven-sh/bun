@@ -8,5 +8,5 @@ function hasUndefined(list) { let got; for (let turn = 0; turn < turns; turn++) 
 function places(list) { let got; for (let turn = 0; turn < turns; turn++) got = list.map(x => x * 1.5).map((v, i) => i); return got; }
 function keys(list) { let got; for (let turn = 0; turn < turns; turn++) got = Object.keys(list.map(x => x * 1.5).slice()).join(); return got; }
 for (const list of [sparse, long, new Array(5), [, 1], [1, 2, 3]]) console.log(say(kept(list)), say(told(list)), say(joined(list)), say(hasUndefined(list)), say(places(list)), 1 in places(list), say(keys(list)));
-// STATISTIC: NewListsInPlaceOfSpecies >= 1
-// STATISTIC: NumbersStoredByKindOfStorageInCopiedRuns <= 5
+// STATISTIC: ArraySpeciesLookupsElided >= 1
+// STATISTIC: NumberStoresDispatchedByIndexingType <= 5

@@ -2809,8 +2809,7 @@ impl JSValue {
         })?;
         Ok((matched, shown))
     }
-    /// `self.asymmetricMatch(received)` if `self` is an asymmetric matcher: a built-in one, or an object whose
-    /// `asymmetricMatch()` deep equality calls. `None` if it is neither, and then nothing was called.
+    /// Asks the asymmetric matcher `self` about `received`. `None`: `self` is not a matcher, and nothing was called.
     pub fn jest_asymmetric_match(
         self,
         received: JSValue,

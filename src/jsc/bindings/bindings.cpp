@@ -803,8 +803,7 @@ static NEVER_INLINE int8_t applyAsymmetricMatcher(JSGlobalObject* globalObject, 
     return callAsymmetricMatch(globalObject, scope, method, matcher, received);
 }
 
-// `matcher.asymmetricMatch(received)`, as Jest and Vitest ask a matcher that is the whole argument of `toThrow()`.
-// Unlike deep equality, `received` is never read as a matcher. Returns -1 if `matcher` isn't a matcher.
+// Unlike deep equality, never reads `received` as a matcher, as in `toThrow()` of Jest and Vitest. -1: `matcher` isn't a matcher.
 extern "C" int8_t JSC__JSValue__jestAsymmetricMatch(JSC::EncodedJSValue encodedMatcher, JSC::EncodedJSValue encodedReceived, JSC::JSGlobalObject* globalObject)
 {
     JSValue matcher = JSValue::decode(encodedMatcher);

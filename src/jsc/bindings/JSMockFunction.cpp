@@ -321,6 +321,29 @@ private:
     std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> m_allow;
 };
 
+static NEVER_INLINE void reifyOwnPropertyOfFunctionSlow(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // An empty descriptor defines a key that the function lacks.
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, key, slot);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!hasOwn)
+        return;
+    scope.release();
+    object->methodTable()->defineOwnProperty(object, globalObject, key, PropertyDescriptor(), false);
+}
+
+// A function's defineOwnProperty() lays its `length`, `name` or `prototype` into its storage and records that a program changes it, also when the descriptor defines nothing. A direct store does neither: bind() would go on taking `length` and `name` from the code, and `new` the old `prototype`.
+static ALWAYS_INLINE void reifyOwnPropertyOfFunction(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
+{
+    auto& names = *JSC::getVM(globalObject).propertyNames;
+    if ((key == names.length || key == names.name || key == names.prototype) && isJSFunctionOrCompiledCallee(object)) [[unlikely]]
+        reifyOwnPropertyOfFunctionSlow(globalObject, object, key);
+}
+
 static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -334,7 +357,13 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
             descriptor.setDescriptor(storage, attributes);
         scope.release();
         object->methodTable()->defineOwnProperty(object, globalObject, key, descriptor, true);
-    } else if (attributes & PropertyAttribute::Accessor) {
+        return;
+    }
+
+    reifyOwnPropertyOfFunction(globalObject, object, key);
+    RETURN_IF_EXCEPTION(scope, );
+
+    if (attributes & PropertyAttribute::Accessor) {
         scope.release();
         object->putDirectAccessor(globalObject, key, uncheckedDowncast<GetterSetter>(storage), attributes);
     } else if (attributes & PropertyAttribute::CustomAccessorOrValue) {
@@ -3239,6 +3268,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         return JSValue::encode(original);
     }
 
+    // A compiled function answers for its `length` and `name` before it has them in its storage.
+    reifyOwnPropertyOfFunction(globalObject, object, propertyKey);
+    RETURN_IF_EXCEPTION(scope, {});
     unsigned spyAttributes = 0;
     JSValue storage = getOwnPropertyStorage(globalObject, object, propertyKey, spyAttributes);
     RETURN_IF_EXCEPTION(scope, {});

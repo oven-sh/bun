@@ -211,6 +211,19 @@ describe("Bun.parseEnv", () => {
     );
   });
 
+  test("the budget is exactly 4 MiB of substituted bytes", () => {
+    // `B` substitutes 4 x 1 MiB = 4,194,304 bytes, the whole budget. One more byte for `C` is too many.
+    const mib = Buffer.alloc(1024 * 1024, "a").toString();
+    const atLimit = `A=${mib}\nB=$A$A$A$A`;
+    expect(Bun.parseEnv(atLimit).B).toHaveLength(4 * 1024 * 1024);
+    expect(() => Bun.parseEnv(`${atLimit}\nD=x\nC=$D`)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        message: 'The content expands to more than 4.19 MB of variable references at "C"',
+      }),
+    );
+  });
+
   test("options.env values are stringified and undefined is skipped", () => {
     expect(Bun.parseEnv("A=$N\nB=$U\nC=$T", { env: { N: 1, U: undefined, T: true } })).toEqual({
       A: "1",

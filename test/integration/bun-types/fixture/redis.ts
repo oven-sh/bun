@@ -6,6 +6,12 @@ const copy = await Bun.redis.duplicate();
 expectType(copy.connected).is<boolean>();
 expectType(copy).is<Bun.RedisClient>();
 
+// A handler reads a function or `null`, never `undefined`: a `!== null` check is enough. `null` removes it.
+if (copy.onconnect !== null) expectType(copy.onconnect.length).is<number>();
+if (copy.onclose !== null) copy.onclose.call(copy, new Error("closed"));
+copy.onconnect = null;
+copy.onclose = null;
+
 const listener: Bun.RedisClient.StringPubSubListener = (message, channel) => {
   expectType(message).is<string>();
   expectType(channel).is<string>();

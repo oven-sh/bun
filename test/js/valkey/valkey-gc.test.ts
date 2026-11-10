@@ -577,6 +577,36 @@ test.concurrent.each(["null", "undefined", "{}", "42"])(
   },
 );
 
+// redis.d.ts declares each handler as a function or `null`. The setters keep a function and drop
+// anything else, so that is all a read can give.
+test("RedisClient onconnect and onclose read null until a function is assigned, and after anything else is", () => {
+  const client = new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+  const handler = () => {};
+  const proxy = new Proxy(handler, {});
+  const readAfter = (...values: unknown[]) => {
+    for (const value of values) Object.assign(client, { onconnect: value, onclose: value });
+    return [client.onconnect, client.onclose];
+  };
+  expect({
+    "unset": readAfter(),
+    "a function": readAfter(handler),
+    "a proxy of a function": readAfter(proxy),
+    "null": readAfter(handler, null),
+    "undefined": readAfter(handler, undefined),
+    "an object": readAfter(handler, {}),
+    "a number": readAfter(handler, 42),
+  }).toEqual({
+    "unset": [null, null],
+    "a function": [handler, handler],
+    "a proxy of a function": [proxy, proxy],
+    "null": [null, null],
+    "undefined": [null, null],
+    "an object": [null, null],
+    "a number": [null, null],
+  });
+  client.close();
+});
+
 // Fuzzer found heap corruption (zapped cell during GC marking) when a custom
 // setter on a generated class was invoked with a receiver that is not an
 // instance of that class (e.g. through a Proxy wrapping the instance, or an

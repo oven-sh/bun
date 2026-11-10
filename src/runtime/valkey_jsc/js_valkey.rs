@@ -992,11 +992,18 @@ impl JSValkeyClient {
         self.client_mut().on_close()
     }
 
-    // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
-    // connection's events arrive in (and nothing, outside a graph).
+    /// A callable (which continues the `Bun.ModuleGraph` of its script) or `ZERO`: an event calls whatever the slot holds.
+    fn handler_to_store(value: JSValue, global: &JSGlobalObject) -> JSValue {
+        if value.is_callable() {
+            value.with_graph_context_if_needed(global)
+        } else {
+            JSValue::ZERO
+        }
+    }
+
     pub(crate) fn get_onconnect(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onconnect_get_cached(this_value.to_js())
-            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
+            .map_or(JSValue::NULL, JSValue::without_async_context)
     }
     pub(crate) fn set_onconnect(
         &self,
@@ -1008,12 +1015,12 @@ impl JSValkeyClient {
         js::onconnect_set_cached(
             this_value.to_js(),
             global,
-            value.to_js().with_graph_context_if_needed(global),
+            Self::handler_to_store(value.to_js(), global),
         );
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onclose_get_cached(this_value.to_js())
-            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
+            .map_or(JSValue::NULL, JSValue::without_async_context)
     }
     pub(crate) fn set_onclose(
         &self,
@@ -1025,7 +1032,7 @@ impl JSValkeyClient {
         js::onclose_set_cached(
             this_value.to_js(),
             global,
-            value.to_js().with_graph_context_if_needed(global),
+            Self::handler_to_store(value.to_js(), global),
         );
     }
 
@@ -1229,9 +1236,7 @@ impl JSValkeyClient {
             };
             js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
-            if let Some(on_connect) = js::onconnect_get_cached(this_value)
-                .filter(|handler| handler.without_async_context().is_callable())
-            {
+            if let Some(on_connect) = js::onconnect_get_cached(this_value) {
                 let js_value = this_value;
                 js_value.ensure_still_alive();
                 global_object.queue_microtask(on_connect, &[js_value, hello_value]);
@@ -1377,9 +1382,7 @@ impl JSValkeyClient {
         }
 
         // Call onClose callback if it exists
-        if let Some(on_close) = js::onclose_get_cached(this_jsvalue)
-            .filter(|handler| handler.without_async_context().is_callable())
-        {
+        if let Some(on_close) = js::onclose_get_cached(this_jsvalue) {
             on_close.call(&global_object, this_jsvalue, &[error_value])?;
         }
         Ok(())

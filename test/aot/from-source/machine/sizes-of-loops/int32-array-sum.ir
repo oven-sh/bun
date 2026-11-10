@@ -1,0 +1,19 @@
+# f1 = turn
+# -- source: int32-array-sum.ts
+# const counts = new Int32Array(1000);
+# function turn(i: number): number {
+#   let sum = i & 1;
+#   for (let k = 0; k < counts.length; k++) sum += counts[k]!;
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 20, patches 0, moves 0, unlikely 11 ; loop: operations 6, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:20,6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 20
+# X64-NEXT: loop: at most 6

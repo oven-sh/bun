@@ -1,0 +1,19 @@
+# -- source: the-receiver-of-a-call-of-a-built-in-is-held-to-the-note-that-it-is-as-made.ts
+# declare function print(...values: unknown[]): void;
+# function pass(x: unknown): unknown { return x; }
+# function main(): string { const promise: any = Promise.resolve(1); let asked = 0; Object.defineProperty(promise, "constructor", { get() { asked++; return Promise; } });
+#   const held: unknown = JSON.parse("true") ? promise : 1; const same: any = Promise.resolve(held); Promise.prototype.then.call(same, pass); return String(asked); }
+# print(main());
+# -- end of source
+# LIBRARY: own
+# A row fits by the aspects that are seen of its receiver: then() on a promise as made asks for no constructor. This promise bears a constructor of its own that counts.
+# The lie, testing=OneRowSpeaksForAllThatCallMayTake: where a call may take several rows the first alone is asked whether what it hands back is fresh, though another hands back the operand: the result is noted as made. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the cell is asked where the note is leaned on: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 2
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: 2
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,OneRowSpeaksForAllThatCallMayTake
+# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

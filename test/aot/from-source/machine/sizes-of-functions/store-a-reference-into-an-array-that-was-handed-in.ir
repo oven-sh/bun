@@ -1,0 +1,18 @@
+# f1 = put
+# -- source: store-a-reference-into-an-array-that-was-handed-in.ts
+# type Entry = { weight: number };
+# function put(list: Entry[], index: number, entry: Entry): void {
+#   list[index] = entry;
+# }
+# declare const input: any;
+# const list: Entry[] = [{ weight: 0.5 }, { weight: 1.5 }];
+# put(list, input | 0, { weight: +input });
+# put(list, 1, { weight: 2.5 });
+# (globalThis as any).answer = list[0].weight + list[1].weight;
+# -- end of source
+# The compiler before this one: 14 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 12, patches 0, moves 1, unlikely or rare 16.
+# RUN(X64): steps most:13 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 13

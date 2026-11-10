@@ -1,0 +1,42 @@
+# WHOEVER MAKES A CLOSURE NAMES THE ENTRY THAT ITS WORD LEADS TO, AND AN ENTRY JUMPS TO THE BODY: so a class that is made kept the bodies of its constructor and methods though every call of them was copied in line.
+# Of Crate, floor and Row every caller is known and every call has one callee, and no unit that was compiled has built anything at those calls that may enter by value: the word alone is named. Such an entry is written when its
+# cycle has drained: it stops the process and names no body. [Symbol.iterator] is found by the spread, out of code that no site lists: it keeps entry and body.
+# f1 = Crate, f2 = floor, f3 = Row, f4 = [Symbol.iterator]
+# -- source: an-entry-by-value-that-nobody-enters-names-no-body.ts
+# class Crate {
+#   readonly width: number;
+#   constructor(width: number) {
+#     this.width = width;
+#   }
+#   floor(): number {
+#     return this.width * 2;
+#   }
+# }
+# class Row {
+#   readonly end: number;
+#   constructor(end: number) {
+#     this.end = end;
+#   }
+#   [Symbol.iterator]() {
+#     return [this.end, this.end + 1][Symbol.iterator]();
+#   }
+# }
+# let sum = 0;
+# for (let size = 1; size < 5; size++) sum += new Crate(size).floor();
+# console.log(sum, [...new Row(3)].join());
+# -- end of source
+# RUN: units-with-code f1:Body f1:GenericCallEntry f2:Body f2:GenericCallEntry f3:Body f3:GenericCallEntry f4:Body f4:GenericCallEntry mechanisms=all
+# CHECK: unit f1:Body has no code
+# CHECK: unit f1:GenericCallEntry {{*}} bytes
+# CHECK: unit f2:Body has no code
+# CHECK: unit f2:GenericCallEntry {{*}} bytes
+# CHECK: unit f3:Body has no code
+# CHECK: unit f3:GenericCallEntry {{*}} bytes
+# CHECK: unit f4:Body {{*}} bytes
+# CHECK: unit f4:GenericCallEntry {{*}} bytes
+# RUN(COUNT): compile EntriesThatNobodyEnters mechanisms=all
+# COUNT: statistic EntriesThatNobodyEnters 3
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 callers-known one-callee
+# LINK: function f2 callers-known one-callee
+# LINK: function f3 callers-known one-callee

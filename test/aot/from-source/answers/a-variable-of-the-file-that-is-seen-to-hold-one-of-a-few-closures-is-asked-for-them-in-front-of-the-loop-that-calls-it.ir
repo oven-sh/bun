@@ -1,0 +1,117 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function mul(a, b) { return (a * b) % 1009; }
+# function low(a) { return a & 15; }
+# let chosen = mul;
+# if (flag()) chosen = add;
+# function lay(callee) { chosen = callee; }
+# function overVariable(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + chosen(i, t)) | 0; return s; }
+# function told(a, b) { tell(a); return (a + b) | 0; }
+# function quiet(a, b) { return (a - b) | 0; }
+# let turned = quiet;
+# if (flag()) turned = told;
+# function turn(callee) { turned = callee; }
+# function overTurned(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + turned(i, t)) | 0; return s; }
+# print(overVariable(1), overVariable(3));
+# outside(lay, add, mul, low);
+# try { print(overVariable(3)); } catch (error) { print(error.constructor.name); }
+# inside(turn, told, quiet, low);
+# try { print(overTurned(3)); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# f1 = add, f2 = mul, f3 = low, f5 = overVariable, f9 = overTurned
+# A variable of the file in which two closures were seen is called in a loop. Nothing is proven of it: Link has no set of functions, two that meet are "some function"; its held reading writes f1|f2.
+# The variable is asked for the two in front of the loop. In the typed copy each closure has its arm, walked in line, and there is no arm as written: the sum in each arm is one of numbers. Whatever else lies in the variable runs the closed copy.
+# RUN(VARIABLE): walk f5 mechanisms=all
+# VARIABLE: = TypeTest {{*}}testedType=f1|f2
+# VARIABLE: = Call {{*}}calleeName="chosen"
+# VARIABLE: isInLoop=true isLoopHead=true
+# VARIABLE-NOT: = Call 
+# VARIABLE: Return v
+# The shell says which of the two the variables take. Then, out of sight of Link, it lays something else into the first: the one, the other, a third function, an arrow, a bound function, a Proxy, a native function, one that answers texts,
+# the very function with a property laid on it and another prototype, an object, a number, nothing. And it lays something else into the second FROM INSIDE A CALLEE, in the middle of the loop.
+# RUN(FIRST): run-in-shell flag = function () { return true; }; swap = function (first) { return first; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# FIRST: 11 34
+# FIRST-NEXT: 34
+# FIRST-NEXT: 16
+# FIRST-NEXT: exited with 0
+# RUN(SECOND): run-in-shell flag = function () { return false; }; swap = function (first, second) { return second; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# SECOND: 7 46
+# SECOND-NEXT: 46
+# SECOND-NEXT: -2
+# SECOND-NEXT: exited with 0
+# RUN(CROSSED): run-in-shell flag = function () { return true; }; swap = function (first, second) { return second; }; late = function (first, second, third) { return third; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# CROSSED: 11 34
+# CROSSED-NEXT: 46
+# CROSSED-NEXT: 25
+# CROSSED-NEXT: exited with 0
+# RUN(CROSSEDBACK): run-in-shell flag = function () { return false; }; swap = function (first) { return first; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# CROSSEDBACK: 7 46
+# CROSSEDBACK-NEXT: 34
+# CROSSEDBACK-NEXT: -2
+# CROSSEDBACK-NEXT: exited with 0
+# RUN(THIRD): run-in-shell flag = function () { return true; }; swap = function (first, second, third) { return third; }; late = function (first, second, third) { return third; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# THIRD: 11 34
+# THIRD-NEXT: 16
+# THIRD-NEXT: 25
+# THIRD-NEXT: exited with 0
+# RUN(ARROW): run-in-shell flag = function () { return false; }; swap = function (first) { return (a, b) => -first(a, b); }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# ARROW: 7 46
+# ARROW-NEXT: -32
+# ARROW-NEXT: -2
+# ARROW-NEXT: exited with 0
+# RUN(BOUND): run-in-shell flag = function () { return true; }; swap = function (first) { return first.bind(null, 100); }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# BOUND: 11 34
+# BOUND-NEXT: 616
+# BOUND-NEXT: 16
+# BOUND-NEXT: exited with 0
+# RUN(PROXY): run-in-shell flag = function () { return true; }; swap = function (first, second) { return new Proxy(second, { }); }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# PROXY: 11 34
+# PROXY-NEXT: 46
+# PROXY-NEXT: 16
+# PROXY-NEXT: exited with 0
+# RUN(NATIVE): run-in-shell flag = function () { return true; }; swap = function () { return Math.max; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# NATIVE: 11 34
+# NATIVE-NEXT: 22
+# NATIVE-NEXT: 16
+# NATIVE-NEXT: exited with 0
+# RUN(TEXTS): run-in-shell flag = function () { return true; }; swap = function () { return a => "t" + a; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# TEXTS: 11 34
+# TEXTS-NEXT: 0
+# TEXTS-NEXT: 16
+# TEXTS-NEXT: exited with 0
+# RUN(ALTERED): run-in-shell flag = function () { return false; }; swap = function (first) { first.extra = 1; Object.setPrototypeOf(first, { }); return first; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# ALTERED: 7 46
+# ALTERED-NEXT: 34
+# ALTERED-NEXT: -2
+# ALTERED-NEXT: exited with 0
+# RUN(ALTEREDTOO): run-in-shell flag = function () { return true; }; swap = function (first, second) { second.extra = 1; Object.setPrototypeOf(second, null); return second; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# ALTEREDTOO: 11 34
+# ALTEREDTOO-NEXT: 46
+# ALTEREDTOO-NEXT: 16
+# ALTEREDTOO-NEXT: exited with 0
+# RUN(OBJECT): run-in-shell flag = function () { return true; }; swap = function () { return { }; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# OBJECT: 11 34
+# OBJECT-NEXT: TypeError
+# OBJECT-NEXT: 16
+# OBJECT-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell flag = function () { return true; }; swap = function () { return 5; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# NUMBER: 11 34
+# NUMBER-NEXT: TypeError
+# NUMBER-NEXT: 16
+# NUMBER-NEXT: exited with 0
+# RUN(NOTHING): run-in-shell flag = function () { return false; }; swap = function () { }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# NOTHING: 7 46
+# NOTHING-NEXT: TypeError
+# NOTHING-NEXT: -2
+# NOTHING-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime flag = function () { return true; }; swap = function (first, second, third) { return third; }; late = function (first, second, third) { return third; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# CHECKED: 11 34
+# CHECKED-NEXT: 16
+# CHECKED-NEXT: 25
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime flag = function () { return false; }; swap = function (first) { first.extra = 1; return first; }; late = function (first, second, third) { return second; }; outside = function (lay, first, second, third) { lay(swap(first, second, third)); }; inside = function (turn, first, second, third) { tell = function (a) { if (a === 2) turn(late(first, second, third)); }; }; tell = function () { };
+# CHECKEDTOO: 7 46
+# CHECKEDTOO-NEXT: 34
+# CHECKEDTOO-NEXT: -2
+# CHECKEDTOO-NEXT: exited with 0

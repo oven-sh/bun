@@ -11,7 +11,7 @@ use bun_sema::bind::{
 use bun_sema::check::aot::{
     ListedMember, MemberLookup, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind, TypeIdentity,
 };
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PatKind, PropKey, PropKind};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, PatKind, PropKey, PropKind};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -22,7 +22,7 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::SourceDialect;
 use crate::builtins::table;
 use crate::ir::generated::{
-    Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
+    DeclaredRecord, Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
 use crate::ir::{
     DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, TypeId, WellKnownSymbol,
@@ -35,6 +35,42 @@ const _: () = assert!(PropertyKeyKind::COUNT <= 1 << u8::BITS);
 const _: () = assert!(WellKnownSymbol::COUNT <= 1 << u8::BITS);
 
 const KIND_OF_TEXT: u8 = PropertyKeyKind::Text.to_wire() as u8;
+const KIND_OF_CREATED_SYMBOL: u8 = PropertyKeyKind::CreatedSymbol.to_wire() as u8;
+
+fn split_home(key: &[u8]) -> Option<(&[u8], FileId)> {
+    let [KIND_OF_CREATED_SYMBOL, ..] = key else {
+        return None;
+    };
+    let (rest, home) = key.split_last_chunk()?;
+    Some((rest, FileId(u32::from_be_bytes(*home))))
+}
+
+fn identity_of_keys<'a>(
+    keys: impl Iterator<Item = (&'a [u8], ObjectMemberKind)> + Clone,
+    mark: Option<&'a [u8]>,
+) -> TypeIdentity {
+    let mark = mark.map(|mark| (mark, ObjectMemberKind::Field));
+    let whole = TypeIdentity::of_untyped_members(keys.clone().chain(mark));
+    let Some((_, home)) = keys.clone().find_map(|(key, _)| split_home(key)) else {
+        return whole;
+    };
+    let without_home = |key| split_home(key).map_or(key, |(rest, _)| rest);
+    let text = keys.map(|(key, kind)| (without_home(key), kind));
+    let TypeIdentity([first, _]) = TypeIdentity::of_untyped_members(text.chain(mark));
+    TypeIdentity([first, whole.0[1]]).in_file(home)
+}
+
+fn literal_writes_functions_alone(hir: &File<'_>, literal: ExprId) -> bool {
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return false;
+    };
+    properties.iter().next().is_some()
+        && properties.iter().all(|property| match hir[property].kind {
+            PropKind::Method => true,
+            PropKind::Init => matches!(hir[hir[property].value].kind, ExprKind::Fn(_)),
+            _ => false,
+        })
+}
 
 type Member = (PropertyKeyId, ObjectMemberKind);
 type Members = SmallVec<[Member; 8]>;
@@ -380,11 +416,8 @@ impl FileLowering<'_, '_, '_, '_> {
             .filter(|(name, _)| name.is_described())
             .map(|(name, field)| (name.description(&described.text), field.1.kind));
         let is_empty = descriptions.clone().next().is_none();
-        let names = descriptions.chain(
-            has_other_optional_members
-                .then_some((bytes_of_flags.as_slice(), ObjectMemberKind::Field)),
-        );
-        (TypeIdentity::of_untyped_members(names), is_empty)
+        let flags = has_other_optional_members.then_some(bytes_of_flags.as_slice());
+        (identity_of_keys(descriptions, flags), is_empty)
     }
 
     fn describe_sorted_names(&mut self, ty: CheckerTypeId, fields: &[SortedMember]) {
@@ -398,6 +431,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         described.ty = Some(ty);
         self.layouts.described_names = described;
+    }
+
+    fn holder_of_what_member_says(
+        &mut self,
+        ty: CheckerTypeId,
+        member: ListedMember,
+    ) -> Option<CheckerTypeId> {
+        let hangs_on_arguments = self
+            .queries
+            .listed_member_hangs_on_type_arguments(ty, member);
+        hangs_on_arguments.then_some(ty)
     }
 
     fn grows_without_end(&mut self, ty: CheckerTypeId) -> bool {
@@ -418,6 +462,40 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         path.reverse();
         self.queries.grows_along(&path)
+    }
+
+    pub(in crate::lower) fn note_declared_record(
+        &mut self,
+        function: FnId,
+        parameter: u32,
+        ty: CheckerTypeId,
+    ) {
+        let is_written_by_declaration = matches!(
+            self.queries.object_origin(ty),
+            ObjectOrigin::Symbol(_)
+                | ObjectOrigin::TypeLiteral { .. }
+                | ObjectOrigin::MappedType { .. }
+        );
+        if !is_written_by_declaration || self.is_dictionary_type(ty) {
+            return;
+        }
+        let Ok(members) = self.queries.listed_members(ty) else {
+            return;
+        };
+        let fields = self.sort_listed_fields(ty, members);
+        let required = fields.iter().filter(|field| !field.1.is_optional);
+        let names: Vec<PropertyKeyId> = required.map(|field| self.find_key(field.0)).collect();
+        if !names.is_empty() {
+            let module = self.module_id();
+            let declared = DeclaredRecord {
+                module,
+                position: 0,
+                parameter,
+                names,
+            };
+            self.declared_records_without_position
+                .push((function, declared));
+        }
     }
 
     pub(crate) fn object_type_layout(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
@@ -460,7 +538,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 (MemberName::String(name), SourceDialect::Runtime) => {
                     FieldName::Key(self.name_key(name))
                 }
-                (MemberName::Symbol(name), _) => match self.created_symbol_key(name) {
+                (MemberName::Symbol(name), _) => match self.symbol_key_of_member(name) {
                     Some(key) => FieldName::Key(key),
                     None => continue,
                 },
@@ -697,7 +775,8 @@ impl FileLowering<'_, '_, '_, '_> {
         ty: CheckerTypeId,
         member: ListedMember,
     ) -> DeclaredType {
-        let outer = self.layouts.holder_in_progress.replace(ty);
+        let outer = self.layouts.holder_in_progress;
+        self.layouts.holder_in_progress = self.holder_of_what_member_says(ty, member);
         let types = self.queries.listed_member_types(ty, member);
         let declared = self.create_member_position(types);
         self.layouts.holder_in_progress = outer;
@@ -856,8 +935,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let listed = self.sort_listed_fields(ty, members);
         let mut fields = Vec::with_capacity(listed.len());
         let mut is_kept = true;
-        let outer = self.layouts.holder_in_progress.replace(ty);
+        let outer = self.layouts.holder_in_progress;
         for &(name, member) in listed.iter() {
+            self.layouts.holder_in_progress = self.holder_of_what_member_says(ty, member);
             let types = self.queries.listed_member_types(ty, member);
             is_kept = is_kept && self.queries.keeps_listed_member_types(ty, member);
             let declared = self.create_member_position(types);
@@ -1045,8 +1125,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 let ModuleRef::File(home) = self.fragment.module_ref(key.module?) else {
                     return None;
                 };
-                description.extend_from_slice(&home.0.to_be_bytes());
                 description.extend_from_slice(&key.call_number?.to_be_bytes());
+                if let Some(text) = key.text {
+                    description.extend_from_slice(self.fragment.strings.get(text));
+                }
+                description.extend_from_slice(&home.0.to_be_bytes());
             }
             PropertyKeyKind::PrivateName => return None,
         }
@@ -1096,14 +1179,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let site = site.map(|site| [b"\xffmade at ".as_slice(), &site.0.to_le_bytes()].concat());
         let descriptions = sorted
             .iter()
-            .map(|member| (member.description.as_slice(), member.kind))
-            .chain(
-                site.iter()
-                    .map(|site| (site.as_slice(), ObjectMemberKind::Field)),
-            );
+            .map(|member| (member.description.as_slice(), member.kind));
         let layout = self.fragment.declare_layout(LayoutKey::UntypedLiteral {
             file: self.file,
-            members: TypeIdentity::of_untyped_members(descriptions),
+            members: identity_of_keys(descriptions, site.as_deref()),
         });
         if self.fragment.is_layout_defined(layout) {
             return layout;
@@ -1181,7 +1260,68 @@ impl FileLowering<'_, '_, '_, '_> {
             )
         {
             self.collect_names_listed_by(ty, members);
+        } else if let Some(ty) = self.find_literal_type_expected_of_parameter(source) {
+            self.collect_names_listed_by(ty, members);
         }
+    }
+
+    pub(in crate::lower) fn find_literal_type_expected_of_parameter(
+        &mut self,
+        source: ExprId,
+    ) -> Option<CheckerTypeId> {
+        if self.is_checked() || !matches!(self.hir[source].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let named = self.bound.symbol_of_expr(source);
+        if named.is_none() {
+            return None;
+        }
+        let [Decl::Param(pattern)] = *self.bound.symbol(named).decls else {
+            return None;
+        };
+        if !self.queries.is_given_by_written_calls_alone(pattern) {
+            return None;
+        }
+        let expected = self.queries.binding_type(pattern).ok()?;
+        let expected = self.queries.without_nullish(expected).ok()?;
+        let is_written_literal = matches!(
+            self.queries.object_origin(expected),
+            ObjectOrigin::ObjectLiteral { .. }
+        );
+        is_written_literal.then_some(expected)
+    }
+
+    pub(in crate::lower) fn adds_names_to_literal_expected_of_parameter(
+        &mut self,
+        literal: ExprId,
+    ) -> bool {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return false;
+        };
+        let mut rest = properties.iter();
+        let Some(first) = rest.next().map(|first| hir[first]) else {
+            return false;
+        };
+        if first.kind != PropKind::Spread {
+            return false;
+        }
+        let Some(expected) = self.find_literal_type_expected_of_parameter(first.value) else {
+            return false;
+        };
+        let mut copied = Members::new();
+        self.collect_names_listed_by(expected, &mut copied);
+        let copied: FxHashSet<PropertyKeyId> = copied.iter().map(|&(listed, _)| listed).collect();
+        rest.any(|property| {
+            let is_written_value = matches!(
+                hir[property].kind,
+                PropKind::Init | PropKind::Shorthand | PropKind::Method
+            );
+            match hir.runtime_property_key(property) {
+                PropKey::Name(name) if is_written_value => !copied.contains(&self.name_key(name)),
+                _ => false,
+            }
+        })
     }
 
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {
@@ -1203,7 +1343,12 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             match hir.runtime_property_key(property) {
                 PropKey::Name(name) => members.push((self.name_key(name), kind)),
-                PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {}
+                PropKey::Computed(computed) => {
+                    if let Some(key) = self.find_locked_symbol_key(computed) {
+                        members.push((key, kind));
+                    }
+                }
+                PropKey::None | PropKey::Private(_) => {}
             }
         }
         members
@@ -1313,12 +1458,14 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let mut copied = Members::new();
+        let mut holds_spread = false;
         for property in properties.iter() {
             if hir[property].kind == PropKind::Spread {
+                holds_spread = true;
                 self.collect_names_copied_from_literal(hir[property].value, &mut copied);
             }
         }
-        if copied.is_empty() {
+        if !holds_spread {
             return None;
         }
         let ty = self.queries.expression_type(literal).ok()?;
@@ -1327,7 +1474,17 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let members = self.collect_literal_members(literal);
+        if members.is_empty() {
+            return None;
+        }
+        if copied.is_empty() {
+            self.layouts.literals_opened_at_once.insert(literal);
+        }
         Some(self.untyped_layout_made_at(&members, Some(literal)))
+    }
+
+    pub(in crate::lower) fn is_opened_at_once(&self, literal: ExprId) -> bool {
+        self.layouts.literals_opened_at_once.contains(&literal)
     }
 
     pub(in crate::lower) fn literal_layout(&mut self, literal: ExprId) -> LayoutId {
@@ -1359,6 +1516,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let members = self.queries.listed_members(ty).ok()?;
         let (identity, is_empty) = self.describe_names(ty, members);
         let origin = origin.unwrap_or_else(|| self.queries.object_origin(ty));
+        let home_of_functions = match (origin, literal) {
+            (_, Some(expression)) => {
+                literal_writes_functions_alone(self.hir, expression).then_some(self.file)
+            }
+            (ObjectOrigin::ObjectLiteral { file, expression }, None) => {
+                literal_writes_functions_alone(self.queries.files().hir(file), expression)
+                    .then_some(file)
+            }
+            (_, None) => None,
+        };
+        let identity = match home_of_functions {
+            Some(file) if !is_empty => identity.in_file(file),
+            _ => identity,
+        };
         let origin = match (origin, literal) {
             _ if !is_empty => ObjectOrigin::Computed,
             (_, Some(expression)) => ObjectOrigin::ObjectLiteral {

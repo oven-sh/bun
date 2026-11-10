@@ -416,7 +416,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* create = JSFunction::create(vm, globalObject, useFakeTimersCreatePerformanceCodeGenerator(vm), globalObject);
 #if ENABLE(AOT)
-    JSC::AOT::admitFunctionOfTestRunner(vm, *create->jsExecutable());
+    JSC::AOT::allowTestRunnerFunction(vm, *create->jsExecutable());
 #endif
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(original));

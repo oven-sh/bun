@@ -1,7 +1,9 @@
-use bun_sema::hir::PropKey;
+use bun_sema::bind::Binding;
+use bun_sema::hir::{PatKind, PropKey};
 use smallvec::SmallVec;
 
 use super::{DefaultHolder, PatternNode};
+use crate::builtins::table::BuiltinId;
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::FunctionLowering;
@@ -43,7 +45,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             let prepared = self.prepare_target(property.target);
             self.set_position(property.position);
-            let read = self.emit_get(object, name);
+            let read = match self.find_locked_builtin_bound_by(property.target) {
+                Some(builtin) => self.emit_locked_builtin(builtin),
+                None => self.emit_get(object, name),
+            };
             let holder = DefaultHolder::ObjectPattern;
             let read = super::apply_default(self, read, property.default, property.target, holder);
             self.finish_target(property.target, prepared, read);
@@ -51,6 +56,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 read_names.push(name);
             }
         }
+    }
+
+    fn find_locked_builtin_bound_by(&self, target: PatternNode) -> Option<BuiltinId> {
+        let PatternNode::Binding(name) = target else {
+            return None;
+        };
+        let (PatKind::Ident(_), Binding::Symbol(symbol)) = (
+            self.file.hir[name].kind,
+            self.file.bound.initialized_binding(name),
+        ) else {
+            return None;
+        };
+        self.file
+            .builtins
+            .of_name_in_pattern(symbol)?
+            .locked_builtin()
     }
 
     pub(super) fn destructure_exports(&mut self, node: PatternNode, module: ModuleRef) {

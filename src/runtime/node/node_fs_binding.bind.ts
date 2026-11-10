@@ -14,9 +14,18 @@ const operation = (length: number, ...returns: readonly (string | table.TableTyp
     length,
   }) as const;
 
+/** A path or data that is a view is pinned while it is read (`PinnedArrayBuffer`), which moves the bytes of a small one. `readSync` and `readvSync` fill views. */
+const heapsOfViews = ["TypedArrayStorage", "TypedArrayElements"] as const;
+
 /** `x` and `xSync` run what an argument names while they parse it, and nothing else: `NodeFS::dispatch` never enters JavaScript. */
 const parsesArguments = (length: number, returns: table.TableType) =>
-  ({ ...operation(length, returns.spec), runsOnlyOperandCode: true, uses }) as const;
+  ({
+    ...operation(length, returns.spec),
+    runsOnlyOperandCode: true,
+    uses,
+    reads: heapsOfViews,
+    writes: heapsOfViews,
+  }) as const;
 
 /** What `x` and `xSync` do with an argument (`args::*::from_js` in node_fs.rs): they keep none and return none. */
 const uses = {

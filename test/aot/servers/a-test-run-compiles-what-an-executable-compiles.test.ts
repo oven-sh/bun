@@ -4,5 +4,5 @@ import { holdBothWays } from "./both-ways";
 holdBothWays(
   { hono: 98, express: 95 },
   { hono: 92, express: 77 },
-  { equal: { hono: 91, express: 63 }, equalBehindAnotherFile: { hono: 91, express: 59 } },
+  { equal: { hono: 92, express: 76 }, equalBehindAnotherFile: { express: 76 } },
 );

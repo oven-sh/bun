@@ -12,14 +12,12 @@
 # console.log(Object.keys(first).join(), Object.keys(second).join());
 # -- end of source
 # RUN: plan orders mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: orders L0
 # CHECK-NEXT: order 0: "flags" "target" "declaration" "parameters" "mapper"
 # CHECK-NEXT: order 1: "flags" | "target" "mapper"
 # CHECK-NEXT: order 2: "flags" | "declaration" "parameters" "target" "mapper"
 # CHECK-NEXT: orders
 # RUN(NONE): plan orders mechanisms=none
-# REQUIRES(NONE): entries-of-bun
 # NONE: orders L0
 # NONE-NEXT: order 0: "flags"
 # NONE-NEXT: orders

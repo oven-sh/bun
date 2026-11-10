@@ -2,7 +2,7 @@
 // opens the table, stores the entries that stood on the method, and closes it. It opened the whole table for one entry of four bytes: 52 pages in a large application.
 // It opens the pages that hold the entries it stores. The run time counts each page that it opens.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
@@ -10,6 +10,17 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
+
+function pageSize(): number {
+  if (!isLinux) return isMacOS && process.arch === "arm64" ? 16384 : 4096;
+  // Pairs of u64: a type, then its value.
+  const auxiliaryVector = readFileSync("/proc/self/auxv");
+  const AT_PAGESZ = 6n;
+  for (let at = 0; at + 16 <= auxiliaryVector.length; at += 16) {
+    if (auxiliaryVector.readBigUInt64LE(at) === AT_PAGESZ) return Number(auxiliaryVector.readBigUInt64LE(at + 8));
+  }
+  throw new Error("no AT_PAGESZ");
+}
 
 const numbered = (count: number, text: (number: number) => string, between = "\n") =>
   Array.from({ length: count }, (nothing, number) => text(number)).join(between);
@@ -56,9 +67,9 @@ test("a method that is replaced on one class opens one page of a table of many",
 });
 
 test("a method that is replaced above thousands of heirs opens every page that holds an entry of it", async () => {
-  // 4,202 entries of four bytes: more than one page holds where a page has 16 KB, so they lie on two pages at the least.
+  // 4,202 entries of four bytes lie side by side.
   const [pages] = await pagesOpenedBy(
     program(4200, 1, `(Base.prototype as any).m0 = function () { return 1000000; };`),
   );
-  expect(pages).toBeGreaterThanOrEqual(2);
+  expect(pages).toBeGreaterThanOrEqual(Math.ceil((4202 * 4) / pageSize()));
 });

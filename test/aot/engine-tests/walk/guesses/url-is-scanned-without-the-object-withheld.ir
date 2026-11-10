@@ -1,0 +1,6 @@
+# the same function with guesses withheld: the object is made, and asked
+# RUN: walk f1 mechanisms=all-Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: CompilerHelpersScanPlainURL
+# CHECK: = NewArray
+# PROGRAM-OF: url-is-scanned-without-the-object.ir

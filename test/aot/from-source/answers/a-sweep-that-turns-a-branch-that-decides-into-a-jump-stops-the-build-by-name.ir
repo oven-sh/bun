@@ -1,0 +1,10 @@
+# What the checks look at is what is emitted: where code is verified, the verifier runs once more behind the sweep, on the swept code.
+# THE LIE, testing=SweepTurnsBranchThatDecidesIntoJump: in each unit the sweep turns one branch whose other side is entered by another way too into a jump to its taken side. The Narrowed behind it stays.
+# The verifier's run in front of the sweep sees nothing of it: the build went through under check=Validate, and the program died where it ran.
+# -- source: main.js
+# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = x | 0; return to; }
+# print(fill([1.5, 2.5, 3.5].slice(), 7).join() + " " + fill([1, 2, 3].slice(), 7).join());
+# -- end of source
+# OPTIONS: check=Validate testing=SweepTurnsBranchThatDecidesIntoJump
+# DIAGNOSTIC: OpcodeNotInForm
+# RUN: compile mechanisms=all

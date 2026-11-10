@@ -1806,6 +1806,55 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(exitCode).toBe(0);
       });
 
+      // In Jest's keys the snapshot of beforeEach is the first of the test. An older Bun counted the body alone.
+      test("is not the entry that an earlier snapshot of the test has under the file's own count", async () => {
+        const testsOf = (body: string) => `
+          describe("h", () => {
+            beforeEach(() => { expect("s").toMatchSnapshot(); });
+            test("c new", () => { ${body} });
+          });
+          test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
+        `;
+        using dir = tempDir("snapshot-out-of-order", {
+          "a.test.js": testsOf("expect(5).toMatchSnapshot();"),
+          "__snapshots__/a.test.js.snap": headers[format] + old + "\nexports[`gone 1`] = `0`;\n",
+        });
+        const first = await runTests(String(dir), { CI: "false" });
+        writeFileSync(
+          join(String(dir), "a.test.js"),
+          testsOf("expect(5).toMatchSnapshot(); expect(6).toMatchSnapshot();"),
+        );
+        const second = await runTests(String(dir), { CI: "false" });
+        expect(second.stderr).toContain("3 passed, 1 added");
+        const all = await runTests(String(dir), { CI: "true" });
+        expect({ pass: all.pass, stderr: all.pass === 2 ? "" : all.stderr }).toEqual({ pass: 2, stderr: "" });
+        expect([first.exitCode, second.exitCode, all.exitCode]).toEqual([0, 0, 0]);
+      });
+
+      test("is found again by each attempt of a test that is retried", async () => {
+        // The name has a line break, so the key of the file is not Bun's key in either format.
+        const appended =
+          headers[format] + old + "\nexports[`outer in\nner 1`] = `1`;\n" + "\nexports[`outer in\nner 2`] = `2`;\n";
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js": `
+            let attempts = 0;
+            describe("outer", () => {
+              test("in\\nner", () => {
+                expect(1).toMatchSnapshot();
+                expect(2).toMatchSnapshot();
+                if (++attempts < 3) throw new Error("not yet");
+              }, { retry: 3 });
+            });
+            test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
+          `,
+          "__snapshots__/a.test.js.snap": appended,
+        });
+        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+        expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+        expect(snap(dir)).toBe(appended);
+        expect(exitCode).toBe(0);
+      });
+
       test.skipIf(format === "jest")(
         "is found for a second snapshot of a test whose first is the runner's",
         async () => {

@@ -685,7 +685,8 @@ impl Build<'_> {
             hands_on_any_module: contents.loads_by_unknown_name
                 || contents.loads_by_unknown_path
                 || (project == ProjectId::Application
-                    && contents.run.loader_functions_answer_requires),
+                    && (contents.run.loader_functions_answer_requires
+                        || self.options.aot.admits_inspector)),
             any_module_loads_again: self.options.load.runs_tests && contents.any_module_loads_again,
             runs_tests: self.options.load.runs_tests,
             runner_starts_entry_points: project == ProjectId::Application

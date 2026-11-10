@@ -888,10 +888,10 @@ test("the file is missing", () => {
 });
 ```
 
-Bun looks for the method on plain objects and on instances of your own classes:
+Write the matcher as a plain object or as an instance of your own class:
 
-- A function, an array, an `Error`, a `Map`, a `Date` or a `Proxy` isn't a matcher. Neither is an instance of a class that extends `Array`, `Error` or `Map`.
-- `asymmetricMatch` has to be a method. Bun doesn't call a getter to read it.
+- A function, an array, an `Error`, a `Map`, a `Set`, a `Date`, a `RegExp`, a `Promise` or a `Proxy` isn't a matcher. Neither is an instance of a class that extends one of them.
+- `asymmetricMatch` has to be a method. An object that has a getter with that name isn't a matcher.
 
 ## Best Practices
 

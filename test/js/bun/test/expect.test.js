@@ -1269,6 +1269,9 @@ describe("expect()", () => {
       ["boom", expect.any(Number), false],
       [1.26, expect.closeTo(1.3, 1), true],
       [1.26, expect.closeTo(1.4, 1), false],
+      [Symbol("thrown"), expect.anything(), true],
+      [Symbol("thrown"), expect.any(Symbol), true],
+      [Symbol("thrown"), expect.any(String), false],
     ];
     if (isBun) {
       cases.push(
@@ -5503,6 +5506,28 @@ describe("expect()", () => {
           };
           expect(() => expect(throwsRangeError).toThrow(throws)).toThrow(new SyntaxError("thrown by the matcher"));
           expect(() => expect(throwsRangeError).not.toThrow(throws)).toThrow(new SyntaxError("thrown by the matcher"));
+        });
+
+        test("an error thrown by a matcher of expect.extend() propagates", () => {
+          expect.extend({
+            toBlowUp() {
+              throw new SyntaxError("thrown by toBlowUp");
+            },
+          });
+          const blowsUp = ANY(expect).toBlowUp();
+          expect(() => expect(throwsRangeError).toThrow(blowsUp)).toThrow(new SyntaxError("thrown by toBlowUp"));
+          expect(() => expect(throwsRangeError).not.toThrow(blowsUp)).toThrow(new SyntaxError("thrown by toBlowUp"));
+        });
+
+        test("an expect() inside asymmetricMatch() counts, with .not too", () => {
+          expect.assertions(2);
+          const matcher = {
+            asymmetricMatch(/** @type {unknown} */ value) {
+              expect(value).toBe(rangeError);
+              return false;
+            },
+          };
+          expect(throwsRangeError).not.toThrow(matcher);
         });
 
         test("asymmetricMatch() can be inherited, or be on an object without a prototype", () => {

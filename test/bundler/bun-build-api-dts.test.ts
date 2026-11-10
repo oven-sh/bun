@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const project = {
@@ -171,6 +171,41 @@ export { join };
     const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"));
     expect((await typed?.text())?.match(/^function .*$/gm)).toEqual([
       "function pick(index: number = void 0 as any): number {",
+    ]);
+  });
+
+  // In index.aot.ts `limit` is a local constant, which its initializer narrows, so the first cast is an error there.
+  // On Windows the check of index.aot.ts reads no file, so the build does not see the error.
+  test.todoIf(isWindows).each([
+    ["without a minify option", false],
+    ["minify.syntax", true],
+  ])("%s: a cast that index.aot.ts does not allow does not cost index.aot.ts", async (_, syntax) => {
+    using dir = tempDir("build-api-dts-rejected-cast", {
+      ...project,
+      "src/constants.ts": `export const limit: number | undefined = undefined;
+export const value: unknown = "v";
+`,
+      "src/index.ts": `import * as ns from "./constants";
+export const narrowed = (n: number | undefined = ns.limit as number): number => n ?? 1;
+export function held(p: unknown = ns.value as string): unknown {
+  return p;
+}
+export const text = ns.value as string;
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      tsconfig: join(root, "tsconfig.json"),
+      minify: { syntax },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"));
+    expect((await typed?.text())?.match(/^(const (narrowed|text) |function ).*$/gm)).toEqual([
+      "const narrowed = (n: number | undefined = limit): number => n ?? 1;",
+      "function held(p: unknown = value): unknown {",
+      "const text = value as string;",
     ]);
   });
 

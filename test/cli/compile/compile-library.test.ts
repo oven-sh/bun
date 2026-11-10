@@ -1141,8 +1141,10 @@ export function turned(x: number, p: boolean = "k" === (ns.kind as string)): num
   if (null == (ns.value as string)) x++;
   return p ? x : 0;
 }
-export function folded(x: number): number {
+export function folded(x: number, count: number): number {
   while (((ns.size + ns.text) as string) && true) break;
+  do x++;
+  while (!!count as unknown as boolean);
   return x;
 }
 export class Rows {
@@ -1157,8 +1159,70 @@ export class Rows {
       'function turned(x: number, p: boolean = kind === "k"): number {',
       "  if (value == null)",
       "  while (size + text)",
+      "  while (count);",
       "  label = (__privateAdd(this, _id, 0), pair);",
     ]);
+  });
+
+  // In index.aot.ts `limit` is a local constant, which its initializer narrows, so the first cast is an error there.
+  // On Windows the check of index.aot.ts reads no file, so the build does not see the error.
+  test.todoIf(isWindows).each([
+    ["without a minify flag", []],
+    ["--minify-syntax", ["--minify-syntax"]],
+  ])("%s: a cast that index.aot.ts does not allow does not cost index.aot.ts", async (_, flags) => {
+    using dir = tempDir(
+      "library-typed-file-rejected-cast",
+      library({
+        "src/constants.ts": `export const limit: number | undefined = undefined;
+export const value: unknown = "v";
+`,
+        "src/index.ts": `import * as ns from "./constants";
+export const narrowed = (n: number | undefined = ns.limit as number): number => n ?? 1;
+export function held(p: unknown = ns.value as string): unknown {
+  return p;
+}
+export const text = ns.value as string;
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/^(const (narrowed|text) |function ).*$/gm)).toEqual([
+      "const narrowed = (n: number | undefined = limit): number => n ?? 1;",
+      "function held(p: unknown = value): unknown {",
+      "const text = value as string;",
+    ]);
+  });
+
+  test.todo("--minify-syntax: Infinity keeps its cast", async () => {
+    using dir = tempDir(
+      "library-typed-file-infinity",
+      library({
+        "src/index.ts": `export type Ms = number & { readonly unit: "ms" };
+export function wait(limit: Ms = Infinity as Ms): Ms {
+  return limit;
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+  });
+
+  test.todo("useDefineForClassFields: false: a field keeps its cast", async () => {
+    using dir = tempDir("library-typed-file-assigned-field", {
+      ...library({
+        "src/index.ts": `export class Late {
+  field: number = undefined as any;
+}
+`,
+      }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, moduleResolution: "bundler", types: [], useDefineForClassFields: false },
+      }),
+    });
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
   });
 
   test("--minify-whitespace: a member of a const enum keeps its type after case", async () => {

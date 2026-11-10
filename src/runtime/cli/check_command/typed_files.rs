@@ -14,8 +14,8 @@ use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::typed_files::{
-    ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
-    module_types, tsconfig_of_sources, typed_path_beside,
+    ModuleTypes, Output, TypedFilesError, annotate_implicit_any, build_typed_files,
+    emitted_declarations_of, first_kept, module_types, tsconfig_of_sources, typed_path_beside,
 };
 use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
@@ -110,6 +110,14 @@ fn first_error(report: &Report) -> Option<&Diagnostic> {
 }
 
 type Texts = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Typed files as the writer made them, with what their check says.
+type Checked = (bun_sema_driver::typed_files::TypedFiles, Report);
+
+enum NotKept {
+    NotWritten(TypedFilesError),
+    Rejected(Checked),
+}
 
 const STATED_AS_THE_SOURCES_STATE_THEM: [&[u8]; 7] = [
     b"jsx",
@@ -303,7 +311,7 @@ pub(crate) fn typed_files_for_build(
             }
         }
     };
-    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[]);
+    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[], true);
     let untyped_modules = without_emitted_declarations
         .as_ref()
         .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
@@ -344,9 +352,18 @@ pub(crate) fn typed_files_for_build(
         bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |_| ());
     }
     let emitted_modules = emitted_modules.take();
+    let write = |with_root_lookup: bool| {
+        build_typed_files(
+            outdir,
+            &outputs,
+            modules,
+            &emitted_modules,
+            with_root_lookup,
+        )
+    };
     let found = match emitted_modules.is_empty() {
         true => without_emitted_declarations,
-        false => build_typed_files(outdir, &outputs, modules, &emitted_modules),
+        false => write(true),
     };
     let mut warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(
@@ -356,15 +373,26 @@ pub(crate) fn typed_files_for_build(
         );
         TypedFiles::default()
     };
-    let mut found = match found {
-        Ok(found) => found,
-        Err(why) => return warn(format_args!("{why}")),
-    };
-    let report = check(
-        &mut found.typed,
-        &found.declarations_while_checked,
-        &newest_lib,
+    let kept = first_kept(
+        found,
+        || write(false),
+        |found| {
+            let mut found = found.map_err(NotKept::NotWritten)?;
+            let report = check(
+                &mut found.typed,
+                &found.declarations_while_checked,
+                &newest_lib,
+            );
+            match first_error(&report).is_none() && report.incomplete.is_empty() {
+                true => Ok((found, report)),
+                false => Err(NotKept::Rejected((found, report))),
+            }
+        },
     );
+    let (mut found, report) = match kept {
+        Ok(checked) | Err(NotKept::Rejected(checked)) => checked,
+        Err(NotKept::NotWritten(why)) => return warn(format_args!("{why}")),
+    };
     if let Some(first) = first_error(&report) {
         let path = bundler_path(&first.path);
         let separator = std::path::MAIN_SEPARATOR_STR.as_bytes();

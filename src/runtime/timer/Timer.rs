@@ -749,4 +749,16 @@ pub(crate) mod internal_bindings {
         timer_all_mut().last_id = id;
         Ok(())
     }
+
+    /// `internal/trace_events` turns the log of the timers on and off with the `node.async_hooks` category.
+    pub(crate) fn set_async_hooks_trace(enabled: bool) {
+        timer_all_mut()
+            .async_hooks_trace
+            .set_enabled(VirtualMachine::get(), enabled);
+    }
+
+    /// What the timers did since the last call, if anything: see `AsyncHooksTrace::log`.
+    pub(crate) fn take_async_hooks_trace() -> Option<Vec<f64>> {
+        timer_all_mut().async_hooks_trace.take()
+    }
 }

@@ -100,7 +100,7 @@ macro_rules! impl_timer_object {
 
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
             /// heap-allocate → `to_js_ptr` → `internals.init` →
-            /// inspector `did_schedule_async_call`. The per-type `init` fn
+            /// `internals.notify_created`. The per-type `init` fn
             /// picks `kind`/`interval` and forwards here.
             pub(crate) fn init_with(
                 cx: &bun_jsc::JsThread<'_>,
@@ -128,13 +128,9 @@ macro_rules! impl_timer_object {
                         js_value, cx, id, kind, interval, callback, arguments, clock,
                     );
                 }
-                if cx.vm().as_mut().is_inspector_enabled() {
-                    ::bun_jsc::Debugger::did_schedule_async_call(
-                        cx.global(),
-                        ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
-                        super::ID { id, kind: kind.big() }.async_id(),
-                        kind != super::Kind::SetInterval,
-                    );
+                if cx.vm().timer_observers() != 0 {
+                    // SAFETY: `payload` is live: the wrapper owns it, and `_keep` the wrapper.
+                    unsafe { &(*payload).internals }.notify_created(cx.global(), callback);
                 }
                 js_value
             }
@@ -188,6 +184,10 @@ mod date_header_timer_draft;
 
 #[path = "EventLoopDelayMonitor.rs"]
 pub(crate) mod event_loop_delay_monitor;
+
+#[path = "AsyncHooksTrace.rs"]
+pub(crate) mod async_hooks_trace;
+pub(crate) use async_hooks_trace::AsyncHooksTrace;
 
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
@@ -574,6 +574,7 @@ pub(crate) struct All {
     pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
+    pub(crate) async_hooks_trace: AsyncHooksTrace,
     pub(crate) maps: Maps,
     pub(crate) date_header_timer: DateHeaderTimer,
     pub(crate) wtf_timers: Guarded<TimerHeap>,
@@ -598,6 +599,7 @@ impl All {
             uv_idle: bun_core::ffi::zeroed(),
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
+            async_hooks_trace: AsyncHooksTrace::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),
             wtf_timers: Guarded::init(TimerHeap::default()),

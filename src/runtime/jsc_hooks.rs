@@ -686,7 +686,7 @@ unsafe fn configure_debugger(
     }
     let mode = debugger.mode;
     // SAFETY: `vm` is the unique freshly-boxed VM; sole writer.
-    unsafe { (*vm).debugger = Some(Box::new(debugger)) };
+    unsafe { (*vm).set_debugger(Some(Box::new(debugger))) };
 
     // The inspector is always enabled at this point, so disable the cache
     // unconditionally.
@@ -1782,6 +1782,12 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         (*state).timer.fake_timers.forget_realm((*vm).global());
+        // So would the `node.async_hooks` log, which only this global's `internal/trace_events`
+        // takes. `bun test --isolate=modules` keeps the global between files.
+        let global_stays = (*vm).test_isolation_state.shares_global && !(*vm).is_shutting_down();
+        if !global_stays {
+            (*state).timer.async_hooks_trace.set_enabled(&*vm, false);
+        }
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
     }
 }

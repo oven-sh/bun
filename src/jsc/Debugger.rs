@@ -581,7 +581,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
     let url_bytes: &'static [u8] = Box::leak(url.to_owned_slice().into_boxed_slice());
-    this.as_mut().debugger = Some(Box::new(Debugger {
+    this.as_mut().set_debugger(Some(Box::new(Debugger {
         path_or_port: Some(url_bytes),
         wait_for_connection: if wait_for_connection {
             Wait::Forever
@@ -590,7 +590,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
         },
         protocol: Protocol::NodeInspector,
         ..Default::default()
-    }));
+    })));
 
     // Frontends need positions that map back to the original source, so stop
     // minifying and caching transpiled output for code loaded from now on.
@@ -609,7 +609,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     let global = this.global;
     // SAFETY: `global` is set during `VirtualMachine::init` and outlives the VM.
     if Debugger::create(VirtualMachine::get_mut_ptr(), unsafe { &*global }).is_err() {
-        this.as_mut().debugger = None;
+        this.as_mut().set_debugger(None);
         return false;
     }
 

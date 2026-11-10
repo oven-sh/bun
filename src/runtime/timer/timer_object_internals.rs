@@ -16,11 +16,12 @@ use crate::jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecu
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
-use crate::jsc::virtual_machine::VirtualMachine;
+use crate::jsc::virtual_machine::{VirtualMachine, timer_observer};
 
+use super::async_hooks_trace::Op as TraceOp;
 use super::{
-    Clock, ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, Kind, KindBig,
-    TimeoutObject,
+    AsyncHooksTrace, Clock, ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject,
+    Kind, KindBig, TimeoutObject,
 };
 
 /// Data that TimerObject and ImmediateObject have in common.
@@ -184,6 +185,60 @@ impl TimerObjectInternals {
         .async_id()
     }
 
+    /// Tells whoever follows the timers about `op` of this one, for a caller that has just found
+    /// `VirtualMachine::timer_observers` not zero.
+    #[cold]
+    #[inline(never)]
+    fn notify_observers(&self, global: &JSGlobalObject, async_id: u64, op: TraceOp) {
+        self.notify(
+            VirtualMachine::get().timer_observers(),
+            global,
+            async_id,
+            op,
+        );
+    }
+
+    /// [`Self::notify_observers`] of a timer that `init` has just filled in.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn notify_created(&self, global: &JSGlobalObject, callback: JSValue) {
+        let mut observers = VirtualMachine::get().timer_observers();
+        // `Bun.sleep` has a promise here, and no `Timeout` that script can see.
+        if !callback.without_async_context().is_callable() {
+            observers &= !timer_observer::ASYNC_HOOKS_TRACE;
+        }
+        self.notify(observers, global, self.async_id(), TraceOp::Init);
+    }
+
+    fn notify(&self, observers: u8, global: &JSGlobalObject, async_id: u64, op: TraceOp) {
+        if observers & timer_observer::INSPECTOR != 0 {
+            let call = Debugger::AsyncCallType::DOMTimer;
+            match op {
+                TraceOp::Init => {
+                    let single_shot = self.flags.get().kind() != Kind::SetInterval;
+                    Debugger::did_schedule_async_call(global, call, async_id, single_shot);
+                }
+                TraceOp::Before => Debugger::will_dispatch_async_call(global, call, async_id),
+                TraceOp::After => Debugger::did_dispatch_async_call(global, call, async_id),
+                TraceOp::Destroy => Debugger::did_cancel_async_call(global, call, async_id),
+            }
+        }
+        if observers & timer_observer::ASYNC_HOOKS_TRACE != 0 {
+            self.trace(op);
+        }
+    }
+
+    /// Notes `op` of this timer for the `node.async_hooks` trace category, which the caller has
+    /// just found on. A timer of a fake clock has no events.
+    #[cold]
+    #[inline(never)]
+    fn trace(&self, op: TraceOp) {
+        let flags = self.flags.get();
+        if !flags.fake() {
+            AsyncHooksTrace::record(op, flags.kind(), self.id);
+        }
+    }
+
     /// Note (jsc/runtime crate cycle): the low-tier
     /// `bun_jsc::VirtualMachine.timer` is `()`,
     /// so resolve `Timer::All` via the per-thread `RuntimeState` instead.
@@ -240,8 +295,8 @@ impl TimerObjectInternals {
         // deref (panics on null; `vm.global` is never null).
         let global = JSGlobalObject::opaque_ref(global_this);
         // SAFETY: `vm` is the live per-thread VM (hook contract).
-        if unsafe { (*vm).is_inspector_enabled() } {
-            Debugger::will_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
+        if unsafe { (*vm).timer_observers() } != 0 {
+            self.notify_observers(global, async_id, TraceOp::Before);
         }
 
         // Bun__JSTimeout__call handles exceptions.
@@ -257,8 +312,8 @@ impl TimerObjectInternals {
         self.update_flags(|f| f.set_in_callback(false));
 
         // SAFETY: as above.
-        if unsafe { (*vm).is_inspector_enabled() } {
-            Debugger::did_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
+        if unsafe { (*vm).timer_observers() } != 0 {
+            self.notify_observers(global, async_id, TraceOp::After);
         }
 
         result
@@ -448,6 +503,10 @@ impl TimerObjectInternals {
                     core::ptr::null_mut(),
                 )
             };
+            // SAFETY: `vm` per fn contract.
+            if unsafe { (*vm).timer_observers() } & timer_observer::ASYNC_HOOKS_TRACE != 0 {
+                s.trace(TraceOp::Destroy);
+            }
             // `Self::run` has no early return so the deref ordering below is
             // preserved. After the second `deref()` `*this` may be
             // freed; do not touch it past this block.
@@ -565,12 +624,12 @@ impl TimerObjectInternals {
 
         if has_been_cleared || !callback.to_boolean() {
             // SAFETY: `vm`/`global_this` live per hook contract.
-            if unsafe { (*vm).is_inspector_enabled() } {
-                Debugger::did_cancel_async_call(
+            if unsafe { (*vm).timer_observers() } != 0 {
+                s.notify_observers(
                     // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
                     JSGlobalObject::opaque_ref(global_this),
-                    Debugger::AsyncCallType::DOMTimer,
                     async_id.async_id(),
+                    TraceOp::Destroy,
                 );
             }
             s.set_enable_keeping_event_loop_alive(vm, false);
@@ -720,6 +779,10 @@ impl TimerObjectInternals {
 
             if is_timer_done {
                 s.set_enable_keeping_event_loop_alive(vm, false);
+                // SAFETY: `vm` per fn contract.
+                if unsafe { (*vm).timer_observers() } & timer_observer::ASYNC_HOOKS_TRACE != 0 {
+                    s.trace(TraceOp::Destroy);
+                }
                 // The timer will not be re-entered into the event loop at this point.
                 s.deref();
             }
@@ -1132,6 +1195,17 @@ impl TimerObjectInternals {
         self.this_value.with_mut(|r| r.finalize());
     }
 
+    /// As Node's `unenroll` and `clearImmediate`: a timer that is destroyed already has no second
+    /// `destroy`. A timer that its own callback clears is noted once that callback has returned
+    /// (`fire_catching`, `run_immediate_task`), so that the event is never inside the callback's.
+    #[cold]
+    #[inline(never)]
+    fn trace_cancel(&self) {
+        if !self.flags.get().in_callback() && !self.get_destroyed() {
+            self.trace(TraceOp::Destroy);
+        }
+    }
+
     /// `clearTimeout`/`clearInterval`
     /// / `clearImmediate` / `Timeout#[Symbol.dispose]` body.
     ///
@@ -1140,6 +1214,10 @@ impl TimerObjectInternals {
     /// `set_enable_keeping_event_loop_alive` which already uses the raw-ptr
     /// contract. `vm.timer` resolved via `runtime_state()` (jsc/runtime crate cycle).
     pub(crate) fn cancel(&self, vm: *mut VirtualMachine) {
+        // SAFETY: `vm` is the live per-thread VM (every caller's contract).
+        if unsafe { (*vm).timer_observers() } & timer_observer::ASYNC_HOOKS_TRACE != 0 {
+            self.trace_cancel();
+        }
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));
 

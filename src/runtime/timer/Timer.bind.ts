@@ -6,6 +6,9 @@ export default b.module({ rustPath: "crate::timer::timer::internal_bindings" });
 export const timerClockMs = b.fn({ returns: b.f64 });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 export const setNextTimerId = b.fn({ args: { id: b.u64.optional }, length: 1, capability: "heap", throws: true });
+// For `internal/trace_events`: the log that the timers keep while the `node.async_hooks` category is on.
+export const setAsyncHooksTrace = b.fn({ args: { enabled: b.bool } });
+export const takeAsyncHooksTrace = b.fn({ returns: b.array(b.f64).nullable });
 
 // These change flags of the native timer and its place among the timers that wait. None of them keeps the wrapper or hands it to anybody but the caller.
 const inspectsTimer = { this: table.inspected };

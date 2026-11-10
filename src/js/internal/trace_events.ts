@@ -10,6 +10,8 @@ const {
   isCategoryGroupEnabled,
   emitEvent,
   emitEventWithArgs,
+  pushEvent,
+  setOlderEvents,
 } = require("internal/trace_event_recorder");
 // Live one-byte views handed out by getCategoryEnabledBuffer(); byte 0 is 1
 // while the category is enabled.
@@ -20,7 +22,6 @@ const everEnabled = new Set<string>();
 let activated = false;
 let initialTitle: string | undefined;
 let filePattern: string | null = null;
-let nextAsyncId = 2;
 // Synthetic tid for the PlatformWorkerThread __metadata row. Worker rows use
 // threadId + 1 (first worker = 2), so keep this far out of that range to
 // avoid clobbering a worker's thread_name in last-wins trace viewers.
@@ -78,6 +79,7 @@ function enableCategoriesImpl(categories: string[]) {
       categoryRefs.$set(category, refs + 1);
     }
   }
+  syncTimerTrace();
   if (categories.length !== 0) {
     activate();
     // Re-check on every enable so dynamically enabled categories (e.g.
@@ -99,6 +101,7 @@ function disableCategories(categories: string[]) {
       categoryRefs.$set(category, refs - 1);
     }
   }
+  syncTimerTrace();
 }
 
 function getEnabledCategories(): string | undefined {
@@ -158,7 +161,6 @@ function activate() {
   activated = true;
   initialTitle = process.title;
   process.on("exit", flush);
-  installTimerInstrumentation();
   installInstrumentation();
 }
 
@@ -214,6 +216,7 @@ function flush() {
 }
 
 function flushImpl() {
+  writeTimerEvents();
   let fileName = filePattern ?? "node_trace.${rotation}.log";
   fileName = fileName.replaceAll("${pid}", String(process.pid)).replaceAll("${rotation}", "1");
   if (!Bun.isMainThread) {
@@ -343,6 +346,7 @@ function emitMetadata(target: object[] = events) {
 // tracing activated.
 function emitWorkerThreadName(name: unknown, threadId: number) {
   if (!activated) return;
+  writeTimerEvents();
   events.push({
     pid: process.pid,
     tid: threadId + 1,
@@ -366,6 +370,7 @@ function inspectorStart(categories: string[]): boolean {
   if (inspectorCategories !== null) return false;
   inspectorCategories = categories.slice();
   enableCategoriesImpl(inspectorCategories);
+  writeTimerEvents();
   inspectorStartIndex = events.length;
   return true;
 }
@@ -384,6 +389,7 @@ function inspectorStop(): { collected: object[]; metadata: object[] } {
   const collected: object[] = [];
   if (inspectorCategories !== null) {
     const sessionCats = new Set(inspectorCategories);
+    writeTimerEvents();
     disableCategories(inspectorCategories);
     inspectorCategories = null;
     // Partition the events recorded during the session window instead of
@@ -411,85 +417,90 @@ function inspectorStop(): { collected: object[]; metadata: object[] } {
   return { collected, metadata };
 }
 
-// Timeout init/destroy events under "node,node.async_hooks". Bun's
-// async_hooks ids are stubs, so synthesize monotonic ids; Node's shape is
-// 'b' at init with args.data.{executionAsyncId,triggerAsyncId} and 'e' at
-// destroy, both carrying the async id.
-let timersInstrumented = false;
-// Open Timeout span stashed on the returned timer so clearTimeout /
-// clearInterval can close it (Node emits the 'e' from the destroy hook).
-const kTimerSpan = Symbol("traceTimerSpan");
-function installTimerInstrumentation() {
-  if (timersInstrumented) return;
-  timersInstrumented = true;
-  globalThis.setTimeout = wrapTimerFunction(globalThis.setTimeout, false);
-  globalThis.setInterval = wrapTimerFunction(globalThis.setInterval, true);
-  globalThis.clearTimeout = wrapClearFunction(globalThis.clearTimeout);
-  globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
+// Timeout and Immediate events under "node,node.async_hooks". Node writes them from an async hook
+// (https://github.com/nodejs/node/blob/v26.12.1/lib/internal/trace_events_async_hooks.js#L41-L77): init is 'b' <type>
+// with args.data.{triggerAsyncId,executionAsyncId}, before and after are 'B' and 'E' <type>_CALLBACK, destroy is 'e'
+// <type>, and all four carry the async id. Bun has no async hooks. While the category is on, the native timers log
+// those four points of every timer (src/runtime/timer/AsyncHooksTrace.rs), and `writeTimerEvents` writes the events.
+let timersTraced = false;
+let setAsyncHooksTrace: ((enabled: boolean) => void) | undefined;
+let takeAsyncHooksTrace: (() => number[] | null) | undefined;
+// Node's `typeMemory`: the type of each async id whose init was traced. No other id has later events.
+let typeOfAsyncId: Map<number, string> | undefined;
+// The async ids of the timer callbacks that are running, the innermost last.
+let runningAsyncIds: number[] = [];
+
+// `Op` and `IMMEDIATE` of AsyncHooksTrace.rs.
+const kTimerInit = 0;
+const kTimerBefore = 1;
+const kTimerAfter = 2;
+const kTimerDestroy = 3;
+const kTimerIsImmediate = 4;
+
+function syncTimerTrace() {
+  const enabled = isCategoryGroupEnabled(kAsyncHooksCat);
+  if (enabled === timersTraced) return;
+  if (enabled) {
+    typeOfAsyncId ??= new Map();
+    takeAsyncHooksTrace ??= $bindgen("Timer.bind.ts", "takeAsyncHooksTrace");
+    (setAsyncHooksTrace ??= $bindgen("Timer.bind.ts", "setAsyncHooksTrace"))(true);
+    timersTraced = true;
+    setOlderEvents(writeTimerEvents);
+  } else {
+    // As Node's hook when it is disabled: a timer that is alive now has no more events, also not if the category comes back.
+    writeTimerEvents();
+    timersTraced = false;
+    setOlderEvents(undefined);
+    setAsyncHooksTrace!(false);
+    typeOfAsyncId!.$clear();
+    runningAsyncIds = [];
+  }
+}
+
+function writeTimerEvents() {
+  if (!timersTraced) return;
+  const log = takeAsyncHooksTrace!();
+  if (log === null) return;
+  const types = typeOfAsyncId!;
+  for (let i = 0; i < log.length; i += 3) {
+    // Node's async ids start at 2, because 1 is the script outside of every callback. The ids of Bun's timers start at 1.
+    const asyncId = log[i + 1] + 1;
+    const ts = log[i + 2];
+    switch (log[i] & ~kTimerIsImmediate) {
+      case kTimerInit: {
+        const type = log[i] & kTimerIsImmediate ? "Immediate" : "Timeout";
+        types.$set(asyncId, type);
+        const executionAsyncId = runningAsyncIds.length === 0 ? 1 : runningAsyncIds[runningAsyncIds.length - 1];
+        pushEvent(ts, "b", kAsyncHooksCat, type, asyncId, {
+          data: { triggerAsyncId: executionAsyncId, executionAsyncId },
+        });
+        break;
+      }
+      case kTimerBefore: {
+        $arrayPush(runningAsyncIds, asyncId);
+        const type = types.$get(asyncId);
+        if (type !== undefined) pushEvent(ts, "B", kAsyncHooksCat, type + "_CALLBACK", asyncId, {});
+        break;
+      }
+      case kTimerAfter: {
+        if (runningAsyncIds[runningAsyncIds.length - 1] === asyncId) runningAsyncIds.length -= 1;
+        const type = types.$get(asyncId);
+        if (type !== undefined) pushEvent(ts, "E", kAsyncHooksCat, type + "_CALLBACK", asyncId, {});
+        break;
+      }
+      case kTimerDestroy: {
+        const type = types.$get(asyncId);
+        if (type === undefined) break;
+        types.$delete(asyncId);
+        pushEvent(ts, "e", kAsyncHooksCat, type, asyncId, {});
+        break;
+      }
+    }
+  }
 }
 
 /** Whatever function is wrapped so that its calls leave events: the arguments are passed on as they come. */
 type Wrapped = (...args: any[]) => unknown;
-
-function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInterval: boolean): T {
-  function wrapped(callback: Wrapped, delay: unknown, ...args: unknown[]) {
-    let span: { id: number; open: boolean } | null = null;
-    if (typeof callback === "function" && isCategoryGroupEnabled(kAsyncHooksCat)) {
-      const asyncId = nextAsyncId++;
-      span = { id: asyncId, open: true };
-      emitEvent("b", kAsyncHooksCat, "Timeout", asyncId, {
-        executionAsyncId: 1,
-        triggerAsyncId: 1,
-      });
-      const inner = callback;
-      const capturedSpan = span;
-      callback = function (this: unknown, ...callbackArgs: unknown[]) {
-        try {
-          return inner.$apply(this, callbackArgs);
-        } finally {
-          if (!isInterval && capturedSpan.open) {
-            capturedSpan.open = false;
-            emitEvent("e", kAsyncHooksCat, "Timeout", capturedSpan.id);
-          }
-        }
-      };
-    }
-    const timer = original(callback, delay, ...args);
-    if (span !== null && typeof timer === "object" && timer !== null) {
-      timer[kTimerSpan] = span;
-    }
-    return timer;
-  }
-  // Preserve the original's own properties — name/length (writable:false but
-  // configurable:true, so defineProperty works) and extras like the promisify
-  // custom symbol. Only `prototype` is skipped: it can be non-configurable,
-  // and the wrapper deliberately keeps its own.
-  for (const key of Reflect.ownKeys(original)) {
-    if (key === "prototype") continue;
-    const desc = Object.getOwnPropertyDescriptor(original, key);
-    if (desc) Object.defineProperty(wrapped, key, desc);
-  }
-  return wrapped as T;
-}
-
-function wrapClearFunction(original: (timer: any) => void) {
-  function wrapped(timer) {
-    if (typeof timer === "object" && timer !== null) {
-      const span = timer[kTimerSpan];
-      if (span !== undefined && span.open) {
-        span.open = false;
-        emitEvent("e", kAsyncHooksCat, "Timeout", span.id);
-      }
-    }
-    return original(timer);
-  }
-  for (const key of Reflect.ownKeys(original)) {
-    if (key === "prototype") continue;
-    const desc = Object.getOwnPropertyDescriptor(original, key);
-    if (desc) Object.defineProperty(wrapped, key, desc);
-  }
-  return wrapped;
-}
 
 // fs instrumentation: the single native binding object from
 // `internal/fs/binding` is shared by node:fs, node:fs/promises and the
@@ -735,6 +746,7 @@ function installRejectionInstrumentation() {
     // them would flip unhandled-rejection semantics mid-program), so gate
     // emission per-call like every other emitter in this file.
     if (!isCategoryGroupEnabled(kRejectionsCat)) return;
+    writeTimerEvents();
     events.push({
       pid: process.pid,
       tid: getTid(),

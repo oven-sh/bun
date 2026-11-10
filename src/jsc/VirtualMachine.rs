@@ -158,6 +158,14 @@ pub enum BuiltinEntryPoint {
     Bake = 1,
 }
 
+/// Bits of [`VirtualMachine::timer_observers`].
+pub mod timer_observer {
+    /// The inspector: [`VirtualMachine::debugger`] is set.
+    pub const INSPECTOR: u8 = 1 << 0;
+    /// The `node.async_hooks` trace category is on.
+    pub const ASYNC_HOOKS_TRACE: u8 = 1 << 1;
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -388,8 +396,11 @@ pub struct VirtualMachine {
     pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
 
+    /// Written by [`Self::set_debugger`] only: `timer_observers` says whether it is set.
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub(crate) has_started_debugger: bool,
+    /// The [`timer_observer`] bits of whoever follows each timer of this VM. One byte, so a timer asks for all of them with one load.
+    timer_observers: u8,
 
     /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
     /// through `vm_ref()` (`&VirtualMachine`) without forming an overlapping
@@ -1782,6 +1793,30 @@ impl VirtualMachine {
 
     pub fn is_inspector_enabled(&self) -> bool {
         self.debugger.is_some()
+    }
+
+    pub fn set_debugger(&mut self, debugger: Option<Box<crate::debugger::Debugger>>) {
+        self.set_timer_observer(timer_observer::INSPECTOR, debugger.is_some());
+        self.debugger = debugger;
+    }
+
+    /// Zero unless the inspector or the `node.async_hooks` trace category follows the timers.
+    #[inline]
+    pub fn timer_observers(&self) -> u8 {
+        debug_assert_eq!(
+            self.timer_observers & timer_observer::INSPECTOR != 0,
+            self.debugger.is_some(),
+            "`debugger` was written without `set_debugger`",
+        );
+        self.timer_observers
+    }
+
+    pub fn set_timer_observer(&mut self, observer: u8, enabled: bool) {
+        if enabled {
+            self.timer_observers |= observer;
+        } else {
+            self.timer_observers &= !observer;
+        }
     }
 
     pub fn is_shutting_down(&self) -> bool {

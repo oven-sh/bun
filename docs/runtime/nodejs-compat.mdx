@@ -181,7 +181,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
-🟢 Fully implemented. `createTracing()`, `getEnabledCategories()` and the `--trace-events-enabled`, `--trace-event-categories` and `--trace-event-file-pattern` flags are supported. Bun writes the trace at exit. Some categories record less than in Node.js. For example, `node.async_hooks` only records timers, and the `v8` category is a placeholder, since JavaScriptCore has no V8 GC or compile events.
+🟢 Fully implemented. `createTracing()`, `getEnabledCategories()` and the `--trace-events-enabled`, `--trace-event-categories` and `--trace-event-file-pattern` flags are supported. Bun writes the trace at exit. Some categories record less than in Node.js. For example, `node.async_hooks` only records timers and immediates, and the `v8` category is a placeholder, since JavaScriptCore has no V8 GC or compile events.
 
 ### [`node:quic`](https://github.com/nodejs/node/blob/main/doc/api/quic.md)
 

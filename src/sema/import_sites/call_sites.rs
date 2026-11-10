@@ -1401,11 +1401,20 @@ fn find_specifier(
     );
     let is_followed = found.as_ref().is_some_and(|found| {
         let mut names = found.alternatives.iter();
-        found.is_out_of_data_file || names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
+        found.is_out_of_data_file && !found.appends_unread_part
+            || names.all(|it| matches!(it, ImportSpecifier::Constant(_)))
     });
     if !is_followed {
+        let read = found.as_ref().filter(|found| found.is_out_of_data_file);
+        let is_read = |name: &Atom| {
+            read.is_some_and(|read| {
+                read.alternatives
+                    .contains(&ImportSpecifier::Constant(*name))
+            })
+        };
         let written = find_names_as_written(inputs, &alternatives.written_names, argument);
-        let written = written.into_iter().map(|name| (name, argument, true));
+        let written = written.into_iter().filter(|name| !is_read(name));
+        let written = written.map(|name| (name, argument, true));
         alternatives.names_out_of_data_files.extend(written);
     }
     let Some(found) = found else {

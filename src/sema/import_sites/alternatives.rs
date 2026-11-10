@@ -331,6 +331,7 @@ struct Follower<'i, 'a, 's> {
     takes_all_as_written: bool,
     keeps_what_is_known: bool,
     has_read_data_file: Cell<bool>,
+    has_appended_unread_part: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
     not_kept_as_written: FxHashSet<SymbolId>,
@@ -375,6 +376,7 @@ pub(super) struct Found {
     pub(super) start_at_own_directory: bool,
     pub(super) resolved_form: Option<ResolvedForm>,
     pub(super) is_out_of_data_file: bool,
+    pub(super) appends_unread_part: bool,
 }
 
 impl<'i, 'a, 's> Follower<'i, 'a, 's> {
@@ -394,6 +396,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             takes_all_as_written: false,
             keeps_what_is_known: false,
             has_read_data_file: Cell::new(false),
+            has_appended_unread_part: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
             not_kept_as_written: FxHashSet::default(),
@@ -677,6 +680,7 @@ fn find_alternatives_with(follower: &mut Follower<'_, '_, '_>, argument: ExprId)
         start_at_own_directory,
         resolved_form,
         is_out_of_data_file: follower.has_read_data_file.get(),
+        appends_unread_part: follower.has_appended_unread_part.get(),
     })
 }
 
@@ -1411,7 +1415,12 @@ impl Follower<'_, '_, '_> {
         }
         appended.shared_sort_unstable_by_key(|it| hir[it.0].pos);
         for (assignment, value) in appended {
-            if !self.runs_once_for_each_binding(assignment, symbol, pattern) {
+            let runs_once = self.runs_once_for_each_binding(assignment, symbol, pattern);
+            let read = match runs_once {
+                true => self.values_of(value),
+                false => None,
+            };
+            let Some(value) = read else {
                 let mut open_at_end = Distinct::new();
                 for held in values.all {
                     let Held::Text(mut text) = held else {
@@ -1421,9 +1430,11 @@ impl Follower<'_, '_, '_> {
                     add(&mut open_at_end, Held::Text(text));
                 }
                 values = open_at_end;
+                if runs_once {
+                    self.has_appended_unread_part.set(true);
+                }
                 continue;
-            }
-            let value = self.values_of(value)?;
+            };
             let before = values.len();
             for sum in self.add_values(&values, &value)? {
                 add(&mut values, sum);
@@ -3604,7 +3615,14 @@ impl Follower<'_, '_, '_> {
             if matches!(expr_kind(hir, argument), None | Some(ExprKind::Spread(_))) {
                 return None;
             }
-            given.push(self.values_of(argument)?);
+            let read = self.values_of(argument);
+            given.push(match method == b"concat" {
+                true => read.unwrap_or_else(|| {
+                    self.has_appended_unread_part.set(true);
+                    some_text()
+                }),
+                false => read?,
+            });
         }
         if method == b"concat" {
             let is_joined = |value: &Held| matches!(value, Held::Text(_) | Held::Primitive(_));

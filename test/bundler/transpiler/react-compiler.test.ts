@@ -2944,6 +2944,168 @@ describe("bundler", () => {
     }
   }
 
+  // The parser declares the name of a function expression in the scope of its
+  // parameters. A parameter with that name takes its place there, and the
+  // name prints as that parameter does. A compiled function gets new
+  // parameters and keeps its name, so the renamer has to number the name like
+  // any other symbol. Printed as written, `function c(t0) { let $ = c(6);`
+  // takes itself for the memo cache function, for the JSX runtime function,
+  // or for the import that its new body reads.
+  const namedLikeItsParameter = {
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        const lines = [];
+        for (const [name, form] of Object.entries(forms)) {
+          try {
+            lines.push(name + "=" + form({ x: 1, c: 2, jsx: 3, jsxDEV: 4, imported: 5, Inner: 6, Alone: 7 }));
+          } catch (e) {
+            lines.push(name + " threw " + e);
+          }
+        }
+        console.log(lines.join("\\n"));
+      `,
+      "/forms.jsx": /* jsx */ `
+        import { forwardRef, memo, useEffect } from "react";
+        import { imported as other } from "./values";
+        export * from "./typed";
+
+        // \`c\` is the memo cache function of react/compiler-runtime.
+        export const CacheDestructured = memo(function c({ x, c }) {
+          useEffect(() => {});
+          return <b><i x={x} y={[c, x]} /></b>;
+        });
+        export const CachePlain = memo(function c(c) {
+          useEffect(() => {});
+          return <b><i x={c.x} y={[c.c, c.x]} /></b>;
+        });
+        // The name is linked to the parameter, and the parameter to a
+        // declaration in the body.
+        export const CacheRedeclared = memo(function c(c) {
+          useEffect(() => {});
+          function c() {
+            return 8;
+          }
+          return <b><i x={c()} /></b>;
+        });
+        // \`--minify-syntax\` removes a name that nothing reads, and
+        // \`export default\` puts it back.
+        export default (function c({ x, c }) {
+          "use memo";
+          useEffect(() => {});
+          return <b><i x={x} y={[c, x]} /></b>;
+        });
+        // The function that makes an element: \`jsxDEV\`, or \`jsx\` in a
+        // production build.
+        export const JsxDEV = memo(function jsxDEV({ x, jsxDEV }) {
+          useEffect(() => {});
+          return <b><i x={x} y={[jsxDEV, x]} /></b>;
+        });
+        export const Jsx = forwardRef(function jsx(jsx, ref) {
+          useEffect(() => {});
+          return <b><i x={jsx.x} y={[jsx.jsx, jsx.x]} /></b>;
+        });
+        // The bundler prints an import under the name of its export.
+        export const Import = memo(function imported({ x, imported }) {
+          useEffect(() => {});
+          return x + ":" + imported + ":" + other;
+        });
+        // Nothing that this body reads has the name.
+        export const NoCollision = memo(function Alone({ x, Alone }) {
+          useEffect(() => {});
+          return <b><i x={x} y={[Alone, x]} /></b>;
+        });
+        // The name of a declaration is linked to the \`var\`, not to the
+        // parameter, and has to stay linked.
+        export const MergedDeclaration = (() => {
+          function Inner({ x, Inner }) {
+            useEffect(() => {});
+            return <b><i x={x} y={[Inner, x]} /></b>;
+          }
+          var Inner;
+          return Inner;
+        })();
+      `,
+      "/typed.tsx": /* tsx */ `
+        import { memo, useEffect } from "react";
+        export const CacheTyped = memo(function c({ x, c }: { x: number; c: number }) {
+          useEffect(() => {});
+          return <b><i x={x} y={[c, x]} /></b>;
+        });
+      `,
+      "/values.js": `export const imported = "IMPORTED";`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": /* js */ `
+        export function useEffect() {}
+        export function memo(component) {
+          return component;
+        }
+        export function forwardRef(component) {
+          return component;
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": /* js */ `
+        export function jsx(type, props) {
+          return type + ":" + Object.values(props).join("|");
+        }
+        export const jsxs = jsx;
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export function jsxDEV(type, props) {
+          return type + ":" + Object.values(props).join("|");
+        }
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        export function c(size) {
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: {
+      stdout: `
+        CacheDestructured=b:i:1|2,1
+        CachePlain=b:i:1|2,1
+        CacheRedeclared=b:i:8
+        CacheTyped=b:i:1|2,1
+        Import=1:5:IMPORTED
+        Jsx=b:i:1|3,1
+        JsxDEV=b:i:1|4,1
+        MergedDeclaration=b:i:1|6,1
+        NoCollision=b:i:1|7,1
+        default=b:i:1|2,1
+      `,
+    },
+  } satisfies BundlerTestInput;
+  // Every function above compiled: the compiler outlines the empty effect
+  // callback (client) or drops the effect (ssr).
+  const expectAllCompiled = (out: string) => expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/FunctionExpressionNamedLikeItsParameter-${target}-identifiers=${minifyIdentifiers}`, {
+        ...namedLikeItsParameter,
+        target,
+        minifyIdentifiers,
+        onAfterBundle(api) {
+          if (minifyIdentifiers) return;
+          const out = api.readFile("/out.js");
+          expectAllCompiled(out);
+          // Where nothing has the name, the function and the local keep it.
+          expect(out).toMatch(/memo\(function Alone\(t0\) \{\s*(let \$ = c\(\d+\);\s*)?let \{ x, Alone \} = t0;/);
+        },
+      });
+    }
+  }
+  itBundled("react-compiler/FunctionExpressionNamedLikeItsParameter-minifySyntax", {
+    ...namedLikeItsParameter,
+    target: "browser",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expectAllCompiled(api.readFile("/out.js"));
+    },
+  });
+
   // The compiler lowers the call the visit pass made of each JSX element into
   // HIR and builds a new call from that. Both steps have to use the call shape
   // of the file's JSX runtime. The classic runtime, and `key` after a spread in

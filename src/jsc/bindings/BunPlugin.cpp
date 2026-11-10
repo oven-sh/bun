@@ -3106,7 +3106,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     // With two paths, a module object may also lie in require.cache under the mock's own path: what require() of that very path got.
     bool isLoaded = loaded.esmNamespace || loaded.staleESMEntry || loaded.commonJSModule || mock->requireKey;
     if (overwritten || mock->originalCommonJSExports || isLoaded)
-        appendMockedModule(globalObject, evict, mock, overwritten, !!mock->originalCommonJSExports);
+        appendMockedModule(globalObject, evict, mock, !!overwritten, !!mock->originalCommonJSExports);
 }
 
 static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock)
@@ -3247,7 +3247,6 @@ struct ModuleMockSpecifier {
     JSC::JSString* requireKeyString { nullptr };
     WTF::String written;
 
-    JSC::JSString* keyStringForRequire() const { return requireKeyString ? requireKeyString : keyString; }
     WTF::String keyForRequire() const { return requireKeyString ? requireKeyString->tryGetValue().data : key; }
 };
 
@@ -4084,7 +4083,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (wasLoadedByEarlierTestFile || loaded.staleESMEntry || loaded.staleCommonJSEntry) {
             ModulesToEvict evict;
             evict.onlyImportersFromEarlierTestFiles = true;
-            appendMockedModule(globalObject, evict, mock, loaded.esmNamespace, loaded.commonJSModule);
+            appendMockedModule(globalObject, evict, mock, !!loaded.esmNamespace, !!loaded.commonJSModule);
             evictModulesAndTheirImporters(globalObject, WTF::move(evict));
             RETURN_IF_EXCEPTION(scope, {});
         }

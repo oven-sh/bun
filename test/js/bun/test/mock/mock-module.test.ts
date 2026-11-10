@@ -1740,6 +1740,518 @@ describe.concurrent("a module mocked without a factory", () => {
   });
 });
 
+describe.concurrent("a name that import and require() resolve to two files", () => {
+  const esm = (name: string) =>
+    `(globalThis.loaded ??= []).push("${name} esm"); export const which = "real esm"; export const fn = () => "real esm"; export default { which, fn };`;
+  const cjs = (name: string) =>
+    `(globalThis.loaded ??= []).push("${name} cjs"); module.exports = { which: "real cjs", fn: () => "real cjs" };`;
+  // An import of each of `names` loads the ES module, and require() of it the CommonJS file.
+  const names = ["dual", "dual/sub", "#dep", "./lib", "./folder"];
+  const files = {
+    "package.json": JSON.stringify({
+      name: "project",
+      imports: { "#dep": { import: "./dep.mjs", require: "./dep.cjs" } },
+    }),
+    "node_modules/dual/package.json": JSON.stringify({
+      name: "dual",
+      exports: {
+        ".": { import: "./esm.mjs", require: "./cjs.cjs" },
+        "./sub": { import: { default: "./sub.mjs" }, default: "./sub.cjs" },
+      },
+    }),
+    "node_modules/dual/esm.mjs": esm("dual"),
+    "node_modules/dual/cjs.cjs": cjs("dual"),
+    "node_modules/dual/sub.mjs": esm("dual/sub"),
+    "node_modules/dual/sub.cjs": cjs("dual/sub"),
+    "dep.mjs": esm("#dep"),
+    "dep.cjs": cjs("#dep"),
+    "lib.mjs": esm("./lib"),
+    "lib.cjs": cjs("./lib"),
+    "folder/index.mjs": esm("./folder"),
+    "folder/index.cjs": cjs("./folder"),
+  };
+  const forms = [
+    ["mock.module", "mock", "bun:test"],
+    ["jest.mock", "jest", "bun:test"],
+    ["jest.doMock", "jest", "bun:test"],
+    ["vi.mock", "vi", "vitest"],
+    ["vi.doMock", "vi", "vitest"],
+  ];
+
+  test.each(isolationFlags)("every kind of mock is what require() and import() of the name get %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        ...Object.fromEntries(
+          forms.map(([mock, api, from]) => [
+            `${mock}.test.js`,
+            `
+            import { expect, test, ${api} } from "${from}";
+            globalThis.calls = {};
+            ${names
+              .map(
+                name => `
+            ${mock}("${name}", () => {
+              globalThis.calls["${name}"] = (globalThis.calls["${name}"] ?? 0) + 1;
+              return { which: "mock", fn: () => "mock" };
+            });
+            test("${name}", async () => {
+              const required = require("${name}");
+              const imported = await import("${name}");
+              expect([required.which, imported.which]).toEqual(["mock", "mock"]);
+              expect(imported.fn).toBe(required.fn);
+              expect(require("${name}")).toBe(required);
+              expect(globalThis.calls["${name}"]).toBe(1);
+            });`,
+              )
+              .join("")}
+            test("neither file of any of them ran", () => expect(globalThis.loaded).toBeUndefined());
+          `,
+          ]),
+        ),
+      },
+      forms.length * (names.length + 1),
+      args,
+    );
+  });
+
+  test("whoever calls require(), and however it is spelled", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "helper.cjs": `module.exports = { read: () => require("dual").which, viaModule: () => module.require("dual").which };`,
+        "commonjs.test.cjs": `
+          const { expect, mock, test } = require("bun:test");
+          mock.module("dual", () => ({ which: "mock" }));
+          test("a CommonJS test file and a CommonJS module that it loads", () => {
+            expect([require("dual").which, module.require("dual").which]).toEqual(["mock", "mock"]);
+            expect(require("./helper.cjs").read()).toBe("mock");
+            expect(require.cache[require.resolve("dual")].exports).toBe(require("dual"));
+          });
+        `,
+        "spellings.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import Module, { createRequire } from "node:module";
+          import { read, viaModule } from "./helper.cjs";
+          mock.module("dual", () => ({ which: "mock" }));
+          test("createRequire(), import.meta.require() and module.require()", () => {
+            expect(createRequire(import.meta.url)("dual").which).toBe("mock");
+            expect(import.meta.require("dual").which).toBe("mock");
+            expect([read(), viaModule()]).toEqual(["mock", "mock"]);
+          });
+          test("with Module._resolveFilename replaced", () => {
+            const resolveFilename = Module._resolveFilename;
+            Module._resolveFilename = (...args) => resolveFilename.apply(Module, args);
+            try {
+              expect(require("dual/sub").which).toBe("real cjs");
+              mock.module("dual/sub", () => ({ which: "mock" }));
+              expect(require("dual/sub").which).toBe("mock");
+            } finally {
+              Module._resolveFilename = resolveFilename;
+            }
+          });
+          test("an import of the path that require() resolves the name to", async () => {
+            const imported = await import(require.resolve("dual"));
+            expect(imported.which).toBe("mock");
+            expect(await import("dual")).toBe(imported);
+          });
+          test("only the file that was required before its mock ran", () => expect(globalThis.loaded).toEqual(["dual/sub cjs"]));
+        `,
+      },
+      5,
+    );
+  });
+
+  test("a mock that a preload made", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "preload.js": `
+          import { mock } from "bun:test";
+          mock.module("dual", () => ({ which: "mock" }));
+        `,
+        "helper.cjs": `module.exports = { read: () => require("dual").which };`,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import { read } from "./helper.cjs";
+          test("reaches require()", async () => {
+            expect([require("dual").which, read(), (await import("dual")).which]).toEqual(["mock", "mock", "mock"]);
+          });
+        `,
+        "2.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("in every test file", () => {
+            expect([require("dual").which, require("./helper.cjs").read()]).toEqual(["mock", "mock"]);
+          });
+        `,
+        "3.test.js": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("dual", () => ({ which: "mock of the file" }));
+          test("gives way to a mock of the test file", async () => {
+            expect([require("dual").which, (await import("dual")).which]).toEqual(["mock of the file", "mock of the file"]);
+          });
+        `,
+        "4.test.js": `
+          import { expect, test } from "bun:test";
+          test("and is back in the next one", async () => {
+            expect([require("dual").which, (await import("dual")).which]).toEqual(["mock", "mock"]);
+            expect(globalThis.loaded).toBeUndefined();
+          });
+        `,
+      },
+      4,
+      ["--preload", "./preload.js"],
+    );
+  });
+
+  test("require() that cannot wait for an async factory gets the file that it loads", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "early.cjs": `module.exports = require("dual");`,
+        "async.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import early from "./early.cjs";
+          import * as dual from "dual";
+          vi.mock("dual", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
+          test("and the mock once the factory has settled", () => {
+            expect([early.which, dual.which, require("dual").which]).toEqual(["real cjs", "mock", "mock"]);
+            expect(require("dual").fn).toBe(dual.fn);
+            expect(globalThis.loaded).toEqual(["dual cjs", "dual esm"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  describe("a library in node_modules that loads the name", () => {
+    const libraries = {
+      ...files,
+      "node_modules/cjs-lib/package.json": `{ "name": "cjs-lib", "main": "index.js" }`,
+      "node_modules/cjs-lib/index.js": `const dual = require("dual"); module.exports = { which: () => dual.which };`,
+      "node_modules/esm-lib/package.json": `{ "name": "esm-lib", "type": "module", "main": "index.js" }`,
+      "node_modules/esm-lib/index.js": `import { which as of } from "dual"; export const which = () => of;`,
+      "own.cjs": `const dual = require("dual"); exports.which = () => dual.which;`,
+    };
+    const file = (mock: string, api: string, from: string, expected: string[], loaded: string) => `
+      import { expect, test, ${api} } from "${from}";
+      ${mock}("dual", () => ({ which: "mock" }));
+      import own from "./own.cjs";
+      import cjsLib from "cjs-lib";
+      import * as esmLib from "esm-lib";
+      test("${mock}()", () => {
+        expect([own.which(), cjsLib.which(), esmLib.which()]).toEqual(${JSON.stringify(expected)});
+        expect(globalThis.loaded).toEqual(${loaded});
+      });
+    `;
+
+    test("jest.mock() and mock.module() mock it for the library too, as in Jest", async () => {
+      await expectFixturesToPass(
+        {
+          ...libraries,
+          "jest.test.js": file("jest.mock", "jest", "bun:test", ["mock", "mock", "mock"], "undefined"),
+          "mock.test.js": `
+            import { expect, mock, test } from "bun:test";
+            test("mock.module()", async () => {
+              mock.module("dual", () => ({ which: "mock" }));
+              const [{ default: own }, { default: cjsLib }, esmLib] = await Promise.all([import("./own.cjs"), import("cjs-lib"), import("esm-lib")]);
+              expect([own.which(), cjsLib.which(), esmLib.which()]).toEqual(["mock", "mock", "mock"]);
+              expect(globalThis.loaded).toBeUndefined();
+            });
+          `,
+        },
+        2,
+      );
+    });
+
+    test.each(isolationFlags)("vi.mock() leaves the library the file that it loads, as in Vitest %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...libraries,
+          "1.test.js": file("vi.mock", "vi", "vitest", ["mock", "real cjs", "real esm"], `["dual cjs", "dual esm"]`),
+          "2.test.js": `
+            import { expect, test, vi } from "vitest";
+            import own from "./own.cjs";
+            import cjsLib from "cjs-lib";
+            test("each file of the package has run once", () => {
+              expect([own.which(), cjsLib.which()]).toEqual(["real cjs", "real cjs"]);
+              expect(globalThis.loaded.filter(name => name === "dual cjs")).toEqual(["dual cjs"]);
+            });
+          `,
+        },
+        2,
+        args,
+      );
+    });
+  });
+
+  test("a file of the name that ran before its mock", async () => {
+    const patches = (mock: string) => `
+      import { expect, jest, mock, test } from "bun:test";
+      import * as dual from "dual";
+      import * as dep from "#dep";
+      const sub = require("dual/sub");
+      const depRequired = require("#dep");
+      const mocked = name => {
+        let calls = 0;
+        ${mock}(name, () => ({ which: "mock", fn: () => "mock", calls: ++calls }));
+        return [require(name), calls];
+      };
+      test("the ES module: it is patched, and require() gets the mock", async () => {
+        const [required, calls] = mocked("dual");
+        expect([calls, dual.which, required.which, required.calls]).toEqual([1, "mock", "mock", 1]);
+        expect(dual.fn).toBe(required.fn);
+        expect(await import("dual")).toBe(dual);
+      });
+      test("the CommonJS file: require() gets the mock, and so does an import", async () => {
+        const [required, calls] = mocked("dual/sub");
+        expect([calls, sub.which, required.which, required.calls]).toEqual([1, "real cjs", "mock", 1]);
+        const imported = await import("dual/sub");
+        expect([imported.which, imported.calls]).toEqual(["mock", 1]);
+        expect(imported.fn).toBe(required.fn);
+      });
+      test("both", async () => {
+        const [required, calls] = mocked("#dep");
+        expect([calls, dep.which, depRequired.which, required.which, required.calls]).toEqual([1, "mock", "real cjs", "mock", 1]);
+        expect(dep.fn).toBe(required.fn);
+      });
+      test("no other file of them ran", () => expect(globalThis.loaded).toEqual(["dual esm", "#dep esm", "dual/sub cjs", "#dep cjs"]));
+    `;
+    await expectFixturesToPass(
+      {
+        ...files,
+        "mock.module.test.js": patches("mock.module"),
+        "jest.doMock.test.js": patches("jest.doMock"),
+        "vi.doMock.test.js": `
+          import { expect, test, vi } from "vitest";
+          import * as dual from "dual";
+          const required = require("dual");
+          test("vi.doMock() leaves both alone, and vi.doUnmock() brings both back", async () => {
+            let calls = 0;
+            vi.doMock("dual", () => ({ which: "mock", fn: () => "mock", calls: ++calls }));
+            expect([calls, dual.which, required.which]).toEqual([0, "real esm", "real cjs"]);
+            const mocked = require("dual");
+            expect([mocked.which, mocked.calls]).toEqual(["mock", 1]);
+            expect((await import("dual")).fn).toBe(mocked.fn);
+            expect(calls).toBe(1);
+            vi.doUnmock("dual");
+            expect(require("dual")).toBe(required);
+            expect(await import("dual")).toBe(dual);
+            expect(globalThis.loaded.filter(name => name.startsWith("dual "))).toEqual(["dual esm", "dual cjs"]);
+          });
+        `,
+      },
+      9,
+      ["--isolate"],
+    );
+  });
+
+  test("a mock that ends, and one that is made again", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "unmock.test.js": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          const both = async name => [require(name).which, (await import(name)).which];
+          test.each([["jest.unmock", jest.unmock], ["jest.dontMock", jest.dontMock], ["vi.unmock", vi.unmock], ["vi.doUnmock", vi.doUnmock]])("%s()", async (_, unmock) => {
+            mock.module("dual", () => ({ which: "mock" }));
+            expect(await both("dual")).toEqual(["mock", "mock"]);
+            unmock("dual");
+            expect(await both("dual")).toEqual(["real cjs", "real esm"]);
+          });
+          test("the end of the block of a using declaration", async () => {
+            {
+              using _ = vi.doMock("dual/sub", () => ({ which: "mock" }));
+              expect(await both("dual/sub")).toEqual(["mock", "mock"]);
+            }
+            expect(await both("dual/sub")).toEqual(["real cjs", "real esm"]);
+          });
+          test("a second mock of the name", async () => {
+            mock.module("#dep", () => ({ which: "first" }));
+            expect(await both("#dep")).toEqual(["first", "first"]);
+            mock.module("#dep", () => ({ which: "second" }));
+            expect(await both("#dep")).toEqual(["second", "second"]);
+          });
+          test("jest.resetModules() calls the factory once more, for both", async () => {
+            let calls = 0;
+            jest.doMock("./lib", () => ({ fn: () => "mock", calls: ++calls }));
+            const before = require("./lib");
+            expect((await import("./lib")).fn).toBe(before.fn);
+            jest.resetModules();
+            const after = require("./lib");
+            expect([before.calls, after.calls, calls]).toEqual([1, 2, 2]);
+            expect((await import("./lib")).fn).toBe(after.fn);
+            expect(calls).toBe(2);
+          });
+        `,
+      },
+      7,
+    );
+  });
+
+  test.each(isolationFlags)("a mock of one test file is gone in the next one %j", async args => {
+    const helper = `const dual = require("dual"); exports.which = () => dual.which;`;
+    const mocks = `
+      import { expect, jest, test } from "bun:test";
+      jest.mock("dual", () => ({ which: "mock" }));
+      import { which } from "./helper.cjs";
+      test("mock", async () => expect([which(), require("dual").which, (await import("dual")).which]).toEqual(["mock", "mock", "mock"]));
+    `;
+    await expectFixturesToPass(
+      {
+        ...files,
+        "helper.cjs": helper,
+        "1.test.js": mocks,
+        "2.test.js": `
+          import { expect, test } from "bun:test";
+          import { which } from "./helper.cjs";
+          test("real", async () => expect([which(), require("dual").which, (await import("dual")).which]).toEqual(["real cjs", "real cjs", "real esm"]));
+        `,
+        "3.test.js": mocks,
+      },
+      3,
+      args,
+    );
+  });
+
+  test("the original is the file that the kind of the function loads", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "__mocks__/dual.cjs": `module.exports = { which: "manual" };`,
+        "actual.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          jest.mock("dual/sub", () => ({ ...jest.requireActual("dual/sub"), extra: 1 }));
+          test("of a name that is not mocked", async () => {
+            expect(jest.requireActual("dual")).toBe(require("dual"));
+            expect([jest.requireActual("dual").which, (await vi.importActual("dual")).which]).toEqual(["real cjs", "real esm"]);
+          });
+          test("of a mocked name, in its factory and outside", async () => {
+            const required = require("dual/sub");
+            expect([required.which, required.fn(), required.extra]).toEqual(["real cjs", "real cjs", 1]);
+            expect((await import("dual/sub")).fn).toBe(required.fn);
+            expect([jest.requireActual("dual/sub").which, jest.requireActual("dual/sub").extra]).toEqual(["real cjs", undefined]);
+            expect((await vi.importActual("dual/sub")).which).toBe("real esm");
+            expect(jest.requireMock("dual/sub")).toBe(required);
+          });
+          test("jest.createMockFromModule()", () => {
+            const created = jest.createMockFromModule("#dep");
+            expect([created.which, created.fn()]).toEqual(["real cjs", undefined]);
+          });
+        `,
+        "automock.test.js": `
+          import { expect, jest, test } from "bun:test";
+          jest.mock("#dep");
+          jest.mock("dual");
+          test("jest.mock() without a factory mocks what require() loads", async () => {
+            const required = require("#dep");
+            expect([required.which, required.fn()]).toEqual(["real cjs", undefined]);
+            expect(required.fn).toHaveBeenCalledTimes(1);
+            expect((await import("#dep")).fn).toBe(required.fn);
+            expect(globalThis.loaded).toEqual(["#dep cjs"]);
+          });
+          test("and loads the file of __mocks__ for both", async () => {
+            expect([require("dual").which, (await import("dual")).which]).toEqual(["manual", "manual"]);
+          });
+        `,
+        "vi.test.js": `
+          import { expect, test, vi } from "vitest";
+          vi.mock("./lib");
+          test("vi.mock() without a factory mocks what an import loads", async () => {
+            const imported = await import("./lib");
+            expect([imported.which, imported.fn()]).toEqual(["real esm", undefined]);
+            expect(require("./lib").fn).toBe(imported.fn);
+            expect(globalThis.loaded).toEqual(["./lib esm"]);
+          });
+        `,
+      },
+      6,
+      ["--isolate"],
+    );
+  });
+
+  test("an ES module of a package that wraps the CommonJS file", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/wrap/package.json": JSON.stringify({
+          name: "wrap",
+          exports: { ".": { import: "./wrapper.mjs", require: "./index.cjs" } },
+        }),
+        "node_modules/wrap/index.cjs": `(globalThis.loaded ??= []).push("cjs"); module.exports = { which: "real", fn: () => "real" };`,
+        "node_modules/wrap/wrapper.mjs": `import cjs from "./index.cjs"; (globalThis.loaded ??= []).push("esm"); export const which = cjs.which; export const fn = cjs.fn; export default cjs;`,
+        "original.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          mock.module("wrap", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
+          test("importOriginal() and vi.importActual() load both", async () => {
+            const imported = await import("wrap");
+            expect([imported.which, imported.fn(), require("wrap").which]).toEqual(["mock", "real", "mock"]);
+            expect((await vi.importActual("wrap")).which).toBe("real");
+            expect(globalThis.loaded).toEqual(["cjs", "esm"]);
+          });
+        `,
+        "vitest.test.js": `
+          import { expect, test, vi } from "vitest";
+          import { which, fn } from "wrap";
+          vi.mock("wrap", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
+          test("vi.mock() with importOriginal()", () => {
+            expect([which, fn(), require("wrap").which]).toEqual(["mock", "real", "mock"]);
+            expect(globalThis.loaded).toEqual(["cjs", "esm"]);
+          });
+        `,
+        "require.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          jest.mock("wrap", () => ({ ...jest.requireActual("wrap"), which: "mock" }));
+          test("jest.requireActual() in the factory loads the CommonJS file alone", async () => {
+            expect([require("wrap").which, require("wrap").fn(), (await import("wrap")).which]).toEqual(["mock", "real", "mock"]);
+            expect(globalThis.loaded).toEqual(["cjs"]);
+          });
+          test("so does require() of the name in its own factory", () => {
+            mock.module("wrap", () => ({ ...require("wrap"), which: "again" }));
+            expect([require("wrap").which, require("wrap").fn()]).toEqual(["again", "real"]);
+          });
+        `,
+      },
+      4,
+      ["--isolate"],
+    );
+  });
+
+  test("a mock of the name and a mock of the path that require() resolves it to", async () => {
+    const file = (first: string, second: string) => `
+      import { expect, jest, mock, test } from "bun:test";
+      const byName = () => mock.module("dual", () => ({ which: "by name" }));
+      const byPath = () => mock.module(require.resolve("dual"), () => ({ which: "by path" }));
+      test("each is called for its own", async () => {
+        ${first}();
+        ${second}();
+        expect([(await import("dual")).which, require("dual").which]).toEqual(["by name", "by path"]);
+        jest.unmock(require.resolve("dual"));
+        expect([(await import("dual")).which, require("dual").which]).toEqual(["by name", "by name"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...files,
+        "node_modules/esm-only/package.json": JSON.stringify({ name: "esm-only", exports: { import: "./index.mjs" } }),
+        "node_modules/esm-only/index.mjs": `export const which = "real esm";`,
+        "name-first.test.js": file("byName", "byPath"),
+        "path-first.test.js": file("byPath", "byName"),
+        "esm-only.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("require() of a name that only an import resolves fails as before", async () => {
+            mock.module("esm-only", () => ({ which: "mock" }));
+            expect((await import("esm-only")).which).toBe("mock");
+            expect(() => require("esm-only")).toThrow("Cannot find module");
+          });
+        `,
+      },
+      3,
+      ["--isolate"],
+    );
+  });
+});
+
 describe.concurrent("unmock", () => {
   test.each([{}, { BUN_JSC_useDFGJIT: "0" }])(
     "an export still uninitialized when it was mocked keeps the value its module assigned later %j",

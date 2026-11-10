@@ -47,42 +47,11 @@ const ClassInfo JSExpectOfVitest::s_info = { "Function"_s, &Base::s_info, nullpt
 extern "C" EncodedJSValue Expect__createOfVitest(JSGlobalObject* globalObject, EncodedJSValue encodedConstructor, NativeFunction call, NativeFunction soft, NativeFunction poll)
 {
     auto& vm = getVM(globalObject);
-    auto* constructor = uncheckedDowncast<InternalFunction>(JSValue::decode(encodedConstructor));
-    auto* expect = JSExpectOfVitest::create(vm, globalObject, constructor, call);
-    Identifier softName = Identifier::fromString(vm, "soft"_s);
-    Identifier pollName = Identifier::fromString(vm, "poll"_s);
-    JSValue softOfVitest = JSFunction::create(vm, globalObject, 1, softName.string(), soft, ImplementationVisibility::Public);
-    JSValue pollOfVitest = JSFunction::create(vm, globalObject, 1, pollName.string(), poll, ImplementationVisibility::Public);
-    // It has the members of the constructor itself, so that Object.assign() and a spread copy them from it too.
-    constructor->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-        UniquedStringImpl* key = entry.key();
-        if (key == vm.propertyNames->name.impl() || key == vm.propertyNames->length.impl())
-            return true;
-        JSValue value = constructor->getDirect(entry.offset());
-        if (key == softName.impl())
-            value = softOfVitest;
-        else if (key == pollName.impl())
-            value = pollOfVitest;
-        if (entry.attributes() & PropertyAttribute::Accessor)
-            expect->putDirectNonIndexAccessorWithoutTransition(vm, key, uncheckedDowncast<GetterSetter>(value), entry.attributes());
-        else if (value.isCustomGetterSetter())
-            expect->putDirectCustomGetterSetterWithoutTransition(vm, key, value, entry.attributes());
-        else
-            expect->putDirectWithoutTransition(vm, key, value, entry.attributes());
-        return true;
-    });
+    auto* expect = JSExpectOfVitest::create(vm, globalObject, uncheckedDowncast<InternalFunction>(JSValue::decode(encodedConstructor)), call);
+    // Its own two makers, with the attributes that the constructor's have. It inherits every other member.
+    expect->putDirectWithoutTransition(vm, Identifier::fromString(vm, "soft"_s), JSFunction::create(vm, globalObject, 1, "soft"_s, soft, ImplementationVisibility::Public), PropertyAttribute::DontDelete | 0);
+    expect->putDirectWithoutTransition(vm, Identifier::fromString(vm, "poll"_s), JSFunction::create(vm, globalObject, 1, "poll"_s, poll, ImplementationVisibility::Public), PropertyAttribute::DontDelete | 0);
     return JSValue::encode(expect);
-}
-
-// The `expect` of "vitest" in this realm, or empty if its module was not made or has another `expect` now.
-extern "C" EncodedJSValue Expect__ofVitestIfMade(JSGlobalObject* globalObject)
-{
-    auto& vm = getVM(globalObject);
-    JSObject* module = defaultGlobalObject(globalObject)->nativeModuleDefaultObject(NativeModuleDefaultSlot::BunTestVitest).get();
-    if (!module)
-        return {};
-    JSValue expect = module->getDirect(vm, Identifier::fromString(vm, "expect"_s));
-    return JSValue::encode(expect && expect.inherits<JSExpectOfVitest>() ? expect : JSValue());
 }
 
 extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue function, EncodedJSValue deferred)

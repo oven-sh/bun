@@ -684,7 +684,7 @@ impl Expect {
 
     /// The module whose rules a comparison follows: that of the `expect()` whose matcher runs, or of the `equals()` that was called. With neither, as for `asymmetricMatch()` called directly, that of the running entry.
     pub(crate) fn flavor_of_comparison(global: &JSGlobalObject) -> Flavor {
-        Pass::flavor().unwrap_or(if global.bun_vm().is_running_vitest_entry { Flavor::Vitest } else { Flavor::Jest })
+        Pass::flavor().unwrap_or_else(|| if global.bun_vm().is_running_vitest_entry { Flavor::Vitest } else { Flavor::Jest })
     }
 
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
@@ -695,7 +695,7 @@ impl Expect {
         Self::call_with(cx.global(), value.to_js(), message.to_js(), None, Flavor::Vitest, 0)
     }
 
-    /// The `expect` of `"vitest"`. It inherits from the constructor and has the constructor's members, so both modules share `extend()`, the state and the asymmetric matchers.
+    /// The `expect` of `"vitest"`. Like the `expect` of a test context it inherits from the constructor, so both modules share `extend()`, the state and the asymmetric matchers.
     #[optimize(size)]
     pub(crate) fn create_of_vitest(global: &JSGlobalObject) -> JSValue {
         let constructor = super::expect::js::get_constructor(global);
@@ -1605,10 +1605,6 @@ impl Expect {
 
                 expect_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
                 expect_constructor.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                let expect_of_vitest = Expect__ofVitestIfMade(global_this);
-                if !expect_of_vitest.is_empty() {
-                    expect_of_vitest.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                }
                 expect_static_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
             }
         }
@@ -3476,7 +3472,6 @@ unsafe extern "C" {
 
     safe fn Expect__getPrototype(global_this: &JSGlobalObject) -> JSValue;
     safe fn Expect__createOfVitest(global: &JSGlobalObject, constructor: JSValue, call: bun_jsc::JSHostFn, soft: bun_jsc::JSHostFn, poll: bun_jsc::JSHostFn) -> JSValue;
-    safe fn Expect__ofVitestIfMade(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectStatic__getPrototype(global_this: &JSGlobalObject) -> JSValue;
 }
 

@@ -3009,9 +3009,13 @@ describe.concurrent("behavior depends on the module a function is imported from"
       "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
+        class Box { constructor(items) { this.items = items; } }
+        function boxesAreEqual(a, b) { if (a instanceof Box && b instanceof Box) return this.equals(a.items, b.items); }
+        bun.expect.addEqualityTesters([boxesAreEqual]);
         bun.expect.extend({
           toEqualAMissingItem(received) { return { pass: this.equals(received, ["a", undefined]), message: () => "" }; },
           toEqualWithEqualsAlone(received) { const { equals } = this; return { pass: equals(received, ["a", undefined]), message: () => "" }; },
+          toEqualThroughATester(received, expected) { return { pass: this.equals(received, expected, [boxesAreEqual]), message: () => "" }; },
         });
         const passes = fn => { try { fn(); return true; } catch { return false; } };
         const settles = promise => promise.then(() => true, () => false);
@@ -3031,6 +3035,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
             "the errors of an AggregateError": passes(() => expect(new AggregateError([1], "m")).toEqual(new AggregateError([2], "m"))),
             "this.equals() in a matcher of extend()": passes(() => expect(["a"]).toEqualAMissingItem()),
             "equals() taken from this": passes(() => expect(["a"]).toEqualWithEqualsAlone()),
+            "this.equals() in an equality tester": passes(() => expect(new Box(["a"])).toEqual(new Box(["a", undefined]))),
+            "this.equals() in a tester handed to equals()": passes(() => expect({ box: new Box(["a"]) }).toEqualThroughATester({ box: new Box(["a", undefined]) })),
             ".resolves": await settles(expect(Promise.resolve(["a"])).resolves.toEqual(["a", undefined])),
             "expect.poll()": await settles(poll.toEqual(["a", undefined])),
           };
@@ -3073,6 +3079,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
           toEqualAnErrorWithoutCause(received) { return { pass: this.equals(received, new Error("m")), message: () => "" }; },
           async toEqualAMissingItemLater(received) { await 1; return { pass: this.equals(received, ["a", undefined]), message: () => "" }; },
           toKeepEquals(received, keep) { keep(this.equals); return { pass: true, message: () => "" }; },
+          toAskAnAsymmetricMatcher(received) { return { pass: bun.expect.toEqualAMissingItem().asymmetricMatch(received), message: () => "" }; },
+          toCompareWith(received, equals) { return { pass: equals(received, ["a", undefined]), message: () => "" }; },
         });
         const passes = fn => { try { fn(); return true; } catch { return false; } };
         const settles = promise => promise.then(() => true, () => false);
@@ -3101,6 +3109,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
             for (const other in modules) seen["meets a matcher of " + other] = meets(expect, modules[other].expect);
             seen["this.equals() after an await"] = runner({ it: await settles(expect(["a"]).toEqualAMissingItemLater()) });
             seen["equals() kept from its matcher"] = runner({ it: kept[module](["a"], ["a", undefined]) });
+            seen["asymmetricMatch() called inside its matcher"] = runner({ it: passes(() => expect(["a"]).toAskAnAsymmetricMatcher()) });
+            for (const other in modules) seen["equals() kept from a matcher of " + other + ", called inside its matcher"] = runner({ it: passes(() => expect(["a"]).toCompareWith(kept[other])) });
             seen["asymmetricMatch() of its matcher, called directly"] = calledDirectly(expect);
             for (const what in seen) console.log(where + " | expect of " + module + " | " + what + ": " + seen[what]);
           }
@@ -3131,6 +3141,10 @@ describe.concurrent("behavior depends on the module a function is imported from"
             ...modules.map(other => `meets a matcher of ${other}: ${runnerOf[module]}`),
             `this.equals() after an await: ${runnerOf[module]}`,
             `equals() kept from its matcher: ${runnerOf[module]}`,
+            `asymmetricMatch() called inside its matcher: ${runnerOf[module]}`,
+            ...modules.map(
+              other => `equals() kept from a matcher of ${other}, called inside its matcher: ${runnerOf[other]}`,
+            ),
             `asymmetricMatch() of its matcher, called directly: ${runnerOfEntry}`,
           ].map(line => `${where} | expect of ${module} | ${line}`),
         ),
@@ -3242,36 +3256,36 @@ describe.concurrent("behavior depends on the module a function is imported from"
     },
   );
 
-  test(`the expect of "vitest" is a function of its own, with the members, the state and the extensions of the other`, async () => {
+  test(`the expect of "vitest" is a function of its own, which inherits the members, the state and the extensions of the other`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
-        const names = Object.getOwnPropertyNames(bun.expect);
         const message = fn => { try { return fn(); } catch (error) { return error.message; } };
         console.log(bun.expect === vitest.expect, Object.getPrototypeOf(vitest.expect) === bun.expect, typeof vitest.expect, Bun.inspect(vitest.expect));
-        // It has every member itself, and only soft() and poll() are functions of its own: each makes an expect() of its module.
+        // Its own members are soft() and poll(): each makes an expect() of its module. Like the expect of a test context it inherits the others.
         console.log(
-          Object.getOwnPropertyNames(vitest.expect).join() === names.join(),
-          Object.keys(vitest.expect).join() === Object.keys(bun.expect).join(),
-          names.filter(name => typeof bun.expect[name] !== "object" && vitest.expect[name] !== bun.expect[name]).join(),
+          Object.keys(vitest.expect).join(),
+          vitest.expect.soft !== bun.expect.soft && vitest.expect.poll !== bun.expect.poll,
+          vitest.expect.extend === bun.expect.extend && vitest.expect.any === bun.expect.any && vitest.expect.prototype === bun.expect.prototype,
+          vitest.expect.name === bun.expect.name && vitest.expect.length === bun.expect.length,
           message(() => new vitest.expect(1)) === message(() => new bun.expect(1)),
         );
         vitest.expect.extend({ toBeOne(received) { return { pass: received === 1, message: () => "expected 1" }; } });
         bun.expect.extend({ toBeTwo(received) { return { pass: received === 2, message: () => "expected 2" }; } });
         const serializer = { test: value => value === "serialized", serialize: () => "by the serializer" };
         vitest.expect.addSnapshotSerializer(serializer);
-        // A copy made the way Vitest makes its own expect has the members, also those that extend() added.
-        const copy = Object.assign(value => vitest.expect(value), vitest.expect);
-        const { extend, ...others } = vitest.expect;
-        console.log(["extend", "any", "getState", "soft", "toBeOne", "toBeTwo"].map(name => typeof copy[name]).join(), typeof extend, "toBeTwo" in others);
+        // What the other gets later is there too, and a matcher that is registered again replaces the first one for both.
+        bun.expect.later = "written on the other";
+        bun.expect.extend({ toBeTwo(received) { return { pass: received === 2, message: () => "expected 2, again" }; } });
+        console.log(typeof vitest.expect.toBeOne, vitest.expect.toBeTwo === bun.expect.toBeTwo, vitest.expect.later, Object.hasOwn(vitest.expect, "toBeOne"));
         for (const [module, { expect, test }] of Object.entries({ "bun:test": bun, vitest })) {
           test("test of " + module, () => {
             expect(1).toBeOne();
             expect(2).toBeTwo();
             expect({ one: 1, two: 2 }).toEqual({ one: expect.toBeOne(), two: expect.not.toBeOne() });
-            expect({ a: 1, b: "b", two: 2 }).toEqual({ a: expect.any(Number), b: expect.stringContaining("b"), two: copy.toBeTwo() });
-            expect(() => expect(2).toBeOne()).toThrow("expected 1");
+            expect({ a: 1, b: "b", two: 2 }).toEqual({ a: expect.any(Number), b: expect.stringContaining("b"), two: expect.toBeTwo() });
+            expect(() => expect(1).toBeTwo()).toThrow("expected 2, again");
             expect("serialized").toMatchInlineSnapshot(\`by the serializer\`);
             expect.assertions(7);
             console.log(module, expect.getState().currentTestName, expect(1) instanceof bun.expect, expect(1) instanceof vitest.expect);
@@ -3282,8 +3296,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, results, exitCode }).toEqual({
       log: [
         "false true function [class Expect extends Expect]",
-        "true true poll,soft true",
-        "function,function,function,function,function,function function true",
+        "soft,poll true true true true",
+        "function true written on the other false",
         "bun:test test of bun:test true true",
         "vitest test of vitest true true",
       ],
@@ -3311,6 +3325,10 @@ describe.concurrent("behavior depends on the module a function is imported from"
           vitest.beforeEach(({ expect }) => { expect.soft("abc1").toContain(1); });
           bun.test("soft of the context of a test of bun:test", () => {});
         });
+        bun.describe("a test of bun:test has a context in a hook of vitest that polls", () => {
+          vitest.beforeEach(async ({ expect }) => { await expect.poll(() => "abc1", { interval: 1, timeout: 50 }).toContain(1); });
+          bun.test("poll of the context of a test of bun:test", () => {});
+        });
         bun.test("in a test of bun:test", () => {
           vitest.expect.soft("abc1").toContain(1);
           console.log("soft of vitest passed in a test of bun:test");
@@ -3322,6 +3340,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
       log: ["soft of vitest passed in a test of bun:test"],
       results: [
         "(fail) a test of bun:test has a context in a hook of vitest > soft of the context of a test of bun:test",
+        "(fail) a test of bun:test has a context in a hook of vitest that polls > poll of the context of a test of bun:test",
         "(fail) concurrent > poll of bun:test",
         "(fail) concurrent > soft of bun:test",
         "(fail) in a test of bun:test",
@@ -3390,6 +3409,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
       ["--isolate", "./bun.test.js", "./vitest.test.js"],
       ["bun:test Jest Jest true", "vitest Vitest Vitest true"],
     ],
+    // With the flag every file gets its globals from "vitest".
+    [["--globals=vitest", "./bun.test.js"], ["bun:test Vitest Vitest false"]],
     // A preload loads them before any test file is known.
     [["--preload=./of-neither.js", "./vitest.test.js"], ["vitest Jest Jest false"]],
     [["--preload=./of-vitest.js", "./bun.test.js"], ["bun:test Vitest Vitest false"]],

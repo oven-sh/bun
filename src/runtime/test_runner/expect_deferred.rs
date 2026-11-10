@@ -293,7 +293,7 @@ enum Role {
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
-    /// The module whose rules a comparison under this pass follows. A pass that states none has that of the pass it was made under.
+    /// The module whose rules a comparison under this pass follows. A barrier that states none has that of the pass it was made under.
     flavor: Option<Flavor>,
     /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
     cursor: Cell<u32>,
@@ -341,7 +341,7 @@ impl Pass {
     }
 
     fn replaying(deferred: JSValue) -> Pass {
-        Self::new(Role::Replaying, deferred, Self::flavor())
+        Self::new(Role::Replaying, deferred, None)
     }
 
     pub(crate) fn barrier(flavor: Option<Flavor>) -> Pass {

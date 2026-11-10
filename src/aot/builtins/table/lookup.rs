@@ -183,7 +183,7 @@ pub fn stubs_global(id: BuiltinId) -> bool {
     )
 }
 
-/// What `expect.extend()` writes to. The last is the `expect` of "vitest", which holds the members of the first itself.
+/// What `expect.extend()` writes to, and the `expect` of "vitest", which reads the first of them as its prototype.
 pub const HOLDERS_OF_MATCHERS: [BuiltinId; 4] = [
     BuiltinId::Expect,
     BuiltinId::ExpectPrototype,

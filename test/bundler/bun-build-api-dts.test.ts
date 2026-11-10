@@ -152,6 +152,47 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.
+  test("a constant that only a type names is declared with a type that names nothing", async () => {
+    using dir = tempDir("build-api-dts-constants", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/flag.ts": `type Flag = true | false;
+declare const stored: Flag;
+export const on = stored;
+`,
+      "src/index.ts": `import { on } from "./flag";
+type Flag = "yes" | "no";
+const big = 1e999;
+const small = -1e999;
+const word = "a";
+export type On = typeof on;
+export type Sizes = [typeof big, typeof small, typeof word];
+export function pick(flag: Flag): On {
+  return flag === "yes";
+}
+export function sizes(): Sizes {
+  return [1e999, -1e999, "a"];
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
+    // `Flag` of the other file is `boolean`, and no type is `Infinity`.
+    expect(typed.match(/^declare const .*$/gm)?.sort()).toEqual([
+      "declare const big: number;",
+      "declare const on: boolean;",
+      "declare const small: number;",
+      `declare const word: "a";`,
+    ]);
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),

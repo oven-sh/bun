@@ -19,7 +19,6 @@ use bun_jsc::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
-    safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
     /// The value that a fake for `owner[name]` replaces. Sets `entry` if a spy or a stub can undo that value while the clock is on.
     safe fn JSMock__readForFake(
         global: &JSGlobalObject,
@@ -28,16 +27,22 @@ unsafe extern "C" {
         originals: JSValue,
         entry: &mut JSValue,
     ) -> JSValue;
-    /// Puts back what the fake with this `entry` replaced. Runs no JS.
+    /// Puts back what `fake` replaced, or nothing if the undo of what it replaced wrote over `fake`. Runs no JS.
     safe fn JSMock__putBackForFake(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        name: &bun_core::String,
+        entry: JSValue,
+        fake: JSValue,
+    );
+    /// Puts what an uninstalled fake replaced in its place. `entry` is what `originals` has for that fake. Runs no JS.
+    safe fn JSMock__takeOffUninstalledFake(
         global: &JSGlobalObject,
         owner: JSValue,
         name: &bun_core::String,
         originals: JSValue,
         entry: JSValue,
-        is_uninstalled: bool,
     );
-    safe fn JSMock__didUndoTestFile(global: &JSGlobalObject);
 }
 
 unsafe extern "C" {
@@ -902,13 +907,14 @@ impl FakeTimers {
             });
         }
         let has_retractable = !deactivated.retractable.is_empty();
-        for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
-            {
-                continue;
-            }
-            if has_retractable && Self::put_back_retractable(global, api, &deactivated.retractable)
+        for Replaced {
+            api,
+            original,
+            fake,
+        } in deactivated.replaced
+        {
+            if has_retractable
+                && Self::put_back_retractable(global, api, &deactivated.retractable, fake.get())
             {
                 continue;
             }
@@ -917,12 +923,13 @@ impl FakeTimers {
         deactivated.drives
     }
 
-    /// A restored spy and what a removed stub put don't go back on the property: what they had replaced does. True if `api` has an entry.
+    /// A spy that was restored since, or what a stub that was removed since had put, doesn't go back on the property. True if `api` has an entry.
     #[cold]
     fn put_back_retractable(
         global: &JSGlobalObject,
         api: Api,
         retractable: &[(Api, Strong)],
+        fake: JSValue,
     ) -> bool {
         let Some((_, entry)) = retractable.iter().find(|(of, _)| *of == api) else {
             return false;
@@ -930,7 +937,7 @@ impl FakeTimers {
         let owner = api.owner(global);
         if owner.is_object() {
             let name = bun_core::String::static_(api.property());
-            JSMock__putBackForFake(global, owner, &name, JSValue::ZERO, entry.get(), false);
+            JSMock__putBackForFake(global, owner, &name, entry.get(), fake);
         }
         true
     }
@@ -1073,7 +1080,7 @@ impl FakeTimers {
             if !unsafe { (*timer_all()).fake_timers.is_installed(installed) }
                 && let Some(entry) = original_of(originals, installed)
             {
-                JSMock__putBackForFake(global, owner, &name, originals, entry, true);
+                JSMock__takeOffUninstalledFake(global, owner, &name, originals, entry);
             }
         }
     }
@@ -1820,7 +1827,6 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
-    JSMock__didUndoTestFile(global);
 }
 
 pub(crate) fn is_active() -> bool {

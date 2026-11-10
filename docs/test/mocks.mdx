@@ -790,7 +790,7 @@ test("lazy import", async () => {
 ```
 
 - Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
-- A spy and a stub can be on the same global. If you restore the spy while the global is stubbed, `vi.unstubAllGlobals()` gives the global what the spy had replaced. If you make the spy on the stubbed global, `vi.unstubAllGlobals()` takes the spy off with the stub.
+- A spy and a stub can be on the same global. If you restore the spy while the global is stubbed, the global has what the spy had replaced after `vi.unstubAllGlobals()`. If you make the spy on the stubbed global, `vi.unstubAllGlobals()` takes the spy off with the stub.
 - `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
 
 ### Differences from Vitest
@@ -808,7 +808,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
-- After you restore a spy on a stubbed global, `vi.unstubAllGlobals()` gives the global what the spy had replaced. Vitest puts the restored spy back.
+- `vi.unstubAllGlobals()` doesn't put back a spy that you restored while the global was stubbed. The restore of a spy that you made on a stubbed global doesn't put back a stub that `vi.unstubAllGlobals()` removed. Vitest puts both back.
 
 ## Implementation Details
 

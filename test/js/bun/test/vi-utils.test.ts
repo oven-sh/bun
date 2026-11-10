@@ -796,6 +796,85 @@ describe("vi.stubGlobal", () => {
       expect(fetch).toBe(original);
     });
 
+    test("the restore leaves a later stub of another function in place", () => {
+      vi.stubGlobal("fetch", () => "first");
+      const spy = jest.spyOn(globalThis, "fetch");
+      vi.unstubAllGlobals();
+      const second = (() => "second") as unknown as typeof fetch;
+      vi.stubGlobal("fetch", second);
+      spy.mockRestore();
+      expect(fetch).toBe(second);
+      vi.unstubAllGlobals();
+      expect(fetch).toBe(original);
+    });
+
+    // The second vi.stubGlobal() leaves the property as it is: with the first string or BigInt, or with the first bits of the number.
+    test.each<[string, unknown, unknown]>([
+      ["strings", "on", ["o", "n"].join("")],
+      ["numbers", 5, Math.sqrt(25)],
+      ["BigInts", 5n, BigInt("5")],
+    ])("on a global that was stubbed twice with equal %s: it is gone again", (_, first, second) => {
+      vi.stubGlobal("viUtilsNew", first);
+      vi.stubGlobal("viUtilsNew", second);
+      const spy = jest.spyOn(globalThis, "viUtilsNew");
+      vi.unstubAllGlobals();
+      spy.mockRestore();
+      expect("viUtilsNew" in globalThis).toBe(false);
+    });
+
+    // Only a spy that is restored after the stub was made is undone by the unstub.
+    test("a restored spy that the test put in an accessor stays there under a later spy of the other half", () => {
+      const getter = () => "original";
+      const accessor = (setter: unknown) => ({ get: getter, set: setter, enumerable: true, configurable: true });
+      Object.defineProperty(
+        globalThis,
+        "viUtilsNew",
+        accessor((_: unknown) => {}),
+      );
+      try {
+        const ofSetter = jest.spyOn(globalThis, "viUtilsNew", "set");
+        vi.stubGlobal("viUtilsNew", "stub");
+        ofSetter.mockRestore();
+        vi.unstubAllGlobals();
+        Object.defineProperty(globalThis, "viUtilsNew", accessor(ofSetter));
+        const ofGetter = jest.spyOn(globalThis, "viUtilsNew", "get");
+        vi.stubGlobal("viUtilsNew", "stub");
+        ofGetter.mockRestore();
+        vi.unstubAllGlobals();
+        expect(Object.getOwnPropertyDescriptor(globalThis, "viUtilsNew")).toEqual(accessor(ofSetter));
+      } finally {
+        delete globalThis.viUtilsNew;
+      }
+    });
+
+    test("a restored spy that the test put beside a live spy in an accessor is not undone with that spy", () => {
+      const accessor = (name: string) => ({
+        get: () => name,
+        set(_: unknown) {},
+        enumerable: true,
+        configurable: true,
+      });
+      const own = () => Object.getOwnPropertyDescriptor(globalThis, "viUtilsNew");
+      Object.defineProperty(globalThis, "viUtilsNew", accessor("first"));
+      try {
+        const ofSetter = jest.spyOn(globalThis, "viUtilsNew", "set");
+        vi.stubGlobal("viUtilsNew", "stub");
+        ofSetter.mockRestore();
+        vi.unstubAllGlobals();
+        const second = accessor("second");
+        Object.defineProperty(globalThis, "viUtilsNew", second);
+        const ofGetter = jest.spyOn(globalThis, "viUtilsNew", "get");
+        Object.defineProperty(globalThis, "viUtilsNew", { get: ofGetter, set: ofSetter });
+        vi.stubGlobal("viUtilsNew", "stub");
+        ofGetter.mockRestore();
+        vi.unstubAllGlobals();
+        // As with no stub: the restore of the spy of the getter puts back the accessor that it replaced.
+        expect(own()).toEqual(second);
+      } finally {
+        delete globalThis.viUtilsNew;
+      }
+    });
+
     test("a spy on a value that the test assigned over the stub puts that value back", () => {
       vi.stubGlobal("fetch", () => "stub");
       const assigned = (() => "assigned") as unknown as typeof fetch;
@@ -970,7 +1049,36 @@ describe.concurrent("stubs do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
-  // As before: once its file has ended, a restored spy is a value like any other.
+  // The spy of the first test is restored after the stub of the second test is made.
+  test("a suite that restores its mocks before each test keeps the stub of each test", async () => {
+    const { stderr, exitCode } = await run(["test", "./hooks.test.ts"], {
+      "hooks.test.ts": `
+        import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
+        const stubs = [];
+        beforeEach(() => {
+          stubs.push(() => "stub");
+          vi.stubGlobal("fetch", stubs.at(-1));
+        });
+        afterEach(() => void vi.unstubAllGlobals());
+        describe("restores its mocks", () => {
+          beforeEach(() => void vi.restoreAllMocks());
+          test("spies on the stub and leaves the spy", () => {
+            expect(vi.spyOn(globalThis, "fetch")()).toBe("stub");
+          });
+          test("has the stub of this test", () => expect(fetch).toBe(stubs[1]));
+        });
+      `,
+    });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({
+      results: [
+        "(pass) restores its mocks > spies on the stub and leaves the spy",
+        "(pass) restores its mocks > has the stub of this test",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // A spy that was restored before the stub was made is a value like any other.
   test("a spy that a stub replaced in an earlier file, put on the global by a later file", async () => {
     const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
       "a.test.ts": `

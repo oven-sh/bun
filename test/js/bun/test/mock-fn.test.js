@@ -1828,6 +1828,20 @@ describe("spyOn", () => {
       expect(obj.x).toBe(10);
     });
 
+    test("a getter spy puts back a restored spy that the test had assigned to the property", () => {
+      const original = () => "original";
+      const obj = { method: original };
+      const ofMethod = spyOn(obj, "method");
+      const over = spyOn(obj, "method", "get");
+      ofMethod.mockRestore();
+      over.mockRestore();
+      expect(obj.method).toBe(original);
+      // The restored spy is a plain mock function now.
+      obj.method = ofMethod;
+      spyOn(obj, "method", "get").mockRestore();
+      expect(obj.method).toBe(ofMethod);
+    });
+
     test("spying twice gives the same spy", () => {
       const obj = counter();
       const getter = spyOn(obj, "x", "get");

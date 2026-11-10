@@ -101,9 +101,14 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A spy or a fake timer that replaced the value of this stub reads the entry later. No value: the stub is removed.
+    auto* entry = uncheckedDowncast<InternalFieldTuple>(original);
+    JSValue valueOfStub = entry->getInternalField(1);
+    entry->internalField(InternalFieldTuple::Field::Slot1).clear();
+
     auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
-    original = uncheckedDowncast<InternalFieldTuple>(original)->getInternalField(0);
+    original = entry->getInternalField(0);
     if (original.isUndefined()) {
         scope.release();
         JSCell::deleteProperty(target, globalObject, name);
@@ -113,9 +118,9 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     toPropertyDescriptor(globalObject, original, descriptor);
     RETURN_IF_EXCEPTION(scope, );
     if (mayHaveSpy(descriptor)) {
-        bool isBack = putBackForStub(defaultGlobalObject(globalObject), name, descriptor);
+        bool isDone = putBackForStub(defaultGlobalObject(globalObject), name, descriptor, entry, valueOfStub);
         RETURN_IF_EXCEPTION(scope, );
-        if (isBack)
+        if (isDone)
             return;
     }
     scope.release();
@@ -144,8 +149,9 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     // Undefined if the name is not stubbed: see JSMockModule::stubbedGlobals.
     JSValue remembered = originalOf(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
-    if (auto* stubbed = dynamicDowncast<InternalFieldTuple>(remembered)) {
-        stubbed->putInternalField(vm, 1, value);
+    auto* entry = dynamicDowncast<InternalFieldTuple>(remembered);
+    if (entry) {
+        entry->putInternalField(vm, 1, value);
     } else {
         JSValue original = jsUndefined();
         PropertyDescriptor descriptor;
@@ -156,12 +162,12 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
             RETURN_IF_EXCEPTION(scope, );
             object->setPrototypeDirect(vm, jsNull());
             original = object;
-            if (mayHaveSpy(descriptor))
-                willReplaceForStub(globalObject, name, descriptor);
+            if (mayHaveSpy(descriptor)) {
+                willReplaceForStub(globalObject, name, descriptor, object);
+                RETURN_IF_EXCEPTION(scope, );
+            }
         }
-        auto* entry = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
-        entry->putInternalField(vm, 0, original);
-        entry->putInternalField(vm, 1, value);
+        entry = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), original, value);
         JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(entry));
         RETURN_IF_EXCEPTION(scope, );
         globalObject->mockModule.namesOfStubbedGlobals |= bitOfStubbedGlobal(name);
@@ -169,6 +175,14 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
 
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);
     RETURN_IF_EXCEPTION(scope, );
+    // A property that had a SameValue value is left as it was. The entry has what the property has: the same number in other bits, or an equal string or BigInt in another cell.
+    if (!value.isObject()) {
+        PropertySlot slot(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasValue = target->methodTable()->getOwnPropertySlot(target, globalObject, name, slot) && slot.isValue();
+        RETURN_IF_EXCEPTION(scope, );
+        if (hasValue)
+            entry->putInternalField(vm, 1, slot.getValue(globalObject, name));
+    }
     RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.globalsOfPreload, key, value));
 }
 

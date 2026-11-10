@@ -2,12 +2,14 @@ import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
+import path from "node:path";
 import { performance as perfHooksPerformance, PerformanceObserver } from "node:perf_hooks";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
@@ -989,6 +991,53 @@ test("workers with fake timers don't share a clock", async () => {
   expect(JSON.parse(stdout)).toEqual({ "0": [], [2 ** 40]: [] });
   expect(exitCode).toBe(0);
 });
+
+// Only a build with assertions aborts if useRealTimers() asserts that nothing was thrown. Windows has no named pipe of this kind.
+test.skipIf((!isDebug && !isASAN) || isWindows)(
+  "useRealTimers() over a spy in a worker that is being terminated",
+  async () => {
+    using dir = tempDir("fake-timers-terminated-worker", {
+      "worker.ts": `
+        import { jest } from "bun:test";
+        import { openSync } from "node:fs";
+        import { workerData } from "node:worker_threads";
+        // The callees are locals, and none is a JavaScript function: nothing between the calls handles the termination.
+        function run(ready: () => unknown, block: () => unknown, useRealTimers: () => unknown) {
+          ready();
+          block();
+          useRealTimers();
+        }
+        jest.spyOn(globalThis, "setTimeout");
+        jest.useFakeTimers();
+        // open() blocks until the other end of the pipe is open.
+        run(postMessage.bind(null, "ready"), openSync.bind(null, workerData, "r"), jest.useRealTimers);
+      `,
+      "script.ts": `
+        import { constants, openSync } from "node:fs";
+        import { Worker } from "node:worker_threads";
+        const worker = new Worker("./worker.ts", { workerData: "./pipe" });
+        let hasExited = false;
+        worker.once("exit", () => (hasExited = true));
+        await new Promise(resolve => worker.once("message", resolve));
+        const terminated = worker.terminate();
+        // This open fails until the worker is blocked in its own.
+        while (!hasExited) {
+          try {
+            openSync("./pipe", constants.O_WRONLY | constants.O_NONBLOCK);
+            break;
+          } catch {
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        }
+        await terminated;
+        console.log("terminated");
+      `,
+    });
+    mkfifo(path.join(String(dir), "pipe"));
+    const { stdout, stderr, exitCode, signalCode } = await run(["./script.ts"], String(dir));
+    expect({ stdout, exitCode, signalCode }, stderr).toEqual({ stdout: "terminated\n", exitCode: 0, signalCode: null });
+  },
+);
 
 describe("performance.now() mocking", () => {
   test("performance.now() should be mocked when fake timers are active", () => {
@@ -3237,47 +3286,122 @@ describe("a spy or stub that is undone under the fake clock", () => {
     expect(setTimeout).toBe(saved.setTimeout);
   });
 
-  const orders = [
-    ["spy", "stub", "fake"],
-    ["spy", "fake", "stub"],
-    ["stub", "spy", "fake"],
-    ["stub", "fake", "spy"],
-    ["fake", "spy", "stub"],
-    ["fake", "stub", "spy"],
-  ].map(order => order.join(", "));
-  test.each(
-    orders.flatMap(made => orders.flatMap(undone => stubValues.slice(0, 2).map(([stub]) => [made, undone, stub]))),
-  )("made in the order %s and undone in the order %s, with a stub that is %s", (made, undone, stubValue) => {
-    {
-      let spy: ReturnType<typeof jest.spyOn> | undefined;
-      const stub = stubValues.find(([name]) => name === stubValue)![1]();
-      let fake: typeof setTimeout | undefined;
-      for (const layer of made.split(", ")) {
-        if (layer === "spy") spy = jest.spyOn(globalThis, "setTimeout");
-        else if (layer === "stub") vi.stubGlobal("setTimeout", stub);
-        else {
-          jest.useFakeTimers();
-          fake = setTimeout;
+  // What the global has after each undo, by the order the three were made in, then by the order they are undone in.
+  // "fake" after useRealTimers() is the uninstalled fake that a spy or stub made over it puts back. It behaves like the real function.
+  const afterEachUndo: Record<string, Record<string, string>> = {
+    "spy, stub, fake": {
+      "spy, stub, fake": "real > real > real",
+      "spy, fake, stub": "real > stub > real",
+      "stub, spy, fake": "spy > real > real",
+      "stub, fake, spy": "spy > spy > real",
+      "fake, spy, stub": "stub > real > real",
+      "fake, stub, spy": "stub > spy > real",
+    },
+    "spy, fake, stub": {
+      "spy, stub, fake": "real > fake > real",
+      "spy, fake, stub": "real > real > fake",
+      "stub, spy, fake": "fake > real > real",
+      "stub, fake, spy": "fake > spy > real",
+      "fake, spy, stub": "spy > real > fake",
+      "fake, stub, spy": "spy > fake > real",
+    },
+    "stub, spy, fake": {
+      "spy, stub, fake": "stub > real > real",
+      "spy, fake, stub": "stub > stub > real",
+      "stub, spy, fake": "real > real > real",
+      "stub, fake, spy": "real > real > real",
+      "fake, spy, stub": "spy > stub > real",
+      "fake, stub, spy": "spy > real > real",
+    },
+    "stub, fake, spy": {
+      "spy, stub, fake": "fake > real > real",
+      "spy, fake, stub": "fake > stub > real",
+      "stub, spy, fake": "real > fake > real",
+      "stub, fake, spy": "real > real > fake",
+      "fake, spy, stub": "stub > fake > real",
+      "fake, stub, spy": "stub > real > fake",
+    },
+    "fake, spy, stub": {
+      "spy, stub, fake": "fake > fake > real",
+      "spy, fake, stub": "fake > real > real",
+      "stub, spy, fake": "spy > fake > real",
+      "stub, fake, spy": "spy > real > fake",
+      "fake, spy, stub": "real > fake > fake",
+      "fake, stub, spy": "real > spy > fake",
+    },
+    "fake, stub, spy": {
+      "spy, stub, fake": "stub > fake > real",
+      "spy, fake, stub": "stub > real > fake",
+      "stub, spy, fake": "fake > fake > real",
+      "stub, fake, spy": "fake > real > real",
+      "fake, spy, stub": "real > stub > fake",
+      "fake, stub, spy": "real > fake > fake",
+    },
+  };
+  // spyOn() of a global that has a mock function returns that function, so its mockRestore() writes nothing.
+  const afterEachUndoWithMockStub: Record<string, Record<string, string>> = {
+    ...afterEachUndo,
+    "stub, spy, fake": {
+      "spy, stub, fake": "fake > real > real",
+      "spy, fake, stub": "fake > stub > real",
+      "stub, spy, fake": "real > real > real",
+      "stub, fake, spy": "real > real > real",
+      "fake, spy, stub": "stub > stub > real",
+      "fake, stub, spy": "stub > real > real",
+    },
+    "fake, stub, spy": {
+      "spy, stub, fake": "stub > fake > real",
+      "spy, fake, stub": "stub > real > fake",
+      "stub, spy, fake": "fake > fake > real",
+      "stub, fake, spy": "fake > real > real",
+      "fake, spy, stub": "real > real > fake",
+      "fake, stub, spy": "real > fake > fake",
+    },
+  };
+  test.each([
+    [stubValues[0][0], stubValues[0][1], afterEachUndo],
+    [stubValues[1][0], stubValues[1][1], afterEachUndoWithMockStub],
+  ])("a spy, a stub that is %s and the clock, made and undone in every order", (_, makeStub, expected) => {
+    const orders = Object.keys(afterEachUndo);
+    const seen: Record<string, Record<string, string>> = {};
+    for (const made of orders) {
+      for (const undone of orders) {
+        let spy: unknown;
+        const stub = makeStub();
+        let fake: unknown;
+        for (const layer of made.split(", ")) {
+          if (layer === "spy") spy = jest.spyOn(globalThis, "setTimeout");
+          else if (layer === "stub") vi.stubGlobal("setTimeout", stub);
+          else {
+            jest.useFakeTimers();
+            fake = setTimeout;
+          }
         }
+        const label = (value: unknown) =>
+          value === saved.setTimeout
+            ? "real"
+            : value === stub
+              ? "stub"
+              : value === spy
+                ? "spy"
+                : value === fake
+                  ? "fake"
+                  : typeof value;
+        (seen[made] ??= {})[undone] = undone
+          .split(", ")
+          .map(layer => {
+            if (layer === "spy") (spy as ReturnType<typeof jest.spyOn>).mockRestore();
+            else if (layer === "stub") vi.unstubAllGlobals();
+            else jest.useRealTimers();
+            return label(setTimeout);
+          })
+          .join(" > ");
+        jest.useFakeTimers();
+        jest.useRealTimers();
+        expect(setTimeout).toBe(saved.setTimeout);
       }
-      const seen: unknown[] = [];
-      for (const layer of undone.split(", ")) {
-        if (layer === "spy") spy!.mockRestore();
-        else if (layer === "stub") vi.unstubAllGlobals();
-        else jest.useRealTimers();
-        seen.push(setTimeout);
-      }
-      // A spy is restored and a stub is removed only once: neither is on the global after its own undo.
-      const undoneAt = (layer: string) => undone.split(", ").indexOf(layer);
-      // spyOn() of a global that has a mock function returns that function.
-      if (spy !== stub) expect(seen.slice(undoneAt("spy")).includes(spy as any)).toBe(false);
-      expect(seen.slice(undoneAt("stub")).includes(stub as any)).toBe(false);
-      // The uninstalled fake is what a spy or stub made over it puts back. It behaves like the real function.
-      expect([saved.setTimeout, fake]).toContain(setTimeout);
-      jest.useFakeTimers();
-      jest.useRealTimers();
-      expect(setTimeout).toBe(saved.setTimeout);
     }
+    expect(seen).toEqual(expected);
   });
 
   test("useRealTimers() does not put back a spy that was made over a stub, once the stub is removed", () => {
@@ -3425,6 +3549,171 @@ describe("a spy or stub that is undone under the fake clock", () => {
     expect(setTimeout).toBe(assigned);
   });
 
+  test("useRealTimers() leaves a stub that was made after the stub under the clock was removed", () => {
+    vi.stubGlobal("setTimeout", () => "first");
+    vi.useFakeTimers();
+    vi.unstubAllGlobals();
+    const second = (() => "second") as unknown as typeof setTimeout;
+    vi.stubGlobal("setTimeout", second);
+    vi.useRealTimers();
+    expect(setTimeout).toBe(second);
+  });
+
+  test("useRealTimers() leaves a string stub that was made again with an equal string", () => {
+    vi.stubGlobal("setTimeout", "stub");
+    vi.useFakeTimers();
+    vi.unstubAllGlobals();
+    vi.stubGlobal("setTimeout", ["st", "ub"].join(""));
+    vi.useRealTimers();
+    expect(setTimeout as unknown).toBe("stub");
+  });
+
+  test.each(["setTimeout", "setInterval", "Date", "performance"] as const)(
+    "useRealTimers() leaves what the test assigned to %s after the restore of the spy under the clock",
+    name => {
+      const before = Object.getOwnPropertyDescriptor(globalThis, name)!;
+      try {
+        const spy = jest.spyOn(globalThis, name as "setTimeout");
+        jest.useFakeTimers();
+        spy.mockRestore();
+        const assigned = () => {};
+        Object.assign(globalThis, { [name]: assigned });
+        jest.useRealTimers();
+        expect(globalThis[name] as unknown).toBe(assigned);
+      } finally {
+        jest.useRealTimers();
+        Object.defineProperty(globalThis, name, before);
+      }
+    },
+  );
+
+  // The restore of a "get" spy writes nothing under the clock, so useRealTimers() writes as it does with no spy.
+  test('useRealTimers() writes over what the test assigned after the restore of a "get" spy under the clock', () => {
+    const spy = jest.spyOn(globalThis, "setTimeout", "get");
+    jest.useFakeTimers();
+    spy.mockRestore();
+    globalThis.setTimeout = (() => {}) as unknown as typeof setTimeout;
+    jest.useRealTimers();
+    expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")).toEqual(descriptor);
+  });
+
+  test("a restored spy that the test puts back on the global is a value like any other", () => {
+    const spy = jest.spyOn(globalThis, "setTimeout");
+    jest.useFakeTimers();
+    spy.mockRestore();
+    jest.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+    globalThis.setTimeout = spy as unknown as typeof setTimeout;
+    jest.useFakeTimers();
+    jest.useRealTimers();
+    expect(setTimeout).toBe(spy);
+    vi.stubGlobal("setTimeout", () => {});
+    vi.unstubAllGlobals();
+    expect(setTimeout).toBe(spy);
+  });
+
+  test("a spy puts the first value of a stub back, and the clock over that value knows the stub", () => {
+    vi.stubGlobal("setTimeout", () => "first");
+    const spy = jest.spyOn(globalThis, "setTimeout");
+    vi.stubGlobal("setTimeout", () => "second");
+    spy.mockRestore();
+    vi.useFakeTimers();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("an uninstalled fake that had replaced a stub over another uninstalled fake gives way to the real function", () => {
+    const leaveUninstalledFake = (undoUnderTheClock = () => {}) => {
+      vi.useFakeTimers();
+      const spy = vi.spyOn(globalThis, "setTimeout");
+      undoUnderTheClock();
+      vi.useRealTimers();
+      spy.mockRestore();
+      expect(setTimeout).not.toBe(saved.setTimeout);
+      return setTimeout;
+    };
+    const first = leaveUninstalledFake();
+    vi.stubGlobal("setTimeout", () => {});
+    expect(leaveUninstalledFake(() => vi.unstubAllGlobals())).not.toBe(first);
+    vi.useFakeTimers();
+    vi.useRealTimers();
+    expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("an accessor with a spy, undone in the reverse of the order it was made in", () => {
+    const accessor = { configurable: true, enumerable: true, get: () => saved.setTimeout, set: undefined };
+    Object.defineProperty(globalThis, "setTimeout", accessor);
+    const spy = jest.spyOn(globalThis, "setTimeout");
+    jest.useFakeTimers();
+    jest.useRealTimers();
+    spy.mockRestore();
+    expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")).toEqual(accessor);
+  });
+
+  describe("a second useFakeTimers() keeps what the first one replaced", () => {
+    // As before, and as in Jest and Vitest.
+    test.each(["spy", "stub"])("useRealTimers() does not put back a %s that was made between the two", layer => {
+      jest.useFakeTimers();
+      if (layer === "spy") jest.spyOn(globalThis, "setTimeout");
+      else vi.stubGlobal("setTimeout", () => {});
+      jest.useFakeTimers();
+      jest.useRealTimers();
+      expect(setTimeout).toBe(saved.setTimeout);
+    });
+
+    test.each(["spy", "stub"])("of a %s that was undone between the two, that is what it had replaced", layer => {
+      const make = () =>
+        layer === "spy" ? jest.spyOn(globalThis, "setTimeout") : vi.stubGlobal("setTimeout", () => {});
+      make();
+      jest.useFakeTimers();
+      if (layer === "spy") jest.restoreAllMocks();
+      else vi.unstubAllGlobals();
+      make();
+      jest.useFakeTimers();
+      jest.useRealTimers();
+      expect(setTimeout).toBe(saved.setTimeout);
+    });
+  });
+
+  test("a stub that was removed keeps nothing of its test alive", () => {
+    const fixtures = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.Float64Array ?? 0;
+    };
+    const before = fixtures();
+    for (let i = 0; i < 64; i++) {
+      vi.stubGlobal("setTimeout", () => {});
+      vi.stubGlobal("fakeTimersFixture", new Float64Array(1024));
+      vi.useFakeTimers();
+      vi.spyOn(globalThis, "setTimeout");
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+    // Each round leaves the uninstalled fake on the global, and the next round stubs over it.
+    expect(fixtures() - before).toBeLessThan(16);
+  });
+
+  // In a process of its own: a crash in one order then fails this test only.
+  test.concurrent("no order of a few calls leaves a restored spy or a removed stub on the global", async () => {
+    // Orders that an earlier version got wrong.
+    const more = [
+      ["fake", "spyGet", "stub", "real", "assign"],
+      ["stub", "spyGet", "unstub", "fake", "real"],
+      ["spyOn", "stub", "restoreFirst", "stub", "spyOn", "unstub"],
+      ["spyGet", "spyOn", "fake", "restoreFirst", "real", "assign"],
+    ];
+    const depth = isDebug || isASAN ? 2 : 4;
+    const fixture = path.join(import.meta.dir, "undo-orders-fixture.ts");
+    const { stdout, stderr, exitCode } = await run([fixture, String(depth), JSON.stringify(more)]);
+    const orders = [1, 2, 3, 4].slice(0, depth).reduce((sum, length) => sum + 11 ** length, more.length);
+    expect({ stdout: stdout.trim(), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ orders, retracted: [] }),
+      exitCode: 0,
+    });
+  });
+
   const nextFile = `
     import { test } from "bun:test";
     test("the next file", async () => {
@@ -3487,6 +3776,81 @@ describe("a spy or stub that is undone under the fake clock", () => {
     const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
     expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
       stdout: JSON.stringify({ isReal: true, outcome: "fired", now: "number" }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  const realTimers = JSON.stringify({ isReal: true, outcome: "fired", now: "number" }) + "\n";
+  test.concurrent.each([
+    [
+      "a spy that the beforeAll() of a preload made over the clock of the first file, restored in the second file",
+      {
+        "preload.ts": `
+          import { beforeAll, jest } from "bun:test";
+          globalThis.realSetTimeout = setTimeout;
+          beforeAll(() => { globalThis.spyOfPreload ??= jest.spyOn(globalThis, "setTimeout"); });
+        `,
+        // At load, so before the beforeAll() of the preload.
+        "a.test.ts": `
+          import { jest, test } from "bun:test";
+          jest.spyOn(globalThis, "setTimeout");
+          jest.useFakeTimers();
+          test("a", () => {});
+        `,
+        "b.test.ts": `
+          import { jest, test } from "bun:test";
+          test("b", () => { jest.restoreAllMocks(); });
+        `,
+      },
+    ],
+    [
+      "a fake that the first file kept and the second file puts back",
+      {
+        "a.test.ts": firstFile(`
+          test("a", () => {
+            const spy = jest.spyOn(globalThis, "setTimeout");
+            jest.useFakeTimers();
+            globalThis.keptFake = setTimeout;
+            spy.mockRestore();
+            jest.useRealTimers();
+          });
+        `),
+        "b.test.ts": `
+          import { jest, test } from "bun:test";
+          test("b", () => {
+            globalThis.setTimeout = keptFake;
+            jest.useFakeTimers();
+            jest.useRealTimers();
+          });
+        `,
+      },
+    ],
+    [
+      "a spy under the clock of a preload, restored by the first file, and useRealTimers() in the second file",
+      {
+        "preload.ts": `
+          import { jest } from "bun:test";
+          globalThis.realSetTimeout = setTimeout;
+          jest.spyOn(globalThis, "setTimeout");
+          jest.useFakeTimers();
+        `,
+        "a.test.ts": `
+          import { jest, test } from "bun:test";
+          test("a", () => { jest.restoreAllMocks(); });
+        `,
+        "b.test.ts": `
+          import { jest, test } from "bun:test";
+          test("b", () => { jest.useRealTimers(); });
+        `,
+      },
+    ],
+  ])("the third test file has the real timers after %s", async (_, files) => {
+    using dir = tempDir("fake-timers-undone-under", { ...files, "c.test.ts": nextFile });
+    const preload = "preload.ts" in files ? ["--preload", "./preload.ts"] : [];
+    const cmd = ["test", ...preload, "./a.test.ts", "./b.test.ts", "./c.test.ts"];
+    const { stdout, stderr, exitCode } = await run(cmd, String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+      stdout: realTimers,
       exitCode: 0,
     });
   });

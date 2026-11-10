@@ -121,6 +121,8 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) current_file: CurrentFile,
     pub(crate) files: FileList,
     pub(crate) index: FileMap,
+    /// The path of each test file of this run: as the run was given it, and as it resolved once the file began.
+    pub(crate) test_file_paths: bun_collections::StringHashMap<()>,
     pub(crate) only: bool,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
@@ -255,6 +257,7 @@ impl<'a> TestRunner<'a> {
             })
             .expect("unreachable");
         *entry.value_ptr = file_id;
+        bun_core::handle_oom(self.test_file_paths.put_static_key(file_path, ()));
         GetOrPutFileResult { file_id }
     }
 }
@@ -366,6 +369,15 @@ pub(crate) mod Jest {
         }
         // SAFETY: the runner outlives every test file and is only touched on this thread.
         runner_ptr().map_or(0, |runner| unsafe { (*runner.as_ptr()).bun_test_root.file_generation })
+    }
+
+    /// Whether this run loads `path` as a test file, now or later. Evaluating one a second time registers its tests a second time.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__TestRunner__isTestFile(path: &bun_core::String) -> bool {
+        // SAFETY: the runner outlives every test file and is only touched on this thread.
+        runner_ptr().is_some_and(|runner| unsafe {
+            (*runner.as_ptr()).test_file_paths.contains_key(&*path.to_utf8())
+        })
     }
 
     #[unsafe(no_mangle)]

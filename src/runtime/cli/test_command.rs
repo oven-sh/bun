@@ -2791,6 +2791,7 @@ impl TestCommand {
                 current_file: jest::CurrentFile::default(),
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
+                test_file_paths: Default::default(),
                 default_timeout_override: u32::MAX,
                 vi_config: Default::default(),
                 vi_config_of_preload: Default::default(),
@@ -3795,6 +3796,11 @@ impl TestCommand {
                 let vm = &mut *self.vm;
                 let files = self.files;
                 debug_assert!(!files.is_empty());
+                for file in files {
+                    bun_core::handle_oom(
+                        reporter.jest.test_file_paths.put_static_key(file.as_bytes(), ()),
+                    );
+                }
 
                 let isolate = vm.test_isolation_enabled;
 

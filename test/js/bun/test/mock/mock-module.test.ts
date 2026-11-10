@@ -7,7 +7,7 @@
 
 import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
@@ -5809,6 +5809,740 @@ describe.concurrent("a test file that has mocked modules", () => {
         `,
       },
       2,
+    );
+  });
+});
+
+describe.concurrent("a module that keeps what import() gave it", () => {
+  const modules = {
+    "node_modules/zz-mail/package.json": `{ "name": "zz-mail", "main": "index.js" }`,
+    "node_modules/zz-mail/index.js": `exports.send = () => "real";`,
+    "node_modules/zz-esm/package.json": `{ "name": "zz-esm", "type": "module", "main": "index.js" }`,
+    "node_modules/zz-esm/index.js": `export const send = () => "real";`,
+    "mail.js": `export const send = () => "real";`,
+  };
+  const counted = `globalThis.loads = (globalThis.loads ?? 0) + 1;`;
+  const keeps = (module: string) =>
+    `let mail; export const notify = async () => (mail ??= await import("${module}")).send();`;
+  const real = `
+    import { expect, test } from "bun:test";
+    import { notify } from "./service.js";
+    test("the real module", async () => expect(await notify()).toBe("real"));
+  `;
+  const mocked = (module: string, mock = "vi.mock") => `
+    import { expect, jest, test, vi } from "bun:test";
+    import { notify } from "./service.js";
+    const made = vi.hoisted(() => ({ times: 0 }));
+    ${mock}("${module}", () => (made.times++, { send: () => "mock" }));
+    test("the mock", async () => expect([await notify(), made.times]).toEqual(["mock", 1]));
+  `;
+
+  test.each(isolationFlags)(
+    "gets a later test file's vi.mock() of a package, and the file after that gets the real package %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "service.js": keeps("zz-mail"),
+          "1.test.js": real,
+          "2.test.js": mocked("zz-mail"),
+          "3.test.js": real,
+        },
+        3,
+        args,
+      );
+    },
+  );
+
+  test("and that an earlier test file only loaded doesn't keep the mock for the next file", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "service.js": keeps("zz-mail"),
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import { notify } from "./service.js";
+          test("never calls it", () => expect(notify).toBeFunction());
+        `,
+        "2.test.js": mocked("zz-mail"),
+        "3.test.js": real,
+      },
+      3,
+    );
+  });
+
+  // Each exports notify(), which calls send() of the module that it keeps: [title, its files, what imports it].
+  // `module` is a package, or a path from the root of the project.
+  const holders = (module: string): [string, Record<string, string>, string?][] => {
+    const from = (depth: number) => (module.startsWith(".") ? "../".repeat(depth) + module.slice(2) : module);
+    return [
+      ["in a variable", { "holder.js": keeps(from(1)) }],
+      [
+        "as a promise",
+        {
+          "holder.js": `let loading; export const notify = async () => (await (loading ??= import("${from(1)}"))).send();`,
+        },
+      ],
+      [
+        "in a Map",
+        {
+          "holder.js": `const loaded = new Map(); export const notify = async () => { if (!loaded.has("mail")) loaded.set("mail", await import("${from(1)}")); return loaded.get("mail").send(); };`,
+        },
+      ],
+      [
+        "from a top-level await",
+        { "holder.js": `const mail = await import("${from(1)}"); export const notify = async () => mail.send();` },
+      ],
+      [
+        "as a function that it copied out of it",
+        { "holder.js": `let send; export const notify = async () => (send ??= (await import("${from(1)}")).send)();` },
+      ],
+      ["under a key with a query", { "holder.js": keeps(from(1)) }, "holder.js?x=1"],
+      [
+        "that another module of the project called for it",
+        {
+          "holder.js": `import { load } from "./load.js"; let mail; export const notify = async () => (mail ??= await load("${from(1)}")).send();`,
+          "load.js": `export const load = name => import(name);`,
+        },
+      ],
+      [
+        "in a CommonJS module",
+        { "holder.cjs": `let mail; exports.notify = async () => (mail ??= await import("${from(1)}")).send();` },
+      ],
+      [
+        "from import.meta.glob(), of a module that imports it",
+        {
+          "holder.js": `const found = import.meta.glob("./found/*.js"); let one; export const notify = async () => (one ??= await found["./found/one.js"]()).send();`,
+          "found/one.js": `import * as mail from "${from(2)}"; export const send = () => mail.send();`,
+        },
+      ],
+      [
+        "that a hoisted call made of its static import",
+        {
+          "holder.js": `import { vi } from "bun:test"; import * as mail from "${from(1)}"; vi.hoisted(() => {}); export const notify = async () => mail.send();`,
+        },
+      ],
+      [
+        "of a module that imports it with a static import",
+        {
+          "holder.js": `let next; export const notify = async () => (next ??= await import("./static.js")).send();`,
+          "static.js": `import * as mail from "${from(1)}"; export const send = () => mail.send();`,
+        },
+      ],
+    ];
+  };
+  // One test file for each of `answers`. The file whose answer is "mock" lays the mock.
+  const holderFiles = (mock: string, module: string, answers: string[]) => {
+    const files: Record<string, string> = { ...modules };
+    const cases = holders(module).map(([title, holder, path], at) => {
+      for (const [name, text] of Object.entries(holder)) files[`${at}/${name}`] = text;
+      return [title, `./${at}/${path ?? Object.keys(holder)[0]}`];
+    });
+    const lays = `${mock}("${module}", () => ({ send: () => "mock" }));`;
+    answers.forEach((answer, at) => {
+      files[`${at + 1}.test.js`] = `
+        import { beforeAll, expect, jest, mock, test, vi } from "bun:test";
+        ${answer === "real" ? "" : /^(vi|jest)\.mock$/.test(mock) ? lays : `beforeAll(() => { ${lays} });`}
+        test.each(${JSON.stringify(cases)})("%s", async (_, path) => expect(await (await import(path)).notify()).toBe("${answer}"));
+      `;
+    });
+    return [files, answers.length * cases.length] as const;
+  };
+
+  test.each([
+    ["vi.mock", "zz-mail"],
+    ["vi.mock", "zz-esm"],
+    ["vi.doMock", "zz-mail"],
+    ["vi.doMock", "./mail.js"],
+  ])("%s(%j) reaches it if an earlier test file loaded it, however it keeps the module", async (mock, module) => {
+    await expectFixturesToPass(...holderFiles(mock, module, ["real", "mock", "real"]));
+  });
+
+  test.each([
+    ["mock.module", "./mail.js"],
+    ["jest.mock", "./mail.js"],
+    ["jest.doMock", "./mail.js"],
+    ["vi.mock", "./mail.js"],
+    ["vi.doMock", "./mail.js"],
+    ["mock.module", "zz-mail"],
+    ["jest.mock", "zz-esm"],
+  ])("doesn't keep the %s(%j) of a test file for the next file, however it keeps the module", async (mock, module) => {
+    await expectFixturesToPass(...holderFiles(mock, module, ["mock", "real"]));
+  });
+
+  test("also as the original that a vi.mock() factory imports", async () => {
+    const partly = (mail: string, answer: string) => `
+      import { expect, test, vi } from "bun:test";
+      ${mail}
+      vi.mock("./service.js", async importOriginal => ({ ...(await importOriginal()), other: () => "mock" }));
+      import { notify, other } from "./service.js";
+      test("the original", async () => expect([await notify(), other()]).toEqual(["${answer}", "mock"]));
+    `;
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "service.js": `${keeps("zz-mail")} export const other = () => "real";`,
+        "1.test.js": partly("", "real"),
+        "2.test.js": partly(`vi.mock("zz-mail", () => ({ send: () => "mock" }));`, "mock"),
+        "3.test.js": real,
+      },
+      3,
+    );
+  });
+
+  const project = {
+    "dep.js": `export const who = () => "real";`,
+    "cached.js": `${counted} let dep; export const who = async () => (dep ??= await import("./dep.js")).who();`,
+  };
+
+  test.each(isolationFlags)(
+    "is loaded again after the end of a `using` block, a second vi.doMock() and vi.doUnmock() %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          ...project,
+          "again.test.js": `
+            import { expect, test, vi } from "bun:test";
+            const who = async () => (await import("./cached.js")).who();
+            test("each import() of it gets what the module is then", async () => {
+              {
+                using _ = vi.doMock("./dep.js", () => ({ who: () => "first" }));
+                expect(await who()).toBe("first");
+              }
+              vi.doMock("./dep.js", () => ({ who: () => "second" }));
+              expect(await who()).toBe("second");
+              vi.doMock("./dep.js", () => ({ who: () => "third" }));
+              expect(await who()).toBe("third");
+              vi.doUnmock("./dep.js");
+              expect(await who()).toBe("real");
+            });
+          `,
+        },
+        1,
+        args,
+      );
+    },
+  );
+
+  test("is loaded again with a helper that mocks, so the helper mocks for the next file too", async () => {
+    const file = `
+      import { expect, test } from "bun:test";
+      test("the helper mocks", async () => {
+        await (await import("./setup.js")).setup();
+        expect((await import("./dep.js")).who()).toBe("mock");
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...project,
+        "helper.js": `import { mock } from "bun:test"; mock.module("./dep.js", () => ({ who: () => "mock" })); export const ready = true;`,
+        "setup.js": `let helper; export const setup = async () => (helper ??= await import("./helper.js")).ready;`,
+        "1.test.js": file,
+        "2.test.js": file,
+      },
+      2,
+    );
+  });
+
+  test("is loaded again when a later test file's Bun.plugin() replaces the virtual module", async () => {
+    const file = (value: string) => `
+      import { expect, test } from "bun:test";
+      Bun.plugin({ name: "${value}", setup(build) { build.module("zz-virtual", () => ({ exports: { value: "${value}" }, loader: "object" })); } });
+      test("${value}", async () => expect(await (await import("./cached.js")).value()).toBe("${value}"));
+    `;
+    await expectFixturesToPass(
+      {
+        "cached.js": `let virtual; export const value = async () => (virtual ??= await import("zz-virtual")).value;`,
+        "1.test.js": file("one"),
+        "2.test.js": file("two"),
+      },
+      2,
+    );
+  });
+
+  test("is loaded again when a mock ends that user code has deleted from require.cache", async () => {
+    await expectFixturesToPass(
+      {
+        ...project,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("gets the real module after the mock ends", async () => {
+            vi.doMock("./dep.js", () => ({ who: () => "mock" }));
+            expect(await (await import("./cached.js")).who()).toBe("mock");
+            for (const key of Object.keys(require.cache)) if (key.endsWith("dep.js")) delete require.cache[key];
+            vi.doUnmock("./dep.js");
+            expect(await (await import("./cached.js")).who()).toBe("real");
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the next file too", async () => expect(await (await import("./cached.js")).who()).toBe("real"));
+        `,
+      },
+      2,
+    );
+  });
+
+  test("stays the same instance in the test file that loaded it, through vi.doMock() and vi.doUnmock() of the package", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "service.js": counted + keeps("zz-mail"),
+        "same.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("keeps the real package", async () => {
+            const first = await import("./service.js");
+            expect(await first.notify()).toBe("real");
+            vi.doMock("zz-mail", () => ({ send: () => "mock" }));
+            expect([await first.notify(), (await import("zz-mail")).send(), (await import("./service.js")) === first]).toEqual(["real", "mock", true]);
+            vi.doUnmock("zz-mail");
+            expect([await first.notify(), (await import("zz-mail")).send(), (await import("./service.js")) === first, globalThis.loads]).toEqual(["real", "real", true, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("isn't loaded again for what only an earlier instance of it imported", async () => {
+    await expectFixturesToPass(
+      {
+        ...project,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import { who } from "./cached.js";
+          test("imports the module", async () => expect(await who()).toBe("real"));
+        `,
+        "2.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the instance of this file imports nothing", async () => {
+            vi.doMock("./dep.js", () => ({ who: () => "mock" }));
+            const first = await import("./cached.js");
+            vi.doUnmock("./dep.js");
+            expect([(await import("./cached.js")) === first, globalThis.loads]).toEqual([true, 2]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("is evaluated again with the modules that import it, and with those that import the module that ran import() for it", async () => {
+    const count = (name: string) => `globalThis.${name} = (globalThis.${name} ?? 0) + 1;`;
+    const loads = (expected: number[]) => `
+      import { expect, test } from "bun:test";
+      import { notify } from "./user.js";
+      import { viaLoad } from "./via-load.js";
+      import "./other.js";
+      import "./bystander.js";
+      test("loads", async () => {
+        expect([await notify(), await viaLoad()]).toEqual(["real", "real"]);
+        expect([globalThis.cached, globalThis.user, globalThis.viaLoad, globalThis.other, globalThis.bystander]).toEqual(${JSON.stringify(expected)});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "cached.js": count("cached") + keeps("zz-mail"),
+        "user.js": `${count("user")} export { notify } from "./cached.js";`,
+        "load.js": `export const load = name => import(name);`,
+        "via-load.js": `${count("viaLoad")} import { load } from "./load.js"; let mail; export const viaLoad = async () => (mail ??= await load("zz-mail")).send();`,
+        "other.js": `${count("other")} import { load } from "./load.js"; export const unrelated = () => load("./bystander.js");`,
+        "bystander.js": count("bystander"),
+        "1.test.js": loads([1, 1, 1, 1, 1]),
+        "2.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { notify } from "./user.js";
+          import { viaLoad } from "./via-load.js";
+          import "./other.js";
+          vi.mock("zz-mail", () => ({ send: () => "mock" }));
+          test("the mock", async () => expect([await notify(), await viaLoad()]).toEqual(["mock", "mock"]));
+        `,
+        // Once for the file with the mock and once more after it.
+        "3.test.js": loads([3, 3, 3, 3, 1]),
+        "4.test.js": loads([3, 3, 3, 3, 1]),
+      },
+      4,
+    );
+  });
+
+  test.each([
+    ["mock.module", true],
+    ["jest.mock", true],
+    ["vi.mock", true],
+    ["mock.module", false],
+    ["jest.doMock", false],
+    ["vi.doMock", false],
+  ])(
+    "answers like a module with a static import for a later test file's %s() (at the top: %j)",
+    async (mock, atTop) => {
+      // [specifier, the export that is called]
+      const targets = [
+        ["zz-mail", "send"],
+        ["zz-esm", "send"],
+        ["./mail.js", "send"],
+        ["node:os", "hostname"],
+      ];
+      const files: Record<string, string> = { ...modules };
+      const twins = targets.map(([module, name], at) => {
+        const from = module.startsWith("./") ? `.${module}` : module;
+        const answer = `m.${name}() === "mock" ? "mock" : "real"`;
+        files[`twins/${at}-import.js`] =
+          `let m; export const answer = async () => ((m ??= await import("${from}")), ${answer});`;
+        files[`twins/${at}-static.js`] = `import * as m from "${from}"; export const answer = async () => ${answer};`;
+        return [module, `./twins/${at}-import.js`, `./twins/${at}-static.js`];
+      });
+      const lays = targets
+        .map(([module, name]) => `${mock}("${module}", () => ({ ${name}: () => "mock" }));`)
+        .join("\n");
+      const file = (answer: string) => `
+      import { beforeAll, expect, jest, mock, test, vi } from "bun:test";
+      ${answer === "real" ? "" : atTop ? lays : `beforeAll(() => { ${lays} });`}
+      test.each(${JSON.stringify(twins)})("%s", async (_, byCall, byStatement) => {
+        expect([await (await import(byCall)).answer(), await (await import(byStatement)).answer()]).toEqual(["${answer}", "${answer}"]);
+      });
+    `;
+      await expectFixturesToPass(
+        { ...files, "1.test.js": file("real"), "2.test.js": file("mock"), "3.test.js": file("real") },
+        12,
+      );
+    },
+  );
+
+  test.each(["mock.module", "jest.mock", "vi.mock"])(
+    "isn't evaluated again for a %s() that patches the module in place",
+    async mock => {
+      const file = (lays: string, answers: string) => `
+        import { expect, jest, mock, test, vi } from "bun:test";
+        import { isHostMocked, who } from "./lazy.js";
+        ${lays}
+        test("one instance", async () => expect([await isHostMocked(), await who(), globalThis.loads]).toEqual([${answers}, 1]));
+      `;
+      await expectFixturesToPass(
+        {
+          "dep.js": `export const who = () => "real";`,
+          "lazy.js": `
+            ${counted}
+            let os, dep;
+            export const isHostMocked = async () => (os ??= await import("node:os")).hostname() === "mock";
+            export const who = async () => (dep ??= await import("./dep.js")).who();
+          `,
+          "1.test.js": file("", `false, "real"`),
+          "2.test.js": file(
+            `${mock}("node:os", () => ({ hostname: () => "mock" })); ${mock}("./dep.js", () => ({ who: () => "mock" }));`,
+            `true, "mock"`,
+          ),
+          "3.test.js": file("", `false, "real"`),
+        },
+        3,
+      );
+    },
+  );
+
+  // b.test.js and c.test.js import a function of a.test.js, and c.test.js mocks what the function reaches.
+  const importsTestFile = (makeApp: string) => {
+    const imports = (answer: string, lays = "") => `
+      import { expect, test, vi } from "bun:test";
+      import { makeApp } from "./a.test.js";
+      ${lays}
+      test("imports the test file", async () => expect(await makeApp()).toBe("${answer}"));
+    `;
+    return {
+      "dep.js": `export const who = () => "real";`,
+      "app.js": `import { who } from "./dep.js"; export const create = () => who();`,
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        ${makeApp}
+        test("a", async () => expect(await makeApp()).toBe("real"));
+      `,
+      "b.test.js": imports("real"),
+      "c.test.js": imports("mock", `vi.mock("./dep.js", () => ({ who: () => "mock" }));`),
+    };
+  };
+  const byCall = `export const makeApp = async () => (await import("./app.js")).create();`;
+
+  test.each([
+    ["whose function runs an import() after the file has ended", byCall],
+    [
+      "that imports what imports the module",
+      `import { create } from "./app.js"; export const makeApp = async () => create();`,
+    ],
+  ])("a test file %s isn't evaluated again when a later file mocks the module", async (_, makeApp) => {
+    await expectFixturesToPass(importsTestFile(makeApp), 3);
+  });
+
+  test("nor is a test file that the run was given through a symbolic link", async () => {
+    using dir = tempDir("mock-module-link", { sub: importsTestFile(byCall) });
+    symlinkSync(join(String(dir), "sub"), join(String(dir), "link"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./link/a.test.js", "./link/b.test.js", "./link/c.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a test file that mocked what it imports isn't evaluated again when a later file imports it", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const who = () => "real";`,
+        "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { who } from "./dep.js";
+          export const helper = () => who();
+          test("a", () => {
+            mock.module("./dep.js", () => ({ who: () => "mock" }));
+            expect(who()).toBe("mock");
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { helper } from "./a.test.js";
+          test("b", () => expect(helper()).toBe("real"));
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a test file that an earlier file imported, and that ran an import() there, is loaded once", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const who = () => "real";`,
+        "a.test.js": `
+          import { test } from "bun:test";
+          ${counted}
+          test("a", async () => void (await import("./dep.js")));
+        `,
+        "b.test.js": `
+          import { test, vi } from "bun:test";
+          import "./a.test.js";
+          vi.mock("./dep.js", () => ({ who: () => "mock" }));
+          test("b", () => {});
+        `,
+        "c.test.js": `
+          import { expect, test } from "bun:test";
+          test("c", () => expect(globalThis.loads).toBe(1));
+        `,
+      },
+      3,
+      ["./b.test.js", "./a.test.js", "./c.test.js"],
+    );
+  });
+
+  test("isn't loaded again for an import() that failed", async () => {
+    const file = (mocks: string) => `
+      import { expect, test, vi } from "bun:test";
+      import { found } from "./optional.js";
+      ${mocks}
+      test("evaluated once", async () => expect([await found(), globalThis.loads]).toEqual([false, 1]));
+    `;
+    await expectFixturesToPass(
+      {
+        "broken.js": `throw new Error("broken");`,
+        "optional.js": `${counted} export const found = () => import("./broken.js").then(() => true, () => false);`,
+        "unused.js": `export {};`,
+        "1.test.js": file(`vi.mock("./unused.js", () => ({}));`),
+        "2.test.js": file(""),
+        "3.test.js": file(""),
+      },
+      3,
+    );
+  });
+
+  test("gets the vi.doMock() of a module whose failure it caught", async () => {
+    const file = (answer: string, lays = "") => `
+      import { expect, test, vi } from "bun:test";
+      test("${answer}", async () => {
+        ${lays}
+        expect(await (await import("./optional.js")).who()).toBe("${answer}");
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "broken.js": `throw new Error("broken");`,
+        "optional.js": `let broken; export const who = async () => (broken ??= await import("./broken.js").catch(() => ({ who: () => "fallback" }))).who();`,
+        "1.test.js": file("fallback"),
+        "2.test.js": file("mock", `vi.doMock("./broken.js", () => ({ who: () => "mock" }));`),
+        "3.test.js": file("fallback"),
+      },
+      3,
+    );
+  });
+
+  test("a package whose import() loaded a module of the project isn't loaded again with that module", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/zz-loader/package.json": `{ "name": "zz-loader", "type": "module", "main": "index.js" }`,
+        "node_modules/zz-loader/index.js": `${counted} export const page = () => import("../../page.js");`,
+        "dep.js": `export const who = "real";`,
+        "page.js": `export { who } from "./dep.js";`,
+        "1.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { page } from "zz-loader";
+          vi.mock("./dep.js", () => ({ who: "mock" }));
+          test("the page imports the mock", async () => expect((await page()).who).toBe("mock"));
+        `,
+        "2.test.js": `
+          import { expect, test } from "bun:test";
+          import { page } from "zz-loader";
+          test("the page is loaded again, and the package is not", async () => expect([(await page()).who, globalThis.loads]).toEqual(["real", 1]));
+        `,
+      },
+      2,
+    );
+  });
+
+  test.each(["jest.mock", "mock.module"])(
+    "a package doesn't keep the %s() of another package for the next file",
+    async mock => {
+      const file = (answer: string, lays = "") => `
+        import { expect, jest, mock, test } from "bun:test";
+        ${lays}
+        test("${answer}", async () => expect(await (await import("zz-orm")).notify()).toBe("${answer}"));
+      `;
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "node_modules/zz-orm/package.json": `{ "name": "zz-orm", "type": "module", "main": "index.js" }`,
+          "node_modules/zz-orm/index.js": keeps("zz-mail"),
+          "1.test.js": file("mock", `${mock}("zz-mail", () => ({ send: () => "mock" }));`),
+          "2.test.js": file("real"),
+        },
+        2,
+      );
+    },
+  );
+
+  test("doesn't go with what its instance in an earlier module graph imported, under --isolate=modules", async () => {
+    await expectFixturesToPass(
+      {
+        ...project,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import { who } from "./cached.js";
+          test("imports the module", async () => expect(await who()).toBe("real"));
+        `,
+        "2.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the instance of this file imports nothing", async () => {
+            vi.doMock("./dep.js", () => ({ who: () => "mock" }));
+            const first = await import("./cached.js");
+            expect((await import("./dep.js")).who()).toBe("mock");
+            vi.doUnmock("./dep.js");
+            expect((await import("./cached.js")) === first).toBe(true);
+          });
+        `,
+      },
+      2,
+      ["--isolate=modules"],
+    );
+  });
+
+  test("in CommonJS, from an import() that ran before the first test file asked for bun:test, and under a key with a query", async () => {
+    const notifies = `[await require("./service.cjs").notify(), await require("./service.cjs?x=1").notify()]`;
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "service.cjs": `const loading = import("zz-mail"); exports.notify = async () => (await loading).send();`,
+        "1.test.cjs": `
+          require("./service.cjs");
+          require("./service.cjs?x=1");
+          const { expect, test } = require("bun:test");
+          test("the real package", async () => expect(${notifies}).toEqual(["real", "real"]));
+        `,
+        "2.test.cjs": `
+          const { expect, test, vi } = require("bun:test");
+          vi.mock("zz-mail", () => ({ send: () => "mock" }));
+          test("the mock", async () => expect(${notifies}).toEqual(["mock", "mock"]));
+        `,
+      },
+      2,
+    );
+  });
+
+  test("doesn't go with what a Bun.ModuleGraph's instance of it imported", async () => {
+    await expectFixturesToPass(
+      {
+        ...project,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import "./cached.js";
+          import "./dep.js";
+          test("only the graph's instance imports the module", async () => {
+            const graph = new Bun.ModuleGraph();
+            expect(await (await graph.import(import.meta.dir + "/cached.js")).who()).toBe("real");
+            graph.dispose();
+          });
+        `,
+        "2.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the instance of the test files stays", async () => {
+            const first = await import("./cached.js");
+            vi.doMock("./dep.js", () => ({ who: () => "mock" }));
+            expect([(await import("./cached.js")) === first, globalThis.loads]).toEqual([true, 2]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test.each(isolationFlags)("is loaded again for each run of --rerun-each %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...project,
+        "again.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the mock of this run", async () => {
+            const run = (globalThis.runs = (globalThis.runs ?? 0) + 1);
+            vi.doMock("./dep.js", () => ({ who: () => "mock " + run }));
+            expect(await (await import("./cached.js")).who()).toBe("mock " + run);
+          });
+        `,
+      },
+      3,
+      ["--rerun-each", "3", ...args],
+    );
+  });
+
+  test("a module that a preload loaded keeps what its import() gave it, like one with a static import", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "preload.js": `import "./service.js"; import "./static.js";`,
+        "service.js": keeps("zz-mail"),
+        "static.js": `import * as mail from "zz-mail"; export const notify = async () => mail.send();`,
+        "1.test.js": real,
+        "2.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { notify } from "./service.js";
+          import { notify as byStatement } from "./static.js";
+          vi.mock("zz-mail", () => ({ send: () => "mock" }));
+          test("the real package", async () => expect([await notify(), await byStatement(), (await import("zz-mail")).send()]).toEqual(["real", "real", "mock"]));
+        `,
+      },
+      2,
+      ["--preload", "./preload.js"],
+    );
+  });
+
+  test("vi.mock() of a module that a preload loaded reaches it", async () => {
+    await expectFixturesToPass(
+      {
+        "preload.js": `import "./mail.js";`,
+        "mail.js": `export const send = () => "real";`,
+        "service.js": keeps("./mail.js"),
+        "1.test.js": real,
+        "2.test.js": mocked("./mail.js"),
+        "3.test.js": real,
+      },
+      3,
+      ["--preload", "./preload.js"],
     );
   });
 });

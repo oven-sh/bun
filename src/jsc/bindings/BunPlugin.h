@@ -8,6 +8,7 @@
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/text/AtomStringHash.h>
 #include "helpers.h"
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -151,6 +152,10 @@ public:
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        // By the path of a module whose import() ran under `bun test`: the keys those calls resolved to. The loader keeps no edge for them, so evictModulesAndTheirImporters() reads these.
+        WTF::UncheckedKeyHashMap<AtomString, WTF::UncheckedKeyHashSet<AtomString>> keysOfImportCalls = {};
+        // The test file that is running. Nothing loads a test file again for what it imported, so its own import() calls are not recorded.
+        AtomString runningTestFile;
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
@@ -260,7 +265,7 @@ public:
             WTF::Vector<JSC::Strong<JSC::Unknown>, 2> arguments;
             // The other modules whose bodies ran then. `bun test` runs those again that import the file by statements.
             WTF::Vector<uint32_t, 4> importers;
-            // The rest, and those that waited at an import() at their top, run again only where they laid a mock themselves.
+            // The rest, and those that waited at an import() at their top, run again only where they laid a mock themselves. Without --aot, keysOfImportCalls runs them again too.
             WTF::Vector<uint32_t, 2> importersByCall;
             // The call threw. A body that caught it went on. One that did not has failed: whoever imports it again is given what it threw.
             bool threw { false };
@@ -358,5 +363,7 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
+// Under `bun test`, code of the module at the path `importer` ran an import() that resolved to `imported`.
+void didImportByCall(Zig::GlobalObject*, JSC::JSModuleLoader*, const AtomString& importer, const AtomString& imported);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

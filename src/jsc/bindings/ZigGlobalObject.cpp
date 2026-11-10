@@ -4347,12 +4347,13 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
     int64_t referrerAsyncOrder = -1;
+    JSC::Identifier referrerKey;
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
         auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
+        referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
             : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
         referrerAsyncOrder = loader->asyncEvaluationOrderForKey(referrerKey);
@@ -4398,6 +4399,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!referrerKey.isNull())
+            JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, Bun::didImportByCall>(globalObject, loader, referrerKey.string(), key.string());
     }
     return result;
 }

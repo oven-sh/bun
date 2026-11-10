@@ -7,6 +7,38 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > a package doesn't keep the jest.mock() of another package for the next file
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > a package doesn't keep the mock.module() of another package for the next file
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > also as the original that a vi.mock() factory imports
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > and that an earlier test file only loaded doesn't keep the mock for the next file
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > answers like a module with a static import for a later test file's vi.doMock() (at the top: false)
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > answers like a module with a static import for a later test file's vi.mock() (at the top: true)
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the jest.doMock("./mail.js") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the jest.mock("./mail.js") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the jest.mock("zz-esm") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the mock.module("./mail.js") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the mock.module("zz-mail") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the vi.doMock("./mail.js") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > doesn't keep the vi.mock("./mail.js") of a test file for the next file, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > gets a later test file's vi.mock() of a package, and the file after that gets the real package []
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > gets the vi.doMock() of a module whose failure it caught
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > in CommonJS, from an import() that ran before the first test file asked for bun:test, and under a key with a query
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is evaluated again with the modules that import it, and with those that import the module that ran import() for it
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again after the end of a `using` block, a second vi.doMock() and vi.doUnmock() ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again after the end of a `using` block, a second vi.doMock() and vi.doUnmock() ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again after the end of a `using` block, a second vi.doMock() and vi.doUnmock() []
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again for each run of --rerun-each ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again for each run of --rerun-each ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again for each run of --rerun-each []
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again when a later test file's Bun.plugin() replaces the virtual module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again when a mock ends that user code has deleted from require.cache
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > is loaded again with a helper that mocks, so the helper mocks for the next file too
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > isn't loaded again for what only an earlier instance of it imported
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > vi.doMock("./mail.js") reaches it if an earlier test file loaded it, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > vi.doMock("zz-mail") reaches it if an earlier test file loaded it, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > vi.mock("zz-esm") reaches it if an earlier test file loaded it, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > vi.mock("zz-mail") reaches it if an earlier test file loaded it, however it keeps the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > vi.mock() of a module that a preload loaded reaches it
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
@@ -30,6 +62,13 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > a module that re-exports the mocked module, and is re-exported next to it
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a package is patched for the modules that have yet to run []
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > every file that imports the module that mocks gets the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > a package whose import() loaded a module of the project isn't loaded again with that module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > a test file whose function runs an import() after the file has ended isn't evaluated again when a later file mocks the module
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > answers like a module with a static import for a later test file's jest.doMock() (at the top: false)
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > answers like a module with a static import for a later test file's jest.mock() (at the top: true)
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > answers like a module with a static import for a later test file's mock.module() (at the top: false)
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > answers like a module with a static import for a later test file's mock.module() (at the top: true)
+test/js/bun/test/mock/mock-module.test.ts: a module that keeps what import() gave it > isn't loaded again for an import() that failed
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with jest.mock(), the mock reaches modules the preload loaded and mocked
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with jest.mock(), the mock reaches modules the preload loaded and not mocked
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with mock.module(), the mock reaches modules the preload loaded and mocked

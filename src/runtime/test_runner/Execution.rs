@@ -659,12 +659,6 @@ impl Execution {
             sequence.executing = false;
             if sequence.maybe_skip {
                 sequence.maybe_skip = false;
-                if Some(entry_ptr) == sequence.test_entry && entry.base.mode == ScopeMode::Normal {
-                    // SAFETY: a field that neither `sequence` nor `group_ptr` points into. The reporter outlives every BunTest.
-                    let reporter = unsafe { (*buntest.as_ptr()).reporter };
-                    // SAFETY: single-threaded, and no `&mut` to the reporter is live.
-                    sequence.failed_owner = reporter.map(|reporter| unsafe { reporter.as_ref() }.jest.rejection_owner);
-                }
                 sequence.active_entry = match entry.failure_skip_past {
                     // SAFETY: arena-owned entry
                     Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
@@ -978,6 +972,7 @@ impl Execution {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Fail;
                 }
+                sequence.failed_owner = super::jest::Jest::rejection_owner();
                 HandleUncaughtExceptionResult::ShowHandledError
             }
         }

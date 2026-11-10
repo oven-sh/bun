@@ -3892,6 +3892,31 @@ describe.concurrent("a promise that was rejected before the callback that runs n
       expect(await run(`afterEach(() => {});` + flaky(", { retry: 1 }"))).toEqual(forgiven);
     });
 
+    // expect.soft() fails the test callback and lets it go on.
+    test("and the test callback failed through expect.soft()", async () => {
+      const file = `
+        let attempt = 0;
+        test("flaky", async () => {
+          attempt++;
+          await new Promise<void>(resolve => {
+            setTimeout(() => {
+              if (attempt === 1) {
+                expect.soft(1).toBe(2);
+                Promise.reject(new Error("left"));
+              }
+              resolve();
+            });
+          });
+        }, { retry: 1 });
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) flaky (attempt 2)"],
+        errors: ["error: expect(received).toBe(expected)", "error: left"],
+        betweenTests: 0,
+        exitCode: 0,
+      });
+    });
+
     test("and an afterEach() hook of a test without retry starts", async () => {
       const file = `
         afterEach(() => {});

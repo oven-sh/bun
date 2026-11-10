@@ -329,6 +329,12 @@ pub(crate) mod Jest {
         runner_ptr().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
+    /// `TestRunner::rejection_owner`: names the callback that started last.
+    pub(crate) fn rejection_owner() -> Option<i32> {
+        // SAFETY: a read through the pointer, so that no `&mut TestRunner` is made while a sub-borrow of it is live.
+        runner_ptr().map(|runner| unsafe { (*runner.as_ptr()).rejection_owner })
+    }
+
     /// Raw-pointer accessor for callers that must not materialise
     /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
@@ -704,7 +710,7 @@ pub(crate) mod on_unhandled_rejection {
             if buntest.unclaimed.is_ended_error(rejection) {
                 return;
             }
-            if owner.is_int32() && Jest::runner().is_some_and(|runner| runner.rejection_owner != owner.as_int32()) {
+            if owner.is_int32() && Jest::rejection_owner().is_some_and(|current| current != owner.as_int32()) {
                 // Another callback has started since this promise was rejected.
                 buntest.on_rejection_left(global_object, rejection, owner.as_int32());
                 return;

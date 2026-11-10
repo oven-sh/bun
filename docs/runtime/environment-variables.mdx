@@ -154,6 +154,8 @@ BAR=hello\$FOO
 process.env.BAR; // => "hello$FOO"
 ```
 
+Expansion is limited to 4 MiB of substituted text per file. If a file goes past that, Bun prints a warning naming the variable it stopped at and leaves that variable, and the ones after it in the same file, unexpanded.
+
 ### `dotenv`
 
 Bun reads `.env` files automatically, so `dotenv` and `dotenv-expand` are unnecessary.
@@ -193,7 +195,7 @@ for (const [key, value] of Object.entries(values)) {
 }
 ```
 
-`$NAME` reads `options.env` first (the environment Bun loaded at startup by default), then any key of the text. Values from `options.env` are used as they are. A key that `options.env` already has is still returned with the value the text gives it. Pass `expand: false` to get the values as written, like `util.parseEnv`.
+`$NAME` reads `options.env` first, then any key of the text. `options.env` defaults to the process environment Bun started with, without the `.env` files Bun loaded and without later writes to `process.env`. Pass `env: process.env` to read what the program sees. Values from `options.env` are used as they are. A key that `options.env` already has is still returned with the value the text gives it. Pass `expand: false` to get the values as written, like `util.parseEnv`. The text may substitute in at most 4 MiB of references, after that `Bun.parseEnv` throws a `RangeError`.
 
 ## Reading environment variables
 

@@ -334,15 +334,27 @@ pub(crate) fn parse_env<'a>(
     content: &'a [u8],
     options: &ParseEnvOptions<'a>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
+    use bun_dotenv::env_loader::{Loader, MAX_EXPANSION_BYTES, ParseExpandedError};
     if !options.expand {
         return node::node_util_binding::parse_env(&cx.heap, content);
     }
     let env = options.env.to_js();
-    let map = if env.is_undefined_or_null() {
-        bun_dotenv::Loader::parse_expanded(content, &VirtualMachine::get().env_loader().map)?
+    let parsed = if env.is_undefined_or_null() {
+        Loader::parse_expanded(content, &VirtualMachine::get().env_loader().process_env())
     } else {
         let seed = env_map_from_js(cx.global(), env)?;
-        bun_dotenv::Loader::parse_expanded(content, &seed)?
+        Loader::parse_expanded(content, &seed)
+    };
+    let map = match parsed {
+        Ok(map) => map,
+        Err(ParseExpandedError::Alloc(err)) => return Err(err.into()),
+        Err(ParseExpandedError::ExpansionLimit { key }) => {
+            return Err(cx.heap.range_error(format_args!(
+                "The content expands to more than {} of variable references at {}",
+                bun_core::fmt::bytes(MAX_EXPANSION_BYTES),
+                bun_core::fmt::quote(&key),
+            )));
+        }
     };
     node::node_util_binding::env_map_to_js(&cx.heap, &map)
 }
@@ -365,7 +377,7 @@ fn env_map_from_js(global: &JSGlobalObject, env: JSValue) -> JsResult<bun_dotenv
         global,
         env_object,
         jsc::PropertyIteratorOptions {
-            skip_empty_name: false,
+            skip_empty_name: true,
             include_value: true,
         },
     )?;

@@ -69,6 +69,23 @@ describe("Bun.parseEnv", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("the default env is the process environment without the .env files Bun loaded", async () => {
+    using dir = tempDir("dotenv-parse-env-default", {
+      ".env": "DB_HOST=localhost\nFROM_DOTENV=yes",
+      "index.ts": `
+        const text = "DB_HOST=prod\\nDB_URL=postgres://$DB_HOST/db\\nX=$FROM_DOTENV\\nP=$PROBE";
+        console.log(JSON.stringify([Bun.parseEnv(text), Bun.parseEnv(text, { env: process.env })]));
+      `,
+    });
+    const { stdout } = await bunRun(`${dir}/index.ts`, { PROBE: "fromproc" });
+    expect(JSON.parse(stdout)).toEqual([
+      // A key of the text wins over the `.env` that Bun loaded, as it does when the text is the
+      // first file the startup loader reads.
+      { DB_HOST: "prod", DB_URL: "postgres://prod/db", X: "", P: "fromproc" },
+      { DB_HOST: "prod", DB_URL: "postgres://localhost/db", X: "yes", P: "fromproc" },
+    ]);
+  });
+
   test("returns the text's value for a key the environment already has", async () => {
     // The startup loader keeps the environment's value for such a key. The parser returns the
     // text's value, expanded against the environment, and leaves the precedence to the caller.
@@ -109,6 +126,23 @@ describe("Bun.parseEnv", () => {
     // The output of one parse is a valid env for the next.
     const first = Bun.parseEnv("D=\\$A");
     expect(Bun.parseEnv("X=$D", { env: first })).toEqual({ X: "$A" });
+  });
+
+  test("an empty name in options.env is skipped", () => {
+    expect(Bun.parseEnv("A=${}", { env: { "": "v" } })).toEqual({ A: "" });
+  });
+
+  test("throws once the text substitutes in more than 4 MiB", () => {
+    // Each line substitutes the previous value ten times, so A(n) is 10^(n+1) bytes.
+    const lines = ["A0=xxxxxxxxxx"];
+    for (let i = 1; i <= 7; i++) lines.push(`A${i}=` + `$A${i - 1}`.repeat(10));
+    expect(Bun.parseEnv(lines.slice(0, 6).join("\n")).A5).toHaveLength(1_000_000);
+    expect(() => Bun.parseEnv(lines.join("\n"))).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        message: 'The content expands to more than 4.19 MB of variable references at "A6"',
+      }),
+    );
   });
 
   test("options.env values are stringified and undefined is skipped", () => {

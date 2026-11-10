@@ -851,9 +851,9 @@ declare module "bun" {
      * `content`, including keys defined later in the text. Values from `env` are used as they
      * are: a `$` inside them is not expanded.
      *
-     * Defaults to the environment Bun loaded at startup (the process environment and the `.env`
-     * files Bun loaded), the same source `Bun.which` and `Bun.spawn` use. Pass `process.env` to
-     * include later writes to it.
+     * Defaults to the process environment Bun started with, without the `.env` files Bun loaded
+     * and without later writes to `process.env`. Pass `process.env` to read what the program
+     * sees.
      */
     env?: Record<string, string | undefined>;
   }
@@ -865,6 +865,8 @@ declare module "bun" {
    * The result holds only the keys that `content` defines, with the values the text gives
    * them. `process.env` is not changed, and a key that `process.env` already has is not
    * skipped: apply the precedence you want when you copy the values.
+   *
+   * @throws {RangeError} If the text substitutes in more than 4 MiB of variable references.
    *
    * @category Utilities
    *

@@ -124,7 +124,7 @@ const values = Bun.parseEnv("HOST=localhost\nURL=http://$HOST:${PORT:-3000}");
 console.log(values); // { HOST: "localhost", URL: "http://localhost:3000" }
 ```
 
-`$NAME` reads `options.env` first, then any key of `content`, including a key defined later in the text. Values from `options.env` are used as they are: a `$` inside them is not expanded. `options.env` defaults to the environment Bun loaded at startup (the process environment and the `.env` files Bun loaded). Pass `process.env` to include later writes to it. Pass `expand: false` to get the values as written, like `util.parseEnv`.
+`$NAME` reads `options.env` first, then any key of `content`, including a key defined later in the text. Values from `options.env` are used as they are: a `$` inside them is not expanded. `options.env` defaults to the process environment Bun started with, without the `.env` files Bun loaded and without later writes to `process.env`. Pass `env: process.env` to read what the program sees. Pass `expand: false` to get the values as written, like `util.parseEnv`. The text may substitute in at most 4 MiB of references, after that `Bun.parseEnv` throws a `RangeError`.
 
 See [Environment variables](/runtime/environment-variables#parsing-env-files-at-runtime) for a loader that reads a set of `.env` files at runtime.
 

@@ -168,9 +168,10 @@ describe("bundler", () => {
   });
   // The polyfill (src/node-fallbacks/events.js) is a hand copy of src/js/node/events.ts. One script runs against both:
   // as a browser bundle it gets the polyfill, as a bun bundle it gets the runtime module. Both must print the same.
-  // Node prints other values in three places, where the runtime does not follow it: it runs the listener twice in
-  // "a once() wrapper called again by a removeListener listener", it names the once() wrapper of `g` in
-  // "removeAllListeners(name)", and it throws in "a listener that removes another listener of the list".
+  // Node prints other values in two places, where the runtime does not follow it: the event of
+  // "removeAllListeners(name)" carries the once() wrapper of `g`, and "a listener that removes another listener of
+  // the list" throws. Node 26.3.0 also runs the listener twice in "a once() wrapper called again by a removeListener
+  // listener". Node 26.12.1 runs it once, like the runtime.
   const removeListenerEntry = /* js */ `
     import { EventEmitter } from "events";
     import { once } from "node:events";

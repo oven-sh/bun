@@ -118,8 +118,6 @@ interface Holder {
    * It is a function written inside a literal or a class. `hosts` lists what it is read from, under the name `made`.
    */
   hasHost?: boolean;
-  /** Its name comes from a computed key. Plain Bun omits that name from the name of a function bound to it. */
-  isNamedByComputedKey?: boolean;
   /** Object.freeze and Object.seal throw for it. */
   refusesFreeze?: boolean;
   /** Its properties are static fields, and a static field named "prototype" cannot be defined. */
@@ -350,7 +348,7 @@ const holders: Holder[] = [
       ["method-using-super-in-literal", `const host = { __proto__: { base() { return "base"; } }, made(p, q) { return "called " + super.base(); } };`],
       ["async-method-in-literal", `const host = { beside: 1, async made(p, q) { return "called"; } };`],
       ["generator-method-in-literal", `const host = { beside: 1, *made(p, q) { yield "called"; } };`],
-      ["computed-method-in-literal", `const host = { beside: 1, ["ma" + "de"](p, q) { return "called"; } };`, { isNamedByComputedKey: true }],
+      ["computed-method-in-literal", `const host = { beside: 1, ["ma" + "de"](p, q) { return "called"; } };`],
       ["getter-of-literal", `const inner = { get value() { return "called"; } };\nconst host = { get made() { return Object.getOwnPropertyDescriptor(inner, "value").get; } };`],
       ["method-in-nested-literal", `const outer = { inner: { beside: 1, made(p, q) { return "called"; } } };\nconst host = outer.inner;`],
       ["method-in-returned-literal", `const build = () => ({ beside: 1, made(p, q) { return "called"; } });\nconst host = build();`],
@@ -648,7 +646,6 @@ interface Look {
   refusesCallable?: boolean;
   needsHost?: boolean;
   needsCallable?: boolean;
-  readsNameOfBoundFunction?: boolean;
   usesLibrary?: boolean;
 }
 
@@ -674,7 +671,7 @@ const looks: Look[] = [
   { name: "call-it", text: s => `seen = typeof ${s.object}(1, 2);\n`, needsCallable: true },
   { name: "call-it-with-call", text: s => `seen = typeof ${s.object}.call({ beside: 2 }, 1, 2);\n`, needsCallable: true, usesLibrary: true },
   { name: "construct-it", text: s => `seen = typeof new ${s.object}(1, 2);\n`, needsCallable: true },
-  { name: "bind-it", text: s => `const bound = ${s.object}.bind(null, 1);\nseen = str(bound.name) + " " + str(bound.length) + " " + str(Object.hasOwn(bound, "prototype"));\n`, needsCallable: true, readsNameOfBoundFunction: true, usesLibrary: true },
+  { name: "bind-it", text: s => `const bound = ${s.object}.bind(null, 1);\nseen = str(bound.name) + " " + str(bound.length) + " " + str(Object.hasOwn(bound, "prototype"));\n`, needsCallable: true, usesLibrary: true },
   { name: "name-and-length", text: s => `seen = str(${s.object}.name) + " " + str(${s.object}.length) + " " + typeof ${s.object}.prototype;\n`, needsCallable: true },
   { name: "as-a-key", text: s => `const table = new WeakMap();\ntable.set(${s.object}, "kept");\nseen = str(table.get(${s.object})) + " " + str(new Set([${s.object}, ${s.object}]).size);\n`, needsCallable: true, usesLibrary: true },
   { name: "in", text: s => `seen = str(${s.key} in ${s.object});\n` },
@@ -1114,7 +1111,6 @@ function isPossible({ holder, integrity, above, target, operation, key, isOwn, p
   if (look.refusesCallable && holder.isCallable) return false;
   if (look.needsHost && !holder.hasHost) return false;
   if (look.needsCallable && !holder.isCallable) return false;
-  if (look.readsNameOfBoundFunction && holder.isNamedByComputedKey) return false;
   // Function.prototype.toString returns the source text, which a transpiler reformats.
   if (look.needsCalledKey && holder.isCallable && key.name === "toString") return false;
   return true;

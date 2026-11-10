@@ -1706,6 +1706,95 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a member with a decorator list in its key gives its name to a bound function", async () => {
+      // The engine takes such a key for a computed one, and names the member when the class is evaluated.
+      // \`host\` has no decorator: it holds the list of \`#hidden\`.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const keep = (value, context) => {};
+        const autobind = (value, { name, addInitializer }) => {
+          addInitializer(function () { this[name] = this[name].bind(this); });
+        };
+        let boundInItsDecorator;
+        const bindNow = (value, context) => { boundInItsDecorator = value.bind(null).name; };
+        class A {
+          @keep method() {}
+          @keep static staticMethod() {}
+          @keep async asyncMethod() {}
+          @keep *generator() {}
+          @keep async *asyncGenerator() {}
+          @keep get getter() { return 1; }
+          @keep set setter(value) {}
+          @keep accessor field = 1;
+          @autobind onTick() {}
+          @bindNow seenByItsDecorator() {}
+        }
+        class B { @keep #hidden() {} host() {} }
+        const a = new A();
+        const own = (key) => Object.getOwnPropertyDescriptor(A.prototype, key);
+        const bound = (target) => target.bind(a).name;
+        console.log(JSON.stringify({
+          method: bound(a.method),
+          staticMethod: bound(A.staticMethod),
+          asyncMethod: bound(a.asyncMethod),
+          generator: bound(a.generator),
+          asyncGenerator: bound(a.asyncGenerator),
+          getter: bound(own("getter").get),
+          setter: bound(own("setter").set),
+          accessor: [bound(own("field").get), bound(own("field").set)],
+          autobind: [a.onTick.name, Object.hasOwn(a, "onTick")],
+          boundInItsDecorator,
+          host: bound(new B().host),
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        method: "bound method",
+        staticMethod: "bound staticMethod",
+        asyncMethod: "bound asyncMethod",
+        generator: "bound generator",
+        asyncGenerator: "bound asyncGenerator",
+        getter: "bound get getter",
+        setter: "bound set setter",
+        accessor: ["bound get field", "bound set field"],
+        autobind: ["bound onTick", true],
+        boundInItsDecorator: "bound seenByItsDecorator",
+        host: "bound host",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "a static accessor called name or length in front of a decorated member is what a bound class answers",
+      async () => {
+        // The engine defines such an accessor by itself, because a member with a key in brackets follows it.
+        const { stdout, stderr, exitCode } = await runDecorator(`
+        const keep = (value, context) => {};
+        class Named { constructor(a, b) {} static get name() { return "custom"; } @keep method() {} }
+        class Long { constructor(a, b) {} static get length() { return 9; } @keep method() {} }
+        class Behind { constructor(a, b) {} @keep method() {} static get name() { return "custom"; } static get length() { return 9; } }
+        @keep class Decorated { constructor(a, b) {} static get length() { return 9; } @keep method() {} }
+        class Plain { constructor(a, b) {} @keep method() {} }
+        const bound = (target) => { const result = target.bind(null, 1); return [result.name, result.length]; };
+        console.log(JSON.stringify({
+          Named: bound(Named),
+          Long: bound(Long),
+          Behind: bound(Behind),
+          Decorated: bound(Decorated),
+          Plain: bound(Plain),
+        }));
+      `);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          Named: ["bound custom", 1],
+          Long: ["bound Long", 8],
+          Behind: ["bound custom", 8],
+          Decorated: ["bound Decorated", 8],
+          Plain: ["bound Plain", 1],
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
     test.concurrent("a decorator expression sees the outer this, its own class only after it is defined", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         const fns = [];

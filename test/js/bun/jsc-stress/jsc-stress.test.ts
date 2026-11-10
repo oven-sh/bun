@@ -132,6 +132,8 @@ const jsFixtures = [
   "regexp-many-single-character-alternatives.js",
   // Builtins
   "function-prototype-call-not-called-as-a-method.js",
+  "bound-function-name-of-run-time-named-target.js",
+  "function-bind-class-with-static-name-or-length-accessor.js",
 ];
 
 const wasmFixtures = [

@@ -21,7 +21,7 @@ use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::pretty_format::JestPrettyFormat;
-use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
+use super::snapshot::{Form as SnapshotForm, Format as SnapshotFormat, Outcome as SnapshotOutcome, Step as SnapshotStep};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
@@ -884,6 +884,51 @@ pub(crate) enum Received {
     Thrown(JSValue),
 }
 
+/// The number that one call of a snapshot matcher has among the snapshots of its test. `SnapshotFormat::takes_number` says where it takes it.
+pub(crate) struct Numbering<'a> {
+    expect: &'a Expect,
+    hint: &'a [u8],
+    form: SnapshotForm,
+    /// The format of the test's snapshot file, until the number is taken. An inline snapshot whose file cannot be read has no number.
+    pending: Option<SnapshotFormat>,
+    /// What `Snapshots::add_count` returned, for `Snapshots::match_or_write`.
+    taken: Option<(Vec<u8>, usize)>,
+}
+
+impl<'a> Numbering<'a> {
+    fn new(expect: &'a Expect, hint: &'a [u8], form: SnapshotForm, format: Option<SnapshotFormat>) -> Self {
+        Numbering { expect, hint, form, pending: format, taken: None }
+    }
+
+    #[inline]
+    fn take(&mut self, at: SnapshotStep) -> Result<(), crate::Error> {
+        if self.pending.is_some_and(|format| format.takes_number(self.form, at)) { self.take_now() } else { Ok(()) }
+    }
+
+    /// Takes the number, if the call has none yet.
+    #[optimize(size)]
+    fn take_now(&mut self) -> Result<(), crate::Error> {
+        let (Some(format), Some(runner)) = (self.pending.take(), Jest::runner()) else { return Ok(()) };
+        match runner.snapshots.add_count(self.expect, format, self.hint) {
+            Ok(taken) => self.taken = Some(taken),
+            // An inline snapshot is not in the snapshot file, so it does without a number that its test can't give.
+            Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive)
+                if self.form == SnapshotForm::Inline => {}
+            Err(err) => return Err(err),
+        }
+        Ok(())
+    }
+
+    fn take_or_throw(&mut self, global_this: &JSGlobalObject, at: SnapshotStep) -> JsResult<()> {
+        self.take(at).map_err(|err| self.expect.throw_snapshot_error(global_this, &err, b""))
+    }
+
+    /// For a step that fails with an error of its own. That error is the one to report.
+    fn take_as_it_fails(&mut self, at: SnapshotStep) {
+        let _ = self.take(at);
+    }
+}
+
 unsafe extern "C" {
     safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
     safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
@@ -1149,18 +1194,22 @@ impl Expect {
         let is_vitest = this.is_vitest();
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
-        let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
-            this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
-        if this.bun_test().is_some() {
-            match runner.snapshots.format_of(&runner.files, this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
-                Ok(_) => {}
-                Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
+        let file_format = if this.bun_test().is_none() {
+            None
+        } else {
+            match runner.snapshots.format_of(&runner.files, this) {
+                Ok(file_format) => Some(file_format),
+                Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => None,
                 // Inline snapshots don't need the snapshot file, so leave these errors to a matcher that does.
-                Err(crate::Error::FailedToOpenSnapshotFile | crate::Error::ParseError) => {}
+                Err(crate::Error::FailedToOpenSnapshotFile | crate::Error::ParseError) => None,
                 Err(err) => return Err(this.throw_snapshot_error(global_this, &err, b"")),
             }
-        }
+        };
+        let mut numbering = Numbering::new(this, b"", SnapshotForm::Inline, file_format);
+        let (shown, same_as_older_bun) =
+            this.match_and_fmt_snapshot(global_this, received, property_matchers, &mut pretty_value, fn_name, format, &mut numbering)?;
+        // An inline snapshot that is printed has a number in each format.
+        numbering.take_now().map_err(|err| this.throw_snapshot_error(global_this, &err, b""))?;
 
         let mut start_indent: Option<Box<[u8]>> = None;
         let mut end_indent: Option<Box<[u8]>> = None;
@@ -1290,28 +1339,48 @@ impl Expect {
         Ok(false)
     }
 
-    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
+    /// Returns the value with `property_matchers` substituted in, and `print_snapshot`'s result.
     #[optimize(size)]
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
-        value: JSValue,
+        received: Received,
         property_matchers: Option<JSValue>,
         pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
         format: SnapshotFormat,
+        numbering: &mut Numbering<'_>,
     ) -> JsResult<(JSValue, bool)> {
+        // Vitest's print reads the `message` of what was thrown. The other formats print the message, and read it here.
+        let is_thrown = matches!(received, Received::Thrown(_));
+        let print_reads_message = is_thrown && format == SnapshotFormat::Vitest;
+        if is_thrown && !print_reads_message {
+            numbering.take_or_throw(global_this, SnapshotStep::Message)?;
+        }
+        let value = Self::value_to_snapshot(global_this, received, format)?;
         let mut shown = value;
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
+                numbering.take_as_it_fails(SnapshotStep::NotAnObject);
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
                 return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| (value, true));
             }
 
             let prop_matchers = _prop_matchers;
 
-            let (matched, with_matchers) = value.jest_deep_match(prop_matchers, global_this, true)?;
+            let (matched, with_matchers) = match value.jest_deep_match(prop_matchers, global_this, true) {
+                Ok(result) => result,
+                Err(err) => {
+                    // A matcher that waits for a promise runs this call again, and that pass takes the number.
+                    if matches!(err, JsError::Thrown) && !ExpectDeferred::is_thrown(global_this) {
+                        numbering.take_as_it_fails(SnapshotStep::MatchersThrew);
+                    }
+                    return Err(err);
+                }
+            };
             if !matched {
+                // Jest and Vitest take a function for no object.
+                numbering.take_as_it_fails(if value.is_callable() { SnapshotStep::NotAnObject } else { SnapshotStep::NoMatch });
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(false);
@@ -1324,8 +1393,15 @@ impl Expect {
             shown = with_matchers;
         }
 
-        let printed = if format.is_pretty_format() { value } else { shown };
-        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format)?;
+        let printed = match property_matchers {
+            Some(properties) if format.is_pretty_format() => {
+                numbering.take_or_throw(global_this, SnapshotStep::Merge)?;
+                super::pretty_format::deep_merge(global_this, value, properties, format)?
+            }
+            _ => shown,
+        };
+        numbering.take_or_throw(global_this, if print_reads_message { SnapshotStep::Message } else { SnapshotStep::Print })?;
+        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, None, pretty_value, format)?;
         Ok((shown, same_as_older_bun))
     }
 
@@ -1344,11 +1420,11 @@ impl Expect {
             Ok(format) => format,
             Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
-        let value = Self::value_to_snapshot(global_this, received, format)?;
+        let mut numbering = Numbering::new(self, hint, SnapshotForm::Entry, Some(format));
         let (shown, same_as_older_bun) =
-            self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
+            self.match_and_fmt_snapshot(global_this, received, property_matchers, &mut pretty_value, fn_name, format, &mut numbering)?;
 
-        match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint) {
+        match runner.snapshots.match_or_write(&runner.files, self, numbering.taken, &pretty_value, hint) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
                 if runner.snapshots.may_hold_entries_of_bun()

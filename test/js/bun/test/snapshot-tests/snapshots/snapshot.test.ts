@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 971, jest: 601 };
+  const tests = { vitest: 1003, jest: 624 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -1388,6 +1388,256 @@ describe.concurrent("the fixtures and snapshot files that another runner wrote",
     expect(contentsOf(String(dir))).toEqual(written);
     expect(exitCode).toBe(0);
   });
+});
+
+// Jest and Vitest give a snapshot matcher its number before they print the value, and where its property matchers fail
+// (Vitest since 4.1.3). Bun 1.4 gave an inline matcher its number first. So a matcher that throws there has a number
+// all the same, and the key of the next snapshot of the test shows it. The tests that pass in those runners are in
+// formats/{jest,vitest}/numbers.fixture, and the ones of Bun 1.4.4 in formats/bun-1.4.4. The two runners wrote theirs
+// on Node: `npx jest --ci=false --rootDir=<dir> --testMatch='**/*.fixture.js'`, and `npx vitest run --root <dir>` with
+// `include: ["**/*.fixture.ts"]` in its config.
+describe.concurrent("the number of a snapshot matcher that throws as it matches properties or prints", () => {
+  const snap = (dir: unknown, name = "a.test.js") =>
+    readFileSync(join(String(dir), "__snapshots__", name + ".snap"), "utf8");
+  const importing = (module: string | null) =>
+    module ? `import { describe, test, expect } from ${JSON.stringify(module)};\n` : "";
+  const entries = (format: keyof typeof headers, keys: readonly string[], value = "after") =>
+    headers[format] + keys.map(key => `\nexports[\`${key}\`] = \`"${value}"\`;\n`).join("");
+  // `after(call)` takes a snapshot after a matcher that throws.
+  const values = `
+    const unprintable = () => ({ get a() { throw new Error("unprintable"); } });
+    const trap = () => new Proxy({}, { get() { throw new Error("trap"); } });
+    class Unreadable extends Error { get message() { throw new Error("unreadable"); } }
+    const throwUnreadable = () => { throw new Unreadable(); };
+    const number = () => expect.any(Number);
+    const after = call => {
+      try { call(); } catch {}
+      expect("after").toMatchSnapshot();
+    };
+  `;
+
+  // Bun 1.4.4 wrote the .snap files of formats/bun-1.4.4/numbers*.fixture.js, each in a run of that file alone.
+  // To add a case, run it under 1.4.4.
+  describe("what Bun 1.4.4 wrote", () => {
+    const fixtures = [
+      ["numbers.fixture.js", 16],
+      ["numbers-vitest.fixture.js", 13],
+    ] as const;
+    const copy = () => {
+      const dir = tempDir("snapshot-number-bun", {});
+      cpSync(join(import.meta.dir, "..", "formats", "bun-1.4.4"), String(dir), { recursive: true });
+      return dir;
+    };
+    const contentsOf = (dir: unknown, fixture: string) => [
+      readFileSync(join(String(dir), fixture), "latin1"),
+      snap(dir, fixture),
+    ];
+
+    test.each(fixtures.flatMap(([fixture, tests]) => ["true", "false"].map(CI => [fixture, CI, tests] as const)))(
+      "%s passes, and is left alone (CI: %s)",
+      async (fixture, CI, tests) => {
+        using dir = copy();
+        const before = contentsOf(dir, fixture);
+        const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI }, "./" + fixture);
+        expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: tests, stderr: "" });
+        expect(contentsOf(dir, fixture)).toEqual(before);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  // Bun 1.4.4 wrote `t 2` here only when b.test.js ran alone or first: its first `toMatchSnapshot()` of a file lost
+  // the numbers of the inline matchers before it when it took the place of another file's snapshots.
+  test("a file of Bun: the number does not depend on the files that ran before", async () => {
+    using dir = tempDir("snapshot-number-files", {
+      "a.test.js": `test("a", () => { expect(1).toMatchSnapshot(); });`,
+      "b.test.js": values + `test("t", () => after(() => expect(trap()).toMatchInlineSnapshot()));`,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" }, "./a.test.js", "./b.test.js");
+    expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+    expect(snap(dir, "b.test.js")).toBe(entries("bun", ["t 2"]));
+    expect(exitCode).toBe(0);
+  });
+
+  // Jest 30.5.2 writes these keys. There the matcher does not throw and the test fails at its end, so formats/jest
+  // cannot hold these tests.
+  test("a file of Jest: properties that do not match have a number", async () => {
+    using dir = tempDir("snapshot-number-jest", {
+      "a.test.js":
+        values +
+        `
+        test("in the file", () => after(() => expect({ a: "1" }).toMatchSnapshot({ a: number() })));
+        test("inline", () => after(() => expect({ a: "1" }).toMatchInlineSnapshot({ a: number() })));
+      `,
+      "__snapshots__/a.test.js.snap": entries("jest", ["in the file 2", "inline 2"]),
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 2, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Vitest prints the error, and reads `message` as it does, after it took the number. Jest reads it first, as Bun's
+  // format of an inline snapshot does. The number goes by the file, whatever format the inline snapshot has.
+  test.each([
+    ["vitest", "bun:test", "t 2"],
+    ["jest", "vitest", "t 1"],
+  ] as const)(
+    "a file of %s, and an inline snapshot of %s of an error whose message throws",
+    async (format, module, key) => {
+      using dir = tempDir("snapshot-number-message", {
+        "a.test.js":
+          importing(module) +
+          values +
+          `test("t", () => after(() => expect(throwUnreadable).toThrowErrorMatchingInlineSnapshot()));`,
+        "__snapshots__/a.test.js.snap": entries(format, [key]),
+      });
+      const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+      expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 1, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Nothing throws here. The print of "vitest" reads the message, so in a file of Jest the number comes after that print.
+  test("a file of Jest, and an inline snapshot of vitest of an error that is printed", async () => {
+    using dir = tempDir("snapshot-number-printed", {
+      "a.test.js":
+        importing("vitest") +
+        `
+        test("t", () => {
+          expect(() => { throw new Error("printed"); }).toThrowErrorMatchingInlineSnapshot(\`[Error: printed]\`);
+          expect("after").toMatchSnapshot();
+        });
+      `,
+      "__snapshots__/a.test.js.snap": entries("jest", ["t 2"]),
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 1, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // It is Vitest's matcher: it reads the file, takes the number and then prints, whatever the format of the .snap file.
+  test.each(["bun", "jest"] as const)("toMatchFileSnapshot() in a file of %s", async format => {
+    using dir = tempDir("snapshot-number-file", {
+      "a.test.js": values + `test("t", () => after(() => expect(trap()).toMatchFileSnapshot("./file.txt")));`,
+      "__snapshots__/a.test.js.snap": entries(format, ["t 2"]),
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 1, stderr: "" });
+    expect(readdirSync(String(dir)).sort()).toEqual(["__snapshots__", "a.test.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Vitest 5.0.3 wrote this file. The tests fail there too: what `expect.soft()` reports fails its test at the end.
+  test("expect.soft() goes on, and the next snapshot has the next number", async () => {
+    using dir = tempDir("snapshot-number-soft", {
+      "a.test.js":
+        importing("vitest") +
+        values +
+        `
+        test("not printed", () => { expect.soft(trap()).toMatchSnapshot(); expect("after").toMatchSnapshot(); });
+        test("no match", () => { expect.soft({ a: "1" }).toMatchSnapshot({ a: number() }); expect("after").toMatchSnapshot(); });
+        test("inline", () => { expect.soft(trap()).toMatchInlineSnapshot(); expect("after").toMatchSnapshot(); });
+      `,
+    });
+    const { exitCode, fail } = await runTests(String(dir), { CI: "false" });
+    expect(snap(dir)).toBe(entries("vitest", ["inline 2", "no match 2", "not printed 2"]));
+    expect({ fail, exitCode }).toEqual({ fail: 3, exitCode: 1 });
+  });
+
+  test.each(["bun", "jest"] as const)("a test that runs again gives its numbers back (a file of %s)", async format => {
+    using dir = tempDir("snapshot-number-retry", {
+      "a.test.js":
+        values +
+        `
+        let attempts = 0;
+        test("t", () => {
+          after(() => expect(trap()).toMatchInlineSnapshot());
+          if (attempts++ === 0) throw new Error("again");
+        }, { retry: 1 });
+      `,
+      "__snapshots__/a.test.js.snap": entries(format, ["t 2"]),
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 1, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A property matcher that waits for a promise makes the matcher run again, and only that run takes the number.
+  test.each([
+    ["bun:test", "bun"],
+    ["vitest", "vitest"],
+  ] as const)("a property matcher that waits is not one that throws (%s)", async (module, format) => {
+    using dir = tempDir("snapshot-number-wait", {
+      "a.test.js":
+        importing(module) +
+        `
+        expect.extend({ async toBeLater() { await 0; return { pass: true, message: () => "" }; } });
+        test("t", async () => {
+          const later = expect({ a: 1 }).toMatchInlineSnapshot({ a: expect.toBeLater() }, "another text");
+          expect("before").toMatchSnapshot();
+          await later.then(() => { throw new Error("the matcher passed"); }, () => {});
+          expect("after").toMatchSnapshot();
+        });
+      `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
+    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(snap(dir)).toBe(headers[format] + '\nexports[`t 1`] = `"before"`;\n\nexports[`t 3`] = `"after"`;\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["bun:test", "vitest"])("makes no snapshot file (%s)", async module => {
+    using dir = tempDir("snapshot-number-no-file", {
+      "a.test.js":
+        importing(module) +
+        values +
+        `
+        test("t", () => {
+          expect(() => expect(trap()).toMatchSnapshot()).toThrow("trap");
+          expect(() => expect(trap()).toMatchInlineSnapshot()).toThrow("trap");
+          expect(() => expect(trap()).toMatchFileSnapshot("./file.txt")).toThrow("trap");
+          expect(() => expect(1).toMatchInlineSnapshot({ a: number() })).toThrow("must be an object");
+          expect(() => expect(unprintable()).toMatchInlineSnapshot({ a: number() })).toThrow("unprintable");
+          expect(() => expect({ a: "1" }).toMatchInlineSnapshot({ a: number() })).toThrow("to match properties");
+        });
+      `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
+    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(readdirSync(String(dir))).toEqual(["a.test.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // An older Bun added its entries at the end of a file of Jest or Vitest, so the keys of such a file are not sorted.
+  // The numbers go by the first line of the file all the same: with --update-snapshots, and after a run that sorts the file.
+  test.each(["--update-snapshots", "a run that adds a snapshot"] as const)(
+    "a file of Jest that an older Bun added to has the numbers of Jest, after %s too",
+    async step => {
+      const failsThenSnapshots = (name: string) =>
+        `test("${name}", () => after(() => expect({ a: "1" }).toMatchSnapshot({ a: number() })));`;
+      const tests = values + failsThenSnapshots("t") + `test("older", () => { expect(1).toMatchSnapshot(); });`;
+      const entry = (key: string) => `\nexports[\`${key}\`] = \`"after"\`;\n`;
+      const older = "\nexports[`older 1`] = `1`;\n";
+      using dir = tempDir("snapshot-number-runs", {
+        "a.test.js": tests,
+        "__snapshots__/a.test.js.snap": headers.jest + entry("t 2") + older,
+      });
+      const first = await runTests(String(dir), { CI: "true" });
+      const adds = step !== "--update-snapshots";
+      if (adds) {
+        writeFileSync(join(String(dir), "a.test.js"), tests + failsThenSnapshots("added"));
+        await runTests(String(dir), { CI: "false" });
+      } else {
+        await runTests(String(dir), { CI: "true" }, step);
+      }
+      expect(snap(dir)).toBe(headers.jest + (adds ? entry("added 2") + older + entry("t 2") : entry("t 2") + older));
+      const next = await runTests(String(dir), { CI: "true" });
+      expect([first, next].map(({ pass, fail, stderr }) => ({ pass, fail, stderr: fail ? stderr : "" }))).toEqual([
+        { pass: 2, fail: 0, stderr: "" },
+        { pass: adds ? 3 : 2, fail: 0, stderr: "" },
+      ]);
+    },
+  );
 });
 
 describe.concurrent("the first line of a snapshot file says whose format it has", () => {

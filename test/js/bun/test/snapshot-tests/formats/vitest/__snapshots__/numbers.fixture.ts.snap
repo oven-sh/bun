@@ -1,0 +1,73 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`in the snapshot file > a function that does not throw 1`] = `"after"`;
+
+exports[`in the snapshot file > a getter that throws 2`] = `"after"`;
+
+exports[`in the snapshot file > a hint > hint 2`] = `"after"`;
+
+exports[`in the snapshot file > a hint 1`] = `"without the hint"`;
+
+exports[`in the snapshot file > a serializer that throws 2`] = `"after"`;
+
+exports[`in the snapshot file > a snapshot that is taken while another one prints 1`] = `
+{
+  "inner": 1,
+}
+`;
+
+exports[`in the snapshot file > a snapshot that is taken while another one prints 2`] = `"inner"`;
+
+exports[`in the snapshot file > a value that cannot be printed 2`] = `"after"`;
+
+exports[`in the snapshot file > an error whose message cannot be read 2`] = `"after"`;
+
+exports[`in the snapshot file > not 1`] = `"after"`;
+
+exports[`in the snapshot file > properties for a function 2`] = `"after"`;
+
+exports[`in the snapshot file > properties for what is no object 2`] = `"after"`;
+
+exports[`in the snapshot file > properties of an array that cannot be compared 2`] = `"after"`;
+
+exports[`in the snapshot file > properties that cannot be compared 2`] = `"after"`;
+
+exports[`in the snapshot file > properties that cannot be merged 1`] = `"after"`;
+
+exports[`in the snapshot file > twice 3`] = `"after"`;
+
+exports[`inline > a function that does not throw 1`] = `"after"`;
+
+exports[`inline > a serializer that throws 2`] = `"after"`;
+
+exports[`inline > a value that cannot be printed 2`] = `"after"`;
+
+exports[`inline > after one in the snapshot file 3`] = `"after"`;
+
+exports[`inline > an error whose message cannot be read 2`] = `"after"`;
+
+exports[`inline > not 1`] = `"after"`;
+
+exports[`inline > properties for a function 2`] = `"after"`;
+
+exports[`inline > properties for what is no object 2`] = `"after"`;
+
+exports[`inline > properties that cannot be compared 2`] = `"after"`;
+
+exports[`only in Vitest > a getter that throws, inline 2`] = `"after"`;
+
+exports[`only in Vitest > a snapshot that is taken while an inline one prints 2`] = `"inner"`;
+
+exports[`only in Vitest > a test that runs again 2`] = `"after"`;
+
+exports[`only in Vitest > properties that cannot be merged, inline 1`] = `"after"`;
+
+exports[`only in Vitest > properties that do not match 2`] = `"after"`;
+
+exports[`only in Vitest > properties that do not match, inline 2`] = `"after"`;
+
+exports[`only in Vitest > toMatchFileSnapshot() 2`] = `"after"`;
+
+exports[`only in Vitest > toMatchFileSnapshot() with a name that is too long 2`] = `"after"`;
+
+exports[`only in Vitest > toMatchFileSnapshot() with a path under a file 2`] = `"after"`;

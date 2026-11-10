@@ -39,6 +39,13 @@ extern "C" EncodedJSValue ExpectDeferred__takeThrown(JSGlobalObject* globalObjec
     return JSValue::encode(thrown);
 }
 
+extern "C" bool ExpectDeferred__isThrown(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    auto* exception = scope.exception();
+    return exception && dynamicDowncast<Bun::Bindgen::Generated::JSExpectDeferred>(exception->value());
+}
+
 extern "C" void ExpectDeferred__setCauseIfNone(JSGlobalObject* globalObject, EncodedJSValue error, EncodedJSValue cause)
 {
     auto& vm = getVM(globalObject);

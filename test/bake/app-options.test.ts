@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
 // of another type must throw ERR_INVALID_ARG_TYPE from Bun.serve, before any
@@ -377,5 +378,79 @@ test.concurrent("Bun.serve({ app }) reports an unsupported app router file", asy
   expect(stderr).toContain('error: "app/loading.ts" is not a valid route\n');
   expect(stderr).toContain('Bun Bake currently does not support "loading" files\n');
   expect(stdout).toBe("200 page\n");
+  expect(exitCode).toBe(0);
+});
+
+// Each graph of an app has its own transpiler. Their resolvers read NODE_PATH, as `bun build` does.
+test.concurrent.each([
+  ["Bun.serve({ app })", ["fixture.ts"]],
+  ["bun build --app", ["build", "--app", "./app.ts"]],
+])("%s resolves a package from NODE_PATH in every graph and in a macro", async (_, args) => {
+  using dir = tempDir("bake-app-node-path", {
+    "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
+    "client.ts": `import { dep } from "dep";\nconsole.log("client " + dep);\n`,
+    "server.ts": `
+      export function render(req, meta) {
+        return new Response(meta.pageModule.default());
+      }
+      export async function prerender(meta) {
+        return { files: { "index.html": meta.pageModule.default() } };
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "ssr.ts": `import { dep } from "dep";\nexport default "ssr " + dep;\n`,
+    "macro.ts": `import { dep } from "dep";\nexport function value() {\n  return "macro " + dep;\n}\n`,
+    "routes/index.ts": `
+      import { dep } from "dep";
+      import ssr from "../ssr.ts" with { bunBakeGraph: "ssr" };
+      import { value } from "../macro.ts" with { type: "macro" };
+      const macro = value();
+      export default () => ["server " + dep, ssr, macro].join("; ");
+    `,
+    "app.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+      const serverComponents = {
+        separateSSRGraph: true,
+        serverRuntimeImportSource: "./server.ts",
+        serverRegisterClientReferenceExport: "registerClientReference",
+      };
+      export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents } } };
+    `,
+    "fixture.ts": `
+      import config from "./app.ts";
+      const server = Bun.serve({ port: 0, development: true, app: config.app, fetch: () => new Response("fallback") });
+      const res = await fetch(server.url);
+      console.log(res.status + " " + (await res.text()));
+      await server.stop(true);
+    `,
+  });
+  const isBuild = args[0] === "build";
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: {
+      ...bunEnv,
+      NODE_PATH: join(String(dir), "vendor"),
+      // `bun build --app` exits with its graph transpilers alive, which LeakSanitizer reports.
+      ...(isBuild && { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const rendered = "server from NODE_PATH; ssr from NODE_PATH; macro from NODE_PATH";
+
+  if (isBuild) {
+    const html = await Bun.file(join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stdout + stderr);
+    expect(html).toBe(rendered);
+  } else {
+    // The dev server also prints a "Bundled page" line.
+    expect(stdout.split("\n"), stderr).toContain("200 " + rendered);
+  }
   expect(exitCode).toBe(0);
 });

@@ -992,6 +992,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
+/// The module mock code keys a mock by the answer. [`ResolveMode::ModuleMock`] names the package that yields `undefined` too.
 // HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
 pub(crate) fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
@@ -1002,13 +1003,12 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let mode = match is_esm {
+        true => ResolveMode::ModuleMock,
+        false => ResolveMode::Require,
+    };
     jsc::to_js_host_call(global, || {
-        match resolve_with_args::<true>(
-            global,
-            &specifier_str,
-            source,
-            ResolveMode::from_ffi_bools(is_esm, false),
-        )? {
+        match resolve_with_args::<true>(global, &specifier_str, source, mode)? {
             Resolved::Found(value) => value.into_js(global),
             Resolved::NotFound(_) => Ok(JSValue::UNDEFINED),
         }

@@ -429,6 +429,262 @@ describe("NODE_PATH test", () => {
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
   });
+
+  const files = {
+    "modules/node-path-test/index.js": "exports.testValue = 'NODE_PATH works';",
+    "modules/node-path-preload/index.js": "globalThis.preloaded = 'NODE_PATH preload works';",
+    "modules/node-path-mocked/index.js": "exports.copy = 'NODE_PATH';",
+    "modules/setup.js": "globalThis.setup = 'NODE_PATH';",
+    "app/package.json": JSON.stringify({ name: "app" }),
+    "app/node_modules/dependent/index.js": "exports.copy = require('node-path-mocked').copy;",
+    "app/node_modules/dependent/node_modules/node-path-mocked/index.js": "exports.copy = 'nested';",
+    "app/setup.js": "globalThis.setup = 'cwd';",
+    "app/resolve.test.js": /*js*/ `
+      import { expect, test } from "bun:test";
+      import { join } from "node:path";
+      import { testValue } from "node-path-test";
+
+      const entry = join(import.meta.dir, "..", "modules", "node-path-test", "index.js");
+
+      test("NODE_PATH", async () => {
+        expect({
+          import: testValue,
+          require: require("node-path-test").testValue,
+          dynamicImport: (await import("node-path-test")).testValue,
+          requireResolve: require.resolve("node-path-test"),
+          resolveSync: Bun.resolveSync("node-path-test", import.meta.dir),
+          importMetaResolve: Bun.fileURLToPath(import.meta.resolve("node-path-test")),
+        }).toEqual({
+          import: "NODE_PATH works",
+          require: "NODE_PATH works",
+          dynamicImport: "NODE_PATH works",
+          requireResolve: entry,
+          resolveSync: entry,
+          importMetaResolve: entry,
+        });
+      });
+    `,
+    "app/second.test.js": /*js*/ `
+      import { expect, test } from "bun:test";
+      import { testValue } from "node-path-test";
+
+      test("NODE_PATH", () => {
+        expect(testValue).toBe("NODE_PATH works");
+      });
+    `,
+    "app/preload.test.js": /*js*/ `
+      import { expect, test } from "bun:test";
+
+      test("NODE_PATH", () => {
+        expect(globalThis.preloaded).toBe("NODE_PATH preload works");
+      });
+    `,
+    "app/mock.test.js": /*js*/ `
+      import { expect, mock, test } from "bun:test";
+
+      mock.module("node-path-mocked", () => ({ copy: "mocked" }));
+
+      test("NODE_PATH", () => {
+        expect({ test: require("node-path-mocked").copy, dependent: require("dependent").copy }).toEqual({
+          test: "mocked",
+          dependent: "nested",
+        });
+      });
+    `,
+    "app/worker.js": "postMessage(require('node-path-test').testValue + ', preload from ' + globalThis.setup);",
+    "app/main.js": /*js*/ `
+      const worker = new Worker(new URL("./worker.js", import.meta.url), { preload: ["setup.js"] });
+      worker.onmessage = event => {
+        console.log(event.data);
+        worker.terminate();
+      };
+    `,
+    "app/worker.test.js": /*js*/ `
+      import { test } from "bun:test";
+
+      test("NODE_PATH", async () => {
+        const worker = new Worker(new URL("./worker.js", import.meta.url), { preload: ["setup.js"] });
+        const { promise, resolve, reject } = Promise.withResolvers();
+        worker.onmessage = event => resolve(event.data);
+        worker.onerror = reject;
+        console.log(await promise);
+        worker.terminate();
+      });
+    `,
+  };
+
+  // `bun test` creates its own VM. The resolver of that VM reads NODE_PATH, as the resolver of `bun run` does.
+  describe("bun test", () => {
+    it.concurrent.each([
+      { name: "resolves modules from NODE_PATH", args: ["./resolve.test.js"], pass: 1 },
+      { name: "--isolate", args: ["--isolate", "./second.test.js", "./resolve.test.js"], pass: 2 },
+      { name: "--parallel", args: ["--parallel=2", "./resolve.test.js", "./second.test.js"], pass: 2 },
+      { name: "--preload of a package", args: ["--preload", "node-path-preload", "./preload.test.js"], pass: 1 },
+      { name: "NODE_PATH from .env", args: ["./resolve.test.js"], pass: 1, dotenv: true },
+      // `modules` is not the hoist folder of a package manager: the mock replaces the file that the test resolves, not another copy.
+      { name: "mock.module replaces the copy that the test resolves", args: ["./mock.test.js"], pass: 1 },
+    ])("$name", async ({ args, pass, dotenv }) => {
+      using dir = tempDir("node-path-bun-test", files);
+      const nodePath = join(String(dir), "modules");
+      if (dotenv) writeFileSync(join(String(dir), "app", ".env"), `NODE_PATH=${nodePath}\n`);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: { ...bunEnv, NODE_PATH: dotenv ? undefined : nodePath },
+        cwd: join(String(dir), "app"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr, stdout).toContain(` ${pass} pass`);
+      expect(stderr).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    });
+
+    // `import { assert } from "vitest"` imports "chai". pnpm links the chai of vitest next to vitest, and its bin shims
+    // put the packages that it hoists in NODE_PATH. A mock of "chai" is a mock of the chai next to vitest too.
+    it.concurrent("the chai next to vitest comes before a chai that only NODE_PATH has", async () => {
+      const store = "node_modules/.pnpm/vitest@1.0.0/node_modules";
+      const hoistFolder = "node_modules/.pnpm/node_modules";
+      const chaiPackage = `{ "name": "chai", "type": "module", "main": "index.js" }`;
+      using dir = tempDir("node-path-chai", {
+        [`${store}/vitest/package.json`]: `{ "name": "vitest", "exports": { "./package.json": "./package.json" } }`,
+        [`${store}/chai/package.json`]: chaiPackage,
+        [`${store}/chai/index.js`]: `export const assert = () => "the chai next to vitest";`,
+        [`${hoistFolder}/chai/package.json`]: chaiPackage,
+        [`${hoistFolder}/chai/index.js`]: `export const assert = () => "a chai in NODE_PATH";`,
+        "a.test.js": `import { assert, test } from "vitest"; test("test", () => console.log(assert()));`,
+        "b.test.js": /*js*/ `
+          import { test, vi } from "vitest";
+
+          vi.mock("chai", async importOriginal => ({ ...(await importOriginal()), mocked: "the mock of" }));
+
+          test("test", async () => {
+            const chai = await import("chai");
+            console.log(chai.mocked, chai.assert());
+          });
+        `,
+      });
+      symlinkSync(join(String(dir), store, "vitest"), join(String(dir), "node_modules", "vitest"), "junction");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: { ...bunEnv, NODE_PATH: join(String(dir), hoistFolder) },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(
+        stdout.split(/\r?\n/).filter(line => line.includes("chai")),
+        stderr,
+      ).toEqual(["the chai next to vitest", "the mock of the chai next to vitest"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // pnpm links every package of the project into node_modules/.pnpm/node_modules, and its bin shims put that folder in
+    // NODE_PATH. Under `bun test` the key of the mock of a package that only that folder has is its name, as for a name
+    // that does not resolve: the mock replaces every copy. Under `bun run` the key is the file that the name resolves to.
+    it.concurrent("mock.module of a package in the hoist folder of pnpm", async () => {
+      const hoistFolder = "node_modules/.pnpm/node_modules";
+      using dir = tempDir("node-path-hoisted", {
+        "packages/lib/package.json": JSON.stringify({
+          name: "node-path-hoisted",
+          main: "./index.cjs",
+          exports: { ".": { import: "./index.mjs", require: "./index.cjs" } },
+        }),
+        "packages/lib/index.cjs": `exports.copy = "cjs";`,
+        "packages/lib/index.mjs": `export const copy = "esm";`,
+        "node_modules/dependent/package.json": `{ "name": "dependent", "type": "module" }`,
+        "node_modules/dependent/index.js": `export { copy } from "node-path-hoisted";`,
+        "node_modules/node-path-declared/index.js": `exports.copy = "declared";`,
+        [`${hoistFolder}/node-path-declared/index.js`]: `exports.copy = "the copy in the hoist folder";`,
+        "a.test.js": /*js*/ `
+          import { expect, mock, test } from "bun:test";
+          import { join } from "node:path";
+          import { copy as declared } from "node-path-declared";
+
+          const resolved = require.resolve("node-path-hoisted");
+          mock.module("node-path-hoisted", () => ({ copy: "mocked" }));
+          mock.module("node-path-declared", () => ({ copy: "mocked" }));
+
+          test("test", async () => {
+            expect({
+              resolved,
+              test: (await import("node-path-hoisted")).copy,
+              dependent: (await import("dependent")).copy,
+              declared,
+            }).toEqual({
+              resolved: join(import.meta.dir, "packages", "lib", "index.cjs"),
+              test: "mocked",
+              dependent: "mocked",
+              declared: "mocked",
+            });
+          });
+        `,
+        "run.js": /*js*/ `
+          import { mock } from "bun:test";
+
+          mock.module("node-path-hoisted", () => ({ copy: "mocked" }));
+          const [test, dependent] = await Promise.all([import("node-path-hoisted"), import("dependent")]);
+          console.log(JSON.stringify({ test: test.copy, dependent: dependent.copy }));
+        `,
+      });
+      // As pnpm links a package of the workspace: the folder of the package is outside node_modules.
+      const lib = join(String(dir), "packages", "lib");
+      mkdirSync(join(String(dir), "node_modules", "dependent", "node_modules"));
+      symlinkSync(lib, join(String(dir), "node_modules", "dependent", "node_modules", "node-path-hoisted"), "junction");
+      symlinkSync(lib, join(String(dir), hoistFolder, "node-path-hoisted"), "junction");
+
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: { ...bunEnv, NODE_PATH: join(String(dir), hoistFolder) },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const [underTest, underRun] = await Promise.all([run("test"), run("run.js")]);
+
+      expect(underTest.stderr, underTest.stdout).toContain(" 1 pass");
+      expect(underTest.stderr).toContain(" 0 fail");
+      expect(underTest.exitCode).toBe(0);
+      expect({ stdout: underRun.stdout, exitCode: underRun.exitCode }, underRun.stderr).toEqual({
+        stdout: `{"test":"mocked","dependent":"esm"}\n`,
+        exitCode: 0,
+      });
+    });
+  });
+
+  // `setup.js` is in the cwd and in the NODE_PATH directory. Both commands resolve the Worker's preload the same way.
+  it.concurrent("a Worker resolves its modules and its preload under bun test as under bun run", async () => {
+    using dir = tempDir("node-path-worker", files);
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, NODE_PATH: join(String(dir), "modules") },
+        cwd: join(String(dir), "app"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // `bun test` prints its version line to stdout too.
+      return { message: stdout.split(/\r?\n/).find(line => line.includes("preload from")), stderr, exitCode };
+    };
+    const [underRun, underTest] = await Promise.all([run("main.js"), run("test", "./worker.test.js")]);
+
+    expect(underRun.message, underRun.stderr).toStartWith("NODE_PATH works, preload from ");
+    expect(underRun.exitCode, underRun.stderr).toBe(0);
+    expect({ message: underTest.message, exitCode: underTest.exitCode }, underTest.stderr).toEqual({
+      message: underRun.message,
+      exitCode: 0,
+    });
+  });
 });
 
 it("can resolve with source directories that do not exist", () => {
@@ -1445,6 +1701,62 @@ describe("dangling symlinks in node_modules", () => {
         stderr: "",
         exitCode: 0,
       });
+    } finally {
+      // Ensure tempDir cleanup can delete work/.keep.
+      try {
+        chmodSync(work, 0o755);
+      } catch {}
+    }
+  });
+
+  // The env load of the VM stops before the `.env` files when the cwd cannot be listed. The process env is loaded by then.
+  it.skipIf(!canTriggerEACCES)("bun test resolves from NODE_PATH in a cwd that it cannot list", async () => {
+    using dir = tempDir("node-path-unreadable-cwd", {
+      "modules/node-path-only/index.js": `module.exports = "NODE_PATH works";`,
+      "app/a.test.js": `
+        import { expect, test } from "bun:test";
+
+        test("NODE_PATH", () => {
+          expect(require("node-path-only")).toBe("NODE_PATH works");
+        });
+      `,
+      "work/.keep": "",
+    });
+    const root = String(dir);
+    const work = join(root, "work");
+    const testFile = join(root, "app", "a.test.js");
+    const packageDir = join(root, "modules", "node-path-only");
+
+    const cmd = [bunExe(), "test", testFile];
+    if (canUseRunuser) {
+      // Let `nobody` traverse and read everything except the cwd.
+      for (const p of [
+        root,
+        join(root, "app"),
+        testFile,
+        join(root, "modules"),
+        packageDir,
+        join(packageDir, "index.js"),
+      ]) {
+        chmodSync(p, 0o777);
+      }
+      cmd.unshift("runuser", "-u", "nobody", "--");
+    }
+    // Execute-only: the spawn can chdir into it, but listing it fails.
+    chmodSync(work, 0o111);
+
+    try {
+      await using proc = Bun.spawn({
+        cmd,
+        env: { ...bunEnv, NODE_PATH: join(root, "modules") },
+        cwd: work,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr, stdout).toContain(" 1 pass");
+      expect(exitCode).toBe(0);
     } finally {
       // Ensure tempDir cleanup can delete work/.keep.
       try {

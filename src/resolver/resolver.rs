@@ -498,12 +498,13 @@ pub struct Resolver<'a> {
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
-    // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
-    // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
+    // mutably reborrowed via `Transpiler.env: *mut Loader` (`configure_defines()`
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
-    pub env_loader: Option<NonNull<DotEnv::Loader>>,
+    env_loader: NonNull<DotEnv::Loader>,
+    /// `NODE_PATH` as of the owning transpiler's `run_env_loader`: a resolve can run on a thread that does not own the loader. A later load by another transpiler on a shared loader does not change it.
+    node_path: Interned,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
@@ -604,7 +605,7 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
+    /// Auto-install receives the copied `env_loader`, and the caller picks `'a`: the
     /// loader that `from.env_loader` points to must outlive `'a`.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
@@ -631,6 +632,7 @@ impl<'a> Resolver<'a> {
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
+            node_path: from.node_path,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
             outfile_of_build: from.outfile_of_build,
@@ -832,14 +834,11 @@ impl<'a> Resolver<'a> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
-        let env: NonNull<DotEnv::Loader> = self
-            .env_loader
-            .expect("Resolver.env_loader must be set before auto-install");
-        // SAFETY: `__bun_resolver_init_package_manager` is defined
-        // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
-        // final binary; `self.log` / `self.opts.install` / `env` point at
-        // process-lifetime storage (Transpiler-owned). The returned pointer
-        // names the `PackageManager` singleton (`'static`).
+        // SAFETY: `__bun_resolver_init_package_manager` is defined `#[no_mangle]`
+        // in `bun_install::auto_installer` and linked into the final binary. The
+        // `PackageManager` singleton it returns (`'static`) keeps `self.log` and
+        // `self.env_loader`, and reads `self.opts.install`: the caller's
+        // transpiler has to own storage that lives as long as the process.
         let pm: NonNull<dyn AutoInstaller> = unsafe {
             bun_removable_features::call_removable!(
                 Install,
@@ -847,7 +846,7 @@ impl<'a> Resolver<'a> {
                 __bun_resolver_init_package_manager,
                 self.log,
                 self.opts.install,
-                env,
+                self.env_loader,
                 self.opts.install_preference
                     == bun_options_types::offline_mode::OfflineMode::Offline,
                 importer_dir,
@@ -919,22 +918,29 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
-    ///
-    /// Single `unsafe` deref site for the `env_loader: Option<NonNull<_>>`
-    /// field. The pointee is the Transpiler-owned loader (set from
-    /// `transpiler.env`) and strictly outlives the resolver. Only called once
-    /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
-    /// live concurrently — see the field comment for why this is *not* stored
-    /// as `Option<&'a Loader>`.
-    #[inline]
-    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
-        // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
-        // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
-        // never mutates the env, so no `&mut Loader` overlaps this shared
-        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
-        // the env borrow across `&mut self` resolver calls.
-        self.env_loader.map(|p| unsafe { p.as_ref() })
+    /// `Transpiler::run_env_loader` hands over the `NODE_PATH` of its loader.
+    pub fn set_node_path(&mut self, node_path: &[u8]) {
+        if *self.node_path != *node_path {
+            self.node_path = Self::intern_node_path(node_path);
+        }
+    }
+
+    /// Returns a `'static` copy of `node_path`. Copies of a resolver on other threads keep the slice, so a published one is never freed.
+    fn intern_node_path(node_path: &[u8]) -> Interned {
+        static CACHE: bun_core::Mutex<Option<bun_collections::HashMap<&'static [u8], ()>>> =
+            bun_core::Mutex::new(None);
+        if node_path.is_empty() {
+            return Interned::EMPTY;
+        }
+        let mut cache = CACHE.lock();
+        let cache = cache.get_or_insert_default();
+        if let Some((&interned, ())) = cache.get_key_value(node_path) {
+            return Interned::from_static(interned);
+        }
+        let interned =
+            bun_core::handle_oom(Fs::file_system::DirnameStore::instance().append(node_path));
+        cache.insert(interned, ());
+        Interned::from_static(interned)
     }
 
     #[inline]
@@ -961,9 +967,11 @@ impl<'a> Resolver<'a> {
         self.opts.global_cache.is_enabled()
     }
 
+    /// `env_loader` is the loader of the `Transpiler` that owns this resolver. It outlives the resolver, and auto-install receives it.
     pub fn init1(
         log: NonNull<bun_ast::Log>,
         _fs: *mut Fs::FileSystem,
+        env_loader: NonNull<DotEnv::Loader>,
         opts: options::BundleOptions,
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
@@ -990,7 +998,8 @@ impl<'a> Resolver<'a> {
             generation: 0,
             package_manager: None,
             on_wake_package_manager: Default::default(),
-            env_loader: None,
+            env_loader,
+            node_path: Interned::EMPTY,
             store_fd: false,
             standalone_module_graph: None,
             outfile_of_build: None,
@@ -2704,6 +2713,10 @@ impl<'a> Resolver<'a> {
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
+                result.flags.set_is_from_node_path(res.is_from_node_path);
+                result
+                    .flags
+                    .set_is_from_hoist_folder(res.is_from_hoist_folder);
                 result.module_type = res.module_type;
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
@@ -3219,10 +3232,7 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
-            .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
+        let node_path: &[u8] = self.node_path.as_bytes();
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
@@ -3242,6 +3252,8 @@ impl<'a> Resolver<'a> {
                     .load_as_file_or_directory(abs_path, kind, out)
                     .is_success()
                 {
+                    out.is_from_node_path = true;
+                    out.is_from_hoist_folder = is_hoist_folder(path);
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
                     }
@@ -7176,6 +7188,21 @@ fn is_require(kind: ast::ImportKind) -> bool {
     )
 }
 
+/// Whether `dir` is a `node_modules` folder inside another `node_modules` folder.
+fn is_hoist_folder(mut dir: &[u8]) -> bool {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    while let [parent @ .., last] = dir
+        && separators.contains(last)
+    {
+        dir = parent;
+    }
+    let Some(parent) = dir.strip_suffix(b"node_modules") else {
+        return false;
+    };
+    parent.last().is_some_and(|last| separators.contains(last))
+        && strings::tokenize_any(parent, separators).any(|folder| folder == b"node_modules")
+}
+
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
@@ -7252,5 +7279,47 @@ impl Dirname {
         }
 
         &path[0..end_index + 1]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bun_sema_standalone as _;
+
+    use super::*;
+
+    #[test]
+    fn a_node_path_value_is_interned_once() {
+        let value: &[u8] = b"/node-path-tests/a:/node-path-tests/b";
+        let first = Resolver::intern_node_path(&value.to_vec());
+        let again = Resolver::intern_node_path(&value.to_vec());
+        let on_a_thread = std::thread::spawn(move || Resolver::intern_node_path(value))
+            .join()
+            .unwrap();
+        assert_eq!(first.as_bytes(), value);
+        assert!(core::ptr::eq(first.as_bytes(), again.as_bytes()));
+        assert!(core::ptr::eq(first.as_bytes(), on_a_thread.as_bytes()));
+
+        let other = Resolver::intern_node_path(b"/node-path-tests/c");
+        assert_eq!(other.as_bytes(), b"/node-path-tests/c");
+        assert!(Resolver::intern_node_path(b"").is_empty());
+    }
+
+    #[test]
+    fn a_hoist_folder_is_a_node_modules_folder_inside_another() {
+        assert!(is_hoist_folder(b"/app/node_modules/.pnpm/node_modules"));
+        assert!(is_hoist_folder(
+            b"/app/node_modules/.pnpm/cross-env@7.0.3/node_modules/"
+        ));
+        assert!(is_hoist_folder(b"node_modules/.pnpm/node_modules"));
+        assert!(!is_hoist_folder(b"/deps/node_modules"));
+        assert!(!is_hoist_folder(b"/deps/node_modules/"));
+        assert!(!is_hoist_folder(b"node_modules"));
+        assert!(!is_hoist_folder(b"/app/node_modules/app/src"));
+        assert!(!is_hoist_folder(
+            b"/app/node_modules/.pnpm/old_node_modules"
+        ));
+        assert!(!is_hoist_folder(b"/app/node_modules_old/node_modules"));
+        assert!(!is_hoist_folder(b""));
     }
 }

@@ -300,7 +300,7 @@ With `--update-snapshots`, Bun removes entries that no test uses anymore from a 
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 
-Earlier versions also wrote a property matcher into the object before they printed it. If a getter of the object reads a property that a matcher matched, the old snapshot holds text that the getter made from the matcher, such as `Row[object ExpectAny]`. Bun now prints the object as it is, so that entry fails until `--update-snapshots` rewrites it.
+Earlier versions also wrote a property matcher into the object before they printed it. A snapshot they wrote fails now if the matcher matched `Symbol.toStringTag`, an own `constructor`, the `$$typeof` of a React element, or a property that a `Symbol.toStringTag` getter reads: its text came from the matcher, such as `Row[object ExpectAny]`. Bun now prints the object as it is, and `--update-snapshots` stores text that comes from the matched value, so keep a matched property out of the text that names the object, or match the whole value, for example with `expect.any(Row)`.
 
 ## Best Practices
 

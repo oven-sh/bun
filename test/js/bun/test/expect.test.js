@@ -4046,6 +4046,31 @@ describe("expect()", () => {
         expect(tagged.b).toBe(2);
         expect(pattern.a).toBe(number);
 
+        // A matcher that the tag of an object matched does not stand in for the tag: the object is named as it is.
+        const last = Symbol("zz");
+        expect(
+          failureOf(() =>
+            expect({ [Symbol.toStringTag]: "Foo", [last]: 1 }).toMatchObject({
+              [Symbol.toStringTag]: expect.any(String),
+              [last]: 2,
+            }),
+          ).split("\n"),
+        ).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "- {",
+          "+ Foo ",
+          "+ Foo {",
+          "    [Symbol(Symbol.toStringTag)]: Any<String>,",
+          "-   [Symbol(zz)]: 2,",
+          "+   [Symbol(zz)]: 1,",
+          "  }",
+          "",
+          "- Expected  - 2",
+          "+ Received  + 3",
+          "",
+        ]);
+
         const { Database } = require("bun:sqlite");
         using database = new Database(":memory:");
         const statement = database.query("select 1 as a");
@@ -4299,6 +4324,42 @@ describe("expect()", () => {
           '+       "color": Any<String>,',
           '+       "width": 1,',
           "+     } />,",
+        ]);
+      });
+
+      test("keeps the matchers and the objects of its rows while a getter collects garbage", () => {
+        const names = Array.from({ length: 40 }, (_, i) => "row" + String(i).padStart(2, "0"));
+        let collections = 0;
+        const received = {
+          // Sorts first, so it runs before a row is printed.
+          get aaa() {
+            Bun.gc(true);
+            collections++;
+            // A cell that the collection freed goes to the next matcher or object of its size.
+            return Array.from({ length: 100 }, () => [expect.any(Boolean), { id: "other", label: "other" }]).length;
+          },
+          // Each read gives a new object, so only the rows hold the one that the comparison read.
+          get nested() {
+            return { id: 7, label: "fresh" };
+          },
+          wrong: 1,
+        };
+        // The pattern does not name the property next to each row. The diff marks its line, so it folds no row.
+        for (const [i, name] of names.entries()) Object.assign(received, { [name]: i, [name + "x"]: i });
+        // Each read of the pattern gives a matcher that nothing else holds.
+        const pattern = {};
+        for (const name of names) {
+          Object.defineProperty(pattern, name, { enumerable: true, get: () => expect.any(Number) });
+        }
+        Object.defineProperty(pattern, "nested", { enumerable: true, get: () => ({ id: expect.any(Number) }) });
+        pattern.wrong = 2;
+
+        const lines = failureOf(() => expect(received).toMatchObject(pattern)).split("\n");
+        expect(collections).toBe(1);
+        expect(lines.filter(line => /"(row\d\d|id|label)": /.test(line))).toEqual([
+          '      "id": Any<Number>,',
+          '+     "label": "fresh",',
+          ...names.map(name => `    "${name}": Any<Number>,`),
         ]);
       });
     }

@@ -2450,6 +2450,56 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("keeps what the rows hold, and what stands for an object, while a serializer collects garbage", async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => `  "row${String(i).padStart(2, "0")}": Any<Number>,\n`);
+    using dir = tempDir("snapshot-serializer-gc", {
+      "a.test.js": `
+          // Bun offers each value to the serializer before it prints the value. The serializer collects garbage,
+          // and then makes matchers and objects that take the cells which the collection freed.
+          let collections = 0;
+          expect.addSnapshotSerializer({
+            test(value) {
+              Bun.gc(true);
+              collections++;
+              Array.from({ length: 64 }, () => [expect.any(Boolean), new Object(), { id: "other", leaf: false }]);
+              return value?.leaf === true;
+            },
+            serialize: (value, config, indentation, depth, refs, printer) =>
+              "Leaf(" + printer(value.id, config, indentation, depth, refs) + ")",
+          });
+          test("t", () => {
+            const names = Array.from({ length: 40 }, (_, i) => "row" + String(i).padStart(2, "0"));
+            const received = {};
+            const matchers = {};
+            // Each read gives a new matcher or object, so only the rows hold what the comparison read.
+            for (const [i, name] of names.entries()) {
+              received[name] = i;
+              Object.defineProperty(matchers, name, { enumerable: true, get: () => expect.any(Number) });
+            }
+            for (const name of ["first", "second", "third"]) {
+              Object.defineProperty(received, name, { enumerable: true, get: () => ({ id: 1, leaf: true }) });
+              Object.defineProperty(matchers, name, { enumerable: true, get: () => ({ id: expect.any(Number) }) });
+            }
+            // The serializer gets a URL as it is, so nothing but a row holds the matcher of its href.
+            Object.defineProperty(received, "link", { enumerable: true, get: () => new URL("http://example.com/a") });
+            Object.defineProperty(matchers, "link", { enumerable: true, get: () => ({ href: expect.any(String) }) });
+            expect(received).toMatchSnapshot(matchers);
+            expect(collections).toBeGreaterThan(names.length);
+          });
+        `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
+    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    // The serializer is for what stands for each of the three objects, and a matcher is in each row.
+    expect(snap(dir)).toBe(
+      headers.bun +
+        `\nexports[\`t 1\`] = \`\n{\n  "first": Leaf(Any<Number>),\n  "link": URL URL {\n    "href": Any<String>,\n  },\n` +
+        rows.join("") +
+        `  "second": Leaf(Any<Number>),\n  "third": Leaf(Any<Number>),\n}\n\`;\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test.each(isolationFlags)(
     "lasts until the end of its test file, and for every file when a preload script adds it %j",
     async args => {
@@ -2737,6 +2787,16 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       "URL and its searchParams": `URL \nURL {\n  "href": Any<String>,\n}\n`,
       "object from a getter of the class": `\nPost {\n  "id": Any<Number>,\n  "title": "t",\n}\n`,
       "object from an own getter": `\n{\n  "author": [native code],\n  "id": Any<Number>,\n}\n`,
+      // In each of these, that version printed something that Bun prints another way now, so the text is not what a new snapshot gets.
+      "array element": `\n{\n  "g": [native code],\n  "list": [\n    Any<Number>,\n    "two",\n    {\n      "id": Any<Number>,\n    },\n  ],\n}\n`,
+      "nested object": `\n{\n  "g": [native code],\n  "inner": {\n    "deep": {\n      "id": Any<Number>,\n      "k": "k",\n    },\n    "id": Any<Number>,\n  },\n}\n`,
+      "root array": `\n[\n  {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n  2,\n]\n`,
+      "symbol key": `\n{\n  "a": 2,\n  "g": [native code],\n  [Symbol(key)]: Any<Number>,\n}\n`,
+      "getter of a class": `\nUser {\n  "hidden": "h",\n  "id": Any<Number>,\n  "name": "n",\n}\n`,
+      "React 19 element": `\n{\n  "$$typeof": Symbol(react.transitional.element),\n  "_owner": null,\n  "_store": {},\n  "key": null,\n  "props": {\n    "children": {\n      "$$typeof": Symbol(react.transitional.element),\n      "_owner": null,\n      "_store": {},\n      "key": null,\n      "props": {\n        "id": Any<String>,\n      },\n      "type": "b",\n    },\n    "id": Any<String>,\n  },\n  "type": "div",\n}\n`,
+      "DOM-like class": `\n{\n  "node": HTMLDivElement {\n    "attributes": [],\n    "childNodes": [],\n    "id": Any<String>,\n    "nodeType": 1,\n    "tagName": "DIV",\n  },\n}\n`,
+      "property that is not enumerable": `\n{\n  "hidden": "h",\n  "id": Any<Number>,\n}\n`,
+      "same object with the same matchers twice": `\n{\n  "a": {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n  "b": {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n}\n`,
     };
     const older =
       headers.bun +
@@ -2785,6 +2845,46 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
           test("URL and its searchParams", () => { expect(new URL("http://example.com/a?b=1")).toMatchSnapshot({ href: string, searchParams: { size: number } }); });
           test("object from a getter of the class", () => { expect(new Post()).toMatchSnapshot({ id: number, author: { id: number } }); });
           test("object from an own getter", () => { expect({ id: 1, get author() { return new Author(); } }).toMatchSnapshot({ id: number, author: { id: number } }); });
+          const andGetter = fields => ({ ...fields, get g() { return 1; } });
+          test("array element", () => { expect(andGetter({ list: [1, "two", { id: 3 }] })).toMatchSnapshot({ list: [number, "two", { id: number }] }); });
+          test("nested object", () => { expect(andGetter({ inner: { id: 1, deep: { id: 2, k: "k" } } })).toMatchSnapshot({ inner: { id: number, deep: { id: number } } }); });
+          test("root array", () => { expect([andGetter({ id: 1 }), 2]).toMatchSnapshot([{ id: number }, 2]); });
+          test("symbol key", () => {
+            const key = Symbol("key");
+            expect(andGetter({ [key]: 1, a: 2 })).toMatchSnapshot({ [key]: number });
+          });
+          test("getter of a class", () => {
+            class User {
+              name = "n";
+              constructor() {
+                Object.defineProperty(this, "hidden", { value: "h" });
+              }
+              get id() {
+                return 3;
+              }
+            }
+            expect(new User()).toMatchSnapshot({ id: number });
+          });
+          test("React 19 element", () => {
+            const element = (type, props) => ({ $$typeof: Symbol.for("react.transitional.element"), type, key: null, props, _owner: null, _store: {} });
+            expect(element("div", { id: "a1", children: element("b", { id: "c1" }) })).toMatchSnapshot({ props: { id: string, children: { props: { id: string } } } });
+          });
+          test("DOM-like class", () => {
+            class HTMLDivElement {
+              nodeType = 1;
+              tagName = "DIV";
+              attributes = [];
+              childNodes = [];
+              id = "a1";
+            }
+            expect({ node: new HTMLDivElement() }).toMatchSnapshot({ node: { id: string } });
+          });
+          test("property that is not enumerable", () => { expect(Object.defineProperty({ id: 1 }, "hidden", { value: "h" })).toMatchSnapshot({ id: number }); });
+          test("same object with the same matchers twice", () => {
+            const shared = andGetter({ id: 1 });
+            const matchers = { id: number };
+            expect({ a: shared, b: shared }).toMatchSnapshot({ a: matchers, b: matchers });
+          });
         `,
       "__snapshots__/a.test.js.snap": older,
     });
@@ -2793,6 +2893,62 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ pass, stderr: pass === count ? "" : stderr }).toEqual({ pass: count, stderr: "" });
     expect(readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8")).toBe(older);
     expect(exitCode).toBe(0);
+  });
+
+  test("fails when it is what an older Bun wrote where a matcher changed how the object is named", async () => {
+    // Bun 1.4.2 wrote the first text of each, with the matcher in the object. To add one, run its test under that version.
+    // The second text is what Bun prints: the object names itself as it is, which is by the value that the matcher matched.
+    const printed = {
+      "own tag": [
+        `\n{\n  [Symbol(Symbol.toStringTag)]: Any<String>,\n  "a": 1,\n}\n`,
+        `Foo \nFoo {\n  [Symbol(Symbol.toStringTag)]: Any<String>,\n  "a": 1,\n}\n`,
+      ],
+      "own constructor": [`\n{\n  "a": 1,\n}\n`, `\nNamed {\n  "a": 1,\n}\n`],
+      "tag that a getter makes from a matched property": [
+        `Row[object ExpectAny] \nRow {\n  "id": Any<Number>,\n}\n`,
+        `Row7 \nRow {\n  "id": Any<Number>,\n}\n`,
+      ],
+      "$$typeof of a React element": [
+        `\n{\n  "$$typeof": Any<Symbol>,\n  "key": null,\n  "props": {\n    "id": "a",\n  },\n  "ref": null,\n  "type": "div",\n}\n`,
+        `<div id="a" />`,
+      ],
+    };
+    const file = (which: 0 | 1) =>
+      headers.bun +
+      Object.entries(printed)
+        .map(([name, texts]) => `\nexports[\`${name} 1\`] = \`${texts[which]}\`;\n`)
+        .join("");
+    using dir = tempDir("snapshot-older-bun-names", {
+      "a.test.js": `
+          class Named {}
+          class Row {
+            id = 7;
+            get [Symbol.toStringTag]() {
+              return "Row" + this.id;
+            }
+          }
+          const string = expect.any(String);
+          test("own tag", () => { expect({ [Symbol.toStringTag]: "Foo", a: 1 }).toMatchSnapshot({ [Symbol.toStringTag]: string }); });
+          test("own constructor", () => { expect({ constructor: Named, a: 1 }).toMatchSnapshot({ constructor: expect.any(Function) }); });
+          test("tag that a getter makes from a matched property", () => { expect(new Row()).toMatchSnapshot({ id: expect.any(Number) }); });
+          test("$$typeof of a React element", () => {
+            const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "a" } };
+            expect(element).toMatchSnapshot({ $$typeof: expect.any(Symbol) });
+          });
+        `,
+      "__snapshots__/a.test.js.snap": file(0),
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    const count = Object.keys(printed).length;
+    const older = await runTests(String(dir), { CI: "true" });
+    expect({ pass: older.pass, fail: older.fail, snap: snap() }).toEqual({ pass: 0, fail: count, snap: file(0) });
+    const updated = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+    expect({ pass: updated.pass, stderr: updated.pass === count ? "" : updated.stderr }).toEqual({
+      pass: count,
+      stderr: "",
+    });
+    expect(snap()).toBe(file(1));
+    expect([older.exitCode, updated.exitCode]).toEqual([1, 0]);
   });
 
   test("what an older Bun wrote counts as passed, stays as it is, and --update-snapshots rewrites it once", async () => {

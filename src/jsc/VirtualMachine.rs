@@ -431,6 +431,8 @@ pub struct VirtualMachine {
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     pub(crate) is_in_on_resolve: Cell<bool>,
     pub test_isolation_enabled: bool,
+    /// Set by the first `resetModules()` under `bun test --isolate`: from then on a source read from a file takes a `SourceValidator`.
+    pub(crate) source_validators_armed: core::cell::Cell<bool>,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
     /// made under an earlier count is the finished file's, and is dropped.
@@ -6148,6 +6150,14 @@ impl VirtualMachine {
         self.transpiler_store
             .generation_number
             .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        if self.use_isolation_source_provider_cache() {
+            self.source_validators_armed.set(true);
+        }
+    }
+
+    /// Whether a source read from a file takes a `SourceValidator` for `IsolatedModuleCache`. JS thread only.
+    pub fn captures_source_validators(&self) -> bool {
+        self.source_validators_armed.get()
     }
 
     #[unsafe(export_name = "Bun__VM__isMainModule")]

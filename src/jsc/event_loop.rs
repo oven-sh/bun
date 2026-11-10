@@ -1520,7 +1520,7 @@ impl EventLoop {
             let vm = self.vm_ref();
             let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
             if terminated
-                || vm.entry_evaluation_started
+                || vm.entry_evaluation_started()
                 || promise.status() != PromiseStatus::Pending
             {
                 break;
@@ -1532,7 +1532,7 @@ impl EventLoop {
             let vm = self.vm_ref();
             let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
             if terminated
-                || vm.entry_evaluation_started
+                || vm.entry_evaluation_started()
                 || promise.status() != PromiseStatus::Pending
             {
                 break;

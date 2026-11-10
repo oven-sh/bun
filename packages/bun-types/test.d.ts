@@ -1657,7 +1657,8 @@ declare module "bun:test" {
      *
      * A tester returns `true` or `false`. It can also return `undefined` to pass the pair on
      * to the next tester, and then to the built-in rules. Testers registered by a test file last
-     * until that file ends. Testers registered by a preload script apply to every file.
+     * until that file ends. Testers registered by a preload script, or at the top level of a
+     * module that test files import, apply to every file after it.
      *
      * @example
      * expect.addEqualityTesters([
@@ -1672,7 +1673,7 @@ declare module "bun:test" {
      * returns `true` for, anywhere in a snapshot. The most recently added serializer is tried first.
      *
      * A serializer added by a test file lasts until that file ends. One added by a preload script,
-     * or by a module that test files import, applies to every file after it.
+     * or at the top level of a module that test files import, applies to every file after it.
      *
      * @example
      * expect.addSnapshotSerializer({

@@ -255,7 +255,16 @@ export const ExpectMatcherContext = b.class({
 /** `this.utils` in a matcher of `expect.extend()`. Its functions are own properties, which ignore `this`. */
 export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
-  internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
+  // `equalityTesters` and `snapshotSerializers` hold what applies now. The `shared` lists leave out what the running test file registered itself.
+  internalFields: [
+    "equalityTesters",
+    "equals",
+    "state",
+    "snapshotSerializers",
+    "toSatisfy",
+    "sharedEqualityTesters",
+    "sharedSnapshotSerializers",
+  ],
 });
 
 /** Ignores `this`, so a matcher can destructure it or pass it around like in Jest. */

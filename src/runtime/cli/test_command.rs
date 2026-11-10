@@ -4283,7 +4283,15 @@ struct EnteredFile<'a> {
 impl Drop for EnteredFile<'_> {
     fn drop(&mut self) {
         // SAFETY: `bun_test_root` belongs to `Jest::runner()`, which lives as long as the process.
-        unsafe { (*self.bun_test_root).exit_file() };
+        let root = unsafe { &mut *self.bun_test_root };
+        let has_expect_registrations =
+            (root.active_file.as_ref()).is_some_and(|file| file.get().has_expect_registrations);
+        // A global that the next load doesn't share takes them with it.
+        if has_expect_registrations && self.next_load_shares_global {
+            crate::test_runner::Expect::forget_registrations_of_test_file(self.global);
+        }
+        root.exit_file();
+        self.global.bun_vm().as_mut().did_end_test_file();
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);

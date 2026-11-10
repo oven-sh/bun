@@ -2,8 +2,7 @@ use super::bun_test::{self, AddedInPhase};
 use bun_jsc::JSGlobalObject;
 
 /// Also true inside a hook that a preload registered, because a preload's `beforeAll` runs once for all test files.
-#[unsafe(no_mangle)]
-extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
+pub(crate) fn is_in_preload(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     if vm.is_in_preload {
         return true;
@@ -25,4 +24,9 @@ extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
         .get_current_state_data()
         .entry(buntest)
         .is_some_and(|entry| entry.added_in_phase == AddedInPhase::Preload)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
+    is_in_preload(global)
 }

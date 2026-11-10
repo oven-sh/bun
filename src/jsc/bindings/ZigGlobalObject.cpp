@@ -5006,7 +5006,6 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return importMeta;
 }
 
-extern "C" bool Bun__VM__entryEvaluationStarted(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
@@ -5018,8 +5017,6 @@ extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     void* bunVM = globalObject->bunVM();
-    if (Bun__VM__entryEvaluationStarted(bunVM))
-        return;
     BunString rootKey = Bun__VM__entryRootKey(bunVM);
     auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
     if (!entry)
@@ -5033,7 +5030,28 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
 // The body of a compiled module starts without moduleLoaderEvaluate(), so a starting Worker asks after each turn of its event loop.
 extern "C" void Bun__noteEntryEvaluation(Zig::GlobalObject* globalObject)
 {
-    noteModuleEvaluation(globalObject, globalObject->moduleLoader());
+    if (Bun__VM__moduleBodyNotes(globalObject->bunVM()) & Bun::ModuleBodyNote::EntryOfWorker)
+        noteModuleEvaluation(globalObject, globalObject->moduleLoader());
+}
+
+static NEVER_INLINE JSC::JSValue evaluateModuleWithNotes(uint8_t notes, Zig::GlobalObject* globalObject, JSGlobalObject* lexicalGlobalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>&& scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    if (notes & Bun::ModuleBodyNote::EntryOfWorker)
+        noteModuleEvaluation(globalObject, moduleLoader);
+    std::optional<Bun::ModuleBodyOfTestFile> body;
+    if (notes & Bun::ModuleBodyNote::TestFile) {
+        if (auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue))
+            body.emplace(globalObject->bunVM(), record->moduleKey().string());
+    }
+    return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+}
+
+// Only `bun test` and a Worker that starts have something to note about the module.
+static ALWAYS_INLINE JSC::JSValue evaluateModule(Zig::GlobalObject* globalObject, JSGlobalObject* lexicalGlobalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>&& scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    if (uint8_t notes = Bun__VM__moduleBodyNotes(globalObject->bunVM())) [[unlikely]]
+        return evaluateModuleWithNotes(notes, globalObject, lexicalGlobalObject, moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
@@ -5046,8 +5064,7 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
-    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    RELEASE_AND_RETURN(scope, evaluateModule(defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -5065,8 +5082,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.ModuleGraph.
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(globalObject, moduleLoader);
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
+    JSC::JSValue result = evaluateModule(globalObject, lexicalGlobalObject, moduleLoader, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
     // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before

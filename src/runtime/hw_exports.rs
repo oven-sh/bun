@@ -18,7 +18,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{VirtualMachine, module_body_notes};
 use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
@@ -133,6 +133,16 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
         return specifier_str.eql_utf8(eval_source.path.text);
     }
     false
+}
+
+/// For `evaluateCommonJSModuleOnce`: `EVAL_ENTRY_POINT` for the entry point of `--eval` or `--print`, else the
+/// VM's [`module_body_notes`].
+// HOST_EXPORT(Bun__VM__commonJSModuleBodyNotes, c)
+pub(crate) fn commonjs_module_body_notes(this: &mut VirtualMachine, filename: JSValue) -> u8 {
+    if specifier_is_eval_entry_point(this, filename) {
+        return module_body_notes::EVAL_ENTRY_POINT;
+    }
+    this.module_body_notes
 }
 
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports

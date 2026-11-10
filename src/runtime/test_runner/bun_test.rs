@@ -780,6 +780,8 @@ pub(crate) struct BunTest {
     pub(crate) is_reporting_uncaught: bool,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
+    /// The file registered an equality tester or a snapshot serializer of its own, which ends with the file.
+    pub(crate) has_expect_registrations: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
@@ -824,6 +826,7 @@ impl BunTest {
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
             is_loading: true,
+            has_expect_registrations: false,
             file_end: None,
             unclaimed: Default::default(),
         }

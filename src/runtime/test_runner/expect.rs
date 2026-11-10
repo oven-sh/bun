@@ -2747,7 +2747,7 @@ impl ExpectMatcherContext {
         } else {
             custom_testers
         };
-        let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
+        let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers);
         let pass = Pass::barrier();
         let _entered = pass.enter();
         if strict_check {
@@ -2819,21 +2819,12 @@ impl FirstReport {
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 ///
 /// It's the only `expect` cell that each global roots, so `expect`'s per-global state lives here too.
-#[derive(Default)]
-pub(crate) struct ExpectMatcherUtils {
-    /// Per equality tester, whether the test file's own code registered it. Those don't carry over to the next file.
-    /// Testers from preloads and imported modules stay, because those modules are only evaluated once.
-    pub(crate) testers_of_file: bun_jsc::JsCell<Vec<bool>>,
-    /// `BunTestRoot::file_generation` of that test file.
-    pub(crate) testers_file: Cell<u32>,
-    pub(crate) serializers_of_file: bun_jsc::JsCell<Vec<bool>>,
-    pub(crate) serializers_file: Cell<u32>,
-}
+pub(crate) struct ExpectMatcherUtils {}
 
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
-        let utils = ExpectMatcherUtils::default().to_js(global_this);
+        let utils = ExpectMatcherUtils {}.to_js(global_this);
         let functions: [(&str, bun_jsc::JSHostFn, u32); 8] = [
             ("stringify", generated::Bun__ExpectMatcherUtils__stringify, 1),
             ("printExpected", generated::Bun__ExpectMatcherUtils__printExpected, 1),

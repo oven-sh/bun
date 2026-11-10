@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { basename, join } from "path";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
 
@@ -1445,6 +1446,349 @@ describe("expect.addEqualityTesters", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+});
+
+describe("who an equality tester or a snapshot serializer belongs to", () => {
+  // A fixture names what it registers by a `shape`, and the last test of each file prints the shapes that apply in it.
+  const named = `
+    const tester = shape => Object.assign(() => undefined, { shape });
+    const serializer = shape => ({ shape, test: () => false, serialize: () => "" });
+    const both = shape => {
+      expect.addEqualityTesters([tester(shape)]);
+      expect.addSnapshotSerializer(serializer(shape));
+    };
+  `;
+  const lists = (file: string) => `
+    test("lists", () => {
+      let testers;
+      expect.extend({ toListTesters() { testers = this.customTesters.map(tester => tester.shape); return { pass: true, message: () => "" }; } });
+      expect(0).toListTesters();
+      let serializers;
+      const listed = {};
+      expect.addSnapshotSerializer({
+        test: value => value === listed,
+        serialize(value, config) { serializers = config.plugins.map(plugin => plugin.shape).filter(Boolean); return "listed"; },
+      });
+      expect(listed).toMatchInlineSnapshot("listed");
+      console.log("registered " + JSON.stringify([${JSON.stringify(file)}, testers.sort(), serializers.sort()]));
+    });
+  `;
+  type Registered = [file: string, testers: string[], serializers: string[]];
+  async function registrations(files: Record<string, string>, args: string[] = []) {
+    const { stdout, exitCode } = await runTests(files, args);
+    const registered: Registered[] = stdout
+      .split("\n")
+      .filter(line => line.startsWith("registered "))
+      .map(line => JSON.parse(line.slice("registered ".length)));
+    return { registered, exitCode };
+  }
+
+  // A stack frame of a bundled file names its source, which isn't the test file. Not concurrent, so that the
+  // tests below don't run in one group with those above.
+  test("what a test file that is bundled with a source map registers applies until the file ends", async () => {
+    const imports = `import { expect, test } from "bun:test";`;
+    using dir = tempDir("vitest-apis-bundled", {
+      "a.test.ts": [imports, named, `both("the top level");`, lists("a")].join("\n"),
+      "b.test.ts": [imports, lists("b")].join("\n"),
+    });
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "a.test.ts"), join(String(dir), "b.test.ts")],
+      target: "bun",
+      sourcemap: "inline",
+      external: ["bun:test"],
+    });
+    const bundled = await Promise.all(outputs.map(async output => [basename(output.path), await output.text()]));
+    const { registered, exitCode } = await registrations(Object.fromEntries(bundled));
+    expect(registered).toEqual([
+      ["a", ["the top level"], ["the top level"]],
+      ["b", [], []],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `add` is one of the two functions and `value` its argument. `id` keeps apart what the two calls of a shape declare.
+  const writtenInTestFile: Record<string, (add: string, value: string, id: number) => string> = {
+    "at the top level": (add, value) => `${add}(${value});`,
+    "a statement of a hook": (add, value) => `beforeAll(() => { ${add}(${value}); });`,
+    "the body of the arrow of a hook": (add, value) => `beforeAll(() => ${add}(${value}));`,
+    "returned by a hook": (add, value) => `beforeAll(function () { return ${add}(${value}); });`,
+    "returned by a hook through a variable": (add, value) =>
+      `beforeAll(() => { const result = ${add}(${value}); return result; });`,
+    "the body of the arrow of a test": (add, value) => `test("registers", () => ${add}(${value}));`,
+    "the body of the arrow of a describe": (add, value) => `describe("registers", () => ${add}(${value}));`,
+    "the body of the arrow of test.each": (add, value) => `test.each([0])("registers %d", () => ${add}(${value}));`,
+    "the body of the arrow of a promise reaction": (add, value) =>
+      `beforeAll(() => Promise.resolve().then(() => ${add}(${value})));`,
+    "the body of the arrow of a timer": (add, value) =>
+      `beforeAll(() => new Promise(resolve => { setTimeout(() => ${add}(${value})); setTimeout(resolve); }));`,
+    "the body of the arrow that forEach calls": (add, value) => `[0].forEach(() => ${add}(${value}));`,
+    "the body of the arrow that another module calls": (add, value) => `call(() => ${add}(${value}));`,
+    "called by another name": (add, value, id) => `const add${id} = ${add};\nbeforeAll(() => add${id}(${value}));`,
+    "bound, as a hook": (add, value) => `beforeAll(${add}.bind(expect, ${value}));`,
+    "passed to forEach": (add, value) => `[${value}].forEach(${add});`,
+    "passed to a promise as its reaction": (add, value) => `beforeAll(() => Promise.resolve(${value}).then(${add}));`,
+    "called by code from a string": (add, value) => `new Function("add", "value", "add(value);")(${add}, ${value});`,
+  };
+  const withExpectOfTestContext: typeof writtenInTestFile = {
+    "the body of the arrow of a test, with the expect of its context": (add, value) =>
+      `test("registers", ({ expect }) => ${add}(${value}));`,
+  };
+  const registers = (shapes: typeof writtenInTestFile) =>
+    Object.entries(shapes)
+      .flatMap(([shape, write], index) => [
+        write("expect.addEqualityTesters", `[tester(${JSON.stringify(shape)})]`, index * 2),
+        write("expect.addSnapshotSerializer", `serializer(${JSON.stringify(shape)})`, index * 2 + 1),
+      ])
+      .join("\n");
+
+  test.concurrent("what a test file registers applies until the file ends, however the call is written", async () => {
+    const importing = (from: string) =>
+      `import { beforeAll, describe, expect, test } from ${JSON.stringify(from)};\nimport { call } from "./call.ts";`;
+    // Strict, so that its calls in tail position are tail calls as in an ES module.
+    const requiring = `"use strict";\nconst { beforeAll, describe, expect, test } = require("bun:test");\nconst { call } = require("./call.ts");`;
+    const file = (name: string, header: string, shapes = writtenInTestFile) =>
+      [header, named, registers(shapes), lists(name)].join("\n");
+    const { registered, exitCode } = await registrations({
+      "call.ts": `export function call(callback) { callback(); }`,
+      "1.test.ts": file("bun:test", importing("bun:test")),
+      "2.test.ts": file("@jest/globals", importing("@jest/globals")),
+      "3.test.ts": file("vitest", importing("vitest"), { ...writtenInTestFile, ...withExpectOfTestContext }),
+      "4.test.cjs": file("require", requiring),
+      "5.test.ts": [importing("bun:test"), lists("the next file")].join("\n"),
+    });
+    // Each file registers the same shapes, so one that the file before it left behind would be there twice.
+    const all = Object.keys(writtenInTestFile).sort();
+    const ofVitest = [...all, ...Object.keys(withExpectOfTestContext)].sort();
+    expect(registered).toEqual([
+      ["bun:test", all, all],
+      ["@jest/globals", all, all],
+      ["vitest", ofVitest, ofVitest],
+      ["require", all, all],
+      ["the next file", [], []],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(isolationFlags)("each run of --rerun-each registers what the file adds once %j", async args => {
+    const { registered, exitCode } = await registrations(
+      {
+        "a.test.ts": `
+          import { beforeAll, expect, test } from "bun:test";
+          ${named}
+          both("the top level");
+          beforeAll(() => expect.addEqualityTesters([tester("a hook")]));
+          beforeAll(() => expect.addSnapshotSerializer(serializer("a hook")));
+          ${lists("a")}
+        `,
+      },
+      ["--rerun-each=3", ...args],
+    );
+    expect(registered).toEqual(Array(3).fill(["a", ["a hook", "the top level"], ["a hook", "the top level"]]));
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("what a preload script or the body of a module registers applies in every later file", async () => {
+    const module = (shape: string, before = "") => `
+      import { expect } from "bun:test";
+      ${named}
+      ${before}
+      both(${JSON.stringify(shape)});
+    `;
+    const commonJS = (shape: string) => `
+      const { expect } = require("bun:test");
+      ${named}
+      both(${JSON.stringify(shape)});
+    `;
+    const file = (name: string) => `
+      import { beforeAll, expect, test } from "bun:test";
+      import "./imported.ts";
+      import "./awaits.ts";
+      require("./required.ts");
+      require("./required.cjs");
+      await import("./imported-by-call.ts");
+      beforeAll(() => { require("./required-by-hook.cjs"); });
+      test.concurrent("imports", async () => { await import("./imported-by-test.ts"); });
+      test.concurrent("another of the group", async () => { await null; });
+      ${lists(name)}
+    `;
+    const { registered, exitCode } = await registrations(
+      {
+        "preload.ts": `
+          import { beforeAll, beforeEach, expect } from "bun:test";
+          ${named}
+          both("a preload");
+          beforeAll(() => both("a hook of a preload"));
+          beforeAll(async () => { await null; both("a hook of a preload, after an await"); });
+          let ran = false;
+          beforeEach(() => {
+            if (ran) return;
+            ran = true;
+            both("a hook of a preload, for a concurrent test");
+          });
+        `,
+        "imported.ts": module("an imported module"),
+        "awaits.ts":
+          module("an imported module, after an await", "await null;") +
+          `await new Promise(resolve => setImmediate(resolve));\nboth("an imported module, after a timer");`,
+        "required.ts": module("a required ES module"),
+        "required.cjs": commonJS("a required CommonJS module"),
+        "imported-by-call.ts": module("a module that import() loads"),
+        "required-by-hook.cjs": commonJS("a module that a hook requires"),
+        "imported-by-test.ts": module("a module that a test imports"),
+        "a.test.ts": file("a"),
+        "b.test.ts": file("b"),
+        "c.test.ts": file("c"),
+      },
+      ["--preload", "./preload.ts"],
+    );
+    // Once each: the preload and the modules run for a.test.ts alone.
+    const all = [
+      "a hook of a preload",
+      "a hook of a preload, after an await",
+      "a hook of a preload, for a concurrent test",
+      "a module that a hook requires",
+      "a module that a test imports",
+      "a module that import() loads",
+      "a preload",
+      "a required CommonJS module",
+      "a required ES module",
+      "an imported module",
+      "an imported module, after a timer",
+      "an imported module, after an await",
+    ];
+    expect(registered).toEqual([
+      ["a", all, all],
+      ["b", all, all],
+      ["c", all, all],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "what a module that a CommonJS test file requires registers applies in every later file",
+    async () => {
+      const { registered, exitCode } = await registrations({
+        "required.cjs": `
+        const { expect } = require("bun:test");
+        ${named}
+        both("a required module");
+      `,
+        "a.test.cjs": `
+        const { expect, test } = require("bun:test");
+        require("./required.cjs");
+        ${lists("a")}
+      `,
+        "b.test.cjs": `
+        const { expect, test } = require("bun:test");
+        ${lists("b")}
+      `,
+      });
+      expect(registered).toEqual([
+        ["a", ["a required module"], ["a required module"]],
+        ["b", ["a required module"], ["a required module"]],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
+    "a serializer that a hook of a test file adds doesn't print the snapshots of the next file",
+    async () => {
+      const matches = (inline: string, file: string) => `
+        test("t", async () => {
+          expect({ id: 1 }).toMatchSnapshot();
+          expect({ id: 1 }).toMatchInlineSnapshot(${JSON.stringify(inline)});
+          await expect({ id: 1 }).toMatchFileSnapshot(${JSON.stringify(file)});
+        });
+      `;
+      const object = `{\n  "id": 1,\n}`;
+      const { results, exitCode } = await runTests({
+        "a.test.js":
+          `beforeAll(() => expect.addSnapshotSerializer({ test: value => value?.id === 1, serialize: () => "from a.test.js" }));` +
+          matches("from a.test.js", "a.txt"),
+        "b.test.js": matches(`\n${object}\n`, "b.txt"),
+        // What an earlier run of b.test.js stored, so a snapshot in another form is a failure and not a new snapshot.
+        "__snapshots__/b.test.js.snap":
+          "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`t 1`] = `\n" + object + "\n`;\n",
+        "b.txt": object,
+      });
+      expect(results).toEqual(["(pass) t", "(pass) t"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
+    "a test file that adds the serializer of a preload script again tries it first, until the file ends",
+    async () => {
+      const prints = (expected: string, before = "") => `
+      ${before}
+      test(${JSON.stringify(expected)}, () => {
+        expect("value").toMatchInlineSnapshot(${JSON.stringify(expected)});
+      });
+    `;
+      const { results, exitCode } = await runTests(
+        {
+          "preload.js": `
+          const { expect } = require("bun:test");
+          const serializer = name => ({
+            test: value => value === "value",
+            serialize: (value, config) => name + ", one of " + config.plugins.length,
+          });
+          globalThis.first = serializer("first");
+          expect.addSnapshotSerializer(first);
+          expect.addSnapshotSerializer(serializer("second"));
+        `,
+          "a.test.js": prints("second, one of 2"),
+          "b.test.js": prints("first, one of 2", "expect.addSnapshotSerializer(first);"),
+          "c.test.js": prints("second, one of 2"),
+        },
+        ["--preload", "./preload.js"],
+      );
+      expect(results).toEqual(["(pass) second, one of 2", "(pass) first, one of 2", "(pass) second, one of 2"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // With --isolate each file has its own copy of the module, and so a first call of its own.
+  test.concurrent.each([[[]], [["--isolate"]]] as [string[]][])(
+    "what a function of a module registers belongs to the test file that calls it %j",
+    async args => {
+      const file = (name: string) => `
+        import { expect, test } from "bun:test";
+        import { addsOnEachCall, addsOnce } from "./helper.ts";
+        addsOnEachCall();
+        addsOnce();
+        ${lists(name)}
+      `;
+      const { registered, exitCode } = await registrations(
+        {
+          "helper.ts": `
+            import { expect } from "bun:test";
+            ${named}
+            export function addsOnEachCall() { both("made by each call"); }
+            let added = false;
+            export function addsOnce() {
+              if (added) return;
+              added = true;
+              both("added by the first call");
+            }
+          `,
+          "a.test.ts": file("a"),
+          "b.test.ts": file("b"),
+          "c.test.ts": file("c"),
+        },
+        args,
+      );
+      const first = ["added by the first call", "made by each call"];
+      const later = args.length ? first : ["made by each call"];
+      expect(registered).toEqual([
+        ["a", first, first],
+        ["b", later, later],
+        ["c", later, later],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe("toHaveBeenCalledExactlyOnceWith", () => {

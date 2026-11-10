@@ -162,3 +162,46 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     ErrorableResolvedSource* res);
 
 } // namespace Bun
+
+// What has to be noted before a module body runs: bits of Bun::ModuleBodyNote. Zero in every VM but that of
+// `bun test` and that of a Worker which starts.
+extern "C" uint8_t Bun__VM__moduleBodyNotes(void* bunVM);
+// The same for a CommonJS module, or EvalEntryPoint.
+extern "C" uint8_t Bun__VM__commonJSModuleBodyNotes(void* bunVM, JSC::EncodedJSValue filename);
+extern "C" bool Bun__VM__willRunModuleBody(void* bunVM, const BunString* key);
+extern "C" void Bun__VM__didRunModuleBody(void* bunVM);
+
+namespace Bun {
+
+// `module_body_notes` in VirtualMachine.rs has the same values and says what each is for.
+namespace ModuleBodyNote {
+static constexpr uint8_t EntryOfWorker = 1 << 0;
+static constexpr uint8_t TestFile = 1 << 1;
+static constexpr uint8_t EvalEntryPoint = 1 << 7;
+}
+
+// Goes round the body of a module while ModuleBodyNote::TestFile is set.
+class ModuleBodyOfTestFile {
+    WTF_MAKE_NONCOPYABLE(ModuleBodyOfTestFile);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    ModuleBodyOfTestFile(void* bunVM, const WTF::String& key)
+        : m_bunVM(bunVM)
+    {
+        BunString borrowedKey = Bun::toString(key);
+        m_isImport = Bun__VM__willRunModuleBody(bunVM, &borrowedKey);
+    }
+
+    ~ModuleBodyOfTestFile()
+    {
+        if (m_isImport)
+            Bun__VM__didRunModuleBody(m_bunVM);
+    }
+
+private:
+    void* m_bunVM;
+    bool m_isImport;
+};
+
+} // namespace Bun

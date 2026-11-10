@@ -661,7 +661,7 @@ test("1 L is 1000 mL", () => {
 });
 ```
 
-A tester registered in a test file applies until that file ends. A tester registered in a [preload script](/test/lifecycle#global-setup-and-teardown), or in a module that test files import, applies to every file after it.
+A tester registered by a test file applies until that file ends. That includes a tester that a function of another module registers when the test file calls it. A tester registered in a [preload script](/test/lifecycle#global-setup-and-teardown), or at the top level of a module that test files import, applies to every file after it.
 
 To compare nested values inside a tester, call `this.equals(a, b, customTesters)`. `customTesters` is the third argument the tester receives.
 

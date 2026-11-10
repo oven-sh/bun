@@ -53,6 +53,10 @@ unsafe extern "C" {
     safe fn Bun__AOT__willReevaluateEntryPoint(global: &JSGlobalObject, path: &bun_core::String);
     safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
+    safe fn Bun__AOT__runsBodyOfModuleOtherThan(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+    ) -> bool;
     safe fn Bun__AOT__mayHoldPathStartingWith(start: FfiSlice<'_>) -> bool;
     safe fn Bun__AOT__isLeftToCodeOutsideImage(
         specifier: &bun_core::String,
@@ -408,6 +412,13 @@ pub fn did_run_preloads(global: &JSGlobalObject) {
 pub fn is_compiled_module(path: &[u8]) -> bool {
     compiled_program().is_some()
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
+}
+
+/// Whether the engine evaluates a compiled module now that is not the one at `path`. The module loader's evaluate
+/// hooks see no body of a compiled module start.
+pub fn runs_body_of_module_other_than(global: &JSGlobalObject, path: &[u8]) -> bool {
+    compiled_program().is_some()
+        && Bun__AOT__runsBodyOfModuleOtherThan(global, &bun_core::StringView::from_bytes(path))
 }
 
 /// On a thread that runs apart from the compiled program: an entry point of that program, of which the graph holds no text.

@@ -277,13 +277,11 @@ pub struct VirtualMachine {
     // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
-    /// The current entry load reached module evaluation: the root's graph is
-    /// linked and executing (set from the moduleLoaderEvaluate hook once the
-    /// root record — `Bun__VM__entryRootKey` — is Evaluating; a module some
-    /// other root evaluates meanwhile, e.g. a preload's un-awaited import(),
-    /// does not count). What is still pending on the entry promise after that
-    /// is a top-level await.
-    pub entry_evaluation_started: bool,
+    /// What the module loader's evaluate hooks have to note in this VM: bits of
+    /// [`module_body_notes`]. Zero in every VM but a Worker that starts and the
+    /// one of `bun test`, so a hook reads this one byte.
+    pub module_body_notes: u8,
+    pub test_file_modules: TestFileModules,
 
     pub(crate) had_errors: bool,
 
@@ -459,6 +457,34 @@ pub struct TestIsolationState {
     /// What the outgoing file gives back once its realm is retired. See
     /// [`VirtualMachine::release_at_retirement`].
     pub at_retirement: Option<Vec<Box<dyn FnOnce()>>>,
+}
+
+/// Bits of [`VirtualMachine::module_body_notes`]. `ModuleBodyNote` in ModuleLoader.h has the same values.
+pub mod module_body_notes {
+    /// A Worker's entry load has not reached module evaluation: the root's graph
+    /// is not linked and executing yet. The moduleLoaderEvaluate hook clears this
+    /// once the root record (`Bun__VM__entryRootKey`) is Evaluating. A module some
+    /// other root evaluates meanwhile, e.g. a preload's un-awaited import(), does
+    /// not count. What is still pending on the entry promise after that is a
+    /// top-level await.
+    pub const ENTRY_OF_WORKER: u8 = 1 << 0;
+    /// `bun test` loads or runs a test file: [`TestFileModules`](super::TestFileModules).
+    pub const TEST_FILE: u8 = 1 << 1;
+    /// Never stored. `Bun__VM__commonJSModuleBodyNotes` answers it for the entry point of `--eval` and `--print`.
+    pub const EVAL_ENTRY_POINT: u8 = 1 << 7;
+}
+
+/// `bun test` keeps what the body of a module registers with `expect.addEqualityTesters()` or
+/// `expect.addSnapshotSerializer()` for every later test file, because that body runs once. The evaluate hooks note
+/// here which module's body runs, from the load of a test file to the end of that file.
+#[derive(Default)]
+pub struct TestFileModules {
+    /// The module key of the test file.
+    key: bun_core::String,
+    /// The body of the test file's own module has started.
+    pub own_body_started: bool,
+    /// How many bodies of other modules run now, one inside the other.
+    pub imported_bodies: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -800,14 +826,33 @@ impl ExitHandler {
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
-        vm.entry_evaluation_started = true;
+        vm.module_body_notes &= !module_body_notes::ENTRY_OF_WORKER;
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
-    /// any other VM answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
+    pub(crate) extern "C" fn Bun__VM__moduleBodyNotes(vm: &VirtualMachine) -> u8 {
+        vm.module_body_notes
+    }
+
+    /// The body of the module `key` is about to run while `bun test` loads or runs a test file. Returns true for a
+    /// module that is not the test file itself: `Bun__VM__didRunModuleBody` has to follow that body.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__willRunModuleBody(
+        vm: &mut VirtualMachine,
+        key: &bun_core::String,
+    ) -> bool {
+        let modules = &mut vm.test_file_modules;
+        if key.eql(&modules.key) {
+            modules.own_body_started = true;
+            return false;
+        }
+        modules.imported_bodies += 1;
+        true
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__didRunModuleBody(vm: &mut VirtualMachine) {
+        vm.test_file_modules.imported_bodies -= 1;
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -1714,6 +1759,12 @@ impl VirtualMachine {
         // owned by C++ that outlives this VM (BACKREF — see field decl).
         self.worker
             .map(|w| unsafe { &*w.cast::<crate::web_worker::WebWorker>() })
+    }
+
+    /// Whether a worker's entry load has reached module evaluation.
+    #[inline]
+    pub fn entry_evaluation_started(&self) -> bool {
+        self.module_body_notes & module_body_notes::ENTRY_OF_WORKER == 0
     }
 
     #[inline]
@@ -3860,7 +3911,11 @@ impl VirtualMachine {
 
         // Preloads (evaluated above, synchronously) are not the entry: only
         // module evaluations from here on mark the entry graph as executing.
-        self.entry_evaluation_started = false;
+        // Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
+        // in any other VM the hook's registry probe never runs.
+        if self.worker.is_some() {
+            self.module_body_notes |= module_body_notes::ENTRY_OF_WORKER;
+        }
         let builtin = match self.main_entry_point {
             MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable => {
                 None
@@ -5211,6 +5266,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
+        vm_ref.module_body_notes |= module_body_notes::ENTRY_OF_WORKER;
         if worker.arm_test_gate() {
             vm_ref.handle.arm_test_gate();
         }
@@ -6217,6 +6273,11 @@ impl VirtualMachine {
 
         // After the preloads, so the modules they loaded still count as loaded by a preload.
         crate::cpp::JSMock__didBeginTestFile(self.global());
+        self.test_file_modules = TestFileModules {
+            key: bun_core::String::clone_utf8(self.main().unwrap_or_default()),
+            ..Default::default()
+        };
+        self.module_body_notes |= module_body_notes::TEST_FILE;
 
         // Note: reshaped for borrowck.
         let global = self.global;
@@ -6258,6 +6319,12 @@ impl VirtualMachine {
             }
         }
         Ok(promise)
+    }
+
+    /// The test file that `reload_entry_point_for_test_runner` loaded has ended.
+    pub fn did_end_test_file(&mut self) {
+        self.module_body_notes &= !module_body_notes::TEST_FILE;
+        self.test_file_modules = TestFileModules::default();
     }
 
     /// Waits for `pending_internal_promise` to settle. If it never can, replaces it with a rejected promise and returns that.

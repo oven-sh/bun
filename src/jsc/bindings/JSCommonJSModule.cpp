@@ -146,7 +146,6 @@ static bool tryFastEnumeration(VM& vm, JSObject* object, const Invocable<void(Un
     return true;
 }
 
-extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
@@ -273,7 +272,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         moduleObject->hasEvaluated = true;
     };
 
-    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+    const auto evaluateEntryPointOfEval = [&]() -> bool {
         initializeModuleObject();
         scope.assertNoExceptionExceptTermination();
 
@@ -302,79 +301,94 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
 
         RELEASE_AND_RETURN(scope, true);
-    }
+    };
 
-    // Same out-param pattern as the eval-entry path above: the 3-arg
-    // overload would swallow the exception, leaving the misleading
-    // "function wrapper" TypeError below instead of the real error.
-    WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
-    if (wrapperException) [[unlikely]] {
-        scope.throwException(globalObject, wrapperException.get());
-        return false;
-    }
-    ASSERT(fnValue);
+    const auto callWrapper = [&]() ALWAYS_INLINE_LAMBDA -> bool {
+        // Same out-param pattern as the eval-entry path above: the 3-arg
+        // overload would swallow the exception, leaving the misleading
+        // "function wrapper" TypeError below instead of the real error.
+        WTF::NakedPtr<JSC::Exception> wrapperException;
+        JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+        if (wrapperException) [[unlikely]] {
+            scope.throwException(globalObject, wrapperException.get());
+            return false;
+        }
+        ASSERT(fnValue);
 
-    // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
-    // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
-    // one a custom `Module.wrapper` made inside another function reads that function's variables by
-    // their offsets in its scope, and one that already ran was compiled for the chain it ran in.
-    JSModuleGraph* graph = moduleObject->moduleGraph();
-    if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && !wrapper->jsExecutable()->eitherCodeBlock())
-        fnValue = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
+        // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
+        // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
+        // one a custom `Module.wrapper` made inside another function reads that function's variables by
+        // their offsets in its scope, and one that already ran was compiled for the chain it ran in.
+        JSModuleGraph* graph = moduleObject->moduleGraph();
+        if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && !wrapper->jsExecutable()->eitherCodeBlock())
+            fnValue = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
 
-    JSObject* fn = fnValue.getObject();
-    if (!fn) [[unlikely]] {
-        scope.throwException(globalObject, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
-        RELEASE_AND_RETURN(scope, false);
-    }
+        JSObject* fn = fnValue.getObject();
+        if (!fn) [[unlikely]] {
+            scope.throwException(globalObject, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
+            RELEASE_AND_RETURN(scope, false);
+        }
 
-    JSC::CallData callData = JSC::getCallData(fn);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        scope.throwException(globalObject, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
-        RELEASE_AND_RETURN(scope, false);
-    }
+        JSC::CallData callData = JSC::getCallData(fn);
+        if (callData.type == CallData::Type::None) [[unlikely]] {
+            scope.throwException(globalObject, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
+            RELEASE_AND_RETURN(scope, false);
+        }
 
-    initializeModuleObject();
-    RETURN_IF_EXCEPTION(scope, false);
+        initializeModuleObject();
+        RETURN_IF_EXCEPTION(scope, false);
 
-    MarkedArgumentBuffer args;
-    auto exports = moduleObject->exportsObject();
-    RETURN_IF_EXCEPTION(scope, false);
-    args.append(exports); // exports
-    args.append(requireFunction); // require
-    args.append(moduleObject); // module
-    args.append(filename); // filename
-    args.append(dirname); // dirname
+        MarkedArgumentBuffer args;
+        auto exports = moduleObject->exportsObject();
+        RETURN_IF_EXCEPTION(scope, false);
+        args.append(exports); // exports
+        args.append(requireFunction); // require
+        args.append(moduleObject); // module
+        args.append(filename); // filename
+        args.append(dirname); // dirname
 
-    if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn); jsFunction && !jsFunction->isHostFunction()) {
-        if (jsFunction->jsExecutable()->parameterCount() > 5) {
-            // it expects ImportMetaObject
-            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
+        if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn); jsFunction && !jsFunction->isHostFunction()) {
+            if (jsFunction->jsExecutable()->parameterCount() > 5) {
+                // it expects ImportMetaObject
+                auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
+                RETURN_IF_EXCEPTION(scope, false);
+                importMeta->setModuleGraph(vm, graph);
+                args.append(importMeta);
+            }
+        }
+
+        // Clear the source code as early as possible.
+        code = {};
+
+        // Call the CommonJS module wrapper function.
+        //
+        //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
+        //
+        JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
+            if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
+                linked = linked->baselineAlternative();
+                globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
+                graph->keepCommonJSWrapper(vm, linked);
+            }
+        }
+        return true;
+    };
+
+    // Only the entry point of `--eval`, `bun test` and a Worker that starts have notes. Any other module takes this one test.
+    if (uint8_t notes = Bun__VM__commonJSModuleBodyNotes(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+        if (notes & Bun::ModuleBodyNote::EvalEntryPoint)
+            return evaluateEntryPointOfEval();
+        if (notes & Bun::ModuleBodyNote::TestFile) {
+            String key = filename.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
-            importMeta->setModuleGraph(vm, graph);
-            args.append(importMeta);
+            Bun::ModuleBodyOfTestFile body(globalObject->bunVM(), key);
+            return callWrapper();
         }
     }
-
-    // Clear the source code as early as possible.
-    code = {};
-
-    // Call the CommonJS module wrapper function.
-    //
-    //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
-    //
-    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
-        if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
-            linked = linked->baselineAlternative();
-            globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
-            graph->keepCommonJSWrapper(vm, linked);
-        }
-    }
-    return true;
+    return callWrapper();
 }
 
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)

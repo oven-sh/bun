@@ -169,6 +169,66 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent(
+    "an equality tester and a snapshot serializer of a test file end with it, and those of a module it imports stay",
+    async () => {
+      const registers = (name: string, before = "") => `
+        import { expect } from "bun:test";
+        export class ${name} { constructor(public id: number) {} }
+        ${before}
+        expect.addEqualityTesters([(a: unknown, b: unknown) => (a instanceof ${name} && b instanceof ${name} ? true : undefined)]);
+        expect.addSnapshotSerializer({ test: (value: unknown) => value instanceof ${name}, serialize: () => "${name}" });
+      `;
+      const imports = `
+        import { expect, test } from "bun:test";
+        import { Imported } from "./imported";
+        import { Awaited } from "./awaited";
+        import { Own } from "./own";
+      `;
+      const printed = (own: string) => "`\n[\n  Imported,\n  Awaited,\n  " + own + ",\n]\n`";
+      const { stderr, exitCode } = await expectSameAsBunTest({
+        "imported.ts": registers("Imported"),
+        "awaited.ts": registers("Awaited", "await Promise.resolve();"),
+        "own.ts": `export class Own { constructor(public id: number) {} }`,
+        "a.test.ts": `
+          ${imports}
+          import { beforeAll } from "bun:test";
+          expect.addEqualityTesters([(a: unknown, b: unknown) => (a instanceof Own && b instanceof Own ? true : undefined)]);
+          beforeAll(() => expect.addSnapshotSerializer({ test: (value: unknown) => value instanceof Own, serialize: () => "Own" }));
+          test("its own and those of the modules", () => {
+            expect([new Imported(1), new Awaited(1), new Own(1)]).toEqual([new Imported(2), new Awaited(2), new Own(2)]);
+            expect([new Imported(1), new Awaited(1), new Own(1)]).toMatchInlineSnapshot(${printed("Own")});
+          });
+        `,
+        "b.test.ts": `
+          ${imports}
+          test("those of the modules alone", () => {
+            expect([new Imported(1), new Awaited(1)]).toEqual([new Imported(2), new Awaited(2)]);
+            expect(new Own(1)).not.toEqual(new Own(2));
+            expect([new Imported(1), new Awaited(1), new Own(1)]).toMatchInlineSnapshot(${printed('Own {\n    "id": 1,\n  }')});
+          });
+        `,
+        "required.cjs": `
+          const { expect } = require("bun:test");
+          exports.marker = {};
+          expect.addEqualityTesters([(a, b) => (a === exports.marker || b === exports.marker ? true : undefined)]);
+        `,
+        "c.test.cjs": `
+          const { expect, test } = require("bun:test");
+          const { marker } = require("./required.cjs");
+          test("that of the module a CommonJS test file requires", () => { expect(marker).toEqual(1); });
+        `,
+        "d.test.cjs": `
+          const { expect, test } = require("bun:test");
+          const { marker } = require("./required.cjs");
+          test("and still in the next file", () => { expect(marker).toEqual(1); });
+        `,
+      });
+      expect(stderr).toContain(" 4 pass");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("snapshots", async () => {
     const files = {
       "snap.test.ts": `

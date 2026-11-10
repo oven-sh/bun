@@ -1,43 +1,23 @@
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
+use bun_jsc::{compiled_program, JSGlobalObject, JSValue, JsClass as _, JsResult};
 
-use super::super::jest::{FileColumns as _, Jest};
+use super::super::bun_test::{self, AddedInPhase, BunTestPtr, ExecutionEntry};
+use super::super::module_mock;
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
+/// Who an equality tester or a snapshot serializer belongs to.
+pub(crate) enum Registrant {
+    /// The running test file. What it registers is gone when it ends.
+    TestFile(BunTestPtr),
+    /// A preload, a hook of a preload, or the body of a module that a test file imports. Each of them runs once, so
+    /// what it registers stays for every later file.
+    Shared,
+}
+
 impl Expect {
-    /// The first call in a new test file drops the testers that the previous file registered itself.
-    pub(crate) fn equality_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
-        let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
-
-        let file = Jest::file_generation(global);
-        let same_file = utils.testers_file.replace(file) == file;
-        let Some(testers) = js::equality_testers_get_cached(utils_value) else { return Ok(None) };
-        if same_file || !utils.testers_of_file.get().contains(&true) {
-            return Ok(Some(testers));
-        }
-
-        let of_file = utils.testers_of_file.replace(Vec::new());
-        let kept = JSValue::create_empty_array(global, 0)?;
-        let mut count = 0;
-        let mut iter = testers.array_iterator(global)?;
-        for is_of_file in of_file {
-            let Some(tester) = iter.next()? else { break };
-            if !is_of_file {
-                kept.put_index(global, count, tester)?;
-                count += 1;
-            }
-        }
-        utils.testers_of_file.set(vec![false; count as usize]);
-        if count == 0 {
-            js::equality_testers_set_cached(utils_value, global, JSValue::ZERO);
-            return Ok(None);
-        }
-        js::equality_testers_set_cached(utils_value, global, kept);
-        Ok(Some(kept))
+    pub(crate) fn equality_testers(global: &JSGlobalObject) -> Option<JSValue> {
+        js::equality_testers_get_cached(ExpectMatcherUtils::singleton(global))
     }
 
     /// `--isolate=modules` keeps the global object. The next file's preloads and imports are evaluated again, and
@@ -47,20 +27,65 @@ impl Expect {
         if !global.bun_vm().test_isolation_state.shares_global {
             return;
         }
-        let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = utils_value.as_class_ref::<ExpectMatcherUtils>() else { return };
-        js::equality_testers_set_cached(utils_value, global, JSValue::ZERO);
-        js::snapshot_serializers_set_cached(utils_value, global, JSValue::ZERO);
-        utils.testers_of_file.set(Vec::new());
-        utils.serializers_of_file.set(Vec::new());
+        let utils = ExpectMatcherUtils::singleton(global);
+        js::equality_testers_set_cached(utils, global, JSValue::ZERO);
+        js::shared_equality_testers_set_cached(utils, global, JSValue::ZERO);
+        js::snapshot_serializers_set_cached(utils, global, JSValue::ZERO);
+        js::shared_snapshot_serializers_set_cached(utils, global, JSValue::ZERO);
     }
 
+    /// The test file ends, and with it what it registered itself.
     #[optimize(size)]
-    pub(crate) fn is_called_by_test_file(global: &JSGlobalObject) -> bool {
-        let Some(runner) = Jest::runner() else { return false };
-        let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };
-        let path = runner.files.items_source()[buntest.get().file_id as usize].path.text;
-        global.get_caller_src_loc().str.eql_utf8(path)
+    pub(crate) fn forget_registrations_of_test_file(global: &JSGlobalObject) {
+        let utils = ExpectMatcherUtils::singleton(global);
+        let shared = js::shared_equality_testers_get_cached(utils).unwrap_or_default();
+        js::equality_testers_set_cached(utils, global, shared);
+        let shared = js::shared_snapshot_serializers_get_cached(utils).unwrap_or_default();
+        js::snapshot_serializers_set_cached(utils, global, shared);
+    }
+
+    /// What runs decides, not the call stack: a tail call drops the frame of its caller, and a bound function or the
+    /// callback of a builtin runs without a frame of the file that passed it.
+    #[optimize(size)]
+    pub(crate) fn registrant(global: &JSGlobalObject) -> Registrant {
+        let vm = global.bun_vm();
+        // The runner and its files belong to the main thread.
+        if vm.worker_ref().is_some() || module_mock::is_in_preload(global) {
+            return Registrant::Shared;
+        }
+        let Some(file) = bun_test::clone_active_strong() else { return Registrant::Shared };
+        let buntest = file.get();
+        // `is_in_preload` can't name the hook that runs in a concurrent group.
+        if let Some(on_stack) = buntest.execution.on_stack.get() {
+            // SAFETY: `on_stack` names an entry only while its callback runs, and the file keeps its entries.
+            let entry = unsafe { &*on_stack.entry.cast::<ExecutionEntry>() };
+            if entry.added_in_phase == AddedInPhase::Preload {
+                return Registrant::Shared;
+            }
+        }
+        if Self::runs_import_of_test_file(global, buntest.is_loading) {
+            return Registrant::Shared;
+        }
+        Registrant::TestFile(file)
+    }
+
+    /// Whether the body of a module that the test file imports runs. Until the file's own body starts, that is also
+    /// what such a body waits for: a promise, a timer.
+    fn runs_import_of_test_file(global: &JSGlobalObject, is_loading: bool) -> bool {
+        let vm = global.bun_vm();
+        if vm.test_file_modules.imported_bodies != 0 {
+            return true;
+        }
+        if !is_loading {
+            return false;
+        }
+        match vm.main() {
+            // No evaluate hook sees the body of a compiled module start, so the engine is asked.
+            Some(main) if compiled_program::is_compiled_module(main) => {
+                compiled_program::runs_body_of_module_other_than(global, main)
+            }
+            _ => !vm.test_file_modules.own_body_started,
+        }
     }
 
     pub(crate) fn add_equality_testers(cx: &mut JsScope<'_>, testers: JsLocal<'_>) -> JsResult<()> {
@@ -70,24 +95,22 @@ impl Expect {
             return Err(global.throw_invalid_argument_type_value("testers", "array", testers));
         }
 
-        let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let utils = ExpectMatcherUtils::singleton(global);
+        let registered = js::equality_testers_get_cached(utils);
+        let shared = js::shared_equality_testers_get_cached(utils);
 
         // Build a new array, because script may still hold the old one through `this.customTesters`.
         let all = JSValue::create_empty_array(global, 0)?;
         let mut count = 0;
-        if let Some(registered) = Self::equality_testers(global)? {
+        if let Some(registered) = registered {
             let mut iter = registered.array_iterator(global)?;
             while let Some(tester) = iter.next()? {
                 all.put_index(global, count, tester)?;
                 count += 1;
             }
         }
-        let registered = count;
+        let registered_count = count;
 
-        let is_of_file = Self::is_called_by_test_file(global);
         let mut iter = testers.array_iterator(global)?;
         'testers: while let Some(tester) = iter.next()? {
             if !tester.is_callable() {
@@ -97,12 +120,11 @@ impl Expect {
                     tester,
                 ));
             }
-            // A shared helper that every test file calls shouldn't register the same tester again.
-            if !is_of_file {
-                for index in 0..registered {
-                    if all.get_direct_index(global, index)? == tester
-                        && utils.testers_of_file.get().get(index as usize) == Some(&false)
-                    {
+            // Every file has a shared tester already, so a helper that every test file calls doesn't add it again.
+            if let Some(shared) = shared {
+                let mut iter = shared.array_iterator(global)?;
+                while let Some(earlier) = iter.next()? {
+                    if earlier == tester {
                         continue 'testers;
                     }
                 }
@@ -110,17 +132,41 @@ impl Expect {
             all.put_index(global, count, tester)?;
             count += 1;
         }
-        if count == registered {
+        if count == registered_count {
             return Ok(());
         }
 
-        js::equality_testers_set_cached(utils_value, global, all);
-        utils.testers_of_file.with_mut(|of_file| of_file.resize(count as usize, is_of_file));
+        match Self::registrant(global) {
+            Registrant::Shared => {
+                // Without testers of the test file, the two lists are one array.
+                let all_shared = if registered == shared {
+                    all
+                } else {
+                    let all_shared = JSValue::create_empty_array(global, 0)?;
+                    let mut shared_count = 0;
+                    if let Some(shared) = shared {
+                        let mut iter = shared.array_iterator(global)?;
+                        while let Some(tester) = iter.next()? {
+                            all_shared.put_index(global, shared_count, tester)?;
+                            shared_count += 1;
+                        }
+                    }
+                    for index in registered_count..count {
+                        all_shared.put_index(global, shared_count, all.get_direct_index(global, index)?)?;
+                        shared_count += 1;
+                    }
+                    all_shared
+                };
+                js::shared_equality_testers_set_cached(utils, global, all_shared);
+            }
+            Registrant::TestFile(file) => file.get().has_expect_registrations = true,
+        }
+        js::equality_testers_set_cached(utils, global, all);
         Ok(())
     }
 
     fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
-        let Some(testers) = Self::equality_testers(global)? else { return Ok(None) };
+        let Some(testers) = Self::equality_testers(global) else { return Ok(None) };
         let context = ExpectMatcherContext { flags: Flags::default(), parent: None }.to_js(global);
         let mut iter = testers.array_iterator(global)?;
         while let Some(tester) = iter.next()? {
@@ -153,7 +199,7 @@ impl Expect {
 impl ExpectMatcherContext {
     pub(crate) fn get_custom_testers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        match Expect::equality_testers(global)? {
+        match Expect::equality_testers(global) {
             Some(testers) => Ok(testers),
             None => JSValue::create_empty_array(global, 0),
         }
@@ -167,10 +213,10 @@ pub(crate) struct EqualityTestersScope<'a> {
 }
 
 impl<'a> EqualityTestersScope<'a> {
-    pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> JsResult<Self> {
-        let outer = Expect::equality_testers(global)?.unwrap_or_default();
+    pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> Self {
+        let outer = Expect::equality_testers(global).unwrap_or_default();
         js::equality_testers_set_cached(ExpectMatcherUtils::singleton(global), global, testers);
-        Ok(Self { global, outer })
+        Self { global, outer }
     }
 }
 

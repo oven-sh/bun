@@ -2323,6 +2323,20 @@ extern "C" void Bun__AOT__didRunPreloads(JSC::JSGlobalObject* globalObject)
         JSC::AOT::retainNewlyEvaluatedModules(globalObject);
 }
 
+// `bun test` asks while a test file loads: the evaluate hooks of the module loader see no body of a compiled module start.
+extern "C" bool Bun__AOT__runsBodyOfModuleOtherThan(JSC::JSGlobalObject* globalObject, const BunString* path)
+{
+    std::optional<JSC::AOT::ModuleID> own = Bun::compiledModuleForPath(path->toWTFString(BunString::ZeroCopy));
+    bool runs = false;
+    JSC::AOT::forEachModule([&](JSC::AOT::ModuleID module) {
+        if (module == own || !JSC::AOT::isBeingEvaluated(globalObject, module))
+            return IterationStatus::Continue;
+        runs = true;
+        return IterationStatus::Done;
+    });
+    return runs;
+}
+
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString* path)
 {
     String file = path->toWTFString(BunString::ZeroCopy);
@@ -2509,6 +2523,7 @@ extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" void Bun__AOT__willReevaluateEntryPoint(JSC::JSGlobalObject*, const BunString*) {}
 extern "C" void Bun__AOT__willRunPreloads(JSC::JSGlobalObject*) {}
 extern "C" void Bun__AOT__didRunPreloads(JSC::JSGlobalObject*) {}
+extern "C" bool Bun__AOT__runsBodyOfModuleOtherThan(JSC::JSGlobalObject*, const BunString*) { return false; }
 extern "C" void Bun__AOT__setPluginsSilent(bool) {}
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
 extern "C" bool Bun__AOT__mayHoldPathStartingWith(BunAOTBytes) { return false; }

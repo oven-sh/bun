@@ -6,11 +6,12 @@ use bun_core::fmt as bun_fmt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, StringJsc as _, VM,
+    JSPropertyIterator, JSType, JSValue, JsError, JsResult, StringJsc as _, VM,
 };
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
+use super::expect::add_equality_testers::Registrant;
 use super::snapshot::Format as SnapshotFormat;
 use crate::generated_bindgen::expect::{
     js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
@@ -3559,7 +3560,7 @@ impl JestPrettyFormat {
     ) -> JsResult<bool> {
         let mut formatter = Formatter::new(global);
         formatter.snapshot_format = format;
-        formatter.serializers = Self::serializers(global)?;
+        formatter.serializers = Self::serializers(global);
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
             let tag = Tag::get(value, global)?;
@@ -4664,63 +4665,53 @@ impl JestPrettyFormat {
             ));
         }
 
-        let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
-
-        let is_of_file = expect::Expect::is_called_by_test_file(global);
-        let serializers = JSValue::create_empty_array(global, 0)?;
-        serializers.push(global, plugin)?;
-        if let Some(registered) = Self::serializers(global)? {
-            let mut iter = registered.array_iterator(global)?;
+        let utils = expect::ExpectMatcherUtils::singleton(global);
+        let registered = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils);
+        let shared = js_ExpectMatcherUtils::shared_snapshot_serializers_get_cached(utils);
+        let mut is_shared = false;
+        if let Some(shared) = shared {
+            let mut iter = shared.array_iterator(global)?;
             while let Some(earlier) = iter.next()? {
-                // A shared helper that every test file calls would otherwise register its serializer once per file.
-                if !is_of_file && earlier == plugin && utils.serializers_of_file.get().get(iter.i as usize - 1) == Some(&false) {
-                    return Ok(());
-                }
-                serializers.push(global, earlier)?;
+                is_shared |= earlier == plugin;
             }
         }
-        js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, serializers);
-        utils.serializers_of_file.with_mut(|of_file| of_file.insert(0, is_of_file));
+        let registrant = expect::Expect::registrant(global);
+        // Every file has a shared serializer already, so a helper that every test file calls doesn't add it again.
+        if is_shared && matches!(registrant, Registrant::Shared) {
+            return Ok(());
+        }
+
+        // A new array, because script may still hold the old one through `config.plugins`. A test file that adds a
+        // shared serializer again moves it to the front for itself.
+        let in_front_of = |earlier: Option<JSValue>| -> JsResult<JSValue> {
+            let serializers = JSValue::create_empty_array(global, 0)?;
+            serializers.push(global, plugin)?;
+            if let Some(earlier) = earlier {
+                let mut iter = earlier.array_iterator(global)?;
+                while let Some(earlier) = iter.next()? {
+                    if !is_shared || earlier != plugin {
+                        serializers.push(global, earlier)?;
+                    }
+                }
+            }
+            Ok(serializers)
+        };
+        let serializers = in_front_of(registered)?;
+        match registrant {
+            Registrant::Shared => {
+                // Without serializers of the test file, the two lists are one array.
+                let all_shared = if registered == shared { serializers } else { in_front_of(shared)? };
+                js_ExpectMatcherUtils::shared_snapshot_serializers_set_cached(utils, global, all_shared);
+            }
+            Registrant::TestFile(file) => file.get().has_expect_registrations = true,
+        }
+        js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils, global, serializers);
         Ok(())
     }
 
-    /// Most recently added first. Drops the ones an earlier test file registered itself.
-    #[optimize(size)]
-    fn serializers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
-        let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
-        let file = super::jest::Jest::file_generation(global);
-        let is_same_file = utils.serializers_file.replace(file) == file;
-        let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {
-            return Ok(None);
-        };
-        if is_same_file || !utils.serializers_of_file.get().contains(&true) {
-            return Ok(Some(serializers));
-        }
-
-        let of_file = utils.serializers_of_file.replace(Vec::new());
-        let kept = JSValue::create_empty_array(global, 0)?;
-        let mut count = 0;
-        let mut iter = serializers.array_iterator(global)?;
-        for is_of_file in of_file {
-            let Some(serializer) = iter.next()? else { break };
-            if !is_of_file {
-                kept.put_index(global, count, serializer)?;
-                count += 1;
-            }
-        }
-        utils.serializers_of_file.set(vec![false; count as usize]);
-        if count == 0 {
-            js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, JSValue::ZERO);
-            return Ok(None);
-        }
-        js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, kept);
-        Ok(Some(kept))
+    /// Most recently added first.
+    fn serializers(global: &JSGlobalObject) -> Option<JSValue> {
+        js_ExpectMatcherUtils::snapshot_serializers_get_cached(expect::ExpectMatcherUtils::singleton(global))
     }
 
     pub(crate) fn printer(

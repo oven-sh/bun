@@ -137,6 +137,12 @@ lowering, which tells codegen which identifier it became. A nested function
 expression is printed anew, under the text of its name: where it refers to that
 name, lowering stops (see "Bail-out semantics").
 
+RenameVariables gets that identifier too, with the text of the name. It names
+the identifier first, so no local of the function has that text: the parameter
+`t0`, a temporary, the memo cache `$`, a local that the source declares. The
+runtime transpiler has no renamer and prints each symbol under the text it was
+made with, so such a local would take the reads of the name.
+
 ### The compiler as a linter
 
 `bun lint` has the validations as rules (`react/refs`, `react-hooks/refs`, ...). `lint.rs` is upstream's

@@ -5404,16 +5404,68 @@ test("react-compiler: a function expression reads its own name under bun test --
         const first = items.map(Renamed => Renamed + 1);
         return <ul first={first}>{[0].map(n => <Renamed key={n} items={[]} />)}</ul>;
       });
+      // The function keeps its name, so no local of the compiled function may print under it. The compiler declares
+      // the local of a block at function level. babel-plugin-react-compiler 1.0.0 leaves the six functions that read
+      // the name as a value as written ("Unsupported declaration type for hoisting"), and compiles the two that read
+      // it as a JSX tag.
+      export const BlockLocal = memo(function BlockLocal({ items }) {
+        let first;
+        {
+          const BlockLocal = [items.length];
+          BlockLocal.push(1);
+          first = BlockLocal;
+        }
+        return <ul first={first}>{[0].map(() => typeof BlockLocal + " " + BlockLocal.name)}</ul>;
+      });
+      // The compiler names the parameter \`t0\` and a temporary \`t1\`.
+      export const Parameter = memo(function t0({ x }) {
+        return <ul x={x}>{[0].map(() => typeof t0 + " " + t0.name)}</ul>;
+      });
+      export const Temporary = memo(function t1({ x }) {
+        return <ul x={x}>{[0].map(() => typeof t1 + " " + t1.name)}</ul>;
+      });
+      // The temporary \`t2\` is declared behind the block that reads the name.
+      export const TemporaryBehindTheRead = memo(function t2({ x, y }) {
+        let kids = null;
+        if (x) {
+          kids = [0].map(() => typeof t2 + " " + t2.name);
+        }
+        const a = [y].map(v => v + x);
+        return <ul a={[a, y]}>{kids}</ul>;
+      });
+      // The memo cache is \`$\`. A parameter of that name is lowered ahead of the read, as in \`Renamed\`.
+      export const Cache = memo(function $({ items, x }) {
+        const first = items.map($ => $ + 1);
+        return <ul first={first} x={x}>{[0].map(() => typeof $ + " " + $.name)}</ul>;
+      });
+      // A hook has no parameter of the compiler's: its first temporary is \`t0\`.
+      export const useItself = function t0(props) {
+        return <ul x={props.x}>{[0].map(() => typeof t0 + " " + t0.name)}</ul>;
+      };
+      export const BlockLocalTag = memo(function BlockLocalTag({ items }) {
+        let first;
+        {
+          const BlockLocalTag = [items.length];
+          BlockLocalTag.push(1);
+          first = BlockLocalTag;
+        }
+        return <ul first={first}>{[0].map(n => <BlockLocalTag key={n} items={[]} />)}</ul>;
+      });
+      export const ParameterTag = memo(function t0({ x }) {
+        return <ul x={x}>{[0].map(n => <t0.Self key={n} x={n} />)}</ul>;
+      });
     `,
     "own.test.jsx": `
       import { test } from "bun:test";
       import * as own from "./Own";
       test("which read themselves", () => {
-        const read = Object.entries(own).map(([name, { type }]) => {
-          const compiled = /\\$\\[\\d+\\]/.test(String(type)) ? "" : " (not compiled)";
+        const read = Object.entries(own).map(([name, component]) => {
+          const type = component.type ?? component;
+          type.Self = type;
+          const compiled = /\\$\\d*\\[\\d+\\]/.test(String(type)) ? "" : " (not compiled)";
           try {
-            const [kid] = type({ x: 1, items: [1] }).props.children;
-            return name + compiled + ": " + (kid.type === type ? "itself" : "another");
+            const [kid] = type({ x: 1, y: 2, items: [1] }).props.children;
+            return name + compiled + ": " + (typeof kid === "string" ? kid : kid.type === type ? "itself" : "another");
           } catch (error) {
             return name + compiled + ": " + error.message;
           }
@@ -5432,9 +5484,60 @@ test("react-compiler: a function expression reads its own name under bun test --
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.match(/read: (.*)/)?.[1] ?? stderr).toBe("Renamed: itself, Tree: itself");
+  expect((stdout.match(/read: (.*)/)?.[1] ?? stderr).split(", ")).toEqual([
+    "BlockLocal: function BlockLocal",
+    "BlockLocalTag: itself",
+    "Cache: function $",
+    "Parameter: function t0",
+    "ParameterTag: itself",
+    "Renamed: itself",
+    "Temporary: function t1",
+    "TemporaryBehindTheRead: function t2",
+    "Tree: itself",
+    "useItself: function t0",
+  ]);
   expect(exitCode).toBe(0);
 });
+
+// Lint mode prints nothing, so a report has each name as written. Only a fixture pragma asks for that mode here.
+test.skipIf(!isDebug && !isASAN)(
+  "react-compiler in lint mode renames no local for the name of a function expression",
+  async () => {
+    using dir = tempDir("react-compiler-lint-own-name", {
+      "entry.jsx": `
+        // @outputMode:"lint" @validatePreserveExistingMemoizationGuarantees
+        import { memo, useMemo } from "react";
+        export const Component = memo(function Component(props) {
+          let data;
+          {
+            const Component = props.list;
+            data = useMemo(() => {
+              const x = [];
+              x.push(Component?.a);
+              if (props.cond) {
+                x.push(Component.a);
+              }
+              return x;
+            }, [Component?.a, props.cond]);
+          }
+          return <div>{data}{[0].map(() => typeof Component)}</div>;
+        });
+      `,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.jsx")],
+      target: "browser",
+      external: ["*"],
+      reactCompiler: true,
+      // @ts-expect-error test-only option, not in bun-types
+      reactCompilerParseTestPragmas: true,
+      throw: false,
+    });
+    expect(result.logs.map(log => String(log.message).match(/The inferred dependency was .*?\]/)?.[0])).toEqual([
+      "The inferred dependency was `Component`, but the source dependencies were [Component?.a, props.cond]",
+    ]);
+  },
+);
 
 // Upstream sorts them with `<` of JavaScript, by UTF-16 code units: U+20000 begins with 0xD840, which is
 // before U+FF21. In UTF-8 it begins with 0xF0, which is after 0xEF.

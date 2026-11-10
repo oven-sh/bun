@@ -200,14 +200,16 @@ pub(crate) fn compile_fn(
         return Err(env.take_errors());
     }
 
-    let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
-
     let own_name = own_name
         .zip(own_name_identifier)
         .map(|(symbol, identifier)| codegen::OwnName {
             declaration: env.identifiers[identifier.0 as usize].declaration_id,
             symbol,
+            name: StoreStr::new(host.ref_name(symbol)),
         });
+
+    let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context, own_name)?;
+
     let mut cg = Codegen::new(host, arena, own_name);
     let codegen_result = pass!(
         env,
@@ -353,7 +355,7 @@ pub(crate) fn compile_outlined_fn(
         return Err(env.take_errors());
     }
 
-    let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
+    let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context, None)?;
 
     let mut cg = Codegen::new(host, arena, None);
     let mut codegen_result =
@@ -375,9 +377,10 @@ fn run_hir_passes(
     hir: &mut crate::hir::HirFunction,
     env: &mut Environment,
     context: &mut ProgramContext,
+    own_name: Option<codegen::OwnName>,
 ) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
     run_analysis_passes(hir, env, context, None)?;
-    run_reactive_scope_passes(hir, env, context)
+    run_reactive_scope_passes(hir, env, context, own_name)
 }
 
 /// Whether [`run_reactive_scope_passes`] is to follow, by what is known of the function when all
@@ -633,6 +636,7 @@ pub(crate) fn run_reactive_scope_passes(
     hir: &mut crate::hir::HirFunction,
     env: &mut Environment,
     context: &mut ProgramContext,
+    own_name: Option<codegen::OwnName>,
 ) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
     if env.enable_memoization() {
         pass!(
@@ -819,7 +823,11 @@ pub(crate) fn run_reactive_scope_passes(
     let unique_identifiers = pass!(
         env,
         "RenameVariables",
-        crate::reactive_scopes::rename_variables(&mut reactive_fn, env)
+        crate::reactive_scopes::rename_variables(
+            &mut reactive_fn,
+            env,
+            own_name.map(|own| (own.declaration, own.name))
+        )
     );
 
     for name in &unique_identifiers {

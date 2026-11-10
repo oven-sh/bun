@@ -58,8 +58,8 @@ type RefSet = crate::collections::FxHashSet<Ref>;
 /// Not in upstream (facebook/react#38100, facebook/react#37511): `own_name` is the name of `func`. A function
 /// expression declares it in its own scope, and a read of it is lowered to a local that nothing declares. Upstream
 /// prints the function and that read under one text. Here the function keeps the symbol of the parser, so this also
-/// returns the identifier that the reads became, for codegen to print that symbol. A declaration's name is bound
-/// outside of `func` and has no such identifier.
+/// returns the identifier that the reads became, for codegen to print that symbol and for RenameVariables to give its
+/// name to no local. A declaration's name is bound outside of `func` and has no such identifier.
 pub(crate) fn lower(
     func: &FunctionNode<'_>,
     _id: Option<&str>,

@@ -123,6 +123,8 @@ pub(crate) struct OwnName {
     /// What lowering made of the name.
     pub(crate) declaration: DeclarationId,
     pub(crate) symbol: Ref,
+    /// What `symbol` is printed as where no renamer runs. RenameVariables gives it to `declaration` alone.
+    pub(crate) name: StoreStr,
 }
 
 impl<'h> Codegen<'h> {
@@ -379,7 +381,7 @@ pub(crate) fn codegen_function(
         prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
         prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
-        let identifiers = rename_variables(&mut reactive_fn_mut, cx.env);
+        let identifiers = rename_variables(&mut reactive_fn_mut, cx.env, None);
         let mut outlined_cx = Context::new(cx.env, cx.cg, identifiers);
         let mut codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
         // Module level. `name_to_ref` gives the `Ref` the use site's `LoadGlobal` printed.

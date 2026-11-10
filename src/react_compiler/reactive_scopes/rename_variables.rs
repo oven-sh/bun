@@ -245,17 +245,22 @@ impl ReactiveFunctionVisitor for Visitor<'_> {
 /// Renames variables for output — assigns unique names, handles SSA renames.
 /// Returns a Set of all unique variable names used.
 /// TS: `renameVariables`
+///
+/// Not in upstream (facebook/react#38100, facebook/react#37511): `own_name` is what lowering made of the name that the
+/// function expression gives itself, and the text of that name.
 pub(crate) fn rename_variables(
     func: &mut ReactiveFunction,
     env: &mut Environment,
+    own_name: Option<(DeclarationId, StoreStr)>,
 ) -> HashSet<String> {
-    rename_variables_with_parent(func, env, None)
+    rename_variables_with_parent(func, env, None, own_name)
 }
 
 fn rename_variables_with_parent(
     func: &mut ReactiveFunction,
     env: &mut Environment,
     parent_names: Option<&HashSet<StoreStr>>,
+    own_name: Option<(DeclarationId, StoreStr)>,
 ) -> HashSet<String> {
     let globals = collect_referenced_globals(&func.body, env);
 
@@ -276,6 +281,21 @@ fn rename_variables_with_parent(
                 .insert(name, DeclarationId(u32::MAX));
             scopes.names.insert(name);
         }
+    }
+    // Not in upstream: the function keeps the symbol of the parser for its own name, which is printed as `name` where
+    // no renamer runs. This binding has the name first, so no local takes it. Lint mode prints nothing.
+    if let Some((declaration_id, name)) = own_name
+        && env.output_mode != OutputMode::Lint
+    {
+        scopes
+            .seen
+            .insert(declaration_id, IdentifierName::Named(name));
+        scopes
+            .stack
+            .last_mut()
+            .unwrap()
+            .insert(name, declaration_id);
+        scopes.names.insert(name);
     }
     rename_variables_impl(func, &Visitor { env }, &mut scopes);
 

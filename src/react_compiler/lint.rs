@@ -174,7 +174,7 @@ fn run(
             was_followed.get(),
             "an error was recorded after the question"
         );
-        pipeline::run_reactive_scope_passes(&mut hir, env, context)?;
+        pipeline::run_reactive_scope_passes(&mut hir, env, context, None)?;
     }
     match env.has_errors() {
         true => Err(env.take_errors()),

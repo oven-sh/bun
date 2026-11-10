@@ -5,6 +5,7 @@ use bun_ast::LexerLog;
 use bun_ast::expr::Data;
 use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
 use bun_core::StackCheck;
+use bun_core::heap;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
 
@@ -97,7 +98,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         // hand `tape` a frozen, shared-reborrow pointer. The parser writes
         // through `tape` for the rest of the parse.
         let (tape, tape_owned) = match arena {
-            None => (Box::leak(Box::new(E::JsonTape::empty())).root_ptr(), true),
+            // `take_tape` takes the box back.
+            None => (
+                heap::release(Box::new(E::JsonTape::empty())).root_ptr(),
+                true,
+            ),
             Some(arena) => {
                 let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
                 (
@@ -134,7 +139,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if !self.tape_owned {
             return None;
         }
-        // SAFETY: `tape` came from `Box::leak` in `new` (`tape_owned`) and is taken exactly once.
+        // SAFETY: `tape` came from `heap::release` in `new` (`tape_owned`) and is taken only once.
         Some(unsafe { Box::from_raw(tape.as_ptr()) })
     }
 

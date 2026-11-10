@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,81 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+// The loader of "a.svg" gives no style sheet, so the rule is a build error and is not dropped.
+devTest("an @import of a file that is not CSS fails the stylesheet until it is removed", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `@import "./b.css";\n.m { width: 1px; }`,
+    "b.css": `@import "./a.svg";\n.b { width: 1px; }`,
+    "a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['b.css:1:1: error: Cannot import "a.svg" into a CSS file'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("b.css", `.b { width: 2px; }`);
+    });
+    await c.style(".b").width.expect.toBe("2px");
+  },
+});
+// The first build of such a stylesheet fails the page. A hot update of it must not serve the page again.
+devTest("a hot update that adds an invalid @import to a stylesheet fails its page", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `.m { width: 1px; }`,
+    "x.ts": `export default 1;`,
+  },
+  async test(dev) {
+    const status = async () => (await dev.fetch("/")).status;
+    expect(await status()).toBe(200);
+    await dev.write("main.css", `@import "./x.ts";\n.m { width: 2px; }`, { errors: null });
+    expect([await status(), await status()]).toEqual([500, 500]);
+    await dev.write("main.css", `.m { width: 3px; }`, { errors: null });
+    expect(await status()).toBe(200);
+  },
+});
+// The file that did not load has the error. Its importer has none of its own, so it is right again
+// as soon as the file loads.
+devTest("an @import of a file that a plugin fails to load is not an invalid import", {
+  framework: minimalFramework,
+  pluginFile: `
+    export default [
+      {
+        name: "foo",
+        setup(build) {
+          build.onLoad({ filter: /\\.foo$/ }, async args => {
+            const contents = await Bun.file(args.path).text();
+            if (contents.includes("broken")) throw new Error("the plugin failed");
+            return { contents, loader: "css" };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "routes/index.ts": `
+      import "../main.css";
+      export default function (req, meta) {
+        return new Response("ok");
+      }
+    `,
+    "main.css": `@import "./theme.foo";\n.m { width: 1px; }`,
+    "theme.foo": `broken`,
+  },
+  async test(dev) {
+    const failed = await dev.fetch("/");
+    // The error page carries the build errors as base64.
+    const errors = atob((await failed.text()).match(/atob\("([^"]+)"\)/)![1]);
+    expect({
+      status: failed.status,
+      pluginError: errors.includes("the plugin failed"),
+      invalidImport: errors.includes("Cannot import"),
+    }).toEqual({ status: 500, pluginError: true, invalidImport: false });
+    await dev.write("theme.foo", `.t { width: 2px; }`, { errors: null });
+    expect(await dev.fetch("/").text()).toBe("ok");
   },
 });
 

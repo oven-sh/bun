@@ -960,7 +960,7 @@ describe("esbuild-bundler", () => {
     },
     entryPoints: ["/entry.css"],
     bundleErrors: {
-      "/entry.css": ['Cannot import a ".ts" file into a CSS file'],
+      "/entry.css": ['Cannot import "entry.ts" into a CSS file'],
     },
   });
   itBundled("css/ImportJSONFromCSS", {
@@ -971,7 +971,85 @@ describe("esbuild-bundler", () => {
     },
     entryPoints: ["/entry.css"],
     bundleErrors: {
-      "/entry.css": ['Cannot import a ".json" file into a CSS file'],
+      "/entry.css": ['Cannot import "entry.json" into a CSS file'],
+    },
+  });
+
+  // An "@import" takes a style sheet only. Each of these files gets a loader that gives none.
+  const notCSS: Record<string, { file: string; contents: string | Buffer; loader?: Record<`.${string}`, any> }> = {
+    Asset: { file: "a.svg", contents: `<svg xmlns="http://www.w3.org/2000/svg"/>` },
+    UnknownExtension: { file: "theme.foo", contents: `.t { color: red }` },
+    NoExtension: { file: "what", contents: `.t { color: red }` },
+    Text: { file: "a.txt", contents: `.t { color: red }` },
+    Toml: { file: "a.toml", contents: `a = 1` },
+    Wasm: { file: "a.wasm", contents: Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]) },
+    Shell: { file: "a.sh", contents: `echo` },
+    TextLoader: { file: "a.svg", contents: `<svg xmlns="http://www.w3.org/2000/svg"/>`, loader: { ".svg": "text" } },
+  };
+  for (const [name, { file, contents, loader }] of Object.entries(notCSS)) {
+    itBundled(`css/Import${name}FromCSS`, {
+      files: {
+        "/entry.css": `@import "./${file}";\n.t { color: green }`,
+        [`/${file}`]: contents,
+      },
+      loader,
+      outdir: "/out",
+      bundleErrors: {
+        "/entry.css": [`Cannot import "${file}" into a CSS file`],
+      },
+    });
+  }
+  // One error for each "@import" rule, also with import conditions. The "url()" is valid.
+  itBundled("css/ImportAssetFromCSSWithConditions", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./a.svg" layer(x) screen;
+        @import "./a.svg" supports(display: grid);
+        .t { background: url(./a.svg) }
+      `,
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/entry.css": [`Cannot import "a.svg" into a CSS file`, `Cannot import "a.svg" into a CSS file`],
+    },
+  });
+  // The error is on the style sheet, also when JavaScript has the asset in the graph first.
+  itBundled("css/ImportAssetFromCSSThatJSImports", {
+    files: {
+      "/entry.js": `import icon from "./a.svg";\nimport "./styles.css";\nconsole.log(icon);`,
+      "/styles.css": `@import "./a.svg";\n.t { color: green }`,
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.css": [`Cannot import "a.svg" into a CSS file`],
+    },
+  });
+  // A file with another extension is a style sheet when it has the "css" loader.
+  itBundled("css/ImportUnknownExtensionWithCSSLoaderFromCSS", {
+    files: {
+      "/entry.css": `@import "./theme.foo";\n.t { color: green }`,
+      "/theme.foo": `.f { color: red }`,
+    },
+    loader: { ".foo": "css" },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(".f{color:red}.t{color:green}\n");
+    },
+  });
+  // An external "@import" is not loaded, so it stays.
+  itBundled("css/ImportExternalAssetFromCSS", {
+    files: {
+      "/entry.css": `@import "./a.svg";\n.t { color: green }`,
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    },
+    external: ["./a.svg"],
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`@import "./a.svg";.t{color:green}\n`);
     },
   });
   itBundled("css/MissingImportURLInCSS", {
@@ -2736,30 +2814,28 @@ describe("bundler", () => {
       },
       out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}`,
     },
-    // An import that does not load a style sheet still declares its layer, each time.
-    LayersOfImportsOfAnAsset: {
+    // An import that closes a cycle does not load a style sheet. It still declares its layer, each time.
+    LayersOfImportsOfACycle: {
       files: {
         "/entry.css": /* css */ `
-          @import "./a.svg" layer(x);
-          @import "./a.svg" layer(y);
+          @import "./entry.css" layer(x);
+          @import "./entry.css" layer(y);
           @import "./c.css" layer(y);
           @import "./b.css" layer(x);
         `,
-        "/a.svg": `<svg/>`,
         "/b.css": `.t { color: red }`,
         "/c.css": `.t { color: blue }`,
       },
       out: "@layer x;@layer y{.t{color:#00f}}@layer x{.t{color:red}}",
     },
-    // An asset under no layer adds nothing, so the statement stays ahead of the external import.
-    ImportOfAnAssetAheadOfAStatement: {
+    // Such an import under no layer adds nothing, so the statement stays ahead of the external import.
+    ImportOfACycleAheadOfAStatement: {
       files: {
         "/entry.css": /* css */ `
-          @import "./a.svg" screen;
-          @import "./a.svg" screen;
+          @import "./entry.css" screen;
+          @import "./entry.css" screen;
           @import "./a.css";
         `,
-        "/a.svg": `<svg/>`,
         "/a.css": /* css */ `
           @layer x;
           @import "https://example.com/e.css" layer(y);
@@ -2768,21 +2844,6 @@ describe("bundler", () => {
       out: `@layer x;@import "https://example.com/e.css" layer(y);`,
     },
     // Only "z" is out of its place, and nothing else declares it.
-    ConditionalImportOfAnAssetAheadOfAStatement: {
-      files: {
-        "/entry.css": /* css */ `
-          @import "./a.svg" layer(z) screen;
-          @import "./a.css";
-        `,
-        "/a.svg": `<svg/>`,
-        "/a.css": /* css */ `
-          @layer x;
-          @import "https://example.com/e.css" layer(y);
-          .a { c: d }
-        `,
-      },
-      out: `@layer x;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
-    },
     ConditionalImportOfACycleAheadOfAStatement: {
       files: {
         "/entry.css": /* css */ `

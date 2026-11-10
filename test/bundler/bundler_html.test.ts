@@ -31,6 +31,27 @@ describe("bundler", () => {
     },
   });
 
+  // A linked style sheet gets the same check as a CSS entry point.
+  itBundled("html/css-import-of-a-file-that-is-not-css", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body></body>
+</html>`,
+      "/styles.css": `@import "./a.svg";\nbody { background-color: red; }`,
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/styles.css": ['Cannot import "a.svg" into a CSS file'],
+    },
+  });
+
   // Test relative paths without "./" in script src
   itBundled("html/implicit-relative-paths", {
     outdir: "out/",

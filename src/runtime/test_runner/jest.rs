@@ -700,8 +700,8 @@ pub(crate) mod on_unhandled_rejection {
                 return;
             }
             if owner.is_int32() && Jest::runner().is_some_and(|runner| runner.rejection_owner != owner.as_int32()) {
-                // Another callback has started since this promise was rejected. It isn't that callback's, and nothing ends.
-                buntest.on_uncaught_exception(global_object, Some(rejection), true, &RefDataValue::Start);
+                // Another callback has started since this promise was rejected.
+                buntest.on_rejection_left(global_object, rejection, owner.as_int32());
                 return;
             }
             // An error that is reported as it happens, or a promise that was rejected under the callback that runs now.

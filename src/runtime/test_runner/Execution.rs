@@ -179,6 +179,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) failure: Option<test_command::TestFailure>,
     /// Failures from earlier attempts, for the JUnit report.
     pub(crate) earlier_failures: Vec<test_command::TestFailure>,
+    /// The rejection owner of a test callback of this test that failed. A promise rejected under it is that attempt's error.
+    pub(crate) failed_owner: Option<i32>,
 }
 
 impl ExecutionSequence {
@@ -208,6 +210,7 @@ impl ExecutionSequence {
             counted_snapshots: Vec::new(),
             failure: None,
             earlier_failures: Vec::new(),
+            failed_owner: None,
         }
     }
 
@@ -656,6 +659,12 @@ impl Execution {
             sequence.executing = false;
             if sequence.maybe_skip {
                 sequence.maybe_skip = false;
+                if Some(entry_ptr) == sequence.test_entry && entry.base.mode == ScopeMode::Normal {
+                    // SAFETY: a field that neither `sequence` nor `group_ptr` points into. The reporter outlives every BunTest.
+                    let reporter = unsafe { (*buntest.as_ptr()).reporter };
+                    // SAFETY: single-threaded, and no `&mut` to the reporter is live.
+                    sequence.failed_owner = reporter.map(|reporter| unsafe { reporter.as_ref() }.jest.rejection_owner);
+                }
                 sequence.active_entry = match entry.failure_skip_past {
                     // SAFETY: arena-owned entry
                     Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
@@ -912,6 +921,7 @@ impl Execution {
             attempt: sequence.attempt.wrapping_add(1),
             context: sequence.context.take(),
             earlier_failures: core::mem::take(&mut sequence.earlier_failures),
+            failed_owner: sequence.failed_owner,
             ..ExecutionSequence::init(
                 sequence.first_entry,
                 sequence.test_entry,
@@ -971,6 +981,12 @@ impl Execution {
                 HandleUncaughtExceptionResult::ShowHandledError
             }
         }
+    }
+
+    /// The sequence that `current` names, if `owner` is the rejection owner of a test callback of it that failed.
+    pub(crate) fn failed_under(&mut self, current: &RefDataValue, owner: i32) -> Option<&mut ExecutionSequence> {
+        let (sequence, _) = self.get_current_and_valid_execution_sequence(current)?;
+        (sequence.failed_owner == Some(owner)).then_some(sequence)
     }
 
     pub(crate) fn record_error(

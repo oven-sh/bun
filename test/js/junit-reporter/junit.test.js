@@ -1240,6 +1240,51 @@ describe("only block", () => {
       },
     );
 
+    // A test callback that failed takes what it left with it, while its test still runs.
+    it.each([[[]], [["--parallel=2", "--parallel-delay=600000"]]])(
+      "puts a promise that a failed test callback rejected on the failure of that attempt %j",
+      async args => {
+        using dir = tempDir("junit-left-by-an-attempt", {
+          "a.test.js": `
+            let attempt = 0;
+            const fails = async () => {
+              await new Promise((resolve, reject) => {
+                setTimeout(() => {
+                  Promise.reject(new Error("left"));
+                  reject(new Error("own"));
+                });
+              });
+            };
+            test("flaky", () => (attempt++ ? undefined : fails()), { retry: 1 });
+            describe("with a hook", () => {
+              afterEach(() => {});
+              test("fails", fails);
+            });
+          `,
+          "b.test.js": `test("passes", () => {});`,
+        });
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const exitCode = await proc.exited;
+        const xml = await file(join(String(dir), "junit.xml")).text();
+        const errors = [...xml.matchAll(/<(failure|flakyFailure) [^>]*>[^<]*/g)].map(([element]) =>
+          element.match(/<\w+ [^>]*>|Error: \w+/g),
+        );
+        expect({ cases: xml.match(/<testcase name="[^"]*"/g), errors }).toEqual({
+          cases: [`<testcase name="flaky"`, `<testcase name="fails"`, `<testcase name="passes"`],
+          errors: [
+            [`<flakyFailure type="Error" message="own" uncaught="true">`, "Error: own", "Error: left"],
+            [`<failure type="Error" message="own" uncaught="true">`, "Error: own", "Error: left"],
+          ],
+        });
+        expect(exitCode).toBe(1);
+      },
+    );
+
     it("rejects any other value", async () => {
       const [flag, bunfig] = await Promise.all([
         report([...junit, "--reporter-junit-suites=deep"]),

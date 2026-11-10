@@ -1647,26 +1647,8 @@ impl BunTest {
             Output::flush();
         }
 
-        let vm = global_this.bun_vm().as_mut();
-        if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::TestFailure::record_cb);
-            vm.on_print_error_zig_exception_ctx = failure_ctx;
-        }
-        print_error(vm, global_this, exception, None);
-        if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception = None;
-            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
-            // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
-            let slot: &mut Option<crate::cli::test_command::TestFailure> =
-                unsafe { &mut *failure_ctx.cast() };
-            crate::cli::test_command::TestFailure::record_log_message(slot, exception);
-            if let Some(failure) = slot
-                && handle_status == HandleUncaughtExceptionResult::ShowHandledError
-            {
-                failure.uncaught |= self.is_reporting_uncaught;
-            }
-        }
+        let uncaught = self.is_reporting_uncaught && handle_status == HandleUncaughtExceptionResult::ShowHandledError;
+        print_error_into(global_this, exception, failure_ctx.cast(), uncaught);
         if let (Some(failure), Some(reporter)) = (unhandled_failure, self.reporter) {
             // SAFETY: as above.
             unsafe { &mut *reporter.as_ptr() }.record_unhandled_error(self.file_id, failure);
@@ -1681,6 +1663,57 @@ impl BunTest {
         }
 
         Output::flush();
+    }
+
+    /// Reports a promise that was rejected under `owner`, before the callback that runs now started.
+    #[optimize(size)]
+    pub(crate) fn on_rejection_left(&mut self, global_this: &JSGlobalObject, rejection: JSValue, owner: i32) {
+        let current = self.get_current_state_data();
+        let Some(sequence) = self.execution.failed_under(&current, owner).map(NonNull::from) else {
+            // It isn't the callback's that runs now, and nothing ends.
+            return self.on_uncaught_exception(global_this, Some(rejection), true, &RefDataValue::Start);
+        };
+        // SAFETY: points into `execution.sequences`, a boxed slice that lives until the file is done.
+        let sequence = unsafe { &mut *sequence.as_ptr() };
+        // SAFETY: the reporter outlives every BunTest; single-threaded, and no `&mut` to it is live.
+        let junit = self.reporter.is_some_and(|reporter| unsafe { reporter.as_ref() }.jest.test_options.reporters.junit);
+        // The attempt that failed is this one, or the one that `save_attempt_failure` saved last.
+        let mut earlier = if sequence.result.is_fail() { None } else { sequence.earlier_failures.pop() };
+        let failure = if !junit {
+            core::ptr::null_mut()
+        } else if earlier.is_some() {
+            &raw mut earlier
+        } else {
+            &raw mut sequence.failure
+        };
+        self.bun_test_root.on_before_print();
+        print_error_into(global_this, rejection, failure, true);
+        sequence.earlier_failures.extend(earlier);
+        Output::flush();
+    }
+}
+
+/// Prints `error`, and folds it into the JUnit failure at `failure` unless that is null.
+fn print_error_into(
+    global_this: &JSGlobalObject,
+    error: JSValue,
+    failure: *mut Option<crate::cli::test_command::TestFailure>,
+    uncaught: bool,
+) {
+    let vm = global_this.bun_vm().as_mut();
+    if failure.is_null() {
+        return print_error(vm, global_this, error, None);
+    }
+    vm.on_print_error_zig_exception = Some(crate::cli::test_command::TestFailure::record_cb);
+    vm.on_print_error_zig_exception_ctx = failure.cast();
+    print_error(vm, global_this, error, None);
+    vm.on_print_error_zig_exception = None;
+    vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+    // SAFETY: the caller's `Option<TestFailure>`, and the callback is done with it.
+    let slot = unsafe { &mut *failure };
+    crate::cli::test_command::TestFailure::record_log_message(slot, error);
+    if let Some(failure) = slot {
+        failure.uncaught |= uncaught;
     }
 }
 

@@ -3380,7 +3380,7 @@ describe.concurrent("the next test doesn't start inside the call that ended the 
 // `bun test` reports a rejected promise that nothing handled after the callback that rejected it has returned. By then
 // the runner can have started the next hook or test. The queue of rejected promises keeps which callback of the runner
 // had started last when each promise was rejected, and a callback that started later isn't charged: the error is one
-// between tests.
+// between tests, or one more error of the failed attempt whose test callback rejected it.
 describe.concurrent("a promise that was rejected before the callback that runs now started", () => {
   const results = (stderr: string) =>
     stderr.match(/^\((pass|fail|skip|todo)\) [\w >():,]+/gm)?.map(line => line.trimEnd());
@@ -3857,24 +3857,79 @@ describe.concurrent("a promise that was rejected before the callback that runs n
     });
   });
 
-  describe("isn't charged to the next attempt or run of the test that rejected it", () => {
-    test.each([1, 2])("with { retry: %d }", async retry => {
+  // A test callback that failed takes what it left with it while its test still runs: the rejection is one more error of
+  // that attempt, and a retry forgives it with the attempt.
+  describe("is an error of the attempt that rejected it, when the test callback of that attempt failed", () => {
+    const flaky = (options = "") => `
+      let attempt = 0;
+      test("flaky", async () => {
+        attempt++;
+        await new Promise<void>((resolve, reject) => {
+          setTimeout(() => {
+            if (attempt > 1) return resolve();
+            Promise.reject(new Error("left"));
+            reject(new Error("fails once"));
+          });
+        });
+      }${options});
+    `;
+    const forgiven = {
+      results: ["(pass) flaky (attempt 2)"],
+      errors: ["error: fails once", "error: left"],
+      betweenTests: 0,
+      exitCode: 0,
+    };
+
+    test.each([1, 2])("and { retry: %d } starts the next attempt", async retry => {
+      expect(await run(flaky(`, { retry: ${retry} }`))).toEqual(forgiven);
+    });
+
+    test("and --retry starts the next attempt", async () => {
+      expect(await run(flaky(), "--retry=1")).toEqual(forgiven);
+    });
+
+    test("and an afterEach() hook of that attempt starts", async () => {
+      expect(await run(`afterEach(() => {});` + flaky(", { retry: 1 }"))).toEqual(forgiven);
+    });
+
+    test("and an afterEach() hook of a test without retry starts", async () => {
       const file = `
-        let attempt = 0;
-        test("flaky", async () => {
-          attempt++;
+        afterEach(() => {});
+        test("fails", async () => {
           await new Promise<void>((resolve, reject) => {
             setTimeout(() => {
-              if (attempt > 1) return resolve();
               Promise.reject(new Error("left"));
-              reject(new Error("fails once"));
+              reject(new Error("own"));
             });
           });
-        }, { retry: ${retry} });
+        });
+        ${next}
       `;
       expect(await run(file)).toEqual({
-        results: ["(pass) flaky (attempt 2)"],
-        errors: ["error: fails once", "error: left"],
+        results: ["(fail) fails", "(pass) next"],
+        errors: ["error: own", "error: left"],
+        betweenTests: 0,
+        exitCode: 1,
+      });
+    });
+  });
+
+  describe("stays an error between tests", () => {
+    test("when the test that failed and rejected it has ended", async () => {
+      const file = `
+        test("fails", async () => {
+          await new Promise<void>((resolve, reject) => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              reject(new Error("own"));
+            });
+          });
+        });
+        ${nextWithRetry}
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(fail) fails", "(pass) next"],
+        errors: ["error: own", "error: left"],
         betweenTests: 1,
         exitCode: 1,
       });
@@ -3899,6 +3954,29 @@ describe.concurrent("a promise that was rejected before the callback that runs n
       });
     });
 
+    // A hook that fails also fails the attempt, but what a hook leaves was never an error of its test.
+    test("with { retry }, when a beforeEach() hook that failed rejected it", async () => {
+      const file = `
+        let attempt = 0;
+        beforeEach(async () => {
+          if (++attempt > 1) return;
+          await new Promise<void>((resolve, reject) => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              reject(new Error("fails once"));
+            });
+          });
+        });
+        test("flaky", () => {}, { retry: 1 });
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) flaky (attempt 2)"],
+        errors: ["error: fails once", "error: left"],
+        betweenTests: 1,
+        exitCode: 1,
+      });
+    });
+
     test("with { repeats }", async () => {
       const file = `
         let run = 0;
@@ -3908,6 +3986,22 @@ describe.concurrent("a promise that was rejected before the callback that runs n
         }, { repeats: 1 });
       `;
       expect(await run(file)).toEqual({ results: ["(pass) repeats (run 2)"], ...isBetweenTests });
+    });
+
+    // The error that test.fails() expects is the one of its own callback. Another one can't pass with it.
+    test("when the callback of a test.fails() test rejected it", async () => {
+      const file = `
+        afterEach(() => {});
+        test.fails("throws", async () => {
+          await new Promise<void>((resolve, reject) => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              reject(new Error("expected"));
+            });
+          });
+        });
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) throws"], ...isBetweenTests });
     });
   });
 

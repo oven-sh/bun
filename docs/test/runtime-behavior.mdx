@@ -217,6 +217,8 @@ test("test 2", () => {});
 
 The stack trace of the error shows which test rejected the promise. To make the rejection fail that test, `await` the promise in the test.
 
+If the test function fails in the same callback, the rejection is one more error of that failed attempt while the test still runs: in its `afterEach` hooks, or in its next attempt when the test has [`retry`](/test/configuration#retry). An attempt that passes later then passes the test.
+
 ### Custom Error Handling
 
 You can set up custom error handlers in your test setup:

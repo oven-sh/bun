@@ -27,6 +27,8 @@ public:
     void release(JSC::JSCell* owner, size_t mark);
     // Right before a drained promise is reported as unhandled.
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
+    // Whether a promise rejected since the last drain still has no handler. JS thread only.
+    bool hasUnhandled() const;
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
 

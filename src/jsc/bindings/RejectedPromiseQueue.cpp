@@ -35,6 +35,15 @@ void RejectedPromiseQueue::markReported(JSC::JSGlobalObject* owner, JSC::JSPromi
     reported->add(vm, promise);
 }
 
+bool RejectedPromiseQueue::hasUnhandled() const
+{
+    for (auto& entry : m_entries) {
+        if (!isHandled(entry))
+            return true;
+    }
+    return false;
+}
+
 void RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
 {
     WTF::Locker locker { owner->cellLock() };

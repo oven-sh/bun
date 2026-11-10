@@ -1109,8 +1109,7 @@ impl BunTest {
     }
 
     /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
-    /// The microtasks have run by now, so a matcher that failed among them gets its verdict first. No task stands
-    /// behind a verdict: `ExpectDeferred::run_again` only sets `has_pending_test_step`.
+    /// A matcher that failed among the microtasks gets its verdict first. Only `has_pending_test_step` leads here for it, no task does.
     #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
         let Some(strong) = clone_active_strong() else {

@@ -566,9 +566,9 @@ test("promises", async () => {
 
 If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
 
-The failure fails the test only if nothing handles the matcher's promise by the time the promise callbacks and `process.nextTick()` callbacks that follow the failure have run. So an `await` or a `.catch()` a few promise callbacks after the failure still handles it. A handler that you add later, such as after a timer, still runs, but the test has already failed.
+Bun fails the test for such a failure only if nothing handles the matcher's promise by the time the promise callbacks and `process.nextTick()` callbacks that follow the failure have run. An `await` or a `.catch()` a few promise callbacks after the failure still handles it, and gets the failure as a rejection. An `await` throws that rejection, so the test still fails unless you catch it. A handler that you add later, such as after a timer, still runs, but the test has already failed.
 
-A `.then()` or a `.finally()` with no rejection handler also counts as a handler. The promise that it returns rejects with the failure, so `await` that promise or return it from the test. Otherwise Bun reports the failure like any other unhandled rejection, which can be while a later test runs.
+A `.then()` or a `.finally()` with no rejection handler passes the failure on to the promise that it returns, so `await` that promise or return it from the test. Otherwise nothing handles the failure. Bun then fails the test for it, or reports it like any other unhandled rejection, which can be while a later test runs.
 
 In a `"bun:test"` test, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. In a `"vitest"` test, the matcher always returns a promise.
 

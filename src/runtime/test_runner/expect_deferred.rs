@@ -51,6 +51,7 @@ unsafe extern "C" {
         promise: JSValue,
         error: JSValue,
     );
+    safe fn ExpectDeferred__isStillUnhandled(global: &JSGlobalObject, promise: JSValue) -> bool;
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
         global: &JSGlobalObject,
@@ -556,8 +557,7 @@ pub(crate) struct ExpectDeferred {
     held: JsCell<Option<RunningEntry>>,
     replays: Cell<u32>,
     is_abandoned: Cell<bool>,
-    /// The matcher failed with no reaction on its promise, which is rejected. `held` stays until
-    /// `take_due_verdicts` has asked again.
+    /// The matcher failed with no reaction on its promise, which is rejected. `held` stays until `take_due_verdicts` asks again.
     verdict_due: Cell<bool>,
 }
 
@@ -727,15 +727,13 @@ impl ExpectDeferred {
         match held {
             Some(held) if !ExpectDeferred__isHandled(promise) => {
                 let vm = global.bun_vm();
-                // Native code that continues a disposed `Bun.ModuleGraph` settles no promise, so no reaction can
-                // take this failure later.
+                // Native code that continues a disposed `Bun.ModuleGraph` settles no promise, so no reaction can take the failure later.
                 let Some(buntest) = held.buntest.upgrade().filter(|_| !vm.reports_to_nobody())
                 else {
                     held.release(global, Some(error));
                     return settle.reject_as_handled(global, error);
                 };
-                // No reaction yet is not the verdict: an `await` of this promise can be a few promise jobs away.
-                // So the promise rejects now, and `take_due_verdicts` asks again once the microtasks have run.
+                // No reaction yet is not the verdict: an `await` can be a few promise jobs away, so `take_due_verdicts` asks again after them.
                 this.held.set(Some(held));
                 this.verdict_due.set(true);
                 buntest.get().unclaimed.verdict_due = true;
@@ -752,8 +750,7 @@ impl ExpectDeferred {
         }
     }
 
-    /// Takes the verdict of each call that failed with no reaction on its promise, in call order. The runner calls
-    /// it once the microtasks queued at that moment have run, with no script on the stack.
+    /// Reports each failed call whose failure nothing handles by now, in call order. Runs after the microtasks, with no script on the stack.
     #[cold]
     pub(crate) fn take_due_verdicts(buntest: &BunTestPtr, global: &JSGlobalObject) {
         let mut index = 0;
@@ -773,9 +770,9 @@ impl ExpectDeferred {
             let Some(held) = this.held.take() else {
                 continue;
             };
-            // With a reaction by now, the failure is that reaction's to handle or to pass on.
+            // A reaction takes the failure, unless a rejected promise has no handler: `.finally()` and the like only pass a rejection on.
             let failure = js::promise_get_cached(deferred)
-                .filter(|&promise| !ExpectDeferred__isHandled(promise))
+                .filter(|&promise| ExpectDeferred__isStillUnhandled(global, promise))
                 .and_then(JSValue::as_promise)
                 .map(|promise| JSPromise::opaque_mut(promise).result(global.vm()));
             held.release(global, failure);

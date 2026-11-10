@@ -167,6 +167,12 @@ expectType(redis.zrangebyscore("zset", 0, 10, "LIMIT", anyOption, anyOption, "WI
 redis.zrange("zset", 0, -1, anyOption, null);
 // @ts-expect-error - ZREVRANGE takes no numeric option, also beside an option typed `any`
 redis.zrevrange("zset", 0, -1, anyOption, 5);
+// A spread of a value typed `any` gives TypeScript no options to read: the reply stays typed as members
+expectType(redis.zrange("zset", 0, -1, ...anyOption)).is<Promise<string[]>>();
+expectType(redis.zrevrange("zset", 0, -1, ...anyOption)).is<Promise<string[]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, ...anyOption)).is<Promise<string[]>>();
+expectType(redis.zrevrangebyscore("zset", 10, 0, ...anyOption)).is<Promise<string[]>>();
+expectType(redis.zrange("zset", 0, -1, ...anyOption, "WITHSCORES")).is<Promise<[string, number][]>>();
 // An option that may or may not be the literal gives either reply
 expectType(redis.zrange("zset", 0, -1, ...(withScores ? ["WITHSCORES"] : []))).is<
   Promise<string[] | [string, number][]>

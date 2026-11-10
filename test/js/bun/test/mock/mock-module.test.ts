@@ -2234,10 +2234,23 @@ test.concurrent(
       {
         // "await" keeps this call out of tail position, so the helper's frame is the one below the arrow's.
         "helpers/run.ts": `export const run = async callback => await callback();`,
+        "helpers/mock.ts": `
+          import { mock } from "bun:test";
+          export const mockElsewhere = factory => mock.module("./elsewhere", factory);
+          export const forward = (path, factory) => mock.module(path, factory);
+        `,
         "helpers/where.ts": `export default "beside the helper";`,
+        "helpers/there.ts": `export default "beside the helper";`,
+        "helpers/elsewhere.ts": `export default "beside the helper";`,
+        "helpers/forwarded.ts": `export default "beside the helper";`,
         "tests/where.ts": `export default "beside the test file";`,
+        "tests/there.ts": `export default "beside the test file";`,
+        "tests/elsewhere.ts": `export default "beside the test file";`,
+        "tests/forwarded.ts": `export default "beside the test file";`,
         "tests/path.test.ts": `
+        import { mock } from "bun:test";
         import { expect, test, vi } from "vitest";
+        import { forward, mockElsewhere } from "../helpers/mock";
         import { run } from "../helpers/run";
 
         test("vi.importActual()", async () => {
@@ -2261,12 +2274,155 @@ test.concurrent(
           await run(() => vi.doMock("./where", () => ({ default: "mock" })));
           expect([(await import("./where")).default, (await import("../helpers/where")).default]).toEqual(["mock", "beside the helper"]);
         });
+
+        test("mock.module()", async () => {
+          await run(() => mock.module("./there", () => ({ default: "mock" })));
+          expect([(await import("./there")).default, (await import("../helpers/there")).default]).toEqual(["mock", "beside the helper"]);
+        });
+
+        test("mock.module() with a path that a function of another file wrote", async () => {
+          mockElsewhere(() => ({ default: "mock" }));
+          expect([(await import("./elsewhere")).default, (await import("../helpers/elsewhere")).default]).toEqual(["beside the test file", "mock"]);
+        });
+
+        // The function got the path as a parameter, so its call stays a tail call and the path is its caller's.
+        test("mock.module() with a path that its caller hands to a function of another file", async () => {
+          forward("./forwarded", () => ({ default: "mock" }));
+          expect([(await import("./forwarded")).default, (await import("../helpers/forwarded")).default]).toEqual(["mock", "beside the helper"]);
+        });
       `,
       },
-      4,
+      7,
     );
   },
 );
+
+test.concurrent("mock.module() that a function ends in updates the modules that are already loaded", async () => {
+  // Each test file mocks "./dep" and "pkg" with calls in tail position, where JavaScriptCore drops the frame of the caller.
+  const testFile = (lastCalls: string, from = `import { mock } from "bun:test";`) => `
+    import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+    ${from}
+    import { from } from "./dep";
+    import { from as fromPackage } from "pkg";
+
+    const loaded = [from(), fromPackage()];
+    const mocked = () => ({ from: () => "mock" });
+    ${lastCalls}
+
+    test("both modules are mocked", () => {
+      expect(loaded).toEqual(["real", "real"]);
+      expect([from(), fromPackage()]).toEqual(["mock", "mock"]);
+    });
+  `;
+  const arrowsInHooks = `
+    beforeEach(() => mock.module("./dep", mocked));
+    beforeEach(() => mock.module("pkg", mocked));
+  `;
+  await expectFixturesToPass(
+    {
+      "dep.ts": `export const from = () => "real";`,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", type: "module", main: "./index.js" }),
+      "node_modules/pkg/index.js": `export const from = () => "real";`,
+      "arrow-in-hook.test.ts": testFile(arrowsInHooks),
+      "return-in-hook.test.ts": testFile(`
+        beforeAll(function () {
+          return mock.module("./dep", mocked);
+        });
+        beforeAll(() => {
+          return mock.module("pkg", mocked);
+        });
+      `),
+      "arrow-in-test.test.ts": testFile(`
+        test("a local module", () => mock.module("./dep", mocked));
+        test("a package", () => mock.module("pkg", mocked));
+      `),
+      "return-in-test.test.ts": testFile(`
+        test("a local module", () => {
+          return mock.module("./dep", mocked);
+        });
+        test("a package", function () {
+          return mock.module("pkg", mocked);
+        });
+      `),
+      "in-describe.test.ts": testFile(`
+        describe("a local module", () => mock.module("./dep", mocked));
+        describe("a package", () => {
+          return mock.module("pkg", mocked);
+        });
+      `),
+      "in-callback.test.ts": testFile(`
+        beforeAll(async () => {
+          await Promise.resolve().then(() => mock.module("./dep", mocked));
+          await new Promise(resolve =>
+            setImmediate(() => {
+              resolve();
+              return mock.module("pkg", mocked);
+            }),
+          );
+        });
+      `),
+      "after-operator.test.ts": testFile(`
+        const enabled = () => true;
+        beforeEach(() => (enabled() ? mock.module("./dep", mocked) : undefined));
+        beforeEach(() => enabled() && mock.module("pkg", mocked));
+      `),
+      // The transpiler would inline the variable into the "return".
+      "in-returned-variable.test.ts": testFile(`
+        beforeEach(() => {
+          const result = mock.module("./dep", mocked);
+          return result;
+        });
+        beforeEach(() => {
+          const result = mock.module("pkg", mocked);
+          return result;
+        });
+      `),
+      // The hook returns the promise of mock.module(), and the runner waits for it.
+      "pending-factory.test.ts": testFile(`
+        const later = async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          return mocked();
+        };
+        beforeAll(() => mock.module("./dep", later));
+        beforeAll(() => mock.module("pkg", later));
+      `),
+      "imported-under-another-name.test.ts": testFile(
+        `
+        beforeEach(() => mockOfBun.module("./dep", mocked));
+        beforeEach(() => mockOfBun.module("pkg", mocked));
+        `,
+        `import { mock as mockOfBun } from "bun:test";`,
+      ),
+      "imported-from-vitest.test.ts": testFile(arrowsInHooks, `import { mock } from "vitest";`),
+      "imported-from-jest-globals.test.ts": testFile(arrowsInHooks, `import { mock } from "@jest/globals";`),
+      // The helper made a mock, so the next test file that imports it runs it again.
+      "helpers/hook.ts": `
+        import { beforeEach, mock } from "bun:test";
+        const mocked = () => ({ from: () => "mock" });
+        beforeEach(() => mock.module("../dep", mocked));
+        beforeEach(() => mock.module("pkg", mocked));
+      `,
+      "hook-of-helper-1.test.ts": testFile("", `import "./helpers/hook";`),
+      "hook-of-helper-2.test.ts": testFile("", `import "./helpers/hook";`),
+      // A million nested calls only return where each of them is a tail call.
+      "other-receivers.test.ts": `
+        import { expect, mock, test } from "bun:test";
+
+        test("module() of another object is still a tail call", () => {
+          const counter = { module: left => (left === 0 ? "done" : counter.module(left - 1)) };
+          expect(counter.module(1_000_000)).toBe("done");
+        });
+
+        test("module() of a parameter with the name of the import is still a tail call", () => {
+          const counter = { module: (left, mock) => (left === 0 ? "done" : mock.module(left - 1, mock)) };
+          expect(counter.module(1_000_000, counter)).toBe("done");
+          expect(mock).toBeFunction();
+        });
+      `,
+    },
+    20,
+  );
+});
 
 test.concurrent.each(["bun:test", "vitest"])(
   "vi.doMock() from %s leaves a module that is already loaded as it is",

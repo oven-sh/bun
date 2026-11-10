@@ -116,6 +116,18 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
+    /// Out of line, so that an import of any other module doesn't pay for it.
+    #[cold]
+    pub(crate) fn record_imports_of_test_module(&mut self, import: &S::Import) {
+        for item in import.items.iter() {
+            if let Some(api) = MockApi::from_export_name(item.alias.slice()) {
+                self.imported_mock_apis.insert(item.name.ref_, api);
+            } else if item.alias.slice() == b"mock" {
+                self.mock_imports.push(item.name.ref_);
+            }
+        }
+    }
+
     #[optimize(size)]
     fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
         if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
@@ -403,8 +415,18 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let ExprData::EDot(dot) = call.target.data else {
             return false;
         };
+        let receiver = || match dot.target.data {
+            ExprData::EIdentifier(id) => Some(id.ref_),
+            ExprData::EImportIdentifier(id) => Some(id.ref_),
+            _ => None,
+        };
         let api = match dot.name.slice() {
             b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => return true,
+            b"module" => {
+                let path = call.args.slice().first();
+                return receiver().is_some_and(|mock| self.mock_imports.contains(&mock))
+                    && !path.is_some_and(|path| self.is_parameter_of_its_function(path));
+            }
             b"mock" | b"doMock" | b"unmock" => None,
             b"doUnmock" | b"importActual" | b"importMock" => Some(MockApi::Vi),
             b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => {
@@ -412,17 +434,41 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
             _ => return false,
         };
-        let found = match dot.target.data {
-            ExprData::EIdentifier(id) => self.mock_api(id.ref_),
-            ExprData::EImportIdentifier(id) => self.mock_api(id.ref_),
-            _ => None,
-        };
+        let found = receiver().and_then(|receiver| self.mock_api(receiver));
         match (api, found) {
             (_, None) => false,
             (None, Some(_)) => true,
             (Some(MockApi::Vi), Some(found)) => matches!(found, MockApi::Vi),
             (Some(MockApi::Jest), Some(found)) => matches!(found, MockApi::Jest),
         }
+    }
+
+    /// Whether `argument` is a parameter of the function that is being visited, or a spread of one. Its caller wrote
+    /// the path then. A tail call resolves the path from that caller, and shims that forward to `mock.module()` rely on it.
+    fn is_parameter_of_its_function(&self, argument: &Expr) -> bool {
+        let value = match &argument.data {
+            ExprData::ESpread(spread) => &spread.value,
+            _ => argument,
+        };
+        let ExprData::EIdentifier(id) = value.data else {
+            return false;
+        };
+        let symbol = &self.symbols[id.ref_.inner_index() as usize];
+        let mut scope = Some(self.current_scope);
+        while let Some(at) = scope {
+            if at.kind == js_ast::scope::Kind::FunctionArgs {
+                // A `var` of the body that redeclares a parameter links to it.
+                return at
+                    .members
+                    .get(symbol.original_name.slice())
+                    .is_some_and(|parameter| {
+                        (parameter.ref_.eql(id.ref_) || parameter.ref_.eql(symbol.link.get()))
+                            && symbol.kind == js_ast::symbol::Kind::Hoisted
+                    });
+            }
+            scope = at.parent;
+        }
+        false
     }
 
     fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {

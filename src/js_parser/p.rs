@@ -467,6 +467,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) jest: Jest,
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// The names that imports bind to `mock` of a test module. It is no global and nothing of it is hoisted, so it is no `MockApi`.
+    pub(crate) mock_imports: Vec<Ref>,
     /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
     pub(crate) chai_imports: crate::parser::ChaiImports,
     /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
@@ -4501,11 +4503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if self.options.features.inject_jest_globals && is_test_module(path.text) {
-            for item in stmt.items.iter() {
-                if let Some(api) = MockApi::from_export_name(item.alias.slice()) {
-                    self.imported_mock_apis.insert(item.name.ref_, api);
-                }
-            }
+            self.record_imports_of_test_module(&stmt);
         }
 
         // Track the items for this namespace
@@ -9801,6 +9799,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),
+            mock_imports: Vec::new(),
             chai_imports: Default::default(),
             did_apply_test_feature: false,
             has_hoisted_mock_stmt: false,

@@ -23,7 +23,7 @@ use crate::fold::{
     Constant, Decisions, FoldedValue, find_export_of_module, find_members_below_module,
 };
 use crate::hir::{
-    BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, IdList,
+    BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, FnId, IdList,
     ImportedFileChanger, MemberKey, NodeData, PropId, PropKey, PropKind, UnOp,
 };
 use crate::util::{FxHashSet, SharedSort};
@@ -375,7 +375,58 @@ fn is_name_that_transpiler_knows(
     }
 }
 
-fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
+/// The function whose body holds `e`, with no other function in between.
+fn find_function_around(bound: &Bound<'_>, e: ExprId) -> Option<FnId> {
+    let mut parent = bound.parent_of_expr(e);
+    loop {
+        parent = match parent {
+            Parent::Expr(above) if above.is_some() => bound.parent_of_expr(above),
+            Parent::Stmt(above) if above.is_some() => bound.parent_of_stmt(above),
+            Parent::VarInit(declaration) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+            Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+            Parent::FnBody(function) => return Some(function),
+            _ => return None,
+        };
+    }
+}
+
+/// Whether `argument` is a parameter of the function whose body holds `call`, or a spread of one. The transpiler
+/// leaves `mock.module()` a tail call there: the caller of that function wrote the path.
+fn is_parameter_of_its_function(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    call: ExprId,
+    argument: ExprId,
+) -> bool {
+    let argument = match expr_kind(hir, argument) {
+        Some(ExprKind::Spread(value)) => value,
+        _ => argument,
+    };
+    let argument = hir.skip_type_assertions(argument);
+    let Some(ExprKind::Ident(_)) = expr_kind(hir, argument) else {
+        return false;
+    };
+    let Binding::Symbol(symbol) = bound.binding(argument) else {
+        return false;
+    };
+    let Some(function) = find_function_around(bound, call) else {
+        return false;
+    };
+    bound.symbol(symbol).decls.iter().any(|&declaration| {
+        let Decl::Param(mut pattern) = declaration else {
+            return false;
+        };
+        loop {
+            pattern = match bound.pat_parent[pattern.idx()] {
+                PatParent::Param(parameter) => return bound.param_fn[parameter.idx()] == function,
+                PatParent::Prop(above, _) | PatParent::Elem(above, _) => above,
+                PatParent::Var(_) | PatParent::None => return false,
+            };
+        }
+    })
+}
+
+fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, written: ExprId, call: CallId) -> bool {
     let callee = hir.skip_type_assertions(hir[call].callee);
     let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
         return false;
@@ -388,6 +439,13 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
         .contains(&name) =>
         {
             return true;
+        }
+        _ if name == known::module => {
+            let path = hir.ids(hir[call].args).next();
+            if path.is_some_and(|path| is_parameter_of_its_function(hir, bound, written, path)) {
+                return false;
+            }
+            &[known::mock]
         }
         _ if [known::mock, known::doMock, known::unmock].contains(&name) => {
             &[known::vi, known::vitest, known::jest]
@@ -417,8 +475,9 @@ pub fn ends_in_call_that_reads_frame_of_caller(
     value: ExprId,
 ) -> bool {
     let ends_so = |value| ends_in_call_that_reads_frame_of_caller(hir, bound, value);
-    match expr_kind(hir, hir.skip_type_assertions(value)) {
-        Some(ExprKind::Call(call)) => reads_frame_of_caller(hir, bound, call),
+    let value = hir.skip_type_assertions(value);
+    match expr_kind(hir, value) {
+        Some(ExprKind::Call(call)) => reads_frame_of_caller(hir, bound, value, call),
         Some(ExprKind::Cond { branches, .. }) => {
             let Branches { yes, no } = hir.branches(branches);
             ends_so(yes) || ends_so(no)

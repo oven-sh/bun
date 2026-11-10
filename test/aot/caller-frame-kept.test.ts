@@ -1,6 +1,7 @@
-// `vi.importActual("./dep")`, `jest.requireActual("./dep")`, `vi.doMock("./dep", ..)`, `expect(a).toMatchInlineSnapshot()`: native code of the test runner
-// finds the file or the position of the call in the frame of its caller. In a test run Bun's transpiler prints none of them as a tail call, which
-// would drop that frame, so a compiled test run makes none either. Plain `bun test` says what is right.
+// `vi.importActual("./dep")`, `jest.requireActual("./dep")`, `vi.doMock("./dep", ..)`, `mock.module("./dep", ..)`, `expect(a).toMatchInlineSnapshot()`:
+// native code of the test runner finds the file or the position of the call in the frame of its caller. In a test run Bun's transpiler prints none of
+// them as a tail call, which would drop that frame, so a compiled test run makes none either. `mock.module(path)` stays a tail call where `path` is a
+// parameter of its function. Plain `bun test` says what is right.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -17,7 +18,7 @@ const project = {
   "dep.cjs": `exports.where = "beside the test file";`,
   "sub/dep.ts": `export const where = "beside the helper";`,
   "sub/dep.cjs": `exports.where = "beside the helper";`,
-  "sub/helper.ts": `import { expect, jest, vi } from "bun:test";
+  "sub/helper.ts": `import { expect, jest, mock, vi } from "bun:test";
     export const arrow = () => vi.importActual<any>("./dep");
     export const throughName = () => { const loaded = vi.importActual<any>("./dep"); return loaded; };
     export function declared() { return vi.importActual<any>("./dep"); }
@@ -30,6 +31,8 @@ const project = {
     export const made = () => jest.createMockFromModule("./dep.cjs") as any;
     export const mockIt = () => vi.doMock("./dep", () => ({ where: "mocked" }));
     export const unmockIt = () => vi.doUnmock("./dep");
+    export const mockModule = () => mock.module("./dep", () => ({ where: "mocked by mock.module()" }));
+    export const forward = (path: string) => mock.module(path, () => ({ where: "mocked through a forwarder" }));
     export const withoutName = () => vi.unmock();
     export const snapshot = (value: unknown) => expect(value).toMatchInlineSnapshot();
     export const snapshotOfError = (thrower: () => void) => expect(thrower).toThrowErrorMatchingInlineSnapshot();`,
@@ -46,6 +49,14 @@ const project = {
       helper.mockIt();
       console.log("mocked:", (await import("./sub/dep")).where, ".", (await import("./dep")).where);
       helper.unmockIt();
+    });
+    test("mock.module()", async () => {
+      helper.mockModule();
+      console.log("mock.module():", (await import("./sub/dep")).where, ".", (await import("./dep")).where);
+    });
+    test("a forwarder of mock.module()", async () => {
+      helper.forward("./dep");
+      console.log("forwarded:", (await import("./sub/dep")).where, ".", (await import("./dep")).where);
     });
     test("frames", () => {
       try {
@@ -93,11 +104,15 @@ test("as one program", async () => {
   expect(plain.results).toEqual([
     "pass loads",
     "pass mocks",
+    "pass mock.module()",
+    "pass a forwarder of mock.module()",
     "pass frames",
     "pass snapshots in another file",
     "pass snapshots",
   ]);
   expect(plain.printed).toContain("arrow: beside the helper");
+  expect(plain.printed).toContain("mock.module(): mocked by mock.module() . beside the test file");
+  expect(plain.printed).toContain("forwarded: mocked by mock.module() . mocked through a forwarder");
   expect(plain.written).toContain("toMatchInlineSnapshot(`1`)");
   expect(await runTests(asOneProgram, "--aot")).toEqual(plain);
 });

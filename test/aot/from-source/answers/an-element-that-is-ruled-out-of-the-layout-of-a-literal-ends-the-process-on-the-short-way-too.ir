@@ -14,14 +14,17 @@
 # OPTIONS: mechanisms=all
 # RUN(STORES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0)[0] = 1; print("went on"); };
 # STORES: 1 one count,label
-# STORES: AOT: AddProperty of an object of layout L0
+# STORES: bun: internal AOT error: object mutation check failed
+# STORES-NEXT: AddProperty on an object
 # STORES-NOT: went on
 # STORES: crashed with
 # RUN(PUSHES): run-in-shell globalThis.poke = () => { Array.prototype.push.call(aotFindObjectOfLayout(0), 1); print("went on"); };
-# PUSHES: AOT: AddProperty of an object of layout L0
+# PUSHES: bun: internal AOT error: object mutation check failed
+# PUSHES-NEXT: AddProperty on an object
 # PUSHES-NOT: went on
 # PUSHES: crashed with
 # RUN(ASSIGNS): run-in-shell globalThis.poke = () => { Object.assign(aotFindObjectOfLayout(0), [1]); print("went on"); };
-# ASSIGNS: AOT: AddProperty of an object of layout L0
+# ASSIGNS: bun: internal AOT error: object mutation check failed
+# ASSIGNS-NEXT: AddProperty on an object
 # ASSIGNS-NOT: went on
 # ASSIGNS: crashed with

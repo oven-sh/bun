@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
-// Under: --aot-testing=FailGuesses: every guess fails
+// Under: --aot-testing=FailSpeculations: every guess fails
 const meter = { scale: 3, bias: 0, run(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum += list[i] * this.scale + this.bias; return sum; } };
 globalThis.madeUpMeter = meter;
 const subject = { scale: 2, bias: 1, extra: true, run: meter.run };

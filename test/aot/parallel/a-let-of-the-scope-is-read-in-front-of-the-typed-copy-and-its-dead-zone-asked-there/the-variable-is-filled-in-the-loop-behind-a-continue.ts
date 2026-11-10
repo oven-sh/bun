@@ -1,5 +1,5 @@
 // The let stands in the body of the loop behind a continue: a turn that continues leaves it in its dead zone, the next fills it.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 0
+// STATISTIC: CapturedVariableReadsHoisted >= 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

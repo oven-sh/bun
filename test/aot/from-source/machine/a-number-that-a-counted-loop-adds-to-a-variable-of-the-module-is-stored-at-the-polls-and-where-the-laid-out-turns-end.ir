@@ -32,10 +32,10 @@
 # POLL-LABEL: unit f1:Body
 # POLL-COUNT-3: = Store(
 # POLL-NEXT: = Patch(earlyClobbered = [{{*}}], lateClobbered = [{{*}}], effects = ExitsSideways
-# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut StoresLeftOutOfTurnsLaidOut SumsOfIntegersInTurnsLaidOut mechanisms=all
-# EVENT: statistic LoopsWhoseTurnsAreLaidOut 1
-# EVENT: statistic StoresLeftOutOfTurnsLaidOut 1
-# EVENT: statistic SumsOfIntegersInTurnsLaidOut 1
+# RUN(EVENT): compile UnrolledLoopsEmitted UnrolledLoopStoresSunk UnrolledLoopIntegerSums mechanisms=all
+# EVENT: statistic UnrolledLoopsEmitted 1
+# EVENT: statistic UnrolledLoopStoresSunk 1
+# EVENT: statistic UnrolledLoopIntegerSums 1
 # RUN(RIGHT): run-in-shell globalThis.count = () => 40;
 # RIGHT: 140
 # RIGHT-NEXT: exited with 0

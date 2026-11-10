@@ -45,7 +45,7 @@
 # RUN(LONG): walk f3:Body mechanisms=all
 # LONG: NewArray {{*}} arrayStorage=Double
 # LONG: [[length]]: {{*}} = GetArrayLength
-# LONG: ReserveArrayRoom
+# LONG: ReserveArrayCapacity
 # LONG: isLoopHead=true
 # LONG: ExtendArrayLength
 # LONG-NEXT: PutDoubleIndex

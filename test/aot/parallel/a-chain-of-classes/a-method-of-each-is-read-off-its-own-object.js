@@ -1,4 +1,4 @@
-// STATISTIC: ClassesClimbedAboveMembersOfFamilies <= 3000
+// STATISTIC: AncestorClassesVisited <= 3000
 // Forty classes in a chain, a method of each read off an object of it. Each read asks every class at or below the receiver's whether a statement lays the name above it: climbed from each anew that is 22,140 steps, a cube of the chain's length; each class passed once for a question: 1,311.
 let count = 0;
 class C0 { m0() { return 0; } }

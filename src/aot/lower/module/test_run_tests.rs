@@ -858,7 +858,7 @@ fn file_that_reads_its_own_name_through_a_barrel_is_no_station_for_itself() {
 }
 
 #[test]
-fn commonjs_file_behind_its_face_is_a_station_with_its_declaration_below_it() {
+fn module_behind_facade_is_station() {
     let rest = "import { flag } from './barrel.js';\nconsole.log(flag);\n";
     let test_file = write_test_file(&["dep.cjs"], rest);
     let files = [

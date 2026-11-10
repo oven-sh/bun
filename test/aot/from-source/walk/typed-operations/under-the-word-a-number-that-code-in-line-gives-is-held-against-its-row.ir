@@ -5,10 +5,13 @@
 # print(bits(id(2)));
 # print("went on");
 # -- end of source
-# THE LIE: the row of Math.clz32 writes 0 alone. The call is code in line (CallInline): no door stands behind it, for it is our own code; so `+ 1` was 1 while the program was compiled, the call had no user left and went: 1 for 31,
-# no stop, UNDER THE OPTION TOO: it held the proven type against the type without Link's proofs, and both come out of the same row. Under the word what code in line gives is held against what its record says.
-# OPTIONS: testing=CheckProofsAtRunTime,RowSaysLess:Builtin/Math.clz32/RangeOfResult
+# Fault injection: the signature of Math.clz32 declares 0 as its only result. The call is inline code (CallInline). No entry check follows it, because it is the compiler's own code.
+# So `+ 1` was folded to 1 at compile time, and the call had no user left and was removed. The program printed 1 instead of 31 and did not crash, even with testing=CheckProofsAtRunTime.
+# That switch compared the proven type with the type without Link's proofs, and both come from the same signature.
+# Now, with that switch, the result of inline code is checked against the type of its operation.
+# OPTIONS: testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Math.clz32/RangeOfResult
 # RUN: run-in-shell mechanisms=all globalThis.id = (x) => x;
-# CHECK: AOT: f1 at {{*}}: what a built-in or a call by value gives is not of the type that the compiler has proven of it.
+# CHECK: bun: internal AOT error: type check failed at {{*}} (bits)
+# CHECK-NEXT: in the result of a built-in or indirect call
 # CHECK-NOT: went on
 # CHECK: crashed with

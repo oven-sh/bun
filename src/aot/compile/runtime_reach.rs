@@ -768,7 +768,7 @@ impl<'a, 's> FileScan<'a, 's> {
             SiteTarget::Module(
                 ModuleRef::File(target)
                 | ModuleRef::Inner { file: target, .. }
-                | ModuleRef::Face(target)
+                | ModuleRef::Facade(target)
                 | ModuleRef::Check(target),
             ) => Some(target),
             SiteTarget::Module(ModuleRef::Runtime(_) | ModuleRef::External { .. })
@@ -1458,7 +1458,7 @@ impl<'a, 's> Walk<'a, 's> {
         match module {
             ModuleRef::File(file)
             | ModuleRef::Inner { file, .. }
-            | ModuleRef::Face(file)
+            | ModuleRef::Facade(file)
             | ModuleRef::Check(file) => Some(file),
             ModuleRef::Runtime(module) => self.input.library.find_module_file(module),
             ModuleRef::External { .. } => None,
@@ -1598,7 +1598,7 @@ impl<'a, 's> Walk<'a, 's> {
     fn find_target_module(&self, file: FileId, site: ImportSiteKind) -> Option<RuntimeModule> {
         match self.input.library.find_site_target(file, site)? {
             SiteTarget::Module(
-                ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target),
+                ModuleRef::File(target) | ModuleRef::Facade(target) | ModuleRef::Check(target),
             ) => self.input.library.runtime_module(target),
             SiteTarget::Module(ModuleRef::Runtime(module)) => Some(module),
             _ => None,

@@ -1,13 +1,16 @@
-# A read off a receiver that is proven to be one of a few layouts is told apart by a row of shape tests, an arm a layout; the failing side of the last test is unreachable: the row leans on the list being complete.
-# THE LIE, testing=RowsOfShapeTestsLeaveOutTheirLastArm: the row leaves out its last arm, as if that layout were not in use: an object of it comes to the unreachable end.
-# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the receiver as it entered the row is held to the layouts of the arms in front of that end, or the process ends by name.
+# A read from a receiver that is proven to be one of a few layouts is dispatched by a chain of shape tests, one case per layout.
+# The failing side of the last test is unreachable, so the chain relies on the list of layouts being complete.
+# Fault injection, testing=DropLastCase: the chain omits its last case, as if that layout were not in use. An object of that layout reaches the unreachable end.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the receiver, as it entered the chain, is checked against the layouts of the cases before that end.
+# If the check fails, the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 18
 # RIGHT-NEXT: exited with 0
-# RUN(WRONG): run-in-shell mechanisms=all testing=RowsOfShapeTestsLeaveOutTheirLastArm
+# RUN(WRONG): run-in-shell mechanisms=all testing=DropLastCase
 # WRONG: crashed with SIGILL
-# RUN(HELD): run-in-shell mechanisms=all testing=RowsOfShapeTestsLeaveOutTheirLastArm,CheckProofsAtRunTime
-# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=DropLastCase,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: in the result of an operation
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

@@ -1,7 +1,8 @@
-// A value that the host computes at the first read (process.pid, Bun.version, process.env) is typed by a row of the table of built-ins. Compiled code reads it out of a
-// cell that the run time fills once. Where the cell is filled the value is held against what the record says, and the record says no more than that door asks.
-// THE LIE: --aot-testing=NativeCodeAnswersNullish: the row writes undefined | null. Without the door `v == null` was true while the program was compiled:
-// true,number,false for false,number,true, no stop; other programs died by an illegal instruction, without a sentence.
+// A value that the host computes at the first read (process.pid, Bun.version, process.env) gets its type from an entry in the table of built-ins.
+// Compiled code reads the value from a cell that the runtime fills once. When the runtime fills the cell, it checks the value against the type in the record,
+// and the record claims no more than that check tests.
+// Fault injection, --aot-testing=AssumeNullishHostResults: the table entry declares undefined | null. Without the check, `v == null` was already true at compile time:
+// the program printed true,number,false instead of false,number,true and did not crash. Other programs died on an illegal instruction without a message.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -40,11 +41,9 @@ describe.skipIf(!!unsupported)("a value that the host computes", () => {
         stdout: "false,number,true false,number,true\n",
         exitCode: 0,
       });
-      expect((await build("lied", "--aot-testing=NativeCodeAnswersNullish")).exitCode).toBe(0);
+      expect((await build("lied", "--aot-testing=AssumeNullishHostResults")).exitCode).toBe(0);
       const lied = await spawned([executable("lied")], folder, { ...env, ...withoutCrashReport });
       expect(lied.stdout).toBe("");
-      expect(lied.stderr).toContain(
-        "AOT: process.pid (call) is declared as undefined | null, and native code answered with something else: number.",
-      );
+      expect(lied.stderr).toContain("expected undefined | null, found int32 in the result of process.pid");
     }));
 });

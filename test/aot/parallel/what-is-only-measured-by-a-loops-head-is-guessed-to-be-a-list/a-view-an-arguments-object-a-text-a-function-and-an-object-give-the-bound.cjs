@@ -1,4 +1,4 @@
-// STATISTIC: HoldersOnlyMeasuredByHeadsGuessedToBeLists >= 1
+// STATISTIC: ArraysSpeculatedFromLoopBounds >= 1
 "use strict";
 // None of them is a list: the other copy runs and reads the length as written.
 const spots = JSON.parse('[[0.5,1.5],[2.25,0.75],[3.5,3.25],[1.125,2.5],[4.75,0.25],[2.5,2.5]]');

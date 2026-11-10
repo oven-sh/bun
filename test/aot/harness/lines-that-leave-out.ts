@@ -8,7 +8,7 @@ export function whyLineThatLeavesOutIsNotRead(what: string, why: string | undefi
   if (!isInHead) return "it stands below the head";
   if (!why?.trim()) return "it says no reason";
   const flags = /^No build under (.*)$/.exec(what)?.[1];
-  if (flags !== undefined && (!ways.includes(flags) || flags.includes("FailGuesses")))
+  if (flags !== undefined && (!ways.includes(flags) || flags.includes("FailSpeculations")))
     return "its flags are those of no way in which the program is built whatever the build of CI";
   return undefined;
 }

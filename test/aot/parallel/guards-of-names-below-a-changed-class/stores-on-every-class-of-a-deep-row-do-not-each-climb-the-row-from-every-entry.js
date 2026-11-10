@@ -1,7 +1,7 @@
 // A row of 40 classes, each below the one before, the method on the topmost, called behind the guard of its name at every second class; code that nobody sees stores under the name on every class from the top down.
 // From each of the 20 entries the way up to the changed class, or past it to the top of the row, is as long as the row: 39 stores x 20 entries x the height was a cube.
 // The way down and the ways up go in step, a class each a turn, and the way down is through first: a store on the class with k classes below it looks at itself, k classes down and k - 1 up: 2k.
-// COUNTER: ClassesLookedAtToEndGuardsOfNames = 1560
+// COUNTER: ClassesVisitedForGuardInvalidation = 1560
 const storeOnAll = (0, eval)('(classes) => { for (const one of classes) one.prototype.tell = () => 2; }');
 class K0 { tell() { return 1; } }
 class K1 extends K0 { } function r1(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.tell(); return t; } const o1 = new K1();

@@ -1,4 +1,4 @@
-// STATISTIC: ElementsOfFreshListsKnownAgain >= 1
+// STATISTIC: FreshArrayElementReadsEliminated >= 1
 "use strict";
 // The bound says nothing of the list: a read may find nothing. What the first read found, or did not find, answers the second as long as nothing is written.
 const spots = JSON.parse('[[0.5,1.5],[2.25,0.75],[3.5,3.25],[1.125,2.5],[4.75,0.25],[2.5,2.5],[0.25,4.5],[3.75,1.25]]');

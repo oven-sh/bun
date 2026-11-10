@@ -26,8 +26,8 @@
 # -- end of source
 # A text doubled thirty times is past the longest text: the sum throws a RangeError out of the turn, with no hand-over and no poll on the way. So a turn that may leave by a throw keeps its store: the
 # catch reads what the turn in front of the throw stored. Without that test the store is left out and the second line says -1.
-# RUN(EVENT): compile StoresLeftOutOfTurnsLaidOut mechanisms=all
-# EVENT: statistic StoresLeftOutOfTurnsLaidOut 0
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 0
 # RUN(RIGHT): run-in-shell
 # RIGHT: 10 none 22.5
 # RIGHT-NEXT: 100 RangeError 203

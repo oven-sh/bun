@@ -1,4 +1,4 @@
-// STATISTIC: ProofsCheckedOfContents <= 1
+// STATISTIC: ContentsProofsChecked <= 1
 'use strict';
 const data = JSON.parse('[0,1,2,3,4,5,6,7]');
 class Row { constructor() { this.length = 0; } }

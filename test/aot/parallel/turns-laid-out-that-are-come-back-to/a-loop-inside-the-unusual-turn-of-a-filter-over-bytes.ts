@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutThatAreComeBackTo >= 1
+// STATISTIC: UnrolledLoopsWithReentry >= 1
 export {};
 const out: number[] = [], o = { n: 0 }, m = new Map<number, number>(), keyed: Record<string, number> = {};
 let total = 0, last = -1, text = "", backs = 0, noted = 0;

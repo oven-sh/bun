@@ -262,7 +262,7 @@ impl FileScan<'_, '_> {
 
     fn holds_code_of(&self, module: ModuleRef) -> bool {
         match module {
-            ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Inner { file, .. } => {
+            ModuleRef::File(file) | ModuleRef::Facade(file) | ModuleRef::Inner { file, .. } => {
                 file == self.file
             }
             ModuleRef::Check(_) | ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,

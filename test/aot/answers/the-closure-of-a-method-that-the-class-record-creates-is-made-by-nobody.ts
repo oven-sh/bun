@@ -6,9 +6,9 @@
 // # `plain` has six members that the record creates. `mixed` has members that it does not create: a key that is computed, and methods that hold a
 // # variable of the function round them. Each evaluation of a class makes members of its own.
 // # f2 = plain
-// # OPTIONS: testing=WritesBodiesStraight
-// # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
-// # STRAIGHT-NOT: statistic UnitsWrittenStraight 0
+// # OPTIONS: testing=ForceStraightCompilation
+// # RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
+// # STRAIGHT-NOT: statistic StraightUnitsCompiled 0
 // # RUN(FRAME): bytes f2:Body mechanisms=all
 // # REQUIRES(FRAME): x86_64 as-written
 // # FRAME: frame=80@

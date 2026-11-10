@@ -1,5 +1,5 @@
 // Nothing is computed with what a swap moves, so nothing written says that the rows hold numbers; Link has seen what is pushed into them. The row is asked once all the same, and whatever it is at the run the swap moves what plain moves.
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 1
+// STATISTIC: RowStoreRegionsGuarded >= 1
 "use strict";
 function made(count, width, start) { const grid = []; for (let k = 0; k < count; k++) { const row = []; for (let i = 0; i < width; i++) row.push(k * 0.5 + i * 0.25 + start); grid.push(row); } return grid; }
 function swapped(grid, a, b) { for (let j = 0; j < grid.length; j++) { const held = grid[j][a]; grid[j][a] = grid[j][b]; grid[j][b] = held; } }

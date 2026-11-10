@@ -3,7 +3,7 @@
 // order that the order word of a cell can number, 8,029 here, for the life of the program. What it holds at the end is what was tried less what was forgotten: at most 600.
 // The program collects every 500 bodies and nothing else collects where counts are taken: the counts are the same everywhere. With no collection at all nothing is forgotten.
 // COUNTER: RecordPlansTried <= 11000
-// COUNTER: RecordPlansForgotten >= 10400
+// COUNTER: RecordPlansEvicted >= 10400
 interface Order { amount?: number; buyer?: number; city?: number; day?: number; email?: number; flag?: number; grade?: number; hours?: number; item?: number; job?: number; kind?: number; level?: number }
 const names = ["amount", "buyer", "city", "day", "email", "flag", "grade", "hours", "item", "job", "kind", "level"];
 let seed = Number(process.argv[2] ?? 7) | 0;

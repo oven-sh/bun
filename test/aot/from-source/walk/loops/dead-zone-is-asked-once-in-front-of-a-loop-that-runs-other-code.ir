@@ -21,7 +21,7 @@
 # CHECK: = CheckInitialized {{*}}name="steps"
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = CheckInitialized
-# CHECK: = GetModuleVariable {{*}}followsItsStore
+# CHECK: = GetModuleVariable {{*}}isKnownInitialized
 # CHECK-NOT: = CheckInitialized
 # CHECK: Return
 # RUN(ANSWERS): run-in-shell

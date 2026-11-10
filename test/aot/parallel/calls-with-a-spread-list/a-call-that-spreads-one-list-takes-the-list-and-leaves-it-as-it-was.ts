@@ -1,5 +1,5 @@
 // `f(...list)` where nobody knows f: the list was copied into a new one and the call took the copy. The call takes the list itself: what the callee does with its arguments, its rest list or the list never shows in the other.
-// STATISTIC: CallsThatTakeListInPlaceOfItsCopy >= 3
+// STATISTIC: SpreadCallArrayCopiesElided >= 3
 type Fn = (...args: any[]) => any;
 const seen: string[] = [];
 let shared: any[] = [];

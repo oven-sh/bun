@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function print(...all: unknown[]): void;
+# interface Options { host?: string; port?: number }
+# function bare(port: number): Options { const o: Options = { port }; Object.defineProperty(o, "host", { get() { return "got"; }, enumerable: true }); return o; }
+# function other(port: number): Options { const o: Options = { port }; return o; }
+# print(bare(1).host, other(2).port);
+# -- end of source
+# f1 = bare, f2 = other, f3 = the getter, L1 = Options. Only accessors define "host", so its slot holds the getter and setter pair. The walk never puts a plain value there (valueFitsSlot(), walk/AOTWalkChoices.cpp):
+# it defines the property after the allocation. No injected fault in Link produces such an allocation, so the code below is written by hand.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L1.0 "host" {{*}}filled-by-accessors-alone
+# The getter itself, stored as a plain value, fits the slot's type. Only CodeVerifier::verifyPlainFieldWrites() rejects it.
+# RUN: verify-code mechanisms=all
+# CHECK: {{*}}f2 Body b0 v4 (NewObject): an allocation writes a field that only definitions may write: L1.field0 "host"
+# -- code
+# code f2:Body {
+#   b0(v0: int[0, 2147483647] @Int32) entry=0:
+#     v1: int[0, 2147483647] @OptionalInt64 = Box v0
+#     v2: f3 @Cell = NewClosure function=f3 closureForm=Slim traits=[mayCollect, mayTouchMemory]
+#     v3: f3 @JSValue = Box v2
+#     v4: L1 @Cell = NewObject -, v3, v1 layout=L1 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
+#     v5: L1 @JSValue = Box v4
+#     Return v5
+# }
+# -- end of code

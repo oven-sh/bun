@@ -5,7 +5,7 @@
 # function sum(start) { let total = start; for (let place = 0; place < box.rows.length; place++) total = total + box.rows[place] * box.more[place]; return total; }
 # print(sum([].length + 1));
 # -- end of source
-# RUN(COUNT): compile LoopsLaidOutForOneKindOfStorage mechanisms=all
-# COUNT: statistic LoopsLaidOutForOneKindOfStorage 2
+# RUN(COUNT): compile UnrolledLoopsForIndexingType mechanisms=all
+# COUNT: statistic UnrolledLoopsForIndexingType 2
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 43.5

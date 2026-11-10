@@ -412,6 +412,7 @@ held.push(7);
   "enum-member-with-a-name-that-is-no-identifier": {
     files: {
       "index.ts": `export enum Header { "Content-Type" = "content-type", Accept = "accept" }
+export type Extract<T> = T | "own";
 export const DEFAULT = Header["Content-Type"] as const;
 export const sent = [Header["Content-Type"]];
 export function name(header: Header): string {
@@ -600,6 +601,28 @@ const wrong: 1 = Si.Kilo;
 `,
     errors: ["(5,7): TS2322"],
   },
+  "enum-merged-with-a-namespace-of-types-and-values": {
+    files: {
+      "index.ts": `export enum Unit { Px, Em }
+export namespace Unit {
+  export type Held = Unit | null;
+  export function parse(text: string): Held { return text === "px" ? Unit.Px : text === "em" ? Unit.Em : null; }
+}
+export function label(unit: Unit.Held = Unit.Px): string {
+  if (unit === null) return "none";
+  switch (unit) {
+    case Unit.Px: return "px";
+    case Unit.Em: return "em";
+  }
+}
+`,
+    },
+    caller: `import { label, Unit } from "LIBRARY";
+const text: string = label(Unit.Em) + label(null);
+label("x");
+`,
+    errors: ["(3,7): TS2345"],
+  },
 };
 
 // One build has several shapes as its entry points, and one `bun check` judges their callers. With `--splitting` each
@@ -747,17 +770,73 @@ export function useBoth(first: number = 1, unit = Unit.Px): [number, Unit] {
   const [value] = useState(first);
   return [value, unit];
 }
+export function useCell(first: number = 1, unit = Unit.Px as Unit | null): string {
+  const [value] = useState(first);
+  if (unit === null) return value + "none";
+  switch (unit) {
+    case Unit.Px: return value + "px";
+    case Unit.Em: return value + "em";
+  }
+}
+export function useOnly(first: number = 1, unit = Unit.Px as const): string {
+  const [value] = useState(first);
+  switch (unit) {
+    case Unit.Px: return value + "px";
+  }
+}
+export function useText(first: number = 1, unit = Unit.Px as string): string {
+  const [value] = useState(first);
+  return value + unit.toUpperCase();
+}
+export const useHeld = (first: number = 1, unit = (Unit.Px as Unit | undefined)!): string => {
+  const [value] = useState(first);
+  switch (unit) {
+    case Unit.Px: return value + "px";
+    case Unit.Em: return value + "em";
+  }
+};
+export type NonNullable<T> = T | "own";
+export type Label = (first: number, unit: Unit | null) => string;
+export const useLabel: Label = (first = 1, unit = Unit.Px as Unit) => {
+  const [value] = useState(first);
+  return unit === null ? value + "none" : value + unit;
+};
+export function useLabels(units: (Unit | undefined)[], first: number = 1): string[] {
+  const [value] = useState(first);
+  return units.map((unit = Unit.Px) => value + unit);
+}
+export function useSized({ size } = { size: 1 }, unit = Unit.Px as typeof size extends number ? Unit : never): string {
+  const [value] = useState(size);
+  switch (unit) {
+    case Unit.Px: return value + "px";
+    case Unit.Em: return value + "em";
+  }
+}
 export class Box {
   readonly #unit = Unit.Px;
   get unit(): Unit.Px { return this.#unit; }
 }
 `,
 };
-const movedCaller = (library: string) => `import { Box, Unit, useBoth } from "${library}";
+// A default value under a cast gives its parameter the type of the cast: `useCell` takes `null`, and `useText` any text.
+// A function that its place types keeps the parameters of that type: `useLabel`, and the callback of `useLabels`.
+// The source's own `NonNullable` is not the one that `useHeld` needs, and `size` of `useSized` is no parameter of the output.
+const movedCaller = (
+  library: string,
+) => `import { Box, Unit, useBoth, useCell, useHeld, useLabel, useLabels, useOnly, useSized, useText } from "${library}";
 const both: [number, Unit] = useBoth(1, Unit.Em);
 const px: Unit.Px = new Box().unit;
 useBoth(1, "x");
 const wrong: Unit.Em = new Box().unit;
+const texts: string[] = [useCell(1, null), useOnly(1, Unit.Px), useText(1, "anything"), useHeld(1, Unit.Em)];
+useCell(1, "x");
+useOnly(1, Unit.Em);
+useText(1, 7);
+useHeld(1, null);
+const more: string[] = [useLabel(1, null), useSized({ size: 2 }, Unit.Em), ...useLabels([Unit.Em, undefined], 1)];
+useLabel(1, "x");
+useLabels(["x"], 1);
+useSized({ size: 2 }, null);
 `;
 // `twins`: a typed file exports the twin of an enum that another typed file imports, and no other: not that of `Own`.
 const twin = (name: string) => `export type { ${name} as __enum_${name} };`;
@@ -803,7 +882,17 @@ const fixtures = [
       "callers/of-the-typed-files.ts": movedCaller("../out/index.aot"),
     },
     args: ["./src/index.tsx", "--react-compiler", "--target=bun"],
-    errors: ["(4,12): TS2345", "(5,7): TS2322"],
+    errors: [
+      "(4,12): TS2345",
+      "(5,7): TS2322",
+      "(7,12): TS2345",
+      "(8,12): TS2345",
+      "(9,12): TS2345",
+      "(10,12): TS2345",
+      "(12,13): TS2345",
+      "(13,12): TS2322",
+      "(14,23): TS2345",
+    ],
     twins: [],
   },
 ];
@@ -850,7 +939,9 @@ export { Kind };
     expect(written).toContain(`type Kind2_Circle = (typeof Kind2)["Circle"];\n`);
     expect(written).toContain(`  kind: Kind2 = ("circle" as Kind2_Circle)! /* Circle */;\n`);
     expect(written).toContain(`const square = "square" as Kind2.Square /* Square */;\n`);
-    expect(written).toContain(`const none = "none" as Extract<Kind2, (typeof Kind2)["no-shape"]> /* no-shape */;\n`);
+    expect(written).toContain(
+      `const none = "none" as globalThis.Extract<Kind2, (typeof Kind2)["no-shape"]> /* no-shape */;\n`,
+    );
     expect(written).toContain(`declare const enum Hidden { X = 1, Y = 2 }\n`);
     expect(written).toContain(`const hidden = [(1 as Hidden_X)! /* X */];\n`);
   });

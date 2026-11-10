@@ -1,0 +1,24 @@
+# `let s = 0; for (..) for (..) s = s + list[i]`: in the copy of the inner loop that reads the list as it comes, what is added is unknown, so that copy's sum is a number or a text; that comes round the outer loop,
+# the outer head carries `number|string`, and the TYPED copy of the inner loop, where the elements are numbers, got a sum that might be a text: its Add went by the stub too.
+# What a loop's head carries as a number beside a text or a bigint, and what may enter as a number, is asked for a number in front of the typed copy and held where it comes round; the other copy stays open.
+# `turns` and `grows` are handed lists whose sums and products turn into texts, NaN or TypeErrors in the first, second and last turn.
+# f1 = turns, f2 = grows
+# LIBRARY: own
+# -- source: main.js
+# function turns(list) { let s = 0; for (let r = 0; r < 2; r++) for (let i = 0; i < list.length; i++) s = s + list[i]; return s; }
+# function grows(list) { let p = 1; for (let r = 0; r < 2; r++) for (let i = 0; i < list.length; i++) p = p * list[i]; return p; }
+# publish(turns, grows);
+# -- end of source
+# RUN: compile SumsAskedForNumbersInFrontOfLoops mechanisms=all
+# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 6
+# RUN(TURNS): walk f1 mechanisms=all
+# TURNS: code f1:Body
+# TURNS: : number @Double, v{{*}}: int[0, 4294967295] @Int64) isInLoop=true isLoopHead=true
+# TURNS: = Add {{*}}form=Numbers
+# RUN(GROWS): walk f2 mechanisms=all
+# GROWS: code f2:Body
+# GROWS: : number @Double, v{{*}}: int[0, 4294967295] @Int64) isInLoop=true isLoopHead=true
+# GROWS: = Mul {{*}}form=Numbers
+# RUN(SHELL): run-in-shell globalThis.publish = (turns, grows) => { let asked = 0; const weighs = { valueOf() { asked++; return 5; } }, says = { toString() { asked += 100; return "t"; } }; const holes = [1.5, 2.5, 3.5]; delete holes[1]; const lists = () => [[1.5, 2.5, 3.5], [1, 2, 3], ["a", 2, 3], [1, "b", 3], [1, 2, "c"], ["a", "b", "c"], [1, weighs, 3], [1, says, 3], [1, null, 3], [1, undefined, 3], [1, true, 3], holes, [], [0.1], [1, 2n, 3], [2n, 3n], new Float64Array([1.5, 2.5]), "xy"]; const tell = f => { let told = ""; for (let turn = 0; turn < 2; turn++) for (const list of lists()) { try { const got = f(list); told += " " + typeof got + ":" + String(got); } catch (e) { told += " " + e.constructor.name; } } print(told + " | " + asked); }; tell(turns); tell(grows); };
+# SHELL: number:15 number:12 string:0a23a23 string:1b31b3 string:3c12c string:0abcabc number:18 string:1t31t3 number:8 number:NaN number:10 number:NaN number:0 number:0.2 TypeError TypeError number:8 string:0xyxy number:15 number:12 string:0a23a23 string:1b31b3 string:3c12c string:0abcabc number:18 string:1t31t3 number:8 number:NaN number:10 number:NaN number:0 number:0.2 TypeError TypeError number:8 string:0xyxy | 404
+# SHELL-NEXT: number:172.265625 number:36 number:NaN number:NaN number:NaN number:NaN number:225 number:NaN number:0 number:NaN number:9 number:NaN number:1 number:0.010000000000000002 TypeError TypeError number:14.0625 number:NaN number:172.265625 number:36 number:NaN number:NaN number:NaN number:NaN number:225 number:NaN number:0 number:NaN number:9 number:NaN number:1 number:0.010000000000000002 TypeError TypeError number:14.0625 number:NaN | 808

@@ -6,7 +6,7 @@ use super::testing::{
 use super::*;
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::InternalError;
+use crate::diagnostics::{InternalError, log_diagnostic};
 use crate::engine::LackedModuleRecord;
 use crate::engine::testing::ResultRecords;
 use crate::ir::generated::{FunctionFlags, ModuleKind};
@@ -180,6 +180,34 @@ fn constructor_that_is_left_out_takes_the_class_token_as_a_class_token() {
     let captures = constructor.captures.iter();
     let types = captures.map(|capture| program.types.get(capture.ty));
     assert!(types.eq([Type::opaque(OpaqueKind::ClassToken)]), "{text}");
+}
+
+fn has_key_with_text(statement: &str, name: &[u8]) -> bool {
+    let source = format!("function Base() {{}}\n{statement}\nglobalThis.kept = Base;\n");
+    let program = link_successfully(&[("a.js", &source[..])]).program;
+    let mut keys = program.property_keys.as_slice().iter();
+    keys.any(|key| {
+        key.text
+            .is_some_and(|text| program.strings.get(text) == name)
+    })
+}
+
+#[test]
+fn name_written_at_a_definition_by_descriptor_is_a_key_of_the_program() {
+    let definitions = [
+        "Object.defineProperty(Base.prototype, 'madeUpScale', { get() { return 10; } });",
+        "Reflect.defineProperty(Base.prototype, 'madeUpScale', { get() { return 10; } });",
+    ];
+    for definition in definitions {
+        assert!(
+            has_key_with_text(definition, b"madeUpScale"),
+            "{definition}"
+        );
+    }
+    assert!(!has_key_with_text(
+        "console.log('madeUpScale');",
+        b"madeUpScale"
+    ));
 }
 
 #[test]
@@ -766,6 +794,77 @@ fn every_build_checks_names_of_embedded_files() {
     let (result, log) = link_project(&project, &provider);
     expect_success(result, &log);
     assert_ne!(provider.checks.load(Ordering::Relaxed), 0);
+}
+
+struct CannotTakeOneValue;
+
+impl SourceProvider for CannotTakeOneValue {
+    fn fold_options<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> FoldOptions<'s> {
+        WithoutServices.fold_options(arena, atoms, log)
+    }
+
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn parse_data<'s>(
+        &self,
+        file: &SourceFile<'_>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<DataModule<'s>, DataFailure> {
+        if !file.path.ends_with(b"/list.mjs") {
+            return WithoutServices.parse_data(file, arena, atoms, log);
+        }
+        log_diagnostic(log, Code::UnsupportedOption, &[b"the value of list.mjs"]);
+        Err(DataFailure::Build)
+    }
+
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+#[test]
+fn an_error_of_the_build_is_heard_of_a_file_that_is_named_as_code() {
+    let files = [
+        (
+            "a.mjs",
+            r#"import("./data/" + process.argv[2], { with: { type: "json" } });"#,
+        ),
+        ("data/list.mjs", "[1, 2]"),
+        ("data/other.mjs", "export {};"),
+    ];
+    let project = TestProject::new(&files, &default_settings());
+    let (result, log) = link_project(&project, &CannotTakeOneValue);
+    assert!(!expect_failure(result).is_internal_error);
+    let number = Code::UnsupportedOption.number();
+    assert!(
+        has_code(&log, Kind::Err, number),
+        "{}",
+        describe_messages(&log)
+    );
+    let (result, log) = link_project(&project, &WithoutServices);
+    expect_success(result, &log);
+    assert!(
+        !has_message(&log, Kind::Warn, ""),
+        "{}",
+        describe_messages(&log)
+    );
 }
 
 struct AssetPlugin {
@@ -1462,6 +1561,32 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
 }
 
 #[test]
+fn declared_record_bears_the_position_of_its_function() {
+    let library = "export const first = value => value;\n\
+        export function aborted(payload) { return payload.issues.length > 0; }\n\
+        export class Kept { constructor(payload) { this.payload = payload; } }\n";
+    let declarations = "export interface Payload { value: unknown; issues: unknown[] }\n\
+        export declare const first: <T>(value: T) => T;\n\
+        export declare function aborted(payload: Payload): boolean;\n\
+        export declare class Kept { constructor(payload: Payload); payload: Payload }\n";
+    let main = "import { Kept, aborted, first } from \"./library.js\";\n\
+        console.log(aborted(first(new Kept({ value: 1, issues: [] }).payload)));";
+    let files = [
+        ("main.ts", main),
+        ("library.js", library),
+        ("library.d.ts", declarations),
+        GLOBALS,
+    ];
+    let program = &link_successfully(&files).program;
+    assert_eq!(program.declared_records.len(), 2);
+    for declared in &program.declared_records {
+        let place = (declared.module, declared.position);
+        let mut functions = program.functions.iter();
+        assert!(functions.any(|function| (function.module, function.position) == place));
+    }
+}
+
+#[test]
 fn function_text_lacks_what_a_bundle_lacks() {
     let text = "declare const unbound: unknown;\n\
         export function shown(o: any): unknown {\n  \
@@ -1550,7 +1675,7 @@ fn function_text_runs_as_the_function_does() {
         assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
     }
     let text = "exports.shown = function () {\n  if (false) { function g() {} }\n  return g;\n};";
-    let expected = "function () {\n  if (false) { var g; }\n  return g;\n}";
+    let expected = "function() {\n  if (false) { var g; }\n  return g;\n}";
     let shown = texts_of("a.cjs", text);
     assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
 }

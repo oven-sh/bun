@@ -1,0 +1,18 @@
+# -- source: instanceof-of-what-a-call-hands-back-is-held-to-the-note-that-it-is-as-made.ts
+# declare function print(...values: unknown[]): void;
+# function main(): string { const promise: any = Promise.resolve(1); Object.setPrototypeOf(promise, { constructor: Promise });
+#   const held: unknown = JSON.parse("true") ? promise : 1; return String(Promise.resolve(held) instanceof Promise); }
+# print(main());
+# -- end of source
+# LIBRARY: own
+# instanceof of a built-in class is answered yes for an object of that class that is noted as made. This promise has another prototype, whose constructor is Promise, so that Promise.resolve() hands it back as it came.
+# The lie, testing=OneRowSpeaksForAllThatCallMayTake: where a call may take several rows the first alone is asked whether what it hands back is fresh, though another hands back the operand: the result is noted as made. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the cell is asked where the note is leaned on: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: false
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: false
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,OneRowSpeaksForAllThatCallMayTake
+# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

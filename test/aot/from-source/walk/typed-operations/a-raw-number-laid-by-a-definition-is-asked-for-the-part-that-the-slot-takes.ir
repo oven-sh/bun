@@ -22,7 +22,8 @@
 # ASKED-LABEL: code f2:Body
 # ASKED: [[given]]: int @Double = CallDirect {{*}}function=f1
 # ASKED: CheckProof [[given]] checkedType=int typeWithoutProof=number source=Field
-# ASKED: DefineOwnProperty
+# ASKED: PutSlotOrAdd {{*}}key="size"
+# ASKED-NOT: DefineOwnProperty
 # RUN(RIGHT): run-in-shell
 # RIGHT: 4294967294 none 0 1
 # RIGHT-NEXT: exited with 0

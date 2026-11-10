@@ -1,6 +1,7 @@
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{basename, dirname};
-use bun_sema::hir::ExprKind;
+use bun_sema::atom::known;
+use bun_sema::hir::{ExprKind, MemberKey};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
 use bun_sema::resolve::{CodeResolution, ExternalKind, FinishedFile, SiteResolution};
 
@@ -22,6 +23,23 @@ fn find_file_at(path: Vec<u8>, is_file: &dyn Fn(&[u8]) -> bool) -> Option<Vec<u8
     beside.chain(inside).find(|candidate| is_file(candidate))
 }
 
+fn loads_manual_mock(file: &FinishedFile<'_, '_>, kind: ImportSiteKind) -> bool {
+    let Some(ExprKind::Call(call)) = kind.call().map(|call| file.hir[call].kind) else {
+        return false;
+    };
+    match kind {
+        ImportSiteKind::MockModule(site) => {
+            file.hir[call].args.len() == 1 && !is_module_call_of_plugin(file.hir, file.bound, site)
+        }
+        ImportSiteKind::ImportByTestRunner(_) | ImportSiteKind::RequireByTestRunner(_) => {
+            let callee = file.hir.skip_type_assertions(file.hir[call].callee);
+            matches!(file.hir.member_key(callee), Some((_, MemberKey::Name(name)))
+                if name == known::importMock || name == known::requireMock)
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn find_manual_mocks(
     file: &FinishedFile<'_, '_>,
     working_directory: &[u8],
@@ -30,17 +48,10 @@ pub(crate) fn find_manual_mocks(
     let mut found = Vec::new();
     let sites = file.analysis.import_sites.iter();
     for (site, resolution) in sites.zip(file.resolutions) {
-        let (ImportSiteKind::MockModule(call), ImportSpecifier::Constant(written)) =
-            (site.kind, site.specifier)
-        else {
+        let ImportSpecifier::Constant(written) = site.specifier else {
             continue;
         };
-        let ExprKind::Call(arguments) = file.hir[call].kind else {
-            continue;
-        };
-        if file.hir[arguments].args.len() != 1
-            || is_module_call_of_plugin(file.hir, file.bound, call)
-        {
+        if !loads_manual_mock(file, site.kind) {
             continue;
         }
         let written = file.atoms.bytes(written);

@@ -1,3 +1,3 @@
 import { testRunsInFolders } from "./harness/test-runs-in-folders";
 
-testRunsInFolders(1, 8);
+testRunsInFolders(1, 16);

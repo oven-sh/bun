@@ -91,7 +91,10 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         matches!(
             binding,
             Binding::CommonJs(
-                CommonJsVariable::Require | CommonJsVariable::Module | CommonJsVariable::Filename
+                CommonJsVariable::Require
+                    | CommonJsVariable::Module
+                    | CommonJsVariable::Filename
+                    | CommonJsVariable::Dirname
             )
         )
     };

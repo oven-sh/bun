@@ -1,0 +1,21 @@
+# f1 = turn
+# -- source: string-char-code-sum.ts
+# const line = "the quick brown fox jumps over the lazy dog ".repeat(12);
+# function turn(i: number): number {
+#   let sum = i & 1;
+#   for (let k = 0; k < line.length; k++) sum += line.charCodeAt(k);
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 37, patches 8, moves 0, unlikely 6 ; loop: operations 10, patches 2, moves 0, unlikely 3.
+# Since the turns are laid out once for each width of the text a second loop of eight turns stands between the two, for wide texts: operations 36, patches 8, moves 0, unlikely 6.
+# RUN(X64): loops most:37,36,10 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 37
+# X64-NEXT: loop: at most 36
+# X64-NEXT: loop: at most 10

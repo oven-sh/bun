@@ -1,0 +1,32 @@
+# -- source: main.cjs
+# "use strict";
+# function row(given, count, first) {
+#   const most = count | 0, kept = [first | 0];
+#   for (let j = 1; j <= most; j++) { let least = given[j] + 1; const beside = kept[j - 1] + 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# const made = row(new Float64Array(40).fill(100), 30, 1);
+# print(made.length, made[24], made[25], made[30]);
+# -- end of source
+# `kept` is filled from its end in the typed copy: the turn raises the length and stores raw. What is read under the counter is a view, not a list: it gives no room, and the literal has what its birth gave: 25, as far as the profile of
+# a site may ask. So the turn's own question `key < room` is all that stands between the store of the 25th turn and memory that is not the list's: where it fails the turn begins again as it is written.
+# THE LIE, testing=RoomsAskedInFrontAreTakenForGiven: the turn passes that question over. NO RUN UNDER THE LIE ALONE IS STORED: it would write six words behind the storage of the list, into whatever lies there.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the raise holds the position against the length and against the room, or the process stops by name, in front of the store.
+# AS-USERS-BUILD: under the checks of the runner the verifier of the code refuses the lie at the raise (walk/a-raise-of-a-list-without-a-ground-for-its-room-is-refused.ir): what the emitters hold under the words is asked without them
+# RUN(TAKEN): walk f1:Body mechanisms=all
+# TAKEN: NewArray {{*}} arrayStorage=Double
+# TAKEN: [[room]]: {{*}} = GetArrayRoom
+# TAKEN: isLoopHead=true
+# TAKEN: Less {{*}}, [[room]] form=Integers
+# TAKEN: ExtendArrayLength
+# TAKEN-NEXT: PutDoubleIndex
+# RUN(LIED): walk f1:Body mechanisms=all testing=RoomsAskedInFrontAreTakenForGiven
+# LIED-NOT: GetArrayRoom
+# LIED: ExtendArrayLength
+# LIED-NEXT: PutDoubleIndex
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: 31 49 51 61
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=RoomsAskedInFrontAreTakenForGiven,TestsEveryPosition
+# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT

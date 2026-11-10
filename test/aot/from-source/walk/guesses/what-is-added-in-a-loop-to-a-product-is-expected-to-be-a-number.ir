@@ -1,0 +1,23 @@
+# `level = level * 0.5 + steps[which][i & 3]`: one side of the sum is a product, so the other side, an element of which nothing is known, is asked once whether it is a number; behind "yes" the
+# sum is reckoned on numbers as they lie. A text, null and a big integer in that place answer as the operator on values does.
+# f1 = settle
+# -- source: main.js
+# const which = JSON.parse("0"), steps = [JSON.parse("[1,2.5,3,4]")];
+# function settle(turns) { let level = 0.5; for (let i = 0; i < turns; i++) level = level * 0.5 + steps[which][i & 3]; return level; }
+# print(settle(3), settle(40));
+# steps[0][1] = "!";
+# print(settle(3));
+# steps[0][1] = null;
+# print(settle(6));
+# steps[0][1] = 2n;
+# try { settle(6); } catch (error) { print(error.constructor.name); }
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: TypeTest {{*}} testedType=number
+# WALK: Add {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4.5625 6.666666666661058
+# ANSWERS-NEXT: NaN
+# ANSWERS-NEXT: 1.9140625
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: exited with 0

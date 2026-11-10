@@ -22,7 +22,6 @@
 # console.log(find(a), find(b), find({}));
 # -- end of source
 # RUN(FORM): walk f2 mechanisms=all-Inlining
-# REQUIRES(FORM): entries-of-bun
 # FORM-LABEL: code f2:Body
 # FORM: int|whole @Double
 # FORM-NOT: int|whole @JSValue = Box

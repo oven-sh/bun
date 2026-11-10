@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# "use strict";
+# function halves(kept, count) {
+#   const most = count | 0;
+#   for (let j = 0; j < most; j++) kept[j] = j * 0.5 + 0.25;
+#   return kept;
+# }
+# function fresh() { const made = []; for (let i = 0; i < 4; i++) made.push(9.5 + i); return made; }
+# print(halves(fresh(), 4).join(), halves(fresh(), 6).join());
+# -- end of source
+# `kept` comes from outside and the bound is not its length: in the typed copy the turn asks `key < length` itself and stores raw behind the answer; where it fails the turn begins again as it is written, and the list grows.
+# THE LIE, testing=LengthsAskedInTurnsAreTakenForGiven: the turn passes that question over. NO RUN UNDER THE LIE ALONE IS STORED: it would write two numbers behind the end of the list.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the store holds its position against the length, or the process stops by name, in front of the store.
+# AS-USERS-BUILD: under the checks of the runner the verifier of the code refuses the lie at the store (walk/a-raw-store-into-a-list-without-a-ground-is-refused.ir): what the emitters hold under the words is asked without them
+# RUN(TAKEN): walk f1:Body mechanisms=all
+# TAKEN: isLoopHead=true
+# TAKEN: [[length]]: {{*}} = GetArrayLength
+# TAKEN: Less {{*}}, [[length]] form=Integers
+# TAKEN: PutDoubleIndex {{*}}isInBounds
+# RUN(LIED): walk f1:Body mechanisms=all testing=LengthsAskedInTurnsAreTakenForGiven
+# LIED-NOT: isInBounds
+# LIED: PutDoubleIndex
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: 0.25,0.75,1.25,1.75 0.25,0.75,1.25,1.75,2.25,2.75
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=LengthsAskedInTurnsAreTakenForGiven,TestsEveryPosition
+# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT

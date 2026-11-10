@@ -13,7 +13,9 @@
 # RUN: walk f4:CoroutineBody mechanisms=all
 # CHECK-LABEL: code f4:CoroutineBody
 # CHECK: frame 1 callee=f2
-# CHECK: = IsNotThenable
+# What slice gives is a list, and a list has no `then`: nothing is asked in front of the fulfilling.
+# CHECK: : Array {{*}}= CallBuiltin {{*}}overload=ArrayPrototypeSlice/0
+# CHECK-NOT: = IsNotThenable
 # CHECK: = FulfillFreshPromise
 # CHECK: = AwaitBySavingFrame
 # CHECK: = AsyncGeneratorYield

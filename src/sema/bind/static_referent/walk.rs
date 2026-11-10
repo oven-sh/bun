@@ -324,8 +324,24 @@ pub(super) fn index_member_stores<'s, C: ReferentContext<'s>>(
     if !bound.runtime.is_computed() {
         return stores;
     }
+    stores.holds_long_literals = true;
     for node in (0..hir.exprs.len() as u32).map(ExprId) {
         match hir[node].kind {
+            ExprKind::Object(properties) if properties.len() > LONG_LITERAL => {
+                let first = stores.values_in_long_literals.len();
+                for property in properties.iter() {
+                    match hir.runtime_property_key(property) {
+                        PropKey::Private(_) => {}
+                        PropKey::Name(name) => stores.values_in_long_literals.push((
+                            number_of_pair(properties.start, name.0),
+                            holds_value(hir, property).then(|| hir[property].value),
+                        )),
+                        PropKey::None | PropKey::Computed(_) => {
+                            stores.values_in_long_literals.truncate(first);
+                        }
+                    }
+                }
+            }
             ExprKind::Assign {
                 op: None,
                 target,
@@ -360,7 +376,32 @@ pub(super) fn index_member_stores<'s, C: ReferentContext<'s>>(
     }
     (stores.assignments).sort_by_u64(|it| number_of_pair(it.holder.0, it.name.0));
     stores.copies.sort_by_u32(|it| it.0.0);
+    stores.values_in_long_literals.sort_by_u64(|it| it.0);
     stores
+}
+
+const LONG_LITERAL: usize = 16;
+
+fn holds_value(hir: &File<'_>, property: PropId) -> bool {
+    match hir[property].kind {
+        PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
+        PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
+    }
+}
+
+fn find_value_in_long_literal(
+    stores: &MemberStores,
+    properties: Span<PropId>,
+    name: Atom,
+) -> Option<ExprId> {
+    let key = number_of_pair(properties.start, name.0);
+    let end = stores
+        .values_in_long_literals
+        .partition_point(|it| it.0 <= key);
+    match stores.values_in_long_literals[..end].last() {
+        Some(&(found, value)) if found == key => value,
+        _ => None,
+    }
 }
 
 fn is_in_catch_clause(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
@@ -924,16 +965,21 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let context = self.context;
         let hir = context.hir(file);
         let mut value = None;
-        for property in properties.iter() {
-            let holds_value = || match hir[property].kind {
-                PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
-                PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
-            };
-            match hir.runtime_property_key(property) {
-                PropKey::Name(key) if key != name => {}
-                PropKey::Private(_) => {}
-                PropKey::Name(_) if holds_value() => value = Some(hir[property].value),
-                PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
+        if properties.len() > LONG_LITERAL
+            && let Some(stores) = context.member_stores(file)
+            && stores.holds_long_literals
+        {
+            value = find_value_in_long_literal(stores, properties, name);
+        } else {
+            for property in properties.iter() {
+                match hir.runtime_property_key(property) {
+                    PropKey::Name(key) if key != name => {}
+                    PropKey::Private(_) => {}
+                    PropKey::Name(_) if holds_value(hir, property) => {
+                        value = Some(hir[property].value);
+                    }
+                    PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
+                }
             }
         }
         self.certainty = ReferentCertainty::Expected;

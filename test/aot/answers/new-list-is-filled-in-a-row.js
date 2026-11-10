@@ -4,7 +4,6 @@
 // # The loop stays behind the operation for a list whose storage does not hold boxed values.
 // # f21 = filledArray, f20 = arrayOfUndefined
 // # RUN(FORM): walk f21 f20 mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM-LABEL: code f21:Body
 // # FORM: [[made]]: Array @Cell = NewArrayLike
 // # FORM-NEXT: [[isFilled]]: boolean @Boolean = TryFillNewArray [[made]],
@@ -14,7 +13,6 @@
 // # FORM-NEXT: = TryFillNewArray [[blank]],
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 110 of 110 of 110
 // # CHECK-NEXT: exited with 0
 function tell(deed) { try { report(deed()); } catch (error) { report(error.constructor.name); } }

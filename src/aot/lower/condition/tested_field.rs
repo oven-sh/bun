@@ -38,6 +38,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
+    pub(in crate::lower) fn find_field_of_union(
+        &mut self,
+        expression: ExprId,
+    ) -> Option<TestedField> {
+        let access = self.file.skip_type_syntax(expression);
+        let (object, _) = self.file.hir.member_key(access)?;
+        if !self.file.has_union_type(object) {
+            return None;
+        }
+        self.find_tested_field(expression)
+    }
+
     pub(in crate::lower) fn is_holder_unchanged(&mut self, field: TestedField) -> bool {
         self.read_local(field.holder) == field.holder_value
     }
@@ -77,6 +89,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ShapeKind::NumericEnumMember(_)
                 | ShapeKind::StringLiteral(_)
         )
+    }
+
+    fn has_union_type(&mut self, expression: ExprId) -> bool {
+        let Ok(ty) = self.queries.expression_type(expression) else {
+            return false;
+        };
+        let Ok(shape) = self.queries.type_shape(ty) else {
+            return false;
+        };
+        matches!(shape.kind, ShapeKind::Union(_))
     }
 
     fn find_holder_identifier(&self, object: ExprId) -> Option<ExprId> {

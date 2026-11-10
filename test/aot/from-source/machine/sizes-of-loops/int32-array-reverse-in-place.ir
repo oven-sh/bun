@@ -1,0 +1,21 @@
+# f1 = turn
+# -- source: int32-array-reverse-in-place.ts
+# const order = new Int32Array(512);
+# function turn(i: number): number {
+#   for (let low = 0, high = order.length - 1; low < high; low++, high--) {
+#     const kept = order[low]!;
+#     order[low] = order[high]!;
+#     order[high] = kept;
+#   }
+#   return order[i & 511]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 9 instructions, 4 of them patches, a turn of the written loop steps by 4 ; 7 instructions, 4 of them patches ; 27 instructions, 16 of them patches, a turn of the written loop steps by 16.
+# When the bound was taken: loop: operations 13, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:13 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 13

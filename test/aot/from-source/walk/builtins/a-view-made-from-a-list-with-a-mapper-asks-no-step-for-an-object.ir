@@ -1,0 +1,19 @@
+# -- source: main.js
+# const list = [1, 2, 3, 250, 300];
+# function made() { return Uint8Array.from(list, x => x ^ 5); }
+# function ofText() { return Uint16Array.from("abc", c => c.charCodeAt(0)); }
+# print(made().join(), ofText().join(), Float64Array.from(list).join());
+# -- end of source
+# The engine's own text for `from` of a view lists the values by asking `next` for an object a step, reads `done` and `value` off it by name and stores into the view by a key that nobody knows: some 340 instructions
+# an element, plain Bun 58. Where the items are a list as its class makes it, or a text, and a mapper is handed, the compiler's own text stands for it: the list is copied at once (a text is walked by a loop), the view is
+# made, each value is handed to the mapper: 22 an element. Without a mapper the engine's text stays: native code copies at once there.
+# f1 = made
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: overload=LinkTimeConstantTypedArrayFromFast
+# CHECK: = PutTypedArrayElement {{*}} typedArrayType=2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4,7,6,255,41 97,98,99 1,2,3,250,300
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 4,7,6,255,41 97,98,99 1,2,3,250,300
+# NONE-NEXT: exited with 0

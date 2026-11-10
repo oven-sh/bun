@@ -386,7 +386,7 @@ static bool replaceExportOfNamespace(JSGlobalObject* globalObject, JSC::CallFram
         bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
         RETURN_IF_EXCEPTION(scope, true);
         if (!isReplaced)
-            throwTypeError(globalObject, scope, JSC::AOT::refusedSpyOnExportMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
+            throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
         return true;
     }
 #else
@@ -3191,9 +3191,9 @@ __attribute__((minsize)) static void resolveSpiedProperty(Zig::GlobalObject* glo
     bool isLocked = object->structure()->mayHaveImmutableProperties();
     bool isFixedMemberOfLockedObject = isFixedMember && isLocked && !JSC::AOT::isMemberUnlockedForTests(object, propertyKey.impl());
     // A constructor need not be locked for compiled code to take its `prototype` or a constant on it for what the realm was created with.
-    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberTakenForConstant(object, propertyKey.impl());
-    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::isNameRefusedByLibraryFunction(object, propertyKey.impl()))) {
-        String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.impl());
+    bool isFixedMemberOfOpenObject = isFixedMember && !isLocked && JSC::AOT::isMemberFoldedAsConstant(object, propertyKey.impl());
+    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject || isFixedMemberOfOpenObject || JSC::AOT::rejectsOwnPropertyOnLibraryFunction(object, propertyKey.impl()))) {
+        String message = JSC::AOT::rejectedSpyMessage(globalObject, object, propertyKey.impl());
         if (message.isNull())
             message = makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
         throwTypeError(globalObject, scope, message);
@@ -3641,6 +3641,10 @@ JSC_DEFINE_HOST_FUNCTION(jsReplacedPropertyRestore, (JSC::JSGlobalObject * globa
         // Jest's restore() always puts the original back. A later replacement of the same property is restored instead.
         JSObject* target = callframe->argument(1).getObject();
         Identifier propertyKey = callframe->argument(2).toPropertyKey(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        // A replacement through import.meta.env is installed on the process.env behind it.
+        if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, target))
+            target = env;
         RETURN_IF_EXCEPTION(scope, {});
         auto* active = findReplacedProperty(uncheckedDowncast<Zig::GlobalObject>(mock->globalObject()), target, propertyKey);
         if (!active)

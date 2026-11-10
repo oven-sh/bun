@@ -237,7 +237,8 @@ impl Walker<'_, '_> {
         binding: Binding,
     ) -> Option<CommonJsVariable> {
         let builtins = self.input.builtins;
-        if !self.walk.has_values_of_each_run || !matches!(binding, Binding::Symbol(_)) {
+        let has_values_of_run = self.walk.has_values_of_each_run || self.walk.keeps_first_exports;
+        if !has_values_of_run || !matches!(binding, Binding::Symbol(_)) {
             return None;
         }
         let Some(Resolved::Builtin(path)) = builtins.of_pure_expr(identifier) else {
@@ -248,6 +249,9 @@ impl Walker<'_, '_> {
     }
 
     fn is_value_of_run(&self, variable: CommonJsVariable, context: Context) -> bool {
+        if variable == CommonJsVariable::Exports && self.walk.keeps_first_exports {
+            return true;
+        }
         self.walk.has_values_of_each_run
             && match variable {
                 CommonJsVariable::Exports => true,
@@ -310,7 +314,8 @@ impl Walker<'_, '_> {
             }
             Binding::Arguments(owner) => self.use_arguments_binding(owner, is_store, context),
             Binding::CommonJs(variable)
-                if self.walk.has_wrapper_parameters || self.is_value_of_run(variable, context) =>
+                if self.walk.wrapper_slots.contains(variable)
+                    || self.is_value_of_run(variable, context) =>
             {
                 let slot = ScopeSlot::CommonJs(variable);
                 self.record_slot_use(context.function, self.file_scope, slot);
@@ -410,7 +415,7 @@ impl Walker<'_, '_> {
                 CodeUnit::Function(constructor) => {
                     binds_this_for_what_follows = self.walk.function_of_fn[constructor.idx()]
                         == Some(context.function)
-                        && self.unconditional_statements.contains(&expression);
+                        && self.unconditional_calls_of_super.contains(&expression);
                     self.record_slot_use(context.function, scope, ScopeSlot::Callee);
                     let reference = (context.function, constructor);
                     self.walk.function_references.push(reference);
@@ -427,6 +432,19 @@ impl Walker<'_, '_> {
             let loads_module = self.evaluates_inner_module(expression, &call)
                 || ((self.walk.has_wrapper_parameters || self.walk.has_values_of_each_run)
                     && self.is_bound_module_call(expression, &call));
+            let analysis = &self.input.compiled.analysis;
+            let is_site_of_require = analysis
+                .import_site_of_call(expression)
+                .is_some_and(|site| {
+                    matches!(analysis.import_sites[site].kind, ImportSiteKind::Require(_))
+                });
+            if (loads_module || is_site_of_require)
+                && self.is_value_of_run(CommonJsVariable::Module, context)
+                && self.is_require_seen(expression)
+            {
+                let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+                self.record_slot_use(context.function, self.file_scope, slot);
+            }
             if !loads_module {
                 let called = find_declaration_called_by_name(self.hir, self.bound, expression);
                 match called.filter(|called| self.runs_behind_initialization(called, context)) {
@@ -480,6 +498,14 @@ impl Walker<'_, '_> {
             current = creator;
         }
         is_behind
+    }
+
+    fn is_require_seen(&self, call: ExprId) -> bool {
+        let (modules, file) = (self.input.modules, self.input.file);
+        match modules.site(file, call) {
+            Some(Site::Evaluate { records, .. }) => records,
+            Some(Site::AsToday) | None => modules.keeps_module_object(ModuleRef::File(file)),
+        }
     }
 
     fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {

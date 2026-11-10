@@ -381,12 +381,18 @@ const s3OptionNames = [
   "virtualHostedStyle",
 ];
 
+// credentials_jsc.rs: an option that is no string is refused, and the message reads its constructor's name.
+const bagWithS3Options = (...names: readonly string[]) => [
+  ...b.optionBag([...names, ...s3OptionNames]),
+  ...s3OptionNames.map(name => b.memberStoredIn([name], b.nativeMemory)),
+];
+
 // The promise for a file descriptor is fulfilled with an error.
 const removesFile = {
   ...operandCodeOnly,
   args: { options: anythingOrAbsent },
   returns: settledWithAnyReason(b.union(b.undefined, b.bool, b.instance("Error")).unaliased),
-  uses: { this: stateRead, options: b.optionBag(s3OptionNames) },
+  uses: { this: stateRead, options: bagWithS3Options() },
   reads: externalState,
   writes: externalState,
 } satisfies b.FunctionField;
@@ -430,7 +436,7 @@ const membersOfBlob = {
       capability: "js",
       runsOnlyOperandCode: true,
       throws: true,
-      uses: { this: stateUpdate, value: converted },
+      uses: { this: stateUpdate, value: [b.retained, ...converted] },
       reads: externalState,
       writes: externalState,
       implementation: b.hostCall,
@@ -491,7 +497,7 @@ const membersOfBlob = {
           b.writesContents(),
           b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
         ],
-        options: b.optionBag(["createPath", ...s3OptionNames]),
+        options: bagWithS3Options("createPath"),
       },
       reads: operandHeaps,
       writes: externalState,
@@ -501,7 +507,7 @@ const membersOfBlob = {
     ...operandCodeOnly,
     args: { options: anythingOrAbsent },
     returns: b.union(b.instance("FileSink"), b.instance("NetworkSink")).fresh,
-    uses: { this: stateUpdate, options: b.optionBag(["fd", "path", ...s3OptionNames]) },
+    uses: { this: stateUpdate, options: bagWithS3Options("fd", "path") },
     reads: externalState,
     writes: externalState,
   },
@@ -516,6 +522,8 @@ const streamFromIterable = {
     iterable: [
       b.retained,
       b.runsTransitively("Iterate", "PrototypeChain", "Thenable", b.calls("@@asyncIterator")),
+      // ReadableStreamOperations.cpp throwNotIterable()
+      b.printedByFormatter(),
       b.reachableValuesStoredIn(b.nativeMemory),
     ],
   },

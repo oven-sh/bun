@@ -9,4 +9,4 @@
 # RUN: walk f2 mechanisms=all
 # CHECK: = GetSlot {{*}}key="mark" receivers=[L0] level=Expected
 # RUN(ONCE): walk f3 mechanisms=all
-# ONCE: = PropGet {{*}}key="mark"
+# ONCE: = GetSlot {{*}}key="mark" receivers=[L0] level=Expected

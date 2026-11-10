@@ -1,0 +1,27 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# const kept = { count: 1, label: "one" };
+# const tell = () => kept.count + " " + kept.label + " " + Object.keys(kept).join();
+# print(tell());
+# poke();
+# print(tell());
+# -- end of source
+# The program hands `kept` to nobody, so linked() rules out of the literal's layout that its objects gain a property, and compiled code lists its keys without a look.
+# `poke` is a free name that each run defines, and it is handed nothing. It takes the object out of the heap (aotFindObjectOfLayout()), a road that no program has, and stores an ELEMENT on it:
+# under an index, by the engine's own push, by Object.assign from a list. Each comes to Object::putByIndex() and goes by the short way of elements, which holds EVERY layout to what is proven of it,
+# as the long road does: the run time ends the process at the deed. Once the short way asked that of layouts of classes alone, and all three went on in silence.
+# OPTIONS: mechanisms=all
+# RUN(STORES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0)[0] = 1; print("went on"); };
+# STORES: 1 one count,label
+# STORES: AOT: AddProperty of an object of layout L0
+# STORES-NOT: went on
+# STORES: crashed with
+# RUN(PUSHES): run-in-shell globalThis.poke = () => { Array.prototype.push.call(aotFindObjectOfLayout(0), 1); print("went on"); };
+# PUSHES: AOT: AddProperty of an object of layout L0
+# PUSHES-NOT: went on
+# PUSHES: crashed with
+# RUN(ASSIGNS): run-in-shell globalThis.poke = () => { Object.assign(aotFindObjectOfLayout(0), [1]); print("went on"); };
+# ASSIGNS: AOT: AddProperty of an object of layout L0
+# ASSIGNS-NOT: went on
+# ASSIGNS: crashed with

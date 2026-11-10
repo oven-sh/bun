@@ -1,0 +1,16 @@
+# f1 = size
+# -- source: map-size.ts
+# function size(prices: Map<string, number>): number {
+#   return prices.size;
+# }
+# declare const input: any;
+# const prices = new Map<string, number>();
+# prices.set(String(input), +input);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = size(prices);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 8, patches 0, moves 0, unlikely or rare 3.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

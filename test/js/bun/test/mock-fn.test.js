@@ -2653,6 +2653,19 @@ describe("spyOn", () => {
       },
     );
 
+    test.skipIf(process.env.MODE !== undefined)(
+      "restore on a restored import.meta.env handle puts back the original of a later replacement",
+      () => {
+        // As in a describe() with afterEach(() => mode.restore()), whose tests call jest.replaceProperty() again.
+        const mode = jest.replaceProperty(import.meta.env, "MODE", "a");
+        mode.restore();
+        const later = jest.replaceProperty(import.meta.env, "MODE", "c");
+        expect([later === mode, import.meta.env.MODE, process.env.MODE]).toEqual([false, "c", "c"]);
+        mode.restore();
+        expect([import.meta.env.MODE, "MODE" in process.env]).toEqual(["test", false]);
+      },
+    );
+
     test("through a Proxy", () => {
       const target = { value: 1 };
       const traps = [];

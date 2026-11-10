@@ -326,12 +326,14 @@ impl<'s> Folder<'_, 's> {
         name: ExprId,
         initializer: ExprId,
     ) -> bool {
-        if self.enum_members.values.is_empty()
-            || self.folded(initializer).effects != Effects::LeftOutByBunRun
-        {
+        let is_behind_what_is_left_out = matches!(
+            self.folded(initializer).effects,
+            Effects::LeftOutUnderMinifySyntax | Effects::LeftOutByBunRun
+        );
+        if self.enum_members.values.is_empty() || !is_behind_what_is_left_out {
             return false;
         }
-        if self.is_enum_member_written_in_place(initializer) {
+        if self.holds_under_minify_syntax(|it| it.is_enum_member_written_in_place(initializer)) {
             self.enum_members.reads.insert(name.idx());
             return true;
         }

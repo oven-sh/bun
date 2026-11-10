@@ -3,7 +3,7 @@ use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::module_cache::is_function_that_loader_calls;
 use super::resolver::{AliasSource, ExprState, ResolvedValue, Resolver};
-use super::{SourceDialect, SpyCall};
+use super::{SourceDialect, SpyCall, passes_every_assertion};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
     RuntimeModule, Scope,
@@ -86,7 +86,10 @@ pub(super) fn holder_of(id: BuiltinId) -> BuiltinId {
 }
 
 fn is_of_test_runner(id: BuiltinId) -> bool {
-    table::entry(table::root_of(id)).module == Some(RuntimeModule::BunTest)
+    matches!(
+        table::entry(table::root_of(id)).module,
+        Some(RuntimeModule::BunTest | RuntimeModule::BunTestVitest)
+    )
 }
 
 fn mocks_modules(object: BuiltinId) -> bool {
@@ -112,6 +115,8 @@ fn find_writer(function: BuiltinId) -> Option<Writer> {
         BuiltinId::BunTestSpyOn
         | BuiltinId::BunTestJestSpyOn
         | BuiltinId::BunTestViSpyOn
+        | BuiltinId::BunTestVitestSpyOn
+        | BuiltinId::BunTestVitestViSpyOn
         | BuiltinId::BunTestJestReplaceProperty => Writer::Spy,
         BuiltinId::ObjectDefineProperty
         | BuiltinId::ReflectDefineProperty
@@ -202,22 +207,25 @@ fn opens_where_handed_on(object: BuiltinId) -> bool {
 }
 
 fn leads_to_function_that_loader_calls(object: BuiltinId) -> bool {
-    let mut is_seen = vec![false; BuiltinId::COUNT as usize];
-    let mut pending = vec![table::canonical_id(object)];
-    while let Some(reached) = pending.pop() {
-        if std::mem::replace(&mut is_seen[reached.to_wire() as usize], true) {
-            continue;
+    static LEADING: OnceLock<Vec<bool>> = OnceLock::new();
+    let leading = LEADING.get_or_init(|| {
+        let places = || (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
+        let mut leading = vec![false; BuiltinId::COUNT as usize];
+        let mut pending: Vec<BuiltinId> = places()
+            .filter(|&place| is_function_that_loader_calls(place))
+            .map(table::canonical_id)
+            .collect();
+        while let Some(reached) = pending.pop() {
+            if std::mem::replace(&mut leading[reached.to_wire() as usize], true) {
+                continue;
+            }
+            let held_at = places().filter(|&place| table::canonical_id(place) == reached);
+            let holders = held_at.filter_map(|place| table::entry(place).holder);
+            pending.extend(holders.map(table::canonical_id));
         }
-        if is_function_that_loader_calls(reached) {
-            return true;
-        }
-        pending.extend(
-            table::members(reached)
-                .iter()
-                .map(|&it| table::canonical_id(it)),
-        );
-    }
-    false
+        leading
+    });
+    leading[table::canonical_id(object).to_wire() as usize]
 }
 
 fn takes_no_names(holder: BuiltinId) -> bool {
@@ -368,6 +376,16 @@ impl WritesFound {
     }
 }
 
+pub(super) fn find_what_opens_where_handed_on(
+    objects: &[BuiltinId],
+) -> (Vec<BuiltinId>, Vec<BuiltinId>, bool) {
+    let mut found = WritesFound::default();
+    for &object in objects {
+        found.note_object_out_of_sight(holder_of(object));
+    }
+    (found.members, found.opened, found.stores_loader_functions)
+}
+
 impl Resolver<'_, '_> {
     fn find_holder_behind(&self, object: ExprId) -> Option<BuiltinId> {
         match self.state(self.input.hir.skip_type_assertions(object)) {
@@ -500,6 +518,15 @@ impl Resolver<'_, '_> {
         self.find_written_keys_once(key, &mut SmallVec::new())
     }
 
+    pub(super) fn find_names_written_as_key(&self, key: ExprId) -> SmallVec<[BuiltinName; 2]> {
+        let keys = self.find_written_keys(key).unwrap_or_default();
+        let names = keys.iter().filter_map(|key| match *key {
+            WrittenKey::Text(text) => self.input.names.get(text),
+            WrittenKey::Symbol(name) => Some(name),
+        });
+        names.collect()
+    }
+
     fn find_written_keys_once(
         &self,
         key: ExprId,
@@ -509,6 +536,7 @@ impl Resolver<'_, '_> {
         if let Some((_, symbol)) = self.symbol_that_key_is(key) {
             return Some(smallvec![WrittenKey::Symbol(table::name_of_symbol(symbol))]);
         }
+        let written = key;
         let key = input.hir.skip_type_assertions(key);
         let constant;
         let known;
@@ -522,6 +550,12 @@ impl Resolver<'_, '_> {
                 &known[..]
             }
         };
+        let mut passing = values.iter().map(|&value| Some(value));
+        if !passes_every_assertion(input.hir, written, None)
+            || !passing.all(|value| passes_every_assertion(input.hir, written, value))
+        {
+            return None;
+        }
         if values.is_empty() {
             let mut keys = WrittenKeys::new();
             if asked.contains(&key) {
@@ -815,6 +849,9 @@ impl Resolver<'_, '_> {
         };
         let mut spreads = operands.iter();
         if spreads.any(|&operand| matches!(hir[operand].kind, ExprKind::Spread(_))) {
+            if let Some(holder) = operands.first().and_then(|&it| self.find_holder_behind(it)) {
+                found.open(holder);
+            }
             return found.note_writer_out_of_sight(writer);
         }
         match writer {

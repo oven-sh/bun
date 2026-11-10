@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# const plus = (a, b) => a + b, minus = (a, b) => a - b;
+# function make(again) { const made = {}; const map = { join: { value: plus } }; if (again) map.join = { value: minus }; Object.defineProperties(made, map); return made; }
+# print(make(true).join(5, 2), make(false).join(5, 2));
+# -- end of source
+# The first form of the reader of the map: a store replaces an entry under a condition: two entries under ONE key: each was read as in sight, and Link pairs a definition's access with its change
+# by the site and the key: it found the first change for both: the second value flowed nowhere: "'minus' was not compiled into this executable". An entry is read only where its key is named ONCE in the map, on every way; else the map goes as before.
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3 7
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 3 7
+# CHECKED-NEXT: exited with 0

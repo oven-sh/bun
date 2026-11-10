@@ -51,11 +51,8 @@ declare module "bun" {
     /**
      * The reply of `zrange`, `zrevrange`, `zrangebyscore` and `zrevrangebyscore`, computed from their options.
      * Redis replies with `[member, score]` pairs when `WITHSCORES` is among the options, in any position and
-     * letter case, and with members otherwise. An option typed `string` is not known to be `WITHSCORES`, so it
-     * leaves the reply typed as members.
-     *
-     * The methods declare `Options` as a `const` type parameter with a `readonly` constraint. TypeScript 5.0 to
-     * 5.2 infer no literal types when that constraint is a mutable array.
+     * letter case, and with members otherwise. An option typed `string` or `any` is not known to be `WITHSCORES`,
+     * so it leaves the reply typed as members.
      */
     type RedisZRangeReply<Options extends readonly unknown[]> = Options extends readonly [infer Option, ...infer Rest]
       ? RedisZRangeReplyAfter<Option, Rest>
@@ -69,6 +66,14 @@ declare module "bun" {
         ? [string, number][]
         : RedisZRangeReply<Rest>
       : RedisZRangeReply<Rest>;
+
+    /**
+     * The option list of those four methods: the constraint of their `const Options` type parameter. It is a
+     * union of tuple types and not `readonly Option[]`, because TypeScript checks a tuple option by option. With
+     * the array type, one option typed `any` makes it accept every other option. The tuples are `readonly`
+     * because TypeScript 5.0 to 5.2 infer no literal types when the constraint is mutable.
+     */
+    type RedisZRangeOptions<Option> = readonly [] | readonly [Option, ...Option[]] | readonly [...Option[], Option];
   }
 
   export namespace RedisClient {
@@ -1719,8 +1724,8 @@ declare module "bun" {
      * @param options Additional options (BYSCORE, BYLEX, REV, LIMIT offset count, WITHSCORES)
      * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
      * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
-     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
-     * that is spread into the call without `as const`.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
      *
      * @example
      * ```ts
@@ -1731,7 +1736,7 @@ declare module "bun" {
      * const reversed = await redis.zrange("myzset", "0", "-1", "REV", "WITHSCORES");
      * ```
      */
-    zrange<const Options extends readonly (string | number)[] = []>(
+    zrange<const Options extends __internal.RedisZRangeOptions<string | number> = []>(
       key: RedisClient.KeyLike,
       start: string | number,
       stop: string | number,
@@ -1832,10 +1837,10 @@ declare module "bun" {
      * @param options Additional options (WITHSCORES)
      * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
      * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
-     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
-     * that is spread into the call without `as const`.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
      */
-    zrevrange<const Options extends readonly string[] = []>(
+    zrevrange<const Options extends __internal.RedisZRangeOptions<string> = []>(
       key: RedisClient.KeyLike,
       start: number,
       stop: number,
@@ -2367,10 +2372,10 @@ declare module "bun" {
      * @param options Additional options (WITHSCORES, LIMIT offset count)
      * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
      * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
-     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
-     * that is spread into the call without `as const`.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
      */
-    zrangebyscore<const Options extends readonly (string | number)[] = []>(
+    zrangebyscore<const Options extends __internal.RedisZRangeOptions<string | number> = []>(
       key: RedisClient.KeyLike,
       min: string | number,
       max: string | number,
@@ -2474,10 +2479,10 @@ declare module "bun" {
      * @param options Additional options (WITHSCORES, LIMIT offset count)
      * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
      * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
-     * An option typed `string` counts as not "WITHSCORES", for example a `let` variable or an array literal
-     * that is spread into the call without `as const`.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
      */
-    zrevrangebyscore<const Options extends readonly (string | number)[] = []>(
+    zrevrangebyscore<const Options extends __internal.RedisZRangeOptions<string | number> = []>(
       key: RedisClient.KeyLike,
       max: string | number,
       min: string | number,

@@ -119,11 +119,13 @@ redis.wait(1);
 expectType(redis.lcs("a", "b")).is<Promise<any>>();
 expectType(redis.lcs("a", "b", "LEN")).is<Promise<any>>();
 
-// Sorted set ranges: a literal WITHSCORES among the options, in any position and letter case, types the reply as pairs
+// Sorted set ranges: a literal WITHSCORES among the options types the reply as pairs, in any letter case and in
+// any position but one: TypeScript does not read a literal between two spread arrays
 declare const someOptions: string[];
 declare const withScores: boolean;
 declare const descending: boolean;
 declare const offset: number;
+declare const anyOption: any;
 expectType(redis.zrange("zset", 0, -1)).is<Promise<string[]>>();
 expectType(redis.zrange("zset", 0, -1, "REV")).is<Promise<string[]>>();
 expectType(redis.zrange("zset", "1", "10", "BYSCORE", "LIMIT", "0", "5")).is<Promise<string[]>>();
@@ -156,6 +158,15 @@ expectType(redis.zrange("zset", 0, -1, "REV", someOptions[0]!)).is<Promise<strin
 expectType(redis.zrevrange("zset", 0, -1, ...someOptions)).is<Promise<string[]>>();
 expectType(redis.zrangebyscore("zset", 0, 10, "LIMIT", someOptions[0]!, "5")).is<Promise<string[]>>();
 expectType(redis.zrevrangebyscore("zset", 10, 0, ...someOptions)).is<Promise<string[]>>();
+// An option typed `any` counts as not WITHSCORES too, and TypeScript still checks the options beside it
+expectType(redis.zrange("zset", 0, -1, anyOption)).is<Promise<string[]>>();
+expectType(redis.zrangebyscore("zset", 0, 10, "LIMIT", anyOption, anyOption, "WITHSCORES")).is<
+  Promise<[string, number][]>
+>();
+// @ts-expect-error - null is not an option, also beside an option typed `any`
+redis.zrange("zset", 0, -1, anyOption, null);
+// @ts-expect-error - ZREVRANGE takes no numeric option, also beside an option typed `any`
+redis.zrevrange("zset", 0, -1, anyOption, 5);
 // An option that may or may not be the literal gives either reply
 expectType(redis.zrange("zset", 0, -1, ...(withScores ? ["WITHSCORES"] : []))).is<
   Promise<string[] | [string, number][]>

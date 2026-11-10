@@ -1557,8 +1557,7 @@ impl<'a> BundleOptions<'a> {
             && (self.transform_options.jsx.as_ref()).is_some_and(|jsx| jsx.development.is_none())
     }
 
-    /// For a build, after `configure_defines()`: with `env` set, that merges the JSX of the root tsconfig.json over
-    /// `jsx`. What `transform_options.jsx` says about development goes back, unless `NODE_ENV` chose.
+    /// With `env` set, `configure_defines()` lets the root tsconfig.json replace a stated `jsx.development`.
     pub fn keep_stated_jsx_development(&mut self) {
         if !self.node_env_chose_jsx_development()
             && let Some(development) =

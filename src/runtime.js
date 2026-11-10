@@ -27,13 +27,18 @@ function __accessProp(key) {
 export var __reExport = (target, mod, secondTarget) => {
   // An external CommonJS re-export target may set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
-  var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [];
+  var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [],
+    // A require() of this module that ran before this call holds the view
+    // that `__toCommonJS` cached. The view gets the new names too.
+    view = __moduleCache && __moduleCache.get(target);
   for (let key of keys)
     if (!__hasOwnProp.call(target, key) && key !== "default")
       __defProp(target, key, {
         get: __accessProp.bind(mod, key),
         enumerable: true,
       });
+
+  if (view) __reExport(view, mod);
 
   if (secondTarget) {
     for (let key of keys)
@@ -56,29 +61,41 @@ var __toESMCache_esm;
 // except outside node mode when "__esModule" is truthy and the module has its
 // own "default" property. `bun run` uses the same rule.
 export var __toESM = (mod, isNodeMode, target) => {
-  var canCache = mod != null && typeof mod === "object";
+  var canCache = mod != null && typeof mod === "object",
+    // A CommonJS module may legitimately set "module.exports" to null,
+    // undefined, or a primitive; only objects and functions have named exports.
+    names = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [],
+    isDefault = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default");
   if (canCache) {
-    var cache = isNodeMode ? (__toESMCache_node ??= new WeakMap()) : (__toESMCache_esm ??= new WeakMap());
-    var cached = cache.get(mod);
-    if (cached) return cached;
+    // An entry is [own names, isDefault, namespace]. The namespace is what a
+    // new one would be only while the exports object has those names, that
+    // "default" choice and that prototype: a module that is still loading,
+    // or another module, can add to the object after the first import.
+    var cache = isNodeMode ? (__toESMCache_node ??= new WeakMap()) : (__toESMCache_esm ??= new WeakMap()),
+      cached = cache.get(mod),
+      i = names.length,
+      built;
+    if (
+      cached &&
+      cached[1] === isDefault &&
+      __getProtoOf(cached[2]) === __getProtoOf(mod) &&
+      (built = cached[0]).length === i
+    ) {
+      while (i-- && built[i] === names[i]);
+      if (i < 0) return cached[2];
+    }
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to =
-    isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
-      ? __defProp(target, "default", { value: mod, enumerable: true })
-      : target;
+  const to = isDefault ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
 
-  // A CommonJS module may legitimately set "module.exports" to null,
-  // undefined, or a primitive; only objects and functions have named exports.
-  if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true,
-        });
+  for (let key of names)
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: __accessProp.bind(mod, key),
+        enumerable: true,
+      });
 
-  if (canCache) cache.set(mod, to);
+  if (canCache) cache.set(mod, [names, isDefault, to]);
   return to;
 };
 

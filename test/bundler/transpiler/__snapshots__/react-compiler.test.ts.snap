@@ -101,25 +101,26 @@ function __accessProp(key) {
 var __toESMCache_node;
 var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
-  var canCache = mod != null && typeof mod === "object";
+  var canCache = mod != null && typeof mod === "object", names = mod && typeof mod === "object" || typeof mod === "function" ? __getOwnPropNames(mod) : [], isDefault = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default");
   if (canCache) {
-    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
-    var cached = cache.get(mod);
-    if (cached)
-      return cached;
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap, cached = cache.get(mod), i = names.length, built;
+    if (cached && cached[1] === isDefault && __getProtoOf(cached[2]) === __getProtoOf(mod) && (built = cached[0]).length === i) {
+      while (i-- && built[i] === names[i])
+        ;
+      if (i < 0)
+        return cached[2];
+    }
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
-  if (mod && typeof mod === "object" || typeof mod === "function") {
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true
-        });
-  }
+  const to = isDefault ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  for (let key of names)
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: __accessProp.bind(mod, key),
+        enumerable: true
+      });
   if (canCache)
-    cache.set(mod, to);
+    cache.set(mod, [names, isDefault, to]);
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);

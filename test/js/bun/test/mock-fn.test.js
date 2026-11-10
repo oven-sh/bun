@@ -2814,6 +2814,7 @@ if (isBun) {
       expect(vi.isMockFunction(Date.prototype.getTime)).toBe(false);
       expect(spied.list[3].prototype).toBe(Klass.prototype);
       expect(new spied.list[3]().method()).toBe("Klass");
+      expect(Klass.prototype.method).toHaveBeenCalledTimes(1);
     });
 
     test.each(modes)("%s: cycles and shared references", (_, options) => {

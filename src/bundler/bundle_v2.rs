@@ -5475,7 +5475,8 @@ pub mod bv2_impl {
 
             // Worker-assignment teardown.
             // SAFETY: see `Graph::pool`. The waits at the top of this function are over, so no
-            // source map task and no IO task still borrows the pool.
+            // source map task and no IO task still borrows the pool. For the parse tasks, the
+            // callers `wait_for_parse` first: see `get_worker_slow` for the one exception.
             let pool = unsafe { self.graph.pool.get_mut() };
             {
                 let mut assignments = pool.workers_assignments.lock();

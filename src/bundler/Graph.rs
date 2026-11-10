@@ -196,10 +196,10 @@ impl<'a> Graph<'a> {
     #[inline]
     pub(crate) fn pool(&self) -> &ThreadPool {
         // BackRef invariant: `pool` is set in `BundleV2::init` to an
-        // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
-        // no `&mut ThreadPool` is live across any `pool()` borrow (the only
-        // `&mut` site is `deinit`, called after all schedule/worker activity
-        // has drained).
+        // arena-owned `ThreadPool` and remains valid until
+        // `deinit_without_freeing_arena`; no `&mut ThreadPool` is live across any
+        // `pool()` borrow (the only `&mut` site is there, after all
+        // schedule/worker activity has drained).
         self.pool.get()
     }
 

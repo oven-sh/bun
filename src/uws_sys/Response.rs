@@ -644,7 +644,7 @@ pub enum AnyResponse {
     H2(*mut H2Response),
 }
 
-/// Panics in place on null: with the shared cold `null_handle`, LTO inlines the small dispatchers.
+/// Panics in place on null: with only the cold `null_handle`, LTO inlines the dispatchers, +20 KB.
 #[inline(always)]
 fn as_handle<'a, T>(ptr: *mut T) -> &'a mut T {
     assert!(!ptr.is_null(), "AnyResponse: null uWS handle");
@@ -652,9 +652,9 @@ fn as_handle<'a, T>(ptr: *mut T) -> &'a mut T {
 }
 
 // Helper: dispatch to the underlying response, calling the same-named method on each
-// variant. The three arms are written out by hand.
+// variant. The four arms are written out by hand.
 //
-// The per-variant `*mut → &mut` deref is internalized via `opaque_deref_mut`
+// The per-variant `*mut → &mut` deref is internalized via `as_handle`
 // (S019): each variant payload is a ZST opaque, so the deref is sound by
 // construction and needs no `unsafe` at the dispatch site.
 macro_rules! any_dispatch {

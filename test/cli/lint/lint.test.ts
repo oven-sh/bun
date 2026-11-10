@@ -1263,6 +1263,8 @@ describe.concurrent("bun lint", () => {
       ["class A { #x; #x = 08; }", "1:20: Parsing error: Invalid number"],
       ["class A { #x; get #x() { return 08 } }", "1:33: Parsing error: Invalid number"],
       ["class A { #x; #x } 08", "1:15: Parsing error: Identifier '#x' has already been declared"],
+      ["class A { static prototype 08 }", "1:28: Parsing error: Invalid number"],
+      ["class A { get constructor() { 08 } }", "1:15: Parsing error: Constructor can't have get/set modifier"],
       // An undeclared private name is noticed at the end of the outermost class body around it. A class in an
       // `extends` clause isn't in the body of the class it extends.
       [
@@ -1352,6 +1354,7 @@ describe.concurrent("bun lint", () => {
       ["class A { m() { this.#x } } 08;", "1:29: Parsing error: Invalid number"],
       ['class A { m() { this.#x } } "\\8"', "1:31: Parsing error: Invalid escape sequence"],
       ["class A { m() { this.#x } } /a/x", "1:30: Parsing error: Invalid regular expression flag"],
+      ["var x = /a/ggx;", "1:10: Parsing error: Duplicate regular expression flag"],
       ["class A { m() { this.#x } } 1_", "1:30: Parsing error: Numeric separator is not allowed at the last of digits"],
       ["class A { m() { this.#x } } 3in", "1:30: Parsing error: Identifier directly after number"],
       [

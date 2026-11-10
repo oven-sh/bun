@@ -1065,15 +1065,18 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             let token = it.span().start;
-            let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
-            let message: Vec<u8> = if !flags.iter().all(is_valid) {
-                b"Invalid regular expression flag".to_vec()
-            } else if flags
-                .iter()
-                .enumerate()
-                .any(|(i, flag)| flags[i + 1..].iter().any(|it| it == flag))
-            {
-                b"Duplicate regular expression flag".to_vec()
+            // acorn checks each flag in turn: unknown first, then repeated.
+            let flag_error = flags.iter().enumerate().find_map(|(i, flag)| {
+                if !strings::contains_char(b"dgimsuvy", *flag) {
+                    Some("Invalid regular expression flag")
+                } else if strings::contains_char(&flags[i + 1..], *flag) {
+                    Some("Duplicate regular expression flag")
+                } else {
+                    None
+                }
+            });
+            let message: Vec<u8> = if let Some(flag_error) = flag_error {
+                flag_error.as_bytes().to_vec()
             } else if strings::contains_char(flags, b'u') && strings::contains_char(flags, b'v') {
                 b"Invalid regular expression flag".to_vec()
             } else if let Err(error) = regex::validate_pattern(
@@ -2166,47 +2169,51 @@ impl<'a> Checks<'a, '_> {
             }
             return;
         };
-        let start = key.span(self.file).start;
+        let crate::span::Span { start, end } = key.span(self.file);
+        if matches!(key.kind(), KeyKind::Private(name) if name.is("#constructor")) {
+            return self.fail(start, "Classes can't have an element named '#constructor'");
+        }
         // `checkKeyName`
         let is_named = |name: &str| matches!(key.kind(), KeyKind::Ident(it) | KeyKind::String(it) if it.is(name));
         let is_field = member.kind() == MemberKind::Property;
         // oxc checks an `accessor`'s name only if it's private.
         let skips_name_check = self.is_oxc && member.flags().contains(Flags::ACCESSOR);
-        if matches!(key.kind(), KeyKind::Private(name) if name.is("#constructor")) {
-            self.fail(start, "Classes can't have an element named '#constructor'");
-        } else if skips_name_check || is_declared && !(is_field && is_named("constructor")) {
-            // Its name isn't checked.
-        } else if is_field && is_named("constructor") {
-            self.fail(start, "Classes can't have a field named 'constructor'");
-        } else if self.is_oxc && member.is_static() && is_named("prototype") {
-            self.fail(
-                start,
-                "Classes may not have a static property named 'prototype'",
-            );
-        } else if is_field && member.is_static() && is_named("prototype") {
-            self.fail(start, "Classes can't have a static field named 'prototype'");
-        } else if !is_field && member.is_static() && is_named("prototype") {
-            self.fail(
-                start,
-                "Classes may not have a static property named prototype",
-            );
-        } else if member.is_static() || !is_named("constructor") {
-            // Not a constructor.
-        } else if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter) {
-            self.fail(start, "Constructor can't have get/set modifier");
-        } else if self.is_oxc {
-            // oxc reports both errors for `async *constructor() {}`.
-            if member.func().is_some_and(Func::is_async) {
-                self.fail(start, "Constructor can't be an async method");
+        // acorn checks the name once it has read the key, and the token after it.
+        self.when_read_to(end, |checks| {
+            if skips_name_check || is_declared && !(is_field && is_named("constructor")) {
+                // Its name isn't checked.
+            } else if is_field && is_named("constructor") {
+                checks.fail(start, "Classes can't have a field named 'constructor'");
+            } else if checks.is_oxc && member.is_static() && is_named("prototype") {
+                checks.fail(
+                    start,
+                    "Classes may not have a static property named 'prototype'",
+                );
+            } else if is_field && member.is_static() && is_named("prototype") {
+                checks.fail(start, "Classes can't have a static field named 'prototype'");
+            } else if !is_field && member.is_static() && is_named("prototype") {
+                checks.fail(
+                    start,
+                    "Classes may not have a static property named prototype",
+                );
+            } else if member.is_static() || !is_named("constructor") {
+                // Not a constructor.
+            } else if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter) {
+                checks.fail(start, "Constructor can't have get/set modifier");
+            } else if checks.is_oxc {
+                // oxc reports both errors for `async *constructor() {}`.
+                if member.func().is_some_and(Func::is_async) {
+                    checks.fail(start, "Constructor can't be an async method");
+                }
+                if member.func().is_some_and(Func::is_generator) {
+                    checks.fail(start, "Constructor can't be a generator");
+                }
+            } else if member.func().is_some_and(Func::is_generator) {
+                checks.fail(start, "Constructor can't be a generator");
+            } else if member.func().is_some_and(Func::is_async) {
+                checks.fail(start, "Constructor can't be an async method");
             }
-            if member.func().is_some_and(Func::is_generator) {
-                self.fail(start, "Constructor can't be a generator");
-            }
-        } else if member.func().is_some_and(Func::is_generator) {
-            self.fail(start, "Constructor can't be a generator");
-        } else if member.func().is_some_and(Func::is_async) {
-            self.fail(start, "Constructor can't be an async method");
-        }
+        });
     }
 
     // ───────────────────────────── more expressions ─────────────────────────────

@@ -7001,6 +7001,32 @@ declare module "bun" {
     ): void | Promise<void>;
   }
 
+  namespace __internal {
+    interface RuntimeOnLoadResultSourceCode extends OnLoadResultSourceCode {
+      loader?:
+        "js" | "jsx" | "ts" | "tsx" | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md" | "css";
+    }
+
+    type RuntimeOnLoadResult = RuntimeOnLoadResultSourceCode | OnLoadResultObject | undefined | null | void;
+
+    /**
+     * The builder that `Bun.plugin` gives to `setup()`. It is a `PluginBuilder`
+     * whose `onLoad` and `module()` callbacks can only return a loader that the
+     * runtime accepts.
+     */
+    interface RuntimePluginBuilder extends PluginBuilder {
+      onLoad(
+        constraints: PluginConstraints,
+        callback: (args: OnLoadArgs) => RuntimeOnLoadResult | Promise<RuntimeOnLoadResult>,
+      ): this;
+      module(specifier: string, callback: () => RuntimeOnLoadResult | Promise<RuntimeOnLoadResult>): this;
+    }
+
+    interface RuntimePlugin extends BunPlugin {
+      setup(build: RuntimePluginBuilder): void | Promise<void>;
+    }
+  }
+
   /**
    * Extend Bun's module resolution and loading behavior
    *
@@ -7041,7 +7067,7 @@ declare module "bun" {
    * ```
    */
   interface BunRegisterPlugin {
-    <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
+    <T extends __internal.RuntimePlugin>(options: T): ReturnType<T["setup"]>;
 
     /**
      * Deactivate all plugins

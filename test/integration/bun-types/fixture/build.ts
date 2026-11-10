@@ -79,6 +79,12 @@ Bun.build({
           return { contents: "hey", loader: "js" };
         });
 
+        // Bun.build accepts the loaders that a runtime plugin rejects (see the `Bun.plugin` cases in ./bun.ts).
+        build.onLoad({ filter: /^asset$/ }, () => ({ contents: "hey", loader: "file" }));
+        build.onLoad({ filter: /^addon$/ }, () => ({ contents: "hey", loader: "napi" }));
+        build.onLoad({ filter: /^binary$/ }, () => ({ contents: "hey", loader: "wasm" }));
+        build.onLoad({ filter: /^page$/ }, async () => ({ contents: "hey", loader: "html" }));
+
         build.onStart(() => {});
 
         build.onEnd(result => {

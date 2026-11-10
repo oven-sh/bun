@@ -224,6 +224,8 @@ At runtime, `contents` can be a string or UTF-8 bytes, and Bun loads it like a f
 
 `loader` can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`, `"xml"`, `"text"`, `"md"` or `"css"`. If you don't return one, Bun uses the `type` the module was imported with, then its file extension. A `type` that isn't in this list, such as `"file"`, is an error unless you set `loader`.
 
+When TypeScript infers the type of `build` from the `Bun.plugin()` call, it reports any other `loader`. A plugin with the type `BunPlugin`, or a `setup` function that takes a `Bun.PluginBuilder`, accepts every `Loader`, because it also works in `Bun.build`.
+
 To skip a module, return `undefined` or a promise that resolves to `undefined`. Bun runs the next matching `onLoad()` callback. If they all skip it, Bun loads the module as if no plugin had matched it.
 
 For example:

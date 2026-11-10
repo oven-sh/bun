@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // `handleOnLoadResultNotPromise` in src/jsc/bindings/ModuleLoader.cpp has the loader names that a runtime plugin
-// (`Bun.plugin`) can return from `onLoad` or `module()`. It throws for every other name. The list has three
-// hand-written copies: the message of that throw, the JSDoc of `OnLoadResultSourceCode.loader` in
-// packages/bun-types/bun.d.ts, and docs/runtime/plugins.mdx. The type of that property is the `Loader` of
-// `Bun.build`, which has more names, so the two texts are where a user learns what a runtime plugin accepts (#17655).
+// (`Bun.plugin`) can return from `onLoad` or `module()`. It throws for every other name. The list has four
+// hand-written copies: the message of that throw, `Bun.__internal.RuntimeOnLoadResultSourceCode` in
+// packages/bun-types/bun.d.ts (the type that `Bun.plugin` checks a plugin against), the JSDoc of
+// `OnLoadResultSourceCode.loader` in the same file, and docs/runtime/plugins.mdx. A name that only the type has
+// compiles and then throws (#17655). A name that only the runtime has makes a correct plugin fail to compile.
 const runtimeFile = "src/jsc/bindings/ModuleLoader.cpp";
 const typesFile = "packages/bun-types/bun.d.ts";
 const docsFile = "docs/runtime/plugins.mdx";
@@ -42,6 +43,16 @@ test(`${runtimeFile} compares the loader of a runtime plugin with a list of name
 test(`the error message in ${runtimeFile} has every loader that a runtime plugin can return`, () => {
   const message = between(validator, '"Expected loader to be one of', '"_s', runtimeFile);
   expect(namesIn(message, /\\"([^"\\]+)\\"/g)).toEqual(accepted);
+});
+
+test(`Bun.__internal.RuntimeOnLoadResultSourceCode in ${typesFile} has every loader that a runtime plugin can return`, () => {
+  const declaration = between(
+    read(typesFile),
+    "interface RuntimeOnLoadResultSourceCode extends OnLoadResultSourceCode {",
+    "}",
+    typesFile,
+  );
+  expect(namesIn(between(declaration, "loader?:", ";", typesFile), /"([^"]+)"/g)).toEqual(acceptedWithContents);
 });
 
 test(`the JSDoc of OnLoadResultSourceCode.loader in ${typesFile} has every loader that a runtime plugin can return`, () => {

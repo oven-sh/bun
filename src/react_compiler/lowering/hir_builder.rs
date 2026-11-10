@@ -294,14 +294,12 @@ pub(crate) struct HirBuilder<'h> {
     instruction_table: HirVec<Instruction>,
     /// The scope of the function being compiled (for context identifier checks).
     function_scope: &'h ast::Scope,
-    /// The scope of the outermost component/hook function.
-    component_scope: &'h ast::Scope,
     /// Current lexical scope stack (top = innermost). Used by `resolve_ref` to
     /// resolve `RefTag::SourceContentsSlice` identifier references — this hook
     /// runs before the visit pass that would normally rewrite them to
     /// `RefTag::Symbol`.
     scope_stack: Vec<&'h ast::Scope>,
-    /// Set of `Ref`s for variables declared in scopes between component_scope
+    /// Set of `Ref`s for variables declared in scopes between the outermost function
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
     context_identifiers: Rc<RefSet>,
@@ -325,7 +323,6 @@ impl<'h> HirBuilder<'h> {
         env: &'h mut Environment,
         host: &'h dyn Host,
         function_scope: &'h ast::Scope,
-        component_scope: &'h ast::Scope,
         context_identifiers: Rc<RefSet>,
         function_bindings: &'h FunctionBindings,
         bindings: Option<IndexMap<Ref, IdentifierId>>,
@@ -349,7 +346,6 @@ impl<'h> HirBuilder<'h> {
             exception_handler_stack: Vec::new(),
             instruction_table: AstAlloc::vec(),
             function_scope,
-            component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
             function_bindings,
@@ -394,10 +390,6 @@ impl<'h> HirBuilder<'h> {
 
     pub(crate) fn function_scope(&self) -> &'h ast::Scope {
         self.function_scope
-    }
-
-    pub(crate) fn component_scope(&self) -> &'h ast::Scope {
-        self.component_scope
     }
 
     // -----------------------------------------------------------------------

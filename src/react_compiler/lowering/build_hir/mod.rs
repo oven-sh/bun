@@ -101,7 +101,6 @@ pub(crate) fn lower(
         None, // no pre-existing bindings for top-level
         context_map,
         scope,
-        scope, // component_scope = function_scope for top-level
         context_identifiers,
         &function_bindings,
         import_bindings,
@@ -125,7 +124,6 @@ pub(super) fn lower_inner<'h>(
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
     context_map: IndexMap<LocalRef, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
-    component_scope: &'h ast::Scope,
     context_identifiers: Rc<RefSet>,
     function_bindings: &'h FunctionBindings,
     import_bindings: &'h IndexMap<Ref, VariableBinding>,
@@ -144,7 +142,6 @@ pub(super) fn lower_inner<'h>(
         env,
         host,
         function_scope,
-        component_scope,
         context_identifiers,
         function_bindings,
         parent_bindings,

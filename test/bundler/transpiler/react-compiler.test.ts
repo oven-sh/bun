@@ -1603,6 +1603,47 @@ describe("bundler", () => {
     },
   });
 
+  // A nested function that renders JSX reads the imports of the JSX runtime. The module scope generated those symbols,
+  // so they are no captures of that function. They were taken for captures, and a capture keeps its name from a local
+  // that the component declares later: `const jsxDEV = props.c` was printed as `jsxDEV_0`.
+  for (const development of [true, false]) {
+    itBundled(`react-compiler/JsxRuntimeImportIsNoCaptureOfANestedFunction-${development ? "Dev" : "Prod"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          export function Comp(props) {
+            function list() {
+              return <><i>{props.x}</i><b>{props.y}</b></>;
+            }
+            const jsx = props.a;
+            const jsxs = props.b;
+            const jsxDEV = props.c;
+            const Fragment = props.d;
+            return <div title={jsx + jsxs + jsxDEV + Fragment}>{list()}</div>;
+          }
+          console.log(Comp({ a: "A", b: "B", c: "C", d: "D", x: "X", y: "Y" }).p.title);
+        `,
+        ...stubReact,
+        "/node_modules/react/jsx-runtime.js":
+          stubReact["/node_modules/react/jsx-runtime.js"] + ` exports.Fragment = "";`,
+        "/node_modules/react/jsx-dev-runtime.js":
+          stubReact["/node_modules/react/jsx-dev-runtime.js"] + ` exports.Fragment = "";`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "api",
+      jsx: { development },
+      run: { stdout: "ABCD" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        // `Comp` is compiled: it reads its memo cache.
+        expect(out).toMatch(/\$\[\d+\]/);
+        // The runtime is CommonJS, so its exports print as `$jsx`, and the bundler numbers no local.
+        const locals = Array.from(out.matchAll(/(\w+) = props\.([abcd])\b/g), found => [found[2], found[1]]);
+        expect(Object.fromEntries(locals)).toEqual({ a: "jsx", b: "jsxs", c: "jsxDEV", d: "Fragment" });
+      },
+    });
+  }
+
   // The parser turns a read of a member that a TypeScript namespace or enum exports into a property of the closure
   // parameter of the block, and a read of a member of another block of the namespace into a symbol that prints as one.
   // No scope has a name for either, so the compiler took both for locals of the function that reads them and printed a

@@ -54,7 +54,6 @@ fn lower_function(
     // function is delegated to `lower_inner` / `gather_captured_context`,
     // which walk from `parent_function_scope`.
     let parent_function_scope = builder.function_scope();
-    let component_scope = builder.component_scope();
 
     let parent_bindings = builder.take_bindings();
     let context_ids = Rc::clone(builder.context_identifiers());
@@ -87,7 +86,6 @@ fn lower_function(
         Some(parent_bindings),
         merged_context,
         parent_function_scope,
-        component_scope,
         context_ids,
         function_bindings,
         import_bindings,
@@ -113,7 +111,6 @@ pub(super) fn lower_function_declaration(
     let func_name = func_name_ref.map(|r| StoreStr::new(builder.host().ref_name(r)));
 
     let parent_function_scope = builder.function_scope();
-    let component_scope = builder.component_scope();
 
     let parent_bindings = builder.take_bindings();
     let context_ids = Rc::clone(builder.context_identifiers());
@@ -145,7 +142,6 @@ pub(super) fn lower_function_declaration(
         Some(parent_bindings),
         merged_context,
         parent_function_scope,
-        component_scope,
         context_ids,
         function_bindings,
         import_bindings,
@@ -240,7 +236,6 @@ fn lower_function_for_object_method(
     let func = FunctionNode::Function(method);
 
     let parent_function_scope = builder.function_scope();
-    let component_scope = builder.component_scope();
 
     let parent_bindings = builder.take_bindings();
     let context_ids = Rc::clone(builder.context_identifiers());
@@ -271,7 +266,6 @@ fn lower_function_for_object_method(
         Some(parent_bindings),
         merged_context,
         parent_function_scope,
-        component_scope,
         context_ids,
         function_bindings,
         import_bindings,

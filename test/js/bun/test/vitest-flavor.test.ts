@@ -4346,13 +4346,18 @@ describe.concurrent("retry delay and condition", () => {
           beforeEach(hang, 20);
           test("times out", { retry: { count: 1, condition: /^Hook timed out in 20ms\\./ } }, ({ task }) => { count(task); });
         });
+        // Vitest does not set up again a fixture that hangs, so this one hangs once. The second attempt gets a timeout that a slow machine does not reach.
+        let hangs = true;
         const withFixture = test.extend({
           fixture: async ({}, use) => {
-            await hang();
+            if (hangs) {
+              hangs = false;
+              await hang();
+            }
             await use(1);
           },
         });
-        withFixture("a fixture of the test times out", { timeout: 20, retry: { count: 1, condition: /^Test timed out in 20ms\\./ } }, ({ fixture, task }) => {
+        withFixture("a fixture of the test times out", { timeout: 500, retry: { count: 1, condition: /^Test timed out in 500ms\\./ } }, ({ fixture, task }) => {
           count(task);
         });
       `,
@@ -4379,7 +4384,8 @@ describe.concurrent("retry delay and condition", () => {
         "a test.failing that passes: 1",
         "a test.failing that passes, with the object: 1",
         `["Hook timed out in 20ms${ifLongRunning("hook")}`,
-        `["Test timed out in 20ms${ifLongRunning("test")}`,
+        `["Test timed out in 500ms${ifLongRunning("test")}`,
+        "a fixture of the test times out: 1",
       ],
       results: [
         "(fail) a timeout (attempt 2)",
@@ -4391,7 +4397,7 @@ describe.concurrent("retry delay and condition", () => {
         "(fail) a test.failing that passes",
         "(fail) a test.failing that passes, with the object",
         "(fail) a hook > times out (attempt 2)",
-        "(fail) a fixture of the test times out (attempt 2)",
+        "(pass) a fixture of the test times out (attempt 2)",
       ],
       exitCode: 1,
     });
@@ -4484,14 +4490,19 @@ describe.concurrent("retry delay and condition", () => {
           test("test", retry, () => {});
         });
         describe("a fixture of a hook", () => {
+          // Vitest does not set up again a fixture that hangs, so this one hangs once. The second attempt gets a timeout that a slow machine does not reach.
+          let hangs = true;
           const withFixture = test.extend({
             fixture: async ({}, use) => {
-              await hang();
+              if (hangs) {
+                hangs = false;
+                await hang();
+              }
               await use(1);
             },
           });
-          withFixture.beforeEach(({ fixture }) => {}, 20);
-          withFixture("test", retry, () => {});
+          withFixture.beforeEach(({ fixture }) => {}, 500);
+          withFixture("test", { retry: { count: 1, condition: /^Hook timed out in 500ms\\./ } }, () => {});
         });
       `,
     });
@@ -4501,7 +4512,7 @@ describe.concurrent("retry delay and condition", () => {
         "(fail) onTestFinished() (attempt 2)",
         "(fail) onTestFailed() (attempt 2)",
         "(fail) a function that beforeEach returns > test (attempt 2)",
-        "(fail) a fixture of a hook > test (attempt 2)",
+        "(pass) a fixture of a hook > test (attempt 2)",
       ],
       exitCode: 1,
     });

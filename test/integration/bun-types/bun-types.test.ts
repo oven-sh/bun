@@ -326,6 +326,9 @@ function checkForEmptyInterfaces(program: ts.Program) {
  *                                   only Bun has goes in a base that is always on, such as `BunHeadersOverride`
  *   var Crypto                      a `var` that writes its type out. `Bun.__internal.UseLibDomIfAvailable`
  *                                   takes the type from the `var` of the lib
+ *   var Worker.data (only without the lib)
+ *                                   a static of the type that `UseLibDomIfAvailable` gives the `var` without
+ *                                   the lib, when the `var` of the lib does not have it
  *   function fetch                  an overload
  *   namespace fetch                 a namespace, a class, an enum or a type alias that merges into a lib symbol
  *
@@ -333,6 +336,8 @@ function checkForEmptyInterfaces(program: ts.Program) {
  *
  * The list says which declarations land on the lib, not what they say: a changed signature of a
  * listed member is a diff in ./inventory (packages/bun-types/scripts/inventory.ts), not here.
+ * `only without the lib` compares names too. A gated member or a construct signature that accepts
+ * more than the one of the lib is a difference between two presets of the inventory.
  */
 function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
   const checker = program.getTypeChecker();
@@ -397,15 +402,20 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
     return undefined;
   }
 
+  /** The types that a conditional type can be, or the type itself. */
+  const branchesOf = (node: ts.TypeNode): ts.TypeNode[] =>
+    ts.isConditionalTypeNode(node) ? [...branchesOf(node.trueType), ...branchesOf(node.falseType)] : [node];
+
   /**
-   * The types that a base gives an interface for some `lib` only: the branches of each conditional
-   * type alias of bun-types that the base names, or that an interface of bun-types it names extends.
+   * The types that a base gives an interface, or an annotation gives a `var`, for some `lib` only:
+   * the branches of each conditional type alias of bun-types that it names, or that an interface
+   * of bun-types it names extends.
    */
   function gatedTypes(
     base: ts.ExpressionWithTypeArguments | ts.TypeReferenceNode,
-    found: ts.Type[] = [],
+    found = new Set<ts.Type>(),
     seen = new Set<ts.Node>(),
-  ): ts.Type[] {
+  ): Set<ts.Type> {
     const symbol = resolve(checker.getSymbolAtLocation(ts.isTypeReferenceNode(base) ? base.typeName : base.expression));
     // An interface of the lib has its own entries.
     if (symbol?.declarations?.some(isFrom("lib"))) return found;
@@ -417,10 +427,7 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
       } else if (ts.isTypeAliasDeclaration(declaration)) {
         const parameters = declaration.typeParameters?.map(parameter => parameter.name.text) ?? [];
         const isGate = ts.isConditionalTypeNode(declaration.type);
-        const branches = ts.isConditionalTypeNode(declaration.type)
-          ? [declaration.type.trueType, declaration.type.falseType]
-          : [declaration.type];
-        for (const branch of branches) {
+        for (const branch of branchesOf(declaration.type)) {
           // `LibOrFallback<Fallback>` gives the type that the base passes to it.
           const parameter =
             ts.isTypeReferenceNode(branch) && ts.isIdentifier(branch.typeName)
@@ -428,12 +435,24 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
               : -1;
           const node = parameter === -1 ? branch : base.typeArguments?.[parameter];
           if (!node) continue;
-          if (isGate) found.push(checker.getTypeFromTypeNode(node));
+          if (isGate) found.add(checker.getTypeFromTypeNode(node));
           if (ts.isTypeReferenceNode(node)) gatedTypes(node, found, seen);
         }
       }
     }
     return found;
+  }
+
+  /** The members of bun-types in the gated types of `base` that `type` does not have, by name. */
+  function* gatedMembersNotIn(type: ts.Type, base: ts.ExpressionWithTypeArguments | ts.TypeReferenceNode) {
+    let names: Set<ts.__String> | undefined;
+    for (const gated of gatedTypes(base)) {
+      for (const property of checker.getPropertiesOfType(gated)) {
+        const member = property.declarations?.find(isFrom("bun-types"));
+        names ??= new Set(checker.getPropertiesOfType(type).map(property => property.escapedName));
+        if (member && !names.has(property.escapedName)) yield member;
+      }
+    }
   }
 
   const isEmpty = (type: ts.Type) =>
@@ -464,12 +483,6 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
       const name = prefix + symbol.name;
 
       if (lib.some(ts.isInterfaceDeclaration)) {
-        let resolved: Set<ts.__String> | undefined;
-        /** Whether the interface has the member for this `lib`, from any declaration or base. */
-        const hasMember = (member: ts.Symbol) =>
-          (resolved ??= new Set(
-            checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol)).map(property => property.escapedName),
-          )).has(member.escapedName);
         let names: Set<string> | undefined;
         const notInLib = (member: string) => ((names ??= libMembers(symbol)).has(member) ? [] : ["not in the lib"]);
         const libBases = new Set(lib.filter(ts.isInterfaceDeclaration).flatMap(basesOf).map(baseSymbol));
@@ -490,14 +503,10 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
             // The lib has the same `extends`.
             if (libBases.has(baseSymbol(base))) continue;
             if (provider === "bun-types") {
-              for (const gated of gatedTypes(base)) {
-                for (const property of checker.getPropertiesOfType(gated)) {
-                  const member = property.declarations?.find(isFrom("bun-types"));
-                  if (!member || hasMember(property)) continue;
-                  const container = containerOf(member);
-                  const from = container ? [`from ${qualifiedName(container)}`] : [];
-                  add(`${name}.${memberName(member)}${notes("only without the lib", ...from)}`);
-                }
+              for (const member of gatedMembersNotIn(checker.getDeclaredTypeOfSymbol(symbol), base)) {
+                const container = containerOf(member);
+                const from = container ? [`from ${qualifiedName(container)}`] : [];
+                add(`${name}.${memberName(member)}${notes("only without the lib", ...from)}`);
               }
             }
             const type = checker.getTypeFromTypeNode(base);
@@ -526,6 +535,12 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
           // is loaded, and so is the name of an interface that the lib also uses (`var console: Console`).
           const type = declaration.type && checker.getTypeFromTypeNode(declaration.type);
           if (!lib.some(ts.isVariableDeclaration) || type !== checker.getTypeOfSymbol(symbol)) add(`var ${name}`);
+          // A static that only the type behind the gate has, such as `data` of `var Worker`.
+          if (declaration.type && ts.isTypeReferenceNode(declaration.type)) {
+            for (const member of gatedMembersNotIn(checker.getTypeOfSymbol(symbol), declaration.type)) {
+              add(`var ${name}.${memberName(member)}${notes("only without the lib")}`);
+            }
+          }
         } else if (ts.isFunctionDeclaration(declaration)) {
           add(`function ${name}`);
         } else if (ts.isModuleDeclaration(declaration)) {
@@ -2272,7 +2287,8 @@ const expectedLibOverlapWithLibDom = [
 
   // Only Bun has these members, and the base that has them is `{}` when lib.dom is loaded. So a
   // project that loads lib.dom does not get them (#29401 reports the four of ReadableStream). A
-  // member that moves to a base that is always on leaves this section.
+  // member that moves to a base that is always on leaves this section. `Worker.data` is a static
+  // in the type that `UseLibDomIfAvailable` gives `var Worker` without lib.dom.
   'ReadableStream.blob (only without the lib, from "node:stream/web".ReadableStream)',
   "ReadableStream.bytes (only without the lib, from BunConsumerConvenienceMethods)",
   "ReadableStream.json (only without the lib, from BunConsumerConvenienceMethods)",
@@ -2287,6 +2303,7 @@ const expectedLibOverlapWithLibDom = [
   "Worker.ref (only without the lib, from Bun.Worker)",
   "Worker.threadId (only without the lib, from Bun.Worker)",
   "Worker.unref (only without the lib, from Bun.Worker)",
+  "var Worker.data (only without the lib)",
 
   // @types/node gives these global interfaces the members of the interface of its module
   // ("node:console", "node:url"), with or without lib.dom. bun-types augments the module.

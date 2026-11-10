@@ -212,21 +212,18 @@ impl TestContext {
         global: &JSGlobalObject,
         thrown: JSValue,
     ) -> JsResult<()> {
-        let errors = match js::errors_get_cached(this_value) {
-            Some(errors) => errors,
-            None => {
-                let errors = JSValue::create_empty_array(global, 0)?;
-                js::errors_set_cached(this_value, global, errors);
-                Self::result(this_value, global).put(global, b"errors", errors);
-                errors
-            }
-        };
         let thrown = match thrown.to_error() {
             Some(thrown) => thrown,
             None if thrown.is_exception(global.vm_ptr()) => return Ok(()),
             None => thrown,
         };
-        jsc::cpp::Bun__TestContext__recordError(global, errors, thrown)
+        jsc::cpp::Bun__TestContext__recordError(global, Self::result(this_value, global), thrown)
+    }
+
+    /// `task.result.errors` as the hooks of the test left it, if it is an array.
+    pub(crate) fn errors(this_value: JSValue, global: &JSGlobalObject) -> Option<JSValue> {
+        let errors = jsc::cpp::Bun__TestContext__errorsOfResult(global, js::result_get_cached(this_value)?);
+        (!errors.is_empty()).then_some(errors)
     }
 
     /// What Vitest's `AbortController` of the context does at a timeout. A test that has not read `signal` finds it aborted later.

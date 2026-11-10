@@ -1586,7 +1586,7 @@ fn passes_retry_condition(
     context: Option<JSValue>,
     condition: RetryCondition<JSValue>,
 ) -> JsResult<bool> {
-    let Some(errors) = context.and_then(test_context::js::errors_get_cached) else {
+    let Some(errors) = context.and_then(|context| TestContext::errors(context, global)) else {
         return Ok(false);
     };
     let Some(last) = errors.get_length(global)?.checked_sub(1) else {

@@ -11,7 +11,7 @@ export const TestContext = b.class({
   rustPath: "crate::test_runner::test_context::TestContext",
   /** For a Jest-style `done()` call, which throws. */
   callInstance: { returns: b.any, capability: "js", throws: true },
-  internalFields: ["result", "errors", "annotations", "fixtures", "asyncContext"],
+  internalFields: ["result", "annotations", "fixtures", "asyncContext"],
   proto: {
     task: member,
     expect: member,

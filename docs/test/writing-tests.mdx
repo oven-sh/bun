@@ -549,7 +549,7 @@ test("flaky network request", { retry: { count: 3, delay: 500, condition: /ECONN
 - A failure that Bun finds itself adds the error that Vitest throws for it. A test that times out adds `Test timed out in 5000ms.` and a hook adds `Hook timed out in 10000ms.`, each followed by a hint on a second line. An `expect.assertions(2)` that isn't met adds `expected number of assertions to be 2, but got 1`.
 - Bun's matchers word their messages differently from Vitest's. For a failed assertion, write the `condition` against the message that Bun prints. Bun tests the `condition` against the message without the colors that a terminal gets.
 - Vitest adds a copy of each error to `task.result.errors`. Bun adds the error itself, so the `condition` is tested against the `message` that the error has when the attempt ends, and Bun doesn't call the `toJSON()` of an error.
-- A hook can change the array in `task.result.errors`, and the `condition` is tested against what the hook leaves. Bun doesn't read a new array that a hook assigns to `task.result.errors`.
+- A hook can change `task.result.errors`, in place or with a new array, and the `condition` is tested against what the hook leaves.
 - Vitest's types also allow a function as `condition`. Vitest 5 never calls the function and retries after every error, and so does Bun.
 - The `retry` of a `describe` block is the default for its tests. A test's own `retry` replaces all of it. Bun doesn't read `tags` or `meta` from the options, so a tag can't give a `retry` to its tests.
 - With a number, or with `count` alone, Bun retries after every failed attempt and doesn't read `task.result.errors`. Vitest reads them for a number too, so it doesn't retry a failure that leaves no error, like `throw []`.

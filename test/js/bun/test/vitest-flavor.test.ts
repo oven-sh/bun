@@ -4196,7 +4196,7 @@ describe.concurrent("retry delay and condition", () => {
         ${helpers}
         afterEach(({ task }) => {
           if (task.result.state !== "fail" || task.result.retryCount > 0) return;
-          // Vitest leaves \`errors\` undefined for an empty array.
+          // A thrown empty array leaves \`errors\` undefined.
           console.log(JSON.stringify((task.result.errors ?? []).map(error => error?.message)));
         });
         const members = () => [new Error("first"), new Error("last")];
@@ -4211,6 +4211,9 @@ describe.concurrent("retry delay and condition", () => {
           ["an array with an AggregateError", /^last$/, () => [new Error("of the array"), new AggregateError(members(), "outer")]],
           ["an array of an array", /last/, () => [members()]],
           ["an array with a hole", /^undefined$/, () => [new Error("first"), , ]],
+          ["a frozen array", /^last$/, () => Object.freeze(members())],
+          ["a sealed array", /^last$/, () => Object.seal(members())],
+          ["an AggregateError with frozen errors", /^last$/, () => { const error = new AggregateError(members(), "outer"); Object.freeze(error.errors); return error; }],
           ["an empty array", /.*/, () => []],
           ["a symbol", /^Symbol\\(boom\\)$/, () => Symbol("boom")],
         ]) test("throws " + name, { retry: { count: 1, condition } }, once(() => { throw thrown(); }));
@@ -4249,6 +4252,15 @@ describe.concurrent("retry delay and condition", () => {
         "throws an array with a hole: 1",
         `["first","undefined"]`,
         "throws an array with a hole: 2",
+        "throws a frozen array: 1",
+        `["first","last"]`,
+        "throws a frozen array: 2",
+        "throws a sealed array: 1",
+        `["first","last"]`,
+        "throws a sealed array: 2",
+        "throws an AggregateError with frozen errors: 1",
+        `["first","last"]`,
+        "throws an AggregateError with frozen errors: 2",
         "throws an empty array: 1",
         "[]",
         "throws a symbol: 1",
@@ -4274,6 +4286,9 @@ describe.concurrent("retry delay and condition", () => {
         "(pass) throws an array with an AggregateError (attempt 2)",
         "(fail) throws an array of an array",
         "(pass) throws an array with a hole (attempt 2)",
+        "(pass) throws a frozen array (attempt 2)",
+        "(pass) throws a sealed array (attempt 2)",
+        "(pass) throws an AggregateError with frozen errors (attempt 2)",
         "(fail) throws an empty array",
         "(pass) throws a symbol (attempt 2)",
         "(fail) throws an empty array, and the retry has a delay alone",
@@ -5015,7 +5030,7 @@ describe.concurrent("retry delay and condition", () => {
         import { test, describe, afterEach } from "vitest";
         ${helpers}
         const change = (name, condition, errors) => describe(name, () => {
-          afterEach(({ task }) => { if (attempts[task.fullTestName] === 1) errors(task.result.errors); });
+          afterEach(({ task }) => { if (attempts[task.fullTestName] === 1) errors(task.result.errors, task); });
           test("test", { retry: { count: 1, condition } }, once(boom));
         });
         change("emptied", /boom/, errors => { errors.length = 0; });
@@ -5028,6 +5043,16 @@ describe.concurrent("retry delay and condition", () => {
         change("a message that is a number", /^42$/, errors => { errors.push({ message: 42 }); });
         change("a message that is zero", /^$/, errors => { errors.push({ message: 0 }); });
         change("a message that is zero and is asked for", /0/, errors => { errors.push({ message: 0 }); });
+        change("a new array", /assigned/, (errors, task) => { task.result.errors = [new Error("assigned")]; });
+        change("a new array that is empty", /boom/, (errors, task) => { task.result.errors = []; });
+        change("deleted", /boom/, (errors, task) => { delete task.result.errors; });
+        describe("a new array gets the errors that come after it", () => {
+          afterEach(({ task }) => {
+            if (attempts[task.fullTestName] === 1) task.result.errors = [new Error("assigned")];
+            else console.log(JSON.stringify(task.result.errors.map(error => error.message)));
+          });
+          test("test", { retry: { count: 1, condition: /assigned/ } }, ({ task }) => { throw new Error("attempt " + count(task)); });
+        });
       `,
     });
     expect({ log, results, exitCode }).toEqual({
@@ -5046,6 +5071,13 @@ describe.concurrent("retry delay and condition", () => {
         "a message that is zero > test: 1",
         "a message that is zero > test: 2",
         "a message that is zero and is asked for > test: 1",
+        "a new array > test: 1",
+        "a new array > test: 2",
+        "a new array that is empty > test: 1",
+        "deleted > test: 1",
+        "a new array gets the errors that come after it > test: 1",
+        "a new array gets the errors that come after it > test: 2",
+        `["assigned","attempt 2"]`,
       ],
       results: [
         "(fail) emptied > test",
@@ -5057,6 +5089,10 @@ describe.concurrent("retry delay and condition", () => {
         "(pass) a message that is a number > test (attempt 2)",
         "(pass) a message that is zero > test (attempt 2)",
         "(fail) a message that is zero and is asked for > test",
+        "(pass) a new array > test (attempt 2)",
+        "(fail) a new array that is empty > test",
+        "(fail) deleted > test",
+        "(fail) a new array gets the errors that come after it > test (attempt 2)",
       ],
       exitCode: 1,
     });

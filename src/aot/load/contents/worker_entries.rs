@@ -854,33 +854,42 @@ impl ContentsScan<'_, '_> {
     fn find_files_given(&self, argument: ExprId) -> Vec<FileGiven> {
         let mut given = Vec::new();
         let mut looked_at = FxHashSet::default();
-        let mut pending = self.find_values_given(argument);
-        while let Some(value) = pending.pop() {
-            if !looked_at.insert(value) {
+        let as_given = self.find_values_given(argument).into_iter();
+        let mut pending: Vec<(ExprId, bool)> = as_given.map(|value| (value, false)).collect();
+        while let Some((value, is_converted)) = pending.pop() {
+            if !looked_at.insert((value, is_converted)) {
                 continue;
             }
             match self.find_what_names_same_file(value) {
-                Some(inner) => pending.append(&mut self.find_values_given(inner)),
-                None => given.push((value, self.find_file_written(value))),
+                Some(inner) => {
+                    let converted = self.find_values_given(inner).into_iter();
+                    pending.extend(converted.map(|value| (value, true)));
+                }
+                None => given.push((value, self.find_file_written(value, is_converted))),
             }
         }
         given
     }
 
     fn find_what_names_same_file(&self, value: ExprId) -> Option<ExprId> {
-        let &FinishedFile { hir, atoms, .. } = self.request;
+        let hir = self.request.hir;
         match hir[value].kind {
             ExprKind::Call(call) | ExprKind::New(call) if self.spells_same_file(call) => {
                 hir.ids(hir[call].args).next()
             }
-            ExprKind::Dot { .. } => match hir.member_key(value) {
-                Some((url, MemberKey::Name(name)))
-                    if matches!(atoms.bytes(name), b"href" | b"pathname") =>
-                {
-                    Some(url)
-                }
-                _ => None,
-            },
+            ExprKind::Call(call) if hir[call].args.is_empty() => {
+                let callee = hir.skip_type_assertions(hir[call].callee);
+                self.find_url_read_as(callee, &[b"toString", b"toJSON"])
+            }
+            ExprKind::Dot { .. } => self.find_url_read_as(value, &[b"href", b"pathname"]),
+            _ => None,
+        }
+    }
+
+    fn find_url_read_as(&self, member: ExprId, names: &[&[u8]]) -> Option<ExprId> {
+        let &FinishedFile { hir, atoms, .. } = self.request;
+        match hir.member_key(member) {
+            Some((url, MemberKey::Name(name))) if names.contains(&atoms.bytes(name)) => Some(url),
             _ => None,
         }
     }
@@ -889,7 +898,11 @@ impl ContentsScan<'_, '_> {
         is_each_a_file(&self.find_files_given(argument))
     }
 
-    fn find_file_written(&self, written: ExprId) -> Option<(ImportSpecifier, WorkerNameForm)> {
+    fn find_file_written(
+        &self,
+        written: ExprId,
+        is_converted: bool,
+    ) -> Option<(ImportSpecifier, WorkerNameForm)> {
         let decisions = &self.request.analysis.decisions;
         if self.names_own_file(written) {
             return Some((ImportSpecifier::Unknown, WorkerNameForm::OwnFile));
@@ -904,7 +917,24 @@ impl ContentsScan<'_, '_> {
             return Some(answer);
         }
         let (name, form) = self.find_name_given_to_worker(written);
-        (!self.may_be_out_of_sight(&name)).then_some((name, form))
+        // pathToFileURL("./w.js") reads the text from the working directory of the run, not as a Worker reads it.
+        let is_read_otherwise =
+            is_converted && form == WorkerNameForm::AsWritten && !self.is_anchored(&name);
+        (!self.may_be_out_of_sight(&name) && !is_read_otherwise).then_some((name, form))
+    }
+
+    fn is_anchored(&self, name: &ImportSpecifier) -> bool {
+        let &FinishedFile {
+            analysis, atoms, ..
+        } = self.request;
+        let mut alternatives = analysis.alternatives_of(name).iter();
+        alternatives.all(|alternative| match *alternative {
+            ImportSpecifier::Constant(start) | ImportSpecifier::Pattern { prefix: start, .. } => {
+                let text = atoms.bytes(start);
+                is_absolute(text) || begins_with_scheme(text)
+            }
+            ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
+        })
     }
 
     fn find_file_asked_of_resolver(

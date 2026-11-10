@@ -1335,7 +1335,7 @@ fn file_of_a_worker_that_a_package_starts_off_an_awaited_module_is_an_entry_poin
 
 #[test]
 fn start_that_bun_sema_gives_no_name_takes_the_name_of_each_value_that_it_may_be_given() {
-    let rows: [(&str, &str, &[&str], &[&str], &[&str]); 30] = [
+    let rows: [(&str, &str, &[&str], &[&str], &[&str]); 36] = [
         (
             "main.cjs",
             r#"const { join } = require("node:path"); const FILE = join(__dirname, "w.ts"); function start() { return new Thread(FILE); } const { Worker: Thread } = require("node:worker_threads"); start();"#,
@@ -1559,6 +1559,48 @@ fn start_that_bun_sema_gives_no_name_takes_the_name_of_each_value_that_it_may_be
             &["new Thread(this.file)"],
             &["AsWritten ?"],
             &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { pathToFileURL } from "node:url"; import { Worker } from "node:worker_threads"; new Worker(pathToFileURL("./w.ts"));"#,
+            &[r#"new Worker(pathToFileURL("./w.ts"))"#],
+            &["AsWritten ?"],
+            &[],
+        ),
+        (
+            "main.ts",
+            r#"import { pathToFileURL } from "node:url"; const { Worker: Thread } = await import("node:worker_threads"); const file = "./w.ts"; new Thread(pathToFileURL(file));"#,
+            &[r#"new Thread(pathToFileURL(file))"#],
+            &["AsWritten ?"],
+            &["w.ts MayStartWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { pathToFileURL } from "node:url"; const name = "node:worker_threads"; const { Worker: Thread } = await import(name); new Thread(pathToFileURL("/project/w.ts"));"#,
+            &[],
+            &["AsWritten /project/w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"import { Worker } from "node:worker_threads"; new Worker(new URL("./w.ts", import.meta.url).toString());"#,
+            &[],
+            &["Resolved(Url) ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker: W } = globalThis; new W(new URL("./w.ts", import.meta.url).toString());"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
+        ),
+        (
+            "main.ts",
+            r#"const { Worker: W } = globalThis; const url = new URL("./w.ts", import.meta.url); new W(url.toJSON());"#,
+            &[],
+            &["FromOwnFolder ./w.ts"],
+            &["w.ts StartsWorker"],
         ),
     ];
     for (name, text, places, starts, found) in rows {

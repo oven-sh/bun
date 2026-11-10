@@ -603,10 +603,10 @@ impl JestPrettyFormat {
     fn print_in_bun_snapshot(
         formatter: &mut console_object::Formatter<'_>,
         writer: &mut dyn bun_io::Write,
-        tag: &mut console_object::TagPayload,
+        tag: &mut console_object::Tag,
         value: JSValue,
     ) -> JsResult<bool> {
-        use console_object::TagPayload as Tag;
+        use console_object::Tag;
         let global = formatter.global_this;
         // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
         if !tag.is_primitive() && formatter.snapshot.output_length.is_some_and(|length| length.get() > 1_000_000) {

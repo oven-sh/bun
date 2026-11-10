@@ -1606,12 +1606,7 @@ pub mod formatter {
     pub struct Snapshot<'a> {
         /// Called before a value is printed. Returns true if it printed the value itself.
         pub printer: Option<
-            fn(
-                &mut Formatter<'_>,
-                &mut dyn bun_io::Write,
-                &mut TagPayload,
-                JSValue,
-            ) -> JsResult<bool>,
+            fn(&mut Formatter<'_>, &mut dyn bun_io::Write, &mut Tag, JSValue) -> JsResult<bool>,
         >,
         pub serializers: Option<JSValue>,
         /// The `config` that serializers get, once one was called.
@@ -1666,6 +1661,29 @@ pub mod formatter {
                 value.get_name(global_this)
             } else {
                 value.get_name_property(global_this)
+            }
+        }
+
+        /// Snapshots print these as `JSON.stringify` does, or not at all.
+        #[inline(never)]
+        fn tag_of(js_type: jsc::JSType) -> Option<TagPayload> {
+            only_in_snapshots!(Self::tag_of);
+            use jsc::JSType as T;
+            match js_type {
+                T::DirectArguments
+                | T::ScopedArguments
+                | T::ClonedArguments
+                | T::MapIterator
+                | T::SetIterator
+                | T::WrapForValidIterator
+                | T::RegExpStringIterator
+                | T::JSArrayIterator
+                | T::Iterator
+                | T::IteratorHelper
+                | T::ProxyObject
+                | T::JSAsJSONType => Some(TagPayload::JSON),
+                T::GetterSetter | T::CustomGetterSetter => Some(TagPayload::NativeCode),
+                _ => None,
             }
         }
 
@@ -2018,7 +2036,7 @@ pub mod formatter {
     }
 
     impl Tag {
-        pub(crate) fn is_primitive(self) -> bool {
+        pub fn is_primitive(self) -> bool {
             matches!(
                 self,
                 Tag::String
@@ -2091,7 +2109,7 @@ pub mod formatter {
     }
 
     impl TagPayload {
-        pub fn is_primitive(self) -> bool {
+        pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
         pub fn tag(self) -> Tag {
@@ -2361,27 +2379,10 @@ pub mod formatter {
             }
 
             use jsc::JSType as T;
-            if opts.contains(TagOptions::SNAPSHOT) {
-                // Snapshots print these as `JSON.stringify` does, or not at all.
-                let tag = match js_type {
-                    T::DirectArguments
-                    | T::ScopedArguments
-                    | T::ClonedArguments
-                    | T::MapIterator
-                    | T::SetIterator
-                    | T::WrapForValidIterator
-                    | T::RegExpStringIterator
-                    | T::JSArrayIterator
-                    | T::Iterator
-                    | T::IteratorHelper
-                    | T::ProxyObject
-                    | T::JSAsJSONType => Some(TagPayload::JSON),
-                    T::GetterSetter | T::CustomGetterSetter => Some(TagPayload::NativeCode),
-                    _ => None,
-                };
-                if let Some(tag) = tag {
-                    return Ok(TagResult { tag, cell: js_type });
-                }
+            if opts.contains(TagOptions::SNAPSHOT)
+                && let Some(tag) = Snapshot::tag_of(js_type)
+            {
+                return Ok(TagResult { tag, cell: js_type });
             }
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
@@ -6195,14 +6196,6 @@ pub mod formatter {
             value: JSValue,
             global_this: &'a JSGlobalObject,
         ) -> JsResult<()> {
-            if self.is_snapshot {
-                return self.format_in_snapshot::<ENABLE_ANSI_COLORS>(
-                    result,
-                    writer,
-                    value,
-                    global_this,
-                );
-            }
             let prev_global_this = self.global_this;
             let _restore = defer_restore!(self.global_this, prev_global_this);
             self.global_this = global_this;
@@ -6210,33 +6203,39 @@ pub mod formatter {
             if let TagPayload::CustomFormattedObject(obj) = result.tag {
                 self.custom_formatted_object = obj;
             }
-            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+            self.print_formatted::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
 
-        /// [`Self::format`], with [`Snapshot::printer`] asked first.
+        /// `print_as` for [`Self::format`]. Not in `format`, which is inlined at every call.
         #[inline(never)]
-        fn format_in_snapshot<const C: bool>(
+        fn print_formatted<const C: bool>(
             &mut self,
-            mut result: TagResult,
+            tag: Tag,
             writer: &mut dyn bun_io::Write,
             value: JSValue,
-            global_this: &'a JSGlobalObject,
+            cell: jsc::JSType,
         ) -> JsResult<()> {
-            only_in_snapshots!(Self::format_in_snapshot::<C>);
-            let prev_global_this = self.global_this;
-            let _restore = defer_restore!(self.global_this, prev_global_this);
-            self.global_this = global_this;
+            if self.is_snapshot {
+                return self.print_formatted_in_snapshot::<C>(tag, writer, value, cell);
+            }
+            self.print_as::<C>(tag, writer, value, cell)
+        }
 
+        #[inline(never)]
+        fn print_formatted_in_snapshot<const C: bool>(
+            &mut self,
+            mut tag: Tag,
+            writer: &mut dyn bun_io::Write,
+            value: JSValue,
+            cell: jsc::JSType,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_formatted_in_snapshot::<C>);
             if let Some(print) = self.snapshot.printer
-                && print(self, writer, &mut result.tag, value)?
+                && print(self, writer, &mut tag, value)?
             {
                 return Ok(());
             }
-
-            if let TagPayload::CustomFormattedObject(obj) = result.tag {
-                self.custom_formatted_object = obj;
-            }
-            self.print_as::<C>(result.tag.tag(), writer, value, result.cell)
+            self.print_as::<C>(tag, writer, value, cell)
         }
 
         /// Format a single value into `writer`, propagating a JS exception

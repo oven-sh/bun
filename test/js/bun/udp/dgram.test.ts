@@ -263,6 +263,65 @@ describe.skipIf(isWindows)("cluster", () => {
   }, 40_000);
 });
 
+// child.send(message, socket) leaves the sender reading the socket, as in Node, and the receiver
+// holds it from then on. Node takes one datagram per recvmsg(), so what a listener of the sender
+// has not received is still queued for the receiver:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/udp.c#L285-L362
+// The listener here reads the rest of the queue itself, through the descriptor.
+// POSIX-only: on Windows the receiver cannot adopt the descriptor that arrives.
+test.skipIf(isWindows)("a socket that was sent over IPC takes one datagram per receive call", async () => {
+  const sender = /* js */ `
+    const { spawn } = require("node:child_process");
+    const dgram = require("node:dgram");
+    const { readSync } = require("node:fs");
+    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+
+    // The child takes the IPC channel and never reads it, so only this process reads the socket.
+    const child = spawn(process.execPath, ["-e", "require('node:fs').readSync(0, Buffer.alloc(1))"], {
+      stdio: ["pipe", "ignore", "inherit", "ipc"],
+    });
+    const socket = dgram.createSocket("udp4");
+    const client = dgram.createSocket("udp4");
+    socket.on("message", first => {
+      // "end" is sent last: every datagram that the socket has not taken comes before it.
+      const fd = socket[kStateSymbol].handle.fd;
+      const queued = [];
+      const next = Buffer.alloc(8);
+      const deadline = Date.now() + 1000;
+      for (;;) {
+        let length;
+        try {
+          length = readSync(fd, next);
+        } catch (error) {
+          if (error.code !== "EAGAIN" || Date.now() > deadline) throw error;
+          continue;
+        }
+        const text = next.toString("latin1", 0, length);
+        if (text === "end") break;
+        queued.push(text);
+      }
+      socket.close();
+      client.close();
+      child.kill();
+      console.log(JSON.stringify({ first: String(first), queued }));
+    });
+    socket.bind(0, "127.0.0.1", () => {
+      child.send("socket", socket);
+      client.connect(socket.address().port, "127.0.0.1", () => {
+        for (let i = 0; i < 32; i++) client.send(String(i));
+        client.send("end");
+      });
+    });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", sender], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ first: "0", queued: Array.from({ length: 31 }, (_, i) => String(i + 1)) }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("after close()", () => {
   // Node throws ERR_SOCKET_DGRAM_NOT_RUNNING from these methods once the
   // socket is closed. They must not surface an internal TypeError instead.

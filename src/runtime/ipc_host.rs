@@ -212,7 +212,7 @@ pub(crate) fn do_send(
                 }
             }
         } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
-            if let Some(fd) = udp.native_fd() {
+            if let Some(fd) = udp.share_fd_for_ipc() {
                 log!("got udp socket fd");
                 #[cfg(not(windows))]
                 match Handle::init_dup(fd, handle, false) {

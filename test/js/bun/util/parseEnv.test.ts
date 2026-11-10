@@ -202,8 +202,8 @@ describe("Bun.parseEnv", () => {
     // Each line substitutes the previous value ten times, so A(n) is 10^(n+1) bytes.
     const lines = ["A0=xxxxxxxxxx"];
     for (let i = 1; i <= 7; i++) lines.push(`A${i}=` + `$A${i - 1}`.repeat(10));
-    expect(Bun.parseEnv(lines.slice(0, 6).join("\n")).A5).toHaveLength(1_000_000);
-    expect(() => Bun.parseEnv(lines.join("\n"))).toThrow(
+    expect(Bun.parseEnv(lines.slice(0, 6).join("\n"), { env: {} }).A5).toHaveLength(1_000_000);
+    expect(() => Bun.parseEnv(lines.join("\n"), { env: {} })).toThrow(
       expect.objectContaining({
         name: "RangeError",
         message: 'The content expands to more than 4.19 MB of variable references at "A6"',
@@ -215,8 +215,8 @@ describe("Bun.parseEnv", () => {
     // `B` substitutes 4 x 1 MiB = 4,194,304 bytes, the whole budget. One more byte for `C` is too many.
     const mib = Buffer.alloc(1024 * 1024, "a").toString();
     const atLimit = `A=${mib}\nB=$A$A$A$A`;
-    expect(Bun.parseEnv(atLimit).B).toHaveLength(4 * 1024 * 1024);
-    expect(() => Bun.parseEnv(`${atLimit}\nD=x\nC=$D`)).toThrow(
+    expect(Bun.parseEnv(atLimit, { env: {} }).B).toHaveLength(4 * 1024 * 1024);
+    expect(() => Bun.parseEnv(`${atLimit}\nD=x\nC=$D`, { env: {} })).toThrow(
       expect.objectContaining({
         name: "RangeError",
         message: 'The content expands to more than 4.19 MB of variable references at "C"',

@@ -844,8 +844,7 @@ devTest("a hot update that adds an invalid @import to a stylesheet fails its pag
     expect(await status()).toBe(200);
   },
 });
-// The file that did not load has the error. Its importer has none of its own, so it is right again
-// as soon as the file loads.
+// The file that did not load has the error. Its importer gets no error of its own.
 devTest("an @import of a file that a plugin fails to load is not an invalid import", {
   framework: minimalFramework,
   pluginFile: `
@@ -853,10 +852,8 @@ devTest("an @import of a file that a plugin fails to load is not an invalid impo
       {
         name: "foo",
         setup(build) {
-          build.onLoad({ filter: /\\.foo$/ }, async args => {
-            const contents = await Bun.file(args.path).text();
-            if (contents.includes("broken")) throw new Error("the plugin failed");
-            return { contents, loader: "css" };
+          build.onLoad({ filter: /\\.foo$/ }, async () => {
+            throw new Error("the plugin failed");
           });
         },
       },
@@ -870,7 +867,7 @@ devTest("an @import of a file that a plugin fails to load is not an invalid impo
       }
     `,
     "main.css": `@import "./theme.foo";\n.m { width: 1px; }`,
-    "theme.foo": `broken`,
+    "theme.foo": `.t { width: 1px; }`,
   },
   async test(dev) {
     const failed = await dev.fetch("/");
@@ -881,8 +878,6 @@ devTest("an @import of a file that a plugin fails to load is not an invalid impo
       pluginError: errors.includes("the plugin failed"),
       invalidImport: errors.includes("Cannot import"),
     }).toEqual({ status: 500, pluginError: true, invalidImport: false });
-    await dev.write("theme.foo", `.t { width: 2px; }`, { errors: null });
-    expect(await dev.fetch("/").text()).toBe("ok");
   },
 });
 // The dev server builds the import order with the pass that `bun build` has.

@@ -57,6 +57,10 @@ expectType(jest.replaceProperty(process.env, "NODE_ENV", "test")).is<jest.Replac
 jest.replaceProperty(config, "retries", "many");
 // @ts-expect-error the property must exist
 jest.replaceProperty(config, "notAProperty", 1);
+// @ts-expect-error a method is spied on, not replaced
+jest.replaceProperty(Math, "max", () => 1);
+// @ts-expect-error a class is spied on, not replaced
+jest.replaceProperty(globalThis, "Date", class {});
 
 // Same for `ReturnType<typeof mock>`.
 expectType<ReturnType<typeof mock>>().is<Mock<(...args: any[]) => any>>();

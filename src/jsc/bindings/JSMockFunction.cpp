@@ -937,9 +937,9 @@ public:
         }
         // The original may be a custom property, whose attributes would make putOwnPropertyStorage() treat the value as its getter.
         attributes &= PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
-        // A replacement of an inherited property is an own property that the restore deletes.
+        // A replacement of an inherited property is a new own property with the default attributes, as an assignment makes. The restore deletes it.
         if (!m_spyOriginal)
-            attributes &= ~PropertyAttribute::DontDelete;
+            attributes = 0;
         putOwnPropertyStorage(globalObject, target, m_spyIdentifier, value, attributes, isOpaque);
         return true;
     }
@@ -3558,9 +3558,9 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         original = getOwnPropertyStorage(globalObject, object, propertyKey, spyAttributes);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    // A replacement that shadows an inherited property is deleted on restore, so it has to be configurable.
+    // A replacement that shadows an inherited property is a new own property with the default attributes, as Jest's assignment makes. The restore deletes it.
     if (!property.isOwn)
-        attributes &= ~PropertyAttribute::DontDelete;
+        attributes = 0;
     if (isNamespace)
         spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
     if (property.isOpaque)

@@ -2362,6 +2362,21 @@ describe("spyOn", () => {
     expect(target.value).toBe(1);
   });
 
+  test("the shadow of an inherited property has the default attributes, as an assignment makes", () => {
+    const defaults = { value: 2, writable: true, enumerable: true, configurable: true };
+    for (const target of [{}, [], function () {}]) {
+      const prototype = Object.create(Object.getPrototypeOf(target));
+      Object.defineProperty(prototype, "k", { value: 1, writable: true, enumerable: false, configurable: true });
+      Object.setPrototypeOf(target, prototype);
+      const replaced = jest.replaceProperty(target, "k", 2);
+      expect(Object.getOwnPropertyDescriptor(target, "k")).toEqual(defaults);
+      replaced.replaceValue(3);
+      expect(Object.getOwnPropertyDescriptor(target, "k")).toEqual({ ...defaults, value: 3 });
+      replaced.restore();
+      expect([Object.hasOwn(target, "k"), target.k]).toEqual([false, 1]);
+    }
+  });
+
   test("the same object and key give the same handle, and one restore", () => {
     const target = { value: 1 };
     const first = jest.replaceProperty(target, "value", 2);

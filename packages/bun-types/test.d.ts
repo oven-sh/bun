@@ -346,7 +346,7 @@ declare module "bun:test" {
      * mode.replaceValue("staging");
      * mode.restore();
      */
-    function replaceProperty<T extends object, K extends keyof T>(
+    function replaceProperty<T extends object, K extends JestMock.PropertyLikeKeys<T>>(
       object: T,
       propertyKey: K,
       value: T[K],

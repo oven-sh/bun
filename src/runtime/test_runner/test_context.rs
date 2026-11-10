@@ -207,6 +207,14 @@ impl TestContext {
         Ok(())
     }
 
+    /// Vitest's `makeTimeoutError`
+    pub(crate) fn timeout_error(global: &JSGlobalObject, is_hook: bool, timeout: u32) -> JSValue {
+        let (subject, lowercase, option) = if is_hook { ("Hook", "hook", "hookTimeout") } else { ("Test", "test", "testTimeout") };
+        global.create_error_instance(format_args!(
+            "{subject} timed out in {timeout}ms.\nIf this is a long-running {lowercase}, pass a timeout value as the last argument or configure it globally with \"{option}\"."
+        ))
+    }
+
     pub(crate) fn record_error(
         this_value: JSValue,
         global: &JSGlobalObject,

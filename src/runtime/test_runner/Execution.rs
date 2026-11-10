@@ -305,6 +305,14 @@ impl ExecutionSequence {
         }
     }
 
+    /// The test context whose `task.result.errors` lists this attempt's errors. A test that called `skip()` lists none.
+    fn errors_context(&self) -> Option<JSValue> {
+        if self.result == Result::Skip {
+            return None;
+        }
+        self.context.as_ref().map(Strong::get)
+    }
+
     fn take_deferred(&self) -> Option<NonNull<ExecutionEntry>> {
         let context = TestContext::from_js(self.context.as_ref()?.get())?;
         // SAFETY: `self.context` keeps the wrapper, which owns the payload, alive.
@@ -982,12 +990,9 @@ impl Execution {
         let Some((sequence, _)) = self.get_current_and_valid_execution_sequence(user_data) else {
             return Ok(());
         };
-        let Some(context) = sequence.context.as_ref().map(Strong::get) else {
+        let Some(context) = sequence.errors_context() else {
             return Ok(());
         };
-        if sequence.result == Result::Skip {
-            return Ok(());
-        }
         TestContext::record_error(context, global, thrown)?;
         TestContext::sync_result(context, global, sequence)
     }
@@ -1119,14 +1124,32 @@ fn step_group_one(
     Ok(final_status)
 }
 
-/// `evaluate_timeout` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
-fn report_around_timeout(
+/// What the reporter can't say about an entry that timed out. `evaluate_timeout` leaves the failure of an around hook
+/// to the error made here. Any other entry adds an error to `task.result.errors` of its test context, as in Vitest.
+#[cold]
+fn report_timeout(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
+    sequence: NonNull<ExecutionSequence>,
     entry: &ExecutionEntry,
     data: &RefDataValue,
 ) -> JsResult<()> {
     let Some((around, phase)) = entry.around else {
+        // SAFETY: points into `Execution::sequences`, which is never reallocated during execution. No borrow of it
+        // is held across the push, which can run JS.
+        let Some(context) = unsafe { sequence.as_ref() }.errors_context() else {
+            return Ok(());
+        };
+        // SAFETY: as above.
+        let is_hook = !unsafe { sequence.as_ref() }.test_entry.is_some_and(|test| core::ptr::eq(test.as_ptr().cast_const(), entry));
+        let error = TestContext::timeout_error(global_this, is_hook, entry.timeout);
+        let listed = TestContext::record_error(context, global_this, error)
+            // SAFETY: as above.
+            .and_then(|()| TestContext::sync_result(context, global_this, unsafe { sequence.as_ref() }));
+        // The caller has to advance the sequence even if the list can't take the error, as when it's frozen.
+        if let Err(err) = listed {
+            global_this.bun_vm().as_mut().run_error_handler(global_this.take_exception(err), None);
+        }
         return Ok(());
     };
     let error = around.timeout_error(global_this, phase, entry.timeout)?;
@@ -1200,9 +1223,10 @@ fn step_sequence_one(
                 .bun_test_root
                 .get()
                 .mark_timed_out(this.group_index, entry_data);
-            report_around_timeout(
+            report_timeout(
                 buntest_strong,
                 global_this,
+                NonNull::from(&mut *sequence),
                 active_entry,
                 &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
             )?;
@@ -1355,7 +1379,7 @@ fn step_sequence_one(
                 if let Some(context) = context {
                     TestContext::abort_signal(context, global_this);
                 }
-                report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;
+                report_timeout(buntest_strong, global_this, NonNull::from(&mut *sequence), next_item, &callback_data)?;
             } else if sequence.waits_for_matchers() {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
                     timeout: next_item.timespec,

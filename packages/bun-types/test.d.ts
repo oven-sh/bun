@@ -1296,7 +1296,7 @@ declare module "bun:test" {
     annotations: TestAnnotation[];
     result: {
       state: "run" | "pass" | "fail" | "skip";
-      /** Errors thrown by the test, its hooks and its fixtures. */
+      /** Errors thrown by the test, its hooks and its fixtures. Each one that times out also adds an `Error`. */
       errors?: unknown[];
       retryCount: number;
       repeatCount: number;

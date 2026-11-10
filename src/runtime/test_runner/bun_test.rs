@@ -2431,7 +2431,7 @@ impl ExecutionEntry {
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
             let has_done_parameter = self.calling == Calling::Jest { done: true };
             sequence.result = if self.around.is_some() {
-                // `Execution::report_around_timeout` fails the sequence with an error.
+                // `Execution::report_timeout` fails the sequence with an error.
                 sequence.result
             } else if is_test_entry {
                 if has_done_parameter {

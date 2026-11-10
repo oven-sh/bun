@@ -314,6 +314,285 @@ describe.concurrent("test context", () => {
     });
   });
 
+  // The logs of the next two tests are what Vitest 5.1.0 prints for their files.
+  test("a test or hook that times out adds an error to task.result.errors", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeEach, afterEach, aroundEach, onTestFinished, onTestFailed } from "vitest";
+        const never = new Promise(() => {});
+        const busy = (ms) => { const end = performance.now() + ms; while (performance.now() < end); };
+        const list = ({ result }) => result.state + " " + JSON.stringify(result.errors?.map((error) => error.message.split("\\n")[0]));
+        const show = (where) => ({ task }) => console.log(where, task.name + ":", list(task));
+        const whole = ({ result }) => result.errors.map((error) => error.name + ": " + error.message.replace("\\n", " | ")).join();
+        describe("a test", () => {
+          afterEach(show("afterEach"));
+          test("never ends", { timeout: 20 }, async ({ signal, task }) => {
+            onTestFinished(show("onTestFinished"));
+            onTestFailed(show("onTestFailed"));
+            onTestFailed(({ task }) => console.log(whole(task)));
+            signal.addEventListener("abort", () => console.log("abort never ends:", list(task)));
+            await never;
+          });
+          test("third argument", async () => { await never; }, 25);
+          test("returns late", { timeout: 20 }, () => { busy(40); });
+          test("returns a resolved promise late", { timeout: 20 }, () => { busy(40); return Promise.resolve(); });
+          test("resolves late", { timeout: 20 }, async () => { await 1; busy(40); });
+          test("rejects when the signal aborts", { timeout: 20 }, ({ signal }) => new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))));
+        });
+        describe("around", () => {
+          aroundEach(async (runTest, { task }) => { await runTest(); console.log("aroundEach", task.name + ":", list(task)); });
+          test("inside aroundEach", { timeout: 20 }, async () => { await never; });
+        });
+        describe("beforeEach", () => {
+          beforeEach(() => never, 20);
+          afterEach(({ task }) => console.log("afterEach", task.name + ":", whole(task)));
+          test("is skipped", () => console.log("unreachable"));
+        });
+        describe("afterEach", () => {
+          afterEach(() => never, 20);
+          test("passes first", () => { onTestFinished(show("onTestFinished")); onTestFailed(show("onTestFailed")); });
+        });
+        describe("the teardown that beforeEach returned", () => {
+          beforeEach(() => () => never, 250);
+          afterEach(show("afterEach"));
+          test("passes first", () => { onTestFinished(show("onTestFinished")); });
+        });
+        describe("onTestFinished and onTestFailed", () => {
+          afterEach(show("afterEach"));
+          test("onTestFinished never ends", () => { onTestFailed(show("onTestFailed")); onTestFinished(() => never, 20); });
+          test("onTestFailed never ends", () => { onTestFailed(show("onTestFailed")); onTestFailed(() => never, 20); throw new Error("boom"); });
+        });
+        describe("a fixture of a hook", () => {
+          const extended = test.extend({ slow: async ({}, use) => { await never; await use(1); } });
+          extended.beforeEach(({ slow }) => {}, 30);
+          afterEach(({ task }) => console.log("afterEach", task.name + ":", list(task)));
+          extended("is skipped", () => console.log("unreachable"));
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "abort never ends: run undefined",
+        `afterEach never ends: fail ["Test timed out in 20ms."]`,
+        `onTestFinished never ends: fail ["Test timed out in 20ms."]`,
+        `Error: Test timed out in 20ms. | If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".`,
+        `onTestFailed never ends: fail ["Test timed out in 20ms."]`,
+        `afterEach third argument: fail ["Test timed out in 25ms."]`,
+        `afterEach returns late: fail ["Test timed out in 20ms."]`,
+        `afterEach returns a resolved promise late: fail ["Test timed out in 20ms."]`,
+        `afterEach resolves late: fail ["Test timed out in 20ms."]`,
+        `afterEach rejects when the signal aborts: fail ["Test timed out in 20ms."]`,
+        `aroundEach inside aroundEach: fail ["Test timed out in 20ms."]`,
+        `afterEach is skipped: Error: Hook timed out in 20ms. | If this is a long-running hook, pass a timeout value as the last argument or configure it globally with "hookTimeout".`,
+        `onTestFinished passes first: fail ["Hook timed out in 20ms."]`,
+        `onTestFailed passes first: fail ["Hook timed out in 20ms."]`,
+        "afterEach passes first: pass undefined",
+        `onTestFinished passes first: fail ["Hook timed out in 250ms."]`,
+        "afterEach onTestFinished never ends: pass undefined",
+        `onTestFailed onTestFinished never ends: fail ["Hook timed out in 20ms."]`,
+        `afterEach onTestFailed never ends: fail ["boom"]`,
+        `onTestFailed onTestFailed never ends: fail ["boom","Hook timed out in 20ms."]`,
+        `afterEach is skipped: fail ["Hook timed out in 30ms."]`,
+      ],
+      results: [
+        "(fail) a test > never ends",
+        "(fail) a test > third argument",
+        "(fail) a test > returns late",
+        "(fail) a test > returns a resolved promise late",
+        "(fail) a test > resolves late",
+        "(fail) a test > rejects when the signal aborts",
+        "(fail) around > inside aroundEach",
+        "(fail) beforeEach > is skipped",
+        "(fail) afterEach > passes first",
+        "(fail) the teardown that beforeEach returned > passes first",
+        "(fail) onTestFinished and onTestFailed > onTestFinished never ends",
+        "(fail) onTestFinished and onTestFailed > onTestFailed never ends",
+        "(fail) a fixture of a hook > is skipped",
+      ],
+      // A timeout prints no error of its own.
+      errors: ["error: boom"],
+      exitCode: 1,
+    });
+  });
+
+  test("the error of a timeout stays in task.result.errors beside other errors and for later readers", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeEach, afterEach, expect, onTestFinished, vi } from "vitest";
+        const never = new Promise(() => {});
+        const list = ({ result }) => result.state + " " + JSON.stringify(result.errors?.map((error) => error.message.split("\\n")[0]));
+        const show = (where) => ({ task }) => console.log(where, task.name + ":", list(task));
+        describe("with other errors", () => {
+          test("expect.soft() fails first", { timeout: 20 }, async ({ task }) => {
+            onTestFinished(() => console.log("expect.soft() fails first:", task.result.errors.length, task.result.errors[1].message.split("\\n")[0]));
+            expect.soft(1).toBe(2);
+            await never;
+          });
+          describe("afterEach throws next", () => {
+            afterEach(() => { throw new Error("afterEach"); });
+            test("both", { timeout: 20 }, async () => { onTestFinished(show("onTestFinished")); await never; });
+          });
+          describe("afterEach times out next", () => {
+            afterEach(() => never, 30);
+            test("both", { timeout: 20 }, async () => { onTestFinished(show("onTestFinished")); await never; });
+          });
+        });
+        describe("retry", () => {
+          beforeEach(show("beforeEach"));
+          afterEach(show("afterEach"));
+          test("every attempt", { retry: 1, timeout: 20 }, async () => { await never; });
+          let attempt = 0;
+          test("the first attempt", { retry: 1, timeout: 250 }, async () => { if (attempt++ === 0) await never; });
+        });
+        describe("concurrent", () => {
+          afterEach(show("afterEach"));
+          test.concurrent("20", { timeout: 20 }, async () => { await never; });
+          test.concurrent("40", { timeout: 40 }, async () => { await never; });
+          test.concurrent("in time", async () => {});
+        });
+        describe("afterwards", () => {
+          const earlier = [];
+          test("times out", { timeout: 20 }, async ({ task }) => { earlier.push(task); await never; });
+          test("skip() in the abort listener", { timeout: 20 }, async ({ task, signal, skip }) => {
+            earlier.push(task);
+            signal.addEventListener("abort", () => { try { skip(); } catch {} });
+            await never;
+          });
+          test.fails("test.fails", { timeout: 20 }, async ({ task }) => { onTestFinished(show("onTestFinished")); await never; });
+          test("a later test reads the tasks", () => { for (const task of earlier) console.log("later", task.name + ":", list(task)); });
+        });
+        describe("the default timeouts", () => {
+          vi.setConfig({ testTimeout: 30, hookTimeout: 35 });
+          afterEach(() => never);
+          test("of vi.setConfig()", async () => { onTestFinished(show("onTestFinished")); await never; });
+          vi.resetConfig();
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "expect.soft() fails first: 2 Test timed out in 20ms.",
+        `onTestFinished both: fail ["Test timed out in 20ms.","afterEach"]`,
+        `onTestFinished both: fail ["Test timed out in 20ms.","Hook timed out in 30ms."]`,
+        "beforeEach every attempt: run undefined",
+        `afterEach every attempt: fail ["Test timed out in 20ms."]`,
+        `beforeEach every attempt: run ["Test timed out in 20ms."]`,
+        `afterEach every attempt: fail ["Test timed out in 20ms.","Test timed out in 20ms."]`,
+        "beforeEach the first attempt: run undefined",
+        `afterEach the first attempt: fail ["Test timed out in 250ms."]`,
+        `beforeEach the first attempt: run ["Test timed out in 250ms."]`,
+        `afterEach the first attempt: pass ["Test timed out in 250ms."]`,
+        "afterEach in time: pass undefined",
+        `afterEach 20: fail ["Test timed out in 20ms."]`,
+        `afterEach 40: fail ["Test timed out in 40ms."]`,
+        `onTestFinished test.fails: fail ["Test timed out in 20ms."]`,
+        `later times out: fail ["Test timed out in 20ms."]`,
+        "later skip() in the abort listener: skip undefined",
+        `onTestFinished of vi.setConfig(): fail ["Test timed out in 30ms.","Hook timed out in 35ms."]`,
+      ],
+      results: [
+        "(fail) with other errors > expect.soft() fails first",
+        "(fail) with other errors > afterEach throws next > both",
+        "(fail) with other errors > afterEach times out next > both",
+        "(fail) retry > every attempt (attempt 2)",
+        "(pass) retry > the first attempt (attempt 2)",
+        "(pass) concurrent > in time",
+        "(fail) concurrent > 20",
+        "(fail) concurrent > 40",
+        "(fail) afterwards > times out",
+        "(skip) afterwards > skip() in the abort listener",
+        "(pass) afterwards > test.fails",
+        "(pass) afterwards > a later test reads the tasks",
+        "(fail) the default timeouts > of vi.setConfig()",
+      ],
+      errors: ["error: expect(received).toBe(expected)", "error: afterEach"],
+      exitCode: 1,
+    });
+  });
+
+  test("a timeout adds an error to task.result.errors where Vitest has nothing to compare with", async () => {
+    const { log, results, errors, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test } from "bun:test";
+          import { heapStats } from "bun:jsc";
+          test("never ends", async () => { await new Promise(() => {}); }, 20);
+          test("returns late", () => { const end = performance.now() + 40; while (performance.now() < end); }, 20);
+          test("count", () => console.log("TestContext objects:", heapStats().objectTypeCounts.TestContext ?? 0));
+        `,
+        "b.test.js": `
+          import { test as bunTest, beforeEach as bunBeforeEach, describe } from "bun:test";
+          import { test, afterEach, expect, onTestFinished } from "vitest";
+          const never = new Promise(() => {});
+          const list = ({ result }) => result.state + " " + JSON.stringify(result.errors?.map((error) => error.message.split("\\n")[0]));
+          const show = (where) => ({ task }) => console.log(where, task.name + ":", list(task));
+          describe("a bun:test callback with a done parameter", () => {
+            afterEach(show("afterEach"));
+            bunTest("test", (done) => {}, 20);
+            describe("hook", () => {
+              bunBeforeEach((done) => {}, 20);
+              bunTest("is skipped", () => console.log("unreachable"));
+            });
+          });
+          bunTest("a context that the callback made", () => {
+            onTestFinished(show("onTestFinished"));
+            const end = performance.now() + 40; while (performance.now() < end);
+          }, 20);
+          describe("a fixture", () => {
+            const extended = test.extend({
+              setUp: async ({}, use) => { await never; await use(1); },
+              tearDown: async ({}, use) => { await use(1); await never; },
+            });
+            afterEach(({ task }) => console.log("afterEach", task.name + ":", task.result.state, task.result.errors?.length));
+            extended("set-up", { timeout: 20 }, ({ setUp }) => console.log("unreachable"));
+            extended("teardown", { timeout: 250 }, ({ tearDown }) => { onTestFinished(show("onTestFinished")); });
+          });
+          test("is an Error", { timeout: 20 }, async ({ task }) => {
+            onTestFinished(() => console.log("is an Error:", task.result.errors[0] instanceof Error));
+            await never;
+          });
+          test("a frozen list", { timeout: 20 }, async ({ task }) => {
+            onTestFinished(show("onTestFinished"));
+            expect.soft(1).toBe(2);
+            Object.freeze(task.result.errors);
+            await never;
+          });
+        `,
+      },
+      [],
+      {},
+      beforeTheTestTimesOut,
+    );
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "TestContext objects: 0",
+        `afterEach test: fail ["Test timed out in 20ms."]`,
+        `afterEach is skipped: fail ["Hook timed out in 20ms."]`,
+        `onTestFinished a context that the callback made: fail ["Test timed out in 20ms."]`,
+        "afterEach set-up: fail 1",
+        "afterEach teardown: pass undefined",
+        `onTestFinished teardown: fail ["Hook timed out in 250ms."]`,
+        "is an Error: true",
+        `onTestFinished a frozen list: fail ["expect(received).toBe(expected)"]`,
+      ],
+      results: [
+        "(fail) never ends",
+        "(fail) returns late",
+        "(pass) count",
+        "(fail) a bun:test callback with a done parameter > test",
+        "(fail) a bun:test callback with a done parameter > hook > is skipped",
+        "(fail) a context that the callback made",
+        "(fail) a fixture > set-up",
+        "(fail) a fixture > teardown",
+        "(fail) is an Error",
+        "(fail) a frozen list",
+      ],
+      // The list could not take the timeout. The run reports that and goes on.
+      errors: ["error: expect(received).toBe(expected)", "TypeError: Attempted to assign to readonly property."],
+      exitCode: 1,
+    });
+  });
+
   test("skip()", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `

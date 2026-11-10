@@ -248,18 +248,53 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
         return !JestMatchedRows::isBefore(b.index, b.name, a.index, a.name) && a.record < b.record;
     });
     // A cycle back to the root walks the root place twice. The last record of a name wins, as when the records were applied in order.
-    unsigned rowCount = 0;
+    unsigned candidateCount = 0;
     for (size_t i = 0; i < pending.size(); i++) {
         bool isLastOfName = i + 1 == pending.size() || pending[i].place != pending[i + 1].place || JestMatchedRows::isBefore(pending[i].index, pending[i].name, pending[i + 1].index, pending[i + 1].name);
         if (isLastOfName)
+            pending[candidateCount++] = pending[i];
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    // True only if the printer, with no row, lists the name and reads the value that the walk read: the holder keeps that value under the name as enumerable data of its own. No code of the program runs.
+    auto holdsAsOwnData = [&](unsigned record) {
+        JSC::JSObject* holder = JSC::asObject(state.recorded.at(record * 4));
+        JSC::JSValue value = state.recorded.at(record * 4 + 2);
+        auto& name = state.recordedNames[record];
+        if (auto index = JSC::parseIndex(name))
+            return holder->canGetIndexQuickly(*index) && holder->getIndexQuickly(*index) == value;
+        unsigned attributes = 0;
+        return holder->getDirect(vm, name, attributes) == value && !(attributes & JSC::PropertyAttribute::DontEnum);
+    };
+    // A nested record stays a row only where the row is needed: the place of its value has a row, or the holder does not keep the value, as with a getter, which may return another object. An object that gets no row is offered to serializers as it is.
+    WTF::Vector<bool, 32> hasRow(WTF::FillWith {}, placeCount + 1, false);
+    WTF::Vector<bool, 32> isRow(WTF::FillWith {}, candidateCount, false);
+    for (unsigned i = 0; i < candidateCount; i++) {
+        if (isMatcher(pending[i].record) || !holdsAsOwnData(pending[i].record)) {
+            isRow[i] = true;
+            hasRow[pending[i].place] = true;
+        }
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (unsigned i = candidateCount; i-- > 0;) {
+            if (isRow[i] || !hasRow[handleOf[childOf[pending[i].record]]])
+                continue;
+            isRow[i] = true;
+            hasRow[pending[i].place] = true;
+            changed = true;
+        }
+    }
+    unsigned rowCount = 0;
+    for (unsigned i = 0; i < candidateCount; i++) {
+        if (isRow[i])
             pending[rowCount++] = pending[i];
     }
-    // The printer reaches every row through the rows of the root, which sort first. The root has none if only private names lead on from it, and then there is nothing to show.
+    // The printer reaches every row through the rows of the root, which sort first. Without a row of the root there is nothing to show.
     if (!rowCount || pending[0].place != JestMatchedRows::rootPlace)
         return {};
 
     // `state.recorded` roots every value until the cell holds it.
-    auto& vm = JSC::getVM(globalObject);
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* cell = JestMatchedRows::create(vm, zigGlobal->mockModule.matchedRowsStructure.getInitializedOnMainThread(zigGlobal), placeCount, rowCount);
     for (auto& entry : numbers) {
@@ -324,7 +359,7 @@ JSC::JSObject* JestMatchedRows::mergedOf(JSC::JSGlobalObject* globalObject, uint
         return merged;
     JSC::JSObject* holder = found.holder.get();
     JSC::JSObject* object = holder;
-    // A function is offered as it is, which is what jest-snapshot's merge of the property matchers does with one. So is an object without a row, whose matchers are all under private names: nothing stands in for a property of it, and a serializer that goes by its class still claims it.
+    // A function is offered as it is, which is what jest-snapshot's merge of the property matchers does with one. So is an object without a row: nothing stands in for a property of it, and a serializer that goes by its class still claims it.
     if (!holder->isCallable() && found.rowCount) {
         if (dynamicDowncast<JSC::JSArray>(holder)) {
             object = JSC::constructEmptyArray(globalObject, nullptr);

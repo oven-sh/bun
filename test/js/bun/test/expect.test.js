@@ -4387,18 +4387,21 @@ describe("expect()", () => {
 
       test("prints the object that the comparison read where a matcher under a private name matched", () => {
         const number = expect.any(Number);
+        // The classes are made at run time. Where a build compiles this file, the private fields of a class
+        // that it compiles are no names that the comparison lists, so no matcher under one is recorded.
+        const atRunTime = (/** @type {string} */ text) => new Function("return " + text)();
         // A pattern that is an instance of the class has the private fields too, so the matcher meets `#value`.
-        class Tagged {
+        const Tagged = atRunTime(`class Tagged {
           #value;
           #tag = "T";
-          constructor(/** @type {unknown} */ value, read = 0) {
+          constructor(value, read = 0) {
             this.#value = value;
             if (read) this.read = read;
           }
           get [Symbol.toStringTag]() {
             return this.#tag;
           }
-        }
+        }`);
         let reads = 0;
         const received = Object.freeze({
           get made() {
@@ -4429,13 +4432,13 @@ describe("expect()", () => {
         expect(reads).toBe(1);
 
         // The same where a private field holds the object whose property matched.
-        class Box {
+        const Box = atRunTime(`class Box {
           #inner;
-          constructor(/** @type {object} */ inner, read = 0) {
+          constructor(inner, read = 0) {
             this.#inner = inner;
             if (read) this.read = read;
           }
-        }
+        }`);
         reads = 0;
         const boxed = Object.freeze({
           get box() {
@@ -4458,13 +4461,13 @@ describe("expect()", () => {
         expect(reads).toBe(1);
 
         // With the public property in the pattern as well, the object is the same lines on both sides.
-        class Private {
+        const Private = atRunTime(`class Private {
           #x;
-          constructor(/** @type {unknown} */ x, /** @type {number} */ n) {
+          constructor(x, n) {
             this.#x = x;
             this.n = n;
           }
-        }
+        }`);
         reads = 0;
         const counted = Object.freeze({
           get a() {

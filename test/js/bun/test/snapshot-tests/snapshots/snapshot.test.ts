@@ -2389,15 +2389,25 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
 
   test("is offered an object as it is where the property matchers that matched are all under private names", async () => {
     const unclaimed = `\n{\n  "a": Private {\n    "n": 1,\n  },\n  "n": 1,\n}\n`;
-    const printed = [`\n{\n  "n": 1,\n  "secret": Secret(S, read 1),\n}\n`, `Secret(S, read 1)`, unclaimed];
+    const printed = [
+      `\n{\n  "n": 1,\n  "secret": Secret(S, read 1),\n}\n`,
+      `Secret(S, read 1)`,
+      `Entity(e, read 1)`,
+      `\n{\n  "list": [\n    Entity(e, read 1),\n  ],\n  "n": 1,\n}\n`,
+      unclaimed,
+      `\n{\n  "a": Private {\n    "n": 1,\n  },\n  "count": 1,\n}\n`,
+    ];
+    // The classes with private fields are made at run time. Where a build compiles a fixture, the private fields
+    // of a class that it compiles are no names that the comparison lists, so no matcher under one is recorded.
+    const atRunTime = (text: string) => `new Function(${JSON.stringify("return " + text)})()`;
     const counted = `
-      class Private {
+      const Private = ${atRunTime(`class Private {
         #x;
         constructor(x, n) {
           this.#x = x;
           this.n = n;
         }
-      }
+      }`)};
       // The getter returns a new object each time, and its n says which of them is printed.
       let reads = 0;
       const counted = x => ({
@@ -2410,7 +2420,7 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     using dir = tempDir("snapshot-serializer-private", {
       "a.test.js": `
           // Only an instance has #tag, so the getter throws a TypeError for any other object that has the prototype.
-          class Secret {
+          const Secret = ${atRunTime(`class Secret {
             #value;
             #tag = "S";
             constructor(value, read) {
@@ -2420,12 +2430,23 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
             get tag() {
               return this.#tag;
             }
+          }`)};
+          // Keeps its Secret as data, so a read of the property gives the object that was compared.
+          class Entity {
+            constructor(secret) {
+              this.name = "e";
+              this.secret = secret;
+            }
           }
           ${counted}
           const number = expect.any(Number);
           expect.addSnapshotSerializer({
             test: value => value instanceof Secret,
             serialize: value => "Secret(" + value.tag + ", read " + value.read + ")",
+          });
+          expect.addSnapshotSerializer({
+            test: value => value instanceof Entity,
+            serialize: value => "Entity(" + value.name + ", read " + value.secret.read + ")",
           });
           test("t", () => {
             for (const value of [1, 2]) {
@@ -2441,10 +2462,23 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
               expect(received).toMatchSnapshot({ secret: new Secret(number, 1) });
               expect(made).toHaveLength(1);
               expect(new Secret(value, 1)).toMatchSnapshot(new Secret(number, 1));
+              // Nothing stands in for a property of an object that keeps such an object as data, so the serializer for its class gets it too.
+              expect(new Entity(new Secret(value, 1))).toMatchSnapshot({ secret: new Secret(number, 1) });
+              expect({ list: [new Entity(new Secret(value, 1))], n: 1 }).toMatchSnapshot({ list: [{ secret: new Secret(number, 1) }] });
               // An object that the serializer is not for prints as it does without a serializer.
               reads = 0;
               expect(counted(value)).toMatchSnapshot({ a: new Private(number, 1) });
               expect(reads).toBe(1);
+              // Nothing is built for the serializers out of an object that keeps such an object as data, so a getter beside it runs once.
+              let counts = 0;
+              const beside = {
+                get count() {
+                  return ++counts;
+                },
+                a: new Private(value, 1),
+              };
+              expect(beside).toMatchSnapshot({ a: new Private(number, 1) });
+              expect(counts).toBe(1);
             }
           });
         `,

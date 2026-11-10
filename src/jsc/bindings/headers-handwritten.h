@@ -481,7 +481,7 @@ struct MatchedRow {
     uint32_t childPlace { 0 };
 };
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
-// The rows cell for what `state` recorded, or the empty value if the root gets no row, which is when no name of it that is not private leads to a matched matcher. The names after that one may be private. Takes the names out of `state`. It enters no JavaScript and throws only an OutOfMemoryError, when the record ran out of memory. Otherwise the cell is its only GC allocation (the Structure is made once per global object).
+// The rows cell for what `state` recorded, or the empty value if the root gets no row. A row is a matched matcher under a name that is not private, or an object that the walk read under such a name on the way to a matched matcher: that object is a row only if its place has a row, or if its holder does not keep it under the name as enumerable data of its own, so that the printer might read another object or not list the name. Takes the names out of `state`. It enters no JavaScript and throws only an OutOfMemoryError, when the record ran out of memory. Otherwise the cell is the only cell it makes for the call (the Structure is made once per global object, and a lookup in a holder can make the property table of the holder's Structure).
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
 // `value` is empty if the place has no row of that name or index: the printer then reads the property from the object.
 MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName);

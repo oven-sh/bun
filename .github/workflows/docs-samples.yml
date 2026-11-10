@@ -16,6 +16,10 @@ on:
       - "packages/bun-types/**"
       - "test/integration/bun-types/docs-samples.*"
       - "src/runtime/cli/init/tsconfig.default.json"
+      # The @types/node and undici-types that the test checks with, and the TypeScript that checks.
+      - "bun.lock"
+      - "test/package.json"
+      - "test/bun.lock"
       - ".github/workflows/docs-samples.yml"
   pull_request:
     paths:
@@ -24,6 +28,10 @@ on:
       - "packages/bun-types/**"
       - "test/integration/bun-types/docs-samples.*"
       - "src/runtime/cli/init/tsconfig.default.json"
+      # The @types/node and undici-types that the test checks with, and the TypeScript that checks.
+      - "bun.lock"
+      - "test/package.json"
+      - "test/bun.lock"
       - ".github/workflows/docs-samples.yml"
 
 env:

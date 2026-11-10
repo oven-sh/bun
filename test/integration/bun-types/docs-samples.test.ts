@@ -5,10 +5,10 @@
 // `{/* type-error TS2322 */}` that the page shows an error on purpose.
 //
 // The pages of docs/lint/rules show code for `bun lint` to report. This test does not read them.
-import { $, fileURLToPath } from "bun";
+import { fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, makeTree, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { isDebug, makeTree, tempDir } from "harness";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import ts from "typescript";
@@ -117,12 +117,20 @@ ${fence}
 
 ${fence}ts
 const shown: number = "on purpose";
+notOnThePage(shown);
 ${fence}
 
 {/* type-error TS2322 */}
 
 ${fence}ts
 const notShown: number = 3000;
+${fence}
+
+{/* type-error TS2322 */}
+
+${fence}ts
+const shown: number = "on purpose";
+Bun.sleep("not", "on purpose");
 ${fence}
 `,
 );
@@ -137,28 +145,36 @@ const probe: Sample = {
   fragment: false,
 };
 
-// A project with the package as npm gets it, and with what the package depends on.
+/** Where `bun install` in the repository root put a package that bun-types depends on. */
+function installed(dependency: string) {
+  for (const from of [BUN_TYPES, REPO]) {
+    const found = join(from, "node_modules", dependency);
+    if (existsSync(join(found, "package.json"))) return realpathSync(found);
+  }
+  throw new Error(`${dependency} is not installed. Run \`bun install\` in the repository root.`);
+}
+
+// A project with bun-types and what it depends on, in the versions that bun.lock pins. The test installs nothing, so
+// a release of @types/node on npm does not change what it reports.
 let project: ReturnType<typeof tempDir> | undefined;
 let docs: { samples: Sample[]; problems: string[] }[];
 let errors: Map<Sample, SampleError[]>;
 
-// Packs bun-types and installs it from the registry, as bun-types.test.ts does, then type checks about 1,700 code
-// blocks in this process. A debug build needs minutes for that, so it skips these tests.
+// Type checks about 1,700 code blocks in this process. A debug build needs minutes for that, so it skips these tests.
 beforeAll(async () => {
   if (isDebug) return;
   project = tempDir("docs-samples", { "package.json": "{}" });
-  const version = (process.env.BUN_VERSION ?? Bun.version).replace(/^.*v/, "");
-  const built = join(project, "bun-types");
-  await cp(BUN_TYPES, built, { recursive: true, filter: source => basename(source) !== "node_modules" });
-  await $`${bunExe()} run build ${built}`
-    .cwd(BUN_TYPES)
-    .env({ ...bunEnv, BUN_VERSION: version })
-    .quiet();
-  await $`${bunExe()} pm pack --destination ${project}`.cwd(built).env(bunEnv).quiet();
-  await $`${bunExe()} add bun-types@bun-types-${version}.tgz`.cwd(project).env(bunEnv).quiet();
+  const modules = join(project, "node_modules");
+  await cp(BUN_TYPES, join(modules, "bun-types"), {
+    recursive: true,
+    filter: source => basename(source) !== "node_modules",
+  });
+  for (const dependency of ["@types/node", "undici-types"]) {
+    await cp(installed(dependency), join(modules, dependency), { recursive: true });
+  }
   await makeTree(project, {
     "node_modules/@types/bun/index.d.ts": '/// <reference types="bun-types" />',
-    "node_modules/@types/bun/package.json": JSON.stringify({ name: "@types/bun", version }),
+    "node_modules/@types/bun/package.json": JSON.stringify({ name: "@types/bun", version: Bun.version }),
   });
 
   const root = join(REPO, "docs");
@@ -180,7 +196,7 @@ beforeAll(async () => {
 afterAll(() => project?.[Symbol.dispose]());
 
 describe.skipIf(isDebug)("the TypeScript code blocks of the docs", () => {
-  test("are checked against the packed types", () => {
+  test("are checked against bun-types and what it depends on", () => {
     // Most of the docs: a reader that stops finding pages or code blocks fails here.
     expect(docs.flatMap(page => page.samples).length).toBeGreaterThan(1500);
     expect(errors.get(probe)!.map(at)).toEqual(["2: TS18046"]);
@@ -194,12 +210,10 @@ describe.skipIf(isDebug)("the TypeScript code blocks of the docs", () => {
     const samples = docs.flatMap(page => page.samples);
     const { failures, unused, pruned } = judge(samples, errors, await Bun.file(INVENTORY).json());
     // Never adds an entry or a code: a code block that starts to fail needs a fix, not an entry.
-    if (process.env.UPDATE_DOCS_SAMPLES_INVENTORY) {
-      await Bun.write(INVENTORY, JSON.stringify(pruned, null, 2) + "\n");
-      return;
-    }
+    const update = !!process.env.UPDATE_DOCS_SAMPLES_INVENTORY;
+    if (update) await Bun.write(INVENTORY, JSON.stringify(pruned, null, 2) + "\n");
     expect(failures.join("\n"), REMEDY).toBe("");
-    expect(unused, STALE).toEqual([]);
+    if (!update) expect(unused, STALE).toEqual([]);
   });
 });
 
@@ -313,9 +327,13 @@ ${fence}
       `docs/judged.mdx:13:79 TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?\n    server.on("request", (request, response, ...rest) => response.end(Bun.version.toFixed(2)));`,
     ];
     const parseFails = `docs/judged.mdx:24:14 TS1005: ';' expected.\n    routes: { "/": () => new Response("ok") },`;
+    // A code block with a marker may leave out the rest of its program too: the one at line 41 passes.
     const markersFail = [
       "docs/judged.mdx:35: the code block parses alone, so it needs no {/* fragment */}",
-      "docs/judged.mdx:47: the marker says TS2322, tsc reports nothing",
+      "docs/judged.mdx:48: the marker says TS2322, tsc reports nothing",
+      "docs/judged.mdx:54: the marker says TS2322, tsc reports TS2322 TS2554",
+      `docs/judged.mdx:55:7 TS2322: Type 'string' is not assignable to type 'number'.\n    const shown: number = "on purpose";`,
+      `docs/judged.mdx:56:18 TS2554: Expected 1 arguments, but got 2.\n    Bun.sleep("not", "on purpose");`,
     ];
     expect(judgedWith({})).toEqual({
       failures: [wrongFails, ...partFails, parseFails, ...markersFail],
@@ -347,6 +365,22 @@ ${fence}
     });
     expect(judge(judged.samples, errors, { "docs/removed.mdx": { removed: "TS2304 | gone" } }).unused).toEqual([
       "docs/removed.mdx: removed (TS2304 | gone): no code block with this key fails",
+    ]);
+
+    // An entry follows its code block to the page that has it now.
+    const { [keyOf(wrong)]: entryOfWrong, ...others } = listed;
+    const beforeTheMove = { "docs/before-the-move.mdx": { [keyOf(wrong)]: entryOfWrong }, "docs/judged.mdx": others };
+    expect(judge(judged.samples, errors, beforeTheMove)).toEqual({
+      failures: markersFail,
+      unused: [],
+      pruned: { "docs/judged.mdx": listed },
+    });
+    // A copy of a listed code block on another page is a new code block that fails.
+    const copy = { ...wrong, page: "docs/copy.mdx" };
+    const withTheCopy = new Map(errors).set(copy, errors.get(wrong)!);
+    expect(judge([...judged.samples, copy], withTheCopy, { "docs/judged.mdx": listed }).failures).toEqual([
+      ...markersFail,
+      wrongFails.replace("docs/judged.mdx", "docs/copy.mdx"),
     ]);
   });
 });

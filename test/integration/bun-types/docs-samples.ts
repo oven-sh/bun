@@ -248,44 +248,72 @@ export function judge(samples: Sample[], errors: Map<Sample, SampleError[]>, inv
   const failures: string[] = [];
   const unused: string[] = [];
   const pruned: Inventory = {};
-  const byPage = Map.groupBy(samples, sample => sample.page);
-  for (const page of new Set([...byPage.keys(), ...Object.keys(inventory)])) {
-    const listed = inventory[page] ?? {};
-    const reports = new Map<string, string>();
-    for (const sample of byPage.get(page) ?? []) {
-      const reported = errors.get(sample)!;
-      if (sample.typeErrors) {
-        const expected = sample.typeErrors.map(code => `TS${code}`).sort();
-        if (!Bun.deepEquals(codesOf(reported), expected)) {
-          failures.push(
-            `${page}:${sample.line}: the marker says ${expected.join(" ")}, tsc reports ${codesOf(reported).join(" ") || "nothing"}`,
-            ...describeErrors(sample, reported),
-          );
-        }
-      } else if (sample.fragment) {
-        if (!reported.some(error => error.syntax)) {
-          failures.push(`${page}:${sample.line}: the code block parses alone, so it needs no {/* fragment */}`);
-        }
-      } else if (entryOf(reported)) {
-        const key = keyOf(sample);
-        const known = codesIn(listed[key] ?? "");
-        const added = failuresOf(reported).filter(error => !known.includes(`TS${error.code}`));
-        if (key in listed && added.length > 0) {
-          failures.push(`${page}:${sample.line}: the inventory lists this code block with ${known.join(" ")}`);
-        }
-        failures.push(...describeErrors(sample, added));
-        reports.set(key, entryOf(reported)!);
-      }
-    }
+  const at = <V>(map: Map<string, Map<string, V>>, page: string) => map.get(page) ?? map.set(page, new Map()).get(page)!;
+
+  // Per page, what each sample that fails with no marker would be listed as.
+  const reports = new Map<string, Map<string, string>>();
+  for (const sample of samples) {
+    const entry = sample.fragment || sample.typeErrors ? undefined : entryOf(errors.get(sample)!);
+    if (entry) at(reports, sample.page).set(keyOf(sample), entry);
+  }
+  // A page that moves takes its entries along: an entry whose page no longer has the sample covers the same sample
+  // on one page that does not list it.
+  const moved = new Map<string, { page: string; entry: string }[]>();
+  for (const [page, listed] of Object.entries(inventory)) {
     for (const [key, entry] of Object.entries(listed)) {
-      const now = reports.get(key);
-      const still = codesIn(entry).filter(code => now !== undefined && codesIn(now).includes(code));
-      if (now === undefined) unused.push(`${page}: ${key} (${entry}): no code block with this key fails`);
-      else if (still.length < codesIn(entry).length) unused.push(`${page}: ${key} (${entry}): it reports ${now}`);
-      if (now !== undefined && still.length > 0) {
-        (pruned[page] ??= {})[key] = still.join(" ") + now.slice(now.indexOf(" | "));
-      }
+      if (!reports.get(page)?.has(key)) moved.set(key, [...(moved.get(key) ?? []), { page, entry }]);
     }
   }
-  return { failures, unused, pruned };
+  const entries = new Map<string, Map<string, string>>();
+  for (const [page, reported] of reports) {
+    for (const key of reported.keys()) {
+      const entry = inventory[page]?.[key] ?? moved.get(key)?.shift()?.entry;
+      if (entry !== undefined) at(entries, page).set(key, entry);
+    }
+  }
+
+  for (const sample of samples) {
+    const { page } = sample;
+    const reported = errors.get(sample)!;
+    const failing = failuresOf(reported);
+    if (sample.typeErrors) {
+      // The code block may leave out the rest of its program, as one with no marker may.
+      const expected = [...new Set(sample.typeErrors.map(code => `TS${code}`))].sort();
+      const shown = reported.filter(error => sample.typeErrors!.includes(error.code) || failing.includes(error));
+      if (!Bun.deepEquals(codesOf(shown), expected)) {
+        failures.push(
+          `${page}:${sample.line}: the marker says ${expected.join(" ")}, tsc reports ${codesOf(shown).join(" ") || "nothing"}`,
+          ...describeErrors(sample, shown),
+        );
+      }
+    } else if (sample.fragment) {
+      if (!reported.some(error => error.syntax)) {
+        failures.push(`${page}:${sample.line}: the code block parses alone, so it needs no {/* fragment */}`);
+      }
+    } else if (failing.length > 0) {
+      const entry = entries.get(page)?.get(keyOf(sample));
+      const known = codesIn(entry ?? "");
+      const added = failing.filter(error => !known.includes(`TS${error.code}`));
+      if (entry !== undefined && added.length > 0) {
+        failures.push(`${page}:${sample.line}: the inventory lists this code block with ${known.join(" ")}`);
+      }
+      failures.push(...describeErrors(sample, added));
+    }
+  }
+
+  for (const [page, listed] of entries) {
+    for (const [key, entry] of listed) {
+      const now = reports.get(page)!.get(key)!;
+      const still = codesIn(entry).filter(code => codesIn(now).includes(code));
+      if (still.length < codesIn(entry).length) unused.push(`${page}: ${key} (${entry}): it reports ${now}`);
+      if (still.length > 0) (pruned[page] ??= {})[key] = still.join(" ") + now.slice(now.indexOf(" | "));
+    }
+  }
+  for (const [key, left] of moved) {
+    for (const { page, entry } of left) unused.push(`${page}: ${key} (${entry}): no code block with this key fails`);
+  }
+  const sorted = Object.keys(pruned)
+    .sort()
+    .map(page => [page, Object.fromEntries(Object.entries(pruned[page]).sort(([a], [b]) => (a < b ? -1 : 1)))]);
+  return { failures, unused, pruned: Object.fromEntries(sorted) as Inventory };
 }

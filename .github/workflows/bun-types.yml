@@ -10,6 +10,8 @@ on:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
+      # .github/workflows/docs-samples.yml runs these.
+      - "!test/integration/bun-types/docs-samples.*"
       - "src/cli/init/tsconfig.default.json"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
@@ -18,6 +20,8 @@ on:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
+      # .github/workflows/docs-samples.yml runs these.
+      - "!test/integration/bun-types/docs-samples.*"
       - "src/cli/init/tsconfig.default.json"
       - "src/**/*.bind.ts"
       - "src/codegen/**"

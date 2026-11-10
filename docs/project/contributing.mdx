@@ -413,7 +413,7 @@ routes: { "/": () => new Response("ok") },
 ```
 ````
 
-Use `{/* type-error */}` with the error codes for a code block that shows a type error on purpose. The test fails if TypeScript reports other codes, or none.
+Use `{/* type-error */}` with the error codes for a code block that shows a type error on purpose. The code block can still leave out the rest of its program. The test fails if TypeScript reports another error, or does not report one of the codes.
 
 ````md
 {/* type-error TS2322 */}

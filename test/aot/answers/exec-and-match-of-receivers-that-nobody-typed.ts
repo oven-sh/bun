@@ -2,17 +2,13 @@
 // # exec and match under receivers that nobody typed go by the stubs of RegExp and of String; every other receiver, a RegExp that was touched and an operand of another kind are served as before
 // # f1 = shown, f2 = ran, f3 = matched: the site is the one of a call by name, and the stub that it calls bears the form
 // # RUN(EXEC): bytes f2:Body mechanisms=all
-// # REQUIRES(EXEC): entries-of-bun
 // # EXEC: CallMethodOfBuiltinClass{{*}}RegExpExec count 1
 // # RUN(MATCH): bytes f3:Body mechanisms=all
-// # REQUIRES(MATCH): entries-of-bun
 // # MATCH: CallMethodOfBuiltinClass{{*}}StringMatch count 1
 // # RUN(NAMED): walk f2 mechanisms=all
-// # REQUIRES(NAMED): entries-of-bun
 // # NAMED: = Call {{*}}calleeKey="exec" {{*}}methodOfReceiverAsMade=RegExpPrototypeExec
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 68 of 68 of 68
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;

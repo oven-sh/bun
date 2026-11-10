@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# class Two { flip = false; [Symbol.iterator]() { let i = 0; if (this.flip) return { next: () => ({ done: true, value: undefined }) }; return { next: () => (i < 9 ? { done: false, value: i++ } : { done: true, value: undefined }) }; } }
+# class Lent { list = [1, 2, 3]; [Symbol.iterator]() { return this.list[Symbol.iterator](); } }
+# class Late { [Symbol.iterator]() { const steps: any = {}; steps.next = () => ({ done: true, value: undefined }); return steps; } }
+# function two(own: Two): number { let sum = 0; for (const item of own) sum += item as number; return sum; }
+# function lent(own: Lent): number { let sum = 0; for (const item of own) sum += item; return sum; }
+# function late(own: Late): number { let sum = 0; for (const item of own) sum += item as number; return sum; }
+# sink(new Two(), new Lent(), new Late(), two, lent, late);
+# -- end of source
+# Two returns with two functions . what another object's method hands back . a `next` that is stored later: the text of the method names no one function, and nothing is expected of `next`.
+# STATISTIC: NextMethodsTestedForFunctionWritten = 0
+# RUN: compile mechanisms=all
+# CHECK: image not empty

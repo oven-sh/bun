@@ -56,6 +56,7 @@ linked_functions! {
     pub fn bun_aot_log_part_outside_stages(name: &str);
     pub(crate) fn bun_aot_new_report_line(kind: ExplainSet, text: Vec<u8>) -> ReportEntry;
     pub fn bun_aot_write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>);
+    pub fn bun_aot_write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>);
     pub fn bun_aot_write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>);
     pub fn bun_aot_collect_report_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry>;
     pub fn bun_aot_report_entries_to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage>;
@@ -63,6 +64,6 @@ linked_functions! {
     pub fn bun_aot_globals_that_a_window_replaces() -> Vec<u32>;
     pub fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32>;
     pub fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool;
-    pub fn bun_aot_find_importer_outside_run(root: &[u8], file: &[u8], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Option<Vec<u8>>;
+    pub fn bun_aot_find_importers_outside_run(root: &[u8], files: &[Vec<u8>], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>>;
     pub fn bun_aot_name_values_of_unlinked_files<'a>(files: &'a Files<'_>) -> Box<dyn NamedValues + 'a>;
 }

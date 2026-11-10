@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# class Box { count: number; constructor() { this.count = 1; } }
+# function bump(box: Box): void { let turns = 0; for (let i = 0; i < 2; i++) turns = (turns + i) | 0; box.count = 9 + turns; }
+# function main(): number { const box = new Box(); bump(box); return box.count; }
+# function run(): number { return main() + main(); }
+# print("sum " + run() + ".");
+# -- end of source
+# The lie, testing=RowSaysLess, is one lie: the walk cuts the effects of an operation by it, and so does escape analysis, which works the effects out anew for what is known of a fresh object.
+# What Link says of bump() is taken to name no write of ObjectFields: the field of the fresh box is read as the constructor left it. While escape analysis went by the whole row, the lie moved nothing here and every control on a fresh object was vacuous.
+# f1 = bump
+# RUN: run-in-shell mechanisms=all
+# CHECK: sum 20.
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/ObjectFields
+# LIE: sum 2.
+# LIE-NEXT: exited with 0
+# RUN(NET): run-in-shell mechanisms=all testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f1/ObjectFields
+# NET: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ObjectFields, and those words of operand 0 are others behind it. This is a bug in Bun.
+# NET: crashed
+# NET: with

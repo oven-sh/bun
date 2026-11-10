@@ -1,0 +1,17 @@
+# f2 = addTwice
+# -- source: closure-that-is-only-called.ts
+# function twice(change: (value: number) => number, value: number): number {
+#   return change(change(value));
+# }
+# function addTwice(value: number, step: number): number {
+#   return twice((each) => each + step, value);
+# }
+# declare const input: any;
+# (globalThis as any).answer = addTwice(+input, +input) + addTwice(+input, +input);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 18, patches 4, moves 4, unlikely or rare 0.
+# RUN(X64): steps most:22 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 22

@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: string[] = []; for (let i = 0; i < 12; i++) list.push("name" + (i % 3));
+# const seen = new Set<string>();
+# function count(key: string, from: number, at: number): number { let n = from; for (let i = 0; i < list.length; i++) { if (seen.has(key)) n++; if (i === at) seen.add(key); } return n; }
+# (globalThis as any).kept = count;
+# print(count("k", 0, (globalThis as any).fills === true ? 4 : -1));
+# -- end of source
+# The twin of the table: a question that answers yes or no.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fills = true;
+# RIGHT: 7
+# RIGHT-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands globalThis.fills = true;
+# SILENT: 0
+# SILENT-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem,EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands
+# PASSES: 0
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem,EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands globalThis.fills = true;
+# LIE: AOT: f{{*}} at {{*}}: what a call answers in the turn where the compiler made it once in front of the turns is not of the type that the compiler has proven of it.
+# LIE: crashed with

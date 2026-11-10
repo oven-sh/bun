@@ -1,8 +1,9 @@
 use super::*;
 use crate::bind::{Bound, FnOwner, MemberOwner, Parent};
 use crate::hir::{ExprId, ExprKind, FnId};
+use crate::import_sites::ImportSite;
 use crate::module_format::ModuleFormat;
-use crate::resolve::{CodeImportKind, ComputedResolution, SiteResolution};
+use crate::resolve::{CodeImportKind, ComputedResolution, SiteResolution, is_typescript_file_name};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum LoadedBy {
@@ -105,23 +106,29 @@ impl LoadOrder {
             may_be_mocked: vec![false; files.len() + 2],
         };
         let (any_file, host) = (order.any_file(), order.host());
-        let mut loads: Vec<Vec<u32>> = (files.iter())
-            .map(|file| {
+        let is_of_program = find_files_of_program(context, state);
+        let mut loads: Vec<Vec<u32>> = (files.iter().zip(&is_of_program))
+            .map(|(file, &is_of_program)| {
                 let targets = file.targets.iter().copied();
-                let mut loads: Vec<u32> = targets.filter(|&target| target != NOT_LOADED).collect();
-                if loads_under_unknown_name(file) {
+                let targets = targets.filter(|&target| is_of_program && target != NOT_LOADED);
+                let mut loads: Vec<u32> = targets.collect();
+                if is_of_program && loads_under_unknown_name(file) {
                     loads.push(any_file);
                 }
                 loads
             })
             .collect();
-        loads.push((0..any_file).collect());
+        loads.push(
+            (0..any_file)
+                .filter(|&file| is_of_program[file as usize])
+                .collect(),
+        );
         let mut entry_points: Vec<u32> = Vec::new();
         for entry_point in &context.entry_points() {
             entry_points.push(state.index_of[&context.canonical_key(entry_point.key)]);
         }
         loads.push(entry_points);
-        let run_by_statements = order.follow_statements(files);
+        let run_by_statements = order.follow_statements(files, &is_of_program);
 
         let mut in_order_left: Vec<u32> = Vec::with_capacity(loads.len());
         let mut loaders: Vec<Vec<u32>> = vec![Vec::new(); loads.len()];
@@ -163,10 +170,14 @@ impl LoadOrder {
         order
     }
 
-    fn follow_statements(&mut self, files: &[WalkedFile<'_, '_>]) -> Vec<u32> {
+    fn follow_statements(
+        &mut self,
+        files: &[WalkedFile<'_, '_>],
+        is_of_program: &[bool],
+    ) -> Vec<u32> {
         let mut may_be_mocked = vec![false; files.len()];
         let mut is_any_file_mocked = false;
-        for file in files {
+        for (file, _) in files.iter().zip(is_of_program).filter(|it| *it.1) {
             is_any_file_mocked |=
                 names_unknown_file(file, &|site| matches!(site, ImportSiteKind::MockModule(_)));
             visit_named_files(file, &mut |target, site| {
@@ -179,6 +190,9 @@ impl LoadOrder {
         }
         let mut to_visit: Vec<u32> = Vec::new();
         for (index, file) in (0..).zip(files) {
+            if !is_of_program[index as usize] {
+                continue;
+            }
             visit_named_files(file, &mut |target, site| {
                 let is_statement = matches!(
                     site,
@@ -444,6 +458,13 @@ fn names_unknown_file(
     file: &WalkedFile<'_, '_>,
     is_asked: &dyn Fn(ImportSiteKind) -> bool,
 ) -> bool {
+    names_unknown_file_at(file, &|site| is_asked(site.kind))
+}
+
+fn names_unknown_file_at(
+    file: &WalkedFile<'_, '_>,
+    is_asked: &dyn Fn(&ImportSite) -> bool,
+) -> bool {
     let Some(parsed) = &file.parsed else {
         return false;
     };
@@ -455,7 +476,7 @@ fn names_unknown_file(
             matches!(
                 resolution,
                 SiteResolution::Computed(ComputedResolution::All { .. })
-            ) && is_asked(site.kind)
+            ) && is_asked(site)
         })
 }
 
@@ -469,18 +490,38 @@ fn find_files_that_require_may_load(
     asked: &[(u32, ())],
 ) -> Vec<(bool, bool)> {
     let files = &state.files;
+    let is_of_program = find_files_of_program(context, state);
     let order = LoadOrder::new(context, state);
     let is_module = |file: u32| is_module(&files[file as usize]);
     let mut named_behind = vec![BEHIND_NO_LOAD; files.len()];
     let mut imported_behind = vec![BEHIND_NO_LOAD; files.len()];
     let mut to_visit: Vec<u32> = Vec::new();
+    let imported = std::cell::OnceCell::new();
+    let is_imported = |index: u32| {
+        let imported: &Vec<bool> = imported.get_or_init(|| {
+            let mut imported = vec![false; files.len()];
+            for (file, _) in files.iter().zip(&is_of_program).filter(|it| *it.1) {
+                visit_named_files(file, &mut |target, site| {
+                    imported[target as usize] |=
+                        site.map(loading_kind) == Some(Some(CodeImportKind::Import));
+                });
+            }
+            imported
+        });
+        imported[index as usize]
+    };
     for entry_point in &context.entry_points() {
         let index = state.index_of[&context.canonical_key(entry_point.key)];
         let Some(loads) = context.loads_that_alone_name(entry_point.key) else {
             named_behind[index as usize] = order.load_in(order.host());
             continue;
         };
-        for load in loads.iter().filter(|load| load.requires) {
+        let counts = |load: &&NamingLoad| {
+            load.requires
+                && is_of_program.get(load.written_in.0 as usize) == Some(&true)
+                && !(load.is_guess && is_imported(index))
+        };
+        for load in loads.iter().filter(counts) {
             let behind = order.load_in(load.file.0);
             order.note(&behind, &mut named_behind[index as usize]);
             if is_module(index) && order.note(&behind, &mut imported_behind[index as usize]) {
@@ -489,6 +530,9 @@ fn find_files_that_require_may_load(
         }
     }
     for (index, file) in (0..).zip(files) {
+        if !is_of_program[index as usize] {
+            continue;
+        }
         let awaited = find_awaited_imports(file);
         visit_named_files(file, &mut |target, site| {
             let kind = match site.map(loading_kind) {
@@ -554,6 +598,178 @@ fn is_another_format_where_imported(
             .module_formats
             .get(context.resolver.module_type_where_imported(path))
             != analysis.module_format
+}
+
+fn is_of_kind_that_loader_decides(
+    context: &CodeLoadContext<'_, '_, '_>,
+    file: &WalkedFile<'_, '_>,
+) -> bool {
+    let Some(parsed) = &file.parsed else {
+        return false;
+    };
+    let formats = &parsed.code.analyzed.analysis.module_formats;
+    let path = file.target.key.path;
+    !formats.is_decided_by_text()
+        && file.target.host_module.is_none()
+        && !context.host.is_plugin_source(path)
+        && formats.get(context.resolver.module_type_where_imported(path))
+            != formats.get(context.resolver.declared_module_type(path))
+}
+
+struct NamedEntryPoints<'r> {
+    written: Vec<u32>,
+    named: Vec<(LoadKey<'r>, u32, Vec<NamingLoad>)>,
+}
+
+impl<'r> NamedEntryPoints<'r> {
+    fn new(context: &CodeLoadContext<'_, '_, 'r>, state: &WalkState<'_, '_>) -> Self {
+        let mut entry_points = NamedEntryPoints {
+            written: Vec::new(),
+            named: Vec::new(),
+        };
+        for entry_point in &context.entry_points() {
+            let index = state.index_of[&context.canonical_key(entry_point.key)];
+            match context.loads_that_alone_name(entry_point.key) {
+                Some(loads) => entry_points.named.push((entry_point.key, index, loads)),
+                None => entry_points.written.push(index),
+            }
+        }
+        entry_points
+    }
+
+    fn list_what_each_file_names(
+        &self,
+        file_count: usize,
+        counts: impl Fn(&NamingLoad) -> bool,
+    ) -> Vec<Vec<u32>> {
+        let mut named_from: Vec<Vec<u32>> = vec![Vec::new(); file_count];
+        for (_, index, loads) in &self.named {
+            for load in loads.iter().filter(|load| counts(load)) {
+                if let Some(named) = named_from.get_mut(load.written_in.0 as usize) {
+                    named.push(*index);
+                }
+            }
+        }
+        named_from
+    }
+}
+
+pub(super) fn find_files_of_program(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &WalkState<'_, '_>,
+) -> Vec<bool> {
+    find_files_reached(context, state, |_| true)
+}
+
+fn find_files_reached(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &WalkState<'_, '_>,
+    counts: impl Fn(&NamingLoad) -> bool,
+) -> Vec<bool> {
+    let entry_points = NamedEntryPoints::new(context, state);
+    let named_from = entry_points.list_what_each_file_names(state.files.len(), counts);
+    let mut is_reached = vec![false; state.files.len()];
+    reach(
+        &state.files,
+        &named_from,
+        entry_points.written,
+        &mut is_reached,
+    );
+    is_reached
+}
+
+pub(super) fn program_rules_out_guesses(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &WalkState<'_, '_>,
+) -> bool {
+    let is_of_program = find_files_of_program(context, state);
+    let is_sure = find_files_reached(context, state, |load| !load.may_be_left_out);
+    let files = state.files.iter().zip(is_of_program).zip(is_sure);
+    let mut files = files.filter(|it| it.0.1).map(|it| (it.0.0, it.1));
+    files.any(|(file, is_sure)| match is_sure {
+        true => names_unknown_file_where_nothing_is_written(file),
+        false => {
+            names_unknown_file(file, &|_| true) || is_typescript_file_name(file.target.key.path)
+        }
+    })
+}
+
+fn names_unknown_file_where_nothing_is_written(file: &WalkedFile<'_, '_>) -> bool {
+    let analysis = file.parsed.as_ref().map(|it| &it.code.analyzed.analysis);
+    let guessed = analysis
+        .into_iter()
+        .flat_map(|it| it.names_out_of_data_files);
+    let guessed: FxHashSet<ExprId> = guessed.filter(|it| it.2).map(|it| it.1).collect();
+    names_unknown_file_at(file, &|site| !guessed.contains(&site.specifier_node))
+}
+
+fn reach(
+    files: &[WalkedFile<'_, '_>],
+    named_from: &[Vec<u32>],
+    mut to_visit: Vec<u32>,
+    is_reached: &mut [bool],
+) {
+    while let Some(file) = to_visit.pop() {
+        if !std::mem::replace(&mut is_reached[file as usize], true) {
+            let targets = files[file as usize].targets.iter().copied();
+            to_visit.extend(targets.filter(|&target| target != NOT_LOADED));
+            to_visit.extend_from_slice(&named_from[file as usize]);
+        }
+    }
+}
+
+pub(super) fn find_file_of_kind_that_loader_decides(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &WalkState<'_, '_>,
+) -> Option<Vec<u8>> {
+    let is_of_program = find_files_of_program(context, state);
+    let entry_points = context.entry_points();
+    let guesses = entry_points
+        .iter()
+        .filter(|it| context.is_mere_guess(it.key));
+    let guesses = guesses.map(|it| state.index_of[&context.canonical_key(it.key)]);
+    let mut is_reached_by_guess = vec![false; state.files.len()];
+    let named_by_nobody = vec![Vec::new(); state.files.len()];
+    reach(
+        &state.files,
+        &named_by_nobody,
+        guesses.collect(),
+        &mut is_reached_by_guess,
+    );
+    let files = state.files.iter().zip(&is_of_program);
+    let mut files = files.zip(&is_reached_by_guess);
+    let found = files.find(|&((file, &is_of_program), &is_reached_by_guess)| {
+        is_of_program && is_reached_by_guess && is_of_kind_that_loader_decides(context, file)
+    });
+    found.map(|((file, _), _)| file.target.key.path.to_vec())
+}
+
+pub(super) fn leave_out_guesses_that_decide_formats(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &mut WalkState<'_, '_>,
+) -> bool {
+    let entry_points = NamedEntryPoints::new(context, state);
+    let mut loads = entry_points.named.iter().flat_map(|it| it.2.iter());
+    if !loads.any(|load| load.may_be_left_out) {
+        return false;
+    }
+    let file = find_file_of_kind_that_loader_decides(context, state);
+    file.is_some() && let_all_guesses_go(context, state, file.as_deref())
+}
+
+pub(super) fn let_all_guesses_go(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &mut WalkState<'_, '_>,
+    file_whose_loader_decides_its_kind: Option<&[u8]>,
+) -> bool {
+    let entry_points = NamedEntryPoints::new(context, state);
+    context.let_no_guess_in(file_whose_loader_decides_its_kind);
+    let is_of_program = find_files_of_program(context, state);
+    let dead = entry_points.named.iter();
+    let dead = dead.filter(|it| !is_of_program[it.1 as usize]);
+    let dead: Vec<LoadKey<'_>> = dead.map(|it| it.0).collect();
+    context.leave_out_found_entry_points(&dead);
+    true
 }
 
 pub(super) fn forget_files_that_another_loader_reads(

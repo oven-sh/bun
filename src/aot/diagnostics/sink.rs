@@ -72,6 +72,12 @@ impl Diagnostics {
         self.add_with_locator(locator.as_mut(), diagnostic);
     }
 
+    pub(crate) fn render(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Msg> {
+        let mut kept = Diagnostics::new();
+        kept.add(Some(view), warning);
+        kept.entries.pop().map(|entry| entry.message)
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     pub(super) fn add_with_locator(
         &mut self,

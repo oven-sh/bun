@@ -1,0 +1,91 @@
+# The bound of the counter is a variable of the module, and in front of the loop the state already knows what it holds: the constant 12, stored two lines above. There is nothing to ask and nothing to round: the finder gives
+# nothing. It gave the variable: the loop was bought for its bound alone and could then ask no bound: a walk in vain as users build, and where code is verified and guesses fail unasked the walk of the function failed by name.
+# What shows here is the walk in vain: the blocks that it built and that were dropped.
+# let bound = 0;
+# function run(n: number): number { if (n > 100) bound = n / 3; bound = 12; let s = 0; for (let i = 0; i < bound; i++) s += i & 7; return s; }
+# console.log(run(Number(process.argv[2] ?? "7")), bound);
+# RUN: walk f1 mechanisms=all testing=FailGuesses
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK-NOT: # dropped b
+
+module m0 path="bound-in-a-variable-whose-value-the-state-knows-is-not-asked-in-front-of-the-loop.ts" displayPath="bound-in-a-variable-whose-value-the-state-knows-is-not-asked-in-front-of-the-loop.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="bound" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Integer @12
+    v3 = Convert v2 declared={type=number} @12
+    PutModuleVariable v3 variable=g0 @4
+    v5 = Builtin builtin=GlobalThis @156
+    v6 = PropGet v5 key="console" [isFreeName] @156
+    v7 = Convert v6 declared={type=builtin(Console) flags=[IsExpected]} @156
+    v8 = PropGet v7 key="log" @156
+    v9 = Convert v8 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @156
+    v10 = Builtin builtin=Number @172
+    v11 = Builtin builtin=Process @179
+    v12 = PropGet v11 key="argv" @179
+    v13 = Convert v12 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @179
+    v14 = Integer integer=2 @179
+    v15 = ElemGet v13, v14 @187
+    v16 = TypeTest v15 testedType=undefined|null @179
+    Branch v16 -> taken b1(| 0), notTaken b2(| 0) @179
+  b1(v17):
+    v18 = String string="7" @198
+    Jump -> next b3(v18) @198
+  b2(v19):
+    Jump -> next b3(v19) @179
+  b3(v20):
+    v21 = Call v10, -, v20 calleeName="Number" @172
+    v22 = Convert v21 declared={type=number} illTypedCause=DeclarationWithoutBody @172
+    v23 = Call v1, -, v22 calleeName="run" @168
+    v24 = GetModuleVariable variable=g0 @205
+    v25 = CheckInitialized v24 name="bound" @205
+    v26 = Call v9, v7, v23, v25 calleeKey="log" calleeName="console.log" @164
+    v27 = Undefined @156
+    Return v27 @156
+}
+function f1 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=100 @57
+    v2 = Greater v0, v1 @57
+    Branch v2 -> taken b1(), notTaken b2() @57
+  b1():
+    v3 = GetModuleVariable variable=g0 @62
+    v4 = CheckInitialized v3 name="bound" @62
+    v5 = Integer integer=3 @74
+    v6 = Div v0, v5 @74
+    v7 = Convert v6 declared={type=number} @62
+    PutModuleVariable v7 variable=g0 @62
+    Jump -> next b2() @62
+  b2():
+    v9 = GetModuleVariable variable=g0 @77
+    v10 = CheckInitialized v9 name="bound" @77
+    v11 = Integer integer=12 @85
+    v12 = Convert v11 declared={type=number} @77
+    PutModuleVariable v12 variable=g0 @77
+    v14 = Integer @97
+    v15 = Convert v14 declared={type=number} @97
+    v16 = Integer @113
+    v17 = Convert v16 declared={type=number} @113
+    Jump -> next b3(v15, v17) @109
+  b3(v18: number, v19: number):
+    LoopHint @109
+    v21 = GetModuleVariable variable=g0 @120
+    v22 = CheckInitialized v21 name="bound" @120
+    v23 = Less v19, v22 @120
+    Branch v23 -> taken b4(), notTaken b5() @120
+  b4():
+    v24 = Integer integer=7 @141
+    v25 = BitAnd v19, v24 @141
+    v26 = Add v18, v25 @141
+    v27 = Convert v26 declared={type=number} @132
+    v28 = Increment v19 @127
+    v29 = Convert v28 declared={type=number} @127
+    Jump -> next b3(v27, v29) @127
+  b5():
+    v30 = Convert v18 declared={type=number} @151
+    Return v30 @151
+}

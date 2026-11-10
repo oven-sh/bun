@@ -4,6 +4,7 @@
 //   bun test/aot/run-parallel.ts --jobs=4 --files-from=<a file with one path a line>      as scripts/runner.node.ts starts it
 //   --no-erased       leaves out every build but the first: for whoever asks the system or this driver, and not the compiler. scripts/runner.node.ts says it
 //   --under="<flags>"   behind its first build every program has one more, with these flags, and no other: how a bench looks for what nobody knows of yet
+//   --one-guess-in=<n>   see below: which guesses fail on purpose in the build that has such. `<n>:<seed>` draws other turns. Never 1
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
 //   --seconds=<n>     the time limit of a run. Default: 90, or 240 under ASAN
@@ -11,7 +12,7 @@
 //                     keeps more than a build without it: what a program says that a build counts or prints is not asked, and no `// Todo:` is held to fail
 //   --env-of-the-executable="A=b C=d"   every executable runs with these variables too. No build does, and no reference: the programs under a collector that is forced, say.
 //                     What a run counts, how it grows and what it prints of what the compiler saves hang on when the collector runs: they are not asked, and no `// Todo:` is held to fail
-//   --instructions    how a program grows with its data, or a build with its program, is counted in instructions (`perf stat`, Linux), not taken from the clock: the same on a machine that is shared
+//   --instructions    how a program grows with its data, or a build with its program, is counted by `perf stat` (Linux): for a machine on which this process may open no counter of its own
 //   --deal            builds and runs nothing: prints a line for each program, { ms, files }, with what all its builds take. scripts/runner.node.ts deals the programs to the shards by it
 //   --keep-statistics   the first build of every program is asked what it counted, and the line of the file says it: `statistics: { <name>: <n>, .. }`, without the zeros:
 //                     for whoever sums over all programs how often each mechanism of the compiler fires, build of Bun by build of Bun. CI does not say it
@@ -21,11 +22,23 @@
 // and so is its reference, behind a module that gives every stack trace the same ten frames (Error.prepareStackTrace). It passes if the two agree then, all four runs end alike,
 // and each line in which the first two differ is another line behind that module ON BOTH SIDES: a line that plain Bun prints the same with other frames holds no frame, and what differs in it counts.
 // (The second build is another program, and in other company a fault may not show.)
+// A program that asks which file it began with (process.mainModule, require.main, import.meta.main, module.parent) is not built once more: behind that module every such answer is another one
+// on both sides, frames or no frames, so a wrong line would pass.
 // The line of a program that passes so says `framesDiffer: true`, and the last line of the run says how many did, and how many are skipped by a `// Todo: only frames (..): <why this driver cannot tell>`.
+//
+// THE REFERENCE IS ASKED AGAIN WHERE THE TWO PART. `bun <file>` itself answers otherwise once in some hundred runs of some programs.
+// It is run again, twice at most, and the program passes if one of those runs ends and prints as the executable did.
+// The executable is not run again: what it printed stands, so an executable that answers now one way, now the other, fails as ever. Not under a mark: that stands for a difference.
+// The line of a program that passes so says `referenceWavered: true`, stderr names it at once, and the last lines of the run name them all.
 //
 // Every program is built in each way of harness/ways.ts: as written, and with its types erased.
 // Each executable is held to the same run of plain Bun. Only the first build is asked what the program says that a build counts or prints.
 // A program that says `// Under: <flags>: <why>` is built once more with those flags: it is the witness of a fault that showed only there.
+// And every program is built once more with --aot-testing=FailGuesses:<n>: one guess in n fails on purpose though its value would have passed. So each program with a loop or a guess walks the ways
+// from its typed copies into the closed ones, which its own values seldom or never take, and must still print what plain Bun prints. n is 3, 2 and 7 in turns, by the number of CI's build, and 3
+// anywhere else; the way in the line of a program names it. With 1 no typed copy is entered at all, and nothing is seen.
+// And once more with --aot-harden=proof-checks: what the compiler has proven is asked again at run time, and a proof that does not hold stops the program by name. A stored program is right, so a stop
+// there is a proof that is false or a question that is. The last line on stderr counts the builds of each way: a way that a flag leaves out is missing there, and --no-erased is named.
 //
 // Every program is built by itself, as anybody builds it: in its folder, with nothing but --compile --aot, a number of threads and its flags. What a build makes of a program
 // goes by all that the build holds, and beside others a fault may not show: so nothing here is ever joined into one program, also not to compile Bun's library once for many.
@@ -38,24 +51,34 @@
 //   // Env of the executable: A=b       the same, for the executable alone
 //   // Env of the build: A=b            the same, for the build alone
 //   // Build prints: 2 x <line>         how often the build prints exactly that line
+//   // Build prints on x64: 2 x <line>  the same where process.arch is that word, and nothing anywhere else: what a compiler says of its machine code
 //   // Reference: bun build --compile  it is compared with an executable built without --aot, with the flags that do not begin with --aot
 //   // Exit code: 3                    what both runs end with. Without the line a reference that does not end with 0 fails the program: two runs that
 //                                      stop at the same error agree and show nothing
-//   // Todo: <why>                     it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
-//                                      No `Todo` of any kind and no `Skip` stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
+//   // Todo: <what>: <why>             it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
+//                                      It stands for the one difference that <what> names, and the program fails by any other:
+//                                        it grows                  how it or its build grows is over its bound. What it prints is held as ever
+//                                                                  Whether a build's mark is met is said only where instructions are counted: elsewhere half of its bound is not asked
+//                                        "collected" | "KEPT"      it prints one of the two words where its reference prints the other. Everything else that the two print, and how they end, is held as ever
+//                                        only frames (..)          see above
+//                                      A line that says none of the three fails the program, on whatever platform the line is for.
+//                                      No `Todo` of any kind stands for a death: what a signal ends, what passes a limit of time or memory, a report of a sanitizer,
 //                                      a failed assertion and an internal compiler error fail the program whatever it is marked with
 //   // Todo on win32 x64: <why>        the same where process.platform and process.arch are those two, and nothing anywhere else. There it goes before a `// Todo:`
-//   // Skip on win32 x64: <why>        where process.platform and process.arch are those two, what it prints is compared with nothing, and it is reported as skipped:
-//                                      for a program whose reference, `bun <file>`, answers now one way, now the other there. It is built and run all the same,
-//                                      and its line says in which lines the two differed in this run
-//                                      Nothing anywhere else. There is no such line for every platform
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
-//                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there
+//                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there,
+//                                      nor where no instructions are counted
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
+//   // No build under --aot-harden=proof-checks: <why>   it is not built with those flags. The others are held as ever. For a build that outgrows the machine: <why> says how large it is
+//                                      It names one of the ways in which every program is built whatever the build of CI, or one of the program's own `// Under:`.
+//                                      It and the two `// Prints what ..:` stand in the head
+//                                      and say why: a line that does not fails the program (harness/lines-that-leave-out.ts). stderr lists what they leave out behind the
+//                                      counts of the builds, and every-stored-program-is-built-once-more-where-guesses-fail.test.ts holds the list of all of them
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. What it prints is compared in the first build alone, and not under --more-flags.
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
+//   // Prints what goes by the copy that runs: <what>   the same, for what the language leaves open and a typed copy of its code answers otherwise than the closed one: the bytes of a NaN
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable of the first build must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or
@@ -71,15 +94,20 @@
 //                                      In a folder with a main file they may stand in any file: none of the others is a program
 //   // Sizes: 1000 4000 16000          what one piece of its data costs must not hang on how much data there is. The program makes its data of the size that SIZE says and
 //   // Passes: 350                     does its deed PASSES times over. Three sizes, each four times the one before. The executable of the first build is run at each, and
-//   // Grows: linear                   (t(16n) - t(4n)) / (t(4n) - t(n)) is at most 9: the differences strike out the start, linear gives 4, n log n less than 5, a square 16.
-//                                      t is the time the processors spent in the program, and the passes are raised until the smallest run takes 50 ms. Only what is over
-//                                      the bound is run twice more, and judged by the least at each size. Under --instructions t is a count, and the bound is 6.
+//   // Grows: linear                   (t(16n) - t(4n)) / (t(4n) - t(n)) is at most 6: the differences strike out the start, linear gives 4, n log n less than 5, a square 16.
+//                                      t is a count of instructions: under --instructions, and without it wherever Linux lets this process open a counter of its own (in CI:
+//                                      Alpine on x64). Elsewhere the executable is run at each size all the same and held to end as the program ends, and what the clock
+//                                      read is said and not judged. So a square that only the code for one platform has shows only where that platform counts.
 //                                      All three lines or none. Not asked under --more-flags or ASAN.
 //                                      Whoever writes one: the passes make some 200 M instructions at the smallest size; what it keeps alive stays small (past some 30,000
 //                                      cells a unit costs twice as much, once, in plain Bun too: three sizes cannot tell that step from a square); plain Bun is linear in it
 //   // Grows: the build, linear        the program is a WRITER: it prints a program of the size SIZE that holds PASSES copies of its function under names of their own. Any three
 //                                      rising sizes. Each of the three programs is built with one thread, and its executable must print what plain Bun prints of it. What the
 //                                      build holds at its peak may rise by 200 bytes for each byte that the program grows by (the dearest takes 70), and 32 MB.
+//                                      The peak is the largest resident set that the kernel counted for the build. It holds what is mapped from files too, which is the same
+//                                      at all three sizes. What a watcher sees in looks 50 ms apart differs from one run to the next by more than the 32 MB leave room for.
+//   // Room of the peak: 62 MB: <why>  in place of the 32 MB, for a writer whose short lines each copy much code in line: its peak rises in line with its size and by more than its
+//                                      text says. The why names the cause and the numbers that were read.
 //                                      WHERE INSTRUCTIONS ARE COUNTED what the build takes must grow as the size does: (t3 - t2) / (t2 - t1) is at most 1.5 times (s3 - s2) / (s2 - s1).
 //                                      That is under --instructions, and without it wherever Linux lets this process open a counter of its own (in CI: Alpine on x64, as for build-scaling).
 //                                      Only a count says that: a build has a long start of its own, and by the clock what lies between two builds drowns in it
@@ -90,7 +118,7 @@
 //   /* Build errors: .. */             the build ends with exit code 1 and these `error:` lines
 //
 // Prints a line of JSON when it takes a file ({ file, state: "compiling" }) and one when the file is through
-// ({ file, state: "pass", compileMs, runMs, plainMs, buildMB, runMB }, { file, state: "fail", stage, message, expected, actual } or { file, state: "skip", message }).
+// ({ file, state: "pass", compileMs, runMs, plainMs, buildMB, runMB, plainMB }, { file, state: "fail", stage, message, expected, actual } or { file, state: "skip", message }).
 // One such line a file, when every way to build it is through. `ways` says how each went.
 //
 // Every build and every run has a time limit. What passes it is ended with everything it started, and the program fails alone.
@@ -103,8 +131,10 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, w
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { measureHere, openInstructionCounter } from "./analysis-scaling/measure-here";
+import { lineThatLeavesOut, whyLineThatLeavesOutIsNotRead } from "./harness/lines-that-leave-out";
 import { runtimeEnvironment } from "./harness/flags";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
+import { stacksOf } from "./harness/stacks-of-a-run";
 import { ways } from "./harness/ways";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import "./harness/without-installing-packages";
@@ -126,17 +156,21 @@ type Program = {
   runsByItself: boolean;
   weight: number;
   namesModules: boolean;
+  asksForEntryPoint: boolean;
   exitCode: number;
   todo?: string;
-  skip?: string;
   todoOfBuildWith: (flags: readonly string[]) => string | undefined;
+  isNotBuiltWith: (flags: readonly string[]) => boolean;
+  marksNotRead: string[];
+  /** The lines `// No build under ..:` and `// Prints what ..:` that name no way, say no reason or stand below the head. */
+  linesThatLeaveOutNotRead: string[];
   /** The flags of each further build that it asks for. */
   under: string[][];
   statistics: Bound[];
   counts: Bound[];
   boundsNotRead: string[];
   /** What `// Sizes:` and `// Passes:` say. */
-  growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number };
+  growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number; roomOfPeakMB?: number };
   growthNotRead?: string;
   output?: string;
   buildErrors?: string;
@@ -152,6 +186,8 @@ const namesMuchOfTheLibrary =
   /["'`](?:node:)?(?:assert|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|events|fs|https?|http2|inspector|net|perf_hooks|readline|repl|stream|tls|tty|util|v8|worker_threads|zlib)(?:\/[a-z]+)?["'`]|\bWorker\b|\bprocess\.std(?:in|out|err)\b/;
 // So does whoever lets one of these stand as a value: all that hangs on it is out of the compiler's sight.
 const handsOutObjectOfHost = /(?<![.\w$"'`:])(?:globalThis|process|Bun)\b(?!\s*\??\.\s*[A-Za-z_$])(?!["'`:])/;
+// Whoever names one of these, in whichever of its files, gets another answer behind another entry point.
+const asksForEntryPoint = /\bmainModule\b|\brequire\s*\.\s*main\b|\bmeta\s*\.\s*main\b|\bmodule\s*\.\s*parent\b/;
 // And whoever was seen to take long, which no text tells: the table by which the shards are dealt lists only such programs.
 const tests = resolve(import.meta.dir, "..");
 const tookMs = new Map(
@@ -229,18 +265,22 @@ const isASAN = (() => {
 })();
 const askedOfAll = option("under")?.split(/\s+/).filter(Boolean);
 const isCheck = (flag: string) => flag.startsWith("--aot-check=");
+const oneGuessIn = option("one-guess-in") ?? String([3, 2, 7][Number(process.env.BUILDKITE_BUILD_NUMBER ?? 0) % 3]);
+if (!/^(?:[2-9]|[1-9]\d+)(?::\d+)?$/.test(oneGuessIn)) throw new Error(`--one-guess-in=${oneGuessIn}: <n> or <n>:<seed>, and n over 1`);
+const whereGuessesFail = [`--aot-testing=FailGuesses:${oneGuessIn}`];
+const whereProofsAreChecked = ["--aot-harden=proof-checks"];
 const waysBehindTheFirst = ways.map(({ flags }) => flags).filter(flags => flags.length > 0);
 const isOneOfTheWays = (flags: readonly string[]) => waysBehindTheFirst.some(way => way.join(" ") === flags.join(" "));
 /** The flags of each build of a program behind the first. */
-function furtherBuilds({ under, flags: own, buildErrors }: Program) {
+function furtherBuilds({ under, flags: own, buildErrors, isNotBuiltWith }: Program) {
   if (takesTheFirstBuildAlone || moreFlags.length || buildErrors !== undefined) return [];
   const asked: (readonly string[])[] = askedOfAll
     ? [askedOfAll]
-    : [...waysBehindTheFirst, ...under.filter(flags => !isOneOfTheWays(flags))];
+    : [...waysBehindTheFirst, whereGuessesFail, whereProofsAreChecked, ...under.filter(flags => !isOneOfTheWays(flags))];
   const seen = new Set<string>();
   return asked.filter(flags => {
     const key = flags.join(" ");
-    if (seen.has(key) || flags.every(flag => own.includes(flag))) return false;
+    if (seen.has(key) || flags.every(flag => own.includes(flag)) || isNotBuiltWith(flags)) return false;
     seen.add(key);
     return true;
   });
@@ -531,8 +571,11 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
   using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build", answers);
   let ranOver = false;
   let threadsAtLimit = "";
+  let stacksAtLimit = "";
   const end = (signal: "SIGTERM" | "SIGKILL") => {
     if (!ranOver) threadsAtLimit = describeThreads(pid);
+    // They stand behind what the run itself has said. A build says what its threads are at.
+    if (!ranOver && cmd[1] !== "build") stacksAtLimit = stacksOf(pid);
     ranOver = true;
     endGroup(pid, signal);
   };
@@ -549,7 +592,7 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
       exitCode: child.signalCode ? null : exitCode,
       signal: child.signalCode,
       stdout,
-      stderr,
+      stderr: stderr + stacksAtLimit,
       overLimit: held.exceeded
         ? held.held
         : ranOver
@@ -561,7 +604,9 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
     const ms = Math.round(performance.now() - began);
     noteProcess(cmd, cwd, ms, Number(child.resourceUsage()?.cpuTime.total ?? 0) / 1000);
     const userMs = Number(child.resourceUsage()?.cpuTime.user ?? 0) / 1000;
-    return { output, ms, userMs, peakMB: Math.round(held.peak / 2 ** 20) };
+    // Nothing is held on Windows, where the watcher tells nothing either.
+    const mostResidentMB = isWindows ? 0 : Math.round(Number(child.resourceUsage()?.maxRSS ?? 0) / 2 ** 20);
+    return { output, ms, userMs, peakMB: Math.round(held.peak / 2 ** 20), mostResidentMB };
   } finally {
     timers.forEach(clearTimeout);
     if (!isWindows) endGroup(pid, "SIGKILL");
@@ -638,6 +683,7 @@ function differOnlyInLinesWithFrames(one: string, other: string, oneAgain: strin
   return lines.every((line, at) => line === others[at] || (line !== again[at] && others[at] !== othersAgain[at]));
 }
 let programsWhoseFramesDiffer = 0;
+const programsWhoseReferenceWavered = new Set<string>();
 let programsMarkedForFramesAlone = 0;
 /** The lines of `text` that are not the same in `other`, each with the line before and the line after it. */
 function differingLines(text: string, other: string) {
@@ -668,6 +714,25 @@ const deathOf = ({ signal, overLimit, stderr }: Output) =>
   overLimit ??
   /^.*(?:internal compiler error \(|ERROR: AddressSanitizer|ASSERTION FAILED|panicked at ).*$/m.exec(stderr)?.[0];
 
+/** What a `// Todo` of a program, or of one of its builds, stands for: the stage at which it fails today and, where that is what it prints, the two words of which one is printed for the other. */
+type Mark = { stage: "growth" | "compare"; alike?: readonly [string, string] };
+function readMark(said: string): Mark | undefined {
+  if (said.startsWith("it grows: ")) return { stage: "growth" };
+  if (said.startsWith("only frames")) return { stage: "compare" };
+  const [, one, other] = /^"([^"]+)" \| "([^"]+)": ./.exec(said) ?? [];
+  return one === undefined ? undefined : { stage: "compare", alike: [one, other] };
+}
+/** Whether the two print the same once nobody tells the one word from the other. */
+type AlikeBut = (one: string, other: string) => boolean;
+function standsFor(said: string, { stage, alikeBut }: Record<string, unknown>) {
+  const mark = readMark(said);
+  return mark?.stage === stage && (!mark.alike || (alikeBut as AlikeBut | undefined)?.(...mark.alike) === true);
+}
+const notWhatItsMarkStandsFor = (verdict: Record<string, unknown>) =>
+  verdict.stage === "read"
+    ? verdict
+    : { ...verdict, message: `${verdict.message}: its \`// Todo\` does not stand for that` };
+
 const waysLeft = new Map<string, number>();
 const verdicts = new Map<string, Record<string, unknown>[]>();
 /** A file has one verdict: of the ways that fail the first build, or else whichever failed first; or else the first. */
@@ -675,7 +740,9 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   if (program.todoOfWay !== undefined && !verdict.died)
     verdict =
       verdict.state === "fail"
-        ? { state: "todo" }
+        ? standsFor(program.todoOfWay, verdict)
+          ? { state: "todo" }
+          : notWhatItsMarkStandsFor(verdict)
         : {
             state: "fail",
             stage: "todo",
@@ -686,21 +753,19 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   if (all.length < waysLeft.get(program.file)!) return;
   const sum = (name: string) => all.reduce((total, verdict) => total + Number(verdict[name] ?? 0), 0);
   const failed = all.some(({ state }) => state === "fail");
-  if (program.skip !== undefined && !all.some(({ died }) => died)) {
-    const differs = all.find(({ state }) => state === "fail");
-    const linesOf = (output: unknown) => JSON.stringify((output as Output | undefined)?.stdout ?? "");
-    const printed = differs
-      ? `the reference printed ${linesOf(differs.expected)} and the executable ${linesOf(differs.actual)}`
-      : "the executable printed what the reference printed";
-    return say({
-      file: program.file,
-      state: "skip",
-      message: `skipped on this platform: ${program.skip} | in this run ${printed}`,
-      ...goalsNotMetOf(program.file),
-    });
+  const failsOtherwise =
+    program.todo !== undefined && all.find(verdict => verdict.state === "fail" && !standsFor(program.todo!, verdict));
+  if (failsOtherwise && !all.some(({ died }) => died)) {
+    hasFailed = true;
+    return say({ ...notWhatItsMarkStandsFor(failsOtherwise), ...goalsNotMetOf(program.file) });
   }
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
-    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && program.growth)) {
+    // Whichever way ends last settles the file, and only the first build says how it grows.
+    const growth = asWritten.find(({ file }) => file === program.file)?.growth;
+    // Where nothing is counted, only the peak is judged of how a build grows, and nothing of how a program grows: a mark may stand for the instructions, and a run that has not
+    // counted them has not seen it met.
+    const isHalfJudged = growth && !countsInstructions && !opensCounterOfItsOwn();
+    if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && growth) || isHalfJudged) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}`, ...goalsNotMetOf(program.file) });
     }
@@ -726,6 +791,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     ways: Object.fromEntries(
       all.map(({ way, state, isCompared }) => [way, isCompared === false ? "built and run, not compared" : state]),
     ),
+    ...(all.some(({ referenceWavered }) => referenceWavered) && { referenceWavered: true }),
     ...(statisticsKept.has(program.file) && { statistics: statisticsKept.get(program.file) }),
     ...goalsNotMetOf(program.file),
   });
@@ -736,12 +802,20 @@ const leavingOutTheSame = (output: Output, other: Output) => ({
   stdout: differingLines(output.stdout, other.stdout),
   stderr: differingLines(output.stderr, other.stderr),
 });
-function fail(program: Program, stage: string, message: string, actual?: Output, expected?: Output) {
+function fail(
+  program: Program,
+  stage: string,
+  message: string,
+  actual?: Output,
+  expected?: Output,
+  alikeBut?: AlikeBut,
+) {
   settle(program, {
     state: "fail",
     stage,
     message: program.way === "compiled" ? message : `${program.way}: ${message}`,
     died: actual && deathOf(actual),
+    alikeBut,
     expected: expected && shown(actual ? leavingOutTheSame(expected, actual) : expected),
     actual: actual && shown(expected ? leavingOutTheSame(actual, expected) : actual),
   });
@@ -810,13 +884,13 @@ function read(file: string): Program {
       ...Object.fromEntries(lines("Env of the executable").map(line => line.split(/=(.*)/s).slice(0, 2))),
     },
     envOfBuild: Object.fromEntries(lines("Env of the build").map(line => line.split(/=(.*)/s).slice(0, 2))),
-    buildPrints: lines("Build prints").map(line => {
+    buildPrints: [...lines("Build prints"), ...lines(`Build prints on ${process.arch}`)].map(line => {
       const [, times, text] = /^(\d+) x (.*)$/.exec(line)!;
       return { times: Number(times), line: text };
     }),
     entryPoints: words("Entry points"),
     comparesWithCompiled: lines("Reference").includes("bun build --compile"),
-    printsWhatIsSaved: lines("Prints what the compiler saves").length > 0,
+    printsWhatIsSaved: lines("Prints what the compiler saves").length + lines("Prints what goes by the copy that runs").length > 0,
     runsByItself: lines("Runs by itself").length > 0,
     weight: tookMs.has(path)
       ? Math.max(8, Math.round(tookMs.get(path)! / msOfWeight))
@@ -824,14 +898,28 @@ function read(file: string): Program {
         ? 8
         : 1,
     namesModules,
+    asksForEntryPoint: texts.some(text => asksForEntryPoint.test(text)),
     exitCode: Number(lines("Exit code")[0] ?? 0),
     todo:
       (isASAN ? lines("Todo under ASAN")[0] : undefined) ??
       lines(`Todo on ${process.platform} ${process.arch}`)[0] ??
       lines("Todo")[0],
-    skip: lines(`Skip on ${process.platform} ${process.arch}`)[0],
+    marksNotRead: Array.from(
+      head.matchAll(/^\/\/ Todo(?: on \w+ \w+| under ASAN| under a check)?:[ \t]+(.*)$/gm),
+      ([line, said]) => (readMark(said.trim()) ? [] : [line]),
+    ).flat(),
     todoOfBuildWith: flags =>
       lines(`Todo under ${flags.join(" ")}`)[0] ?? (flags.some(isCheck) ? lines("Todo under a check")[0] : undefined),
+    linesThatLeaveOutNotRead: Array.from(text.matchAll(lineThatLeavesOut), ([line, what, why]) => {
+      const refusal = whyLineThatLeavesOutIsNotRead(
+        what,
+        why,
+        head.split(/\r?\n/).includes(line),
+        [...waysBehindTheFirst, whereProofsAreChecked, ...lines("Under").map(said => said.split(": ", 1)[0].split(/\s+/))].map(way => way.join(" ")),
+      );
+      return refusal ? [`${line.slice(0, 120)}: ${refusal}`] : [];
+    }).flat(),
+    isNotBuiltWith: flags => lines(`No build under ${flags.join(" ")}`).length > 0,
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
     counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
@@ -842,6 +930,7 @@ function read(file: string): Program {
           passes,
           of: growsWithProgram ? "the build" : "the run",
           power: saidOfGrowth[2][0].endsWith("a square") ? 2 : 1,
+          roomOfPeakMB: Number.parseInt(lines("Room of the peak")[0] ?? "") || undefined,
         }
       : undefined,
     growthNotRead:
@@ -936,14 +1025,11 @@ function unmetBounds(file: string, counted: Map<string, number>, bounds: Bound[]
   });
 }
 
-// Counted, a linear program reads 3.9 to 5.2. By the clock, on a machine with twice as much to do as it has processors, up to 6.9; a square 14 to 16 either way.
-const mostThatIsLinear = countsInstructions ? 6 : 9;
-// No linear program has read more than this. What reads more is measured again, and the least of three runs at each size is judged.
-const mostThatIsLinearAtOnce = countsInstructions ? 6 : 6.9;
-const leastMsOfSmallestRun = 50;
+// A linear program reads 3.9 to 5.2, a square 14 to 16.
+const mostThatIsLinear = 6;
 /**
  * How what the executable takes grows with its data. A run that does not end as the program ends fails it.
- * Other work on the machine can only make a run longer. A longer run at the middle size makes a square look linear: 54 | 429 | 3170 ms read 7.31.
+ * The clock is no count: on one kind of machine two programs that counted read 3.92 and 4.08 read 10.15 and 9.66 by it, the second by the least of seven runs at each size.
  */
 async function measureGrowth(
   { growth, exitCode }: Program,
@@ -952,16 +1038,28 @@ async function measureGrowth(
   env: Record<string, string | undefined>,
 ): Promise<{ growth: number; measured?: string; message?: string; output?: Output }> {
   const { sizes } = growth!;
+  const isCounted = countsInstructions || opensCounterOfItsOwn();
   // A count has no noise to speak of, and an eighth of the work says the same.
-  let passes = countsInstructions ? Math.max(1, Math.round(growth!.passes / 8)) : growth!.passes;
+  const passes = isCounted ? Math.max(1, Math.round(growth!.passes / 8)) : growth!.passes;
   const counted = `${executable}.instructions`;
-  const take = async (size: number) => {
+  const take = async (size: number): Promise<{ output: Output; taken: number }> => {
+    const sized = { ...env, SIZE: String(size), PASSES: String(passes) };
+    if (isCounted && !countsInstructions) {
+      const run = await withSlot(() => measureHere(cwd, [executable], timeLimit([executable]) * 1000, sized));
+      const output = {
+        exitCode: run.signalCode ? null : run.exitCode,
+        signal: run.signalCode,
+        stdout: run.stdout,
+        stderr: run.stderr,
+        overLimit: run.exceededMemoryLimit ? "it held more than it may" : undefined,
+      };
+      const endsAsTheProgram = !output.overLimit && !output.signal && output.exitCode === exitCode;
+      return { output, taken: endsAsTheProgram ? (run.instructions ?? NaN) / 1e6 : NaN };
+    }
     const cmd = countsInstructions
       ? ["perf", "stat", "-x,", "-e", "instructions:u", "-o", counted, "--", executable]
       : [executable];
-    const { output, userMs } = await withSlot(() =>
-      start(cmd, cwd, { ...env, SIZE: String(size), PASSES: String(passes) }),
-    );
+    const { output, userMs } = await withSlot(() => start(cmd, cwd, sized));
     if (output.overLimit || output.signal || output.exitCode !== exitCode) return { output, taken: NaN };
     if (!countsInstructions) return { output, taken: userMs };
     const written = await Bun.file(counted)
@@ -971,33 +1069,21 @@ async function measureGrowth(
     const [, instructions] = /^(\d+),,instructions/m.exec(written) ?? [];
     return { output, taken: Number(instructions) / 1e6 };
   };
-  const unit = countsInstructions ? "M instructions" : "ms";
-  for (let raised = 0; !countsInstructions && raised < 4; raised++) {
-    const { output, taken } = await take(sizes[0]);
+  const all: number[] = [];
+  for (const size of sizes) {
+    const { output, taken } = await take(size);
     if (Number.isNaN(taken))
-      return { growth: NaN, message: `at the size ${sizes[0]} it ended by ${describeEnd(output)}`, output };
-    if (taken >= leastMsOfSmallestRun) break;
-    passes *= Math.ceil((1.2 * leastMsOfSmallestRun) / Math.max(taken, 5));
+      return {
+        growth: NaN,
+        message: `at the size ${size} it ended by ${describeEnd(output)}, or nothing was counted`,
+        output,
+      };
+    all.push(taken);
   }
-  const least = sizes.map(() => Infinity);
-  let grows = Infinity;
-  for (let round = 0; round < 3 && !(grows <= mostThatIsLinearAtOnce); round++) {
-    for (const [index, size] of sizes.entries()) {
-      const { output, taken } = await take(size);
-      if (Number.isNaN(taken))
-        return {
-          growth: NaN,
-          message: `at the size ${size} it ended by ${describeEnd(output)}, or nothing was counted`,
-          output,
-        };
-      least[index] = Math.min(least[index], taken);
-    }
-    grows = (least[2] - least[1]) / Math.max(least[1] - least[0], Number.MIN_VALUE);
-    if (countsInstructions) break;
-  }
+  const grows = (all[2] - all[1]) / Math.max(all[1] - all[0], Number.MIN_VALUE);
   const rounded = Math.round(grows * 100) / 100;
-  const measured = `${least.map(taken => Math.round(taken)).join(" | ")} ${unit} at the sizes ${sizes.join(" | ")}, ${passes} passes`;
-  if (grows <= mostThatIsLinear) return { growth: rounded, measured };
+  const measured = `${all.map(taken => Math.round(taken)).join(" | ")} ${isCounted ? "M instructions" : "ms, which is not judged,"} at the sizes ${sizes.join(" | ")}, ${passes} passes`;
+  if (!isCounted || grows <= mostThatIsLinear) return { growth: rounded, measured };
   return {
     growth: rounded,
     message: `what it takes grows faster than its data: ${rounded}, and at most ${mostThatIsLinear} is linear (4 is, 16 is a square): ${measured}`,
@@ -1026,7 +1112,7 @@ async function measureGrowthOfBuild(
   env: Record<string, string | undefined>,
   command: (entry: string, outfile: string) => string[],
 ): Promise<{ growth?: number; measured?: string; message?: string; output?: Output }> {
-  const { sizes, passes, power } = growth!;
+  const { sizes, passes, power, roomOfPeakMB: room = roomOfPeakMB } = growth!;
   const counted = `${executable}.instructions`;
   const taken: number[] = [];
   const peaks: number[] = [];
@@ -1061,7 +1147,7 @@ async function measureGrowthOfBuild(
       const plain = await withSlot(() => start([process.execPath, entry], folder, env));
       if (compiled.output.stdout !== plain.output.stdout || compiled.output.exitCode !== plain.output.exitCode)
         return { message: `its program of the size ${size} does not print as plain Bun does`, output: compiled.output };
-      peaks.push(build.peakMB);
+      peaks.push(build.mostResidentMB || build.peakMB);
       bytes.push(written.output.stdout.length);
       if (!countsInstructions) {
         if (!opensCounterOfItsOwn()) continue;
@@ -1084,7 +1170,7 @@ async function measureGrowthOfBuild(
     }
   }
   const said = `at the sizes ${sizes.join(" | ")}, ${passes} copies`;
-  const mayHold = peaks[0] + roomOfPeakMB + (bytesOfPeakForAByteOfProgram * (bytes[2] - bytes[0])) / 2 ** 20;
+  const mayHold = peaks[0] + room + (bytesOfPeakForAByteOfProgram * (bytes[2] - bytes[0])) / 2 ** 20;
   if (peaks[2] > mayHold)
     return {
       message: `what the build holds at its peak grows faster than its program: ${peaks.join(" | ")} MB ${said}, and at most ${Math.round(mayHold)} MB at the last`,
@@ -1113,6 +1199,19 @@ async function run(program: Program): Promise<void> {
       `not of the form \`// STATISTIC | COUNT | COUNTER: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
     );
   if (program.growthNotRead) return fail(program, "read", program.growthNotRead);
+  if (program.marksNotRead.length)
+    return fail(
+      program,
+      "read",
+      'not of the form `// Todo..: it grows: <why>`, `// Todo..: "<a word>" | "<the word for it>": <why>` or `// Todo: only frames (..): <why>`: ' +
+        program.marksNotRead.join("; "),
+    );
+  if (program.linesThatLeaveOutNotRead.length)
+    return fail(
+      program,
+      "read",
+      program.linesThatLeaveOutNotRead.join("; "),
+    );
   if ("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER" in { ...program.env, ...program.envOfExecutable })
     return fail(program, "read", "no user sets BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: what is run runs without it");
   const cwd = dirname(program.path);
@@ -1124,6 +1223,7 @@ async function run(program: Program): Promise<void> {
     "--aot",
     `--aot-threads=${threads}`,
     ...program.flags,
+    ...(program.flags.includes(whereProofsAreChecked[0]) ? ["--aot-testing=ReadsByKeyOffFilledRecordsAreListed"] : []),
     ...(program.statistics.length || (keepsStatistics && program.way === "compiled") ? ["--explain=statistics"] : []),
     entry,
     ...program.entryPoints,
@@ -1218,7 +1318,7 @@ async function run(program: Program): Promise<void> {
     const reference = () => {
       if (stored !== undefined) return undefined;
       const known = references.get(program.path);
-      if (known) return known.then(({ output, peakMB }) => ({ output, ms: 0, peakMB }));
+      if (known) return known.then(({ output, peakMB, mostResidentMB }) => ({ output, ms: 0, peakMB, mostResidentMB }));
       const first = runReference();
       references.set(program.path, first);
       return first;
@@ -1248,6 +1348,25 @@ async function run(program: Program): Promise<void> {
     if (!compiled.output.stderr.includes("[aot] module: "))
       return fail(program, "run", "it did not run compiled code", compiled.output, plain?.output);
     compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
+    // What compiled code lays in store ahead of a deed shows in nothing that a program prints. Of 8,046 programs the worst held 1.48 times what plain Bun held.
+    // Not where a program grows its data on purpose, where collections are off for a count, or under a sanitizer.
+    const [mostOfCompiled, mostOfPlain] = [compiled.mostResidentMB, plain?.mostResidentMB ?? 0];
+    if (
+      !isASAN &&
+      !moreFlags.length &&
+      runsAreAsUsersRunThem &&
+      !program.growth &&
+      !counts &&
+      mostOfPlain &&
+      mostOfCompiled > 2 * mostOfPlain + 64
+    )
+      return fail(
+        program,
+        "memory",
+        `it held ${mostOfCompiled} MB at most, and plain Bun ${mostOfPlain} MB`,
+        compiled.output,
+        plain?.output,
+      );
     const unmetByRun = counts ? unmetBounds(program.file, counted, program.counts, "executable") : [];
     if (unmetByRun.length) return fail(program, "count", unmetByRun.join("; "), compiled.output, plain?.output);
     const grown =
@@ -1265,20 +1384,26 @@ async function run(program: Program): Promise<void> {
       compileMs: build.ms,
       runMs: compiled.ms,
       buildMB: build.peakMB,
-      runMB: Math.max(compiled.peakMB, plain?.peakMB ?? 0),
+      runMB: compiled.peakMB,
+      plainMB: plain?.peakMB,
     };
-    if ((moreFlags.length || !runsAreAsUsersRunThem || program.way !== "compiled") && program.printsWhatIsSaved)
+    if ((moreFlags.length || !runsAreAsUsersRunThem || program.way !== "compiled") && program.printsWhatIsSaved) {
+      if (compiled.output.exitCode !== program.exitCode)
+        return fail(program, "run", `it ended with ${describeEnd(compiled.output)}, not with ${program.exitCode}`, compiled.output, plain?.output);
       return settle(program, { ...passes, isCompared: false });
+    }
     const passesButForFrames = () => (programsWhoseFramesDiffer++, settle(program, { ...passes, framesDiffer: true }));
     if (stored !== undefined) {
       if (asText(compared(compiled.output)) === stored) return settle(program, passes);
       if (withoutFrames(asText(compared(compiled.output))) === withoutFrames(stored)) return passesButForFrames();
-      return fail(program, "compare", "it does not print what its last comment says", compiled.output, {
-        exitCode: null,
-        signal: null,
-        stdout: stored,
-        stderr: "",
-      });
+      return fail(
+        program,
+        "compare",
+        "it does not print what its last comment says",
+        compiled.output,
+        { exitCode: null, signal: null, stdout: stored, stderr: "" },
+        (one, other) => asText(compared(compiled.output)).replaceAll(one, other) === stored.replaceAll(one, other),
+      );
     }
     if (plain!.output.exitCode !== program.exitCode || plain!.output.overLimit)
       return fail(
@@ -1291,8 +1416,34 @@ async function run(program: Program): Promise<void> {
     if (Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output)))
       return settle(program, { ...passes, plainMs: plain!.ms });
     if (agreeButForFrames(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output))) return passesButForFrames();
+    if (program.todo === undefined && program.todoOfWay === undefined)
+      for (let asked = 0; asked < 2; asked++) {
+        const again = await runReference();
+        if (!Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(again.output))) continue;
+        references.set(program.path, Promise.resolve(again));
+        programsWhoseReferenceWavered.add(program.file);
+        console.error(
+          `THE REFERENCE WAVERED: ${program.file}: plain Bun printed ${JSON.stringify(differingLines(plain!.output.stdout, again.output.stdout))} at first, ` +
+            `and asked again what the executable printed: ${JSON.stringify(differingLines(again.output.stdout, plain!.output.stdout))}`,
+        );
+        return settle(program, { ...passes, plainMs: plain!.ms + again.ms, referenceWavered: true });
+      }
     const differs = () =>
-      fail(program, "compare", "it does not exit and print as plain Bun does", compiled.output, plain!.output);
+      fail(
+        program,
+        "compare",
+        "it does not exit and print as plain Bun does",
+        compiled.output,
+        plain!.output,
+        (one, other) => {
+          const [mine, its] = [compiled, plain!].map(({ output }) => comparedWithPlain(output));
+          return Bun.deepEquals(
+            { ...mine, stdout: mine.stdout.replaceAll(one, other) },
+            { ...its, stdout: its.stdout.replaceAll(one, other) },
+          );
+        },
+      );
+    if (program.asksForEntryPoint) return differs();
     const entry = `${executable}-behind-the-same-frames.mjs`;
     const other = nextExecutable("behind-the-same-frames");
     writeFileSync(entry, behindTheSameFrames(program.path));
@@ -1351,6 +1502,8 @@ const all = [
         ...program,
         way,
         todoOfWay: program.todoOfBuildWith(flags),
+        marksNotRead: [program.todoOfBuildWith(flags) ?? []].flat().filter(said => !readMark(said)),
+        linesThatLeaveOutNotRead: [],
         flags: [...program.flags, ...flags.filter(flag => !program.flags.includes(flag))],
         statistics: [],
         counts: [],
@@ -1378,9 +1531,33 @@ const runs = all.map(program => run(program));
 void Promise.all(runs.filter((_, index) => !all[index].runsByItself)).then(() => othersAreThrough.resolve());
 await Promise.all(runs);
 console.error(describeTime());
+const buildsOfWays = new Map<string, number>();
+for (const { way } of all) buildsOfWays.set(way, (buildsOfWays.get(way) ?? 0) + 1);
+console.error(
+  `builds by way: ${Array.from(buildsOfWays, ([way, builds]) => `${way} ${builds}`).join(" | ")}` +
+    (takesTheFirstBuildAlone ? " | --no-erased leaves out every build behind the first" : ""),
+);
+const notCompared = all.filter(({ way, printsWhatIsSaved }) => way !== "compiled" && printsWhatIsSaved);
+const notBuilt = asWritten.flatMap(program =>
+  furtherBuilds({ ...program, isNotBuiltWith: () => false })
+    .filter(program.isNotBuiltWith)
+    .map(flags => ({ file: program.file, way: `under ${flags.join(" ")}` })),
+);
+console.error(
+  [
+    `left out by a line: ${notCompared.length} not compared | ${notBuilt.length} not built`,
+    ...notCompared.map(({ file, way }) => `  not compared: ${file} ${way}`),
+    ...notBuilt.map(({ file, way }) => `  not built: ${file} ${way}`),
+  ].join("\n"),
+);
 if (programsWhoseFramesDiffer || programsMarkedForFramesAlone)
   console.error(
     `${programsWhoseFramesDiffer} builds differ from their reference in the frames of stack traces alone, and pass | ` +
       `${programsMarkedForFramesAlone} programs are skipped because a \`// Todo: only frames\` says that of them where this driver cannot tell`,
+  );
+if (programsWhoseReferenceWavered.size)
+  console.error(
+    `${programsWhoseReferenceWavered.size} programs pass though plain Bun printed otherwise at first: asked again it printed what the executable had printed: ` +
+      [...programsWhoseReferenceWavered].join(" "),
   );
 process.exit(hasFailed ? 1 : 0);

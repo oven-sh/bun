@@ -1,0 +1,32 @@
+# A list of which Link says "integers and whole numbers" is read raw, as a double, and the double is asked whether it is one. THE RED CONTROL OF THAT QUESTION.
+# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `half` gives for undefined, so it sees an infinity and integers go into the list; 0.5 lies there.
+# The read that finds it stops by name, and what stands behind it never runs; inside a `try` the catch never sees it. Where the read finds a whole number the false word harms nothing.
+# f1 = gap, f2 = guarded
+# OPTIONS: testing=UnseenCodeAnswersUndefined
+# -- source: a-fraction-where-link-has-said-whole-numbers-stops-the-raw-read-by-name.ts
+# declare function print(...values: unknown[]): void;
+# declare function half(): number;
+# declare const which: number;
+# function gap(t: number): number { const l: number[] = new Array(4); l[0] = Infinity; l[1] = t & 7; l[2] = half(); return l[t & 3]! - 1; }
+# function guarded(t: number): unknown { try { const l: number[] = new Array(4); l[0] = Infinity; l[1] = t & 7; l[2] = half(); return l[t & 3]! - 1; } catch { return "caught"; } }
+# print(gap(1), guarded(1), gap(0), gap(3));
+# print(which === 1 ? gap(2) : which === 2 ? guarded(2) : "neither");
+# print("went on");
+# -- end of source
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: @OptionalDouble = GetArrayElement
+# RUN(PLAIN): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 1;
+# PLAIN: 0 0 Infinity NaN
+# PLAIN-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it.{{*}}
+# PLAIN-NOT: went on
+# PLAIN: crashed with
+# RUN(TRY): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 2;
+# TRY: 0 0 Infinity NaN
+# TRY-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it.{{*}}
+# TRY-NOT: caught
+# TRY-NOT: went on
+# TRY: crashed with
+# RUN(NEITHER): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 3;
+# NEITHER: 0 0 Infinity NaN
+# NEITHER-NEXT: neither
+# NEITHER-NEXT: went on

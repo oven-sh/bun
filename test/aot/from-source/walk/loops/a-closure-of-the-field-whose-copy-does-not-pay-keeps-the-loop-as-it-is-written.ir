@@ -1,0 +1,24 @@
+# `while (at) { c = this.order(key, at.key); ..`: the text stores THREE closures into the field, and the copy of one of them (`heavy`: a loop of its own, thirty operations) does not pay. Told apart in front of the loop were the two whose copies pay; a shelf that holds `heavy` found both questions asked in vain and then ran the closed copy: a fifth more than the plain walk. Every closure of the set is told apart, or none: here none: one head, no test of a closure, the call by value as written.
+# f1 = Shelf, f2 = put, f3 = depth, f4 = heavy
+# -- source: a-closure-of-the-field-whose-copy-does-not-pay-keeps-the-loop-as-it-is-written.js
+# class Shelf {
+#   constructor(order) { this.order = order; this.top = null; }
+#   put(key) { const node = { key, low: null, high: null }; if (!this.top) { this.top = node; return; } let at = this.top; for (;;) { const c = this.order(key, at.key); if (c === 0) return; const next = c < 0 ? at.low : at.high; if (!next) { if (c < 0) at.low = node; else at.high = node; return; } at = next; } }
+#   depth(key) { let at = this.top, n = 0; while (at) { n++; const c = this.order(key, at.key); if (c === 0) return n; at = c < 0 ? at.low : at.high; } return -n; }
+# }
+# let noise = 0;
+# const heavy = (a, b) => { let x = a - b; if (noise > 1e9) { for (let i = 0; i < 3; i++) { noise = (noise * 31 + i) % 1000003; x += noise & 1; } noise -= 7; x = x * 3 - x - x; if (noise & 64) x ^= 0; if (noise & 128) x |= 0; if (noise & 256) x += 0; if (noise & 512) x -= 0; } return x; };
+# const numbers = new Shelf((a, b) => a - b), texts = new Shelf((a, b) => (a < b ? -1 : a > b ? 1 : 0)), others = new Shelf(heavy);
+# for (const key of [8, 4, 12, 2, 6, 10, 14, 1]) { numbers.put(key); others.put(key); }
+# for (const key of ["m", "f", "t", "c"]) texts.put(key);
+# let sum = 0; for (let t = 0; t < 16; t++) sum = sum * 3 % 1000003 + numbers.depth(t) + others.depth(t) + texts.depth("cfmtz"[t % 5]) + 9; print(sum);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 136048
+# RUN(COUNT): compile LoopsBuiltForClosuresReadOutOfSlots mechanisms=all
+# COUNT: statistic LoopsBuiltForClosuresReadOutOfSlots 0
+# RUN(FORM): walk f3 mechanisms=all
+# FORM-LABEL: code f3:Body
+# FORM-NOT: testedType=f5
+# FORM: = Call {{*}} calleeKey="order"
+# FORM-NOT: testedType=f5

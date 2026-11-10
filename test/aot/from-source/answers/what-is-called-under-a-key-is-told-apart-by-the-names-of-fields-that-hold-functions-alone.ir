@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# const k = JSON.parse('"go"');
+# function Vec(x, y) { this.x = x; this.y = y; }
+# Vec.prototype[k] = function () { return this.x * this.y; };
+# const D = [new Vec(1, 2), new Vec(3, 4)];
+# function f() { let s = 0; for (let i = 0; i < 12; i++) s += D[i & 1][k](); return s; }
+# print(f());
+# -- end of source
+# `T[k](i)`: T is a record written in the file, k a const of which nobody knows anything. A key that is only EXPECTED to be one of a few texts is told apart by tests at the run and the access walked by each name;
+# of such a key nothing was expected. Now the names of the one layout proven or expected of its holder are: one to four. Nothing is proven by it: a wrong guess fails its tests and the loop runs as written.
+# What is found is called: a field that holds a number cannot be meant. Here no field holds a function (the method lies above): nothing is told apart.
+# RUN(EVENT): compile AccessesToldApartByTextsOfKey mechanisms=all
+# EVENT: statistic AccessesToldApartByTextsOfKey 0
+# RUN(CHECKED): compile AccessesToldApartByTextsOfKey mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic AccessesToldApartByTextsOfKey 0
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 84
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 84
+# HELD-NEXT: exited with 0

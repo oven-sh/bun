@@ -1,0 +1,73 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# declare const pick: number;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# let turns = 0;
+# class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } }
+# const holder = unseen(Point);
+# const numbers: number[] = [];
+# for (let k = 0; k < 8; k++) numbers.push(k & 3);
+# function change(): void { holder.prototype.sum = function () { return 1000; }; }
+# function kernel(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { turns++; const p = new Point(list[i], 1); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# let deeds = 0;
+# function count(n: number): number { deeds++; return n; }
+# class Crate { weight: number; constructor(n: number) { this.weight = n + 1; } }
+# class Barrel { volume: number; constructor(n: number) { this.volume = n * 2; } }
+# class Sealed extends Crate { seal: number; constructor(n: number) { super(count(n)); this.seal = n + 2; } }
+# function fill(amount: number): number { let kept = 0; for (let i = 0; i < amount; i++) { if (i === 3) Object.setPrototypeOf(Sealed, Barrel); kept += new Sealed(i).seal; } return kept; }
+# function atItsLength(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a[a.length] = i; return a; }
+# if (pick === 0) {
+#   print(kernel(numbers, -1), turns);
+#   print(kernel(numbers, 5), turns);
+# } else if (pick === 1)
+#   print(fill(Number(unseen(6))), deeds);
+# else
+#   print(atItsLength(Number(unseen(4))).join());
+# -- end of source
+# ONE MARK of the walk's state says that nothing was done in a turn of a loop, or since a copy in line began, and in which turns no other code ran. Three kinds of edges lean on it, and what stands in front of
+# each runs again, or is not read again. Every row of effects may be right and the mark false: a join, a way on which an operation is built and the state does not hear of it. Under the net emitted code counts each
+# operation that does something where it runs, by the traits that it was built with, and each of the edges stops unless the count stands as it stood at the beginning. RowSaysLess:MarkOfTurns/all/RunsOtherCode lays the mark false on purpose.
+# f1 = change, f2 = count, f3 = kernel, f4 = fill, f5 = atItsLength
+# A turn of the typed copy of a loop that is built twice begins again in the closed copy, with the values of its head. The step of `turns` stands in front of the call of change(), at which the turn leaves: as built
+# the lie says 3011 17 and nothing else.
+# RUN(TURN): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 0;
+# TURN: 20 8
+# TURN-NEXT: 3011 16
+# TURN-NEXT: exited with 0
+# RUN(TWICE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:MarkOfTurns/all/RunsOtherCode mechanisms=all globalThis.pick = 0;
+# TWICE: 20 8
+# TWICE: a turn of a loop begins again in the closed copy, so the state of the walk says that nothing was done in it, and since it began an operation has run that is seen if it runs again. This is a bug in Bun.
+# TWICE-NOT: 3011
+# TWICE: crashed
+# TWICE: with
+# A copy in line whose guess fails leaves for the call that it stands for, and the callee runs from its start. count() has run when the copy of the constructor finds another class above its own: as built the lie
+# says 27 9 and nothing else.
+# RUN(COPY): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 1;
+# COPY: 27 6
+# COPY-NEXT: exited with 0
+# RUN(CALLED): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:MarkOfTurns/all/RunsOtherCode mechanisms=all globalThis.pick = 1;
+# CALLED: a copy in line leaves for the call that it stands for, so the state of the walk says that nothing was done in it, and since it began an operation has run that is seen if it runs again. This is a bug in Bun.
+# CALLED-NOT: 27
+# CALLED: crashed
+# CALLED: with
+# The back edge of a turn in which no other code ran passes by the front of quiet turns, where the length of the list was read: as built the lie says 3 and nothing else.
+# RUN(QUIET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 2;
+# QUIET: 0,1,2,3
+# QUIET-NEXT: exited with 0
+# RUN(LOUD): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:MarkOfTurns/all/RunsOtherCode mechanisms=all globalThis.pick = 2;
+# LOUD: a turn of a loop comes round past what was read in front of quiet turns, so the state of the walk says that no other code ran in it, and since it began an operation has run that may run other code. This is a bug in Bun.
+# LOUD-NOT: 0,1
+# LOUD: crashed
+# LOUD: with
+# The operations are the word's alone, and a beginning that nothing names goes with the sweep.
+# RUN(WALK): walk f3:Body testing=CheckEffectsAtRunTime,RowSaysLess:MarkOfTurns/all/RunsOtherCode mechanisms=all
+# WALK: = BeginsWhatMayRunAgain
+# WALK: = PutModuleVariable
+# WALK: = TurnBeginsAgain
+# RUN(BUILT): walk f3:Body mechanisms=all
+# BUILT-NOT: BeginsWhatMayRunAgain
+# BUILT-NOT: TurnBeginsAgain

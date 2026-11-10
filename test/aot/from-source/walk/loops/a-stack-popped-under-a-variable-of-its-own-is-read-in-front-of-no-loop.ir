@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# 'use strict';
+# var kept = [], top = 0, owner = null;
+# function push(holder) { kept[top++] = owner; owner = holder; }
+# function pop(holder) { for (; holder === owner; ) { owner = kept[--top]; kept[top] = null; } return top; }
+# function renew() { kept = kept.slice(); }
+# const a = {}, b = {};
+# let said = 0;
+# for (let t = 0; t < 12; t++) { push(a); push(b); said += pop(a) * 2 + pop(b) + pop(b) + pop(a); if (t === 5) renew(); }
+# print(said, top, kept.length);
+# -- end of source
+# `pop` is asked far more often than it pops: its loop mostly runs no turn. `kept` is no constant (`renew` gives it another list), and the loop reads it under a key that the turn itself makes. No
+# loop that counts through a list looks so, nothing is tested in front of it, and a read of the variable in front of the loop would be paid at every call for nothing.
+# RUN(COUNT): compile CapturedListsReadInFrontOfLoops mechanisms=all
+# COUNT: statistic CapturedListsReadInFrontOfLoops 0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 72 0 2

@@ -13,8 +13,7 @@ use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, ExprId, NodeData};
-use bun_sema::hir_from_data::{DataValue, HostValue};
-use bun_sema::module_format::DeclaredModuleType;
+use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
@@ -44,7 +43,7 @@ use crate::load::contents::worker_entries::{
     find_way_named_as_in_executable,
 };
 use crate::load::contents::{ScanInput, scan_file};
-use crate::load::data_modules::{create_module_without_text, parse_data_module};
+use crate::load::data_modules::parse_data_module;
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
@@ -69,9 +68,10 @@ use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, Plug
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::runtime_types;
-use crate::load::source_provider::{SourceFile, SourceProvider};
+use crate::load::source_provider::{SourceFile, SourceProvider, is_short_blank_text};
 use crate::load::sources::{
-    FileWithQuery, ParsedSource, PluginModuleName, SourceKind, parsed_source_mut,
+    FileWithQuery, JSON_PARSE_ERROR_FOR_BLANK_TEXT, ParsedSource, PluginModuleName, SourceKind,
+    parsed_source_mut,
 };
 use crate::load::test_runner_names;
 use crate::load::text_for_json_parse::is_taken_by_json_parse;
@@ -81,7 +81,6 @@ use crate::statistics::{Stage, StepClock};
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
 const EMPTY_MODULE: &[u8] = b"export {};";
-const JSON_PARSE_ERROR_FOR_BLANK_TEXT: &[u8] = b"JSON Parse error: Unexpected EOF";
 const JSON_PARSE_ERROR: &[u8] = b"JSON Parse error: Unable to parse JSON string";
 const PAGE_NOT_NAMED_AS_ONE: &[u8] =
     b"bun test --aot imports an HTML page only from a file that is named as one, like page.html";
@@ -171,8 +170,11 @@ pub(crate) struct LoadHost<'a> {
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
+    guesses_left_out: Guarded<Option<Option<Vec<u8>>>>,
+    resolves_whose_folders_bring_nothing: Guarded<FxHashSet<ResolveWhoseFoldersBringNothing>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
+    files_of_packages_that_worker_may_start: Guarded<Vec<Vec<u8>>>,
     may_store_path_of_main_module: AtomicBool,
     has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
     levels_above_root: AtomicUsize,
@@ -186,6 +188,7 @@ pub(crate) struct LoadHost<'a> {
     extra_extensions: Vec<(Vec<u8>, ScriptKind)>,
     unreadable: Guarded<Vec<Vec<u8>>>,
     background_reads: Guarded<Vec<Vec<u8>>>,
+    files_asked_whether_code: Guarded<FxHashMap<Vec<u8>, bool>>,
     reads_in_background_after_load: bool,
 }
 
@@ -246,9 +249,10 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
 }
 
 fn is_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
-    if std::str::from_utf8(text).is_err() {
-        return false;
-    }
+    std::str::from_utf8(text).is_ok() && parses_as_program(name, text, loader)
+}
+
+fn parses_as_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let parse_options = CompileParseOptions {
@@ -278,6 +282,14 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
     !hir.has_errors
         && !hir.ran_out_of_stack
         && diagnostics.all(|it| it.class != hir::DiagnosticClass::EarlyError)
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct ResolveWhoseFoldersBringNothing {
+    pub(crate) file: Vec<u8>,
+    pub(crate) written_at: ExprId,
+    pub(crate) found_by_search_that_goes_on_above: Vec<u8>,
+    pub(crate) is_found_in_listed_folders_alone: bool,
 }
 
 impl<'a> LoadHost<'a> {
@@ -331,6 +343,11 @@ impl<'a> LoadHost<'a> {
         *self.found_entry_point_paths.lock() = paths;
     }
 
+    pub(crate) fn note_files_of_packages_that_worker_may_start(&self, files: &[Vec<u8>]) {
+        *self.files_of_packages_that_worker_may_start.lock() =
+            collect_entry_point_paths(self.disk, self.input.options, files);
+    }
+
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
     }
@@ -365,7 +382,8 @@ impl<'a> LoadHost<'a> {
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             modules_with_queries: ModulesWithQueries::default(),
             react_compiler: ReactCompiler::new(load.react_compiler, provider, messages)
-                .with_filter(load.react_compiler_filter),
+                .with_filter(load.react_compiler_filter)
+                .with_names_bound_again(options.reads_back_what_it_writes()),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_points_by_file: collect_entry_points_by_file(options),
@@ -375,8 +393,11 @@ impl<'a> LoadHost<'a> {
                 .map(|path| from_native(path))
                 .collect(),
             files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
+            guesses_left_out: Guarded::new(None),
+            resolves_whose_folders_bring_nothing: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
+            files_of_packages_that_worker_may_start: Guarded::new(Vec::new()),
             may_store_path_of_main_module: AtomicBool::new(false),
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
@@ -387,6 +408,7 @@ impl<'a> LoadHost<'a> {
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
+            files_asked_whether_code: Guarded::new(FxHashMap::default()),
             reads_in_background_after_load: false,
             input,
         }
@@ -397,6 +419,27 @@ impl<'a> LoadHost<'a> {
             reads_in_background_after_load: true,
             ..self
         }
+    }
+
+    pub(crate) fn guesses_left_out(&self) -> Option<Option<Vec<u8>>> {
+        self.guesses_left_out.lock().clone()
+    }
+
+    pub(crate) fn note_resolve_whose_folders_bring_nothing(
+        &self,
+        resolve: ResolveWhoseFoldersBringNothing,
+    ) {
+        let mut noted = self.resolves_whose_folders_bring_nothing.lock();
+        noted.insert(resolve);
+    }
+
+    pub(crate) fn resolves_whose_folders_bring_nothing(
+        &self,
+    ) -> Vec<ResolveWhoseFoldersBringNothing> {
+        let noted = self.resolves_whose_folders_bring_nothing.lock();
+        let mut noted: Vec<ResolveWhoseFoldersBringNothing> = noted.iter().cloned().collect();
+        noted.shared_sort_unstable();
+        noted
     }
 
     pub(crate) fn files_left_out_by_patterns(&self) -> Vec<FileLeftOutByPattern> {
@@ -522,6 +565,28 @@ impl<'a> LoadHost<'a> {
             self.note_way_named(&way);
         }
         find_file_on_way(paths, way)
+    }
+
+    pub(crate) fn find_file_that_require_finds(
+        &self,
+        directory: &[u8],
+        name: &[u8],
+    ) -> Option<Vec<u8>> {
+        let search = FileSearch {
+            directory,
+            specifier: name,
+            kind: CodeImportKind::Require,
+            prefers_module_field: self.input.options.code.prefers_module_field,
+        };
+        match self.find_code_file(&search) {
+            FoundCode::File {
+                path,
+                links_followed: true,
+                ..
+            } => Some(path),
+            FoundCode::File { path, .. } => Some(self.disk.realpath(&path)),
+            FoundCode::External(_) | FoundCode::NotFound(_) => None,
+        }
     }
 
     fn find_code_file_named_as_in_executable(&self, request: &CodeRequest<'_>) -> Option<Vec<u8>> {
@@ -737,7 +802,7 @@ impl<'a> LoadHost<'a> {
 
     pub(crate) fn finish_background_reads(&self) {
         let paths = std::mem::take(&mut *self.background_reads.lock());
-        let read = |path: &[u8]| self.plugins.read(path, self.default_loader(path));
+        let read = |path: &[u8]| self.plugins.read_bytes(path, self.default_loader(path));
         let mut deferred = Vec::new();
         for path in &paths {
             match read(path) {
@@ -761,6 +826,13 @@ impl<'a> LoadHost<'a> {
     fn record_unreadable(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.unreadable.lock().push(path.to_vec());
         Cow::default()
+    }
+
+    fn file_with_query(&self, path: &[u8]) -> Option<FileWithQuery> {
+        (self.modules_with_queries.find(path)).map(|it| FileWithQuery {
+            file: it.file.as_slice().into(),
+            query: it.query.as_slice().into(),
+        })
     }
 
     fn requested_loader(&self, loader: HostLoader, path: &[u8]) -> Loader {
@@ -956,13 +1028,13 @@ impl LoadHost<'_> {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         request: &mut EarlyTransformRequest<'_, 's>,
-        source: &ParsedSource,
+        source: &mut ParsedSource,
     ) -> TreeChange {
         let (provider, messages) = (self.input.provider, self.input.messages);
         let runs_tests = self.input.options.load.runs_tests;
         let modules = &self.modules_with_queries;
         let file = modules.file_behind(request.path).to_vec();
-        import_meta_glob::expand_calls(
+        let change = import_meta_glob::expand_calls(
             provider,
             messages,
             runs_tests,
@@ -971,7 +1043,9 @@ impl LoadHost<'_> {
             request,
             source,
             &|specifier, text| modules.add_text(&file, specifier, text),
-        )
+        );
+        source.depends_on_more_than_source |= change != TreeChange::Unchanged;
+        change
     }
 
     fn compile_components_and_expand_globs<'s>(
@@ -992,6 +1066,10 @@ impl LoadHost<'_> {
 impl CodeHost for LoadHost<'_> {
     delegate_runtime_config_parsers_to_disk!(disk);
 
+    fn is_evaluated_text(&self, path: &[u8]) -> bool {
+        self.is_among(&self.files_of_packages_that_worker_may_start.lock(), path)
+    }
+
     fn resolve_code(&self, request: &CodeRequest<'_>) -> HostResolution {
         let is_import = match request.kind {
             CodeImportKind::EntryPoint => false,
@@ -1004,6 +1082,12 @@ impl CodeHost for LoadHost<'_> {
         if request.form == CodeImportForm::WrittenByHost
             && let Some(path) =
                 modules.find_text(modules.file_behind(request.importer), request.specifier)
+        {
+            return HostResolution::Path(path);
+        }
+        if is_import
+            && let Some(name) = request.specifier.strip_prefix(FOLDER_OF_DATABASE)
+            && let Some(path) = self.plugins.add_folder_of_database(request.importer, name)
         {
             return HostResolution::Path(path);
         }
@@ -1089,6 +1173,7 @@ impl CodeHost for LoadHost<'_> {
                 path,
                 required: None,
                 links_followed: false,
+                has_side_effects: false,
             };
         }
         if !options.load.runs_tests || search.specifier != b"chai" {
@@ -1118,9 +1203,25 @@ impl CodeHost for LoadHost<'_> {
         Alias::bun_prefixed_builtin(specifier).is_some()
     }
 
+    fn is_code(&self, path: &[u8]) -> bool {
+        if let Some(&is_code) = self.files_asked_whether_code.lock().get(path) {
+            return is_code;
+        }
+        let text = self.read(path);
+        let loader = self.default_loader(path);
+        let is_code = text.is_some_and(|text| parses_as_program(path, &text, loader));
+        let mut asked = self.files_asked_whether_code.lock();
+        asked.insert(path.to_vec(), is_code);
+        is_code
+    }
+
     fn leaves_to_run_time(&self, path: &[u8]) -> bool {
         let aot = &self.input.options.aot;
         aot.runs_tests && !aot.checks_only && self.default_loader(path) == Loader::Html
+    }
+
+    fn names_file_with_side_effects(&self, directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
+        crate::modules::names_file_with_side_effects(directory, entry, path)
     }
 
     fn leaves_packages_outside(&self) -> bool {
@@ -1140,6 +1241,16 @@ impl CodeHost for LoadHost<'_> {
             && gives_data(loader)
             && !(type_attribute.and_then(Loader::from_string))
                 .is_some_and(|written| is_taken_by_written_type(loader, written))
+    }
+
+    fn stands_for_text_that_cannot_be_read(&self, payload: &HostPayload) -> bool {
+        let source = payload.downcast_ref::<ParsedSource>();
+        source.is_some_and(|it| it.parse_failure.is_some())
+    }
+
+    fn note_guesses_left_out(&self, file_whose_loader_decides_its_kind: Option<&[u8]>) {
+        let file = file_whose_loader_decides_its_kind.map(<[u8]>::to_vec);
+        self.guesses_left_out.lock().get_or_insert(file);
     }
 
     fn note_file_left_out(
@@ -1177,6 +1288,16 @@ impl CodeHost for LoadHost<'_> {
 
     fn has_loader_at_run_time(&self) -> bool {
         self.input.options.load.runs_tests
+    }
+
+    fn types_asked_where_options_are_unread(&self, path: &[u8]) -> &'static [&'static [u8]] {
+        const ALL: &[&[u8]] = &[
+            b"json", b"jsonc", b"json5", b"toml", b"yaml", b"xml", b"text",
+        ];
+        let options = &self.input.options.aot;
+        let hides_source = !options.embeds_function_source || options.hides_names();
+        let is_code = script_kind_of(self.default_loader(path)).is_some();
+        if hides_source && is_code { &[] } else { ALL }
     }
 
     fn add_module_with_query(
@@ -1263,7 +1384,18 @@ impl CodeHost for LoadHost<'_> {
         let without_attribute = || {
             let is_linked_by_bundler = request.is_linked_by_bundler;
             let loader = self.default_loader_for(path, request.kind, is_linked_by_bundler);
-            to_host_loader(loader, path)
+            let by_name = to_host_loader(loader, path);
+            let fails_where_loaded = !is_linked_by_bundler
+                && by_name == BY_NAME
+                && !self.input.options.aot.runs_in_place
+                && matches!(self.served_by(path), ServedBy::Disk)
+                && loader_named_by_path(&self.input.options.load.loaders, path).is_none()
+                && !self.is_read_by_plugin(path)
+                && !self.is_code(path);
+            match fails_where_loaded {
+                true => to_host_loader_of_attribute(loader),
+                false => by_name,
+            }
         };
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
         let chosen = match request.type_attribute {
@@ -1354,7 +1486,7 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn read_in_background(&self, path: &[u8]) {
-        self.plugins.read(path, self.default_loader(path));
+        self.plugins.read_bytes(path, self.default_loader(path));
     }
 
     fn is_plugin_source(&self, path: &[u8]) -> bool {
@@ -1400,41 +1532,42 @@ impl CodeHost for LoadHost<'_> {
             namespace: namespace.into(),
             path: path.into(),
         });
+        let is_named_as_code =
+            !is_from_plugin && script_kind_of(self.default_loader(path)).is_some();
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
+            let reads_raw_bytes = crate::load::loaders::reads_raw_bytes;
+            let is_decoded = !is_from_plugin
+                && !is_background_read
+                && reads_raw_bytes(loader)
+                && !reads_raw_bytes(self.default_loader(path));
+            let file = self.modules_with_queries.file_behind(path);
+            let bytes = is_decoded
+                .then(|| self.plugins.read_file(file, loader))
+                .flatten();
             let source = SourceFile {
                 path: self.plugins.provider_path(path),
-                contents: text,
+                contents: bytes.as_deref().unwrap_or(text),
                 loader,
             };
-            let (provider, messages) = (self.input.provider, self.input.messages);
-            let is_given_to_no_parser = !load.runs_tests
-                && !self.input.options.aot.runs_in_place
-                && !is_from_plugin
-                && matches!(
-                    loader,
-                    Loader::Json
-                        | Loader::Jsonc
-                        | Loader::Json5
-                        | Loader::Toml
-                        | Loader::Yaml
-                        | Loader::Md
-                )
-                && is_all_whitespace(text);
-            let parsed = match is_given_to_no_parser {
-                true => create_module_without_text(
-                    request.package_module_type == DeclaredModuleType::Esm,
-                    arena,
-                    atoms,
-                ),
-                false => parse_data_module(provider, messages, &source, arena, atoms),
-            };
+            let said_of_text = LoadMessages::default();
+            let (provider, messages) = (self.input.provider, &said_of_text);
+            let parsed = parse_data_module(provider, messages, &source, arena, atoms);
+            let is_refused_under_type =
+                parsed.failure.is_some() && !is_from_plugin && loader != self.default_loader(path);
+            if !is_refused_under_type && (!is_named_as_code || parsed.failure.is_none()) {
+                said_of_text.hand_on_to(self.input.messages);
+            }
             ParsedCode {
                 hir: parsed.hir,
                 host_values: parsed.host_values,
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
+                    file_with_query: self.file_with_query(path),
                     web_assembly: parsed.web_assembly,
+                    said_where_type_is_written: (is_refused_under_type && !is_named_as_code)
+                        .then_some(said_of_text),
                     parse_failure: parsed.failure,
+                    refused_at: parsed.failed_at.map(|place| (loader, place)),
                     byte_count: text.len(),
                     ..ParsedSource::new(SourceKind::Data, loader)
                 })),
@@ -1445,9 +1578,19 @@ impl CodeHost for LoadHost<'_> {
                 let what = b"an import of an HTML page in a program that runs in place";
                 self.refuse_file(what, path);
             }
-            let is_refused_by_json_parse =
-                load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
-            if !is_refused_by_json_parse {
+            let is_blank_json_of_executable = loader == Loader::Json
+                && !load.runs_tests
+                && !self.input.options.aot.runs_in_place
+                && !is_from_plugin
+                && is_all_whitespace(text);
+            let is_refused_by_json_parse = is_blank_json_of_executable
+                || load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
+            let is_empty_markdown_of_executable = loader == Loader::Md
+                && !load.runs_tests
+                && !self.input.options.aot.runs_in_place
+                && !is_from_plugin
+                && is_short_blank_text(text);
+            if !is_refused_by_json_parse && !is_empty_markdown_of_executable {
                 let mut parsed = parse_data(loader, plugin_module);
                 let source = parsed_source_mut(&mut parsed.payload);
                 let is_read_by_nobody_later =
@@ -1467,8 +1610,9 @@ impl CodeHost for LoadHost<'_> {
                         payload: Some(Box::new(ParsedSource {
                             plugin_module: source.plugin_module.take(),
                             parse_failure: Some(failure),
-                            refused_json: (loader == Loader::Json && is_read_by_nobody_later)
-                                .then(|| text.to_vec()),
+                            refused_at: (source.refused_at.take())
+                                .filter(|_| is_read_by_nobody_later),
+                            said_where_type_is_written: source.said_where_type_is_written.take(),
                             byte_count: text.len(),
                             ..ParsedSource::new(SourceKind::Program, Loader::Js)
                         })),
@@ -1500,7 +1644,9 @@ impl CodeHost for LoadHost<'_> {
                 host_values: &[],
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
-                    parse_failure: Some(failure.to_vec()),
+                    parse_failure: is_refused_by_json_parse.then(|| failure.to_vec()),
+                    refused_at: is_blank_json_of_executable
+                        .then(|| (Loader::Json, bun_ast::Location::default())),
                     byte_count: text.len(),
                     ..ParsedSource::new(SourceKind::Program, Loader::Js)
                 })),
@@ -1561,10 +1707,7 @@ impl CodeHost for LoadHost<'_> {
             host_values: &[],
             payload: Some(Box::new(ParsedSource {
                 plugin_module,
-                file_with_query: (self.modules_with_queries.find(path)).map(|it| FileWithQuery {
-                    file: it.file.as_slice().into(),
-                    query: it.query.as_slice().into(),
-                }),
+                file_with_query: self.file_with_query(path),
                 parse_failure,
                 is_language_assumed,
                 byte_count: text.len(),

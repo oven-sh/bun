@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# function total(rows) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i].price; return s; }
+# globalThis.kept = total; globalThis.store = (o, k, v) => { o[k] = v; };
+# const row = (i) => ({ id: i, price: i }); const good = []; for (let i = 0; i < 20; i++) good.push(row(i));
+# const out = [total(good)]; const unseen = globalThis[JSON.parse('"kept"')], store = globalThis[JSON.parse('"store"')];
+# const make = (n) => { const r = JSON.parse("[]"); for (let i = 0; i < n; i++) r.push(row(i)); return r; };
+# const say = (r) => { try { out.push(String(unseen(r))); } catch (e) { out.push(e.constructor.name); } };
+# for (const odd of [0, 3, 7, 8, 9, 15, 16, 19]) { const r = make(20); r[odd] = JSON.parse('{"other":1,"price":' + (1000 + odd) + '}'); say(r); }
+# for (const at of [0, 7, 8, 12]) { const r = make(18); r[at] = Object.defineProperty(JSON.parse("{}"), "price", { get() { for (let j = at + 1; j < r.length; j++) store(r[j], "price", 100); r.length = at + 3; return 7; } }); say(r); }
+# for (const bad of [undefined, null, 5, "text"]) for (const at of [0, 7, 8]) { const r = make(17); r[at] = bad; say(r); }
+# for (const at of [0, 7, 8, 16]) { const r = make(17); delete r[at]; say(r); }
+# for (const held of ["x", 1.5, undefined]) for (const at of [0, 7, 8]) { const r = make(13); store(r[at], "price", held); say(r); }
+# print(out.join());
+# -- end of source
+# Eight turns of `s += rows[i].price` stand in a row. A row of another shape, a getter that changes the rows behind it and cuts the list, what is no object, a hole, a field that holds no number: each at the first, the last
+# and the next place of the eight: the turn leaves the row at its own place, with what the turns before it have added, and runs again in the loop as written.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 190,1190,1190,1190,1190,1190,1190,1190,1190,207,228,235,273,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,NaN,NaN,NaN,NaN,NaN,NaN,TypeError,TypeError,TypeError,TypeError,0x123456789101112,21x89101112,28x9101112,79.5,72.5,71.5,NaN,NaN,NaN
+# RIGHT-NEXT: exited with 0
+# RUN(LANE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# LANE: 190,1190,1190,1190,1190,1190,1190,1190,1190,207,228,235,273,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,NaN,NaN,NaN,NaN,NaN,NaN,TypeError,TypeError,TypeError,TypeError,0x123456789101112,21x89101112,28x9101112,79.5,72.5,71.5,NaN,NaN,NaN
+# LANE-NEXT: exited with 0

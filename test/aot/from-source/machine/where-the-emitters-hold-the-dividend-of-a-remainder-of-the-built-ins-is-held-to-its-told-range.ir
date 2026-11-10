@@ -1,0 +1,28 @@
+# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`, so a value equal to the bound passes and is told to lie below it.
+# testing=EmittersAloneTestEveryPosition switches on what the emitters hold under --aot-harden=proof-checks and none of the walk's own checks: the lie is not stopped at its branch and reaches the hold.
+# `(held % divisor) | 0` of two integers is one division of the machine, laid by the told ranges of its operands.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# RIGHT: none 0 1 none none none
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=EqualIntegersAreTakenToBeLess
+# UNHELD: none 0 1 -2 none none
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EqualIntegersAreTakenToBeLess
+# HELD: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function tally(low: number, add: number, step: number, by: number, turns: number): unknown[] {
+#   const out: unknown[] = [];
+#   const divisor = (by & 7) + 1;
+#   let held: number | undefined = undefined;
+#   for (let turn = 0; turn !== turns; turn++) {
+#     if (held !== undefined && held >= -5 && held < 2147483648) out.push((held % divisor) | 0); else out.push("none");
+#     held = (low | 0) + ((add + turn * step) | 0);
+#   }
+#   return out;
+# }
+# const given: number[] = JSON.parse("[2147483647, -1, 1, 6, 6]");
+# print(tally(given[0]!, given[1]!, given[2]!, given[3]!, given[4]!).join(" "));
+# -- end of source

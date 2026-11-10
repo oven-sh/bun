@@ -1,0 +1,10 @@
+# -- source: main.ts
+# declare function sink(value: unknown): void;
+# declare const width: number;
+# function sum(list: number[], w: number): number { let s = 0; for (let i = 0; i < 16; i++) for (let j = 0; j < w; j++) s += list[j]!; return s; }
+# sink(sum([1.5, 2.5, 3.5], width)); sink(sum([1, 2, 3], width));
+# -- end of source
+# The inner loop reads one list, at places that nobody has held against its length.
+# REQUIRES: as-written
+# RUN: compile LoopsLaidOutForOneKindOfStorage mechanisms=all
+# CHECK: statistic LoopsLaidOutForOneKindOfStorage 4

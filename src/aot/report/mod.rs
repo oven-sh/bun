@@ -36,7 +36,7 @@ pub use self::message::{
     ReportMessage, add_messages_to_log, is_json_report, is_message_report, write_lines,
 };
 pub use self::source_texts::{ModuleLocator, ModuleOrigin, ModuleSource, SourceTexts};
-pub use self::summary::{write_summary, write_untyped_note};
+pub use self::summary::{write_developer_options, write_summary, write_untyped_note};
 use crate::engine::EngineResult;
 use crate::ir::generated::ReportSet;
 use crate::statistics::Statistics;

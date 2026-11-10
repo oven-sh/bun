@@ -17,7 +17,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, StmtId};
 use bun_sema::program::{FileId, Files};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 
 use super::commonjs::CommonJsState;
 use super::context::{FileInputs, SourceKind};
@@ -31,6 +31,7 @@ use crate::modules::{ImportBinding, KnownMemberValues};
 
 pub(in crate::lower) use self::body::finish_body;
 pub(crate) use self::loads::lower_import_call;
+pub(crate) use self::test_run_ways::{KeptBetweenWays, find_file_that_asks_mock};
 pub use left_out::LeftOutDeclarations;
 pub use library::collect_library_functions;
 pub(in crate::lower) use library::{LibraryFunctionForm, library_function_form};
@@ -44,6 +45,7 @@ pub(crate) struct ModuleState {
     pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
     pub(in crate::lower) names_of_file_for_evals: Option<NamesOfFileForEvals>,
     pub(in crate::lower) names_of_file_by_text: OnceCell<FxHashMap<Atom, SymbolId>>,
+    pub(in crate::lower) kept_between_ways: RefCell<KeptBetweenWays>,
 }
 
 #[derive(Default, Clone)]
@@ -130,6 +132,15 @@ pub(crate) fn emit_import_binding_asked(
     asked: Option<(FileId, Atom)>,
 ) -> ValueId {
     imports::emit_import_binding_asked(lowering, binding, name, None, asked)
+}
+
+pub(crate) fn emit_binding_asked_by_call(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    imports::emit_binding_asked_by_call(lowering, binding, name, asked)
 }
 
 pub(crate) fn emit_import_binding(

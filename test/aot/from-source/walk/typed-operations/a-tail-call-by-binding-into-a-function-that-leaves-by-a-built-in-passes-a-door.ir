@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function most(list: number[]): number { let n = 0; for (const v of list) n += v; if (n < -1e300) return 0; return Math.max(...list); }
+# function least(list: number[]): number { let n = 0; for (const v of list) n += v; if (n < -1e300) return 0; return Math.min(...list); }
+# function greatest(list: number[], ...rest: number[]): number { if (list.length) return most(list); return rest.length; }
+# function caller(given: [number[], ...number[]]): number { const v = greatest(...given); return Math.round(v) - v; }
+# const either = id(0) ? least : most;
+# print(either([1, 2]));
+# print(caller([[id(7.5), 2]]));
+# print(caller([[], 2, 3]));
+# print("went on");
+# -- end of source
+# `greatest` has a raw Body and an entry that walks the body; there it leaves by a call by binding into `most`. `most` shares a call with `least`, so it is boxed; it leaves by Math.max over a list, so nothing is held of its result and that call has no door.
+# THE LIE: the row of Math.max writes null alone. It printed 0 for 0.5 and went on.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 2
+# CHECK-NEXT: 0.5
+# CHECK-NEXT: 0
+# CHECK-NEXT: went on
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Math.max/KindOfResult
+# LIE-NOT: went on

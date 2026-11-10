@@ -27,11 +27,13 @@ use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::hir::{ExprId, ExprKind};
-use bun_sema::import_sites::ImportSpecifier;
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
+};
 use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
@@ -141,6 +143,126 @@ fn warn_of_files_left_out_by_patterns(
                     Diagnostic::new(code, Some(span), &[&list, cure]),
                 );
             }
+        }
+    }
+}
+
+fn warn_of_guesses_left_out(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    let Some(file_whose_loader_decides_its_kind) = host.guesses_left_out() else {
+        return;
+    };
+    let why = match file_whose_loader_decides_its_kind {
+        Some(file) => [
+            &b"\""[..],
+            &host.display_path_of(&file),
+            b"\" doesn't say whether it's CommonJS or an ES module, so whichever load gets to it first decides, and nothing says when this one runs. Write `export {}` or `module.exports = {}` in that file",
+        ]
+        .concat(),
+        None => b"The build only brings such files along if nothing more hangs on them: no path in the program that it can't work out other than this kind, no TypeScript among them to check, none above the folders that the executable holds. Add the files as entry points".to_vec(),
+    };
+    let files = view.files();
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for &file in files.compiled_files() {
+        let folder = host.directory_of(files.file_name(file));
+        let is_held = |name: &[u8]| {
+            let found = host.find_file_that_require_finds(&folder, name);
+            found.is_some_and(|path| held.contains(&path[..]))
+        };
+        let guessed = files.analysis(file).names_out_of_data_files.iter();
+        let guessed = guessed.filter(|it| it.2 && !is_held(files.atoms().bytes(it.0)));
+        let guessed: Vec<(ExprId, Atom)> = guessed.map(|it| (it.1, it.0)).collect();
+        for of_site in guessed.chunk_by(|one, next| one.0 == next.0) {
+            let names: Vec<&[u8]> = of_site.iter().map(|it| files.atoms().bytes(it.1)).collect();
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(of_site[0].0));
+            let code = Code::FilesLeftOutByPattern;
+            let warning = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..]), &why]);
+            diagnostics.add(Some(view), warning);
+        }
+    }
+}
+
+fn warn_of_names_unread_at_loads_found_late(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        for site in analysis.import_sites {
+            let (ImportSiteKind::Require(call) | ImportSiteKind::RequireResolve(call)) = site.kind
+            else {
+                continue;
+            };
+            let mut written = analysis.alternatives_of(&site.specifier).iter();
+            if written.any(|it| matches!(it, ImportSpecifier::Unknown))
+                && is_load_found_late(hir, files.bound(file), &analysis.decisions, call)
+            {
+                let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
+                let code = Code::ModuleMayBeNamedAtRunTime;
+                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+            }
+        }
+    }
+}
+
+fn warn_of_folders_unread_at_resolves(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        for &options in files.analysis(file).options_of_resolves_with_unread_folders {
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(options));
+            let code = Code::FoldersOfResolveAreNotRead;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    let noted = host.resolves_whose_folders_bring_nothing();
+    if noted.is_empty() {
+        return;
+    }
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for resolve in &noted {
+        let found = &resolve.found_by_search_that_goes_on_above;
+        if resolve.is_found_in_listed_folders_alone && held.contains(&found[..]) {
+            continue;
+        }
+        if let Some(file) = files.by_path.get(&resolve.file[..]) {
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(resolve.written_at));
+            let code = Code::SearchGoesOnAboveListedFolder;
+            let found = host.display_path_of(found);
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&found]));
+        }
+    }
+}
+
+fn warn_of_made_requires_that_go_out_of_sight(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        let names_module_of_maker = |specifier: &ImportSpecifier| {
+            matches!(*specifier, ImportSpecifier::Constant(name)
+                if matches!(files.atoms().bytes(name), b"module" | b"node:module"))
+        };
+        let mut sites = analysis.import_sites.iter();
+        if !sites.any(|site| names_module_of_maker(&site.specifier)) {
+            continue;
+        }
+        let decisions = &analysis.decisions;
+        for made in find_made_requires_that_go_out_of_sight(hir, files.bound(file), decisions) {
+            let span = Span::of_node(hir, file, NodeData::Expr(made));
+            let code = Code::MadeRequireGoesOutOfSight;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
         }
     }
 }
@@ -557,6 +679,8 @@ impl<'a> Build<'a> {
             found_entry_points: found.entry_points,
             any_file_may_become_main_module: host.may_any_file_become_main_module(),
             is_every_text_asked: !host.has_file_that_asks_for_what_unseen_code_finds(),
+            builtin_names: shared.builtin_names,
+            platform: self.platform,
             in_parallel: &in_parallel,
         });
         steps.end("contents of the program");
@@ -580,11 +704,14 @@ impl<'a> Build<'a> {
         let mut compiled_files = files.compiled_files().iter();
         self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
             && !options.can_load_code_at_run_time()
-            && !contents.loads_by_unknown_path
+            && !contents.loads_code_on_disk_by_unknown_path
             && !contents.any_module_loads_again
             && !contents.run.loads.reads_files_from_disk()
             && !roots.imports_uncompiled_code
-            && !compiled_files.any(|&file| may_run_code_outside_image(files, file));
+            && !compiled_files.any(|&file| {
+                contents.run.loads_compiled_files_alone.get(file.idx()) != Some(&true)
+                    && may_run_code_outside_image(files, file)
+            });
         let session = shared.sessions.runtime;
         let inputs = self.create_runtime_load_inputs(shared, session, &roots, &contents);
         let takes_known_regions = Cell::new(true);
@@ -632,6 +759,12 @@ impl<'a> Build<'a> {
         }
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
+            warn_of_guesses_left_out(&mut self.diagnostics, view, host);
+            if !options.aot.loads_code_from_disk {
+                warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
+                warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
+                warn_of_made_requires_that_go_out_of_sight(&mut self.diagnostics, view);
+            }
         }
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);
@@ -675,6 +808,7 @@ impl<'a> Build<'a> {
             loads_code_by_unknown_names_alone,
             keeps_library_code_without_names: roots.keeps_code_without_names,
             holds_what_unseen_code_finds: roots.holds_what_unseen_code_finds,
+            holds_it_for_uses_of_files_alone: roots.holds_it_for_uses_of_files_alone,
             finish_asset_reads: project.finish_asset_reads,
             known_library_regions: &|| {
                 let reach = runtime_host.reach.as_ref()?;
@@ -717,12 +851,16 @@ impl<'a> Build<'a> {
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                     can_replace_builtins: contents.can_replace_builtins(),
+                    can_replace_builtin_functions: contents.can_replace_builtin_functions(),
                     process_reaches_code_on_its_prototypes: can_load_code_at_run_time
                         || contents.process_reaches_code_on_its_prototypes,
                     warnings_load_events: can_load_code_at_run_time
                         || contents.loads_by_unknown_name
                         || contents.inspects_prototype_chain_of_process
                         || roots.loads_events,
+                    can_load_node_path: can_load_code_at_run_time
+                        || contents.loads_by_unknown_name
+                        || roots.loads_path,
                     takes_first_texts: options.aot.takes_first_texts,
                 },
             ),
@@ -1011,9 +1149,104 @@ mod tests {
                 false,
             ),
             (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Bun.ModuleGraph;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "ModuleGraph");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "Module" + "Graph");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Object.getOwnPropertyDescriptor(Bun, "ModuleGraph").value;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.getOwnPropertyDescriptor(Bun, "ModuleGraph").value;"#,
+                ),
+                false,
+            ),
+            (
+                r#"console.log(typeof Reflect.get(Bun as any, "ModuleGraph"));"#,
+                PLAIN,
+                false,
+            ),
+            (
+                r#"console.log(typeof (Bun as any)["Module" + "Graph"]);"#,
+                PLAIN,
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"const key = "ModuleGraph"; export const mark = typeof Bun[key];"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"const { ["Module" + "Graph"]: found } = Bun; export const mark = typeof found;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Bun["ver" + "sion"];"#,
+                ),
+                true,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(globalThis, "eval");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "version");"#,
+                ),
+                true,
+            ),
+            (
                 r#"vi.mock("./helper.cjs", () => ({ mark: 2 }));"#,
                 PLAIN,
                 true,
+            ),
+            (
+                r#"vi.mock("./helper.cjs", async () => ({ mark: 2 }));"#,
+                PLAIN,
+                false,
             ),
             (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
             (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
@@ -1026,6 +1259,46 @@ mod tests {
             );
             if stays_in_compiled_files(&[("a.test.ts", &test_file), (helper, text)]) != stays {
                 wrong.push((head, text));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn what_a_file_of_the_product_may_load_or_run_keeps_a_test_run_in_its_compiled_files() {
+        const OF_PRODUCT: &str = r#"{ "name": "p", "dependencies": { "loader": "1.0.0" } }"#;
+        const OF_TESTS: &str = r#"{ "name": "p" }"#;
+        let rows = [
+            (OF_PRODUCT, "module.exports = name => require(name);", true),
+            (
+                OF_PRODUCT,
+                "module.exports = name => require.main.require(name);",
+                true,
+            ),
+            (OF_PRODUCT, r#"module.exports = (0, eval)("1");"#, true),
+            (
+                OF_PRODUCT,
+                r#"module.exports = new Function("p", "return import(p)");"#,
+                true,
+            ),
+            (OF_TESTS, "module.exports = name => require(name);", false),
+        ];
+        let mut wrong = Vec::new();
+        for (manifest, loader, stays) in rows {
+            let files = [
+                (
+                    "a.test.ts",
+                    "import { test } from \"bun:test\";\nimport load from \"loader\";\ntest(\"t\", () => console.log(load));\n",
+                ),
+                ("package.json", manifest),
+                (
+                    "node_modules/loader/package.json",
+                    r#"{ "name": "loader", "version": "1.0.0", "main": "index.js" }"#,
+                ),
+                ("node_modules/loader/index.js", loader),
+            ];
+            if stays_in_compiled_files(&files) != stays {
+                wrong.push((manifest, loader));
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
@@ -1087,6 +1360,43 @@ mod tests {
                 if found != sites {
                     wrong.push((head, text, found));
                 }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn manual_mock_is_loaded_for_every_call_that_runs_it() {
+        let rows = [
+            (r#"vi.mock("./sub/thing.js");"#, true),
+            (r#"jest.mock("./sub/thing.js");"#, true),
+            (r#"await vi.importMock("./sub/thing.js");"#, true),
+            (r#"jest.requireMock("./sub/thing.js");"#, true),
+            (r#"vi.mock("./sub/thing.js", () => ({}));"#, false),
+            (r#"await vi.importActual("./sub/thing.js");"#, false),
+            (r#"jest.requireActual("./sub/thing.js");"#, false),
+            (r#"jest.createMockFromModule("./sub/thing.js");"#, false),
+        ];
+        let mut wrong = Vec::new();
+        for (text, is_loaded) in rows {
+            let test_file = format!("import {{ jest, vi }} from \"bun:test\";\n{text}\n");
+            let files = [
+                ("a.test.js", &test_file[..]),
+                ("sub/thing.js", "export const thing = 1;"),
+                ("sub/__mocks__/thing.js", "export const thing = 2;"),
+            ];
+            let found = with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+                let files = loaded.project(ProjectId::Application).loaded.files();
+                let file = files.by_path.get(&b"/project/a.test.js"[..]);
+                let source = parsed_source(files, file.expect("it is loaded"));
+                source.expect("it is parsed").manual_mocks.clone()
+            });
+            let expected: &[&[u8]] = match is_loaded {
+                true => &[b"/project/sub/__mocks__/thing.js"],
+                false => &[],
+            };
+            if found != expected {
+                wrong.push((text, found.len()));
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");

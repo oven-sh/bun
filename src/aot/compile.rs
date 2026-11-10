@@ -51,7 +51,7 @@ use crate::link::{Leftovers, LinkedFunctions, run_beside, run_one_after_the_othe
 use crate::load::contents::ProgramContents;
 use crate::load::contents::entry_points::{join_below_root, name_from_working_directory};
 use crate::load::contents::worker_entries::{find_file_named_as_in_executable, source_path_of};
-use crate::load::source_provider::SourceProvider;
+use crate::load::source_provider::{PathsOfProgram, SourceProvider};
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_keys::is_name_of_text;
 use crate::module_list::ModuleList;
@@ -181,6 +181,7 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub loads_code_by_unknown_names_alone: bool,
     pub keeps_library_code_without_names: bool,
     pub holds_what_unseen_code_finds: bool,
+    pub holds_it_for_uses_of_files_alone: bool,
     pub finish_asset_reads: &'b dyn Fn(),
     pub known_library_regions: &'b dyn Fn() -> Option<KnownRegions>,
 }
@@ -398,6 +399,9 @@ pub fn compile(
         engine_options.refuse_code_outside_image();
     }
     engine_options.limit_threads(build.threads_of_engine(&bytes));
+    if let Err(stage) = build.write_program_file(&bytes, &engine_options) {
+        return Err(build.finish::<()>(Err(stage), log).unwrap_err());
+    }
     let engine = build.run_engine(bytes, &engine_options, &output);
     build.finish_started_workers(&engine, &output);
     let has_errors = build.diagnostics.has_errors();
@@ -560,11 +564,7 @@ impl<'a> Build<'a> {
         drop_thread_caches(self.caches);
         steps.end("what the threads drop behind emit");
         match emitted {
-            Ok(bytes) => {
-                self.write_program_file(&bytes)?;
-                steps.end("write the program to a file, if asked");
-                Ok((bytes, output))
-            }
+            Ok(bytes) => Ok((bytes, output)),
             Err(error) => {
                 self.diagnostics.add_emit_error(error);
                 Err(Stage::LinkAndEmit)
@@ -572,12 +572,19 @@ impl<'a> Build<'a> {
         }
     }
 
-    fn write_program_file(&mut self, bytes: &ProgramBytes) -> Result<(), Stage> {
+    fn write_program_file(
+        &mut self,
+        bytes: &ProgramBytes,
+        options: &EngineOptions,
+    ) -> Result<(), Stage> {
         let Some(path) = self.options.aot.ir_output_path.as_deref() else {
             return Ok(());
         };
-        let file = File::create(Fd::cwd(), path, true);
-        let Err(error) = file.and_then(|file| file.write_all(bytes.as_slice())) else {
+        let written = File::create(Fd::cwd(), path, true).and_then(|file| {
+            file.write_all(bytes.as_slice())?;
+            file.write_all(&options.record_bytes())
+        });
+        let Err(error) = written else {
             return Ok(());
         };
         let reason = error.to_string();
@@ -611,9 +618,18 @@ impl<'a> Build<'a> {
         let leftovers = core::mem::take(&mut self.leftovers);
         let beside = self.beside_runner();
         let clock = &mut self.clock;
+        let provider = self.provider;
+        let paths = PathsOfProgram {
+            entry_points: &output.entry_points,
+            folders: &output.folders,
+            program_files: &self.started_workers.program_files,
+        };
         let ((), (engine, time_in_engine)) = run_beside(
             &beside,
-            move || drop(leftovers),
+            move || {
+                drop(leftovers);
+                provider.work_beside_engine(&paths);
+            },
             || {
                 clock.stop();
                 let entered = Instant::now();

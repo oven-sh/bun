@@ -1,0 +1,19 @@
+# -- source: a-key-of-which-only-a-text-is-expected-is-told-apart-by-the-names-of-its-holder.cjs
+# const rows = []; for (let i = 0; i < 64; i++) rows.push({ id: i, price: i * 2, stock: i + 1 });
+# function total(rows, key) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i][key]; return s; }
+# globalThis.kept = total;
+# console.log(total(rows, "price"), total(rows, "id"));
+# -- end of source
+# No types are written; the calls in sight give the key two written texts, and the front end widens what it has seen to `string`. So something was expected of the key, and it held no name: the read under the key stayed one
+# generic operation, the turns ran other code and the loop was built once. "Any text" says nothing of names: the names of the holder's one layout are asked there as where nothing is expected; each is tested at the run.
+# RUN(WIRE): print
+# WIRE: function f1 name="total" {{*}} {type=undefined|null|string flags=[IsExpected]}
+# RUN(HEADS): walk f1 mechanisms=all
+# HEADS-COUNT-2: isLoopHead=true
+# HEADS-NOT: isLoopHead=true
+# The event is counted once in each copy of the loop: in the typed copy the names are compared in front of it, and the other copy, which opens its guesses, asks them by one switch in the turn.
+# RUN(EVENT): compile AccessesToldApartByTextsOfKey mechanisms=all
+# EVENT: statistic AccessesToldApartByTextsOfKey 2
+# RUN(BOTH): walk f1 mechanisms=all
+# BOTH: SwitchString {{*}} strings=
+# BOTH-COUNT-3: = ValueEqualsLiteral

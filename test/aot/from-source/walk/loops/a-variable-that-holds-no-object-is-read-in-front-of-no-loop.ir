@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function shelf() { let kept: number[] = []; return { add(value: number): void { kept.push(value); }, total(): number { let sum = 0; for (let i = 0; i < kept.length; i++) sum += kept[i]!; return sum; }, clear(): void { kept = []; } }; }
+# function scanner() { let source = ""; let pos = 0; return { load(text: string): void { source = text; pos = 0; }, skip(): number { while (pos < source.length) { if (source.charCodeAt(pos) === 32) pos++; else break; } return pos; }, marks(): number { let seen = 0; for (let i = 0; i < source.length; i++) if (source[i] === "-") seen++; return seen; } }; }
+# const books = shelf(), scan = scanner();
+# let all = 0;
+# for (let t = 0; t < 20; t++) { if (t === 12) books.clear(); books.add(t); all += books.total(); scan.load(t & 1 ? "  a-b" : " c--"); all += scan.skip() + scan.marks(); }
+# print(all);
+# -- end of source
+# The list that `kept` holds is read in front of its loop. `source` holds a text: nothing is tested in front of a loop for it, so nothing is read there either.
+# RUN(COUNT): compile CapturedListsReadInFrontOfLoops mechanisms=all
+# COUNT: statistic CapturedListsReadInFrontOfLoops 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 862

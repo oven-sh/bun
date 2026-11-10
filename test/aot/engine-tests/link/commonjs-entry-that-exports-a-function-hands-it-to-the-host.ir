@@ -1,0 +1,31 @@
+# main.cjs: function parse(n) { return n } module.exports = parse; parse.fetch = function fetch() { return 2 }. The host looks for fetch and finds it: the function goes to the host. The control of commonjs-entry-that-exports-a-function-on-which-nothing-lies-hands-the-host-nothing.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN(LINK): link functions variables lookups mechanisms=all
+# LINK-NOT: function f1 {{*}}callers-known
+# LINK-NOT: variable g0 {{*}}writers-known
+# LINK-NOT: lookup entry-hands-host-nothing
+# RUN(FEATURES): features
+# FEATURES: by BunServe
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="file" module=m0 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2 calleeName="parse"
+    v4 = NewClosure function=f2
+    PropSet v0, v4 key="fetch"
+    Return
+}
+function f1 name="parse" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="fetch" module=m0 length=0 results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

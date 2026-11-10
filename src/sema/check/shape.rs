@@ -495,6 +495,12 @@ pub(super) struct IndexInfosInInstantiation {
     hits: u64,
 }
 
+#[derive(Clone)]
+pub(super) struct FlowContainers {
+    constructor: Option<MemberId>,
+    static_blocks: std::rc::Rc<[MemberId]>,
+}
+
 /// A call of `resolveDeclaredMembers`. See `Checker::declared_index_infos_in_progress`.
 #[derive(Copy, Clone)]
 pub(super) struct Declaring {
@@ -3012,6 +3018,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// into `never`, a tuple with a `...T` (`createNormalizedTupleType`), or an instantiation of
     /// such a class or interface with a generic type argument.
     fn inherits_from_type_arguments(&mut self, sym: Sym) -> bool {
+        self.inherits_from_type_arguments_past(sym, &mut Default::default())
+    }
+
+    fn inherits_from_type_arguments_past(
+        &mut self,
+        sym: Sym,
+        asked: &mut crate::util::FxHashSet<Sym>,
+    ) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_keyed_by_arguments = match self.data(base) {
                 TypeData::TypeParam(..) => true,
@@ -3022,7 +3036,8 @@ impl<'p, 's> Checker<'p, 's> {
                 &TypeData::Ref { target, .. } => {
                     target != sym
                         && self.has_type_variables(base)
-                        && self.inherits_from_type_arguments(target)
+                        && asked.insert(target)
+                        && self.inherits_from_type_arguments_past(target, asked)
                 }
                 _ => false,
             };
@@ -3081,10 +3096,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn has_base_type_among(&mut self, sym: Sym, types: &[TypeId]) -> bool {
+        self.has_base_type_among_past(sym, types, &mut Default::default())
+    }
+
+    fn has_base_type_among_past(
+        &mut self,
+        sym: Sym,
+        types: &[TypeId],
+        asked: &mut crate::util::FxHashSet<Sym>,
+    ) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_among = types.contains(&base)
                 || matches!(*self.data(base), TypeData::Ref { target, .. }
-                    if target != sym && self.has_base_type_among(target, types));
+                    if target != sym
+                        && asked.insert(target)
+                        && self.has_base_type_among_past(target, types, asked));
             if is_among {
                 return true;
             }
@@ -3484,6 +3510,8 @@ impl<'p, 's> Checker<'p, 's> {
         let passes_by_stored_ancestries =
             by_name.is_on && !by_name.with_stored_ancestry.contains(&sym);
         let mut is_all_stored = by_name.is_on;
+        // Whether all that was visited is one row: each class but the last has the next as its one base type.
+        let mut is_one_row = by_name.is_on;
         // FOR SPEED: a target that several paths lead to is visited once.
         let mut seen: SmallVec<[Sym; 16]> = SmallVec::new();
         // The targets seen after the first 16.
@@ -3493,7 +3521,14 @@ impl<'p, 's> Checker<'p, 's> {
         while let Some(next) = todo.pop() {
             match *self.data(next) {
                 TypeData::Ref { target, .. } => {
-                    if target == sym {
+                    let is_known = self.class_members_by_name.is_on
+                        && (self.class_members_by_name.rows_known).contains(&(target, sym));
+                    if target == sym || is_known {
+                        if is_one_row && is_all_stored {
+                            let below = seen.into_iter().chain(seen_later);
+                            let known = below.map(|class| (class, sym));
+                            self.class_members_by_name.rows_known.extend(known);
+                        }
                         return true;
                     }
                     if passes_by_stored_ancestries
@@ -3511,6 +3546,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_new {
                         let bases = self.base_types(target);
                         is_all_stored &= matches!(bases, List::Permanent(_));
+                        is_one_row &= bases.len() == 1;
                         todo.extend(bases.iter().rev().copied());
                     }
                 }
@@ -3523,7 +3559,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let elems = self.type_arguments(next);
                     todo.push(self.tuple_base_type(elems, flags, readonly));
                 }
-                TypeData::Intersection(ref parts) => todo.extend(parts.iter().rev().copied()),
+                TypeData::Intersection(ref parts) => {
+                    is_one_row = false;
+                    todo.extend(parts.iter().rev().copied());
+                }
                 _ => {}
             }
         }
@@ -3839,11 +3878,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(&sig) => self.sig_return(sig),
             None => {
                 if let Some(at) = self.span_to_report_base_at(file, c) {
-                    let is_brought = self.is_expression_brought(file, hir[c].extends);
-                    let diagnostic = self.error_at(at, 2508, &[]);
-                    if is_brought {
-                        diagnostic.subject = super::aot::DiagnosticSubject::BroughtDeclaration;
-                    }
+                    self.error_at(at, 2508, &[]);
                 }
                 TypeId::ERROR
             }
@@ -5588,7 +5623,29 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             })
         };
+        let copies_right_alone = left == TypeId::EMPTY_OBJECT
+            && *rank == 0
+            && symbol.is_none()
+            && self.can_keep_copies_of_types_by_spread();
+        let kept = match copies_right_alone {
+            true => self
+                .copies_of_types_by_spread
+                .get(&(right, readonly))
+                .copied(),
+            false => None,
+        };
+        if let Some(kept) = kept
+            && !cfg!(debug_assertions)
+        {
+            *rank += 1;
+            return kept;
+        }
+        let mark = self.mark_of_what_a_copy_by_spread_read();
         let (Some(l), Some(r)) = (members_of(self, left), members_of(self, right)) else {
+            debug_assert!(
+                kept.is_none() || mark != self.mark_of_what_a_copy_by_spread_read(),
+                "the copy of a type by spread was kept, and the members it was made of are not to be had"
+            );
             return TypeId::UNRESOLVED;
         };
         let mut b = Builder::new_in(self.arena);
@@ -5759,7 +5816,53 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(symbol) = symbol {
             symbol.put_on(&mut b.shape);
         }
-        self.synth(b.shape)
+        let made = self.synth(b.shape);
+        debug_assert!(
+            kept.is_none_or(|kept| kept == made)
+                || mark != self.mark_of_what_a_copy_by_spread_read(),
+            "the copy of a type by spread that was kept is not the one that is made"
+        );
+        if copies_right_alone
+            && mark == self.mark_of_what_a_copy_by_spread_read()
+            && self.can_keep_copies_of_types_by_spread()
+        {
+            self.copies_of_types_by_spread
+                .insert((right, readonly), made);
+        }
+        made
+    }
+
+    /// False while `members` may answer with less than a type's whole members: an instantiation or a composition of
+    /// members is under way, or the members of some type are being resolved (see `shape_memo_bound`: one of its ways,
+    /// declared index signatures in progress, raises no count). `copies_of_types_by_spread` is neither read nor
+    /// written then.
+    fn can_keep_copies_of_types_by_spread(&self) -> bool {
+        self.instantiation_depth == 0
+            && self.index_infos_in_instantiation.is_empty()
+            && self.unresolved_members.is_empty()
+            && self.declared_index_infos_in_progress.is_empty()
+            && self.anonymous_members_in_place.is_empty()
+            && self.members_resolved_before_base_types.is_empty()
+            && self.base_types_so_far.is_empty()
+            && self.inheriting.is_empty()
+            && self.late_binding.is_empty()
+            && self.provisional.is_empty()
+            && self.instantiated_symbol_links.is_empty()
+            && self.never_in_progress.is_empty()
+            && !self.stack.iter().any(|q| matches!(q, Query::Shape(_)))
+    }
+
+    /// Unchanged over a computation that made no query and read nothing provisional: members of a type in progress
+    /// are handed out in front of any query, and raise `cycles` and `members_in_place_hits`, not `work`. What is
+    /// answered for the time being without any of the three (the limit of instantiation in its reporting arm among
+    /// them) holds its result back in the task.
+    fn mark_of_what_a_copy_by_spread_read(&self) -> (u64, (u64, u64), u64, u64) {
+        (
+            self.work,
+            self.non_cacheable_mark(),
+            self.members_in_place_hits,
+            self.task.held_back(),
+        )
     }
 
     // ───────────────────────────── reading ─────────────────────────────
@@ -5859,6 +5962,9 @@ impl<'p, 's> Checker<'p, 's> {
         let grown = self.types_of_property_of_grown_union(whole, prop, parts);
         match grown {
             Some(so_far_and_added) => types.extend(so_far_and_added),
+            None if let Some(left) = self.type_of_property_of_union_less_a_member(whole, prop) => {
+                types.push(left);
+            }
             None => {
                 for part in parts.iter() {
                     let ty = self.type_of_prop(part, MapperId::IDENTITY);
@@ -5881,6 +5987,31 @@ impl<'p, 's> Checker<'p, 's> {
                 .insert(&self.task, key, all, stored);
         }
         all
+    }
+
+    fn type_of_property_of_union_less_a_member(
+        &mut self,
+        whole: TypeId,
+        prop: &Prop,
+    ) -> Option<TypeId> {
+        let loss = *self.unions_less_a_member.get(&whole)?;
+        if loss.name != prop.name {
+            return None;
+        }
+        let key = (loss.from, prop.name);
+        let so_far = self.p.intersected_props.get(&self.task, &key)?;
+        let TypeData::Union(members) = self.data(so_far) else {
+            return None;
+        };
+        let literals = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL;
+        if members.len() != self.parts(loss.from).len()
+            || self.types().member_flags(so_far) & !literals != 0
+            || self.types().has_fresh_literal(so_far)
+            || !self.contains_type(members, loss.key)
+        {
+            return None;
+        }
+        Some(self.filter(so_far, |_, m| m != loss.key))
     }
 
     /// For `prop`, the property of the union `whole` that combines `parts`: the type of that property of the union that
@@ -6757,6 +6888,27 @@ impl<'p, 's> Checker<'p, 's> {
         self.get_widened_type(ty)
     }
 
+    fn flow_containers_of_class(&mut self, file: FileId, class: ClassId) -> FlowContainers {
+        if let Some(found) = self.flow_containers_of_classes.get(&(file, class)) {
+            return found.clone();
+        }
+        let hir = self.hir(file);
+        let constructor = hir[class].members.iter().find(|&m| {
+            hir[m].kind == MemberKind::Constructor && !matches!(hir[hir[m].func].body, FnBody::None)
+        });
+        let static_blocks = hir[class]
+            .members
+            .iter()
+            .filter(|&m| hir[m].kind == MemberKind::StaticBlock && hir[m].func.is_some());
+        let found = FlowContainers {
+            constructor,
+            static_blocks: static_blocks.collect(),
+        };
+        self.flow_containers_of_classes
+            .insert((file, class), found.clone());
+        found
+    }
+
     pub(super) fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let hir = self.hir(file);
@@ -6891,10 +7043,9 @@ impl<'p, 's> Checker<'p, 's> {
                     let initial = inherited.unwrap_or(TypeId::UNDEFINED);
                     let mut has_flow_container = false;
                     if !member.flags.contains(Flags::STATIC) {
-                        if let Some(constructor) = hir[c].members.iter().find(|&m| {
-                            hir[m].kind == MemberKind::Constructor
-                                && !matches!(hir[hir[m].func].body, FnBody::None)
-                        }) {
+                        if let Some(constructor) =
+                            self.flow_containers_of_class(file, c).constructor
+                        {
                             has_flow_container = true;
                             if let Some(ty) = self.flow_type_in_constructor_from(
                                 file,
@@ -6909,9 +7060,8 @@ impl<'p, 's> Checker<'p, 's> {
                     } else {
                         // `getFlowTypeInStaticBlocks`: the first static block whose flow type is
                         // more than null or undefined.
-                        for block in hir[c].members.iter().filter(|&m| {
-                            hir[m].kind == MemberKind::StaticBlock && hir[m].func.is_some()
-                        }) {
+                        let static_blocks = self.flow_containers_of_class(file, c).static_blocks;
+                        for &block in static_blocks.iter() {
                             has_flow_container = true;
                             if let Some(ty) = self.flow_type_in_constructor_from(
                                 file,

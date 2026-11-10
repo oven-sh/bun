@@ -1,0 +1,14 @@
+# -- source: main.ts
+# function inside(c: any): string { const kind = c | 0; if (kind === 133) return "a"; if (kind === 159) return "b"; if (kind === 133) return "never"; if (kind === 163) return "d"; if (kind === 155) return "e"; return "no"; }
+# (globalThis as any).kept = inside;
+# const probes: any[] = [-2147483648, -2147483647, -164, -133, -1, -0, 0, 1, 5, 6, 7, 132, 133, 134, 140, 141, 142, 149, 150, 151, 154, 155, 156, 158, 159, 160, 162, 163, 164, 182, 183, 184, 205, 206, 207, 255, 256, 389, 65669, 2147483646, 2147483647, 2147483648, 4294967296, 4294967429, -4294967163, 133.5, 132.999, 183.5, 206.5, NaN, Infinity, -Infinity, "133", "", null, undefined, true, false, [133], {}, { valueOf() { return 133; } }, 133n];
+# const out: string[] = [];
+# for (const probe of probes) { try { out.push(String((globalThis as any).kept(probe))); } catch (error) { out.push((error as Error).constructor.name); } }
+# console.log(out.join(" "));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# RUN: run-in-shell mechanisms=all testing=FailGuesses
+# RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# RUN: run-in-shell mechanisms=all testing=IgnoreExpectedTypes
+# CHECK: no no no no no no no no no no no no a no no no no no no no no e no no b no no d no no no no no no no no no no no no no no no a a a no no no no no no a no no no no no a no a TypeError
+# CHECK-NEXT: exited with 0

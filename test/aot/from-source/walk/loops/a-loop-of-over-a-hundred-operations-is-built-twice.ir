@@ -1,0 +1,10 @@
+# A loop of over a hundred operations was built once: no typed copy, every read by key guessed anew in the turn. Here one element is read twenty-four times a turn.
+# The limit stands at four hundred now. It is still a limit: see the unit's notes for what keeps it.
+# -- source: a-loop-of-over-a-hundred-operations-is-built-twice.cjs
+# function mix(d) { let h = 7; for (let i = 0; i < d.length; i++) { h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; h = (h * 3 + d[i]) & 65535; h = (h ^ d[i]) + 1; } return h; }
+# print(mix(JSON.parse("[1, 2, 3, 4, 5]")));
+# -- end of source
+# RUN(COUNT): compile LoopsBuiltForListsAndForBytes mechanisms=all
+# COUNT: statistic LoopsBuiltForListsAndForBytes 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1443

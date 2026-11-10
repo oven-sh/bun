@@ -1,0 +1,29 @@
+# Off a record that a store in sight fills under keys that are not written, a plain build is told nothing at a read by key: the read is typed anything, no check stands there, and what flows on is held at the
+# next door. Link's flow still says what such a read may find. Under CheckProofsAtRunTime with ReadsByKeyOffFilledRecordsAreListed that is listed and asked at the read: the lane of the stored programs says both
+# and keeps its eye on it. CheckProofsAtRunTime alone, which --aot-harden=proof-checks is and servers ship under, makes no such proof: there is nothing to check, and nothing is paid.
+# f2 = sumOf
+# RUN(PLAIN): walk f2 mechanisms=all
+# PLAIN-LABEL: code f2:Body
+# PLAIN: ElemGet
+# PLAIN-NOT: source=Contents
+# RUN(PROOFS): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS-LABEL: code f2:Body
+# PROOFS: ElemGet
+# PROOFS-NOT: source=Contents
+# RUN(ALONE): walk f2 mechanisms=all testing=ReadsByKeyOffFilledRecordsAreListed
+# ALONE-LABEL: code f2:Body
+# ALONE: ElemGet
+# ALONE-NOT: source=Contents
+# RUN(LISTED): walk f2 mechanisms=all testing=CheckProofsAtRunTime,ReadsByKeyOffFilledRecordsAreListed
+# LISTED-LABEL: code f2:Body
+# LISTED: ElemGet
+# LISTED: CheckProof {{*}}source=Contents
+# -- source: main.cjs
+# 'use strict';
+# function make(size) { const like = { length: size }; for (let i = 0; i < size; i++) like[i] = i * 3; return like; }
+# const like = make(16);
+# function sumOf(turn) { let sum = 0; for (let i = 0; i < 16; i++) sum = (sum + like[(i + turn) & 15]) | 0; return sum; }
+# let total = 0;
+# for (let turn = 0; turn < 40; turn++) total = (total + sumOf(turn)) % 1000003;
+# console.log(total);
+# -- end of source

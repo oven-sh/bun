@@ -32,6 +32,7 @@ pub(crate) enum FileLeavesOpen {
     MocksUnspelledModule,
     HandsOnUnspelledModule,
     LetsSpyOnGo,
+    MayStoreLoaderFunction,
     SpiesUnderNamesFromOutside { texts_passed: usize },
     HoldsTextThatSpies { loads_by_unknown_path: bool },
 }
@@ -107,6 +108,54 @@ fn line_of_files_that_may_run_again(count: usize) -> String {
 pub(crate) fn say_files_that_may_run_again(count: usize) {
     if logs_stages() {
         say(&line_of_files_that_may_run_again(count));
+    }
+}
+
+fn line_of_files_taken_out_behind_factories(count: usize) -> String {
+    format!("AOT test run | files that a factory in flight may take out {count}")
+}
+
+pub(crate) fn say_files_taken_out_behind_factories(count: usize) {
+    if logs_stages() {
+        say(&line_of_files_taken_out_behind_factories(count));
+    }
+}
+
+fn line_of_es_packages_that_mocks_name(count: usize) -> String {
+    format!("AOT modules | ES packages that mocks name, which may run again {count}")
+}
+
+pub(crate) fn say_es_packages_that_mocks_name(count: usize) {
+    if logs_stages() {
+        say(&line_of_es_packages_that_mocks_name(count));
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct CodeOutsideRun {
+    pub files: usize,
+    pub parsed_at_first: usize,
+    pub parsed_later: usize,
+    pub import_what_is_sought: usize,
+    pub take_from_test_runner: usize,
+}
+
+fn line_of_code_outside_run(asked: usize, counts: &CodeOutsideRun) -> String {
+    let CodeOutsideRun {
+        files,
+        parsed_at_first,
+        parsed_later,
+        import_what_is_sought,
+        take_from_test_runner,
+    } = counts;
+    format!(
+        "AOT test run | files on disk that the run does not reach {files}, asked about {asked} files of the run | parsed because they write the last word of one {parsed_at_first}, later {parsed_later} | of those parsed {take_from_test_runner} take from the test runner | {import_what_is_sought} take nothing from it and import what is sought"
+    )
+}
+
+pub(crate) fn say_code_outside_run(asked: usize, counts: &CodeOutsideRun) {
+    if logs_stages() {
+        say(&line_of_code_outside_run(asked, counts));
     }
 }
 
@@ -212,6 +261,9 @@ fn line_of_file_that_leaves_open(path: &[u8], what: FileLeavesOpen) -> String {
         FileLeavesOpen::LetsSpyOnGo => {
             format!("AOT test run | {path} lets spyOn go where nobody sees what it is called with")
         }
+        FileLeavesOpen::MayStoreLoaderFunction => format!(
+            "AOT test run | {path} stores a function that the loader calls, or hands on an object that takes one"
+        ),
         FileLeavesOpen::SpiesUnderNamesFromOutside { texts_passed } => format!(
             "AOT test run | {path} spies on an object from somewhere under a name that it does not spell: {texts_passed} texts are passed to it"
         ),

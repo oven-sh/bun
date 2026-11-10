@@ -60,6 +60,15 @@ impl TypeRanges {
         kept
     }
 
+    pub fn texts_written_over(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        (self.written_over.iter()).map(|(at, text)| (*at, *at + text.len() as u32))
+    }
+
+    pub fn removes(&self, offset: u32) -> bool {
+        let next = self.ranges.partition_point(|range| range.end <= offset);
+        (self.ranges.get(next)).is_some_and(|range| range.start <= offset)
+    }
+
     pub fn pack(&self) -> PackedTypeRanges {
         let mut bytes = Vec::with_capacity(self.ranges.len() * 2);
         let mut at = 0;
@@ -177,26 +186,46 @@ pub fn find_type_ranges(file: &File<'_>) -> TypeRanges {
     find_type_ranges_beside(file, Vec::new())
 }
 
-pub fn keep_only_comments_beside_types<'s>(file: &mut File<'s>, arena: &'s Arena) {
+pub fn keep_only_comments_beside_types_and<'s>(
+    file: &mut File<'s>,
+    arena: &'s Arena,
+    is_read_later: fn(&[u8]) -> bool,
+) {
     let mut passed = Vec::new();
     if !file.is_js && !file.comments.is_empty() {
         let mut finder = Finder::new(file);
         finder.run();
         passed = finder.comments_passed.into_inner();
-        passed.sort_unstable();
-        passed.dedup();
     }
+    for (index, comment) in file.comments.iter().enumerate() {
+        let text = file.text.get(comment.pos as usize..comment.end as usize);
+        if text.is_some_and(is_read_later) {
+            passed.push(index as u32);
+        }
+    }
+    passed.sort_unstable();
+    passed.dedup();
     let kept: Vec<Comment> = (passed.iter())
         .map(|&index| file.comments[index as usize])
         .collect();
     file.comments = Fixed::copied_in(arena, &kept);
 }
 
-pub fn find_type_ranges_beside(file: &File<'_>, mut replaced: Vec<ReplacedText>) -> TypeRanges {
+pub fn find_type_ranges_beside(file: &File<'_>, replaced: Vec<ReplacedText>) -> TypeRanges {
+    find_type_ranges_beside_what_is_laid(file, replaced, |_, _| {})
+}
+
+pub fn find_type_ranges_beside_what_is_laid(
+    file: &File<'_>,
+    mut replaced: Vec<ReplacedText>,
+    lay: impl FnOnce(&[(u32, u32)], &mut Vec<ReplacedText>),
+) -> TypeRanges {
     let mut finder = Finder::new(file);
     if !file.is_js {
         finder.run();
     }
+    finder.found.sort_unstable();
+    lay(&finder.found, &mut replaced);
     finder.leave_what_stands_in(&mut replaced);
     replaced.append(&mut finder.replaced);
     for part in &replaced {

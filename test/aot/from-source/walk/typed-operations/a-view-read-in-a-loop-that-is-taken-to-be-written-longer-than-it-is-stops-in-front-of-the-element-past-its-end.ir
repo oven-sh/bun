@@ -1,0 +1,18 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const view = new Uint8Array(4);
+# view[3] = 7;
+# function sum(): number { let total = 0; for (let i = 0; i < 5; i++) total += view[i]! | 0; return total; }
+# print(sum());
+# print("went on");
+# -- end of source
+# The counter stays below what Link says of the length of the view. That word is held against the view's own length by a test that stops.
+# THE LIE: a view counts as written one longer than it is.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 7
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=OverstateTypedArrayLength
+# LIE: what a container holds is not of the type that the compiler has proven of it. It is: nothing. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed

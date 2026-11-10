@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# function Knot(tag, above) { this.tag = tag; this.flags = 0; this.return = above; this.twin = null; }
+# var cursor = { current: null };
+# function climb(start) {
+#   var found = 0;
+#   for (var knot = start; null !== knot; ) {
+#     if (10 === knot.tag) { if (null !== knot.twin) found += 2; }
+#     else if (knot === cursor.current) found += 1;
+#     knot = knot.return;
+#   }
+#   return found;
+# }
+# sink.kept = climb;
+# var top = null; for (var i = 0; i < 30; i++) top = new Knot(i % 12, top);
+# cursor.current = top;
+# var steps = (function* () { yield 1; })();
+# sink(steps.return(3).value + " " + climb(null) + " " + climb(top));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK: = GetSlot {{*}}key="return" receivers=[L0]
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 3 0 1

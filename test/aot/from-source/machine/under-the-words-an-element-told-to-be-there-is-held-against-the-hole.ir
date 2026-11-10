@@ -1,0 +1,33 @@
+# A guess at an element of numbers asks a list for its kind of storage and for the element's presence, and reads the number raw behind the two: the read is told that the element is there and asks nothing.
+# THE LIE, testing=ElementsInsideListsAreTakenToBeThere: the test of presence still asks the length and takes whatever lies inside it to be there: the raw read finds the hole's own word and takes it for a number.
+# The list with the hole bears a `constructor` of its own, so that it is no list as made and takes the loop as written: a list as made goes through a copy of the loop whose reads ask for the hole themselves.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the read holds what it finds against the mark of a hole, or the process stops by name.
+# RUN(TAKEN): walk f2 mechanisms=all
+# TAKEN-LABEL: code f2:Body
+# TAKEN: = IsElementPresent {{*}}arrayStorage=Int32
+# TAKEN: @Int32 = GetArrayElement {{*}}arrayStorage=Int32
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: 1 0 1
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=ElementsInsideListsAreTakenToBeThere
+# UNHELD: 1 1 1
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=ElementsInsideListsAreTakenToBeThere,TestsEveryPosition
+# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function note(value: any): void {}
+# function count(list: number[]): number { let found = 0; for (let i = 0, n = list.length; i < n; i++) { if (list[i] == 0) found++; } return found; }
+# const fractions: any = [1.5, 0, 100.5], holed: any = [1, 2, 3], whole: any = [0, 2, 3];
+# delete holed[1];
+# holed.constructor = null;
+# print(count(fractions), count(holed), count(whole));
+# note(fractions);
+# const first = { value: 100 }, second = { other: 1 }, third = { third: "x" }, fourth = { fourth: true }, fifth = { fifth: null };
+# note([first]);
+# note([second]);
+# note([third]);
+# note([fourth]);
+# note([fifth]);
+# -- end of source

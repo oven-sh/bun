@@ -1,0 +1,17 @@
+# -- source: what-a-read-off-a-view-gives-is-stored-into-a-view-without-a-test.ts
+# declare function sink(value: unknown): void;
+# function map(src: Uint8Array, out: Uint8Array, table: Uint8Array) { for (let i = 0; i < src.length; i++) out[i] = table[src[i]]; }
+# function main(n: number) { const table = new Uint8Array(128).fill(3), src = new Uint8Array(8).fill(65), out = new Uint8Array(8); src[7] = 200; for (let r = 0; r < n; r++) map(src, out, table); sink(out.join()); }
+# const limits = JSON.parse("[3]");
+# main(limits[0] | 0);
+# -- end of source
+# What a read off a view gives is stored into a view, and all three are proven views. The read may lie outside its table and give undefined. To make a number of undefined runs no code, so the
+# store converts it in line and is proven: the turns are quiet, the loop is built twice for its counter alone and the counter is held below the room of the views. The table is shorter than the range
+# of its key: it is asked for the key itself, so the loop does not leave its typed copy at the first turn. Until now the store was only expected to take a number and the loop ran closed.
+# f1 = map
+# OPTIONS: check=Validate
+# RUN: compile CountersHeldBelowRoomOfViews mechanisms=all
+# CHECK: statistic CountersHeldBelowRoomOfViews 1
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 3,3,3,3,3,3,3,0
+# SHELL: exited with 0

@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# function behindACall(o, between) { let text = ""; for (const k in o) { between(o, k); text += k + (o[k] === undefined ? "_" : o[k]); } return text; }
+# const byName = { behindACall }, key = JSON.parse('"behindACall"');
+# const make = () => JSON.parse('{"ash":1,"birch":2,"cedar":3,"date":4,"elm":5,"fir":6,"gum":7,"hazel":8}');
+# print(byName[key](make(), (o, k) => { if (k === "cedar") delete o.cedar; }));
+# -- end of source
+# The read under the key of a for-in goes by the enumerator's index behind a test. Where nothing has run since the step, the test takes the step's word: the index of the name lies below the count of names that the step found current.
+# Here a call stands between the step and the read, and it deletes the very name: the test asks the object itself, fails, and the read goes as it is written: undefined.
+# THE LIE, testing=KeysOfForInAreTakenToBeAsTheStepFoundThem: the test takes the step's word though other code has run. NO RUN UNDER THE LIE ALONE IS STORED: the read would take the cleared slot of the deleted name for a value.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the read holds the object's structure and order word against the enumerator's, or the process stops by name.
+# RUN(TAKEN): walk f1:Body mechanisms=all
+# TAKEN-NOT: IsEnumeratorCurrent {{*}}, {{*}}, {{*}}, {{*}} traits
+# TAKEN: EnumeratorGetByVal
+# RUN(LIED): walk f1:Body mechanisms=all testing=KeysOfForInAreTakenToBeAsTheStepFoundThem
+# LIED: IsEnumeratorCurrent {{*}}, {{*}}, {{*}}, {{*}} traits
+# LIED: EnumeratorGetByVal
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: ash1birch2cedar_date4elm5fir6gum7hazel8
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=KeysOfForInAreTakenToBeAsTheStepFoundThem,TestsEveryPosition
+# HELD: AOT: f{{*}}
+# HELD: crashed with SIGABRT

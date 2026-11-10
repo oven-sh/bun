@@ -1,0 +1,30 @@
+# super.price(..) is called directly behind two guards: the link of the home class, and the name above the objects of the class above.
+# THE LIE, testing=GuardOfNameIsPassedOverAtCallsThroughSuper: the guard of the name is not asked: the method that the classes' records name is called though another has been stored over it.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the base of super and the read through it are also made as written behind the guards, and what they find is asked to be the closure that the table holds, or the process stops by name.
+# RUN(GUARDED): walk f4:Body mechanisms=all
+# GUARDED: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged {{*}}
+# GUARDED: = AreMembersUnchanged conditions=[{layout={{*}} key="price"}]
+# RUN(CHECKED): walk f4:Body mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: = SuperGet
+# CHECKED: = StrictEq
+# CHECKED: CheckProof {{*}}source=WhatIsRemembered
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 7 7 101
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=GuardOfNameIsPassedOverAtCallsThroughSuper
+# WRONG: 7 7 7
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=GuardOfNameIsPassedOverAtCallsThroughSuper,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Ware { worth: number; constructor(worth: number) { this.worth = worth; } price(rate: number): number { return this.worth * rate; } }
+# class Boxed extends Ware { price(rate: number): number { return super.price(rate) + 1; } }
+# const thing: Ware = new Boxed(id(4));
+# const first = thing.price(1.5);
+# const second = thing.price(1.5);
+# (Ware.prototype as any)[id("price")] = function () { return 100; };
+# print(first, second, thing.price(1.5));
+# -- end of source

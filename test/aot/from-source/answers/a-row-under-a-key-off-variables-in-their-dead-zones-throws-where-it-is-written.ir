@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# const box = JSON.parse('{"name":"rows","holder":{"rows":[1,2,3,4,5,6,7,8,9,10,11,12]}}');
+# function row() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# function tried() { try { return row(); } catch (error) { return error.name; } }
+# print(tried());
+# const data = box.holder;
+# print(tried());
+# const w = box.name;
+# print(tried());
+# -- end of source
+# The variables that find the row are read in front of the loop. In its dead zone a variable holds nothing: the read in front asks that and goes the way on which the loop stands as walked before, where the check throws.
+# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
+# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: ReferenceError
+# RIGHT-NEXT: ReferenceError
+# RIGHT-NEXT: 78
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: ReferenceError
+# HELD-NEXT: ReferenceError
+# HELD-NEXT: 78
+# HELD-NEXT: exited with 0

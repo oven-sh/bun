@@ -1,0 +1,38 @@
+# const { serve } = Bun;  function start() { return serve({ port: 0 }); }  start();
+# A pattern asks first whether what it takes apart is undefined or null, so a branch stands between `Bun` and the read of `serve`, and the read's object is what the edge has narrowed.
+# It is Bun all the same: the constant holds Bun.serve, and the call in start() is seen with its operands as if it were written out.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK-NOT: cause
+# CHECK: unseen-code cannot-run
+
+layout L0 module=m0 fields=[{key="port" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="serve" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Bun
+    v2 = TypeTest v1 testedType=undefined|null
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = NewRuntimeError runtimeError=NotDestructurable name="serve"
+    Throw v4
+  b2(v5):
+    v6 = PropGet v5 key="serve"
+    PutModuleVariable v6 variable=g0
+    v8 = Call v0 calleeName="start"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="start" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="serve"
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Call v1, -, v4 calleeName="serve"
+    Return v5
+}

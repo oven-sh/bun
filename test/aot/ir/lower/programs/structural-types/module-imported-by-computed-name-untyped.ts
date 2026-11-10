@@ -194,7 +194,7 @@ export const count = "texts";
 // CHECK-NEXT: v11 = ImportModule module=[[m_8]] referrer=[[m_0]]
 // CHECK-NEXT: Jump -> next b9(v11)
 // CHECK-NEXT: b8():
-// CHECK-NEXT: v12 = ImportDynamic v4 referrer=[[m_0]]
+// CHECK-NEXT: v12 = ImportDynamic v4 referrer=[[m_0]] [namesNoLibraryModule]
 // CHECK-NEXT: Jump -> next b9(v12)
 // CHECK-NEXT: b9(v13):
 // CHECK-NEXT: Return v13
@@ -205,16 +205,15 @@ export const count = "texts";
 // CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_9]]
 // CHECK-NEXT: v4 = NewObject v3 layout=[[L_9]]
 // CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_10]]
-// CHECK-NEXT: PropSet v5, v1 key="p"
-// CHECK-NEXT: PropSet v5, v2 key="n"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: PropDefine v5, v1 key="p"
+// CHECK-NEXT: PropDefine v5, v2 key="n"
+// CHECK-NEXT: v8 = Undefined
+// CHECK-NEXT: v9 = TypeTest v8 testedType=object
+// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2(v5)
+// CHECK-NEXT: b1(v10):
+// CHECK-NEXT: Jump -> next b2(v10)
+// CHECK-NEXT: b2(v11):
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="all"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_9]]} results=[{type=number}] {

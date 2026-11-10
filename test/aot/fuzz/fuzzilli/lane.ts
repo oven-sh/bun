@@ -14,6 +14,7 @@
 // The programs are drawn here, so nothing is needed but Bun. Where `unshare` can make a network of its own, the drivers run in one that reaches nothing: a drawn program may name any host.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 import { writeProgram, type Program } from "../runners";
 
 const drawn = "--group 1 --ordinary-scenes 100 --milliseconds 1000 --ends-early 100 --minifies 25";
@@ -22,13 +23,17 @@ const rewritten =
 /** What a build proves of a small program it doesn't prove beside many others, and a build of many judges four times as many programs in the same time. Each kind has found what the others missed. */
 const kinds: Record<string, string> = {
   // Each program is built as a user builds it, by run-alone.ts: what a build proves or leaves out only where a program is its own entry point shows there alone.
-  deeds: `alone --scene ${"sceneOfASingleDeed,".repeat(18)}sceneOfAGraphOfModules,sceneOfAGraphOfModules,sceneOfADeepVisitor --checks-proofs 50 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
-  places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --checks-proofs 100 --as-a-test 25 --shuffles-costs 50`,
+  deeds: `alone --scene ${"sceneOfASingleDeed,".repeat(18)}sceneOfAGraphOfModules,sceneOfAGraphOfModules,sceneOfADeepVisitor --changes-draws 30 --checks-proofs 50 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
+  places: `alone --scene sceneOfTypedPlaces,sceneOfHiddenEffects --changes-draws 30 --checks-proofs 100 --as-a-test 25 --shuffles-costs 50`,
   alone: `alone --families 30 --checks-proofs 25 --writes-straight 25 --as-a-test 25 --shuffles-costs 50`,
   kin: `alone --kin 100 --together 10 --checks-proofs 25 --shuffles-costs 25`,
   // Kin of programs that lie outside the tree, such as those that a reader of a change wrote to try it. FUZZ_MORE_STORED_PROGRAMS names their folder.
   "more-kin": `alone --kin 100 --stored ${process.env.FUZZ_MORE_STORED_PROGRAMS ?? join(import.meta.dir, "..", "..", "parallel")} --together 10 --checks-proofs 25 --shuffles-costs 25`,
   hands: `alone --scene sceneOfAHand --draws js --checks-proofs 25 --shuffles-costs 25`,
+  heirs: `alone --scene sceneOfHeirsOfTheLibrary --together 6 --changes-draws 20 --checks-proofs 40 --writes-straight 10 --shuffles-costs 25`,
+  "laid-above": `alone --scene sceneOfWhatIsLaidAbove --changes-draws 20 --checks-proofs 50 --writes-straight 10 --shuffles-costs 25`,
+  makers: `alone --scene sceneOfMakers --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  dispatch: `alone --scene sceneOfDispatch --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   calls: `alone --scene sceneOfUnlikeCallSites --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   changes: `alone --scene sceneOfAChange --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   loops: `alone --scene sceneOfALoop --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
@@ -62,12 +67,15 @@ if (!out || !(kind in kinds)) {
 }
 
 for (const folder of ["finds", "logs", "work"]) mkdirSync(join(out, folder), { recursive: true });
+withoutInstallingPackages(join(out, "work"));
 // Each driver gets a network of its own, so that no drawn program reaches anything and no two meet on a port. The loopback of a new network is down: a program that serves itself would be refused
 // in both ways of running it, and that is the same answer.
+// It also gets process ids of its own, and all that it started ends with it: a driver that is stopped in the middle of a program that never ends would leave that program running for good.
+const apart = ["unshare", "-Urn", "-pf", "--kill-child"];
 const alone =
   process.platform === "linux" &&
-  Bun.spawnSync({ cmd: ["unshare", "-Urn", "true"], stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0
-    ? ["unshare", "-Urn", "sh", "-c", 'ip link set lo up 2> /dev/null; exec "$@"', "sh"]
+  Bun.spawnSync({ cmd: [...apart, "true"], stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0
+    ? [...apart, "sh", "-c", 'ip link set lo up 2> /dev/null; exec "$@"', "sh"]
     : [];
 const drivers = Array.from({ length: jobs }, (_, index) =>
   Bun.spawn({
@@ -105,7 +113,7 @@ const status = () =>
 const last = Date.now() + minutes * 60_000 + 120_000;
 const watch = setInterval(() => {
   status();
-  if (existsSync(join(out, "STOP")) || Date.now() > last) for (const driver of drivers) driver.kill();
+  if (existsSync(join(out, "STOP")) || Date.now() > last) for (const driver of drivers) driver.kill("SIGKILL"); // `unshare` does not hear SIGTERM while it waits for what it started
 }, 20_000);
 await Promise.all(drivers.map(driver => driver.exited));
 clearInterval(watch);

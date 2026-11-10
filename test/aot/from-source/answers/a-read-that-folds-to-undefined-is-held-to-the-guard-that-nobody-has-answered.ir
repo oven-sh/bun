@@ -1,0 +1,28 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) { const parcel = new Parcel(i); if (i === 3) parcel.fragile = true; parcels.push(parcel); }
+# (globalThis as any).parcels = parcels;
+# function look(weight: number) { const parcel = new Parcel(weight); return parcel.fragile; }
+# const looks = id(look);
+# print(looks(1));
+# (Parcel.prototype as any).fragile = true;
+# print(looks(2));
+# -- end of source
+# LIBRARY: own
+# A read of a field that an object just made lacks folds to undefined where nothing stands above under the name, and leaves no operation. What is laid above must be found.
+# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: undefined
+# RIGHT-NEXT: true
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: undefined
+# HARDENED-NEXT: true
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# LIE: undefined
+# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

@@ -6,6 +6,5 @@
 # Native code asks `process` for `noDeprecation`, which it has in some runs only. In the others the accessor that the program has laid on EventEmitter.prototype answers, with `process` as `this`.
 # No file of the program asks `process` for the name. The program spells it to lay the accessor: the text of node:events is told, and hands `process` to the native function that lays the prototype above it.
 # RUN: link lookups mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: lookup let-go Process
 # CHECK: lookup at-unseen Process

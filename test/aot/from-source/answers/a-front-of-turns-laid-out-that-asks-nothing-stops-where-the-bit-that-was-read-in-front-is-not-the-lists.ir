@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# var key = JSON.parse('"go"');
+# var halves = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k + 0.5); return l; }, wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
+# var T = { go(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i] * b[i]; return s; } };
+# print(T[key](halves(16), halves(16)));
+# -- end of source
+# What the front of the turns laid out has found is believed in every one of those turns. testing=CheckProofsAtRunTime and testing=TestsEveryPosition write checks into each turn in the walk, and a turn that holds
+# them is not laid out: so in those lanes no layout was ever run. Under testing=EmittersAloneTestEveryPosition the walk writes nothing more, the turns are laid out as in an executable, and each access holds what it
+# is told against memory. Beside a list that lies inside its length the other has its kind READ in front, and each read branches on the bit. The lie turns the bit round, whatever is handed.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1364
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# HELD: 1364
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold
+# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# LIE: crashed with

@@ -1,0 +1,42 @@
+# -- source: an-edge-to-a-handler-led-in-front-of-the-builds-of-a-loop-hands-on-what-enters-the-loop.js
+# const box = { a: -1 };
+# function make() {
+#   let held = null;
+#   const run = (start, end, list) => {
+#     const from = 4;
+#     const to = end;
+#     let same = -1;
+#     try {
+#       for (let round = 0; round < 3; round++) {
+#         for (let at = from; at <= to - 1; ++at) {
+#           const one = list[at];
+#           same += held == null ? 1 : 0;
+#           box.a += one * 0.5;
+#         }
+#       }
+#     } finally {
+#     }
+#     return [String(box.a), String(held), same].join("|");
+#   };
+#   return run;
+# }
+# const run = make();
+# for (let turn = 0; turn < 1; turn++) {
+#   const made = (function () { return arguments; })(1, 2, 3, 4, 5, 6);
+#   let said;
+#   try { said = run(2, 2, made); } catch (error) { said = error.name; }
+#   print("SAID " + said);
+# }
+# -- end of source
+# The front of the builds of the loop inside runs before any of its turns: there the parameter of its head is what enters, and that is what an edge to the handler hands on. The check that holds such an edge against what the head of its
+# block named held it against names noted at that head, which stands on no way to the front, and stopped the build: "a handler edge hands on what stands in for a value". A note is held only against edges led in the standing in which it was taken.
+# RUN: run-in-shell mechanisms=all
+# CHECK: SAID -1|null|-1
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# FAILING: SAID -1|null|-1
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: SAID -1|null|-1
+# HELD-NEXT: exited with 0

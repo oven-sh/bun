@@ -1,0 +1,10 @@
+# -- source: a-key-that-may-be-minus-zero-goes-onto-the-edge-to-a-handler-as-the-number-that-was-written.ts
+# function store(list: number[], from: number): any { let key = 1; try { for (let i = from | 0; i < 3; i++) { key = i % 4; list[key] = i; } } catch { return Object.is(key, -0); } return "none"; }
+# console.log(store([1, 2, 3, 4], 0), store(Object.freeze([1, 2, 3, 4]) as any, Number(process.env.NO_SUCH ?? -4)));
+# -- end of source
+# The store under `i % 4` is walked while the key is bound to the remainder of integers, which is 0 where the key is -0. The edge to the handler hands on the key as it was written:
+# plain Bun prints none true; until then the compiled program printed none false. The same program under the lie:
+# an-edge-to-a-handler-that-takes-a-whole-remainder-for-a-key-of-minus-zero-stops-the-build-though-a-try-of-the-loop-is-undone.ir.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body

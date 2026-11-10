@@ -1,0 +1,21 @@
+# A fence behind late stores of a new object. The code below makes an object with `info` from the start; `info` lies out of line, so it is stored behind the fence of the fields in line and wants a fence of its own. THE LIE, testing=FencesBehindLateStoresAreLeftOut: the emitters leave that fence out. Every build asks for it, on every processor, so the build stops by name. Without the lie: object-made-with-a-field-out-of-line-has-a-fence-behind-the-field.ir.
+# f1 = plain, f2 = later, f3 = carry
+# -- source: object-made-with-a-field-out-of-line-and-no-fence-behind-the-field-stops-the-build-by-name.ts
+# declare function sink(...values: unknown[]): void;
+# interface Chain { text: string; kind: number; info?: unknown; head?: unknown }
+# function plain(i: number): Chain { return { text: "t", kind: i }; }
+# function later(chain: Chain, value: unknown) { chain.info = value; chain.head = value; }
+# function carry(value: unknown): Chain { return plain(1); }
+# sink(plain, later, carry);
+# -- end of source
+# -- code
+# code f3:Body {
+#   frame 0 callee=f3 callPosition=4294967295 module=m0
+#   b0(v0: anything?ParameterOfEscapedFunction @JSValue) entry=0:
+#     v1: L0 @Cell = NewObject -, v0, v0, v0 layout=L0 fields=[3, 2, 1] storage=Heap traits=[mayCollect, mayTouchMemory]
+#     v2: L0 @JSValue = Box v1
+#     Return v2
+# }
+# -- end of code
+# DIAGNOSTIC: NoFenceBehindLateStores
+# RUN: emit-code mechanisms=all testing=FencesBehindLateStoresAreLeftOut

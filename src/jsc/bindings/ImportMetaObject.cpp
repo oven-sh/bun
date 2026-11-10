@@ -207,7 +207,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 }
 
 // require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
-static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue from)
+static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue written, JSC::JSValue from)
 {
     if (!Bun::hasCompiledModules()) [[likely]]
         return;
@@ -215,13 +215,22 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (auto module = Bun::compiledModuleForPath(resolved)) {
-        WTF::String pathOfAsker = from.isString() ? from.toWTFString(globalObject) : WTF::String();
+        WTF::String requesterPath = from.isString() ? from.toWTFString(globalObject) : WTF::String();
         RETURN_IF_EXCEPTION(scope, );
-        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        // The asker chooses the words of the refusal alone.
+        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForImporter(requesterPath));
         scope.release();
-        JSC::AOT::willAnswerWithModule(globalObject, *module);
+        JSC::AOT::checkModuleAccess(globalObject, *module);
         return;
     }
+    // Module._resolveFilename() answers with where the file lay when the program was built.
+    WTF::String known = Bun::pathInExecutable(resolved);
+    WTF::String specifier = written.isString() ? written.toWTFString(globalObject) : resolved;
+    RETURN_IF_EXCEPTION(scope, );
+    WTF::String importer = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    Bun::throwIfHeldUnderTypesAlone(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
+    RETURN_IF_EXCEPTION(scope, );
     size_t query = resolved.find('?');
     StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
     if (!path.endsWith(".node"_s) || Bun::letsTestRunLoadAddon(globalObject, resolved) || Bun::isFileInExecutable(resolved))
@@ -310,7 +319,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
                             string = jsString(vm, known);
                     }
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
                     RETURN_IF_EXCEPTION(scope, {});
                     return JSC::JSValue::encode(string);
                 }
@@ -368,7 +377,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
 
                 if (!isRequireDotResolve) {
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
                     if (scope.exception()) [[unlikely]]
                         result = {};
                 }
@@ -401,7 +410,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     }
 
     if (!isESM && !isRequireDotResolve) {
-        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
+        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

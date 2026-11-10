@@ -1,0 +1,13 @@
+# -- source: the-turns-of-a-for-of-over-written-data-in-a-loop-are-written-out.ts
+# declare function sink(value: unknown): void;
+# function run(n: number): number { let s = 0; for (let i = 0; i < n; i++) for (const x of [1, 2]) s += x; return s; }
+# sink(run(1000));
+# -- end of source
+# A for-of over a short list of written data, in a loop of the unit's own body. The list is made in every turn of the outer loop; its making is in sight, and what is noted of it (its kind of
+# storage, its length, that it has no hole) holds until something writes on it. So the two turns are written out, each step knows whether it is the last, and no length is read.
+# f1 = run
+# RUN(COUNT): compile TurnsOfForOfWrittenOutByNotedLength mechanisms=all
+# COUNT: statistic TurnsOfForOfWrittenOutByNotedLength 1
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM-NOT: = GetArrayLength

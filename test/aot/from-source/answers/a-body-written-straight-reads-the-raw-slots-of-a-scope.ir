@@ -1,0 +1,47 @@
+# The slow versions of `early` and `read` are written straight, and what is no Tag enters them. There a read of a scope's raw slot boxes the word by the slot's form:
+# a double, an integer, a variable that is still undefined, and one in its dead zone. The statistic counts such reads in the bodies that were written straight to the end.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Tag { n = 1; m = 2; }
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# function make(seed: number) {
+#   let half = seed + 0.5;
+#   let whole = seed | 0;
+#   let later: number | undefined;
+#   const early = (tag: Tag): string => { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return late + " " + work; };
+#   const read = (tag: Tag): string => { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return half + " " + whole + " " + later + " " + work; };
+#   const step = (): void => { half *= 1.5; whole = (whole + 1) | 0; later = whole * 2; };
+#   let said = "";
+#   try { said += early(unseen({ n: 3, m: 4 })); } catch (thrown) { said += (thrown as Error).name; }
+#   let late = seed * 0.25;
+#   said += " " + early(unseen({ n: 3, m: 4 }));
+#   return { read, step, said };
+# }
+# const real = new Tag(), liar = unseen({ n: 10, m: 20 });
+# const first = make(1);
+# const second = make(-7);
+# print(first.said, "|", second.said);
+# print(first.read(real), "|", first.read(liar), "|", second.read(liar));
+# first.step();
+# second.step();
+# second.step();
+# print(first.read(real), "|", first.read(liar), "|", second.read(liar));
+# -- end of source
+# RUN(LAYOUTS): plan layouts mechanisms=all
+# LAYOUTS: Environment
+# LAYOUTS-NEXT: slot 0 {{*}} OptionalDouble
+# LAYOUTS-NEXT: slot 1 {{*}} OptionalInt64
+# LAYOUTS-NEXT: slot 2 {{*}} OptionalDouble
+# LAYOUTS-NEXT: slot 3 {{*}} OptionalDouble
+# RUN(COUNT): compile RawSlotsOfScopesReadStraight mechanisms=all
+# COUNT: statistic RawSlotsOfScopesReadStraight 4
+# RUN(ALL): compile RawSlotsOfScopesReadStraight testing=WritesBodiesStraight mechanisms=all
+# ALL: statistic RawSlotsOfScopesReadStraight 8
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: ReferenceError 0.25 14 | ReferenceError -1.75 14
+# ANSWERS-NEXT: 1.5 1 undefined 6 | 1.5 1 undefined 60 | -6.5 -7 undefined 60
+# ANSWERS-NEXT: 2.25 2 4 6 | 2.25 2 4 60 | -14.625 -5 -10 60
+# RUN(STRAIGHT): run-in-shell testing=WritesBodiesStraight mechanisms=all
+# STRAIGHT: ReferenceError 0.25 14 | ReferenceError -1.75 14
+# STRAIGHT-NEXT: 1.5 1 undefined 6 | 1.5 1 undefined 60 | -6.5 -7 undefined 60
+# STRAIGHT-NEXT: 2.25 2 4 6 | 2.25 2 4 60 | -14.625 -5 -10 60

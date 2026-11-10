@@ -1,0 +1,39 @@
+# a built-in module whose name the code of a file reads out of a variable is reached from that file, over requests and what code loads: the loader fills the variable when it loads the module, in each thread anew
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+variable g0 name="heapSize" module=m1 declared={type=anything}
+module m0 path="main" displayPath="main" requests=[{target=m1 completes=true}]
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="heapSize" variable=g0 isKnownMember=true}]
+module m2 path="goodReadOverItsOwnRequest" displayPath="goodReadOverItsOwnRequest" requests=[{target=m1 completes=true}]
+module m3 path="goodReadOverTwoRequests" displayPath="goodReadOverTwoRequests" requests=[{target=m0 completes=true}]
+module m4 path="goodReadBehindWhatCodeLoads" displayPath="goodReadBehindWhatCodeLoads"
+module m5 path="badReadNotReached" displayPath="badReadNotReached"
+module m6 path="badReadBesideAFileThatIsNotLedThereEither" displayPath="badReadBesideAFileThatIsNotLedThereEither" requests=[{target=m5 completes=true}]
+function f0 name="goodReadOverItsOwnRequest" module=m2 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f1 name="goodReadOverTwoRequests" module=m3 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f2 name="goodReadBehindWhatCodeLoads" module=m4 results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m0 referrer=m4
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}
+function f3 name="badReadNotReached" module=m5 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f4 name="badReadBesideAFileThatIsNotLedThereEither" module=m6 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+entry module=m0

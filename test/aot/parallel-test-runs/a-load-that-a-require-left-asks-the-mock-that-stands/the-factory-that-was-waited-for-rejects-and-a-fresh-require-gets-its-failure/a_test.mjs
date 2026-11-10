@@ -1,0 +1,20 @@
+import { test, vi } from "bun:test";
+const turns = async count => { for (let turn = 0; turn < count; turn++) await new Promise(done => setImmediate(done)); };
+const told = error => "threw " + (/^snapped/.test(error.message) ? error.message : error.constructor.name);
+const asked = name => { try { return String(require(name).label); } catch (error) { return told(error); } };
+test("the factory that failed is not called again", async () => {
+  let unwind, wind, spools = 0, bobbins = 0;
+  const untilItIsUnwound = new Promise(done => (unwind = done));
+  const untilItIsWound = new Promise(done => (wind = done));
+  vi.doMock("./spool.mjs", async () => { spools++; await untilItIsUnwound; throw new Error("snapped at first"); });
+  vi.doMock("./bobbin.mjs", async () => { bobbins++; await untilItIsWound; return { thread: "wound" }; });
+  console.log("the first:", asked("./loom.mjs"));
+  unwind();
+  await turns(5);
+  console.log("the factories were called", spools, "and", bobbins, "times once the first has failed");
+  console.log("the fresh one:", asked("./shuttle.mjs"));
+  console.log("the factories were called", spools, "and", bobbins, "times behind the fresh one");
+  wind();
+  await turns(5);
+  console.log("the factories were called", spools, "and", bobbins, "times once the other has settled");
+});

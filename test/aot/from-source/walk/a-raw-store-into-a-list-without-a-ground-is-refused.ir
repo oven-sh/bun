@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# function halves(kept, count) {
+#   const most = count | 0;
+#   for (let j = 0; j < most; j++) kept[j] = j * 0.5 + 0.25;
+#   return kept;
+# }
+# function fresh() { const made = []; for (let i = 0; i < 4; i++) made.push(9.5 + i); return made; }
+# print(halves(fresh(), 4).join(), halves(fresh(), 6).join());
+# -- end of source
+# `kept` comes from outside and the bound is not its length: in the typed copy the turn asks `key < length` itself and stores raw behind the answer. The store rests on that test.
+# THE LIE, testing=LengthsAskedInTurnsAreTakenForGiven: the turn passes its question over, and the store has no ground to rest on. The verifier of the code refuses a raw store without one wherever the library has not written it.
+# f1 = halves
+# OPTIONS: testing=LengthsAskedInTurnsAreTakenForGiven
+# DIAGNOSTIC: OpcodeNotInForm f1
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: code f1:Body

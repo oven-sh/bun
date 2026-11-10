@@ -64,6 +64,12 @@ import {
 import { launderValues } from "./launder-values.ts";
 import { endHooksInErrors, keepOneScene, printMembersOfObjects, randomFrom } from "./print-members-of-objects.ts";
 import { splitIntoFiles } from "./split-into-files.ts";
+import {
+  comesToTheEndOfTheStack,
+  hearsWhatCodeFromStringsMayHear,
+  refusesOnlyWhatThePageLists,
+  setsThePrototypeOfABuiltIn,
+} from "./what-the-page-declares.ts";
 import { writeOrdinaryScenes } from "./write-ordinary-scenes.ts";
 import { writeScenesOfEverySize } from "./write-scenes-of-every-size.ts";
 
@@ -563,17 +569,7 @@ async function run(
   return results;
 }
 
-// What a compiled program says when it does something that docs/compiler/compatibility.mdx lists, and what a program names when its output depends on such a thing or on the collector.
-// The same lists as in src/runtime/cli/fuzzilli_run_comparison.rs, which has `namesOfDetails` among the names.
-const documentedMessages = [
-  "read-only in a compiled executable",
-  "Attempted to assign to readonly property",
-  "this executable was compiled assuming",
-  "Maximum call stack size exceeded",
-];
-/** Code from a string works in an executable. What the page declares of it, the executable says in these words, and only a program that runs such code may hear them. */
-const documentedMessagesOfCodeFromStrings = ["was not compiled into this executable", "Cannot load"];
-const runsCodeFromStrings = /\beval\b|\bFunction\(|node:vm/;
+// What a program names when its output depends on the collector, on who called, or on where it lies. What the executable may say is in what-the-page-declares.ts.
 const documentedNames = [
   ".caller",
   "WeakRef",
@@ -659,12 +655,10 @@ function differOnlyInDetails(text: string, a: Ended, b: Ended) {
   return left === right;
 }
 
-/** `Reflect.setPrototypeOf()` of a built-in object returns false in an executable, and `Object.setPrototypeOf()` throws. */
 // `bun run` replaces the length and the characters of a string that it knows by their values, also below `delete`.
 const deletesTheLengthOfAString = /\bdelete \(?(?:"[^"\n]*"|t\d+)(?: as any)?\)?\.length\b/;
 const deletesACharacterOfAString =
   /\bdelete \(?"[^"\n]*"(?: as any)?\)?\[\d+\]|\bconst (t\d+) = "[^"\n]*";\n.*\bdelete \(?\1(?: as any)?\)?\[\d+\]/;
-const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
 /**
  * A folder of the program has a tsconfig.json of its own. With `bun run` every file follows the tsconfig.json where Bun is started. In an executable, with --aot or without, each file follows the one nearest
  * to it (docs/compiler/compatibility.mdx, "What differs on purpose"). The two part where either names an option that changes what is written, such as whether fields are assigned or defined, and the one
@@ -2123,7 +2117,6 @@ for (
       plainAgain.get(index)!,
     ];
     const inOrdinary = ordinary.get(index);
-    const says = (message: string) => second.stderr.includes(message) || second.stdout.includes(message);
     let kind =
       referenceAgain.end.startsWith("the process ended") &&
       !wasKilled(referenceAgain) &&
@@ -2141,14 +2134,14 @@ for (
                 ? stopAtAFalseProof.test(second.stderr)
                   ? "false-proof"
                   : "signal"
-                : documentedMessages.some(says) ||
-                    (runsCodeFromStrings.test(texts[index]) && documentedMessagesOfCodeFromStrings.some(says)) ||
-                    (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
+                : refusesOnlyWhatThePageLists(second) ||
+                    hearsWhatCodeFromStringsMayHear(texts[index], second) ||
+                    (!isLimit(second) && comesToTheEndOfTheStack(referenceAgain)) ||
                     documentedNames.some(name => texts[index].includes(name)) ||
                     texts[index].includes(saysThatPlainBunDiffers) ||
                     printsItsStoredOutput(texts[index], second) ||
                     differOnlyInDetails(texts[index], second, referenceAgain) ||
-                    setsThePrototypeOfABuiltIn.test(texts[index]) ||
+                    setsThePrototypeOfABuiltIn(texts[index]) ||
                     deletesTheLengthOfAString.test(texts[index]) ||
                     deletesACharacterOfAString.test(texts[index]) ||
                     (second.end === referenceAgain.end &&

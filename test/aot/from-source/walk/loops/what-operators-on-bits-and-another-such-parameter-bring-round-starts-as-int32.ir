@@ -1,0 +1,13 @@
+# The loop of a gallop: `last = offset; offset = (offset * 2 + 1) | 0; if (offset > most) offset = most;`: through a join an operator on bits and an int32 made in front of the loop come round as `offset`, and `offset` itself as `last`. It was walked four times: `offset` misfitted, then `last`, then the walk that fitted was walked again for the narrower form.
+# Both start as int32: one walk, none undone.
+# -- source: what-operators-on-bits-and-another-such-parameter-bring-round-starts-as-int32.cjs
+# function reach(isFar, length) { let last = 0; let offset = 1; const most = (length - 1) | 0; while (offset < most) { if (isFar(offset)) break; last = offset; offset = (offset * 2 + 1) | 0; if (offset > most) offset = most; } return last * 100 + offset; }
+# const box = {};
+# box[String(['k0'])] = [reach, (at) => at > 4, 8];
+# print(box.k0[0](box.k0[1], box.k0[2]));
+# -- end of source
+# STATISTIC: WalksOfLoopsUndone <= 0
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 307

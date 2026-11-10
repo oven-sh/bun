@@ -1,7 +1,7 @@
 use bun_ast::Kind;
 use bun_core::fmt::QuotedFormatter;
 use bun_sema::atom::Interner;
-use bun_sema::check::aot::Effect;
+use bun_sema::check::aot::{Effect, FileOrigin};
 use bun_sema::fold::{FoldError, FoldErrorKind};
 use bun_sema::hir::{self, File, StmtKind};
 use bun_sema::messages::{self, Category};
@@ -21,6 +21,7 @@ use crate::diagnostic_codes::Code;
 use crate::emit::EmitError;
 use crate::link::LinkError;
 use crate::load::sources::parsed_source;
+use crate::module_keys::type_attribute_of;
 use crate::modules::{FailureEffect, ModuleFailureKind, ModuleGraph, ModuleRef};
 use crate::statistics::{LimitValues, Stage};
 
@@ -93,6 +94,12 @@ impl Diagnostics {
         for failure in modules.errors().iter().chain(modules.failures()) {
             if let ModuleFailureKind::ExportNotFound { exporter, .. } = failure.kind
                 && let ModuleRef::File(exporter) = exporter
+                && parsed_source(view.files(), exporter).is_some_and(|it| it.refused_at.is_some())
+            {
+                continue;
+            }
+            if let ModuleFailureKind::ExportNotFound { exporter, .. } = failure.kind
+                && let ModuleRef::File(exporter) = exporter
                 && failure.effect() == FailureEffect::StopsBuild
                 && syntax_errors_of(view.files().hir(exporter))
                     .next()
@@ -102,6 +109,11 @@ impl Diagnostics {
                     files_with_syntax_errors.push(exporter);
                     self.add_syntax_errors(&mut locator, exporter);
                 }
+                continue;
+            }
+            if failure.effect() == FailureEffect::ThrowsAtSite
+                && view.origin(failure.importer) == FileOrigin::EvaluatedText
+            {
                 continue;
             }
             let span = Some(Span {
@@ -121,8 +133,14 @@ impl Diagnostics {
                     let source = parsed_source(view.files(), failure.importer);
                     let reason = source.and_then(|source| source.parse_failure.as_deref());
                     let path = module_name(view, ModuleRef::File(failure.importer));
-                    let arguments = [path, reason.unwrap_or_default()];
-                    Diagnostic::new(Code::FileIsNotAProgram, None, &arguments)
+                    let reason = reason.unwrap_or_default();
+                    match source.and_then(|source| source.refused_at.as_ref()) {
+                        Some((loader, _)) => {
+                            let kind = type_attribute_of(*loader).as_bytes();
+                            Diagnostic::new(Code::DataFileIsRefused, None, &[path, kind, reason])
+                        }
+                        None => Diagnostic::new(Code::FileIsNotAProgram, None, &[path, reason]),
+                    }
                 }
                 ModuleFailureKind::ExportNotFound { exporter, name } => Diagnostic::new(
                     Code::ExportNotFound,

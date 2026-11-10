@@ -1,14 +1,15 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
-use super::parameters::{find_values_passed_for_pattern, is_exported};
+use super::made_requires::{find_imported_export, may_be_modified, names_own_file, settled_symbol};
+use super::parameters::{ExportedNames, find_values_passed_for_pattern, is_exported};
+use super::touched_exports::{is_only_tested, stands_in_function_with_arguments};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
     write_question_where_file_lies,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, CommonJsVariable, Decl, FnOwner,
-    Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
+    FnOwner, FunctionFlags, Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
 };
 use crate::fold::{
     Constant, FoldedValue, MembersBehindNames, PathBelowFolder, apply_binary, apply_template,
@@ -17,16 +18,20 @@ use crate::fold::{
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, MemberKey,
-    MemberKind, NodeData, PatId, PatKind, PropKey, PropKind, StmtKind, TextOfOtherFile, UnOp,
-    is_proto_setter,
+    MemberKind, NodeData, PatElemId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind,
+    TextOfOtherFile, UnOp, is_proto_setter,
 };
-use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use crate::util::{FxBuild, FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
 use std::cell::{Cell, OnceCell, RefCell};
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::ops::{Deref, Range};
+use std::rc::Rc;
 
 const EXPRESSIONS_FOLLOWED_IN_ANY_FILE: u32 = 4096;
 const MOST_TEXTS_MADE: u32 = 4096;
 const DEEPEST_EXPRESSION: u32 = 64;
+const FEW_ENOUGH_TO_COMPARE: usize = 16;
 
 fn most_expressions_followed(hir: &File<'_>) -> u32 {
     let twice_the_file =
@@ -36,7 +41,7 @@ fn most_expressions_followed(hir: &File<'_>) -> u32 {
 
 const PATH_MODULES: [&[u8]; 4] = [b"path", b"node:path", b"path/posix", b"node:path/posix"];
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Text {
     start: Vec<u8>,
     end: Option<Vec<u8>>,
@@ -133,18 +138,144 @@ impl Held {
     }
 }
 
-type Values = Vec<Held>;
-
-fn add(values: &mut Values, value: Held) {
-    if !values.contains(&value) {
-        values.push(value);
+impl Hash for Held {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Held::Text(text) | Held::Url(text) => text.hash(state),
+            Held::Resolved(text, form) => (text, form).hash(state),
+            Held::Primitive(constant) => {
+                std::mem::discriminant(constant).hash(state);
+                match *constant {
+                    Constant::Undefined | Constant::Null => {}
+                    Constant::Boolean(truth) => truth.hash(state),
+                    Constant::Number(number) => (number + 0.0).to_bits().hash(state),
+                    Constant::String(text) | Constant::BigInt(text) => text.hash(state),
+                }
+            }
+            Held::List(places) => places.hash(state),
+            Held::ListOf(held) | Held::SetOf(held) => held.hash(state),
+            Held::Object(literal) => literal.hash(state),
+            Held::Function(function) => function.hash(state),
+            Held::FunctionOfOs(name) => name.hash(state),
+            Held::PlainPattern { letters, is_at_end } => (letters, is_at_end).hash(state),
+            Held::Data {
+                specifier,
+                path,
+                is_namespace,
+            } => (specifier, path, is_namespace).hash(state),
+            Held::Itself(symbol) | Held::BelowItself(symbol) => symbol.hash(state),
+            Held::Process | Held::Os | Held::Other => {}
+        }
     }
 }
 
+type Values = Vec<Held>;
+
+struct Distinct<T> {
+    all: Vec<T>,
+    places: FxHashMap<u64, usize>,
+}
+
+impl<T: Hash + PartialEq> Distinct<T> {
+    fn new() -> Distinct<T> {
+        Distinct::from(Vec::new())
+    }
+
+    fn add(&mut self, value: T) {
+        if self.all.len() < FEW_ENOUGH_TO_COMPARE {
+            if !self.all.contains(&value) {
+                self.all.push(value);
+            }
+            return;
+        }
+        if self.places.is_empty() {
+            for (place, earlier) in self.all.iter().enumerate() {
+                self.places
+                    .entry(FxBuild.hash_one(earlier))
+                    .or_insert(place);
+            }
+        }
+        let end = self.all.len();
+        let place = *self.places.entry(FxBuild.hash_one(&value)).or_insert(end);
+        if place == end || self.all[place] != value && !self.all.contains(&value) {
+            self.all.push(value);
+        }
+    }
+}
+
+impl<T> From<Vec<T>> for Distinct<T> {
+    fn from(all: Vec<T>) -> Distinct<T> {
+        Distinct {
+            all,
+            places: FxHashMap::default(),
+        }
+    }
+}
+
+impl<T> Deref for Distinct<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Vec<T> {
+        &self.all
+    }
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum Listing {
+    Keys,
+    Values,
+    Entries,
+}
+
+fn count_layers_that_can_be_changed(values: &[Held]) -> u32 {
+    let layers = values.iter().map(|held| match held {
+        Held::List(places) => {
+            let below = places.iter().map(|it| count_layers_that_can_be_changed(it));
+            1 + below.max().unwrap_or(0)
+        }
+        Held::ListOf(held) | Held::SetOf(held) => 1 + count_layers_that_can_be_changed(held),
+        Held::Object(_) => 1,
+        _ => 0,
+    });
+    layers.max().unwrap_or(0)
+}
+
+fn add(values: &mut Distinct<Held>, value: Held) {
+    values.add(value);
+}
+
+fn with(values: Values, value: Held) -> Values {
+    let mut values = Distinct::from(values);
+    add(&mut values, value);
+    values.all
+}
+
+fn with_undefined(values: Values) -> Values {
+    with(values, Held::Primitive(Constant::Undefined))
+}
+
+fn keep_last_of_each_key(written: &mut Vec<(Vec<u8>, ExprId)>) {
+    let mut later = FxHashSet::default();
+    let entries = written.iter().rev();
+    let mut is_last: Vec<bool> = entries.map(|it| later.insert(&it.0[..])).collect();
+    written.retain(|_| is_last.pop().unwrap_or(false));
+}
+
 #[derive(Default)]
-pub(super) struct WrittenNames(OnceCell<Vec<(Atom, ExprId)>>, MembersBehindNames);
+pub(super) struct WrittenNames(
+    OnceCell<Vec<(Atom, ExprId)>>,
+    MembersBehindNames,
+    OnceCell<Vec<u32>>,
+    RefCell<FxHashMap<Atom, Vec<(SymbolId, ExprId)>>>,
+    OnceCell<ExportedNames>,
+);
 
 impl WrittenNames {
+    pub(super) fn exported_names(&self, hir: &File<'_>, bound: &Bound<'_>) -> &ExportedNames {
+        self.4.get_or_init(|| ExportedNames::new(hir, bound))
+    }
+
     fn find(&self, hir: &File<'_>, name: Atom) -> &[(Atom, ExprId)] {
         let all = self.0.get_or_init(|| {
             let exprs = (0..).map(ExprId).zip(hir.exprs.iter());
@@ -179,11 +310,26 @@ impl AskedOfDataFiles {
     }
 }
 
+#[derive(Default)]
+pub(super) struct AskedOfOwnExports(RefCell<Vec<Atom>>);
+
+impl AskedOfOwnExports {
+    pub(super) fn take(&self) -> Vec<Atom> {
+        let mut asked = self.0.take();
+        asked.shared_sort_unstable_by_key(|it| it.0);
+        asked.dedup();
+        asked
+    }
+}
+
 struct Follower<'i, 'a, 's> {
     inputs: &'i ScanInputs<'a, 's>,
     written_names: &'i WrittenNames,
     asked_of_data_files: &'i AskedOfDataFiles,
     asked_of_other_files: Option<&'i AskedOfDataFiles>,
+    asked_of_own_exports: Option<&'i AskedOfOwnExports>,
+    takes_all_as_written: bool,
+    keeps_what_is_known: bool,
     has_read_data_file: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
@@ -195,10 +341,18 @@ struct Follower<'i, 'a, 's> {
     depth: u32,
     follows_key: bool,
     folder: Folder,
-    open_parameters: Vec<ExprId>,
+    open_parameters: Vec<OpenParameter>,
     stand_in: Option<SymbolId>,
+    property_of_stand_in: Option<Atom>,
     calls_of_resolvers: RefCell<FxHashMap<Vec<u8>, CallsUnderName>>,
-    objects_asked_whether_their_functions_see_them: FxHashMap<ExprId, bool>,
+    objects_asked_whether_their_functions_see_them:
+        FxHashMap<ExprId, Option<Rc<FxHashSet<Vec<u8>>>>>,
+    asked_who_takes: FxHashMap<(ExprId, u32), bool>,
+    asked_while_open: Vec<(ExprId, u32)>,
+    shallowest_being_asked: FxHashMap<ExprId, u32>,
+    stored_under_keys: FxHashMap<ExprId, Vec<(Vec<u8>, ExprId)>>,
+    stores_known: FxHashSet<(ExprId, ExprId)>,
+    functions_whose_answers_are_asked: Vec<(FnId, u32)>,
 }
 
 #[derive(Default)]
@@ -213,6 +367,7 @@ const STAND_IN: &[u8] = b"\0";
 pub(super) enum Folder {
     OfFile,
     WorkingDirectory,
+    OfCaller,
 }
 
 pub(super) struct Found {
@@ -235,6 +390,9 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             written_names,
             asked_of_data_files,
             asked_of_other_files: None,
+            asked_of_own_exports: None,
+            takes_all_as_written: false,
+            keeps_what_is_known: false,
             has_read_data_file: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
@@ -248,8 +406,15 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             folder,
             open_parameters: Vec::new(),
             stand_in: None,
+            property_of_stand_in: None,
             calls_of_resolvers: RefCell::default(),
             objects_asked_whether_their_functions_see_them: FxHashMap::default(),
+            asked_who_takes: FxHashMap::default(),
+            asked_while_open: Vec::new(),
+            shallowest_being_asked: FxHashMap::default(),
+            stored_under_keys: FxHashMap::default(),
+            stores_known: FxHashSet::default(),
+            functions_whose_answers_are_asked: Vec::new(),
         }
     }
 }
@@ -308,10 +473,91 @@ pub(super) fn find_alternatives(
     argument: ExprId,
     folder: Folder,
     asked_of_other_files: Option<&AskedOfDataFiles>,
+    asked_of_own_exports: Option<&AskedOfOwnExports>,
 ) -> Option<Found> {
     let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
     follower.asked_of_other_files = asked_of_other_files;
-    find_alternatives_with(follower, argument)
+    follower.asked_of_own_exports = asked_of_own_exports;
+    find_alternatives_with(&mut follower, argument)
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct OpenParameter {
+    pub(super) mention: ExprId,
+    pub(super) taken_out: Option<Atom>,
+}
+
+pub(super) fn find_known_alternatives(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    asked_of_data_files: &AskedOfDataFiles,
+    argument: ExprId,
+) -> (Option<Found>, Option<OpenParameter>) {
+    let folder = Folder::OfFile;
+    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
+    follower.keeps_what_is_known = true;
+    let found = find_alternatives_with(&mut follower, argument);
+    (found, follower.open_parameters.first().copied())
+}
+
+pub(super) fn find_alternatives_beside_caller(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    asked_of_data_files: &AskedOfDataFiles,
+    argument: ExprId,
+    mention: ExprId,
+    property: Option<Atom>,
+) -> Option<Found> {
+    let Binding::Symbol(parameter) = inputs.bound.binding(mention) else {
+        return None;
+    };
+    let folder = Folder::OfCaller;
+    let mut follower = Follower::new(inputs, written_names, asked_of_data_files, false, folder);
+    follower.stand_in = Some(parameter);
+    follower.property_of_stand_in = property;
+    follower.keeps_what_is_known = true;
+    find_alternatives_with(&mut follower, argument)
+}
+
+pub(super) fn find_elements_of_list_that_nothing_changes(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    list: ExprId,
+) -> Option<IdList<ExprId>> {
+    let &ScanInputs { hir, bound, .. } = inputs;
+    let list = hir.skip_type_assertions(list);
+    if let ExprKind::Array(elements) = hir[list].kind {
+        return Some(elements);
+    }
+    let holder = settled_symbol(hir, bound, list)?;
+    let BindingInitializer::Expression(written) = bound.binding_initializer(hir, holder) else {
+        return None;
+    };
+    let ExprKind::Array(elements) = hir[hir.skip_type_assertions(written)].kind else {
+        return None;
+    };
+    let asked = AskedOfDataFiles::default();
+    let mut follower = Follower::new(inputs, written_names, &asked, false, Folder::OfFile);
+    let held = follower.values_of_argument(list)?;
+    matches!(&held[..], [Held::List(places)] if places.len() == elements.len()).then_some(elements)
+}
+
+pub(super) fn find_names_as_written(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    argument: ExprId,
+) -> Vec<Atom> {
+    let asked = AskedOfDataFiles::default();
+    let mut follower = Follower::new(inputs, written_names, &asked, false, Folder::OfFile);
+    follower.takes_all_as_written = true;
+    let found = find_alternatives_with(&mut follower, argument);
+    let written = found.iter().flat_map(|it| it.alternatives.iter());
+    written
+        .filter_map(|it| match *it {
+            ImportSpecifier::Constant(name) => Some(name),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(super) struct PathAroundParameter {
@@ -329,13 +575,13 @@ pub(super) fn find_path_around_parameter(
     let asked = AskedOfDataFiles::default();
     let mut follower = Follower::new(inputs, written_names, &asked, false, Folder::OfFile);
     follower.values_of_argument(path);
-    let &mention = follower.open_parameters.first()?;
+    let mention = follower.open_parameters.first()?.mention;
     let Binding::Symbol(parameter) = inputs.bound.binding(mention) else {
         return None;
     };
     let mut follower = Follower::new(inputs, written_names, &asked, false, Folder::OfFile);
     follower.stand_in = Some(parameter);
-    let found = find_alternatives_with(follower, path)?;
+    let found = find_alternatives_with(&mut follower, path)?;
     let (&[ImportSpecifier::Constant(text)], None, false) = (
         &found.alternatives[..],
         found.resolved_form,
@@ -357,7 +603,7 @@ pub(super) fn find_path_around_parameter(
     })
 }
 
-fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) -> Option<Found> {
+fn find_alternatives_with(follower: &mut Follower<'_, '_, '_>, argument: ExprId) -> Option<Found> {
     let inputs = follower.inputs;
     let values = follower.values_of_argument(argument)?;
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
@@ -374,7 +620,7 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
             Held::Text(text) => (text, None),
             Held::Resolved(text, form) => (text, Some(form)),
             Held::Url(text) => (text, Some(ResolvedForm::UrlObject)),
-            Held::Primitive(_) | Held::Other => continue,
+            Held::Primitive(_) | Held::Function(_) | Held::Other => continue,
             _ => return None,
         };
         texts.push(text);
@@ -411,6 +657,9 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
                 return None;
             }
         }
+        if follower.folder == Folder::OfCaller && text.start.contains(&STAND_IN[0]) {
+            continue;
+        }
         alternatives.push((text.start, text.end));
     }
     alternatives.shared_sort_unstable();
@@ -435,16 +684,18 @@ impl Follower<'_, '_, '_> {
     fn values_of_argument(&mut self, argument: ExprId) -> Option<Values> {
         loop {
             let values = self.values_of(argument)?;
-            let known_before = self.not_kept_as_written.len();
+            let known_before = (self.not_kept_as_written.len(), self.stores_known.len());
             while let Some(symbol) = self.unchecked.pop() {
                 if !self.is_kept_as_written(symbol) {
                     self.not_kept_as_written.insert(symbol);
                 }
             }
-            if self.not_kept_as_written.len() == known_before {
+            if (self.not_kept_as_written.len(), self.stores_known.len()) == known_before {
                 return Some(values);
             }
             self.kept_as_written.clear();
+            self.asked_who_takes.clear();
+            self.objects_asked_whether_their_functions_see_them.clear();
         }
     }
 
@@ -627,6 +878,22 @@ impl Follower<'_, '_, '_> {
         if self.follows_key && is_free_name(hir, bound, e, &[known::undefined]) {
             return Some(vec![Held::Primitive(Constant::Undefined)]);
         }
+        let is_born_here = matches!(
+            expr_kind(hir, e)?,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Array(_) | ExprKind::Object(_)
+        );
+        let values = self.values_of_kind(e)?;
+        let layers = match is_born_here {
+            true => count_layers_that_can_be_changed(&values),
+            false => 0,
+        };
+        let is_as_written =
+            self.takes_all_as_written || (0..layers).all(|below| self.asks_who_takes(e, below));
+        is_as_written.then_some(values)
+    }
+
+    fn values_of_kind(&mut self, e: ExprId) -> Option<Values> {
+        let &ScanInputs { hir, atoms, .. } = self.inputs;
         match expr_kind(hir, e)? {
             ExprKind::Template { exprs } => self.values_of_template(exprs),
             ExprKind::Binary { op, left, right } => self.values_of_binary(op, left, right),
@@ -668,17 +935,25 @@ impl Follower<'_, '_, '_> {
         }
     }
 
+    fn values_of_alternative(&mut self, e: ExprId) -> Option<Values> {
+        let values = self.values_of(e);
+        match self.keeps_what_is_known {
+            true => Some(values.unwrap_or_default()),
+            false => values,
+        }
+    }
+
     fn values_of_any(&mut self, written: impl IntoIterator<Item = ExprId>) -> Option<Values> {
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for e in written {
             if self.is_dead(e) {
                 continue;
             }
-            for value in self.values_of(e)? {
+            for value in self.values_of_alternative(e)? {
                 add(&mut values, value);
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn names_working_directory(&self, e: ExprId) -> bool {
@@ -703,8 +978,10 @@ impl Follower<'_, '_, '_> {
 
     fn names_own_directory(&self, e: ExprId) -> bool {
         let &ScanInputs { hir, bound, .. } = self.inputs;
-        if self.folder == Folder::WorkingDirectory {
-            return self.names_working_directory(e);
+        match self.folder {
+            Folder::OfFile => {}
+            Folder::WorkingDirectory => return self.names_working_directory(e),
+            Folder::OfCaller => return false,
         }
         if is_free_common_js(hir, bound, e, CommonJsVariable::Dirname) {
             return !may_be_modified(hir, bound, CommonJsVariable::Dirname);
@@ -779,7 +1056,7 @@ impl Follower<'_, '_, '_> {
         let mut joined = vec![Text::whole(b"")];
         for (index, part) in parts.iter().enumerate() {
             self.pay_for_pairs(joined.len(), part.len())?;
-            let mut longer: Vec<Text> = Vec::with_capacity(joined.len() * part.len());
+            let mut longer = Distinct::from(Vec::with_capacity(joined.len() * part.len()));
             for (start, next) in joined
                 .iter()
                 .flat_map(|it| part.iter().map(move |n| (it, n)))
@@ -796,11 +1073,9 @@ impl Follower<'_, '_, '_> {
                 if text.len() > max_bytes {
                     return None;
                 }
-                if !longer.contains(&text) {
-                    longer.push(text);
-                }
+                longer.add(text);
             }
-            joined = longer;
+            joined = longer.all;
         }
         Some(joined.into_iter().map(Held::Text).collect())
     }
@@ -838,14 +1113,15 @@ impl Follower<'_, '_, '_> {
             }
             BinOp::Comma => self.values_of(right),
             BinOp::Or | BinOp::And | BinOp::Nullish => {
-                let mut values = self.values_of(left)?;
+                let mut values = self.values_of_alternative(left)?;
                 values.retain(|value| self.may_be_result_of_left(op, value));
+                let mut values = Distinct::from(values);
                 if !self.is_dead(right) {
-                    for value in self.values_of(right)? {
+                    for value in self.values_of_alternative(right)? {
                         add(&mut values, value);
                     }
                 }
-                Some(values)
+                Some(values.all)
             }
             _ => None,
         }
@@ -871,7 +1147,7 @@ impl Follower<'_, '_, '_> {
 
     fn add_values(&self, left: &Values, right: &Values) -> Option<Values> {
         let &ScanInputs { atoms, fold, .. } = self.inputs;
-        let mut sums = Values::new();
+        let mut sums = Distinct::new();
         self.pay_for_pairs(left.len(), right.len())?;
         for (left, right) in left.iter().flat_map(|l| right.iter().map(move |r| (l, r))) {
             let sum = match (left, right) {
@@ -889,7 +1165,7 @@ impl Follower<'_, '_, '_> {
                 add(&mut sums, value);
             }
         }
-        Some(sums)
+        Some(sums.all)
     }
 
     fn values_of_list(&mut self, items: IdList<ExprId>) -> Option<Values> {
@@ -911,11 +1187,11 @@ impl Follower<'_, '_, '_> {
         if !holds_spread {
             return Some(vec![Held::List(places)]);
         }
-        let mut held = Values::new();
+        let mut held = Distinct::new();
         for value in places.into_iter().flatten() {
             add(&mut held, value);
         }
-        Some(vec![Held::ListOf(held)])
+        Some(vec![Held::ListOf(held.all)])
     }
 
     fn is_construction_of_set(&self, call: Call) -> bool {
@@ -938,15 +1214,26 @@ impl Follower<'_, '_, '_> {
 
     fn mentions_of(&self, symbol: SymbolId) -> Vec<ExprId> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
-        let written = self.written_names.find(hir, bound.symbol(symbol).name);
-        let written = written.iter().map(|it| it.1);
-        written
-            .filter(|&e| {
-                bound.is_evaluated_ident(e)
-                    && bound.binding(e) == Binding::Symbol(symbol)
-                    && !self.is_dead(e)
-            })
-            .collect()
+        let name = bound.symbol(symbol).name;
+        let mut mentions_by_name = self.written_names.3.borrow_mut();
+        let mentions = mentions_by_name.entry(name).or_insert_with(|| {
+            let written = self.written_names.find(hir, name).iter().map(|it| it.1);
+            let mut mentions: Vec<(SymbolId, ExprId)> = written
+                .filter_map(|e| match bound.binding(e) {
+                    Binding::Symbol(mentioned)
+                        if bound.is_evaluated_ident(e) && !self.is_dead(e) =>
+                    {
+                        Some((mentioned, e))
+                    }
+                    _ => None,
+                })
+                .collect();
+            mentions.sort_unstable();
+            mentions
+        });
+        let first = mentions.partition_point(|it| it.0 < symbol);
+        let of_symbol = mentions[first..].iter().take_while(|it| it.0 == symbol);
+        of_symbol.map(|it| it.1).collect()
     }
 
     fn outermost_cast(&self, mut e: ExprId) -> ExprId {
@@ -970,7 +1257,12 @@ impl Follower<'_, '_, '_> {
             return None;
         }
         if self.stand_in == Some(symbol) {
-            return Some(vec![Held::Text(Text::whole(STAND_IN))]);
+            let text = match self.folder {
+                Folder::OfFile | Folder::WorkingDirectory => Text::whole(STAND_IN),
+                Folder::OfCaller if self.property_of_stand_in.is_some() => return None,
+                Folder::OfCaller => url_of_caller(),
+            };
+            return Some(vec![Held::Text(text)]);
         }
         if self.variables_in_progress.contains(&symbol) {
             return Some(vec![Held::Itself(symbol)]);
@@ -987,11 +1279,18 @@ impl Follower<'_, '_, '_> {
                     written.map(|it| it.1).collect()
                 };
                 let decisions = self.inputs.decisions;
-                match find_values_passed_for_pattern(hir, bound, decisions, name, &find_written) {
+                match find_values_passed_for_pattern(
+                    hir,
+                    bound,
+                    decisions,
+                    name,
+                    &find_written,
+                    false,
+                ) {
                     Some((passed, path, is_left_out)) => {
                         self.values_of_any(passed).and_then(|mut values| {
                             if is_left_out {
-                                add(&mut values, Held::Primitive(Constant::Undefined));
+                                values = with_undefined(values);
                             }
                             for &key in &path {
                                 let key = self.inputs.atoms.bytes(key).to_vec();
@@ -1003,7 +1302,10 @@ impl Follower<'_, '_, '_> {
                     None => {
                         let handed = self.values_handed_by_walk(symbol);
                         if handed.is_none() {
-                            self.open_parameters.push(name);
+                            self.open_parameters.push(OpenParameter {
+                                mention: name,
+                                taken_out: None,
+                            });
                         }
                         handed
                     }
@@ -1043,8 +1345,9 @@ impl Follower<'_, '_, '_> {
         };
         self.variables_in_progress.pop();
         let values = close_over_itself(symbol, values?)?;
-        let is_as_written =
-            !values.iter().any(Held::can_be_changed) || self.take_as_kept_as_written(symbol);
+        let is_as_written = self.takes_all_as_written
+            || !values.iter().any(Held::can_be_changed)
+            || self.take_as_kept_as_written(symbol);
         is_as_written.then_some(values)
     }
 
@@ -1056,13 +1359,27 @@ impl Follower<'_, '_, '_> {
                 | BindingStability::Stored
                 | BindingStability::NotInitializedOnce
         );
-        let &[Decl::Var(pattern) | Decl::Require(pattern)] = bound.symbol(symbol).decls else {
-            return None;
+        let (pattern, declared_again) = match *bound.symbol(symbol).decls {
+            [Decl::Var(pattern) | Decl::Require(pattern)] => (pattern, &[][..]),
+            [Decl::Var(pattern), ref again @ ..] => (pattern, again),
+            _ => return None,
         };
-        if !is_followed {
+        let mut redeclared = bound.runtime.redeclared_commonjs_variables().iter();
+        let is_filled_by_more_than_is_written = redeclared.any(|it| it.0 == symbol)
+            || bound.is_appended_symbol(symbol)
+            || bound.runtime.is_stored_by_function_of_block(symbol);
+        if !is_followed || is_filled_by_more_than_is_written {
             return None;
         }
-        let mut values = self.values_of_declaration(symbol, pattern)?;
+        let mut values = Distinct::from(self.values_of_declaration(symbol, pattern)?);
+        for declaration in declared_again {
+            let &Decl::Var(pattern) = declaration else {
+                return None;
+            };
+            for value in self.values_of_declaration(symbol, pattern)? {
+                add(&mut values, value);
+            }
+        }
         if bound.binding_kind(symbol) == BindingKind::Var {
             add(&mut values, Held::Primitive(Constant::Undefined));
         }
@@ -1081,7 +1398,7 @@ impl Follower<'_, '_, '_> {
             match store.kind {
                 StoreKind::Assign
                 | StoreKind::CompoundAssign(BinOp::Or | BinOp::And | BinOp::Nullish) => {
-                    for value in self.values_of(value)? {
+                    for value in self.values_of_alternative(value)? {
                         add(&mut values, value);
                     }
                 }
@@ -1089,10 +1406,22 @@ impl Follower<'_, '_, '_> {
                 _ => return None,
             }
         }
+        if !declared_again.is_empty() && !appended.is_empty() {
+            return None;
+        }
         appended.shared_sort_unstable_by_key(|it| hir[it.0].pos);
         for (assignment, value) in appended {
             if !self.runs_once_for_each_binding(assignment, symbol, pattern) {
-                return None;
+                let mut open_at_end = Distinct::new();
+                for held in values.all {
+                    let Held::Text(mut text) = held else {
+                        return None;
+                    };
+                    text.push(&Text::unknown());
+                    add(&mut open_at_end, Held::Text(text));
+                }
+                values = open_at_end;
+                continue;
             }
             let value = self.values_of(value)?;
             let before = values.len();
@@ -1101,7 +1430,7 @@ impl Follower<'_, '_, '_> {
             }
             self.pay_for(values.len() - before)?;
         }
-        let values = self.add_pushed_values(symbol, pattern, values)?;
+        let values = self.add_pushed_values(symbol, pattern, values.all)?;
         self.add_values_added_to_set(symbol, values)
     }
 
@@ -1117,8 +1446,13 @@ impl Follower<'_, '_, '_> {
                         is_await: false,
                         ..
                     } if left == statement => return self.values_of_elements(expr),
+                    StmtKind::ForIn { left, .. }
+                        if left == statement && hir[declaration].init.is_some() =>
+                    {
+                        return None;
+                    }
                     StmtKind::ForIn { left, expr, .. } if left == statement => {
-                        return match self.values_of_listing(expr, true)?.pop() {
+                        return match self.values_of_listing(expr, Listing::Keys)?.pop() {
                             Some(Held::ListOf(keys)) => Some(keys),
                             _ => None,
                         };
@@ -1132,12 +1466,33 @@ impl Follower<'_, '_, '_> {
                 None => Some(vec![Held::Primitive(Constant::Undefined)]),
             };
         }
+        if let PatParent::Elem(whole, element) = bound.pat_parent[pattern.idx()] {
+            let PatParent::Var(_) = bound.pat_parent[whole.idx()] else {
+                return None;
+            };
+            let lists = self.values_of_declaration(symbol, whole)?;
+            return self.values_at_place_of(whole, element, lists);
+        }
         let BindingInitializer::PatternProperty { source, path } =
             bound.binding_initializer(hir, symbol)
         else {
             return None;
         };
-        let mut values = self.values_of(source)?;
+        if let (Some(parameter), &[name]) = (self.stand_in, &path[..])
+            && self.property_of_stand_in == Some(name)
+            && bound.binding(source) == Binding::Symbol(parameter)
+            && bound.stores_to(symbol).is_empty()
+        {
+            return Some(vec![Held::Text(url_of_caller())]);
+        }
+        let opened = self.open_parameters.len();
+        let values = self.values_of(source);
+        if let (&[name], Some(open)) = (&path[..], self.open_parameters.get_mut(opened))
+            && open.mention == source
+        {
+            open.taken_out = Some(name);
+        }
+        let mut values = values?;
         for &name in &path {
             let key = self.inputs.atoms.bytes(name).to_vec();
             values = self.read_member(&values, Some(&[key]), Chain::No)?;
@@ -1145,19 +1500,47 @@ impl Follower<'_, '_, '_> {
         Some(values)
     }
 
+    fn values_at_place_of(
+        &self,
+        whole: PatId,
+        element: PatElemId,
+        lists: Values,
+    ) -> Option<Values> {
+        let hir = self.inputs.hir;
+        let PatKind::Array(elements) = hir[whole].kind else {
+            return None;
+        };
+        let position = elements.iter().position(|it| it == element)?;
+        if hir[element].is_rest || hir[element].default.is_some() {
+            return None;
+        }
+        let mut values = Distinct::new();
+        for list in lists {
+            let Held::List(places) = list else {
+                return None;
+            };
+            match places.into_iter().nth(position) {
+                Some(place) => place.into_iter().for_each(|it| add(&mut values, it)),
+                None => add(&mut values, Held::Primitive(Constant::Undefined)),
+            }
+        }
+        Some(values.all)
+    }
+
     fn values_of_elements(&mut self, list: ExprId) -> Option<Values> {
-        let mut elements = Values::new();
+        let mut elements = Distinct::new();
         for value in self.values_of(list)? {
             let held = match value {
                 Held::List(places) => places.into_iter().flatten().collect(),
                 Held::ListOf(held) | Held::SetOf(held) => held,
+                Held::Primitive(Constant::Undefined | Constant::Null) => continue,
                 _ => return None,
             };
             for value in held {
                 add(&mut elements, value);
             }
         }
-        Some(elements)
+        Some(elements.all)
     }
 
     fn values_handed_by_walk(&mut self, parameter: SymbolId) -> Option<Values> {
@@ -1165,8 +1548,13 @@ impl Follower<'_, '_, '_> {
         let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
             return None;
         };
-        let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-            return None;
+        let (id, taken_out_of) = match bound.pat_parent[pattern.idx()] {
+            PatParent::Param(id) => (id, None),
+            PatParent::Elem(whole, element) => match bound.pat_parent[whole.idx()] {
+                PatParent::Param(id) => (id, Some((whole, element))),
+                _ => return None,
+            },
+            _ => return None,
         };
         let function = bound.param_fn[id.idx()];
         let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
@@ -1188,9 +1576,13 @@ impl Follower<'_, '_, '_> {
         if !holds_what_it_is_handed || hir.ids(call.args).next() != Some(written) {
             return None;
         }
-        match position {
-            0 => self.values_of_elements(list),
-            2 => self.values_of(list),
+        match (position, taken_out_of) {
+            (0, None) => self.values_of_elements(list),
+            (0, Some((whole, element))) => {
+                let elements = self.values_of_elements(list)?;
+                self.values_at_place_of(whole, element, elements)
+            }
+            (2, None) => self.values_of(list),
             _ => None,
         }
     }
@@ -1247,13 +1639,9 @@ impl Follower<'_, '_, '_> {
         let (list, name) = self.find_walk_of_list(call)?;
         match self.inputs.atoms.bytes(name) {
             b"filter" => Some(vec![Held::ListOf(self.values_of_elements(list)?)]),
-            b"find" | b"findLast" => {
-                let mut elements = self.values_of_elements(list)?;
-                add(&mut elements, Held::Primitive(Constant::Undefined));
-                Some(elements)
-            }
+            b"find" | b"findLast" => Some(with_undefined(self.values_of_elements(list)?)),
             b"map" => {
-                let mut made = Values::new();
+                let mut made = Distinct::new();
                 for maker in self.values_of(self.inputs.hir.ids(call.args).next()?)? {
                     let Held::Function(maker) = maker else {
                         return None;
@@ -1262,13 +1650,13 @@ impl Follower<'_, '_, '_> {
                         add(&mut made, value);
                     }
                 }
-                Some(vec![Held::ListOf(made)])
+                Some(vec![Held::ListOf(made.all)])
             }
             _ => None,
         }
     }
 
-    fn find_listing_of_object(&self, call: Call) -> Option<(ExprId, bool)> {
+    fn find_listing_of_object(&self, call: Call) -> Option<(ExprId, Listing)> {
         let &ScanInputs {
             hir, bound, atoms, ..
         } = self.inputs;
@@ -1277,33 +1665,41 @@ impl Follower<'_, '_, '_> {
         else {
             return None;
         };
-        let lists_keys = match atoms.bytes(name) {
-            b"keys" => true,
-            b"values" => false,
+        let (lister, listing) = match atoms.bytes(name) {
+            b"keys" | b"getOwnPropertyNames" => (known::Object, Listing::Keys),
+            b"ownKeys" => (atoms.intern(b"Reflect"), Listing::Keys),
+            b"values" => (known::Object, Listing::Values),
+            b"entries" => (known::Object, Listing::Entries),
             _ => return None,
         };
         let holder = hir.skip_type_assertions(holder);
         let mut arguments = hir.ids(call.args);
         let table = arguments.next().filter(|_| arguments.next().is_none())?;
-        (call.chain == Chain::No && is_free_name(hir, bound, holder, &[known::Object]))
-            .then_some((table, lists_keys))
+        (call.chain != Chain::Start && is_free_name(hir, bound, holder, &[lister]))
+            .then_some((table, listing))
     }
 
-    fn values_of_listing(&mut self, table: ExprId, lists_keys: bool) -> Option<Values> {
-        let mut listed = Values::new();
+    fn values_of_listing(&mut self, table: ExprId, listing: Listing) -> Option<Values> {
+        let mut listed = Distinct::new();
         for table in self.values_of(table)? {
-            let Held::Object(literal) = table else {
-                return None;
+            let literal = match table {
+                Held::Object(literal) => literal,
+                Held::Primitive(Constant::Undefined | Constant::Null) => continue,
+                _ => return None,
             };
             for (key, value) in self.properties_of(literal)? {
-                let held = match lists_keys {
-                    true => vec![Held::Text(Text::whole(&key))],
-                    false => self.values_of(value)?,
+                let held = match listing {
+                    Listing::Keys => vec![Held::Text(Text::whole(&key))],
+                    Listing::Values => self.values_of(value)?,
+                    Listing::Entries => {
+                        let key = vec![Held::Text(Text::whole(&key))];
+                        vec![Held::List(vec![key, self.values_of(value)?])]
+                    }
                 };
                 held.into_iter().for_each(|it| add(&mut listed, it));
             }
         }
-        Some(vec![Held::ListOf(listed)])
+        Some(vec![Held::ListOf(listed.all)])
     }
 
     fn runs_once_for_each_binding(&self, code: ExprId, symbol: SymbolId, pattern: PatId) -> bool {
@@ -1315,6 +1711,10 @@ impl Follower<'_, '_, '_> {
             BindingKind::Var => None,
             _ => Some(bound.parent_of_stmt(bound.var_stmt[declaration.idx()])),
         };
+        if matches!(holder, Some(Parent::Stmt(head)) if matches!(hir[head].kind, StmtKind::For { .. }))
+        {
+            return false;
+        }
         let mut e = code;
         let mut statement = loop {
             match bound.parent_of_expr(e) {
@@ -1398,9 +1798,10 @@ impl Follower<'_, '_, '_> {
         if !self.is_initialized_with_set(symbol) {
             return Some(values);
         }
-        let [Held::SetOf(mut held)] = <[Held; 1]>::try_from(values).ok()? else {
+        let [Held::SetOf(held)] = <[Held; 1]>::try_from(values).ok()? else {
             return None;
         };
+        let mut held = Distinct::from(held);
         let hir = self.inputs.hir;
         for mention in self.mentions_of(symbol) {
             let Some(call) = self.find_add(mention) else {
@@ -1421,7 +1822,7 @@ impl Follower<'_, '_, '_> {
                 add(&mut held, value);
             }
         }
-        Some(vec![Held::SetOf(held)])
+        Some(vec![Held::SetOf(held.all)])
     }
 
     fn is_initialized_with_list(&self, symbol: SymbolId) -> bool {
@@ -1435,11 +1836,12 @@ impl Follower<'_, '_, '_> {
         &mut self,
         symbol: SymbolId,
         pattern: PatId,
-        mut values: Values,
+        values: Values,
     ) -> Option<Values> {
         if !self.is_initialized_with_list(symbol) {
             return Some(values);
         }
+        let mut values = Distinct::from(values);
         for mention in self.mentions_of(symbol) {
             let Some((pushing, call)) = self.find_push(mention) else {
                 continue;
@@ -1459,7 +1861,7 @@ impl Follower<'_, '_, '_> {
                 add(&mut values, Held::List(longer));
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn is_exported(&self, symbol: SymbolId) -> bool {
@@ -1482,11 +1884,45 @@ impl Follower<'_, '_, '_> {
         let mentions = self.mentions_of(symbol);
         !self.is_exported(symbol)
             && mentions.into_iter().all(|mention| {
-                bound.is_store_target(mention)
-                    || self.find_push(mention).is_some() && self.is_initialized_with_list(symbol)
-                    || self.find_add(mention).is_some() && self.is_initialized_with_set(symbol)
-                    || self.keeps_as_written(mention)
+                bound
+                    .dynamic_lookup_scope(NodeData::Expr(mention))
+                    .is_none()
+                    && (self.stores_without_handing_on(mention)
+                        || self.find_push(mention).is_some()
+                            && self.is_initialized_with_list(symbol)
+                        || self.find_add(mention).is_some() && self.is_initialized_with_set(symbol)
+                        || self.keeps_as_written(mention))
             })
+    }
+
+    fn stores_without_handing_on(&mut self, mention: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        if !bound.is_store_target(mention) {
+            return false;
+        }
+        match bound.parent_of_expr(self.outermost_cast(mention)) {
+            Parent::Expr(assignment)
+                if matches!(
+                    hir[assignment].kind,
+                    ExprKind::Assign {
+                        op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
+                        ..
+                    }
+                ) =>
+            {
+                self.keeps_as_written(assignment)
+            }
+            _ => true,
+        }
+    }
+
+    fn stands_in_options_of_resolve(&self, property: PropId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let options = self.outermost_cast(bound.prop_owner[property.idx()]);
+        matches!(bound.parent_of_expr(options), Parent::Expr(call)
+            if matches!(call_site_kind(hir, bound, call), Some(ImportSiteKind::RequireResolve(_)))
+                && matches!(hir[call].kind, ExprKind::Call(call)
+                    if hir[call].args.len() == 2 && hir.id_at(hir[call].args, 1) == options))
     }
 
     fn holds_what_cannot_be_changed(&mut self, e: ExprId) -> bool {
@@ -1501,18 +1937,21 @@ impl Follower<'_, '_, '_> {
             Parent::Expr(above) => above,
             Parent::VarInit(declaration) => {
                 let pattern = hir[declaration].pat;
-                return matches!(hir[pattern].kind, PatKind::Ident(_))
-                    && match bound.initialized_binding(pattern) {
-                        Binding::Symbol(holder) => {
-                            self.take_as_kept_as_written(holder)
-                                && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
-                                && !bound.is_visible_to_eval(holder)
-                        }
-                        _ => false,
-                    };
+                return match hir[pattern].kind {
+                    PatKind::Ident(_) => {
+                        self.asks_name(pattern, bound.initialized_binding(pattern))
+                    }
+                    _ => self.asks_names_of(pattern, Decl::Var, u32::MAX),
+                };
             }
+            Parent::FnBody(function) => return self.is_answer_only_tested(function),
+            Parent::Prop(property) => return self.stands_in_options_of_resolve(property),
             Parent::Stmt(statement) => {
                 return match hir[statement].kind {
+                    StmtKind::Return(_) => match self.find_function_around(statement) {
+                        Some(function) => self.is_answer_only_tested(function),
+                        None => false,
+                    },
                     StmtKind::Expr(_)
                     | StmtKind::If { .. }
                     | StmtKind::While { .. }
@@ -1534,10 +1973,15 @@ impl Follower<'_, '_, '_> {
                 let member = self.outermost_cast(above);
                 let is_deleted = matches!(bound.parent_of_expr(member), Parent::Expr(user)
                     if matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-                if is_deleted || bound.get_assignment_target(hir, member).is_some() {
+                let is_tag = matches!(bound.parent_of_expr(member), Parent::Expr(user)
+                    if matches!(hir[user].kind, ExprKind::TaggedTemplate(call) if hir[call].callee == member));
+                if bound.get_assignment_target(hir, member).is_some() {
+                    return self.joins_what_is_stored(above, member);
+                }
+                if is_deleted || is_tag {
                     return false;
                 }
-                match self.find_call_of_member(above) {
+                match self.find_call_of_member(member) {
                     Some(_) => {
                         self.asks_list_without_changing_it(above)
                             || self.calls_function_that_cannot_see_its_holder(above)
@@ -1571,15 +2015,786 @@ impl Follower<'_, '_, '_> {
                     && elements.is_some_and(|it| !it.iter().any(Held::can_be_changed))
             }
             ExprKind::Call(call) if self.find_listing_of_object(hir[call]).is_some() => {
+                let lists_pairs = matches!(
+                    self.find_listing_of_object(hir[call]),
+                    Some((_, Listing::Entries))
+                );
                 let listed = self.values_of_elements(above);
-                listed.is_some_and(|it| !it.iter().any(Held::can_be_changed))
+                listed.is_some_and(|listed| {
+                    listed.iter().all(|held| match held {
+                        Held::List(pair) if lists_pairs => {
+                            !pair.iter().flatten().any(Held::can_be_changed)
+                        }
+                        held => !held.can_be_changed(),
+                    })
+                })
             }
-            ExprKind::Call(_) | ExprKind::ImportCall { .. } => {
+            ExprKind::Call(call) if hir[call].callee == e => true,
+            ExprKind::Call(call) => {
                 call_site_kind(hir, bound, above).is_some()
-                    && !matches!(hir[above].kind, ExprKind::Call(call) if hir[call].callee == e)
+                    || self.asks_parameter_that_takes(e, hir[call], u32::MAX)
+            }
+            ExprKind::ImportCall { .. } => call_site_kind(hir, bound, above).is_some(),
+            _ => false,
+        }
+    }
+
+    fn asks_who_takes(&mut self, e: ExprId, layers: u32) -> bool {
+        let e = self.outermost_cast(e);
+        if let Some(&known) = self.asked_who_takes.get(&(e, layers)) {
+            return known;
+        }
+        let shallowest = self.shallowest_being_asked.get(&e).copied();
+        if shallowest.is_some_and(|open| open < layers) {
+            return false;
+        }
+        self.asked_who_takes.insert((e, layers), true);
+        let begun = self.asked_while_open.len();
+        self.asked_while_open.push((e, layers));
+        self.shallowest_being_asked.insert(e, layers);
+        let is_asked = self.asks_who_stands_around(e, layers);
+        match shallowest {
+            Some(open) => self.shallowest_being_asked.insert(e, open),
+            None => self.shallowest_being_asked.remove(&e),
+        };
+        if !is_asked {
+            for leaned in self.asked_while_open.drain(begun..) {
+                if self.asked_who_takes.get(&leaned) == Some(&true) {
+                    self.asked_who_takes.remove(&leaned);
+                }
+            }
+        } else if begun == 0 {
+            self.asked_while_open.clear();
+        }
+        self.asked_who_takes.insert((e, layers), is_asked);
+        is_asked
+    }
+
+    fn asks_name(&mut self, pattern: PatId, binding: Binding) -> bool {
+        let bound = self.inputs.bound;
+        match binding {
+            Binding::Symbol(holder) => {
+                self.take_as_kept_as_written(holder)
+                    && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+                    && !bound.is_visible_to_eval(holder)
             }
             _ => false,
         }
+    }
+
+    fn fills_the_name_it_declares(
+        &self,
+        pattern: PatId,
+        written: Atom,
+        decl: fn(PatId) -> Decl,
+    ) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let mut root = pattern;
+        let function = loop {
+            match bound.pat_parent[root.idx()] {
+                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
+                PatParent::Param(it) => break bound.param_fn[it.idx()],
+                PatParent::Var(_) => {
+                    let declared = Binding::Symbol(bound.declared_symbol(decl(pattern)));
+                    return bound.initialized_binding(pattern) == declared;
+                }
+                PatParent::None => return false,
+            }
+        };
+        let owner = bound.fns[function.idx()].owner;
+        let Some(text) = owner.text_of_expression_or_declaration(hir) else {
+            return false;
+        };
+        let mut spelled = self.written_names.find(hir, written).iter();
+        spelled.all(|it| !text.contains(&hir[it.1].pos))
+    }
+
+    fn asks_names_of(&mut self, pattern: PatId, decl: fn(PatId) -> Decl, layers: u32) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        match hir[pattern].kind {
+            PatKind::Missing => true,
+            PatKind::Ident(written) => {
+                let name = bound.declared_symbol(decl(pattern));
+                let is_taken_apart = !matches!(
+                    bound.pat_parent[pattern.idx()],
+                    PatParent::Var(_) | PatParent::Param(_)
+                );
+                let is_copied = (bound.runtime.parameter_var_copies().iter())
+                    .any(|copy| copy.parameter == name || copy.variable == name);
+                let fills_another = matches!(decl(pattern), Decl::Var(_))
+                    && bound.initialized_binding(pattern) != Binding::Symbol(name);
+                if self.is_exported(name) || is_copied || fills_another {
+                    return false;
+                }
+                let is_seen_here_alone =
+                    bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+                        && !bound.is_visible_to_eval(name);
+                let mentions = self.mentions_of(name);
+                let Some(&mention) = mentions.first() else {
+                    return is_seen_here_alone
+                        && self.fills_the_name_it_declares(pattern, written, decl);
+                };
+                let holds_nothing_to_change = is_taken_apart
+                    && is_seen_here_alone
+                    && self.holds_what_cannot_be_changed(mention);
+                holds_nothing_to_change || self.asks_name(pattern, Binding::Symbol(name))
+            }
+            PatKind::Object(_) | PatKind::Array(_) if layers == 0 => true,
+            PatKind::Object(taken) => {
+                (taken.iter()).all(|it| self.asks_names_of(hir[it].value, decl, layers - 1))
+            }
+            PatKind::Array(taken) => (taken.iter()).all(|it| {
+                let below = layers - u32::from(!hir[it].is_rest);
+                self.asks_names_of(hir[it].pat, decl, below)
+            }),
+        }
+    }
+
+    fn asks_parameter(&mut self, function: FnId, position: usize, layers: u32) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let parameters = hir[function].params;
+        let has_rest = (parameters.iter()).any(|id| hir[id].flags.contains(Flags::REST));
+        let ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
+        if has_rest || bound.function_flags(function).intersects(ways) {
+            return false;
+        }
+        let Some(id) = parameters.iter().nth(position) else {
+            return true;
+        };
+        self.asks_names_of(hir[id].pat, Decl::Param, layers)
+    }
+
+    fn asks_parameter_that_takes(&mut self, argument: ExprId, call: Call, layers: u32) -> bool {
+        let hir = self.inputs.hir;
+        let mut arguments = hir.ids(call.args);
+        let is_spread = |it: ExprId| matches!(expr_kind(hir, it), Some(ExprKind::Spread(_)) | None);
+        let Some(position) = arguments.position(|it| it == argument) else {
+            return false;
+        };
+        if call.chain != Chain::No || hir.ids(call.args).take(position).any(is_spread) {
+            return false;
+        }
+        let Some(called) = self.values_of(call.callee) else {
+            return false;
+        };
+        called.into_iter().all(|it| match it {
+            Held::Function(function) => self.asks_parameter(function, position, layers),
+            _ => false,
+        })
+    }
+
+    fn find_function_around(&self, mut statement: StmtId) -> Option<FnId> {
+        let bound = self.inputs.bound;
+        loop {
+            statement = match bound.parent_of_stmt(statement) {
+                Parent::Stmt(above) => above,
+                Parent::Case(case) => bound.case_stmt[case.idx()],
+                Parent::FnBody(function) => return Some(function),
+                _ => return None,
+            };
+        }
+    }
+
+    fn find_walk_that_calls(&mut self, function: FnId) -> Option<(ExprId, ExprId, Atom)> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
+            return None;
+        };
+        let Parent::Expr(walk) = bound.parent_of_expr(self.outermost_cast(written)) else {
+            return None;
+        };
+        let Some(ExprKind::Call(call)) = expr_kind(hir, walk) else {
+            return None;
+        };
+        let call = hir[call];
+        let first = hir
+            .ids(call.args)
+            .next()
+            .map(|it| hir.skip_type_assertions(it));
+        let (list, name) = self
+            .find_walk_of_list(call)
+            .filter(|_| first == Some(written))?;
+        self.values_of_elements(list).map(|_| (walk, list, name))
+    }
+
+    fn is_answer_only_tested(&mut self, function: FnId) -> bool {
+        let walk = self.find_walk_that_calls(function);
+        self.answers_its_caller(function)
+            && walk.is_some_and(|(_, _, name)| self.inputs.atoms.bytes(name) != b"map")
+    }
+
+    fn answers_its_caller(&self, function: FnId) -> bool {
+        let flags = self.inputs.hir[function].flags;
+        !flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+    }
+
+    fn asks_who_takes_answer_of(&mut self, function: FnId, layers: u32) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        if !self.answers_its_caller(function) {
+            return false;
+        }
+        if let Some((walk, _, name)) = self.find_walk_that_calls(function) {
+            return self.inputs.atoms.bytes(name) != b"map"
+                || self.asks_who_takes(walk, layers + 1);
+        }
+        let name = match bound.fns[function.idx()].owner {
+            FnOwner::Stmt(_) => bound.declared_symbol(Decl::Fn(function)),
+            FnOwner::Expr(written) => match bound.parent_of_expr(self.outermost_cast(written)) {
+                Parent::VarInit(declaration) => {
+                    match bound.initialized_binding(hir[declaration].pat) {
+                        Binding::Symbol(name) => name,
+                        _ => return false,
+                    }
+                }
+                Parent::Prop(property) => {
+                    return self.asks_who_takes_answer_of_member(property, layers);
+                }
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if !bound.is_stable_binding(name)
+            || self.is_exported(name)
+            || bound.is_visible_to_eval(name)
+        {
+            return false;
+        }
+        let open = self.functions_whose_answers_are_asked.iter();
+        let open = open.filter(|it| it.0 == function).map(|it| it.1);
+        if let Some(shallowest) = open.min()
+            && shallowest <= layers
+        {
+            return shallowest == layers;
+        }
+        self.functions_whose_answers_are_asked
+            .push((function, layers));
+        let are_asked = self.mentions_of(name).into_iter().all(|mention| {
+            let callee = self.outermost_cast(mention);
+            match bound.parent_of_expr(callee) {
+                Parent::Expr(call) => {
+                    matches!(hir[call].kind, ExprKind::Call(it) if hir[it].callee == callee && hir[it].chain == Chain::No)
+                        && self.asks_who_takes(call, layers)
+                }
+                _ => false,
+            }
+        });
+        self.functions_whose_answers_are_asked.pop();
+        are_asked
+    }
+
+    fn asks_who_takes_answer_of_member(&mut self, property: PropId, layers: u32) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let holder = bound.prop_owner[property.idx()];
+        let PropKey::Name(key) = hir.runtime_property_key(property) else {
+            return false;
+        };
+        let Parent::VarInit(declaration) = bound.parent_of_expr(self.outermost_cast(holder)) else {
+            return false;
+        };
+        let Binding::Symbol(name) = bound.initialized_binding(hir[declaration].pat) else {
+            return false;
+        };
+        let is_literal = matches!(hir[holder].kind, ExprKind::Object(_));
+        if !is_literal
+            || !bound.is_stable_binding(name)
+            || self.is_exported(name)
+            || bound.is_visible_to_eval(name)
+        {
+            return false;
+        }
+        self.mentions_of(name).into_iter().all(|mention| {
+            if bound
+                .dynamic_lookup_scope(NodeData::Expr(mention))
+                .is_some()
+            {
+                return false;
+            }
+            let object = self.outermost_cast(mention);
+            let Parent::Expr(read) = bound.parent_of_expr(object) else {
+                return false;
+            };
+            match hir.member_key(read) {
+                Some((of, MemberKey::Name(other))) if of == object && other != key => true,
+                Some((of, MemberKey::Name(_))) if of == object => {
+                    match self.find_call_of_member(self.outermost_cast(read)) {
+                        Some((answer, _)) => self.asks_who_takes(answer, layers),
+                        None => false,
+                    }
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn asks_who_takes_member(&mut self, read: ExprId, layers: u32) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let member = self.outermost_cast(read);
+        let user = match bound.parent_of_expr(member) {
+            Parent::Expr(user) => Some(hir[user].kind),
+            _ => None,
+        };
+        let is_more_than_read = match user {
+            Some(ExprKind::Unary {
+                op: UnOp::Delete, ..
+            }) => true,
+            Some(ExprKind::TaggedTemplate(call) | ExprKind::New(call)) => {
+                hir[call].callee == member
+            }
+            _ => false,
+        };
+        if is_more_than_read || bound.get_assignment_target(hir, member).is_some() {
+            return false;
+        }
+        let Some((answer, call)) = self.find_call_of_member(member) else {
+            return layers == 0 || self.asks_who_takes(member, layers - 1);
+        };
+        let Some((list, name)) = self.find_walk_of_list(call) else {
+            return matches!(hir.member_key(read), Some((_, MemberKey::Name(name))) if self.only_asks(name));
+        };
+        if layers == 0 {
+            return true;
+        }
+        let written = hir.ids(call.args).next();
+        let written = written.and_then(|it| expr_kind(hir, hir.skip_type_assertions(it)));
+        let Some(ExprKind::Fn(function)) = written else {
+            return false;
+        };
+        let walks_set = self.values_of(list).is_none_or(|held| {
+            let mut held = held.iter();
+            held.any(|it| !matches!(it, Held::List(_) | Held::ListOf(_)))
+        });
+        if !self.asks_parameter(function, 0, layers - 1)
+            || walks_set && !self.asks_parameter(function, 1, layers - 1)
+        {
+            return false;
+        }
+        match self.inputs.atoms.bytes(name) {
+            b"filter" => self.asks_who_takes(answer, layers),
+            b"find" | b"findLast" => self.asks_who_takes(answer, layers - 1),
+            _ => true,
+        }
+    }
+
+    fn asks_who_stands_around(&mut self, e: ExprId, layers: u32) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let above = match bound.parent_of_expr(e) {
+            Parent::Expr(above) => above,
+            Parent::VarInit(declaration) => {
+                let pattern = hir[declaration].pat;
+                return self.asks_names_of(pattern, Decl::Var, layers);
+            }
+            Parent::Prop(property) => {
+                let holder = bound.prop_owner[property.idx()];
+                return matches!(hir[holder].kind, ExprKind::Object(_))
+                    && self.asks_who_takes(holder, layers + 1);
+            }
+            Parent::FnBody(function) => return self.asks_who_takes_answer_of(function, layers),
+            Parent::ParamDefault(id) => {
+                let function = bound.param_fn[id.idx()];
+                let position = hir[function].params.iter().position(|it| it == id);
+                return position.is_some_and(|it| self.asks_parameter(function, it, layers));
+            }
+            Parent::Stmt(statement) => {
+                return match hir[statement].kind {
+                    StmtKind::Expr(_)
+                    | StmtKind::If { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::DoWhile { .. }
+                    | StmtKind::For { .. }
+                    | StmtKind::ForIn { .. }
+                    | StmtKind::Switch { .. } => true,
+                    StmtKind::ForOf {
+                        left,
+                        expr,
+                        is_await: false,
+                        ..
+                    } if expr == e => {
+                        layers == 0
+                            || match hir[left].kind {
+                                StmtKind::Var(declared) => (declared.iter()).all(|it| {
+                                    self.asks_names_of(hir[it].pat, Decl::Var, layers - 1)
+                                }),
+                                _ => false,
+                            }
+                    }
+                    StmtKind::Return(_) => match self.find_function_around(statement) {
+                        Some(function) => self.asks_who_takes_answer_of(function, layers),
+                        None => false,
+                    },
+                    _ => false,
+                };
+            }
+            _ => return false,
+        };
+        match hir[above].kind {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e => {
+                self.asks_who_takes_member(above, layers)
+            }
+            ExprKind::Cond { test, .. } => test == e || self.asks_who_takes(above, layers),
+            ExprKind::Binary { op, left, .. } => match op {
+                BinOp::And | BinOp::Or | BinOp::Nullish => self.asks_who_takes(above, layers),
+                BinOp::Comma => left == e || self.asks_who_takes(above, layers),
+                BinOp::Instanceof => left != e,
+                _ => true,
+            },
+            ExprKind::Unary {
+                op: UnOp::Not | UnOp::Typeof | UnOp::Void,
+                ..
+            } => true,
+            ExprKind::Assign {
+                op: None | Some(BinOp::Or | BinOp::And | BinOp::Nullish),
+                target,
+                value,
+            } if value == e => {
+                let is_asked = match (hir[target].kind, bound.binding(target)) {
+                    (ExprKind::Ident(_), Binding::Symbol(holder)) => {
+                        self.take_as_kept_as_written(holder)
+                            && bound.dynamic_lookup_scope(NodeData::Expr(target)).is_none()
+                            && !bound.is_visible_to_eval(holder)
+                    }
+                    _ => self.takes_export_as_written(target),
+                };
+                is_asked && self.asks_who_takes(above, layers)
+            }
+            ExprKind::Array(_) => self.asks_who_takes(above, layers + 1),
+            ExprKind::Spread(_) => match bound.parent_of_expr(above) {
+                Parent::Expr(list) if matches!(hir[list].kind, ExprKind::Array(_)) => {
+                    layers == 0 || self.asks_who_takes(list, layers)
+                }
+                _ => false,
+            },
+            ExprKind::New(call) if self.is_construction_of_set(hir[call]) => {
+                hir[call].callee != e && (layers == 0 || self.asks_who_takes(above, layers))
+            }
+            ExprKind::Call(call) if hir[call].callee == e => true,
+            ExprKind::Call(call) => match self.find_listing_of_object(hir[call]) {
+                Some((_, Listing::Keys)) => true,
+                Some((_, Listing::Values)) => layers == 0 || self.asks_who_takes(above, layers),
+                Some((_, Listing::Entries)) => {
+                    layers == 0 || self.asks_who_takes(above, layers + 1)
+                }
+                None => {
+                    call_site_kind(hir, bound, above).is_some()
+                        || self.asks_parameter_that_takes(e, hir[call], layers)
+                }
+            },
+            ExprKind::ImportCall { .. } => call_site_kind(hir, bound, above).is_some(),
+            _ => false,
+        }
+    }
+
+    fn takes_export_as_written(&self, target: ExprId) -> bool {
+        let hir = self.inputs.hir;
+        let (Some((_, MemberKey::Name(key))), Some(asked)) =
+            (hir.member_key(target), self.asked_of_own_exports)
+        else {
+            return false;
+        };
+        if !self.names_an_export(target) {
+            return false;
+        }
+        let is_reached_by_name_alone = self.reaches_exports_by_their_name_alone(target);
+        if is_reached_by_name_alone {
+            asked.0.borrow_mut().push(key);
+        }
+        if !is_reached_by_name_alone || hir.exports_that_others_touch.contains(&key) {
+            self.has_read_data_file.set(true);
+        }
+        true
+    }
+
+    fn names_an_export(&self, target: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let is_module = |it: ExprId| is_free_common_js(hir, bound, it, CommonJsVariable::Module);
+        match hir.member_key(target) {
+            Some((holder, MemberKey::Name(key))) => {
+                key == known::exports && is_module(holder)
+                    || is_free_common_js(hir, bound, holder, CommonJsVariable::Exports)
+                    || matches!(hir.member_key(holder),
+                        Some((of, MemberKey::Name(known::exports))) if is_module(of))
+            }
+            _ => false,
+        }
+    }
+
+    fn reaches_exports_by_their_name_alone(&self, target: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let Some((holder, MemberKey::Name(key))) = hir.member_key(target) else {
+            return false;
+        };
+        let is_module = |it: ExprId| is_free_common_js(hir, bound, it, CommonJsVariable::Module);
+        let is_exports = |it: ExprId| is_free_common_js(hir, bound, it, CommonJsVariable::Exports);
+        let of_module = |it: ExprId| match hir.member_key(it) {
+            Some((of, MemberKey::Name(known::exports))) => is_module(of),
+            _ => false,
+        };
+        let is_whole = key == known::exports && is_module(holder);
+        let mut modules = self.written_names.find(hir, known::module).iter();
+        let mut exports = self.written_names.find(hir, known::exports).iter();
+        let mut loaders = self.written_names.find(hir, known::require).iter();
+        let mut handed = self.written_names.find(hir, known::arguments).iter();
+        let mut hosts = self.written_names.find(hir, known::process).iter();
+        let mut see_everything = [known::globalThis, known::global, known::eval].into_iter();
+        let mut expressions = (0..).map(ExprId).zip(hir.exprs.iter());
+        (is_whole || is_exports(holder) || of_module(holder))
+            && modules.all(|it| {
+                let Parent::Expr(above) = bound.parent_of_expr(it.1) else {
+                    return !is_module(it.1);
+                };
+                !is_module(it.1)
+                    || self.is_only_tested(it.1)
+                    || hir.member_key(above).is_some_and(|member| member.0 == it.1)
+                        && self.is_only_tested(above)
+                    || of_module(above)
+                        && match is_whole {
+                            true => above == target,
+                            false => self.reads_another_export(above, key, target),
+                        }
+            })
+            && exports.all(|it| {
+                is_whole
+                    || !is_exports(it.1)
+                    || self.is_only_tested(it.1)
+                    || self.reads_another_export(it.1, key, target)
+            })
+            && loaders.all(|it| self.hands_out_no_module(it.1))
+            && handed.all(|it| stands_in_function_with_arguments(hir, bound, it.1))
+            && hosts.all(|it| self.reads_no_module_off_process(it.1))
+            && see_everything.all(|name| {
+                let mut written = self.written_names.find(hir, name).iter();
+                written.all(|it| !is_free_name(hir, bound, it.1, &[name]))
+            })
+            && expressions.all(|(it, written)| match written.kind {
+                ExprKind::This => {
+                    is_whole
+                        || self.is_only_tested(it)
+                        || self.reads_another_export(it, key, target)
+                }
+                _ => !self.may_load_own_file(it),
+            })
+    }
+
+    fn reads_no_module_off_process(&self, host: ExprId) -> bool {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        if !is_free_name(hir, bound, host, &[known::process]) {
+            return true;
+        }
+        let Parent::Expr(above) = bound.parent_of_expr(host) else {
+            return false;
+        };
+        matches!(hir.member_key(above), Some((of, MemberKey::Name(read)))
+            if of == host && atoms.bytes(read) != b"mainModule")
+    }
+
+    fn hands_out_no_module(&self, loader: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        if !is_free_common_js(hir, bound, loader, CommonJsVariable::Require) {
+            return true;
+        }
+        let Parent::Expr(above) = bound.parent_of_expr(loader) else {
+            return false;
+        };
+        match (hir[above].kind, hir.member_key(above)) {
+            (ExprKind::Call(call), _) => hir[call].callee == loader,
+            (_, Some((_, MemberKey::Name(known::resolve)))) => true,
+            (_, Some((_, MemberKey::Name(known::main)))) => self.is_only_tested(above),
+            _ => false,
+        }
+    }
+
+    fn may_load_own_file(&self, call: ExprId) -> bool {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            file,
+            atoms,
+            ..
+        } = self.inputs;
+        let is_call = matches!(
+            hir[call].kind,
+            ExprKind::Call(_) | ExprKind::ImportCall { .. }
+        );
+        if !is_call || call_site_kind(hir, bound, call).is_none() {
+            return false;
+        }
+        let arguments = call_site_arguments(hir, bound, call);
+        let Some(name) = arguments.and_then(|it| hir.ids(it).next()) else {
+            return false;
+        };
+        if names_own_file(hir, bound, name) {
+            return true;
+        }
+        let (FoldedValue::Constant(Constant::String(name))
+        | FoldedValue::ConstantOutsideDeadZone(Constant::String(name))) =
+            decisions.constant(hir, name)
+        else {
+            return false;
+        };
+        let name = atoms.bytes(name);
+        let mut parts = name.rsplit(|&it| it == b'/' || it == b'\\');
+        let last = parts.next().unwrap_or(name);
+        let stem = file.own_name.rsplitn(2, |&it| it == b'.').last();
+        let stem = stem.unwrap_or(file.own_name);
+        !file.own_name.is_empty()
+            && (last == file.own_name
+                || last == stem
+                || stem == b"index" && matches!(last, b"" | b"." | b".."))
+    }
+
+    fn is_only_tested(&self, e: ExprId) -> bool {
+        is_only_tested(self.inputs.hir, self.inputs.bound, e)
+    }
+
+    fn reads_another_export(&self, exports: ExprId, key: Atom, target: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let Parent::Expr(above) = bound.parent_of_expr(exports) else {
+            return false;
+        };
+        if let Some((of, MemberKey::Name(other))) = hir.member_key(above)
+            && of == exports
+        {
+            let member = self.outermost_cast(above);
+            let is_tag = matches!(bound.parent_of_expr(member), Parent::Expr(user)
+                if matches!(hir[user].kind, ExprKind::TaggedTemplate(call) if hir[call].callee == member));
+            let is_called = is_tag || self.find_call_of_member(member).is_some();
+            let hands_them_on = may_change_or_hand_on_its_object(self.inputs.atoms.bytes(other));
+            let stores_what_may_take_them = matches!(bound.parent_of_expr(member), Parent::Expr(user)
+                if matches!(hir[user].kind, ExprKind::Assign { target, value, .. }
+                    if target == member && !self.is_written_here_or_no_function(value)));
+            return above == target
+                || other != key && !is_called && !hands_them_on && !stores_what_may_take_them;
+        }
+        let ExprKind::Call(call) = hir[above].kind else {
+            return false;
+        };
+        let defines = match hir.member_key(hir[call].callee) {
+            Some((object, MemberKey::Name(name))) => {
+                self.inputs.atoms.bytes(name) == b"defineProperty"
+                    && is_free_name(hir, bound, object, &[known::Object])
+            }
+            _ => false,
+        };
+        let mut arguments = hir.ids(hir[call].args);
+        defines
+            && arguments.next() == Some(exports)
+            && matches!(arguments.next().map(|it| hir[it].kind), Some(ExprKind::String(other)) if other != key)
+            && arguments
+                .next()
+                .is_some_and(|it| self.describes_with_what_is_written_there(it))
+            && matches!(bound.parent_of_expr(above), Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_)))
+    }
+
+    fn describes_with_what_is_written_there(&self, descriptor: ExprId) -> bool {
+        let hir = self.inputs.hir;
+        let ExprKind::Object(properties) = hir[descriptor].kind else {
+            return false;
+        };
+        properties.iter().all(|it| {
+            let property = hir[it];
+            let is_function = matches!(
+                hir[hir.skip_type_assertions(property.value)].kind,
+                ExprKind::Fn(_)
+            );
+            match (property.kind, hir.runtime_property_key(it)) {
+                (PropKind::Init | PropKind::Method, PropKey::Name(known::get | known::set)) => {
+                    is_function
+                }
+                (PropKind::Init, PropKey::Name(_)) => {
+                    self.is_written_here_or_no_function(property.value)
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn is_written_here_or_no_function(&self, value: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Fn(_)
+            | ExprKind::Class(_)
+            | ExprKind::Object(_)
+            | ExprKind::Array(_)
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::Template { .. }
+            | ExprKind::Unary { .. } => true,
+            ExprKind::Assign { value, .. } => self.is_written_here_or_no_function(value),
+            ExprKind::Ident(_) => match bound.binding(value) {
+                Binding::Symbol(name) => {
+                    let mut declarations = bound.symbol(name).decls.iter();
+                    bound.is_stable_binding(name)
+                        && declarations.all(|it| matches!(it, Decl::Fn(_) | Decl::Class(_)))
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn joins_what_is_stored(&mut self, read: ExprId, member: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let Parent::Expr(assignment) = bound.parent_of_expr(member) else {
+            return false;
+        };
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[assignment].kind
+        else {
+            return false;
+        };
+        let is_statement = matches!(bound.parent_of_expr(assignment), Parent::Stmt(statement)
+            if matches!(hir[statement].kind, StmtKind::Expr(_)));
+        let Some((object, key)) = hir.member_key(read) else {
+            return false;
+        };
+        let Some(Some(keys)) = self.keys_of(key) else {
+            return false;
+        };
+        let [key] = &keys[..] else {
+            return false;
+        };
+        let is_plain_key = !matches!(&key[..], b"toString" | b"valueOf" | b"__proto__");
+        if target != member
+            || !is_statement
+            || !is_plain_key
+            || !self.holds_what_cannot_be_changed(value)
+        {
+            return false;
+        }
+        let Some(holders) = self.values_of(object) else {
+            return false;
+        };
+        holders.into_iter().all(|holder| match holder {
+            Held::Object(literal) => {
+                if self.stores_known.insert((literal, value)) {
+                    let stored = self.stored_under_keys.entry(literal).or_default();
+                    stored.push((key.clone(), value));
+                }
+                true
+            }
+            Held::Primitive(Constant::Undefined | Constant::Null) => true,
+            _ => false,
+        })
+    }
+
+    fn only_asks(&self, name: Atom) -> bool {
+        name == known::join
+            || matches!(
+                self.inputs.atoms.bytes(name),
+                b"includes" | b"indexOf" | b"lastIndexOf" | b"has"
+            )
     }
 
     fn asks_list_without_changing_it(&mut self, member: ExprId) -> bool {
@@ -1587,11 +2802,7 @@ impl Follower<'_, '_, '_> {
         let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
             return false;
         };
-        let asks = name == known::join
-            || matches!(
-                self.inputs.atoms.bytes(name),
-                b"includes" | b"indexOf" | b"lastIndexOf" | b"has"
-            );
+        let asks = self.only_asks(name);
         let hands_elements_on = match self.find_call_of_member(member) {
             Some((_, call)) => self.find_walk_of_list(call).is_some(),
             None => false,
@@ -1603,39 +2814,114 @@ impl Follower<'_, '_, '_> {
     }
 
     fn calls_function_that_cannot_see_its_holder(&mut self, member: ExprId) -> bool {
-        let Some((object, _)) = self.inputs.hir.member_key(member) else {
+        let Some((object, key)) = self.inputs.hir.member_key(member) else {
             return false;
         };
         let Some(holders) = self.values_of(object) else {
             return false;
         };
+        let places_read = self.keys_of(key).flatten();
         holders.into_iter().all(|holder| match holder {
-            Held::Object(literal) => self.is_out_of_sight_of_its_functions(literal),
+            Held::Object(literal) => {
+                let Some(read) = places_read.as_ref() else {
+                    return false;
+                };
+                if let Some(written) = self.keys_of_object_out_of_sight_of_its_functions(literal) {
+                    let mut read = read.iter();
+                    return read.all(|key| {
+                        written.contains(key) || !may_change_or_hand_on_its_object(key)
+                    });
+                }
+                let Some(written) = self.properties_of(literal) else {
+                    return false;
+                };
+                read.iter().all(|key| {
+                    let mut under_key = written.iter().filter(|it| it.0 == *key).peekable();
+                    match under_key.peek() {
+                        Some(_) => under_key.all(|it| {
+                            self.values_of(it.1).is_some_and(|named| {
+                                let mut named = named.iter();
+                                named.all(|it| self.cannot_change_what_it_is_called_on(it))
+                            })
+                        }),
+                        None => !may_change_or_hand_on_its_object(key),
+                    }
+                })
+            }
+            Held::List(places) => {
+                let is_blind = |key: &Vec<u8>| {
+                    let index = bun_core::fmt::parse_int::<usize>(key, 10).ok();
+                    index
+                        .and_then(|index| places.get(index))
+                        .is_some_and(|called| {
+                            let mut called = called.iter();
+                            called.all(|it| self.cannot_change_what_it_is_called_on(it))
+                        })
+                };
+                places_read
+                    .as_ref()
+                    .is_some_and(|keys| keys.iter().all(is_blind))
+            }
+            Held::Primitive(Constant::Undefined | Constant::Null) => true,
             _ => false,
         })
     }
 
-    fn is_out_of_sight_of_its_functions(&mut self, literal: ExprId) -> bool {
-        if let Some(&known) = self
+    fn cannot_change_what_it_is_called_on(&self, held: &Held) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let function = match held {
+            &Held::Function(function) => function,
+            Held::Text(_) | Held::Primitive(_) => return true,
+            _ => return false,
+        };
+        let owner = bound.fns[function.idx()].owner;
+        let Some(text) = owner.text_of_expression_or_declaration(hir) else {
+            return false;
+        };
+        !bound
+            .function_flags(function)
+            .contains(FunctionFlags::HAS_DIRECT_EVAL)
+            && !self.says_this_or_super(text)
+    }
+
+    fn says_this_or_super(&self, text: Range<u32>) -> bool {
+        let said = self.written_names.2.get_or_init(|| {
+            let said = self.inputs.hir.exprs.iter();
+            let said = said.filter(|it| matches!(it.kind, ExprKind::This | ExprKind::Super));
+            let mut places: Vec<u32> = said.map(|it| it.pos).collect();
+            places.shared_sort_unstable();
+            places
+        });
+        let first = said.partition_point(|&place| place < text.start);
+        said.get(first).is_some_and(|&place| place < text.end)
+    }
+
+    fn keys_of_object_out_of_sight_of_its_functions(
+        &mut self,
+        literal: ExprId,
+    ) -> Option<Rc<FxHashSet<Vec<u8>>>> {
+        if let Some(known) = self
             .objects_asked_whether_their_functions_see_them
             .get(&literal)
         {
-            return known;
+            return known.clone();
         }
         let &ScanInputs { hir, bound, .. } = self.inputs;
         let text = hir[literal].pos..hir[literal].end;
-        let mut expressions = hir.exprs.iter();
-        let is_out_of_sight = !expressions
-            .any(|it| matches!(it.kind, ExprKind::Super) && text.contains(&it.pos))
-            && self.properties_of(literal).is_some_and(|written| {
-                written.iter().all(|it| {
-                    matches!(hir[hir.skip_type_assertions(it.1)].kind, ExprKind::Fn(function)
-                        if !bound.fns[function.idx()].contains_this)
+        let mentions_itself = self.says_this_or_super(text);
+        let written = self.properties_of(literal).filter(|written| {
+            !mentions_itself
+                && written.iter().all(|it| {
+                    let value = hir.skip_type_assertions(it.1);
+                    matches!(hir[value].kind, ExprKind::Fn(function)
+                        if !self.says_this_or_super(hir[value].pos..hir[value].end)
+                            && !bound.function_flags(function).contains(FunctionFlags::HAS_DIRECT_EVAL))
                 })
-            });
+        });
+        let keys = written.map(|written| Rc::new(written.into_iter().map(|it| it.0).collect()));
         self.objects_asked_whether_their_functions_see_them
-            .insert(literal, is_out_of_sight);
-        is_out_of_sight
+            .insert(literal, keys.clone());
+        keys
     }
 
     fn keys_of(&mut self, key: MemberKey) -> Option<Option<Vec<Vec<u8>>>> {
@@ -1759,9 +3045,9 @@ impl Follower<'_, '_, '_> {
                 return None;
             };
             let key = whole_ascii(key)?.to_vec();
-            written.retain(|earlier| earlier.0 != key);
             written.push((key, value));
         }
+        keep_last_of_each_key(&mut written);
         let asked_for = self.values_apart_from_itself(asked_for);
         let keys: Option<Vec<Vec<u8>>> = asked_for.and_then(|asked_for| {
             let whole = |value: &Held| match value {
@@ -1771,14 +3057,15 @@ impl Follower<'_, '_, '_> {
             asked_for.iter().map(whole).collect()
         });
         let Some(keys) = keys else {
-            let mut values = self.values_of_any(written.iter().map(|it| it.1))?;
-            add(&mut values, Held::Primitive(Constant::Undefined));
-            return Some(values);
+            let values = self.values_of_any(written.iter().map(|it| it.1))?;
+            return Some(with_undefined(values));
         };
-        let mut values = Values::new();
+        let written: FxHashMap<&[u8], ExprId> =
+            written.iter().map(|it| (&it.0[..], it.1)).collect();
+        let mut values = Distinct::new();
         for key in keys {
-            match written.iter().find(|it| it.0 == key) {
-                Some(&(_, value)) => {
+            match written.get(&key[..]) {
+                Some(&value) => {
                     for value in self.values_of(value)? {
                         add(&mut values, value);
                     }
@@ -1786,11 +3073,17 @@ impl Follower<'_, '_, '_> {
                 None => add(&mut values, Held::Primitive(Constant::Undefined)),
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn values_of_member(&mut self, member: ExprId, chain: Chain) -> Option<Values> {
         let (object, key) = self.inputs.hir.member_key(member)?;
+        if let (Some(parameter), MemberKey::Name(name)) = (self.stand_in, key)
+            && self.property_of_stand_in == Some(name)
+            && self.inputs.bound.binding(object) == Binding::Symbol(parameter)
+        {
+            return Some(vec![Held::Text(url_of_caller())]);
+        }
         if let Some(values) = self.values_of_field_of_class_written_here(object, key) {
             return Some(values);
         }
@@ -1805,12 +3098,20 @@ impl Follower<'_, '_, '_> {
         keys: Option<&[Vec<u8>]>,
         chain: Chain,
     ) -> Option<Values> {
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for object in objects {
             let read = match object {
                 Held::Object(literal) => self.read_property(*literal, keys)?,
                 Held::List(places) => read_place(places, keys)?,
-                Held::ListOf(held) => read_place(std::slice::from_ref(held), None)?,
+                Held::ListOf(held) => {
+                    let read = read_place(std::slice::from_ref(held), None)?;
+                    let is_index =
+                        |key: &Vec<u8>| bun_core::fmt::parse_int::<usize>(key, 10).is_ok();
+                    match keys.is_some_and(|keys| !keys.iter().all(is_index)) {
+                        true => with(read, Held::Other),
+                        false => read,
+                    }
+                }
                 Held::SetOf(_) => match keys? {
                     [key] if key == b"size" => vec![Held::Other],
                     _ => return None,
@@ -1858,7 +3159,7 @@ impl Follower<'_, '_, '_> {
                 add(&mut values, value);
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn read_data_file(
@@ -1914,12 +3215,12 @@ impl Follower<'_, '_, '_> {
 
     fn read_member_of_process(&self, keys: &[Vec<u8>]) -> Option<Values> {
         let &ScanInputs { fold, atoms, .. } = self.inputs;
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for key in keys {
             let constant = fold.constant_of_member(known::process, atoms.intern(key))?;
             add(&mut values, self.held_constant(constant));
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn properties_of(&mut self, literal: ExprId) -> Option<Vec<(Vec<u8>, ExprId)>> {
@@ -1950,8 +3251,11 @@ impl Follower<'_, '_, '_> {
             if matches!(&key[..], b"toString" | b"valueOf") {
                 return None;
             }
-            written.retain(|earlier| earlier.0 != key);
             written.push((key, property.value));
+        }
+        keep_last_of_each_key(&mut written);
+        if let Some(stored) = self.stored_under_keys.get(&literal) {
+            written.extend(stored.iter().cloned());
         }
         Some(written)
     }
@@ -1959,15 +3263,18 @@ impl Follower<'_, '_, '_> {
     fn read_property(&mut self, literal: ExprId, keys: Option<&[Vec<u8>]>) -> Option<Values> {
         let written = self.properties_of(literal)?;
         let Some(keys) = keys else {
-            let mut values = self.values_of_any(written.iter().map(|it| it.1))?;
-            add(&mut values, Held::Primitive(Constant::Undefined));
-            return Some(values);
+            let values = self.values_of_any(written.iter().map(|it| it.1))?;
+            return Some(with_undefined(values));
         };
-        let mut values = Values::new();
+        let mut under_keys: FxHashMap<&[u8], Vec<ExprId>> = FxHashMap::default();
+        for (key, value) in &written {
+            under_keys.entry(key).or_default().push(*value);
+        }
+        let mut values = Distinct::new();
         for key in keys {
-            match written.iter().find(|it| it.0 == *key) {
-                Some(&(_, value)) => {
-                    for value in self.values_of(value)? {
+            match under_keys.get(&key[..]) {
+                Some(held) => {
+                    for value in self.values_of_any(held.iter().copied())? {
                         add(&mut values, value);
                     }
                 }
@@ -1975,7 +3282,7 @@ impl Follower<'_, '_, '_> {
                 None => add(&mut values, Held::Primitive(Constant::Undefined)),
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn find_required_module(&self, call: ExprId) -> Option<Atom> {
@@ -2001,6 +3308,9 @@ impl Follower<'_, '_, '_> {
 
     fn values_of_call(&mut self, e: ExprId, call: Call) -> Option<Values> {
         let hir = self.inputs.hir;
+        if let Some((table, listing)) = self.find_listing_of_object(call) {
+            return self.values_of_listing(table, listing);
+        }
         if call.chain != Chain::No {
             return None;
         }
@@ -2017,9 +3327,6 @@ impl Follower<'_, '_, '_> {
         }
         if let Some((name, form)) = self.find_name_asked_of_resolver(e) {
             return self.values_answered_by_resolver(e, name, form);
-        }
-        if let Some((table, lists_keys)) = self.find_listing_of_object(call) {
-            return self.values_of_listing(table, lists_keys);
         }
         if let Some(values) = self.values_of_walk(call) {
             return Some(values);
@@ -2052,7 +3359,7 @@ impl Follower<'_, '_, '_> {
         {
             return self.values_of_joined_lists(&lists, call.args);
         }
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for callee in self.values_of(callee)? {
             let returned = match callee {
                 Held::Function(function) => self.values_returned_by(function)?,
@@ -2063,7 +3370,7 @@ impl Follower<'_, '_, '_> {
                 add(&mut values, value);
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn find_name_asked_of_resolver(&self, call: ExprId) -> Option<(ExprId, ResolvedForm)> {
@@ -2093,7 +3400,7 @@ impl Follower<'_, '_, '_> {
         name: ExprId,
         form: ResolvedForm,
     ) -> Option<Values> {
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         let joins_urls = form == ResolvedForm::Url && !self.inputs.hir.runs_beside_loader;
         for name in self.values_of(name)? {
             let joined = match &name {
@@ -2122,7 +3429,7 @@ impl Follower<'_, '_, '_> {
                 _ => {}
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn is_os_module(&self, specifier: Atom) -> bool {
@@ -2255,17 +3562,15 @@ impl Follower<'_, '_, '_> {
                 .is_none()
                 .then(|| (name.start[..=end].to_vec(), is_written))
         });
-        folders.collect()
+        match self.keeps_what_is_known {
+            true => Some(folders.flatten().collect()),
+            false => folders.collect(),
+        }
     }
 
     fn names_own_url(&self, e: ExprId) -> bool {
         let &ScanInputs { hir, bound, .. } = self.inputs;
-        let e = hir.skip_type_assertions(e);
-        matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
-            if name == known::url
-                && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
-            && !bound.import_meta_may_be_modified()
-            && self.folder == Folder::OfFile
+        names_own_url(hir, bound, e) && self.folder == Folder::OfFile
     }
 
     fn values_of_method_of_text(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
@@ -2316,11 +3621,14 @@ impl Follower<'_, '_, '_> {
             };
             arguments.push(value);
         }
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for text in &texts {
             let Held::Text(text) = text else {
                 return None;
             };
+            if self.folder == Folder::OfCaller && text.start.contains(&STAND_IN[0]) {
+                return None;
+            }
             if text.starts_at_own_directory {
                 add(
                     &mut values,
@@ -2333,7 +3641,7 @@ impl Follower<'_, '_, '_> {
             let made = call_method_of_text(whole_ascii(text)?, method, &arguments)?;
             add(&mut values, Held::Text(Text::whole(&made)));
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn values_of_conversion(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
@@ -2423,7 +3731,7 @@ impl Follower<'_, '_, '_> {
     ) -> Option<Values> {
         let mut arguments = self.inputs.hir.ids(args);
         let mut folders = self.values_of(arguments.next()?)?;
-        let mut below_themselves = Values::new();
+        let mut below_themselves = Distinct::new();
         folders.retain(|folder| match *folder {
             Held::Itself(symbol) | Held::BelowItself(symbol) => {
                 add(&mut below_themselves, Held::BelowItself(symbol));
@@ -2480,7 +3788,7 @@ impl Follower<'_, '_, '_> {
             return None;
         }
         if !has_folder {
-            return (!below_themselves.is_empty()).then_some(below_themselves);
+            return (!below_themselves.is_empty()).then_some(below_themselves.all);
         }
         let mut values = below_themselves;
         for texts in &paths {
@@ -2509,12 +3817,12 @@ impl Follower<'_, '_, '_> {
             }
             add(&mut values, Held::Text(joined));
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn values_of_path_below_some_folder(&mut self, args: IdList<ExprId>) -> Option<Values> {
         let last = self.inputs.hir.ids(args).next_back()?;
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for part in self.values_apart_from_itself(last)? {
             let Held::Text(part) = part else {
                 return None;
@@ -2534,7 +3842,7 @@ impl Follower<'_, '_, '_> {
                 }),
             );
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn values_of_joined_lists(&mut self, lists: &Values, args: IdList<ExprId>) -> Option<Values> {
@@ -2547,7 +3855,7 @@ impl Follower<'_, '_, '_> {
             return None;
         }
         let empty = Held::Text(Text::whole(b""));
-        let mut values = Values::new();
+        let mut values = Distinct::new();
         for list in lists {
             let Held::List(places) = list else {
                 return None;
@@ -2557,7 +3865,7 @@ impl Follower<'_, '_, '_> {
                 if index > 0 {
                     parts.push(separators.clone());
                 }
-                let mut part = Values::new();
+                let mut part = Distinct::new();
                 for value in place {
                     match value {
                         Held::Primitive(Constant::Undefined | Constant::Null) => {
@@ -2567,13 +3875,13 @@ impl Follower<'_, '_, '_> {
                         _ => return None,
                     }
                 }
-                parts.push(part);
+                parts.push(part.all);
             }
             for value in self.join_parts(&parts)? {
                 add(&mut values, value);
             }
         }
-        Some(values)
+        Some(values.all)
     }
 
     fn values_returned_by(&mut self, function: FnId) -> Option<Values> {
@@ -2595,9 +3903,9 @@ impl Follower<'_, '_, '_> {
             FnBody::Expr(value) => self.values_of(value),
             FnBody::Block(_) => {
                 let info = bound.fns[function.idx()];
-                let mut values = Values::new();
+                let mut values = Distinct::new();
                 if info.end != UNREACHABLE {
-                    values.push(Held::Primitive(Constant::Undefined));
+                    add(&mut values, Held::Primitive(Constant::Undefined));
                 }
                 let mut returned = bound
                     .ids(info.returns)
@@ -2614,7 +3922,7 @@ impl Follower<'_, '_, '_> {
                         returned.into_iter().for_each(|it| add(&mut values, it));
                         Some(())
                     })
-                    .map(|()| values)
+                    .map(|()| values.all)
             }
             FnBody::None => None,
         };
@@ -2645,6 +3953,19 @@ fn folder_of_path(path: &Text) -> Option<Text> {
     })
 }
 
+pub(super) fn names_own_url(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let e = hir.skip_type_assertions(e);
+    matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
+        if name == known::url
+            && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
+        && !bound.import_meta_may_be_modified()
+}
+
+fn url_of_caller() -> Text {
+    let path = [b"./", STAND_IN].concat();
+    href_of(&from_own_directory(Text::whole(&path)))
+}
+
 fn href_of(path: &Text) -> Text {
     Text {
         is_file_url: true,
@@ -2673,6 +3994,7 @@ fn close_over_itself(symbol: SymbolId, mut values: Values) -> Option<Values> {
     if !holds_longer_ones {
         return Some(values);
     }
+    let mut values = Distinct::from(values);
     for index in 0..values.len() {
         let Held::Text(text) = &values[index] else {
             return None;
@@ -2682,7 +4004,7 @@ fn close_over_itself(symbol: SymbolId, mut values: Values) -> Option<Values> {
         below.push(&Text::unknown());
         add(&mut values, Held::Text(below));
     }
-    Some(values)
+    Some(values.all)
 }
 
 fn may_step_back(text: &Text) -> bool {
@@ -2877,14 +4199,14 @@ fn is_loop(statement: StmtKind) -> bool {
 }
 
 fn read_place(places: &[Vec<Held>], keys: Option<&[Vec<u8>]>) -> Option<Values> {
-    let mut values = Values::new();
+    let mut values = Distinct::new();
     let Some(keys) = keys else {
         places
             .iter()
             .flatten()
             .for_each(|it| add(&mut values, it.clone()));
         add(&mut values, Held::Primitive(Constant::Undefined));
-        return Some(values);
+        return Some(values.all);
     };
     for key in keys {
         let index = std::str::from_utf8(key).ok()?.parse::<usize>().ok()?;
@@ -2893,7 +4215,22 @@ fn read_place(places: &[Vec<Held>], keys: Option<&[Vec<u8>]>) -> Option<Values> 
             None => add(&mut values, Held::Primitive(Constant::Undefined)),
         }
     }
-    Some(values)
+    Some(values.all)
+}
+
+pub(super) fn may_change_or_hand_on_its_object(key: &[u8]) -> bool {
+    matches!(
+        key,
+        b"__defineGetter__"
+            | b"__defineSetter__"
+            | b"__lookupGetter__"
+            | b"__lookupSetter__"
+            | b"__proto__"
+            | b"constructor"
+            | b"toLocaleString"
+            | b"toString"
+            | b"valueOf"
+    )
 }
 
 fn is_member_of_every_object(key: &[u8]) -> bool {

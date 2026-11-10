@@ -1,0 +1,37 @@
+# internal/net/isIP: export default { grow(by) { return by }, size: 3 };      node:net: const all = require("internal/net/isIP"); export default all.grow(1);      main.js: require("node:net");
+# The build admits the inspector. The console reaches every object of the heap, so the record is frozen where its file hands it back (native: exports-that-stay-in-compiled-code/under-the-inspector-..). What Link leans on is what it leans on where code from disk is allowed:
+# the record stays in sight and keeps the writers of its fields; every value in it goes to code that nobody has seen.
+# OPTIONS: admit=Inspector
+# RUN: link modules functions calls fields mechanisms=all
+# CHECK: module m1 record-is-handed-out-frozen
+# CHECK-NOT: function f2 callers-known
+# CHECK: call f3 v3 -> f2
+# CHECK: field L0.0 {{*}}proven={{*}}f2 writers-known
+layout L0 module=m1 fields=[{key="grow" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f3
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:net"
+    Return
+}
+function f1 module=m1 kind=Module role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Integer integer=3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="grow" module=m1 role=Library length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m2 kind=Module role=Library results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m2 specifier="internal/net/isIP"
+    v1 = PropGet v0 key="grow"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="grow" calleeName="grow"
+    Return v3
+}

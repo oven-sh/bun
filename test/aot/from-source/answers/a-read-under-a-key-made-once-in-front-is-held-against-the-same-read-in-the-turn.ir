@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse("{}");
+# let counted = 9;
+# Object.defineProperty(held, "rows", { get() { counted = Math.max(counted - 1, 0); return [5, 6, 7, 8, 9, 10, 11, 12, 13].slice(0, counted); } });
+# const data = [held][zero], w = ["rows"][zero];
+# function f() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f(), counted);
+# -- end of source
+# `data[w]` stands in the head and in the turn; holder and key are consts of the file of which nobody knows anything. Where the holder is a plain object and the key a text under which an own value lies, the read
+# runs no code and, as the turns write no name of any object, finds the same in every turn: it is made once in front of the typed copy by an operation that runs no code and answers absent for everything else;
+# who gets absent takes the closed copy. A hundred turns: 10,106 > 836 instructions, plain Bun 915.
+# Under testing=CheckProofsAtRunTime the read stands in the turn too and is held against the one made in front. Here an accessor hands out another list at each call; the lie reads by the road that runs code.
+# RUN(EVENT): compile ReadsUnderKeysFromInFrontBuiltInFrontOfLoops mechanisms=all
+# EVENT: statistic ReadsUnderKeysFromInFrontBuiltInFrontOfLoops 2
+# RUN(CHECKED): compile ReadsUnderKeysFromInFrontBuiltInFrontOfLoops mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic ReadsUnderKeysFromInFrontBuiltInFrontOfLoops 2
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 18 2
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 18 2
+# HELD-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad
+# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# STOPPED: crashed with

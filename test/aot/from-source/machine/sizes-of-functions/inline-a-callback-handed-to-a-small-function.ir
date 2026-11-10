@@ -1,0 +1,17 @@
+# f2 = addFour
+# -- source: inline-a-callback-handed-to-a-small-function.ts
+# function applyTwice(operation: (value: number) => number, value: number): number {
+#   return operation(operation(value));
+# }
+# function addFour(value: number): number {
+#   return applyTwice((step) => step + 2, value);
+# }
+# declare const input: any;
+# (globalThis as any).answer = addFour(+input);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 2, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:8 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 8

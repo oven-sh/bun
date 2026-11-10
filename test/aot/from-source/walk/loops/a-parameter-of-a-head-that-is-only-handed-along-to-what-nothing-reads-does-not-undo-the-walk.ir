@@ -1,0 +1,8 @@
+# A variable that some turns assign, read only behind its assignment: the head once had a parameter for it that was handed along an edge to the join behind the branch and from there round again, and nothing read either of the two. No read meets the head, so the front end makes neither.
+# -- source: a-parameter-of-a-head-that-is-only-handed-along-to-what-nothing-reads-does-not-undo-the-walk.cjs
+# function count(rows) { var row, cell; let sum = 0; for (let i = 0; i < rows.length; i++) { if (i & 1) { row = rows[i]; cell = row.size(); sum = (sum + cell) | 0; } } return sum; }
+# print(count([{ size() { return 2; } }, { size() { return 3; } }]), count([]));
+# -- end of source
+# STATISTIC: WalksOfLoopsUndone <= 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 3 0

@@ -1,0 +1,14 @@
+# -- source: main.ts
+# function inside(c: any): string { const whole = c | 0; if (whole < 65 || whole > 90) return "out"; return "in"; }
+# (globalThis as any).kept = inside;
+# const probes: any[] = [-2147483648, -2147483647, -129, -128, -1, -0, 0, 1, 9, 10, 11, 47, 48, 49, 56, 57, 58, 64, 65, 66, 89, 90, 91, 96, 97, 122, 123, 127, 128, 255, 256, 65535, 65536, 2147483646, 2147483647, 2147483648, 4294967295, 4294967296, 4294967361, -4294967231, 65.5, 64.999, 90.0001, NaN, Infinity, -Infinity, "65", "A", "", null, undefined, true, false, [70], {}, { valueOf() { return 70; } }, 70n];
+# const out: string[] = [];
+# for (const probe of probes) { try { out.push(String((globalThis as any).kept(probe))); } catch (error) { out.push((error as Error).constructor.name); } }
+# console.log(out.join(" "));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# RUN: run-in-shell mechanisms=all testing=FailGuesses
+# RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# RUN: run-in-shell mechanisms=all testing=IgnoreExpectedTypes
+# CHECK: out out out out out out out out out out out out out out out out out out in in in in out out out out out out out out out out out out out out out out in in in out in out out out in out out out out out out in out in TypeError
+# CHECK-NEXT: exited with 0

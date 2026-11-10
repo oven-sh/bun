@@ -1,0 +1,25 @@
+# -- source: wide.ts
+# declare function id<T>(value: T): T;
+# declare function report(value: number): void;
+# function isListed(kind: number): boolean {
+#   switch (kind | 0) { case 81: case 84: case 85: case 90: case 168: case 169: case 171: case 208: case 209: case 226: case 260: case 262: case 281: case 303: case 346: case 370: return true; default: return false; }
+# }
+# let listed = 0;
+# for (const kind of [80, 81, 82, 370, 371, 0, -1, -2147483648, 2147483647, 81 - 4294967296, 81 + 4294967296, 226.5, NaN]) if (isListed(id(kind))) listed += kind;
+# report(listed);
+# -- end of source
+# The subject less the least case is tested against the span as a 32-bit word, and is widened for the address in the block behind the test, where nobody else reads the word: the widening costs no step.
+# In front of the test the word was still to be read, and the widening was a copy. f1 = isListed
+# REQUIRES: x86_64
+# RUN: compile SwitchesAnsweredByByteOfTable mechanisms=none+TypedOperations+UnboxedNumbers+Folding
+# CHECK: statistic SwitchesAnsweredByByteOfTable 1
+# REQUIRES(STEPS): x86_64
+# RUN(STEPS): allocate f1:Body mechanisms=none+TypedOperations+UnboxedNumbers+Folding
+# STEPS-LABEL: unit f1:Body
+# STEPS-NOT: = ZExt32
+# STEPS: Branch Below(
+# STEPS-NOT: = ZExt32
+# STEPS: Load8Z
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 839.5
+# RUNS: exited with 0

@@ -1,0 +1,16 @@
+# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the walk tells that `at` is no less than nought.
+# The piece of the text is only parsed, so it is never made: the digits are read out of the text itself, from a start whose clamp has left its lower half out on that word: 4,294,967,295 code units behind the first.
+# Under TestsEveryPosition (which --aot-harden=ignore-told-ranges stands for) the reader asks `start <= end <= length` where it stands, and stops by name. The clamp goes on believing what it is told: a clamp that believed nothing would answer and nobody would hear of the false range.
+# CheckProofsAtRunTime is not in the runs: it holds the range where the test lets the number pass. The lie is not run without the word: it reads memory that is not the program's.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: 12
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=TestsEveryPosition,EqualIntegersAreTakenToBeLess
+# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# STOPPED: crashed with
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function parsed(text: string, from: number): number { let sum = 0; for (let i = 0; i < 2; i++) { const at = (from | 0) + i; if (-1 < at) sum += parseInt(text.slice(at, at + 2), 10); } return sum; }
+# print(parsed(id("1234567890"), id(-1)));
+# -- end of source

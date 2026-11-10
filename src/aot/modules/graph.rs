@@ -4,8 +4,8 @@ mod tests;
 use super::ModuleRef;
 use super::bindings::{
     AccessedModule, AnswerMember, Candidates, ExportBinding, ExportLookup, ExportUse, Holder,
-    ImportBinding, ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
-    SyntheticExport, SyntheticExportId,
+    ImportBinding, ModuleExport, ModuleRequest, NO_STAR_PLACE, RequiredName, SiteAnswer,
+    SpelledModule, SyntheticExport, SyntheticExportId,
 };
 use super::commonjs_exports::CommonJsExports;
 use super::compare_code_units;
@@ -63,6 +63,7 @@ pub struct ModuleGraph {
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
 }
@@ -98,17 +99,20 @@ pub(super) struct FileRow {
     pub evaluating_sites: Vec<(SiteKey, StoredSite)>,
     pub unread_sites: Vec<(ExprId, bool)>,
     pub holders: Vec<Holder>,
+    pub holders_by_call: OnceLock<Vec<u32>>,
     pub answer_members: Vec<(ExprId, AnswerMember)>,
     pub names_read_on_answers: Vec<(SymbolId, Atom)>,
     pub exports: Vec<ModuleExport>,
     pub ambiguous_names: Vec<Atom>,
     pub unread_exports: Vec<SymbolId>,
+    pub names_left_out: Vec<Atom>,
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
     pub handed_on: Vec<(Atom, (ModuleRef, Atom))>,
     pub named_by_stars: Vec<FileId>,
     pub names_from_stars: Vec<Atom>,
+    pub names_of_unlisted_stars: Vec<(Atom, FileId)>,
     pub reaches_mock: bool,
 }
 
@@ -280,6 +284,12 @@ impl ModuleGraph {
         is_namespace.then_some(members[index].1)
     }
 
+    pub fn is_member_of_import(&self, file: FileId, member: ExprId) -> bool {
+        let accessed = &self.row(file).accessed;
+        let index = accessed.binary_search_by_key(&member, |&(member, _)| member);
+        index.is_ok_and(|index| accessed[index].1.is_imported)
+    }
+
     pub fn find_module_accessed(&self, file: FileId, member: ExprId) -> Option<ModuleRef> {
         let accessed = &self.row(file).accessed;
         let index = accessed
@@ -372,6 +382,20 @@ impl ModuleGraph {
         }
     }
 
+    pub fn add_imports(&mut self, imports: &[(FileId, ModuleRef)]) {
+        self.plan.reopen();
+        for &(importer, target) in imports {
+            let index = self.row_by_file[importer.idx()].expect("an importer has a row");
+            let requests = &mut self.rows[index as usize].requests;
+            let is_asked = |request: &ModuleRequest| {
+                request.target == target && request.kind == ModuleRequestKind::Import
+            };
+            if !requests.iter().any(is_asked) {
+                requests.push(ModuleRequest::import(target));
+            }
+        }
+    }
+
     pub fn leave_out_inner_modules(&mut self, modules: &[ModuleRef]) {
         let mut left_out: Vec<(FileId, FnId)> = modules
             .iter()
@@ -458,6 +482,7 @@ impl ModuleGraph {
                         match passed_on.iter_mut().find(|earlier| is_same(earlier)) {
                             Some(earlier) => {
                                 earlier.is_star_export |= request.is_star_export;
+                                earlier.star_place = earlier.star_place.min(request.star_place);
                                 earlier.is_dynamic_star_export |= request.is_dynamic_star_export
                             }
                             None => passed_on.push(request),
@@ -468,6 +493,7 @@ impl ModuleGraph {
                             passed_on.push(ModuleRequest {
                                 is_star_export: false,
                                 is_dynamic_star_export: false,
+                                star_place: NO_STAR_PLACE,
                                 ..request
                             });
                         }
@@ -521,6 +547,9 @@ impl ModuleGraph {
         &self.row(file).ambiguous_names
     }
 
+    pub fn names_left_out(&self, file: FileId) -> &[Atom] {
+        &self.row(file).names_left_out
+    }
     pub fn unread_exports(&self, file: FileId) -> &[SymbolId] {
         &self.row(file).unread_exports
     }
@@ -609,6 +638,21 @@ impl ModuleGraph {
         names.binary_search_by_key(&name.0, |it| it.0).is_ok()
     }
 
+    pub fn unlisted_stars_that_bring(&self, file: FileId, name: Atom) -> &[(Atom, FileId)] {
+        let names = &self.row(file).names_of_unlisted_stars;
+        let start = names.partition_point(|it| it.0.0 < name.0);
+        let end = names.partition_point(|it| it.0.0 <= name.0);
+        &names[start..end]
+    }
+
+    pub fn names_from_stars(&self, file: FileId) -> &[Atom] {
+        &self.row(file).names_from_stars
+    }
+
+    pub fn names_handed_on(&self, file: FileId) -> &[(Atom, (ModuleRef, Atom))] {
+        &self.row(file).handed_on
+    }
+
     pub fn find_what_hands_on_names(&self, file: FileId, name: Atom) -> Option<(ModuleRef, Atom)> {
         let handed_on = &self.row(file).handed_on;
         let at = handed_on.binary_search_by_key(&name.0, |entry| entry.0.0);
@@ -622,6 +666,10 @@ impl ModuleGraph {
     pub fn is_laid_on_object_prototype(&self, name: &[u8]) -> bool {
         let laid = &self.names_laid_on_object_prototype;
         laid.binary_search_by(|laid| (**laid).cmp(name)).is_ok()
+    }
+
+    pub fn folders_of_databases(&self) -> &[FileId] {
+        &self.folders_of_databases
     }
 
     pub fn forms_require_checks_first(&self, module: ModuleRef) -> &[(FileId, FileId)] {
@@ -756,7 +804,6 @@ impl ModuleGraph {
         self.row(file).has_no_side_effects
     }
 
-    #[cfg(test)]
     pub fn has_dynamic_names(&self, file: FileId) -> bool {
         self.row(file).has_dynamic_names
     }
@@ -805,7 +852,7 @@ impl ModuleGraph {
     pub fn names_left_to_loader(
         &self,
         file: FileId,
-    ) -> impl Iterator<Item = (SpelledModule, bool)> + '_ {
+    ) -> impl Iterator<Item = (SpelledModule, ImportSiteKind)> + '_ {
         let sites = self.find_row(file).into_iter().flat_map(|row| {
             row.sites
                 .iter()
@@ -815,9 +862,8 @@ impl ModuleGraph {
                 })
         });
         sites.flat_map(|(kind, spelled)| {
-            let is_required = !matches!(kind, ImportSiteKind::ImportCall(_));
             let left = spelled.iter().filter(|it| it.is_left_to_loader);
-            left.map(move |&it| (it, is_required))
+            left.map(move |&it| (it, kind))
         })
     }
 

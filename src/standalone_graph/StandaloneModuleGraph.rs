@@ -34,7 +34,7 @@ use crate::executable_request::{
 };
 pub use crate::executable_request::{
     ExecutableDetails, ExecutableOutcome, ExecutableRequest, GraphRequest, to_graph_bytes,
-    write_executable,
+    with_graph_slices, write_executable,
 };
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
@@ -226,18 +226,27 @@ impl StandaloneModuleGraph {
         self.lookup_file(name)
     }
 
+    /// What a program reads as data: not the file of a compiled entry point, which is in the graph for its name alone.
+    pub fn find_data(&self, name: &[u8]) -> Option<&File> {
+        let file = self.find_ref(name)?;
+        (!self.is_file_of_compiled_entry_point(file)).then_some(file)
+    }
+
     pub fn contains_file(&self, name: &[u8]) -> bool {
         self.find_ref(name).is_some()
     }
 
     pub fn stat(&self, name: &[u8]) -> Option<Stat> {
         if let Some(file) = self.find_ref(name) {
-            return Some(file.stat());
+            let mut stat = file.stat();
+            self.fill_stat_for_file_system_alone(file.name, &mut stat);
+            return Some(stat);
         }
-        if self.find_dir(name) {
-            return Some(dir_stat());
-        }
-        None
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let key = self.directory_key(name, &mut buffer)?;
+        let mut stat = dir_stat();
+        self.fill_stat_for_file_system_alone(key, &mut stat);
+        Some(stat)
     }
 
     pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {

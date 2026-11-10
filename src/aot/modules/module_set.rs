@@ -38,6 +38,7 @@ pub(super) struct ModuleSet {
     interops: Vec<Option<Interop>>,
     forms: Vec<(FileId, FileId)>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    pub(super) folders_of_databases: Vec<FileId>,
     sibling_forms: Vec<(FileId, FileId, ImportTypeKind)>,
 }
 
@@ -78,6 +79,7 @@ impl ModuleSet {
             interops,
             forms: Vec::new(),
             forms_require_checks_first: Vec::new(),
+            folders_of_databases: Vec::new(),
             sibling_forms: Vec::new(),
         }
     }
@@ -360,6 +362,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     ModuleSet {
         forms,
         forms_require_checks_first,
+        folders_of_databases: Vec::new(),
         sibling_forms,
         compiled_files,
         record_files: with_record.collect(),

@@ -316,13 +316,10 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "the properties of the constant objects of a function that only such a branch calls",
         of("importedConstant", propertiesOfConstantObjectsInBranch),
       ],
-      gap(
-        "an object that the program does make has a place for every property that the program as written adds to it",
-        [
-          "the properties that such a branch adds to an object from outside it",
-          of("importedConstant", propertiesAddedInBranch),
-        ],
-      ),
+      [
+        "the properties that such a branch adds to an object from outside it",
+        of("importedConstant", propertiesAddedInBranch),
+      ],
       [
         "a function called where a type rules the branch out",
         ["typeTestCalleeQ53", "typeTestCalleeTextQ54", "typeTestTextQ56"],

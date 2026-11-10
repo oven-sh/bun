@@ -1,0 +1,17 @@
+# testing=BoundFunctionsAreTakenToBindOneMore reads one word more off a bound function than the number that was tested. A bound function holds three words for its arguments:
+# with three bound arguments there is no fourth, and the build stopped on an assertion of the emitter. There the lying word reads no more, and the program says what it says without it.
+# RUN(READS): walk f2:Body mechanisms=all testing=BoundFunctionsAreTakenToBindOneMore
+# READS: = HasNumberOfBoundArguments {{*}}count=3
+# READS: = GetWordOfBoundFunction {{*}}index=4
+# READS-NOT: = GetWordOfBoundFunction {{*}}index=5
+# RUN(SAID): run-in-shell mechanisms=all testing=BoundFunctionsAreTakenToBindOneMore,CheckProofsAtRunTime
+# SAID: 248
+# SAID-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function join(a: string, b: string, c: number): number { return a.length + b.length + c; }
+# function method(rows: number[], turns: number): number { const bound = join.bind(null, "x", "ab", 1); let sum = 0; for (let i = 0; i < turns; i++) { if (rows[i & 7]! > 3) sum += bound(); } return sum; }
+# const rows: number[] = JSON.parse("[1,9,2,8,3,7,4,6]");
+# print(method(rows, id(100)));
+# -- end of source

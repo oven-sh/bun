@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# function total(rows) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i].price; return s; }
+# globalThis.kept = total;
+# const row = (i) => ({ id: i, price: i * 2 }), turned = (i) => ({ cost: i, tax: 8, extra: 9, price: 1000 });
+# const good = []; for (let i = 0; i < 17; i++) good.push(row(i));
+# const unseen = globalThis[JSON.parse('"kept"')], mixed = JSON.parse("[]");
+# for (let i = 0; i < 17; i++) mixed.push(globalThis.fails && i === 9 ? turned(5) : row(i));
+# print(total(good), unseen(mixed));
+# -- end of source
+# Eight turns of `s += rows[i].price` stand in a row; each tests the shape of its row and reads the slot. Nothing held what such a read gives: the run time's question behind a read of a slot, "what stands under this name
+# in the object", answered to testing=CheckWalkAtRunTime alone, under which no turn is laid out. It answers to testing=EmittersAloneTestEveryPosition too, inside turns laid out.
+# The lie, testing=ShapeTestsInTurnsLaidOutAreTakenToPass, leaves the test of the shape out: as built, the row of another shape gives what lies at the place of the other shape's `price` in silence.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: 272 1254
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition globalThis.fails = true;
+# HELD: 272 1254
+# HELD-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,ShapeTestsInTurnsLaidOutAreTakenToPass
+# PASSES: 272 272
+# PASSES-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=ShapeTestsInTurnsLaidOutAreTakenToPass globalThis.fails = true;
+# SILENT-NOT: 1254
+# SILENT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,ShapeTestsInTurnsLaidOutAreTakenToPass globalThis.fails = true;
+# LIE: AOT: a typed read by name answered a value under the name price, and the object, asked again, answers another.
+# LIE: crashed with

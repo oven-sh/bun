@@ -1,0 +1,32 @@
+# `hidden` is a `const` that holds the one symbol made for it, for good. That is a constant and no memory: an access under it goes by the symbol as by a name, however the unit is walked. Bun's library leans on
+# it: what it registers to run "before somebody looks under the symbol with a key that is a value" must not run at the library's own accesses. A slow version and a unit walked closed believed nothing of any
+# variable: they took this one for any value, the access went by a key that is a value, and the library's own reads looked foreign. Now they ask Link's key at the access, as a fast version does, and take it where
+# the variable bears it out. So Link's own rules hold here too: a symbol of the library is a name in the library's text alone, and symbols with a preparation are names all together or not at all.
+# f1 = read, f2 = store
+# -- source: an-access-under-a-variable-that-holds-one-symbol-for-good-goes-by-that-symbol-however-the-unit-is-walked.ts
+# const hidden = Symbol("hidden");
+# class Tag { n = 1; m = 2; }
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# function read(tag: Tag, holder: any): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return holder[hidden] + Math.abs(work); }
+# function store(tag: Tag, holder: any): void { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; holder[hidden] = Math.abs(work); }
+# const real = new Tag(), liar = unseen({ n: 1, m: 2 }), holder: any = { [hidden]: 0 };
+# store(real, holder);
+# print(read(real, holder), read(liar, holder));
+# store(liar, holder);
+# print(read(real, holder), read(liar, holder), Object.getOwnPropertySymbols(holder).length);
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f1:SlowBody mechanisms=all
+# CHECK-LABEL: code f1:SlowBody
+# CHECK: = PropGet {{*}}key=symbol("hidden")
+# RUN(STORE): walk f2:SlowBody mechanisms=all
+# STORE-LABEL: code f2:SlowBody
+# STORE: = PropSet {{*}}key=symbol("hidden")
+# RUN(NEVER): walk f1:SlowBody mechanisms=all
+# NEVER-NOT: = ElemGet
+# RUN(CLOSED): walk f1:Body mechanisms=all testing=WalksUnitsBy:Closed
+# CLOSED-LABEL: code f1:Body
+# CLOSED: = PropGet {{*}}key=symbol("hidden")
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 12
+# ANSWERS-NEXT: 12 12 1

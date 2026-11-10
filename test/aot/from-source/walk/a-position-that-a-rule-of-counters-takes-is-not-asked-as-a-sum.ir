@@ -1,0 +1,17 @@
+# `pos += 2` on a position of unknown kind gives a number or a text; that enters the inner loop, whose head carries `number|string`. The rules of counters ask such a position for an int32 in front of the typed copy
+# (it is stepped all round and the turns take it as an integer). The rule of sums stands BEHIND them: what one of them takes is no sum. In front of them it asked the position for a number, the typed copy held it as a Double,
+# and a scanner that skips comments cost the compiler that compiles itself 45 to 55 M instructions.
+# f1 = skip
+# LIBRARY: own
+# -- source: main.js
+# function skip(text, pos) { while (true) { const ch = text.charCodeAt(pos); if (ch === 47) { pos += 2; while (pos < text.length) { if (text.charCodeAt(pos) === 10) break; pos++; } continue; } if (ch === 32) { pos++; continue; } return pos; } }
+# publish(skip);
+# -- end of source
+# RUN: compile SumsAskedForNumbersInFrontOfLoops mechanisms=all
+# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 0
+# RUN(SKIP): walk f1 mechanisms=all
+# SKIP: code f1:Body
+# SKIP-NOT: : number @Double) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.publish = (skip) => { const t = " //ab" + String.fromCharCode(10) + " /x y"; print(skip(t, 0), skip(t, 1), skip(t, 2), skip(t, 7), skip(t, "0"), skip(t, "2"), skip(t, 100), skip(t, -1), skip("", 0), skip(t, 2.5)); try { print(skip(t, 1n)); } catch (e) { print(e.constructor.name); } };
+# SHELL: 5 5 5 11 5 22 100 -1 0 5.5
+# SHELL-NEXT: TypeError

@@ -1,0 +1,32 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function sum(n: number): number { let s = 0; for (let i = 0; i < 4; i++) s += n * i + n; return s; }
+# function other(n: unknown): number { return n === 1 ? -1 : -2; }
+# const table = [sum, other];
+# function byValue(which: number, x: unknown): unknown { return (table[which] as any)(x); }
+# print(byValue(JSON.parse("0"), JSON.parse("4")), byValue(JSON.parse("1"), 1));
+# print(byValue(JSON.parse("0"), JSON.parse('"ab"')));
+# print("went on");
+# -- end of source
+# A conversion out of a box goes by the type of what lies in it: what is no int32 is read as a double, and what is no number is taken for the first marker of the type, unasked. Under a false proof that is silent.
+# Under the words on proofs those two arms ask. Here the guard of f1 unboxes its operand for a Body that takes a Double, one record behind its own test: no check in the Body can see what came.
+# THE LIE: testing=RowSaysLess:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass.
+# f1 = sum
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:Body (Double)
+# CHECK: unit f1:ParameterGuard (JSValue) -> (JSValue) tests (number)
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 40 -1
+# RIGHT-NEXT: 0NaNabNaNabNaNabNaNab
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,RowSaysLess:Callee/f1/TestsOfGuard
+# ENTRIES: 40 -1
+# ENTRIES: what an operation gives is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ENTRIES-NOT: went on
+# ENTRIES: crashed
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Callee/f1/TestsOfGuard
+# PROOFS: 40 -1
+# PROOFS: what an operation gives is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# PROOFS-NOT: went on
+# PROOFS: crashed

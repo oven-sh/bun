@@ -1,0 +1,34 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# let last = -1;
+# function run(n: number, text: string): number {
+#   let t = 0;
+#   for (let i = 0; i < n; i++) {
+#     text = text + text;
+#     t = t + i * 0.5;
+#     last = t;
+#   }
+#   return text.length;
+# }
+# function show(n: number): void {
+#   let work = 0;
+#   for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   last = -1;
+#   let said = "none";
+#   try {
+#     run(n, "ab");
+#   } catch (error) {
+#     said = (error as Error).name;
+#   }
+#   print(n, said, last);
+# }
+# for (const n of JSON.parse("[10,100]") as number[]) show(n | 0);
+# -- end of source
+# A text doubled thirty times is past the longest text: the sum throws a RangeError out of the turn, with no hand-over and no poll on the way. So a turn that may leave by a throw keeps its store: the
+# catch reads what the turn in front of the throw stored. Without that test the store is left out and the second line says -1.
+# RUN(EVENT): compile StoresLeftOutOfTurnsLaidOut mechanisms=all
+# EVENT: statistic StoresLeftOutOfTurnsLaidOut 0
+# RUN(RIGHT): run-in-shell
+# RIGHT: 10 none 22.5
+# RIGHT-NEXT: 100 RangeError 203
+# RIGHT-NEXT: exited with 0

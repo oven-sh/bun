@@ -1,0 +1,36 @@
+# -- source: main.js
+# class Box { constructor(width, height) { this.cached = ""; this.width = width; this.height = height; } }
+# function make(width, height) { return new Box(width, height); }
+# function count(width, height) { return width + height; }
+# function area(made, scale) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return ((made.width * made.height + work) * scale) | 0; }
+# function areaOfText(text) { const made = JSON.parse(text); return typeof made === "object" && made !== null ? area(made, 3) : 0; }
+# function measure(box, sizes) {
+#   let sum = 0;
+#   for (let i = 0; i < box.height; i++) sum = (sum + box.width * box.height + i) | 0;
+#   return sum + area(make(...sizes), 2);
+# }
+# print(measure(new Box(1, 2), [3, 4]));
+# print(measure(new Box(2, 3), [1, 4]));
+# print(measure(JSON.parse('{"cached":"","width":5,"height":6}'), [1, 1]));
+# print(areaOfText('{"width":2,"height":2}'));
+# print(count(1, 2));
+# -- end of source
+# f1 = make, f2 = area, f3 = count, f4 = areaOfText, f5 = measure
+# `measure` has a guard on `box`, and so a slow body. `area` goes by what its callers leave, and Link proves nothing of `made`: `areaOfText` hands over what only its own test tells.
+# The records of a slow body say nothing of positions: that of `make(...sizes)` says `anything`. What the walk leaves at `area` is what the one function that is called hands back
+# (Walker::typeThatCallByValueIsShownToGive()), and the judge of calls asks the same rule. `f2:0:L0` says what the unit of the text has left at entry parameter 0 of f2.
+# RUN: verify-code f2:0:L0 f2:1:i32 mechanisms=all
+# CHECK: verified
+# -- code
+# code f5:SlowBody {
+#   v0: 2 @Int32 = Integer integer=2
+#   b0(v1: anything?ParameterOfEscapedFunction @JSValue, v2: anything?ParameterOfEscapedFunction @JSValue) entry=0:
+#     v3: Array @Cell = NewArray contents=anything traits=[mayCollect, mayTouchMemory]
+#     v4: f1 @JSValue = GetModuleVariable variable=g0 traits=[mayCollect, mayTouchMemory]
+#     v5: anything?ResultOfUnknownCallee @JSValue = CallList v4, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: i32 @Int32 = CallDirect v5, v0 function=f2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v7: i32 @JSValue = Box v6
+#     v8: i32 @Double = Unbox v7
+#     Return v8
+# }
+# -- end of code

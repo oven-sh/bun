@@ -174,20 +174,6 @@ async function answersIn(program: Program, folder: string, command: string[]) {
 const plainAnswer = (program: Program, name: string) =>
   answersIn(program, "tool", [bunExe(), join(directory, program, "tool/main.cjs"), name]);
 
-// Where code may come from disk, a require() made for a folder without code of the program is taken for one of a file from disk, which finds no file of the executable.
-const formsThatAnswer = (program: Program) =>
-  program === "a-folder-given-to-create-require" ? (["closed"] as const) : (["closed", "withCodeFromDisk"] as const);
-test.failing(
-  "a start that names a-folder-given-to-create-require, where code may come from disk: what is in the executable is found",
-  async () => {
-    const { executable } = await build("a-folder-given-to-create-require", "withCodeFromDisk");
-    expect(await answersIn("a-folder-given-to-create-require", "empty", [executable, "en"])).toBe(
-      "made-up mark of tool: locales/en.json",
-    );
-  },
-  600_000,
-);
-
 test.each([
   [
     "a-folder",
@@ -220,7 +206,7 @@ test.each([
 ] as const)(
   "a start that names %s: what the path may name is in the executable, and the build says so",
   async (program, names, held) => {
-    for (const form of formsThatAnswer(program)) {
+    for (const form of ["closed", "withCodeFromDisk"] as const) {
       const { executable, said } = await build(program, form);
       expect({ form, held: dataHeldBy(executable) }).toEqual({ form, held: [...held] });
       expect(said).toContain(`TS100088: `);

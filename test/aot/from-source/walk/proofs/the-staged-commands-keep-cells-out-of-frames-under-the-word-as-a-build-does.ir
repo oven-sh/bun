@@ -1,0 +1,17 @@
+# As built the object of `dist` lies in a frame. Under KeepsCellsOutOfFrames, one of the two words of --aot-harden=proof-checks, a build takes the mechanism CellsInFrames away (withoutMechanismsThatOptionsWithhold()).
+# testaot's staged commands did not: `walk` laid the cell in a frame, the emitter refused it, and no unit was printed. They ask the same function now: what they print under the word is what a build compiles.
+# f0 = the file (dist and norm are copied in)
+# RUN(BUILT): walk f0 mechanisms=all
+# BUILT-LABEL: code f0:Body
+# BUILT: NewObject {{*}}storage=Frame
+# RUN(KEPT): walk f0 mechanisms=all testing=KeepsCellsOutOfFrames
+# KEPT-LABEL: code f0:Body
+# KEPT: NewObject
+# KEPT-NOT: storage=Frame
+# -- source: main.js
+# function norm(v, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += Math.sqrt(v.x * v.x + v.y * v.y + i); return sum; }
+# function dist(ax, ay, bx, by) { const d = { x: bx - ax, y: by - ay }; return norm(d, 3); }
+# let total = 0;
+# for (let i = 0; i < 50; i++) total += dist(i, 1, 2 * i, 5);
+# console.log(Math.round(total));
+# -- end of source

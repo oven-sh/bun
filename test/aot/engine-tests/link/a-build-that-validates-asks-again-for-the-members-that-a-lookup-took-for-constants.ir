@@ -1,0 +1,7 @@
+# As a-build-that-validates-asks-again-for-the-names-that-a-lookup-took-for-unlaid.ir: here the member that the lookup finds is taken for a constant first and found written later.
+# OPTIONS: check=Validate
+# LIBRARY: own
+# PROGRAM-OF: member-of-an-open-prototype-laid-through-the-link-of-an-instance-is-not-taken-for-the-tables.ir
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowStandsOnWhatNoLongerHolds
+# CHECK-NOT: function f2 unreached

@@ -90,6 +90,8 @@ pub enum VariableKey {
     MockOfRuntimeModule(RuntimeModule),
     RequiresMadeForOwnFile(FileId),
     RequiresMadeForOtherFolders(FileId),
+    /// The requires that the real createRequire() made in the file for a written path other than the file's own.
+    RequiresMadeForPaths(FileId),
 }
 
 impl FunctionKey {
@@ -123,6 +125,32 @@ impl LayoutKey {
         )
     }
 
+    pub fn differs_in_files_alone(&self, other: &LayoutKey) -> bool {
+        match (*self, *other) {
+            (
+                LayoutKey::ObjectType {
+                    origin: ObjectOrigin::Computed,
+                    instantiation: TypeIdentity([text, _]),
+                },
+                LayoutKey::ObjectType {
+                    origin: ObjectOrigin::Computed,
+                    instantiation: TypeIdentity([other_text, _]),
+                },
+            ) => text == other_text,
+            (
+                LayoutKey::UntypedLiteral {
+                    file,
+                    members: TypeIdentity([text, _]),
+                },
+                LayoutKey::UntypedLiteral {
+                    file: other_file,
+                    members: TypeIdentity([other_text, _]),
+                },
+            ) => file == other_file && text == other_text,
+            _ => false,
+        }
+    }
+
     pub fn home_file(&self) -> Option<FileId> {
         match *self {
             LayoutKey::Class(class) => Some(class.file),
@@ -154,6 +182,7 @@ impl VariableKey {
             | VariableKey::InstantiationState(file)
             | VariableKey::RequiresMadeForOwnFile(file)
             | VariableKey::RequiresMadeForOtherFolders(file)
+            | VariableKey::RequiresMadeForPaths(file)
             | VariableKey::EnvironmentMadeAhead(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),

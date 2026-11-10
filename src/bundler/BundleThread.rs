@@ -242,6 +242,9 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
+                // The resolver reads a folder again only where its listing is older than the build. The run time's
+                // listings bear 0, and an earlier build's bear that build's number.
+                generation = generation.saturating_add(1);
                 match Self::generate_in_new_thread(completion, generation) {
                     Ok(()) => {}
                     Err(err) => {
@@ -251,8 +254,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 has_bundled = true;
             }
-            generation = generation.saturating_add(1);
-
             if has_bundled {
                 crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
                 bun_alloc::mimalloc::mi_collect(false);

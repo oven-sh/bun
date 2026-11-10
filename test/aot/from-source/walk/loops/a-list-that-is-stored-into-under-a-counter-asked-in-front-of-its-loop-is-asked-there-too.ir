@@ -1,0 +1,19 @@
+# `for (let i = n - 1; i >= 0; --i) r[i] = a[i] * 2`, where `n` is the length of a value of which nothing is known: the counter is asked for an int32 in front of the loop, the list that is read under it is asked there, and so is the list that is STORED INTO:
+# its store is built typed. A typed store asks `i < length` with the length read in front: a list that is shorter than the counter runs (born empty, of one element, handed in) fails that at the first turn.
+# The way out leads to a copy of the loop that asks the counter alone, with an ordinary store: what the loop was before the list was asked. (While it led to the walk as written, where the counter is no integer, an empty list filled from its far end cost 2.4 times as much.)
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(...values: unknown[]): void;
+# function down(a: any, r: any): any { const n = a.length; for (let i = n - 1; i >= 0; --i) r[i] = a[i] * 2; return r; }
+# hand(down);
+# print(down([0.5, 1.5, 2.5], []).join(), down([0.5, 1.5, 2.5], [9]).join(), down([0.5, 1.5, 2.5], new Array(3)).join(), down([0.5, 1.5, 2.5], [1, 2, 3, 4]).join(), down([], [7]).join(), down([1, undefined, 3], [0, 0, 0]).join(), down("12", []).join(), Object.keys(down({ length: 1.5, 0: 3 }, [])).join());
+# -- end of source
+# f1 = down
+# RUN(EVENT): compile LoopsWhoseOtherCopyAsksCountersAlone mechanisms=all
+# EVENT: statistic LoopsWhoseOtherCopyAsksCountersAlone 6
+# RUN(DOWN): walk f1 mechanisms=all
+# DOWN-LABEL: code f1:Body
+# DOWN: PutContiguousIndex
+# DOWN: PutArrayElement {{*}}level=Expected [keyIsIntegral
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 1,3,5 1,3,5 1,3,5 1,3,5,4 7 2,NaN,6 2,4 0.5

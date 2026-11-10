@@ -1,4 +1,4 @@
-use bun_sema::check::aot::{Blocks, ClassRef, RowsCarriedOver, ShapeKind};
+use bun_sema::check::aot::{Blocks, ClassRef, FunctionRef, RowsCarriedOver, ShapeKind};
 
 use super::shape_edges::collect_edges;
 use super::{ExploredType, MappedType};
@@ -12,6 +12,7 @@ enum LeftInFile {
     Unknown,
     Nothing,
     Class(ClassRef),
+    ConstructorFunction(FunctionRef),
     ObjectType(Option<LayoutId>),
 }
 
@@ -172,6 +173,7 @@ fn depends_on_file(kind: ShapeKind<'_>) -> bool {
         | ShapeKind::Function(_)
         | ShapeKind::ClassConstructor(_)
         | ShapeKind::Class(_)
+        | ShapeKind::ConstructorFunctionInstance(_)
         | ShapeKind::Object => true,
         ShapeKind::Anything(_)
         | ShapeKind::TypeVariable { .. }
@@ -236,6 +238,9 @@ fn find_what_is_left_in_file(
     match shape.kind {
         ShapeKind::AnyObject if file.is_type_of_module(ty) => LeftInFile::Unknown,
         ShapeKind::Class(class) => LeftInFile::Class(class),
+        ShapeKind::ConstructorFunctionInstance(function) => {
+            LeftInFile::ConstructorFunction(function)
+        }
         ShapeKind::Object => LeftInFile::ObjectType(file.object_type_layout(ty)),
         _ => LeftInFile::Nothing,
     }
@@ -263,6 +268,9 @@ impl FileLowering<'_, '_, '_, '_> {
         match entry.left_in_file {
             LeftInFile::Unknown | LeftInFile::Nothing => {}
             LeftInFile::Class(class) => _ = self.class_type_layout(class, ty),
+            LeftInFile::ConstructorFunction(function) => {
+                _ = self.declare_constructor_function_layout(function);
+            }
             LeftInFile::ObjectType(layout) => {
                 if self.object_type_layout(ty) != layout {
                     return false;

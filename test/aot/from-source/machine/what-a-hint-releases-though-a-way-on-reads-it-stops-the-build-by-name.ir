@@ -1,0 +1,19 @@
+# What a hint lets go. `first` is copied into the loop of `inLoop` on one way and called on another that is laid later, so what make() returned is read behind each hint by position, and whether it is let go is asked of the ways on. Two hints in a row name it: where `x = null` stands and where the copied body ends. At the first the second still reads it. The word makes the ways on read nothing, so the first lets it go.
+# No check is asked for here, as in a build of a user: what the hints let go is looked for all the same in the steps on the ways on, and the build stops by name. Without that check it would end well and the code would read a register that was cleared.
+# f4 = inLoop
+# -- source: what-a-hint-releases-though-a-way-on-reads-it-stops-the-build-by-name.ts
+# declare function sink(...values: unknown[]): void;
+# declare function collect(): void;
+# declare const turns: number;
+# type Thing = { id: number };
+# let made = 0;
+# function make(): Thing { return { id: ++made }; }
+# function other(): number { sink(made); return made & 1; }
+# function first(x: Thing | null, more: number): boolean { sink(x, more); x = null; collect(); return made > 3; }
+# function inLoop(): boolean { let all = true; for (let i = 0; i < turns; i++) all = first(make(), other() + i) && all; return all; }
+# sink(inLoop);
+# -- end of source
+# REQUIRES: x86_64
+# AS-USERS-BUILD: the look for what hints let go on the ways on runs in every build, and under the check of the runner the allocation is checked as well and would stop it under another name
+# DIAGNOSTIC: ReleasedValueIsReadOnWayOn f4
+# RUN: emit f4 mechanisms=all testing=WaysOnAreTakenToReadNothing

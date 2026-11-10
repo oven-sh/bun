@@ -1,0 +1,20 @@
+# A read off a receiver that is proven to be one of a few layouts is told apart by a row of shape tests, an arm a layout; the failing side of the last test is unreachable: the row leans on the list being complete.
+# THE LIE, testing=RowsOfShapeTestsLeaveOutTheirLastArm: the row leaves out its last arm, as if that layout were not in use: an object of it comes to the unreachable end.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the receiver as it entered the row is held to the layouts of the arms in front of that end, or the process ends by name.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 18
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=RowsOfShapeTestsLeaveOutTheirLastArm
+# WRONG: crashed with SIGILL
+# RUN(HELD): run-in-shell mechanisms=all testing=RowsOfShapeTestsLeaveOutTheirLastArm,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Strand { constructor(readonly text: string) {} get size(): number { return this.text.length; } }
+# class Pair { readonly size: number; constructor(readonly left: Strand | Pair, readonly right: Strand | Pair) { this.size = left.size + right.size; } }
+# function join(one: Strand | Pair, other: Strand | Pair): Strand | Pair { if (!one.size) return other; if (!other.size) return one; return new Pair(one, other); }
+# let cord: Strand | Pair = new Strand("ab");
+# for (let i = 0; i < 3; i++) cord = join(join(cord, new Strand(i % 2 ? "c" : "")), cord);
+# print(cord.size);
+# -- end of source

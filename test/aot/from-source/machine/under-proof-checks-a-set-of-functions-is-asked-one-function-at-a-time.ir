@@ -1,0 +1,39 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function sub(a, b) { return (a - b) | 0; }
+# function low(a) { return a & 15; }
+# let chosen = sub;
+# if (flag()) chosen = add;
+# function lay(callee) { chosen = callee; }
+# function overVariable(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + chosen(i, t)) | 0; return s; }
+# drive(overVariable);
+# outside(lay, add, sub, low);
+# drive(overVariable);
+# -- end of source
+# f1 = add, f2 = sub, f3 = low, f5 = overVariable
+# A variable of the file in which two closures were seen is asked for the two in front of the loop that calls it. Compiled code asks "one of these functions" by runs of closure numbers: not below the first of a run, not above its last.
+# RUN(SET): walk f5 mechanisms=all
+# SET: = TypeTest {{*}}testedType=f1|f2
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) what the test has let pass is asked for the same type, and that check asks each function by itself: it compares with no run.
+# RUN(CHECKED): walk f5 mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: = TypeTest {{*}}testedType=f1|f2
+# CHECKED: = CheckProof {{*}}checkedType=f1|f2 {{*}}source=Test
+# The shell calls the function with the loop, lays a third function into the variable out of sight, and calls it again.
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
+# RIGHT: 11 34
+# RIGHT-NEXT: 7 16
+# RIGHT-NEXT: exited with 0
+# THE LIE, testing=RunsOfClosureNumbersTakeInTheNextFunction: the last of a run is taken one higher, so the function that is declared right behind the two passes the test.
+# RUN(RUNS): bytes f5:Body mechanisms=all testing=RunsOfClosureNumbersTakeInTheNextFunction
+# RUNS: relocation {{*}}ClosureFunction {{*}}"sub" plus 1
+# Alone it changes no answer here: behind the test of the two, the arm that is walked in line asks for its own function, and whatever else has passed runs the loop as written.
+# RUN(ALONE): run-in-shell testing=RunsOfClosureNumbersTakeInTheNextFunction flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
+# ALONE: 11 34
+# ALONE-NEXT: 7 16
+# ALONE-NEXT: exited with 0
+# With the check the process stops by name where the third function has passed the test of the two.
+# RUN(HELD): run-in-shell testing=RunsOfClosureNumbersTakeInTheNextFunction,CheckProofsAtRunTime flag = function () { return true; }; outside = function (lay, first, second, third) { lay(third); }; drive = function (over) { print(over(1), over(3)); };
+# HELD: 11 34
+# HELD: AOT: f5 {{*}}what a test has let pass is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT

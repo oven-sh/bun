@@ -328,12 +328,20 @@ struct Harvest<'a> {
     names_await_at_top_level: bool,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How often this thread has begun to parse a text.
+    pub(crate) static ENTRIES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) fn run<'a>(
     text: &'a [u8],
     options: Options,
     atoms: Option<&'a dyn Intern>,
     scratch: &'a mut Scratch,
 ) -> Result<Parsed, Rejected> {
+    #[cfg(test)]
+    ENTRIES.set(ENTRIES.get() + 1);
     if text.len() >= 1 << 30 {
         return Err(Rejected::new(Rejection::TooLarge));
     }
@@ -586,7 +594,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `Options::reads_module_statements_alone`, at the start of a statement. True if the statement is to be parsed. Otherwise
-    /// the text ends here, or is rejected.
+    /// the text ends here. Where the rest cannot be left out, it is parsed from here on.
     #[inline(never)]
     fn is_at_module_statement(&mut self) -> bool {
         use skipped_blocks::{may_export_from_a_file, may_reach_beyond_the_module};
@@ -603,11 +611,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             }
             _ => src.get(self.pos() as usize..).unwrap_or_default(),
         };
-        match self.f.has_module_syntax && !may_reach_beyond_the_module(rest) {
-            true => self.lx.stop(),
-            false => self.reject(Rejection::Unsupported),
+        if self.f.has_module_syntax && !may_reach_beyond_the_module(rest) {
+            self.f.rare_syntax |= rare::LEFT_OUT;
+            self.lx.stop();
+            return false;
         }
-        false
+        self.options.reads_module_statements_alone = false;
+        true
     }
 
     /// `parseSourceFileWorker`

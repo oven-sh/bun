@@ -1,0 +1,55 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function fill(list: unknown[]): void {
+#   for (let i = 0; i < list.length; i++) list[i] = 7;
+# }
+# function halve(list: unknown[]): void {
+#   for (let i = 0; i < list.length; i++) list[i] = i * 0.5;
+# }
+# function shift(list: number[]): void {
+#   for (let i = 1; i < list.length; i++) list[i] = (list[i - 1]! + 1) | 0;
+# }
+# const make = (step: number, extra: unknown[]) => id(Array.from({ length: 19 }, (_, i) => i * step as unknown).concat(extra));
+# for (const store of [fill, halve]) {
+#   const ints = make(1, []), fractions = make(1.5, []), values = make(1, ["x"]);
+#   store(ints);
+#   store(fractions);
+#   store(values);
+#   print(ints.join(), fractions.join(), values.join());
+# }
+# const more = id([1, 2, 3].map(x => x + 1));
+# shift(more);
+# print(more.join());
+# -- end of source
+# The front of a loop that stores a number into a list asked for the one storage that would HOLD the number. A whole number laid into a list of doubles, a fraction laid into a list of any values failed it, and the
+# closed, rare copy ran: 8,270 and 6,990 instructions a call of 256 stores, plain Bun 1,560. Every plain writable storage TAKES a number: boxed into int32s (an int32 alone) and into any values, raw into doubles.
+# The walk: the front asks for any of them; the store is one operation that goes by the kind found. The code generator: the turns are laid out in a row once for boxed storage and once for doubles, the kind asked in
+# front of them, as for lists that are read and for views; the rest of fewer turns asks in place. All five roads: 1,880. A list of int32s that is to take fractions is converted in front, as before.
+# `shift` reads its list by key: it goes on asking for int32 storage, which types the read.
+# f1 = fill, f2 = halve, f3 = shift
+# RUN: compile LoopsLaidOutForOneKindOfStorage mechanisms=all
+# CHECK: statistic LoopsLaidOutForOneKindOfStorage 4
+# RUN(FILL): walk f1:Body mechanisms=all
+# FILL-NOT: arrayStorage=Contiguous
+# FILL: [isWritable, admitsInt32Storage]
+# FILL: [goesByKindOfStorage
+# RUN(HALVE): walk f2:Body mechanisms=all
+# HALVE: ConvertToDoubleStorage
+# HALVE-NOT: arrayStorage=Double
+# HALVE: [isWritable]
+# HALVE: [goesByKindOfStorage
+# RUN(SHIFT): walk f3:Body mechanisms=all
+# SHIFT: arrayStorage=Int32 [isWritable]
+# SHIFT: PutContiguousIndex
+# SHIFT-NOT: [goesByKindOfStorage
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7
+# ANSWERS-NEXT: 0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9 0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9 0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9,9.5
+# ANSWERS-NEXT: 2,3,4
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7 7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7
+# NONE-NEXT: 0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9 0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9 0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5,8,8.5,9,9.5
+# NONE-NEXT: 2,3,4
+# NONE-NEXT: exited with 0

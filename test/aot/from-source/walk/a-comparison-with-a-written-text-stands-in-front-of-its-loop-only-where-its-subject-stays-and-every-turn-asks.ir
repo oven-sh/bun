@@ -1,0 +1,182 @@
+# -- source: main.cjs
+# "use strict";
+# function changes(x) { let c = 0; for (let i = 0; i < 24; i++) { if (x === "const") c++; x = i & 1 ? "const" : "let"; } return c; }
+# function notEveryTurnAsks(x, n) { let c = 0; for (let i = 0; i < n; i++) if (i & 1) { if (x === "const") c++; } return c; }
+# function readInTurn(o, n) { let c = 0; for (let i = 0; i < n; i++) { if (o.kind === "const") c++; o = o.next; } return c; }
+# globalThis.kept = [changes, notEveryTurnAsks, readInTurn];
+# const ring = { kind: "const" }; ring.next = { kind: "let", next: ring };
+# console.log(changes("let"), notEveryTurnAsks("const", 5), readInTurn(ring, 5));
+# -- end of source
+# The other side: the comparison stays in the turn where its subject changes in the turn, where not every turn asks it, and where the subject is read in the turn off what changes.
+# RUN: compile ComparisonsWithTextsThatStandInFrontOfLoops mechanisms=all
+# CHECK: statistic ComparisonsWithTextsThatStandInFrontOfLoops 0
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=465 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] place=465 ownFieldCount=1
+layout L1 module=m0 position=496 fields=[{key="kind" declared={type=anything}}, {key="next" declared={type=anything}}] place=496 ownFieldCount=2
+layout L2 module=m0 place=0
+layout L3 module=m0 place=0
+data d0 root=Object{layout=L0 members=[{key="kind" value=String{value="const"}}]} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=5
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L2 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f2 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = NewClosure function=f3 @0
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @0
+    v9 = Builtin builtin=GlobalThis @393
+    v10 = PropGet v9 key="globalThis" [isFreeName] @393
+    v11 = Convert v10 declared={type=builtin(GlobalThis) flags=[IsExpected]} @393
+    v12 = NewArray v4, v6, v8 contents=anything @411
+    PropSet v11, v12 key="kept" @393
+    v14 = Data data=d0 @465
+    v15 = String string="let" @504
+    v16 = NewObject -, v15, v14 layout=L1 fields=[0, 1] @496
+    v17 = FinishObject v16 @496
+    PropSet v14, v17 key="next" @484
+    v19 = Builtin builtin=GlobalThis @525
+    v20 = PropGet v19 key="console" [isFreeName] @525
+    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]} @525
+    v22 = PropGet v21 key="log" @525
+    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @525
+    v24 = String string="let" @545
+    v25 = Call v4, -, v24 calleeName="changes" @537
+    v26 = String string="const" @570
+    v27 = Integer integer=5 @579
+    v28 = Call v6, -, v26, v27 calleeName="notEveryTurnAsks" @553
+    v29 = Integer integer=5 @600
+    v30 = Call v8, -, v14, v29 calleeName="readInTurn" @583
+    v31 = Call v23, v21, v25, v28, v30 calleeKey="log" calleeName="console.log" @533
+    v32 = Undefined @525
+    Return v32 @525
+}
+function f1 name="changes" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @44
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @44
+    v3 = Integer @60
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @60
+    Jump -> next b1(v0, v2, v4) @56
+  b1(v5, v6, v7):
+    LoopHint @56
+    v9 = Integer integer=24 @67
+    v10 = Less v7, v9 @67
+    Branch v10 -> taken b2(), notTaken b8() @67
+  b2():
+    v11 = String string="const" @88
+    v12 = StrictEq v5, v11 @88
+    Branch v12 -> taken b3(), notTaken b4(v6) @88
+  b3():
+    v13 = Increment v6 @97
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @97
+    Jump -> next b4(v14) @97
+  b4(v15):
+    v16 = Integer integer=1 @110
+    v17 = BitAnd v7, v16 @110
+    v18 = ToBoolean v17 @106
+    Branch v18 -> taken b5(| 0), notTaken b6(| 0) @106
+  b5(v19):
+    v20 = String string="const" @114
+    Jump -> next b7(v20) @114
+  b6(v21):
+    v22 = String string="let" @124
+    Jump -> next b7(v22) @124
+  b7(v23):
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @102
+    v25 = Increment v7 @71
+    v26 = Convert v25 declared={type=i32 flags=[IsExpected]} @71
+    Jump -> next b1(v24, v15, v26) @71
+  b8():
+    Return v6 @140
+}
+function f2 name="notEveryTurnAsks" module=m0 position=145 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = Integer @187
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @187
+    v4 = Integer @203
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @203
+    Jump -> next b1(v3, v5) @199
+  b1(v6, v7):
+    LoopHint @199
+    v9 = Less v7, v1 @210
+    Branch v9 -> taken b2(), notTaken b7() @210
+  b2():
+    v10 = Integer integer=1 @226
+    v11 = BitAnd v7, v10 @226
+    v12 = ToBoolean v11 @222
+    Branch v12 -> taken b3(| 0), notTaken b6(v6) @222
+  b3(v13):
+    v14 = String string="const" @241
+    v15 = StrictEq v0, v14 @241
+    Branch v15 -> taken b4(), notTaken b5(v6) @241
+  b4():
+    v16 = Increment v6 @250
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @250
+    Jump -> next b5(v17) @250
+  b5(v18):
+    Jump -> next b6(v18) @250
+  b6(v19):
+    v20 = Increment v7 @213
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @213
+    Jump -> next b1(v19, v21) @213
+  b7():
+    Return v6 @264
+}
+function f3 name="readInTurn" module=m0 position=269 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L1, v1: anything):
+    v2 = Integer @305
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @305
+    v4 = Integer @321
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @321
+    Jump -> next b1(v0, v3, v5) @317
+  b1(v6, v7, v8):
+    LoopHint @317
+    v10 = Less v8, v1 @328
+    Branch v10 -> taken b2(), notTaken b6() @328
+  b2():
+    v11 = PropGet v6 key="kind" @342
+    v12 = String string="const" @353
+    v13 = StrictEq v11, v12 @353
+    Branch v13 -> taken b3(| 0), notTaken b4(| 0) @353
+  b3(v14):
+    v15 = NarrowByField v6, v14 key="kind" @353
+    v16 = Increment v7 @362
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @362
+    Jump -> next b5(v15, v17) @362
+  b4(v18):
+    v19 = NarrowByField v6, v18 key="kind" @353
+    Jump -> next b5(v19, v7) @353
+  b5(v20, v21):
+    v22 = PropGet v20 key="next" @371
+    v23 = Convert v22 declared={type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]} @367
+    v24 = Increment v8 @331
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @331
+    Jump -> next b1(v23, v21, v25) @331
+  b6():
+    Return v7 @388
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

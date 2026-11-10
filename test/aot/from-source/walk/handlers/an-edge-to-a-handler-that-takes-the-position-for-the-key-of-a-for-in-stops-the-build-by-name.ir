@@ -1,0 +1,12 @@
+# -- source: an-edge-to-a-handler-that-takes-the-position-for-the-key-of-a-for-in-stops-the-build-by-name.ts
+# function run(list: number[], table: any): string[] { var key: any; const seen: string[] = []; try { try { for (key in list) table[key](); } finally { seen.push(typeof key); } } catch {} return seen; }
+# console.log(run(JSON.parse("[7,8,9]"), { 0() {}, 1() { throw new Error("no"); }, 2() {} }).join());
+# -- end of source
+# The red control of the judge and of the test beside this one that holds the mend.
+# An access under the key of a for-in over a list is walked while the key is bound to its position, an int32. What a handler reads is the key, a text: plain Bun prints string.
+# An argument of a handler is never a value of its own block, so every edge that one block leads to its handler hands on the value that the head of the block named, under another name at most.
+# THE LIE, the command walk-where-handler-edges-take-stand-ins, which no build can say: the edge takes whatever the value is bound to when it is led, as it once did: that build prints number, exit 0, and no other net saw it.
+# Where Code is verified the walk holds each argument of the edge against the name at the head and stops the build by name.
+# DIAGNOSTIC: HandlerEdgeHandsOnStandIn
+# RUN: walk-where-handler-edges-take-stand-ins f1 mechanisms=all
+# CHECK: the walk of f1:Body failed

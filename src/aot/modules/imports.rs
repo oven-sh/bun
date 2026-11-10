@@ -95,6 +95,8 @@ pub(super) struct FileImports {
 }
 
 pub(super) type FindMarker<'a> = &'a (dyn Fn(ModuleRef) -> Option<bool> + Sync);
+pub(super) type IsRequiredByStar<'a> = &'a (dyn Fn(FileId, ExprId) -> bool + Sync);
+pub(super) type IsHolderInErasedGetter<'a> = &'a (dyn Fn(FileId, ExprId) -> bool + Sync);
 
 pub(super) fn bind_imports(
     input: &BindInput<'_, '_>,
@@ -104,6 +106,8 @@ pub(super) fn bind_imports(
     order: &EvaluationOrder,
     sites: &PlannedSites,
     marker: FindMarker<'_>,
+    is_required_by_star: IsRequiredByStar<'_>,
+    is_holder_in_erased_getter: IsHolderInErasedGetter<'_>,
     evicted: &EvictedModules,
 ) -> Vec<FileImports> {
     let context = BindContext {
@@ -120,6 +124,8 @@ pub(super) fn bind_imports(
         order,
         sites,
         marker,
+        is_required_by_star,
+        is_holder_in_erased_getter,
         runs_tests: input.runs_tests,
         typescript_drops_absent_exports: input.typescript_drops_absent_exports,
         evicted,
@@ -128,6 +134,7 @@ pub(super) fn bind_imports(
         files_that_sites_name: OnceLock::new(),
         exported_by_mocked_modules: OnceLock::new(),
         defaults_spied_on: OnceLock::new(),
+        names_spied_on: OnceLock::new(),
     };
     let compiled_files = modules.compiled_files.iter();
     let mut slots: Vec<(FileId, Option<FileImports>)> =
@@ -220,6 +227,8 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) order: &'a EvaluationOrder,
     pub(super) sites: &'a PlannedSites,
     pub(super) marker: FindMarker<'a>,
+    pub(super) is_required_by_star: IsRequiredByStar<'a>,
+    pub(super) is_holder_in_erased_getter: IsHolderInErasedGetter<'a>,
     pub(super) runs_tests: bool,
     typescript_drops_absent_exports: bool,
     pub(super) evicted: &'a EvictedModules,
@@ -228,6 +237,7 @@ pub(super) struct BindContext<'a, 's> {
     files_that_sites_name: OnceLock<Vec<bool>>,
     exported_by_mocked_modules: OnceLock<ExportedByMockedModules>,
     defaults_spied_on: OnceLock<FxHashSet<ModuleRef>>,
+    pub(super) names_spied_on: OnceLock<(bool, FxHashSet<Atom>)>,
 }
 
 #[derive(Default)]
@@ -293,17 +303,12 @@ fn find_namespaces_in_sight(context: &BindContext<'_, '_>) -> NamespacesInSight 
     found
 }
 
-fn find_defaults_spied_on(context: &BindContext<'_, '_>) -> FxHashSet<ModuleRef> {
-    let mut found = FxHashSet::default();
-    if !context.runs_tests {
-        return found;
-    }
-    let (files, modules, tables) = (context.files, context.modules, context.tables);
+fn find_names_of_spies(context: &BindContext<'_, '_>) -> (bool, FxHashSet<Atom>) {
     let run = &context.input.run;
     let mut names: FxHashSet<Atom> = run.names_spied.iter().copied().collect();
     let mut is_any_name = run.spies_under_any_name;
-    for &file in &modules.compiled_files {
-        let Some(source) = parsed_source(files, file) else {
+    for &file in &context.modules.compiled_files {
+        let Some(source) = parsed_source(context.files, file) else {
             is_any_name = true;
             continue;
         };
@@ -313,6 +318,27 @@ fn find_defaults_spied_on(context: &BindContext<'_, '_>) -> FxHashSet<ModuleRef>
             names.extend(spy.name);
         }
     }
+    (is_any_name, names)
+}
+
+pub(super) fn find_names_spied_on(context: &BindContext<'_, '_>) -> (bool, FxHashSet<Atom>) {
+    if !context.runs_tests {
+        return (false, FxHashSet::default());
+    }
+    let (is_any_name, mut names) = find_names_of_spies(context);
+    let in_texts = context.input.run.exports_spied_in_text.iter();
+    names.extend(in_texts.map(|it| it.1));
+    (is_any_name, names)
+}
+
+fn find_defaults_spied_on(context: &BindContext<'_, '_>) -> FxHashSet<ModuleRef> {
+    let mut found = FxHashSet::default();
+    if !context.runs_tests {
+        return found;
+    }
+    let (files, modules, tables) = (context.files, context.modules, context.tables);
+    let run = &context.input.run;
+    let (is_any_name, names) = find_names_of_spies(context);
     let mut add = |resolution: Resolution| {
         if let Resolution::Synthetic { module, name } = resolution
             && name == known::default
@@ -605,6 +631,7 @@ impl<'a, 's> FileBinder<'a, 's> {
             self.note_loads_handed_out();
         }
         self.collect_mocked_modules();
+        self.add_names_that_stars_bring_from_mocked_modules();
         let bindings = &mut self.imports.bindings;
         bindings.shared_sort_by_key(|&(symbol, _)| symbol);
         bindings.dedup_by_key(|&mut (symbol, _)| symbol);
@@ -1074,6 +1101,22 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_required_name(RequiredName::new(exporter, name));
                 UNBOUND
             }
+            Err(kind @ ModuleFailureKind::ExportAmbiguous { exporter, name }) => {
+                let (barrel, listed) = (self.context.tables).find_where_names_lead(exporter, name);
+                match self.find_name_that_a_mock_of_an_es_module_may_leave_out(barrel, listed) {
+                    Some(_) => {
+                        self.add_required_name(RequiredName::new(exporter, name));
+                        PendingBinding::Bound(ImportBinding::NamespaceRead {
+                            module: exporter,
+                            name,
+                        })
+                    }
+                    None => {
+                        self.imports.failures.push(written.fail(self.file, kind));
+                        UNBOUND
+                    }
+                }
+            }
             Err(kind) => {
                 self.imports.failures.push(written.fail(self.file, kind));
                 UNBOUND
@@ -1198,10 +1241,17 @@ impl<'a, 's> FileBinder<'a, 's> {
                 }
                 _ => None,
             };
-            let name_of_es_module =
-                self.find_exported_name_that_a_mock_of_an_es_module_may_leave_out(position);
-            let name_that_no_link_finds = self.find_name_that_no_link_finds(position, resolved);
             let tables = self.context.tables;
+            let is_found_by_mocks_alone = tables
+                .find_name_that_mock_may_settle(self.file, export_name)
+                .is_some();
+            let name_of_es_module = self
+                .find_exported_name_that_a_mock_of_an_es_module_may_leave_out(position)
+                .map(|required| RequiredName {
+                    is_found_unless_mocked: !is_found_by_mocks_alone,
+                    ..required
+                });
+            let name_that_no_link_finds = self.find_name_that_no_link_finds(position, resolved);
             if tables
                 .find_statement_ahead_of_stars(self.file, export_name)
                 .is_some()
@@ -1212,7 +1262,20 @@ impl<'a, 's> FileBinder<'a, 's> {
                     .names_searched_behind_stars
                     .extend(behind_stars);
             }
-            let required_name = resolved.required_name.or(name_of_file);
+            let asked_for = match resolved.resolution {
+                Resolution::DynamicStar { .. } => self
+                    .find_name_that_an_export_statement_asks_for(position)
+                    .filter(|&(exporter, _)| tables.is_barrel_where_nothing_is_mocked(exporter)),
+                _ => None,
+            };
+            let required_name = match (resolved.required_name, asked_for) {
+                (Some(required), Some((module, name))) => Some(RequiredName {
+                    module,
+                    name,
+                    ..required
+                }),
+                (required, _) => required.or(name_of_file),
+            };
             let required_names = [required_name, name_of_es_module, name_that_no_link_finds];
             for required_name in required_names.into_iter().flatten() {
                 self.add_name_required_by_export(position, export_name, required_name);
@@ -1235,6 +1298,9 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_name_required_by_export(position, export_name, required_name);
             }
         }
+    }
+
+    fn add_names_that_stars_bring_from_mocked_modules(&mut self) {
         let tables = self.context.tables;
         let own_count = tables.own_names(self.file).len();
         for &(export_name, resolved) in &tables.names(self.file)[own_count..] {
@@ -1249,6 +1315,7 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_required_name(RequiredName {
                     asked_by: Some(asked_by),
                     is_found_unless_mocked: true,
+                    is_asked_for_by_star: true,
                     ..RequiredName::new(ModuleRef::File(named), export_name)
                 });
             }

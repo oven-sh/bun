@@ -1,0 +1,21 @@
+# -- source: a-list-made-in-front-of-two-loops-that-go-down-a-text-is-known-where-their-closed-copies-are-entered-last.js
+# function walk(s, t) {
+#   let count = 0;
+#   const list = [];
+#   for (let i = s.length - 1; i >= 0; i--)
+#     if (i > 0 && s[i] === s[i - 1])
+#       count++;
+#   for (let k = s.length - 1; k >= 0; k--)
+#     if (k > 0 && s[k] === s[k - 1])
+#       count++;
+#   return JSON.stringify([count, list.length]);
+# }
+# print(walk(JSON.parse('"aabbbc"'), "abc"), walk(JSON.parse('""'), "abc"), walk(JSON.parse('"zz"'), "abc"));
+# -- end of source
+# Two such loops, one behind the other: each is bought.
+# RUN: compile PurchasesOfLoopsThatFailed mechanisms=all
+# CHECK: statistic PurchasesOfLoopsThatFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: [6,0] [0,0] [2,0]
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

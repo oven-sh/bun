@@ -2,13 +2,14 @@
 #[path = "source_provider/tests.rs"]
 mod tests;
 
+use crate::compile::{EntryPointPaths, FolderPaths};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
-use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Source};
+use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Msg, Source};
 use bun_js_parser::{
     Define, ExpandedImportMetaGlob, ImportMetaGlobHost, Parser, ParserOptions,
     record_import_meta_globs,
@@ -107,7 +108,25 @@ pub struct ComponentFile<'a> {
     pub is_entry_point: bool,
 }
 
+pub struct PathsOfProgram<'a> {
+    pub entry_points: &'a [EntryPointPaths],
+    pub folders: &'a [FolderPaths],
+    pub program_files: &'a [EntryPointPaths],
+}
+
+pub struct RefusedText<'a> {
+    pub path: &'a [u8],
+    pub is_syntax_error: bool,
+    pub message: &'a [u8],
+    pub line: i32,
+    pub column: i32,
+    pub offset: usize,
+    pub length: usize,
+}
+
 pub trait SourceProvider: Sync {
+    fn work_beside_engine(&self, _paths: &PathsOfProgram<'_>) {}
+
     fn fold_options<'s>(
         &self,
         arena: &'s Arena,
@@ -161,6 +180,22 @@ pub trait SourceProvider: Sync {
         Ok(())
     }
 
+    fn keep_where_text_is_refused(&self, _refused: &RefusedText<'_>) {}
+
+    fn keep_bytes_of_data_file(&self, _source_path: &[u8]) {}
+
+    fn keep_path_of_code_that_file_system_sees(&self, _source_path: &[u8]) {}
+
+    fn is_file_that_only_asset_brings(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    fn is_data_file_that_its_folder_may_hide(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    fn warn_if_file_system_lacks(&self, _source_path: &[u8], _warning: Msg) {}
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,
@@ -188,6 +223,10 @@ pub trait SourceProvider: Sync {
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
+}
+
+pub fn is_short_blank_text(text: &[u8]) -> bool {
+    text.len() < 33 && text.iter().all(|byte| matches!(byte, b'\n' | b'\r' | b' '))
 }
 
 pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {

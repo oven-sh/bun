@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# class Steps { at = 0; next() { return this.at < 9 ? { done: false, value: this.at++ } : { done: true, value: undefined }; } }
+# class Own { [Symbol.iterator]() { return new Steps(); } }
+# function drain(own: Own): number { let sum = 0; for (const item of own) sum += item as number; return sum; }
+# sink(new Own(), new Steps(), drain);
+# -- end of source
+# f1 = drain
+# The parameter is typed by a class of the file; the method that the class writes under Symbol.iterator hands back what `new Steps()` makes; Steps is a class of the file and writes one method under `next`.
+# Objects of both classes are handed out, so nothing is proven of either. In the loop what was read under `next` is tested for that method.
+# STATISTIC: NextMethodsTestedForFunctionWritten >= 1
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"
+# CHECK: = TypeTest [[next]] testedType=f

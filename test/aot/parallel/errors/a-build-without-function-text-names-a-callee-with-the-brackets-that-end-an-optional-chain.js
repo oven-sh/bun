@@ -2,7 +2,8 @@
 // Reference: bun build --compile
 // An executable without the text of its functions spells a call from the name of what is called. That name has the round brackets that end an optional chain,
 // as the quote of an executable with the text has: `(o?.a).m`. No call here has arguments, because without the text none are spelled.
-const o = { one: 1, a: { b: {} } };
+// Every callee is an object. For a primitive, a build without function source prints its kind ("a number") where the reference prints its value.
+const o = { one: {}, a: { b: {} } };
 function tell(label, run) {
   try {
     run(o, "key");

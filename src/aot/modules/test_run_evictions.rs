@@ -6,10 +6,9 @@ use super::plan::Plan;
 use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
-use crate::load::SourceKind;
+use crate::load::{SourceKind, is_in_node_modules};
+use crate::test_run_report::say_es_packages_that_mocks_name;
 use bun_core::strings::{contains, last_index_of_char};
-use bun_sema::bind::{Bound, FnOwner, Parent};
-use bun_sema::hir::{ExprId, ExprKind, File, StmtId, StmtKind};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -49,62 +48,9 @@ fn find_forms<'a>(input: &BindInput<'a, '_>, scans: &Scans) -> Vec<(&'a [u8], Fi
     forms
 }
 
-fn stands_where_a_throw_is_caught(hir: &File<'_>, bound: &Bound<'_>, mut call: ExprId) -> bool {
-    let statement_around = |parent: Parent| -> Option<StmtId> {
-        match parent {
-            Parent::Stmt(statement) => statement.some(),
-            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
-            Parent::Case(case) => bound.case_stmt[case.idx()].some(),
-            _ => None,
-        }
-    };
-    loop {
-        let mut parent = bound.parent_of_expr(call);
-        while let Parent::Expr(outer) = parent {
-            parent = bound.parent_of_expr(outer);
-        }
-        while let Some(inner) = statement_around(parent) {
-            parent = bound.parent_of_stmt(inner);
-            let is_guarded = statement_around(parent).is_some_and(
-                |outer| matches!(hir[outer].kind, StmtKind::Try { block, .. } if block == inner),
-            );
-            if is_guarded {
-                return true;
-            }
-        }
-        let Parent::FnBody(function) = parent else {
-            return false;
-        };
-        let FnOwner::Expr(function) = bound.fns[function.idx()].owner else {
-            return false;
-        };
-        let Parent::Expr(user) = bound.parent_of_expr(function) else {
-            return false;
-        };
-        let (ExprKind::Call(site) | ExprKind::New(site)) = hir[user].kind else {
-            return false;
-        };
-        if hir[site].callee != function {
-            return true;
-        }
-        call = user;
-    }
-}
-
-#[derive(Default)]
-struct FoundAtSites {
-    importers: Vec<(FileId, FileId)>,
-    throwers: Vec<FileId>,
-}
-
-fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
+fn find_importers_by_statements(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<(FileId, FileId)> {
     let files = input.files;
-    let is_thrower = |required: FileId| {
-        let scan = scans.find(required);
-        scan.is_some_and(|scan| scan.interop.kind == ModuleKind::CommonJs)
-            && !contains(files.module(required).file_name(), b"/node_modules/")
-    };
-    let mut found = FoundAtSites::default();
+    let mut importers = Vec::new();
     for &file in files.compiled_files() {
         let analysis = files.analysis(file);
         for (site, answer) in analysis.import_sites.iter().zip(&scans.of(file).sites) {
@@ -117,16 +63,9 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
                 | ImportSiteKind::Import(_)
                 | ImportSiteKind::ExportFrom(_)
                 | ImportSiteKind::ExportStar(_)
-                | ImportSiteKind::ImportEquals(_) => found.importers.push((named, file)),
-                ImportSiteKind::Require(call) => {
-                    if is_thrower(named)
-                        && !analysis.decisions.is_dead_expr(call)
-                        && stands_where_a_throw_is_caught(files.hir(file), files.bound(file), call)
-                    {
-                        found.throwers.push(named);
-                    }
-                }
-                ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::ImportEquals(_) => importers.push((named, file)),
+                ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
                 | ImportSiteKind::RequireByTestRunner(_)
                 | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::ImportByTestRunner(_)
@@ -137,8 +76,38 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
             }
         }
     }
-    found.throwers.clear();
-    found
+    importers
+}
+
+pub(super) fn find_es_packages_that_mocks_name(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+) -> Vec<ModuleRef> {
+    if !input.runner_starts_entry_points {
+        return Vec::new();
+    }
+    let files = input.files;
+    let is_es_package = |named: FileId| {
+        let scan = scans.find(named);
+        scan.is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText)
+            && is_in_node_modules(files.module(named).file_name())
+    };
+    let mut found: Vec<FileId> = Vec::new();
+    for &file in files.compiled_files() {
+        let sites = files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scans.of(file).sites) {
+            let &ScannedSite::Module(ModuleRef::File(named)) = answer else {
+                continue;
+            };
+            if matches!(site.kind, ImportSiteKind::MockModule(_)) && is_es_package(named) {
+                found.push(named);
+            }
+        }
+    }
+    found.shared_sort_unstable();
+    found.dedup();
+    say_es_packages_that_mocks_name(found.len());
+    found.into_iter().map(ModuleRef::File).collect()
 }
 
 pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<ModuleRef> {
@@ -148,16 +117,8 @@ pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) ->
     {
         return Vec::new();
     }
-    let FoundAtSites {
-        mut importers,
-        throwers,
-    } = look_at_sites(input, scans);
-    let mut to_follow = [
-        &loads.files_taken_out[..],
-        &loads.files_changed_on_disk[..],
-        &throwers[..],
-    ]
-    .concat();
+    let mut importers = find_importers_by_statements(input, scans);
+    let mut to_follow = [&loads.files_taken_out[..], &loads.files_changed_on_disk[..]].concat();
     if to_follow.is_empty() {
         return Vec::new();
     }
@@ -243,8 +204,31 @@ pub(super) fn fill_plan_of_copies(
     let mut is_every_file = is_code_changed || mocked.is_every_module();
     is_every_file |= !evicted.modules().is_empty();
     let mut named: Vec<ModuleRef> = Vec::new();
+    let mut asked_of_test_runner: Vec<ModuleRef> = Vec::new();
+    for &file in (modules.compiled_files.iter()).filter(|_| is_any_module_mocked) {
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scan.sites) {
+            let is_asked = matches!(
+                site.kind,
+                ImportSiteKind::ImportByTestRunner(_) | ImportSiteKind::RequireByTestRunner(_)
+            );
+            match *answer {
+                _ if !is_asked => {}
+                ScannedSite::Module(module) => asked_of_test_runner.push(module),
+                ScannedSite::Candidates(ref range) => {
+                    asked_of_test_runner.extend(scan.modules_spelled_in(range));
+                }
+                ScannedSite::AllModules => is_every_file = true,
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
     let copies = evicted.modules().iter().chain(mocked.iter());
-    for &module in copies.chain(&copied_under_queries) {
+    let copies = copies.chain(&copied_under_queries);
+    for &module in copies.chain(&asked_of_test_runner) {
         let ModuleRef::File(file) = module else {
             continue;
         };

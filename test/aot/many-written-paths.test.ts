@@ -71,14 +71,23 @@ test("a name with a part added in each of 10 branches is one of 1024 texts", asy
 });
 
 test("a name with a part added in each of 24 branches does not hold the build up", async () => {
-  using dir = tempDir("many-written-paths", { "main.mjs": withBranches(24), "m.mjs": `export const v = "found";\n` });
-  const executable = join(String(dir), isWindows ? "main.exe" : "main");
-  const started = performance.now();
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
-    String(dir),
-    bunEnv,
+  // The two builds run side by side: a crowded machine holds both up alike.
+  const [withOne, withMany] = await Promise.all(
+    [1, 24].map(async count => {
+      using dir = tempDir("many-written-paths", {
+        "main.mjs": withBranches(count),
+        "m.mjs": `export const v = "found";\n`,
+      });
+      const executable = join(String(dir), isWindows ? "main.exe" : "main");
+      const started = performance.now();
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+        String(dir),
+        bunEnv,
+      );
+      expect(built.exitCode).toBe(0);
+      return performance.now() - started;
+    }),
   );
-  expect(built.exitCode).toBe(0);
-  expect(performance.now() - started).toBeLessThan(60_000);
+  expect(withMany).toBeLessThan(5 * withOne + 5_000);
 });

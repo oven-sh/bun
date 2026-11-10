@@ -1,0 +1,9 @@
+# THE GREEN CONTROL of a-sweep-that-turns-a-branch-that-decides-into-a-jump-stops-the-build-by-name.ir: the same text without the lie goes through both runs of the verifier and answers as the shell's own run of the text.
+# -- source: main.js
+# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = x | 0; return to; }
+# print(fill([1.5, 2.5, 3.5].slice(), 7).join() + " " + fill([1, 2, 3].slice(), 7).join());
+# -- end of source
+# OPTIONS: check=Validate
+# RUN: run-in-shell mechanisms=all
+# CHECK: 7,7,7 7,7,7
+# CHECK: exited with 0

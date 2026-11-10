@@ -1,0 +1,12 @@
+# `s += r.price * r.qty` off records that nobody knows: each factor is tested for a number and, behind the yes, unboxed to a double. The test asked "a number at all?" and the unboxing "an int32?" of every value, in two
+# operations that the emitter did not see together: seven instructions for an int32. Now the test asks for an int32 first and for a number only on the arm that is none, and hands the double on to the unboxing, which may
+# stand further down (the first factor is unboxed behind the test of the second).
+# Three: both factors in the typed copy of the loop, one in the other copy.
+# RUN(EVENT): compile IntegersHandedOnByTheirTests mechanisms=all
+# EVENT: statistic IntegersHandedOnByTheirTests 3
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# function total(rows: any): number { let s = 0.5; for (let i = 0; i < rows.length; i++) { const r = rows[i]; s += r.price * r.qty; } return s; }
+# sink(total(input));
+# -- end of source

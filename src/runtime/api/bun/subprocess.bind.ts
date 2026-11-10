@@ -32,7 +32,11 @@ export const Subprocess = b.class({
     connected: { getter: b.bool },
     disconnect: {},
     exitCode: { getter: b.u8.nullable },
-    exited: { getter: b.any.returning("Promise"), capability: "js", passThis: true },
+    exited: {
+      getter: b.any.returning(table.instance("Promise").holding({ value: table.f64, reason: table.any }).spec),
+      capability: "js",
+      passThis: true,
+    },
     kill: { args: { signal: b.any }, capability: "js", throws: true, passThis: true },
     killed: { getter: b.bool },
     pid: { getter: b.i32 },

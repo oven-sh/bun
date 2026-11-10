@@ -91,6 +91,12 @@ pub struct CompiledProgram {
     root_on_build_machine: Option<&'static [u8]>,
     /// The paths below the root of the files given to `--asset` that their base names find too, each followed by a zero byte.
     assets_named_at_root: &'static [u8],
+    /// `encode_refused_data`, one record after the other.
+    refused_data: &'static [u8],
+    /// `encode_files_for_file_system_alone`
+    files_for_file_system_alone: &'static [u8],
+    /// `--loader` and `[loader]` of bunfig.toml: `bun_aot::module_keys::encode_loaders_given_to_build`.
+    loaders_given_to_build: &'static [u8],
     /// Ascending by path.
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
@@ -165,6 +171,8 @@ pub const ENDS_SEARCH: &[u8] = b"//";
 
 /// Behind a public path without its extension, or that of a folder: on the disk of the build `bun run` finds a file under it that was not compiled.
 pub const LEADS_OUTSIDE: &[u8] = b"//.";
+/// The same for the name written as that of a folder, `./tool/`.
+pub const LEADS_OUTSIDE_AS_FOLDER: &[u8] = b"///.";
 
 pub(crate) fn is_relative_specifier(specifier: &[u8]) -> bool {
     let after_dots = specifier
@@ -448,6 +456,139 @@ fn sorts_before_directory_contents(path: &[u8], directory: &[u8]) -> bool {
     }
 }
 
+/// Where the parser refused a file of data at the build, and a sentence that holds nothing of the file: what the parser says quotes the text. No byte of the file is in the executable.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RefusedData<'a> {
+    /// What the engine's parser of JSON throws. Every other parser is Bun's, and throws a `BuildMessage`.
+    pub is_syntax_error: bool,
+    pub message: &'a [u8],
+    pub line: i32,
+    pub column: i32,
+    pub offset: u32,
+    pub length: u32,
+}
+
+pub fn encode_refused_data(path: &[u8], refused: &RefusedData<'_>) -> Vec<u8> {
+    let mut record = Vec::new();
+    for text in [path, refused.message] {
+        record.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        record.extend_from_slice(text);
+    }
+    record.extend_from_slice(&u32::from(refused.is_syntax_error).to_le_bytes());
+    record.extend_from_slice(&refused.line.to_le_bytes());
+    record.extend_from_slice(&refused.column.to_le_bytes());
+    record.extend_from_slice(&refused.offset.to_le_bytes());
+    record.extend_from_slice(&refused.length.to_le_bytes());
+    record
+}
+
+const FILE_FOR_FILE_SYSTEM_RECORD: usize = 4 * size_of::<u32>() + size_of::<i64>();
+
+/// A file that the build laid into the executable for `node:fs` to find, or a folder that only such files bring into sight.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PathForFileSystemAlone {
+    pub path_below_root: Vec<u8>,
+    /// When it was last changed on the disk of the build, in milliseconds.
+    pub modified_at: i64,
+    pub is_folder: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct FoundForFileSystemAlone {
+    /// Its place among them, from 1.
+    pub number: u32,
+    pub modified_at: i64,
+    pub is_folder: bool,
+}
+
+/// The folders that hold `path`, from its own upward, as long as their paths have `least_length` bytes.
+pub fn folders_up_to(path: &[u8], least_length: usize) -> impl Iterator<Item = &[u8]> {
+    fn folder_of<'p>(path: &&'p [u8]) -> Option<&'p [u8]> {
+        bun_core::strings::last_index_of_char(path, b'/').map(|end| &path[..end])
+    }
+    core::iter::successors(folder_of(&path), folder_of)
+        .take_while(move |folder| folder.len() >= least_length)
+}
+
+/// The number of paths, a record a path in their order (where it begins, how long it is, whether it is a folder, when it was changed), then the paths.
+pub fn encode_files_for_file_system_alone(mut paths: Vec<PathForFileSystemAlone>) -> Vec<u8> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    paths.sort_unstable();
+    paths.dedup_by(|later, earlier| later.path_below_root == earlier.path_below_root);
+    let mut records = (paths.len() as u32).to_le_bytes().to_vec();
+    let mut start = 0u32;
+    for path in &paths {
+        records.extend_from_slice(&start.to_le_bytes());
+        records.extend_from_slice(&(path.path_below_root.len() as u32).to_le_bytes());
+        records.extend_from_slice(&u32::from(path.is_folder).to_le_bytes());
+        records.extend_from_slice(&0u32.to_le_bytes());
+        records.extend_from_slice(&path.modified_at.to_le_bytes());
+        start += path.path_below_root.len() as u32;
+    }
+    records.extend(paths.iter().flat_map(|path| &path.path_below_root));
+    records
+}
+
+fn find_for_file_system_alone(records: &[u8], path: &[u8]) -> Option<FoundForFileSystemAlone> {
+    let (count, records) = records.split_first_chunk::<4>()?;
+    let count = u32::from_le_bytes(*count) as usize;
+    let (records, paths) =
+        records.split_at_checked(count.checked_mul(FILE_FOR_FILE_SYSTEM_RECORD)?)?;
+    let read = |index: usize| -> Option<(&[u8], FoundForFileSystemAlone)> {
+        let record = records.get(index * FILE_FOR_FILE_SYSTEM_RECORD..)?;
+        let (start, record) = record.split_first_chunk::<4>()?;
+        let (length, record) = record.split_first_chunk::<4>()?;
+        let (is_folder, record) = record.split_first_chunk::<4>()?;
+        let (_, record) = record.split_first_chunk::<4>()?;
+        let (modified_at, _) = record.split_first_chunk::<8>()?;
+        let start = u32::from_le_bytes(*start) as usize;
+        let listed = paths.get(start..start.checked_add(u32::from_le_bytes(*length) as usize)?)?;
+        let found = FoundForFileSystemAlone {
+            number: index as u32 + 1,
+            modified_at: i64::from_le_bytes(*modified_at),
+            is_folder: u32::from_le_bytes(*is_folder) != 0,
+        };
+        Some((listed, found))
+    };
+    let (mut low, mut high) = (0, count);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let (listed, found) = read(middle)?;
+        match listed.cmp(path) {
+            core::cmp::Ordering::Less => low = middle + 1,
+            core::cmp::Ordering::Greater => high = middle,
+            core::cmp::Ordering::Equal => return Some(found),
+        }
+    }
+    None
+}
+
+fn read_refused_data<'a>(rest: &mut &'a [u8]) -> Option<(&'a [u8], RefusedData<'a>)> {
+    fn read_number(rest: &mut &[u8]) -> Option<u32> {
+        let (number, behind) = rest.split_first_chunk::<4>()?;
+        *rest = behind;
+        Some(u32::from_le_bytes(*number))
+    }
+    fn read_text<'a>(rest: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let length = read_number(rest)? as usize;
+        let (text, behind) = rest.split_at_checked(length)?;
+        *rest = behind;
+        Some(text)
+    }
+    let (path, message) = (read_text(rest)?, read_text(rest)?);
+    let refused = RefusedData {
+        is_syntax_error: read_number(rest)? != 0,
+        message,
+        line: read_number(rest)? as i32,
+        column: read_number(rest)? as i32,
+        offset: read_number(rest)?,
+        length: read_number(rest)?,
+    };
+    Some((path, refused))
+}
+
 impl CompiledProgram {
     pub fn new(
         image: &'static [u8],
@@ -474,6 +615,9 @@ impl CompiledProgram {
             root_from_executable: None,
             root_on_build_machine: None,
             assets_named_at_root: b"",
+            refused_data: b"",
+            files_for_file_system_alone: b"",
+            loaders_given_to_build: b"",
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
             names_plugin: false,
@@ -574,6 +718,57 @@ impl CompiledProgram {
     pub fn with_assets_named_at_root(mut self, paths: &'static [u8]) -> CompiledProgram {
         self.assets_named_at_root = paths;
         self
+    }
+
+    pub fn with_refused_data(mut self, records: &'static [u8]) -> CompiledProgram {
+        self.refused_data = records;
+        self
+    }
+
+    pub fn with_files_for_file_system_alone(mut self, records: &'static [u8]) -> CompiledProgram {
+        self.files_for_file_system_alone = records;
+        self
+    }
+
+    /// What the build laid at `path_below_root` for `node:fs` to find, where nobody embedded it.
+    pub fn find_for_file_system_alone(
+        &self,
+        path_below_root: &[u8],
+    ) -> Option<FoundForFileSystemAlone> {
+        find_for_file_system_alone(self.files_for_file_system_alone, path_below_root)
+    }
+
+    pub fn with_loaders_given_to_build(mut self, loaders: &'static [u8]) -> CompiledProgram {
+        self.loaders_given_to_build = loaders;
+        self
+    }
+
+    pub fn loaders_given_to_build(&self) -> &'static [u8] {
+        self.loaders_given_to_build
+    }
+
+    /// `path`: that of the module that stands for the file.
+    pub fn find_refused_data(&self, path: &[u8]) -> Option<RefusedData<'static>> {
+        let mut rest = self.refused_data;
+        while !rest.is_empty() {
+            let (of, refused) = read_refused_data(&mut rest)?;
+            if of == path {
+                return Some(refused);
+            }
+        }
+        None
+    }
+
+    pub fn holds_refused_data_starting_with(&self, start: &[u8]) -> bool {
+        let mut rest = self.refused_data;
+        while !rest.is_empty() {
+            match read_refused_data(&mut rest) {
+                Some((of, _)) if of.starts_with(start) => return true,
+                Some(_) => {}
+                None => return false,
+            }
+        }
+        false
     }
 
     pub fn asset_named_at_root(&self, base_name: &[u8]) -> Option<&'static [u8]> {
@@ -810,6 +1005,32 @@ impl CompiledProgram {
         self.find_file_or_directory(&path, how, search, lookup)
     }
 
+    /// Whether `bun run` finds under `specifier` a file that the executable does not hold, where the executable would find another.
+    pub fn leads_outside(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> bool {
+        let how = HowNamed {
+            names_directory: Resolver::import_path_names_directory(specifier),
+            is_require,
+        };
+        !self.preserves_source_paths
+            && (self.join_public_path(public_root, source_dir, specifier))
+                .is_some_and(|path| self.is_marked_as_leading_outside(&path, how))
+    }
+
+    fn is_marked_as_leading_outside(&self, path: &[u8], how: HowNamed) -> bool {
+        let mark = match how.names_directory {
+            true => LEADS_OUTSIDE_AS_FOLDER,
+            false => LEADS_OUTSIDE,
+        };
+        !self.package_names.is_empty()
+            && self.is_hidden_name(&[path, mark].concat(), how.is_require)
+    }
+
     /// The compiled module that `specifier` names by going up out of the root directory and coming back through its folders.
     pub fn resolve_module_through_root_folders(
         &self,
@@ -912,10 +1133,7 @@ impl CompiledProgram {
         search: &ExtensionSearch<'_>,
         lookup: Lookup<'_>,
     ) -> Option<&'static [u8]> {
-        let leads_outside = !how.names_directory
-            && !self.package_names.is_empty()
-            && self.is_hidden_name(&[path, LEADS_OUTSIDE].concat(), how.is_require);
-        if leads_outside {
+        if self.is_marked_as_leading_outside(path, how) {
             return None;
         }
         if let Some(file) = find_file(path, how.names_directory, search, lookup) {
@@ -1273,6 +1491,20 @@ mod tests {
     use bun_sema_standalone as _;
 
     use super::*;
+
+    #[test]
+    fn folders_above_a_path_up_to_a_folder() {
+        let list = |path: &'static [u8], top: &[u8]| -> Vec<&'static [u8]> {
+            folders_up_to(path, top.len()).collect()
+        };
+        assert_eq!(list(b"data/a.json", b"data"), [&b"data"[..]]);
+        assert_eq!(
+            list(b"data/x/y/a.json", b"data"),
+            [&b"data/x/y"[..], b"data/x", b"data"]
+        );
+        assert_eq!(list(b"a/b/c.json", b"a/b"), [&b"a/b"[..]]);
+        assert!(list(b"a.json", b"").is_empty());
+    }
 
     fn program(source_path_order: [u32; 3]) -> CompiledProgram {
         let entry_points: [(u32, &[u8]); 3] =

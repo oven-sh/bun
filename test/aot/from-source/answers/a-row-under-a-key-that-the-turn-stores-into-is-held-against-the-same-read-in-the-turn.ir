@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse("{}"), first = JSON.parse("[5,6,7,8]"), later = JSON.parse("[1,1,1,1]");
+# let counted = 0;
+# Object.defineProperty(held, "rows", { get() { counted++; return counted <= 2 ? first : later; } });
+# function f(data, w) { let s = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; data[w][i] = data[w][i] + 2; } return s; }
+# print(f([held][zero], ["rows"][zero]), counted, first.join(), later.join());
+# -- end of source
+# The row that a loop stores numbers into is remembered through the turns like the row of a loop that only reads. Under testing=CheckProofsAtRunTime the read stands in the turn too and is held against the row remembered.
+# Here an accessor hands out one list at its first two calls and another from then on: the operation that runs no code answers absent and the loop runs as written. The lie reads by the road that runs code: both reads in front
+# of the loop get the first list, the row is remembered falsely, the answer is another; and where proofs are checked the read in the turn gets the other list and the check stops.
+# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops RowsFoundUnderKeysReadAgainInTurns mechanisms=all
+# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# EVENT: statistic RowsFoundUnderKeysReadAgainInTurns 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 8 17 5,6,7,8 3,3,3,3
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 8 17 5,6,7,8 3,3,3,3
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad
+# LIE: 26 2 7,8,9,10 1,1,1,1
+# LIE-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad
+# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# STOPPED: crashed with

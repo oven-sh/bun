@@ -1,0 +1,30 @@
+# A typed copy of a loop reads its list through the storage that was read in front of its turns. No program can give such a turn a stale storage: the turn leaves for the closed copy at every operation that could move it.
+# THE LIE, testing=StoragesFromInFrontAreTakenOneWordFurther: the emitter takes every storage from in front one word further: each read finds its neighbor's element.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the emitter holds the storage against a fresh read off the list in every turn, or the process stops by name.
+# The list is filled by push, so that room lies behind its last element: the lie alone reads a hole there and no memory that is not the list's.
+# RUN(TAKEN): walk f1 mechanisms=all
+# TAKEN-LABEL: code f1:Body
+# TAKEN: = HasContiguousIndex {{*}} storage={{*}} [isInBounds]
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: 96
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=StoragesFromInFrontAreTakenOneWordFurther
+# UNHELD: 93
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=StoragesFromInFrontAreTakenOneWordFurther,TestsEveryPosition
+# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Order = { price: number; open: boolean };
+# function kept(orders: Order[], rounds: number): number {
+#   let total = 0;
+#   for (let round = 0; round < rounds; round++)
+#     total += orders.filter(order => order.open).length;
+#   return total;
+# }
+# const many: Order[] = [];
+# for (let i = 0; i < 64; i++) many.push({ price: i, open: (i & 1) === 0 });
+# const rounds: number = JSON.parse("3");
+# print(kept(many, rounds));
+# -- end of source

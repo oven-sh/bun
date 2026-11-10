@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# "use strict";
+# function behindACall(o, between) { let text = ""; for (const k in o) { between(o, k); text += k + (o[k] === undefined ? "_" : o[k]); } return text; }
+# const byName = { behindACall }, key = JSON.parse('"behindACall"');
+# const make = () => JSON.parse('{"ash":1,"birch":2,"cedar":3,"date":4,"elm":5,"fir":6,"gum":7,"hazel":8}');
+# print(byName[key](make(), (o, k) => { if (k === "cedar") delete o.cedar; }));
+# -- end of source
+# The read under the key of a for-in goes by the enumerator's index behind a test that may take the step's word. The read holds the object against the enumerator (a cell first, then its structure and order word)
+# UNDER EACH OF THREE WORDS, and under no other: TestsEveryPosition (--aot-harden=ignore-told-ranges), CheckProofsAtRunTime (--aot-harden=proof-checks), EmittersAloneTestEveryPosition.
+# THE LIE, testing=KeysOfForInAreTakenToBeAsTheStepFoundThem: the test takes the step's word though a call has deleted the very name. Under the lie and each word the process stops by name; under each word alone the answer is right.
+# RUN(RIGHTP): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHTP: ash1birch2cedar_date4elm5fir6gum7hazel8
+# RIGHTP-NEXT: exited with 0
+# RUN(RIGHTE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# RIGHTE: ash1birch2cedar_date4elm5fir6gum7hazel8
+# RIGHTE-NEXT: exited with 0
+# RUN(HELDT): run-in-shell mechanisms=all testing=KeysOfForInAreTakenToBeAsTheStepFoundThem,TestsEveryPosition
+# HELDT: AOT: f{{*}}
+# HELDT: crashed with SIGABRT
+# RUN(HELDP): run-in-shell mechanisms=all testing=KeysOfForInAreTakenToBeAsTheStepFoundThem,CheckProofsAtRunTime
+# HELDP: AOT: f{{*}}
+# HELDP: crashed with SIGABRT
+# RUN(HELDE): run-in-shell mechanisms=all testing=KeysOfForInAreTakenToBeAsTheStepFoundThem,EmittersAloneTestEveryPosition
+# HELDE: AOT: f{{*}}
+# HELDE: crashed with SIGABRT

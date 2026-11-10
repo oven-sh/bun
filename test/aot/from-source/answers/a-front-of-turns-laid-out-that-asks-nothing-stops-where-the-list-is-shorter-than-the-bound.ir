@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# var wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
+# function copy(from, into, n) { for (var i = 0; i < n; i++) into[i] = from[i]; return into.length + ":" + into[15]; }
+# print(copy(wholes(globalThis.fails ? 10 : 16), wholes(16), 16));
+# -- end of source
+# What the front of the turns laid out has found is believed in every one of those turns. Under testing=EmittersAloneTestEveryPosition the walk writes nothing more, the turns are laid out as in an executable, and
+# each access holds what it is told against memory. The front asks whether the bound passes the length of a list that is read or stored into under the counter. A list of ten, sixteen turns: the loop as written
+# runs. The lie: the eleventh turn reads behind the list.
+# RUN(COUNT): compile mechanisms=all LengthsHeldAgainstBoundInFrontOfTurnsLaidOut
+# Two lengths a layout. The loop has a typed copy for Int32 storage, laid out once, and one for doubles, laid out twice.
+# COUNT: statistic LengthsHeldAgainstBoundInFrontOfTurnsLaidOut 6
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: 16:undefined
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition globalThis.fails = true;
+# HELD: 16:undefined
+# HELD-NEXT: exited with 0
+# Whoever would have passed the front is not harmed by the lie: so what stops below is this question and no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold
+# PASSES: 16:15
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold globalThis.fails = true;
+# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# LIE: crashed with

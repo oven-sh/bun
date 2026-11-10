@@ -1,0 +1,55 @@
+# `while (i < j) { swap(list, i, j); i++; j--; while (list[i] < t) i++; while (list[j] > t) j--; }`: the partition of a quickselect. `i` and `j` enter as numbers of which nothing says that they are whole.
+# A counter is asked for an int32 in front of its loop where every way round brings a step of it. The parameter of the head of a loop INSIDE joins a name of the counter, from outside that loop, with its own step,
+# which is no name yet when the parameter is met: so a counter that a loop inside steps too was "not stepped all round", both went round as doubles, and every read and store under them went by the generic road.
+# Now such a parameter is taken on trust where every way from outside its loop brings a name, and at the end every way into it must have brought one (part).
+# Not where the head inside holds the parameter against a bound, `for (; i < stop; i++)`: that loop is bought for itself, with its counter, its bound and the room of its views asked in front of IT (bounded).
+# Where the trust fails, `k = i; while (list[k] > k) k = list[k]`, the answer is the one of before: `i` stays the counter that it was (strays).
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(...values: unknown[]): void;
+# function swap(list: number[], i: number, j: number): void { const kept = list[i]!; list[i] = list[j]!; list[j] = kept; }
+# function part(list: number[], left: number, right: number, t: number): number {
+#   let i = left, j = right;
+#   while (i < j) {
+#     swap(list, i, j);
+#     i++;
+#     j--;
+#     while (list[i]! < t) i++;
+#     while (list[j]! > t) j--;
+#   }
+#   return j;
+# }
+# function bounded(list: number[], start: number, end: number): number {
+#   let sum = 0, i = start;
+#   while (i < end) {
+#     const stop = Math.min(i + 4, end);
+#     for (; i < stop; i++) sum += list[i]!;
+#     sum %= 1000;
+#   }
+#   return sum;
+# }
+# function strays(list: number[], from: number, until: number): number {
+#   let sum = 0;
+#   for (let i = from; i < until; i++) {
+#     let k = i;
+#     while (list[k]! > k) k = list[k]!;
+#     sum = sum * 3 + k;
+#   }
+#   return sum;
+# }
+# const made = (): number[] => [7.5, 2.5, 9.5, 0.5, 5.5, 3.5, 8.5, 1.5, 6.5, 4.5];
+# const next = [3, 0, 5, 1, 9, 2, 4, 8, 6, 7];
+# hand(part, bounded, strays);
+# const a = made(), b = made(), c = made(), d = made();
+# print(part(a, 0, 9, 4.5), a.join(), part(b, 0.5, 6.5, 4.5), Object.keys(b).length, part(c, NaN, 9, 4.5), part(d, 2147483646, 2147483649, 4.5), bounded(a, 0, 10), bounded(a, 1.5, 4), strays(next, 0, 10), strays(next, 0.5, 3));
+# -- end of source
+# f1 = swap, f2 = part, f3 = bounded, f4 = strays
+# RUN(EVENT): compile CountersThatLoopsInsideStepAskedInFrontOfLoops mechanisms=all
+# `i` and `j` of part alone: bounded and strays add nothing.
+# EVENT: statistic CountersThatLoopsInsideStepAskedInFrontOfLoops 2
+# RUN(PART): walk f2 mechanisms=all
+# PART-LABEL: code f2:Body
+# PART: ] @Int64, {{*}}] @Int64) isInLoop=true isLoopHead=true
+# PART: = GetArrayElement {{*}}level=Proven [keyIsIntegral
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 4 4.5,2.5,1.5,0.5,3.5,5.5,8.5,9.5,6.5,7.5 3.5 16 9 2147483647 50 NaN 81591 11.5

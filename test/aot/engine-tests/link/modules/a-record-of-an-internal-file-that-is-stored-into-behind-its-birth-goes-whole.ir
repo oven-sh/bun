@@ -1,0 +1,35 @@
+# The red control of the-record-of-an-internal-file-stays-in-sight-and-what-lies-in-it-goes.ir: compiled code stores into the record behind its birth.
+# A frozen record would make that store throw, so this one is not frozen: it goes whole, as every value went before: no field keeps its writers.
+# RUN: link modules fields mechanisms=all
+# CHECK-NOT: module m1
+# CHECK-NOT: field L0.0 {{*}}writers-known
+layout L0 module=m1 fields=[{key="grow" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f3
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:net"
+    Return
+}
+function f1 module=m1 kind=Module role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Integer integer=3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="grow" module=m1 role=Library length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m2 kind=Module role=Library results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m2 specifier="internal/net/isIP"
+    v1 = PropGet v0 key="grow"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="grow" calleeName="grow"
+    v4 = Integer integer=4
+    PropSet v0, v4 key="size"
+    Return v3
+}

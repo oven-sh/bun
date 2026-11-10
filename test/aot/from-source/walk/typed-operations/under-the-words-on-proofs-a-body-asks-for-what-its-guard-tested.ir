@@ -1,0 +1,35 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function same(a: number | undefined, b: number | undefined): number { let hits = 0; for (let i = 0; i < 3; i++) if (a === b) hits++; return hits; }
+# function other(a: unknown, b: unknown): number { return a === b ? -1 : -2; }
+# const table = [same, other];
+# function byValue(which: number, x: unknown, y: unknown): number { return (table[which] as any)(x, y); }
+# print(byValue(JSON.parse("0"), JSON.parse("4"), JSON.parse("4")), byValue(JSON.parse("1"), 1, 1));
+# print(byValue(JSON.parse("0"), JSON.parse('"ab"'), JSON.parse('"cd"')));
+# print("went on");
+# -- end of source
+# The Body behind a ParameterGuard believes what the guard tested. Only the build's verifier held a call of the Body to that; under the words on proofs the Body took `tested` as told, and under CheckProofsAtEntries
+# it was not asked at all, since the fused entry lies in front of the guard.
+# THE LIE: testing=RowSaysLess:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass; the walk, the judge of calls and Validate see a right guard. Two texts in boxes of `undefined|number` compare equal.
+# f1 = same
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:ParameterGuard (JSValue, JSValue) -> (JSValue) tests (undefined|number, undefined|number)
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3 -1
+# RIGHT-NEXT: 0
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/TestsOfGuard
+# LIE: 3 -1
+# LIE-NEXT: 3
+# LIE-NEXT: went on
+# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,RowSaysLess:Callee/f1/TestsOfGuard
+# ENTRIES: 3 -1
+# ENTRIES: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ENTRIES-NOT: went on
+# ENTRIES: crashed
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Callee/f1/TestsOfGuard
+# PROOFS: 3 -1
+# PROOFS: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# PROOFS-NOT: went on
+# PROOFS: crashed

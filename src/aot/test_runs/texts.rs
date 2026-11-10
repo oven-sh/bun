@@ -53,6 +53,10 @@ pub(super) fn without_extension(path: &[u8]) -> &[u8] {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
     ];
+    let has_dot = |from_end: usize| path.len() >= from_end && path[path.len() - from_end] == b'.';
+    if !has_dot(3) && !has_dot(4) {
+        return path;
+    }
     let stem = EXTENSIONS.iter().find_map(|end| path.strip_suffix(*end));
     stem.unwrap_or(path)
 }
@@ -568,6 +572,7 @@ impl<'t> Look<'t> {
                 experimental_decorators: false,
                 emits_decorator_metadata: false,
                 use_define_for_class_fields: None,
+                bun_run_assigns_class_fields: false,
             },
             import_meta_main: None,
         };

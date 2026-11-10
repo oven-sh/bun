@@ -1,0 +1,32 @@
+# The stores that are left out because no step reads their slot, where a processor keeps many registers across a call. In the arm of `clear` that calls, more values wait for what lies behind the calls than registers are kept, so some wait in slots and are reloaded for the call of `sink`. THE LIE, testing=SpillsThatStepsReadAreTakenToBeReadByNone: the allocator takes the slots that steps read to be read by none, and the encoder leaves out their stores.
+# No check is asked for here, as in a build of a user: the encoder asks at each read of a slot whether its store was left out, and the build stops by name. Without that question it would end well and the code would read slots that nobody wrote.
+# On x86-64 the entry of this function runs out of registers and the shape is another: its own test is a-slot-whose-store-is-left-out-though-it-is-read-stops-the-build-by-name.ir.
+# f4 = clear
+# -- source: a-slot-whose-store-is-left-out-though-it-is-read-where-more-values-wait-than-registers-are-kept-stops-the-build-by-name.ts
+# declare function sink(...values: unknown[]): void;
+# declare function cancel(handle: unknown): void;
+# class Sweeper {
+#   #timer: unknown = null;
+#   a0: unknown = null;
+#   a1: unknown = null;
+#   a2: unknown = null;
+#   a3: unknown = null;
+#   a4: unknown = null;
+#   a5: unknown = null;
+#   a6: unknown = null;
+#   a7: unknown = null;
+#   set(handle: unknown) { this.#timer = handle; }
+#   fill(value: unknown) { this.a0 = value; this.a1 = value; this.a2 = value; this.a3 = value; this.a4 = value; this.a5 = value; this.a6 = value; this.a7 = value; }
+#   clear() {
+#     const timer = this.#timer;
+#     const v0 = this.a0, v1 = this.a1, v2 = this.a2, v3 = this.a3, v4 = this.a4, v5 = this.a5, v6 = this.a6, v7 = this.a7;
+#     if (timer !== null) { cancel(timer); sink(v0, v1, v2, v3, v4, v5, v6, v7); this.#timer = null; return true; }
+#     return v0 === null && v1 === null && v2 === null && v3 === null && v4 === null && v5 === null && v6 === null && v7 === null;
+#   }
+# }
+# sink(Sweeper);
+# -- end of source
+# REQUIRES: arm64
+# AS-USERS-BUILD: the encoder's question at each read of a slot is asked in every build, and under the check of the runner the allocation is checked, which finds the same
+# DIAGNOSTIC: SpillSlotLacksItsValue f4
+# RUN: emit f4 mechanisms=all testing=SpillsThatStepsReadAreTakenToBeReadByNone

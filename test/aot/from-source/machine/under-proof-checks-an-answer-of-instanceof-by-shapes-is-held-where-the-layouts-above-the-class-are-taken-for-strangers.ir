@@ -1,0 +1,27 @@
+# An object still counts as standing where it was made when plain objects that hide nothing lie between it and its class's prototype, and the prototype of a class below is such an object once it has lost its own names. Out of sight an Animal is laid below the stripped prototype of Dog: it is a Dog. So the layouts of the classes above the class asked for are no strangers.
+# THE LIE, testing=LayoutsAboveClassAskedForAreTakenForStrangers: they count as strangers.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each answer taken from shapes is held to a walk of the chain that gives way at a trap and runs no code, or the process ends.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 2 3
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=LayoutsAboveClassAskedForAreTakenForStrangers
+# WRONG: 2 2
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=LayoutsAboveClassAskedForAreTakenForStrangers,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Animal { n: number; constructor(n: number) { this.n = n; } }
+# class Dog extends Animal { bark(): number { return 1; } }
+# class Cat extends Animal { purr(): number { return 2; } }
+# const lay: (object: object, above: object | null) => void = id((object: object, above: object | null): void => { Object.setPrototypeOf(object, above); });
+# const strip: (object: any) => void = id((object: any): void => { delete object.constructor; delete object.bark; });
+# const things: unknown[] = id([new Dog(1), new Cat(2), new Animal(3), new Dog(4), new Cat(5)]);
+# function dogs(): number { let sum = 0; for (let i = 0; i < things.length; i++) { if (things[i] instanceof Dog) sum++; } return sum; }
+# const first = dogs();
+# strip(Dog.prototype);
+# lay(things[2] as object, Dog.prototype);
+# print(first, dogs());
+# -- end of source

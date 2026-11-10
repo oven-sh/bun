@@ -332,7 +332,7 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2, true, false }, globalObject))
+        if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "sql"_s, 2, true, false }, globalObject))
             return standIn;
     }
 #endif
@@ -352,7 +352,7 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.SQL", "SQL"_s);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "SQL"_s, 0, true }, globalObject))
+        if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "SQL"_s, 0, true }, globalObject))
             return standIn;
     }
 #endif
@@ -385,7 +385,7 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 #if ENABLE(AOT)
     // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "BunShell"_s, 1 }, globalObject)) {
+        if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "BunShell"_s, 1 }, globalObject)) {
             JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
             RETURN_IF_EXCEPTION(scope, {});
             process.get(globalObject, Identifier::fromString(vm, "env"_s));
@@ -1172,7 +1172,7 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
     (void)propertyName;
     if (Bun::hasCompiledModules()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-        Bun::willStorePathOfMainModule(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
+        Bun::willSetMainModulePath(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
         RETURN_IF_EXCEPTION(scope, false);
     }
     return BunObject_setter_main(globalObject, encodedValue);

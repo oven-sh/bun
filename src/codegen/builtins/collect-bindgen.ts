@@ -399,6 +399,9 @@ function createField(
   }
   if (receiver !== null) uses.this ??= receiver.uses;
   else if (isRead && signature.receiver !== "static") uses.this ??= b.handedOver;
+  const writes = columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState);
+  // `held: "pinned"`, the one conversion that throws on its way into Rust: a small view gets a buffer, and its bytes move there.
+  const pinsBytes = args.some(({ type }) => type.rustFromExternThrows);
   return {
     ...columns,
     this: receiver === null ? undefined : new b.TableType(receiver.type),
@@ -427,7 +430,7 @@ function createField(
       args.some(({ type }) => type.canRefuse),
     uses,
     reads: columns.reads ?? (isOfClass && capability === "js" ? undefined : externalState),
-    writes: columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState),
+    writes: pinsBytes && writes && !writes.includes("TypedArrayStorage") ? [...writes, "TypedArrayStorage"] : writes,
     implementation: columns.implementation ?? b.hostCall,
   };
 }

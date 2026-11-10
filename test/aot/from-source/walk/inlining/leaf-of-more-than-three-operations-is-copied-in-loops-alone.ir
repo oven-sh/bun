@@ -11,7 +11,7 @@
 # RUN: walk f3 mechanisms=all
 # CHECK: frame 1 callee=f1
 # RUN(RECURSION): walk f2 mechanisms=all
-# RECURSION-NOT: frame 1
+# RECURSION-NOT: callee=f1
 # RECURSION: CallDirect {{*}} function=f1
 # RUN(ELSEWHERE): walk f4 mechanisms=all
 # ELSEWHERE-NOT: frame 1

@@ -1,0 +1,25 @@
+# A link followed round a loop is held to its layout by a shape test that refuses marked objects; behind it the reads and stores of the turn ask no slot whether it is filled. Out of the loop two fields of the node in the middle are deleted and one is laid again: that node bears a mark and the slot that the turn stores into is empty.
+# THE LIE, testing=MarkedObjectsPassTestsOfLinks: the test of the link lets marked objects pass: the store fills the slot and the object never hears that it has the name again.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) what is remembered of the cell is asked again where it is leaned on, or the process ends.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 2 2 tag,flags,up,seen flags,up,tag,seen tag,flags,up,seen
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=MarkedObjectsPassTestsOfLinks
+# WRONG: 2 2 tag,flags,up,seen flags,up,tag tag,flags,up,seen
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=MarkedObjectsPassTestsOfLinks,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# RUN(WALK): walk f2:Body mechanisms=all
+# WALK: = ShapeTest {{*}}refusesMarkedObjects
+# WALK: : L{{*}} @Cell{{*}}isLoopHead=true
+# WALK-NOT: = IsSlotFilled
+# -- source: main.cjs
+# function Node(tag, up) { this.tag = tag; this.flags = tag * 3; this.up = up; this.seen = 0; }
+# function climb(from) { let sum = 0; for (let at = from; at !== null; at = at.up) { if (at.flags & 1) sum += at.tag; else sum -= at.tag; at.seen = 5; } return sum; }
+# const byName = { climb }, key = JSON.parse('"climb"');
+# const low = new Node(3, null), mid = new Node(2, low), top = new Node(1, mid);
+# const first = byName[key](top);
+# delete mid.seen; delete mid.tag; mid.tag = 2;
+# print(first, byName[key](top), Object.keys(top).join(), Object.keys(mid).join(), Object.keys(low).join());
+# -- end of source

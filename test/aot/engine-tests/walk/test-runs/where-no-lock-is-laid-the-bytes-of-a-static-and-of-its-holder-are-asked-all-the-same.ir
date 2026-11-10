@@ -1,0 +1,125 @@
+# function floors(count: number) { const n = count | 0; let sum = 0; for (let at = 0; at < n; at++) sum += Math.floor(at / 3); return sum; }
+# if (hidden()) Bun.plugin(hidden()); print(floors(10)); replace(); print(floors(10)); restore(); print(floors(10)); replaceHolder(); print(floors(10)); restoreHolder(); print(floors(10))
+# The test run may lay a plugin: code that nobody compiled may run beside it, so no lock is laid on any built-in. A lock would refuse what such code writes; the list of names on a holder refuses nothing in a test run: it hears.
+# So Math.floor and Math are asked by their bytes here as well: once, in front of the loop; where a byte is set the loop is taken as it is written, and finds what the run has laid.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell const holder = Math, original = Math.floor; globalThis.hidden = () => false; globalThis.replace = () => { holder.floor = () => 100; }; globalThis.restore = () => { holder.floor = original; }; globalThis.replaceHolder = () => { globalThis.Math = { floor: () => 7 }; }; globalThis.restoreHolder = () => { globalThis.Math = holder; };
+# CHECK: 12
+# CHECK-NEXT: 1000
+# CHECK-NEXT: 12
+# CHECK-NEXT: 70
+# CHECK-NEXT: 12
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open MathFloor no-lock-is-laid
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: isInLoop=true isLoopHead=true
+# WALK: = PropGet {{*}}key="floor"
+# WALK: isInLoop=true isLoopHead=true
+# WALK-NOT: = PropGet
+# WALK: = DivideIntegers
+# WALK-NOT: = PropGet
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE: = IsMemberAsBuilt builtin=Math {{*}}@
+# TWICE: = IsMemberAsBuilt builtin=MathFloor {{*}}@
+# TWICE: = IsMemberAsBuilt builtin=Math {{*}}@
+# TWICE: = IsMemberAsBuilt builtin=MathFloor {{*}}@
+# TWICE-NOT: = IsMemberAsBuilt
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE: = PropGet {{*}}key="floor"
+# ONCE: = IsMemberAsBuilt builtin=Math {{*}}@
+# ONCE: isInLoop=true isLoopHead=true
+# ONCE-NOT: = IsMemberAsBuilt builtin=Math {{*}}@
+# RUN(COUNT): compile MembersOfBuiltinsAskedByTheirBytes
+# COUNT: MembersOfBuiltinsAskedByTheirBytes
+
+module m0 path="where-no-lock-is-laid-the-bytes-of-a-static-and-of-its-holder-are-asked-all-the-same.ts" displayPath="where-no-lock-is-laid-the-bytes-of-a-static-and-of-its-holder-are-asked-all-the-same.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @143
+    v3 = PropGet v2 key="hidden" [isFreeName] @143
+    v4 = Call v3 calleeName="hidden" @143
+    v5 = ToBoolean v4 @143
+    Branch v5 -> taken b1(| 0), notTaken b2() @143
+  b1(v6):
+    v7 = Builtin builtin=Bun @155
+    v8 = Builtin builtin=GlobalThis @168
+    v9 = PropGet v8 key="hidden" [isFreeName] @168
+    v10 = Call v9 calleeName="hidden" @168
+    v11 = Builtin builtin=BunPlugin @155
+    v12 = Call v11, v7, v10 calleeName="Bun.plugin" @155
+    Jump -> next b2() @176
+  b2():
+    v13 = Builtin builtin=GlobalThis @204
+    v14 = PropGet v13 key="print" [isFreeName] @204
+    v15 = Integer integer=10 @217
+    v16 = Call v1, -, v15 calleeName="floors" @210
+    v17 = Call v14, -, v16 calleeName="print" @204
+    v18 = Builtin builtin=GlobalThis @223
+    v19 = PropGet v18 key="replace" [isFreeName] @223
+    v20 = Call v19 calleeName="replace" @223
+    v21 = Builtin builtin=GlobalThis @234
+    v22 = PropGet v21 key="print" [isFreeName] @234
+    v23 = Integer integer=10 @247
+    v24 = Call v1, -, v23 calleeName="floors" @240
+    v25 = Call v22, -, v24 calleeName="print" @234
+    v26 = Builtin builtin=GlobalThis @253
+    v27 = PropGet v26 key="restore" [isFreeName] @253
+    v28 = Call v27 calleeName="restore" @253
+    v29 = Builtin builtin=GlobalThis @264
+    v30 = PropGet v29 key="print" [isFreeName] @264
+    v31 = Integer integer=10 @277
+    v32 = Call v1, -, v31 calleeName="floors" @270
+    v33 = Call v30, -, v32 calleeName="print" @264
+    v34 = Builtin builtin=GlobalThis @283
+    v35 = PropGet v34 key="replaceHolder" [isFreeName] @283
+    v36 = Call v35 calleeName="replaceHolder" @283
+    v37 = Builtin builtin=GlobalThis @300
+    v38 = PropGet v37 key="print" [isFreeName] @300
+    v39 = Integer integer=10 @313
+    v40 = Call v1, -, v39 calleeName="floors" @306
+    v41 = Call v38, -, v40 calleeName="print" @300
+    v42 = Builtin builtin=GlobalThis @319
+    v43 = PropGet v42 key="restoreHolder" [isFreeName] @319
+    v44 = Call v43 calleeName="restoreHolder" @319
+    v45 = Builtin builtin=GlobalThis @336
+    v46 = PropGet v45 key="print" [isFreeName] @336
+    v47 = Integer integer=10 @349
+    v48 = Call v1, -, v47 calleeName="floors" @342
+    v49 = Call v46, -, v48 calleeName="print" @336
+    v50 = Undefined @336
+    Return v50 @336
+}
+function f1 name="floors" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @51
+    v2 = BitOr v0, v1 @51
+    v3 = Integer @64
+    v4 = Convert v3 declared={type=number} @64
+    v5 = Integer @81
+    v6 = Convert v5 declared={type=number} @81
+    Jump -> next b1(v4, v6) @76
+  b1(v7: number, v8: number):
+    LoopHint @76
+    v10 = Less v8, v2 @89
+    Branch v10 -> taken b2(), notTaken b3() @89
+  b2():
+    v11 = Builtin builtin=GlobalThis @105
+    v12 = PropGet v11 key="Math" [isFreeName] @105
+    v13 = PropGet v12 key="floor" @105
+    v14 = Integer integer=3 @121
+    v15 = Div v8, v14 @121
+    v16 = Call v13, v12, v15 calleeKey="floor" calleeName="Math.floor" @110
+    v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody @105
+    v18 = Add v7, v17 @105
+    v19 = Convert v18 declared={type=number} @98
+    v20 = Increment v8 @92
+    v21 = Convert v20 declared={type=number} @92
+    Jump -> next b1(v19, v21) @92
+  b3():
+    Return v7 @132
+}

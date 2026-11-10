@@ -1,0 +1,29 @@
+# Object.assign(globalThis, { label: "two" }), as the front end writes it: nobody replaces Object.assign, so the operation names the function; the literal is constant data
+# The row of Object.assign writes on its target and hands it back. A write hands nothing out: the global object stays in sight, and with it all that lies below it. What shows it here: the function of the library
+# that makes the standard outputs hangs on process.stdout.
+# If the look at bodies, or Link, took the target for let go, every global would count as used in every way, and the program would hold Bun's whole library.
+# The controls stand beside this file: *-hands-the-global-object-out.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+layout L0 fields=[{key="label" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="label" value=String{value="two"}}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectAssign
+    v3 = Data data=d0
+    v4 = Call v2, v1, v0, v3 calleeName="Object.assign"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v0
+}

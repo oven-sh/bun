@@ -1,0 +1,21 @@
+# const made = new Module("/made.js"); made._compile(text, "/made.js");
+# What `new F()` makes stands below F.prototype, so the name that the program spells off it finds node:module.prototype._compile, which evaluates text.
+# If the prototype were looked through only where the rows name a class with objects, the image would admit no text, and the run time would refuse what the program evaluates in sight
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags {{*}}AdmitsUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeModule
+    v1 = String string="/made.js"
+    v2 = Construct v0, -, v1 calleeName="Module"
+    v3 = PropGet v2 key="_compile"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="text" [isFreeName]
+    v6 = Call v3, v2, v5, v1 calleeKey="_compile"
+    v7 = Undefined
+    Return v7
+}

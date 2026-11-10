@@ -1,0 +1,17 @@
+# -- source: wide.ts
+# declare function id<T>(value: T): T;
+# declare function report(value: number): void;
+# function isListed(kind: number): boolean {
+#   switch (kind | 0) { case 81: case 84: case 85: case 90: case 168: case 169: case 171: case 208: case 209: case 226: case 260: case 262: case 281: case 303: case 346: case 370: return true; default: return false; }
+# }
+# let listed = 0;
+# for (let kind = 0; kind < 500; kind++) if (isListed(id(kind))) listed += kind;
+# report(listed);
+# -- end of source
+# Sixteen cases over 290 values that lead to one place: a test of the range and one byte of a table of 290 bytes, where a table of jumps took four bytes a value.
+# f1 = isListed
+# RUN: compile SwitchesAnsweredByByteOfTable mechanisms=none+TypedOperations+UnboxedNumbers+Folding
+# CHECK: statistic SwitchesAnsweredByByteOfTable 1
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 3313
+# RUNS: exited with 0

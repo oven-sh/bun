@@ -1,0 +1,14 @@
+# `for (let i = 0; i + 2 < w.length; i += 3) { v[i] = ..; v[i + 1] = ..; }`: the test is of ANOTHER list's length: it shows nothing of a position in `v`.
+# THE LIE, testing=GroundsOfPositionsBelowSumsAreHandedOverUnproven: the ground of a position below a sum that has passed below a length is handed over without the prover: the raw store takes it and would write behind the end of its list.
+# The verifier asks the prover at the store and refuses the build. Without the lie: parallel/a-position-below-a-sum-that-has-passed-below-the-length/a-store-by-another-lists-length-into-fractions.cjs, built with the verifier, says what plain says.
+# DIAGNOSTIC: OpcodeNotInForm 1
+# RUN: walk f1:Body mechanisms=all testing=GroundsOfPositionsBelowSumsAreHandedOverUnproven
+# CHECK: the walk of f1:Body failed
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function fill(v: number[], w: number[]): number[] { for (let i = 0; i + 2 < w.length; i += 3) { v[i] = i + 0.25; v[i + 1] = i + 0.25; } return v; }
+# const make = (n: number): number[] => Array.from({ length: n }, (_, i) => i + 0.5);
+# const show = (list: number[]): string => list.length + ":" + JSON.stringify(list);
+# print(show(fill(make(2), make(2))), show(fill(make(9), make(3))));
+# print(show(fill(make(2), make(9))));
+# -- end of source

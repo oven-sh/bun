@@ -1,0 +1,17 @@
+# -- source: what-is-in-sight-of-a-list-that-a-function-is-applied-to-is-held-against-memory.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# function take(x: number, y: number, z: number): string { return x + "," + y + "," + z; }
+# function run(a: number, b: number, c: number): string { const list: [number, number, number] = [a, b, c]; list.reverse(); return take.apply(null, list); }
+# print(id(run)(3, 4, 5));
+# -- end of source
+# LIBRARY: own
+# f2 = run. What is in sight of a list made here (its length, its elements) is taken by an operation that is no read, and no record of a read is left.
+# THE LIE, testing=NothingIsDoneToFreshLists: no operation but an append lets a fresh list leave or writes it. So 3, 4, 5 stay in sight where memory holds 5, 4, 3.
+# Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the taker holds what is in sight against memory: the cell as made, the length, each element: Walker::checkWhatIsInSightOfList().
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 5,4,3
+# RIGHT-NEXT: exited with 0
+# RUN(NAMED): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists,CheckProofsAtRunTime
+# NAMED: AOT: f2 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# NAMED-NEXT: crashed with

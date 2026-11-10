@@ -1,0 +1,17 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i] - b[i]; return s; } };
+# print(T[key](new Int32Array(11).fill(7), new Int32Array(11).fill(2)), T[key](new Uint16Array(4).fill(65535), new Uint16Array(4).fill(1)), T[key](new Float64Array(9).fill(0.5), new Float64Array(9).fill(0.25)), T[key](new Int8Array(6).fill(-3), new Float32Array(6).fill(0.5)), T[key](new Int16Array(9).fill(5), new Int16Array(3).fill(1)), T[key](new Uint32Array(0), new Uint32Array(0)));
+# -- end of source
+# Two holders in one loop, both views of any kind. The second was never asked in front whether it is as made (the question went by the one kind of a class, and a union's class has none), so its length might follow
+# memory that another thread grows and was read in every turn; and a turn with two such views was not laid out. Two Int32Arrays of 1,000 multiplied and added up: 29,146 instructions, plain Bun 14,068.
+# It is asked; the length stands in front; the turns are laid out once for each kind that BOTH types list, and in front of them both cells are asked for that kind. Two kinds at once take the loop as written. 13,448.
+# RUN: compile LoopsLaidOutForEachKindOfView mechanisms=all
+# The second: the copy in which the first is a view of any kind and the other a list: laid out by the view's kind, the list's storage read in front.
+# CHECK: statistic LoopsLaidOutForEachKindOfView 2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 55 262136 2.25 -21 NaN 0
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 55 262136 2.25 -21 NaN 0
+# NONE-NEXT: exited with 0

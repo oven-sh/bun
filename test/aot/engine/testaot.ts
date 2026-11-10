@@ -1,5 +1,5 @@
-// Runs the tests of the compiler's engine: WebKit's Source/JavaScriptCore/aot/tests.
-// `testaot` runs them. CI packs it beside the Bun under test, with `jsc` and the folder `aot-tests`.
+// Runs the tests of the compiler's engine: WebKit's Source/JavaScriptCore/aot/tests, and ../engine-tests: the IR tests that name entries of
+// Bun's table of built-ins. `testaot` runs them. CI packs it beside the Bun under test, with `jsc` and the folder `aot-tests`.
 //
 //   testaot      $TESTAOT, or beside the Bun under test, or in build/release-local, or in build/release
 //   aot-tests    $AOT_ENGINE_TESTS, or beside the Bun under test, or aot/tests in $BUN_WEBKIT_PATH or vendor/WebKit
@@ -31,6 +31,7 @@ export const engineTests =
       .filter(path => path !== undefined)
       .map(path => join(path, "Source", "JavaScriptCore", "aot", "tests")),
   ].find(existsSync);
+const engineTestsOfBun = join(import.meta.dir, "..", "engine-tests");
 
 // Neither tool destroys its VM before it exits.
 export const toolEnv = bunEnv.ASAN_OPTIONS
@@ -142,7 +143,7 @@ async function printOutputOfFailedTests(lines: string[], cwd?: string) {
 // Each is what a FAIL line has between "FAIL " and ": ", with forward slashes, under a TODO that says what it waits for.
 const failsToday: string[] = [];
 
-/** How many passed. */
+/** How many were run: those that passed, and those that fail under a `# TODO:`. ./what-a-todo-of-an-ir-test-stands-for.test.ts shows what such a line stands for. */
 export async function expectEveryTestPasses(args: string[], cwd?: string, env?: Record<string, string>) {
   const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd, env);
   await printOutputOfFailedTests(lines, cwd);
@@ -162,13 +163,21 @@ export async function expectEveryTestPasses(args: string[], cwd?: string, env?: 
     stderr: expect.any(String),
     exitCode: listed ? 1 : 0,
   });
+  // A file with a line `# AS-USERS-BUILD:` shows nothing where the checks are on from outside: testaot does not run it, says what turns them on, and counts it among
+  // the passed. Its own assertions and sanitizer may; a check word may where this call passes one. Anything else leaves the file unrun in a run that looks green.
+  const asksForCheck = args.some(arg => arg.startsWith("--option=check="));
+  const notRun = [...lines, ...stderr.split(/\r?\n/)]
+    .filter(line => line.startsWith("NOT RUN, not as users build here: "))
+    .filter(line => !/^NOT RUN, not as users build here: this testaot has (assertions|the sanitizer): /.test(line))
+    .filter(line => !(asksForCheck && line.startsWith("NOT RUN, not as users build here: the command line asks for a check: ")));
+  expect(notRun).toEqual([]);
   const [, passed, todo] = /^(\d+) passed, \d+ failed, (\d+) todo$/.exec(lines.at(-1)!)!;
   return Number(passed) + Number(todo);
 }
 
 export const skipOrFail = (why: string) =>
   // CI packs the tools wherever Bun has the compiler.
-  isCI && !isWindows && !unsupported
+  isCI && !unsupported
     ? test(`${why}: does ../harness/tests-that-start-tools-of-the-engine.ts see that this file imports ./testaot.ts?`, () =>
         expect(why).toBeUndefined())
     : test.skip(`${why}: test/aot/engine/testaot.ts says where it is looked for`, () => {});
@@ -189,16 +198,33 @@ function inCommandLines(paths: string[]) {
   return lists.filter(list => list.length);
 }
 
-/** Every `parts`-th IR test, from the `part`-th on. A new test needs no list: it is in one of the parts. */
+// Each takes as long as two hundred others, and `testaot run` ends a process of sixteen that has printed nothing for 300 seconds. The n-th has ir-alone-n.test.ts.
+const alone = [
+  "link/regexp-texts/a-chain-of-prototypes-is-paid-for-by-its-length.ir",
+  "link/regexp-texts/a-name-that-a-long-chain-lacks-is-paid-for.ir",
+];
+
+export function irTestAlone(nth: number) {
+  if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
+  test(alone[nth - 1]!, async () => void (await expectEveryTestPasses(["run", alone[nth - 1]!], engineTests)), 600_000);
+}
+
+/** Every `parts`-th IR test of each folder, from the `part`-th on. A new test needs no list: it is in one of the parts. */
 export function irTests(part: number, parts: number) {
   if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
-  const mine = readdirSync(engineTests!, { recursive: true, encoding: "utf8" })
-    .filter(path => path.endsWith(".ir"))
-    .sort()
-    .filter((_, index) => index % parts === part - 1);
-  test(`${mine.length} IR tests of the engine`, async () => {
-    for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], engineTests);
-  }, 600_000);
+  expect(alone.filter((_, at) => !existsSync(join(import.meta.dir, `ir-alone-${at + 1}.test.ts`)))).toEqual([]);
+  for (const [folder, whose] of [
+    [engineTests!, "the engine"],
+    [engineTestsOfBun, "Bun"],
+  ] as const) {
+    const mine = readdirSync(folder, { recursive: true, encoding: "utf8" })
+      .filter(path => path.endsWith(".ir") && !alone.includes(path.replaceAll("\\", "/")))
+      .sort()
+      .filter((_, index) => index % parts === part - 1);
+    test(`${mine.length} IR tests of ${whose}`, async () => {
+      for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], folder);
+    }, 600_000);
+  }
 }
 
 // `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and

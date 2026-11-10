@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# const held = JSON.parse("{}"), name = JSON.parse('"rows"');
+# let counted = 9;
+# Object.defineProperty(held, "rows", { get() { counted = Math.max(counted - 1, 0); return [5, 6, 7, 8, 9, 10, 11, 12, 13].slice(0, counted); } });
+# const data = [held][counted & 0], w = [name][counted & 0];
+# function f() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f(), counted);
+# -- end of source
+# The row found in front under a key read off variables of the file is remembered through the turns. Under testing=CheckProofsAtRunTime the read stands in the turn too and is held against the row remembered.
+# Here an accessor hands out another list at each call; the operation that runs no code answers absent and the loop runs as written. The lie reads by the road that runs code: the row is remembered falsely and the check stops.
+# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
+# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 18 2
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 18 2
+# HELD-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad
+# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# STOPPED: crashed with

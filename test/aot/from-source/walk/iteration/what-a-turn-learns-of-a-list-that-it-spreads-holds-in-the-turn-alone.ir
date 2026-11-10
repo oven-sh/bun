@@ -1,0 +1,11 @@
+# `r = xs.push(...xs)` in a loop whose bound nobody knows, and `xs.join("")` behind the loop. The call is walked apart from what is no list; on the way of the list the list stands in for xs.
+# Behind that way xs is bound to what it was BOUND to in front, not to its narrowest name there (what the read of `push` left of it): that name is made in the turn, and the loop may run no turn.
+# -- source: main.js
+# function self(xs, n) { let r = 0; for (let i = 0; i < n; i++) r = xs.push(...xs); return r + xs.join(""); }
+# print(String(self(JSON.parse("[1,2]"), JSON.parse("0"))) + " " + String(self(JSON.parse("[1,2]"), JSON.parse("1"))));
+# -- end of source
+# RUN(BUILDS): compile CallsWalkedApartFromSpreadsOfWhatIsNoList mechanisms=all
+# BUILDS: statistic CallsWalkedApartFromSpreadsOfWhatIsNoList {{*}}
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 012 41212
+# ANSWERS-NEXT: exited with 0

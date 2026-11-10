@@ -1,0 +1,42 @@
+# `process.nextTick` is made by its holder when it is first read, with code of the library, and the program may see that. Where nobody replaces the member the read is a constant with that first read in front of it.
+# The look at a loop counts on it: it does more than a read of a slot does
+# Nothing else in the loop runs code: function spin(turns) { if (typeof turns !== "number") return; let last; for (let i = 0; i < turns; i++) last = process.nextTick; return last; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Builtin builtin=ProcessNextTick
+# CHECK: GetWatchedBuiltinValue {{*}}builtin=ProcessNextTick
+# CHECK-NOT: InitializeBuiltin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="spin" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = Undefined
+    v4 = Integer
+    Jump -> next b2(v4, v3)
+  b2(v5, v6):
+    LoopHint
+    v8 = Less v5, v2
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Builtin builtin=Process
+    v10 = PropGet v9 key="nextTick"
+    v11 = Increment v5
+    Jump -> next b2(v11, v10)
+  b4():
+    Return v6
+  b5():
+    v12 = Undefined
+    Return v12
+}

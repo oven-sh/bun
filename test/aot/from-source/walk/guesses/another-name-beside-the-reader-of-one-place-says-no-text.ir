@@ -1,0 +1,9 @@
+# -- source: main.cjs
+# "use strict";
+# const text = sink();
+# function named() { let s = 0; for (let i = 0; i < text.length; i++) s += text.charCodeAt(i) + text.size; return s; }
+# sink(named);
+# -- end of source
+# Where a name that no text has is read off the place too, its length says nothing
+# RUN(COUNT): compile TextsExpectedByNamesOfPlaces mechanisms=all
+# COUNT: statistic TextsExpectedByNamesOfPlaces 0

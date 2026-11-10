@@ -1,0 +1,13 @@
+# `async (c, a) => c * a + a * 0.5`: one block, and by its text it returns a sum of products: but what the caller is handed is a promise. The store speaks for no list of numbers: a guess that would fail at every turn is not made. The two lists that are read are asked beside each other, as they were; the one that is stored into is not.
+# LIBRARY: own
+# -- source: main.js
+# const first = JSON.parse("[1.5,2.5,3.5,4.5]"), second = JSON.parse("[0.5,0.25,2,4]"), kept = JSON.parse("[0,0,0,0]");
+# const blend = async (c, a) => c * a + a * 0.5;
+# function run(count) { for (let i = 0; i < count; i++) kept[i] = blend(first[i], second[i]); return kept.map((one) => typeof one).join(); }
+# publish(run);
+# -- end of source
+# RUN: compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
+# CHECK: statistic ListsAskedForBesideListsInFrontOfLoops 2
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(2)); print(run(4)); };
+# SHELL: object,object,number,number
+# SHELL-NEXT: object,object,object,object

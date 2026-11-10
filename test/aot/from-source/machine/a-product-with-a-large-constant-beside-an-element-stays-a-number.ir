@@ -1,0 +1,11 @@
+# -- source: a-product-with-a-large-constant-beside-an-element-stays-a-number.ts
+# declare function sink(value: unknown): void;
+# function mixed(list: number[]): number { let s = 1; for (let i = 0; i < list.length; i++) s = (s * 1103515245 + list[i]!) | 0; return s; }
+# const list: number[] = []; for (let j = 0; j < 40; j++) list.push(j * 1000);
+# sink(mixed(list));
+# -- end of source
+# The product of what comes round and a large constant is a 64-bit integer that would have to be asked in every turn whether it is an int32, and nearly never is: then the turn does the work
+# twice. Beside an element of a list it stays a number, as it was before the element was known for an int32.
+# f1 = mixed
+# RUN: compile ExactIntegersBehindNumbers mechanisms=all
+# CHECK: statistic ExactIntegersBehindNumbers 0

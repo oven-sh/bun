@@ -1,0 +1,66 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# let noted: string[] = [];
+# function note(value: unknown): void {
+#     noted.push(String(value));
+# }
+# function sum(items: number[]): number { let total = 0; for (const item of items) total += item; return total; }
+# function seen(value: unknown): void { note("seen " + value); }
+# function told(last: number): Iterable<number> { return { [Symbol.iterator]() { let at = 0; return { next() { at++; open.seen(at); const twice = at * 2; return at > last ? { done: true, value: 0 } : { done: false, value: twice }; } }; } } as never; }
+# const open = globalThis as unknown as Record<string, (...values: unknown[]) => void>;
+# open.sum = sum as never;
+# open.seen = seen as never;
+# function tried(what: () => void): string {
+#     let end = "ends";
+#     try {
+#         what();
+#     } catch (error) {
+#         end = (error as Error).name + ": " + (error as Error).message.split(" (evaluating")[0];
+#     }
+#     const text = "[" + noted.join(",") + "] " + end + " |";
+#     noted = [];
+#     return text;
+# }
+# function counting(upTo: number, last: unknown): Iterable<number> {
+#     return {
+#         [Symbol.iterator]() {
+#             let at = 0;
+#             return {
+#                 next() {
+#                     at++;
+#                     note("next " + at);
+#                     return (at > upTo ? { done: last, value: -1 } : { done: 0, value: at }) as unknown as IteratorResult<number>;
+#                 },
+#                 return() {
+#                     note("return");
+#                     return { done: true, value: undefined };
+#                 },
+#             };
+#         },
+#     };
+# }
+# function* made(): Generator<number> {
+#     try {
+#         yield 1;
+#         yield 2;
+#         yield 3;
+#     } finally {
+#         note("closed");
+#     }
+# }
+# for (let turn = 0; turn < 2; ++turn) {
+#     print(turn, tried(() => { note(sum(told(3) as never)); }));
+#     print(turn, tried(() => { note(sum([4, 5])); }));
+# }
+# -- end of source
+# A walk of a loop that is cut short inside the step is undone and walked again. The lines below are what plain Bun prints.
+# RUN: run-in-shell mechanisms=all
+# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:1:0
+# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:2:1
+# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:3:1
+# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:5:2
+# CHECK: 0 [seen 1,seen 2,seen 3,seen 4,12] ends |
+# CHECK-NEXT: 0 [9] ends |
+# CHECK-NEXT: 1 [seen 1,seen 2,seen 3,seen 4,12] ends |
+# CHECK-NEXT: 1 [9] ends |
+# CHECK-NEXT: exited with 0

@@ -70,6 +70,7 @@ pub(crate) struct FileOfRun {
     pub names_of_spies_read: Vec<Atom>,
     pub texts_passed: Vec<(u32, Atom)>,
     pub names_stored_on_unknown_objects: Vec<Atom>,
+    pub names_stored_above_literals: Vec<(BuiltinId, Atom)>,
     pub closed_holders_out_of_sight: Vec<BuiltinId>,
     pub loads: LoadsOfFile,
 }
@@ -254,6 +255,17 @@ fn may_be_replaced_by_tests(place: BuiltinId) -> bool {
         }
 }
 
+const FOLDED_BY_IN_EVERY_RUN: [BuiltinId; 4] = [
+    BuiltinId::Symbol,
+    BuiltinId::SymbolFor,
+    BuiltinId::ObjectDefineProperty,
+    BuiltinId::ObjectDefineProperties,
+];
+
+fn is_folded_by_in_every_run(place: BuiltinId) -> bool {
+    FOLDED_BY_IN_EVERY_RUN.contains(&table::canonical_id(place))
+}
+
 fn list_members_written_as_reads(replaced: &[u32]) -> Arc<[u32]> {
     let mut is_listed = vec![false; BuiltinId::COUNT as usize];
     for &number in replaced {
@@ -262,6 +274,7 @@ fn list_members_written_as_reads(replaced: &[u32]) -> Arc<[u32]> {
         }
     }
     let places = (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
+    let places = places.filter(|&place| !is_folded_by_in_every_run(place));
     for place in places.filter(|&place| may_be_replaced_by_tests(place)) {
         is_listed[place.to_wire() as usize] = true;
         is_listed[table::canonical_id(place).to_wire() as usize] = true;
@@ -276,6 +289,14 @@ fn list_members_written_as_reads(replaced: &[u32]) -> Arc<[u32]> {
     numbers.collect()
 }
 
+pub(crate) fn fix_what_every_run_folds_by(replaced: &[u32], fixed: &FixedBuiltins) {
+    for place in FOLDED_BY_IN_EVERY_RUN {
+        if replaced.binary_search(&place.to_wire()).is_err() {
+            fixed.note(place);
+        }
+    }
+}
+
 pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBuiltins) {
     builtins.for_each_locked_builtin(|builtin| {
         let mut place = builtin;
@@ -288,11 +309,12 @@ pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBu
     });
 }
 
-fn runs_unseen_code(source: &ParsedSource) -> bool {
+pub(crate) fn runs_unseen_code(source: &ParsedSource) -> bool {
     let names = &source.contents.names;
     source.of_run.runs_unseen_code
         || source.of_run.loads.names_file_with_query.is_some()
         || names.loads_by_unknown_path
+        || source.builtins.hands_on_loader_of_paths()
         || !names.files_missing_at_build_at.is_empty()
         || source.contents.starts_worker_out_of_sight
 }
@@ -405,6 +427,32 @@ fn list_names_added(
     added
 }
 
+pub(crate) fn list_names_that_tests_may_add(
+    files: &Files<'_>,
+    whose: &[WhoseFile],
+) -> Vec<(BuiltinId, Atom)> {
+    let (mut holders, mut names_stored) = (Vec::new(), Vec::new());
+    let mut above_literals = Vec::new();
+    for &file in files.compiled_files() {
+        if let Some(source) = parsed_source(files, file)
+            && whose[file.idx()] == WhoseFile::OfTests
+        {
+            holders.extend_from_slice(&source.of_run.closed_holders_out_of_sight);
+            names_stored.extend_from_slice(&source.of_run.names_stored_on_unknown_objects);
+            above_literals.extend_from_slice(&source.of_run.names_stored_above_literals);
+        }
+    }
+    let mut added = list_names_added(holders, names_stored, &files.atoms);
+    for (holder, name) in above_literals {
+        for pair in list_names_added(vec![holder], vec![name], &files.atoms) {
+            if !added.contains(&pair) {
+                added.push(pair);
+            }
+        }
+    }
+    added
+}
+
 pub(crate) fn collect_run_contents(
     input: RunInput<'_, '_>,
     (whose, loads_compiled_files_alone): (Vec<WhoseFile>, Vec<bool>),
@@ -430,7 +478,7 @@ pub(crate) fn collect_run_contents(
         runners_beside_all: texts_written.runners_beside_all,
         ..CountsOfScan::default()
     };
-    let (mut helpers, mut holders, mut names_stored) = (Vec::new(), Vec::new(), Vec::new());
+    let mut helpers = Vec::new();
     for &file in files.compiled_files() {
         let Some(source) = parsed_source(files, file) else {
             run.spies_under_any_name = true;
@@ -464,8 +512,13 @@ pub(crate) fn collect_run_contents(
         if builtins.hands_spy_on() {
             say_file_leaves_open(path, FileLeavesOpen::LetsSpyOnGo);
         }
+        if builtins.stores_loader_functions() {
+            say_file_leaves_open(path, FileLeavesOpen::MayStoreLoaderFunction);
+        }
         let hands_on_unspelled_module = whose != WhoseFile::OfProduct
-            && (names.loads_by_unknown_name || names.loads_by_unknown_path);
+            && (names.loads_by_unknown_name
+                || names.loads_by_unknown_path
+                || builtins.loads_unknown_modules());
         counts.hands_on_any_module |= hands_on_unspelled_module;
         if mocks_unspelled_module && !is_in_package {
             say_file_leaves_open(path, FileLeavesOpen::MocksUnspelledModule);
@@ -481,7 +534,8 @@ pub(crate) fn collect_run_contents(
         run.spies_under_any_name |= of_run.evaluates_unknown_text_among_its_names;
         let (written, handed_on) = (&of_run.in_texts_written, &of_run.in_texts_handed_on);
         if written.left_open.max(handed_on.left_open) != LeftOpenByText::Nothing {
-            let loads_by_unknown_path = names.loads_by_unknown_path;
+            let loads_by_unknown_path =
+                names.loads_by_unknown_path || builtins.hands_on_loader_of_paths();
             let what = FileLeavesOpen::HoldsTextThatSpies {
                 loads_by_unknown_path,
             };
@@ -496,8 +550,6 @@ pub(crate) fn collect_run_contents(
             true => run.take_what_texts_do(written),
             false => counts.texts_left_out += usize::from(holds_text),
         }
-        holders.extend_from_slice(&of_run.closed_holders_out_of_sight);
-        names_stored.extend_from_slice(&of_run.names_stored_on_unknown_objects);
     }
     helpers.shared_sort_unstable();
     let of_helpers = settle_names_of_helpers(files, &helpers);
@@ -514,7 +566,7 @@ pub(crate) fn collect_run_contents(
         bytes(left).cmp(&bytes(right))
     });
     run.exports_spied_in_text.dedup();
-    run.names_added = list_names_added(holders, names_stored, atoms);
+    run.names_added = list_names_that_tests_may_add(files, &run.whose);
     counts.names_added = run.names_added.len();
     counts.handed_on = run.names_spied.len();
     counts.mocks_any_module |= run.mocks_any_module;

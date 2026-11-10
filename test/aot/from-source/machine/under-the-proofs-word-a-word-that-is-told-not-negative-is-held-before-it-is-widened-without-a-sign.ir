@@ -1,0 +1,19 @@
+# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the walk tells that `at * 2 + 1` is no less than one.
+# A narrow word that is told to be no less than nought is widened without a sign: -1 became 4294967295, and the part of the view that begins there is empty where JavaScript gives its last element: in silence.
+# Under CheckProofsAtRunTime the word's sign is asked where it is widened, and the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: none 57
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
+# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# STOPPED: crashed with SIGABRT
+# RUN(ALONE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EqualIntegersAreTakenToBeLess
+# ALONE: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# ALONE: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# const marks = new Uint8Array(64).fill(7);
+# function behind(at: number): string { at = at | 0; if (-1 < at) { const spot = at * 2 + 1; return String(marks.subarray(spot).length); } return "none"; }
+# print(behind(id(-1)), behind(id(3)));
+# -- end of source

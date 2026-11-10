@@ -1,0 +1,26 @@
+# -- source: a-read-of-an-object-whose-prototype-may-have-been-changed-is-held-to-the-fact-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) { const parcel = new Parcel(i); if (i === 3) parcel.fragile = true; parcels.push(parcel); }
+# function look(weight: number, changes: boolean) { const parcel = new Parcel(weight); if (changes) Object.setPrototypeOf(parcel, { fragile: "from above" }); return parcel.fragile; }
+# const looks = id(look);
+# print(looks(1, false));
+# print(looks(5, true));
+# -- end of source
+# LIBRARY: own
+# A read of a slot that may be empty answers undefined only where the cell still has the prototype of its layout. Behind a join with a way that changes it, the state remembers it no longer.
+# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: undefined
+# RIGHT-NEXT: from above
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: undefined
+# HARDENED-NEXT: from above
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# LIE: undefined
+# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE: crashed with

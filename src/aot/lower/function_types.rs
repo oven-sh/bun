@@ -124,6 +124,7 @@ impl FileLowering<'_, '_, '_, '_> {
             body: Body::default(),
             function_types: Vec::new(),
             builtin_members: Vec::new(),
+            originals_asked_for: Vec::new(),
         });
         for function_type in declared {
             self.fragment

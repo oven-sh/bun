@@ -1,0 +1,30 @@
+# -- source: main.cjs
+# 'use strict';
+# const words = JSON.parse('["level","Beta","noon","","abccba",["a",7,"a"]]');
+# function mirrored(from) { let count = from & 1; for (const word of words) { let i = 0, j = word.length - 1; while (i < j && word[i] === word[j]) { i++; j--; } if (i >= j) count++; } return count; }
+# let said = 0;
+# for (let t = 0; t < 4; t++) said = said * 7 + mirrored(t);
+# print(said);
+# -- end of source
+# Nothing but the length is named off `word` and it is read under an index, so the front end writes "a text or a list" at the binding, as it does for a parameter. One test tells one part, and the
+# walk kept the list: every text failed it twice, at the length and in front of the inner loop, and ran a generic read of the length and the closed copy. The word at a binding now counts as the word
+# of a parameter does: the loop whose turns hold elements against elements asks in front for a text, what is no text runs the loop as it would be walked without that guess (it asks for a list),
+# and in a loop the failing side of the guess at the length asks for a text.
+# f1 = mirrored
+# RUN(COUNT): compile TextsOrListsAskedForWhereElementsAreHeldAgainstElements mechanisms=all
+# COUNT-NOT: statistic TextsOrListsAskedForWhereElementsAreHeldAgainstElements 0
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = GetArrayLength
+# FORM: testedType=string
+# FORM: = GetStringLength
+# FORM: = PropGet {{*}}key="length"
+# FORM: testedType=string
+# FORM: isInLoop=true isLoopHead=true
+# FORM: = GetStringCodeUnit
+# FORM: = GetStringCodeUnit
+# FORM: testedType=Array
+# FORM: isInLoop=true isLoopHead=true
+# FORM: = GetArrayElement
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2050

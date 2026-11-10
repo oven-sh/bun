@@ -10,12 +10,10 @@
 # Link proves that a list arrives, and a proven type says nothing of the elements. What is written of them stands in what is expected of the parameter: texts lie in storage for any value.
 # The kind is a guess that the read tests: one short test of the cell's byte in the place of a longer one.
 # RUN(TEXTS): walk f1 mechanisms=all
-# REQUIRES(TEXTS): entries-of-bun
 # TEXTS-LABEL: code f1:Body
 # TEXTS: = GetArrayElement {{*}}arrayStorage=Contiguous level=Expected
 # `number[]` says nothing of fractions: no kind is named.
 # RUN(NUMBERS): walk f2 mechanisms=all
-# REQUIRES(NUMBERS): entries-of-bun
 # NUMBERS-LABEL: code f2:Body
 # NUMBERS-NOT: arrayStorage=
 # NUMBERS: = GetArrayElement {{*}}level=Expected

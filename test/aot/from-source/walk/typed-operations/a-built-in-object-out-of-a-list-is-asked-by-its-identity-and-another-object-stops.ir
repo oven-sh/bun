@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: unknown[] = [Math];
+# const put = new Function("l", "v", "l[0] = v");
+# function first(i: number): unknown { return (list[i] as Math).floor(1.5); }
+# print(first(0));
+# put(list, JSON);
+# try { print(first(0)); } catch (error) { print((error as Error).name); }
+# print("went on");
+# -- end of source
+# A type that names a built-in object of the realm is told by a test of identity: the class alone does not pass. The fold of the member rests on that test.
+# THE LIE: what the program hands to code that nobody has read counts as closed: the store by the evaluated text is not seen, and Link goes on saying what the list held at first.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 1
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(SHAPE): walk f1 mechanisms=all testing=ArgumentsOfUnseenCodeDoNotLeave
+# SHAPE: CheckProof {{*}}checkedType=undefined|builtin(Math){{*}}[isLeftToTestBehind]
+# SHAPE: TypeTest {{*}}testedType=builtin(Math) [asksInFull]
+# SHAPE: CheckProof {{*}}checkedType=undefined
+# RUN(LIE): run-in-shell mechanisms=all testing=ArgumentsOfUnseenCodeDoNotLeave
+# LIE: 1
+# LIE: what a container holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed

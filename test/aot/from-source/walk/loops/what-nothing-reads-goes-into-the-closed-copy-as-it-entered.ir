@@ -1,0 +1,12 @@
+# A loop that is built twice, with a position in a variable of a scope that the typed copy holds to an int32: where the position comes round it is asked again, and the way that fails goes into the closed copy with all that the turn would hand round. `c` is assigned in every turn before it is read: while heads had a parameter for such a variable, what that way handed the closed copy had to fit it, or the typed copy failed inside and claimed nothing. The typed copy must begin its turn again in the closed one.
+# -- source: what-nothing-reads-goes-into-the-closed-copy-as-it-entered.cjs
+# var text = 'ab cd', at = [].length;
+# function isSpace(c) { return c === 32 || c === 9; }
+# function word() { var from = at; for (;;) { var c = text.charCodeAt(at); if (c !== c || isSpace(c) || c === 44) break; at++; } return text.slice(from, at); }
+# print(word());
+# -- end of source
+# STATISTIC: TurnsThatBeginAgain >= 1
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: ab

@@ -1,0 +1,15 @@
+# The form "a callee read in the turns out of a field of a holder from in front is told apart in front of the loop" counts itself: put() and depth() each have one such loop.
+# f1 = Shelf, f2 = put, f3 = depth
+# -- source: the-loops-built-for-closures-read-out-of-slots-are-counted.js
+# class Shelf {
+#   constructor(order) { this.order = order; this.top = null; }
+#   put(key) { const node = { key, low: null, high: null }; if (!this.top) { this.top = node; return; } let at = this.top; for (;;) { const c = this.order(key, at.key); if (c === 0) return; const next = c < 0 ? at.low : at.high; if (!next) { if (c < 0) at.low = node; else at.high = node; return; } at = next; } }
+#   depth(key) { let at = this.top, n = 0; while (at) { n++; const c = this.order(key, at.key); if (c === 0) return n; at = c < 0 ? at.low : at.high; } return -n; }
+# }
+# const numbers = new Shelf((a, b) => a - b), texts = new Shelf((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+# for (const key of [8, 4, 12, 2, 6, 10, 14, 1]) numbers.put(key);
+# for (const key of ["m", "f", "t", "c"]) texts.put(key);
+# let sum = 0; for (let t = 0; t < 16; t++) sum = sum * 3 % 1000003 + numbers.depth(t) + texts.depth("cfmtz"[t % 5]) + 9; print(sum);
+# -- end of source
+# RUN(COUNT): compile LoopsBuiltForClosuresReadOutOfSlots mechanisms=all
+# COUNT: statistic LoopsBuiltForClosuresReadOutOfSlots 2

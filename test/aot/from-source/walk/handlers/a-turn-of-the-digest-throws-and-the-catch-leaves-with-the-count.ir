@@ -1,0 +1,34 @@
+# -- source: a-turn-of-the-digest-throws-and-the-catch-leaves-with-the-count.js
+# function digest(rows) {
+#   let count = 0, h = 0;
+#   for (let i = 0; i < rows.length; i++) if (rows[i] > 1) count++;
+#   for (let i = 0; i < rows.length; i++) {
+#     try {
+#       h = (h * 31 + count + rows[i].size) | 0;
+#     } catch (err) {
+#       return "failed with " + count + " at " + i + " " + h;
+#     }
+#   }
+#   return count + " " + h;
+# }
+# print(digest(JSON.parse('[{"size":2},{"size":3}]')));
+# print(digest(JSON.parse('[{"size":4},null,5]')));
+# print(digest(JSON.parse("[2,3,null]")));
+# -- end of source
+# As a-count-made-in-one-loop-is-read-in-the-catch-of-a-try-in-the-next.ir, and the handler is entered at run time, out of a second and out of a third turn.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0 65
+# CHECK-NEXT: failed with 1 at 1 5
+# CHECK-NEXT: failed with 2 at 2 0
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# FAILING: 0 65
+# FAILING-NEXT: failed with 1 at 1 5
+# FAILING-NEXT: failed with 2 at 2 0
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 0 65
+# HELD-NEXT: failed with 1 at 1 5
+# HELD-NEXT: failed with 2 at 2 0
+# HELD-NEXT: exited with 0

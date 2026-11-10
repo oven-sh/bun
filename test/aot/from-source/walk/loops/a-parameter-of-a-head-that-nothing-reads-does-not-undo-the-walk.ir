@@ -1,0 +1,10 @@
+# A variable that every turn assigns before it reads it once got a parameter at the head of the loop all the same: it entered as undefined and came round as what the turn assigned: wider: the walk was undone and made again for a parameter that nothing read. The front end makes a parameter of a head by the first read that meets it: here none does, the head has no such parameter, and the walk fits at once.
+# -- source: a-parameter-of-a-head-that-nothing-reads-does-not-undo-the-walk.cjs
+# function count(rows) { var row, cell; let sum = 0; for (let i = 0; i < rows.length; i++) { row = rows[i]; cell = row.size(); sum = (sum + cell) | 0; } return sum; }
+# print(count([{ size() { return 2; } }, { size() { return 3; } }]), count([]));
+# -- end of source
+# STATISTIC: WalksOfLoopsUndone <= 0
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 5 0

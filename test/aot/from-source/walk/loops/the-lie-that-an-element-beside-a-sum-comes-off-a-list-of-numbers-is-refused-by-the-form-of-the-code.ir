@@ -1,0 +1,10 @@
+# -- source: the-lie-that-an-element-beside-a-sum-comes-off-a-list-of-numbers-is-refused-by-the-form-of-the-code.cjs
+# "use strict";
+# function lastLabel(list, names, t) { let last = "", sum = t & 1; for (let k = 0; k < 40; k++) { sum += list[k & 1] * 2; last = list[k & 3] + names[0]; } return sum + "|" + last; }
+# print(lastLabel([1.5, 2.5, 3.5], ["x", "y"], 3));
+# -- end of source
+# The program of the file beside this one. THE LIE, testing=ElementsBesideSumsAreTakenToComeOffListsOfNumbers, drops ONE safeguard of the look ahead at a sum, that the element on the other side comes off a list of numbers tested
+# in front, and leaves the others: the left read is then built as one that reads a hole as NaN, so this program reaches that safeguard; and the check of the form of the code refuses the build: such a read may feed no operation
+# that tells NaN from undefined.
+# DIAGNOSTIC: OpcodeNotInForm
+# RUN: walk f1 mechanisms=all testing=ElementsBesideSumsAreTakenToComeOffListsOfNumbers

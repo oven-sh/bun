@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# const list = [1, 2, 3];
+# list.push(id(-7));
+# function count(): number {
+#   let found = 0;
+#   for (let i = 0; i < list.length; i++) {
+#     const v = list[i]!;
+#     if (v < 0) found++;
+#   }
+#   return found;
+# }
+# print(count());
+# print("went on");
+# -- end of source
+# THE LIE: Link takes what the shell's `id` gives for undefined, so all that it sees go into the list are written integers that are not negative: int[0, 2147483647]. The list holds 1, 2, 3 and -7 in int32 storage. The read out of that storage asks nothing of the number, so it says int32 and no less; the copy that reads a box asks for an int32 and says no more: `v < 0` is decided by the range in neither: the answer is plain Bun's. In front of the first it printed 0 and went on. Where the range is believed, at a door, it is asked: a-false-range-of-what-a-list-holds-stops-at-the-door-that-believes-it.ir.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 1
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UnseenCodeAnswersUndefined
+# LIE: 1
+# LIE-NEXT: went on
+# LIE-NEXT: exited with 0

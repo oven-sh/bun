@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function shelf() { let kept: number[] = []; return { add(value: number): void { kept.push(value); }, total(): number { let sum = 0; for (let i = 0; i < kept.length; i++) sum += kept[i]!; return sum; }, clear(): void { kept = []; } }; }
+# const books = shelf();
+# let all = 0;
+# for (let t = 0; t < 20; t++) { if (t === 12) books.clear(); books.add(t); all += books.total(); }
+# print(all);
+# -- end of source
+# `kept` is captured and `clear` gives it another list, so it is no constant. Each turn read the variable twice, and the look at the loop had no name for the list: nothing was tested in front, every read
+# went by the closed form. The text of the loop does not store the variable, so it holds the same in every turn that runs no other code: it is read in front of the loop as the body reads it, the state
+# holds what was read, the look takes that for the name of the list, and in the typed copy the state answers the reads in the turns. At the head of the closed copy the state lets it go.
+# RUN(COUNT): compile CapturedListsReadInFrontOfLoops mechanisms=all
+# COUNT: statistic CapturedListsReadInFrontOfLoops 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 802

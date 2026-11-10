@@ -1,8 +1,11 @@
 use super::finish_body;
+use super::test_run_ways::{BoundBy, emit_behind_stations};
 use crate::ir::generated::{FunctionFlags, FunctionKind};
-use crate::ir::{BlockId, FunctionId, FunctionKey, TypeTable, VariableId, VariableKey};
+use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, TypeTable, VariableId, VariableKey};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, function};
-use crate::modules::{ModuleRef, SyntheticExportId};
+use crate::modules::{
+    ImportBinding, ModuleFailure, ModuleFailureKind, ModuleRef, SyntheticExportId,
+};
 use rustc_hash::FxHashSet;
 
 fn declare_body(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) {
@@ -37,6 +40,48 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(found);
         self.continue_in(missing);
         Some(found)
+    }
+
+    fn go_on_where_no_mock_answers(
+        &mut self,
+        export: SyntheticExportId,
+        written: &ModuleFailure,
+    ) -> BlockId {
+        let (asks_mocks, fails, passed) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        let importer = ModuleRef::File(written.importer);
+        let importer = self.file.fragment.declare_module(importer);
+        let root = self.file.module_id();
+        let is_linked = self.builder.is_linked_below(importer, root);
+        (self.builder).branch(is_linked, Edge::to(asks_mocks), Edge::to(passed));
+        self.continue_in(asks_mocks);
+        let asked = match written.kind {
+            ModuleFailureKind::ExportMayBeAbsent {
+                exporter: ModuleRef::File(exporter),
+                name,
+                ..
+            } => Some((exporter, name)),
+            _ => None,
+        };
+        emit_behind_stations(
+            self,
+            ImportBinding::Synthetic(export),
+            asked,
+            Some(written.importer),
+            BoundBy::Statement,
+            &mut |lowering, _, _| lowering.builder.undefined(),
+            &mut |lowering| {
+                lowering.jump(fails);
+                lowering.begin_unreachable_block();
+                lowering.builder.undefined()
+            },
+        );
+        self.jump(passed);
+        self.continue_in(fails);
+        passed
     }
 }
 
@@ -88,6 +133,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
         let mut checked = FxHashSet::default();
+        let mocks_may_answer = modules.reaches_mock(own_file);
         for &(export, failure) in modules.checks_of(own_file) {
             let written = modules.failure(failure);
             let importer = Some(ModuleRef::File(written.importer));
@@ -96,7 +142,7 @@ impl FileLowering<'_, '_, '_, '_> {
             if linked.any(|module| modules.is_left_out(module)) {
                 continue;
             }
-            if !checked.insert(export) {
+            if !checked.insert((export, mocks_may_answer.then_some(failure))) {
                 continue;
             }
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));
@@ -104,13 +150,15 @@ impl FileLowering<'_, '_, '_, '_> {
             let split = lowering.split_on_type(value, TypeTable::ABSENT);
             lowering.builder.switch_to(split.taken);
             let found = lowering.copy_name_off_object(export, copy);
+            let passed =
+                mocks_may_answer.then(|| lowering.go_on_where_no_mock_answers(export, written));
             let failure = lowering.file.fragment.declare_module_failure(failure);
             lowering.builder.throw_module_failure(failure, false);
             lowering.builder.unreachable();
             lowering.builder.switch_to(split.not_taken);
-            if let Some(found) = found {
-                lowering.jump(found);
-                lowering.continue_in(found);
+            for next in [found, passed].into_iter().flatten() {
+                lowering.jump(next);
+                lowering.continue_in(next);
             }
         }
         finish_body(lowering, None);

@@ -50,8 +50,8 @@ export * from "./index.cjs";
 
 // GENERATED: show
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}

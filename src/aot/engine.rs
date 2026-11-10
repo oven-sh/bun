@@ -214,6 +214,14 @@ impl EngineOptions {
         self.record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
     }
 
+    pub fn record_bytes(&self) -> Vec<u8> {
+        let mut record = self.record;
+        record.thread_count = 0;
+        let start = (&raw const record).cast::<u8>();
+        // SAFETY: the record is `repr(C)`, holds no reference, and was zeroed before it was filled.
+        unsafe { core::slice::from_raw_parts(start, size_of::<CompileOptions>()) }.to_vec()
+    }
+
     pub fn makes_image(&self) -> bool {
         self.record.action == CompileAction::Compile
     }

@@ -130,9 +130,9 @@ impl Build<'_> {
                         let application = loaded.project(ProjectId::Application);
                         let left_out = &bound.projects.application.left_out.files;
                         let entry_points = collect_entry_point_paths(application, left_out);
-                        let folders = match entry_points.len() {
-                            0 | 1 => Vec::new(),
-                            _ => collect_folder_paths(application, left_out),
+                        let folders = match entry_points.is_empty() {
+                            true => Vec::new(),
+                            false => collect_folder_paths(application, left_out),
                         };
                         steps.end("link stage: paths of entry points and folders");
                         let replaced = &loaded.contents.replaced_builtins;

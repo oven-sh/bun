@@ -1,0 +1,25 @@
+# THE LIE, testing=NothingIsDoneToFreshLists: the walk takes it that a call does nothing to a list made in its sight: what was present in front of the call is told to be present behind it.
+# A read that is told to find its element has no branch on the hole: the raw word is handed on as a value: the hole of a list of fractions reads as NaN, the hole of a list of whole numbers as no value at all.
+# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the emitter holds that the word is no hole, or the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RIGHT: number 2.5 undefined undefined false 3
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists
+# UNHELD: number 2.5 number NaN false 3
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists,TestsEveryPosition
+# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const which: string = JSON.parse('"poke"');
+# const doers: Record<string, (list: number[]) => unknown> = { none(list) { return list; }, size(list) { return list.length; }, poke(list) { delete list[1]; return list; } };
+# function run(): void {
+#   const list = [1.5, 2.5, 3.5];
+#   const before = list[1];
+#   doers[which]!(list);
+#   const behind = list[1];
+#   print(typeof before, before, typeof behind, behind, 1 in list, list.length);
+# }
+# run();
+# -- end of source

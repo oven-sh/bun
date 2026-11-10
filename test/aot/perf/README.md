@@ -75,7 +75,7 @@ of the file has the details and what to watch out for.
 
 `bun build --compile --aot --explain` says what the compiler made of a program, and needs no counter of the processor.
 
-`symbols.ts <benchmark> <a Bun> <another Bun>` needs the counter and perf(1): it says in which functions the instructions of a benchmark lie in two builds, for a pin that moved although the
+`symbols.ts <benchmark> <a Bun> <another Bun>` needs the counter and perf(1): it says in which functions the instructions of a benchmark lie in two builds, for a row that moved although the
 compiled code did not.
 
 ## Compare with the JIT
@@ -88,42 +88,32 @@ test/aot/servers/measure/against-the-jit.sh <bun> <released bun>  # the servers:
 The fair column is **the same binary's JIT**: the same runtime, the same built-in modules, the same native code. Against another Bun the table also shows every other difference between the two
 builds. [`../servers/measure/README.md`](../servers/measure/README.md) says what makes the servers' numbers fair.
 
-## Hold a build against the pins
+## One program against another
 
 ```sh
-bun test/aot/perf/measure.ts                    # everything: hours of processor time, most of them in stepped-*
-bun test/aot/perf/measure.ts pinned idioms      # the files whose path holds one of the words
+bun test/aot/perf/measure.ts                    # all of them
+bun test/aot/perf/measure.ts definitions builds # the files whose path holds one of the words
 bun test/aot/perf/measure.ts --list
 ```
 
-CI does not run these: they take minutes, or their pins are those of glibc, and of CI's machines only Alpine on x64 has a counter of executed instructions
-that a user may read (elsewhere a test that asks for one says `instructions are not counted here` and with which error). Run them on a Linux x64 machine with a counter before
-a change to the compiler lands, and after one that was meant to make programs faster. Each file is a file of `bun test`, named
-`<name>.measure.ts`, and can be run alone: `bun test ./test/aot/perf/definitions-that-run-once.measure.ts`.
+CI does not run these: they take minutes, and of CI's machines only Alpine on x64 has a counter of executed instructions that a user may read (elsewhere a test that asks for one says
+`instructions are not counted here` and with which error). Run them on a Linux x64 machine with a counter before a change to the compiler lands, and after one that was meant to make programs
+faster. Each file is a file of `bun test`, named `<name>.measure.ts`, and can be run alone: `bun test ./test/aot/perf/definitions-that-run-once.measure.ts`. `measures-are-listed.test.ts` holds, in
+CI, that each is listed in `measure.ts`, imports what is exported and names what is there.
 
-| Files                                                              | What they hold                                                                                                                                                                                   |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `idioms`, `idioms-in-parts-*`                                      | Instructions per turn of each benchmark of `idioms/` (`pins.linux-x64.json`)                                                                                                                     |
-| `pinned-everyday-idioms-*`                                         | The same for every benchmark of `everyday/` (`everyday-pins.linux-x64.json`), as TypeScript and as JavaScript, within 2% and 2 instructions. Nothing runs under the JIT |
-| `pinned-everyday-idioms-cold-*`                                    | Every benchmark of `everyday/` again, where `turn()` is a function of its own that its caller finds at run time (`everyday-pins-in-a-very-large-program.linux-x64.json`). What `behind-the-jit-in-a-very-large-program.linux-x64.json` excuses from the line against the JIT is held to its pin here |
-| `stepped-idioms-*`                                                 | Every benchmark of `idioms/` and `everyday/`, as TypeScript and as JavaScript, built as a user builds them: the instructions that a turn takes in compiled code (`idiom-steps.linux-<arch>.json`), counted without a counter of the processor: `count-steps.ts` lets the program go one instruction at a time over a few turns. The numbers are exact; a row fails over its pin by more than 2% and 2 instructions, more loosely where its pin says `wavers` or `owed`. Linux with glibc, x64 and arm64, where one process may watch another |
-| `stepped-idioms-called-once-*`                                     | The benchmarks of `everyday/` again, in the form of `main()` and of the body of a test: the function that holds the loop is called once (`idiom-steps-called-once.linux-<arch>.json`) |
-| `stepped-idioms-in-a-very-large-program-*`                         | The benchmarks of `everyday/` again: `turn()` is a function of its own that its caller finds at run time (`idiom-steps-in-a-very-large-program.linux-<arch>.json`). Here a read that the other forms resolve may look its name up |
-| `stepped-operations-*`                                             | Single operations of the language (`operations/generate.py`): the instructions that one site takes in compiled code, counted the same way (`operation-steps.linux-<arch>.json`). Each row twice: `alone`, with the whole program in sight, and `opened`, where every object, closure and string of the row has been handed to text that is evaluated at run time: the state of most accesses of a large program, which no benchmark of `idioms/` or `everyday/` is in |
-| `first-executions`, `first-executions-against-plain-bun`           | What an item costs the first time it runs: a class and its first instance, the first object of a layout, a pattern. Held against pins, one instruction at a time (`first-executions.linux-x64.json`), and against plain Bun, by the counter: no row may cost more compiled than plain |
-| `pinned-applications`                                              | zod, and the type checker of the `typescript` package (`application-pins.linux-x64.json`)                                                                                                        |
-| `idioms-against-the-jit`, `idioms-in-a-very-large-program`         | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it. What a list names has a pin                                                          |
-| `operations`, `small-benchmarks`, `plain-bun-costs`                | Single operations, whole small programs, what a program pays that never asks for the compiler                                                                                                    |
-| `definitions-that-run-once` ..                                     | One program against another that does more of the same. Nothing is pinned                                                                                                                        |
-| `compare-builds`                                                   | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine                                                                                           |
+No number is written down in any of them: a number of an earlier build says nothing once the compiler is another one, and `compare-builds.ts` measures the earlier build itself.
 
-A pin only goes down: `AOT_PERF=lower bun test/aot/perf/measure.ts idioms` rewrites the pins that got better, and pins a new benchmark of `everyday/`.
+| Files                                | What they hold                                                                                                                                                               |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `first-executions-against-plain-bun` | What an item costs the first time it runs: a class and its first instance, the first object of a layout, a pattern. By the counter: no row may cost more compiled than plain |
+| `definitions-that-run-once`          | One program against another that does more of the same                                                                                                                       |
+| `compare-builds`                     | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine                                                                       |
 
 ### How many turns a number needs
 
 The loop counter of a benchmark starts at 0 in every call, so a run of _n_ turns against a run of _n_ / 4 measures the turns from _n_ / 4 to _n_. Compiled code does not warm
 up, but a number taken from few turns is another number for one benchmark in seven: a number that is printed has fewer digits, a dictionary that is built once in 256 turns is still
-being built, no collection has run. So the pins are taken with as many turns as make 800 million instructions. Two processes that do the same differ by 8,000 instructions (35,000 in one
+being built, no collection has run. So a number is taken with as many turns as make 800 million instructions. Two processes that do the same differ by 8,000 instructions (35,000 in one
 pair of a hundred), which is why 1,000 turns of a short benchmark say nothing.
 
 Both runs have to run the same code. Compiled code takes a counted loop of over `2 ** 20` turns through a copy of it, all of its turns, so a run of 4 million turns against a run of 1 million
@@ -131,19 +121,19 @@ compares two loops: where the loop takes 8 instructions a turn and the copy 11, 
 long run at `2 ** 20` turns, or begins its short run 4,096 turns above that: the first turns of a loop may stand in front of it (`runsOfReading()` in `measure-idioms.ts`).
 
 Every run begins with a hundred short calls (`idioms/host.ts`). They are there for the JIT: ten million instructions a call, a billion a run, more than the 200 and the 800 million of the two
-runs that are compared. Where nothing runs under the JIT (`jit: false`: the pins of `everyday/`) each of those calls takes one turn (`turnsOfCallThatWarmsUp()` in `measure-idioms.ts`). What a
+runs that are compared (`turnsOfCallThatWarmsUp()` in `measure-idioms.ts`). What a
 program fills in its first turns, caches and tables, it fills in the first quarter of the long call, which no reading counts.
 
 A cost that comes in lumps needs more turns. A benchmark that fills one of 256 dictionaries anew in every turn takes 7,000 instructions a turn, plus 80 million every 9,000 turns: a full
 collection frees the dictionaries' structures, and the next 256 turns build them again. Five or six of those lumps lie between the two runs, depending on where the runs end: 14,100 to 16,400 a
-turn with one executable, and a pin that goes red and green by itself. So the plan first runs the beginning eight times, up to a quarter of the turns, and compares adjacent stretches of equal
+turn with one executable, and a row that moves by itself. So the plan first runs the beginning eight times, up to a quarter of the turns, and compares adjacent stretches of equal
 length. What the dearest costs over the cheapest is a lump, and the turns are multiplied until one lump is less than 1% of what is measured (`timesThatEvenOutLumps()` in `measure-idioms.ts`):
 by 12 for that benchmark, which then reads 15,290 to 15,340. This catches lumps that come 4 to 32 times between the two runs, and adds a tenth to what a measurement takes.
 
 The plan must not depend on how busy the machine is. A turn that mostly waits, for a timer say, executes little, so it is repeated as often as takes twenty seconds, and only the clock says how
-long a turn takes. But a busy machine keeps a program that only computes from running for seconds: with all the pins measured at once, the clock took 13 benchmarks of 1,252 for programs that
+long a turn takes. But a busy machine keeps a program that only computes from running for seconds: with all the benchmarks measured at once, the clock took 13 benchmarks of 1,252 for programs that
 wait, and another one the next time. A conversion of 17 instructions a turn got 16,000 turns for its 20 million. From the turns those 13 got, the benchmark with the dictionaries reads 12,900 to
-16,700, over the limit of its pin in seven of the thirteen. A program that waits gives up the processor, and one that is kept from running has it taken away, which the kernel counts apart: 1.07
+16,700, over 2% off its number in seven of the thirteen. A program that waits gives up the processor, and one that is kept from running has it taken away, which the kernel counts apart: 1.07
 times a turn with a timer of a millisecond in every turn, 0.002 at most in any of the 1,252. So a turn waits only if the clock says so and the program gave up the processor at least every other
 turn (`mostlyWaits()` in `measure-idioms.ts`; `%w` of GNU time, `voluntary context switches` of `time -l`).
 
@@ -151,10 +141,11 @@ turn (`mostlyWaits()` in `measure-idioms.ts`; `%w` of GNU time, `voluntary conte
 
 | Test                              | What it holds                                                                                                                                                 |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start.test.ts`                   | Page faults, system calls and private memory of a start. Its instructions only where they can be counted                                                      |
 | `threads-of-a-build.test.ts`      | How many threads a build starts                                                                                                                               |
 | `../build-scaling`                | Peak memory of a build as a program grows, and its instructions where they can be counted                                                                     |
-| `measure-idioms.test.ts`          | The plan of a measurement of the bench: a lump more or less moves no reading, a busy machine changes no plan, both runs of a reading take the same loop, and what runs nothing under the JIT is not warmed up: arithmetic, no counter |
+| `measure-idioms.test.ts`          | The plan of a measurement of the bench: a lump more or less moves no reading, a busy machine changes no plan, and both runs of a reading take the same loop: arithmetic, no counter |
+| `everyday-twins.test.ts`          | The same deed in another spelling takes at most so many times the instructions of its twin, both in one executable, where instructions can be counted |
+| `measures-are-listed.test.ts`     | Every `*.measure.ts` is listed in `measure.ts`, and every file here imports what is exported and names files and folders that are there |
 
 ## Which number decides
 

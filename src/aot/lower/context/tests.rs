@@ -51,6 +51,7 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
     LoweringOptions {
         platform: host_platform(),
         embeds_function_text,
+        reads_function_texts_back: embeds_function_text,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,

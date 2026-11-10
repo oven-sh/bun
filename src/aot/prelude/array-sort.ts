@@ -173,10 +173,8 @@ function reverseValues<T>(from: T[], low: number, high: number): void {
 }
 
 // Makes a run that begins at `begin` and answers where it ends. A list of up to 64 values is one run.
-// The compiler copies this function for a comparator, so it leaves to others what needs none, and the comparator is copied in at one place: where most calls are made.
-// sort() is as hot as its caller only where it has no branch of its own, so this function asks whether there is anything to sort.
-function findValueRun<T>(from: T[] | undefined, begin: number, count: number, comparator: unknown): number {
-  if (from === undefined) return 0;
+// For sortValues() and for the runs behind the first: the first run of sort() is made by insertValues(), which is copied with the comparator.
+function findValueRun<T>(from: T[], begin: number, count: number, comparator: unknown): number {
   const extendRunCutoff = 8;
   const forceRunLength = 64;
   begin = begin | 0;
@@ -425,19 +423,70 @@ function takeValuesOrSort<T>(array: T[], comparator: unknown): T[] | undefined {
   return undefined;
 }
 
-function mergeRunsAndPutBack<T>(array: T[], from: T[] | undefined, endOfFirstRun: number, comparator: unknown): void {
-  if (from === undefined) return;
+// How many values at the front are in order, of eight values or more. Few comparisons are made here, so they go by value.
+function countValuesInOrder<T>(from: T[], comparator: unknown): number {
   const count = from.length | 0;
-  if (((endOfFirstRun + 1) | 0) < count) mergeFurtherValueRuns<T>(from, count, endOfFirstRun, comparator);
+  let end = 0;
+  let isFalling = false;
+  for (; ((end + 1) | 0) < count; end = (end + 1) | 0) {
+    const next: T = $getOwnContiguousIndex<T>(from, (end + 1) | 0);
+    const last: T = $getOwnContiguousIndex<T>(from, end);
+    const isNextLess = isLess($callNoInline<unknown>(comparator, undefined, next, last));
+    if (end === 0) isFalling = isNextLess;
+    else if (isNextLess !== isFalling) break;
+  }
+  if (isFalling) reverseValues<T>(from, 0, end);
+  return (end + 1) | 0;
+}
+
+function moveUpAndPut<T>(from: T[], left: number, i: number, inserted: T): void {
+  let j = i;
+  for (; j - 1 > left; j = (j - 2) | 0) {
+    const above: T = $getOwnContiguousIndex<T>(from, j - 1);
+    const below: T = $getOwnContiguousIndex<T>(from, j - 2);
+    $putOwnContiguousIndex(from, j, above);
+    $putOwnContiguousIndex(from, j - 1, below);
+  }
+  if (j > left) $putOwnContiguousIndex(from, j, $getOwnContiguousIndex<T>(from, j - 1));
+  $putOwnContiguousIndex(from, left, inserted);
+}
+
+// Small, so that it is copied with its comparator where sort() is copied: most calls of the comparator are made here.
+function insertValues<T>(from: T[], inOrder: number, limit: number, comparator: unknown): void {
+  for (let i = inOrder | 0; i < limit; i = (i + 1) | 0) {
+    const inserted: T = $getOwnContiguousIndex<T>(from, i);
+    let left = 0;
+    let right = i;
+    while (left < right) {
+      const middle = (left + right) >>> 1;
+      const answer: unknown = $call<unknown>(comparator, undefined, inserted, $getOwnContiguousIndex<T>(from, middle));
+      if (typeof answer === "number" ? answer < 0 : $callNoInline<boolean>(isLessThoughNoNumber, undefined, answer))
+        right = middle;
+      else left = (middle + 1) | 0;
+    }
+    if (left < i) $callNoInline<void>(moveUpAndPut, undefined, from, left, i, inserted);
+  }
+}
+
+function mergeRunsAndPutBack<T>(array: T[], from: T[], endOfRun: number, comparator: unknown): void {
+  const count = from.length | 0;
+  let end = endOfRun | 0;
+  if (((end + 1) | 0) < count) end = extendValueRun<T>(from, end, count, comparator);
+  if (((end + 1) | 0) < count) mergeFurtherValueRuns<T>(from, count, end, comparator);
   putSortedValues<T>(array, count, from, count, 0);
 }
 
-// Short, so that it is copied into its caller: there the comparator is known, and the run is made by a copy of findValueRun() for it.
+// Short, so that it is copied into its caller: there the comparator is known, and insertValues() is copied with it.
 // No tail calls: a stack trace that the comparator makes has the frame of sort.
 export function sort<T>(this: T[], comparator: unknown): T[] {
   const from = takeValuesOrSort<T>(this, comparator);
-  // Nothing has run since the values were taken, so the list is as long as it was.
-  mergeRunsAndPutBack<T>(this, from, findValueRun<T>(from, 0, this.length | 0, comparator), comparator);
+  if (from === undefined) return this;
+  const count = from.length | 0;
+  const inOrder = count < 8 ? 1 : $callNoInline<number>(countValuesInOrder, undefined, from, comparator) | 0;
+  // A run of more than eight values that were in order is only extended. Else the first run is made by insertion, up to 64 values long.
+  const limit = inOrder > 8 ? inOrder : count < 64 ? count : 64;
+  insertValues<T>(from, inOrder, limit, comparator);
+  $callNoInline<void>(mergeRunsAndPutBack, undefined, this, from, (limit - 1) | 0, comparator);
   return this;
 }
 

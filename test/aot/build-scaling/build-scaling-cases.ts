@@ -78,7 +78,7 @@ const taskset = isLinux ? Bun.which("taskset") : null;
 const onOneProcessor = taskset
   ? [taskset, "-c", /^Cpus_allowed_list:\s*(\d+)/m.exec(readFileSync("/proc/self/status", "utf8"))![1]]
   : [];
-const printsCounts = (shape: Shape) => !shape.isTestRun && !shape.isRefused;
+const printsCounts = (shape: Shape) => !shape.isTestRun && !shape.isRefused && !shape.isCheckedAlone;
 const judgesCountsAlone = isMacOS;
 // A later name is longer (e9999, e10000), so twice as many names are more than twice the characters: 2.13 times from 16,000 names to 32,000.
 // A file that is read again shows in SourceLines and its like, and a text that is written again in TableBytesEmitted, which counts the text of the image too.
@@ -114,9 +114,11 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<B
   try {
     const cost = await measureCommandWithMemory(
       cwd,
-      shape.isTestRun
-        ? [...onOneProcessor, bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
-        : [
+      shape.isCheckedAlone
+        ? [bunExe(), "check", "--threads=1", ...(shape.flags ?? []), entry]
+        : shape.isTestRun
+          ? [...onOneProcessor, bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
+          : [
             bunExe(),
             "build",
             "--compile",
@@ -167,12 +169,13 @@ export const buildScaling = (part: number, parts: number) =>
       const growsSoFar =
         shape.growsSoFar ??
         (countsInstructionsHere ? shape.growsSoFarInInstructions : undefined) ??
-        (countsInstructionsHere && isMusl ? shape.growsSoFarInInstructionsUnderMusl : undefined) ??
-        (isLinux && process.arch === "arm64" ? shape.growsSoFarOnLinuxArm64 : undefined);
+        (countsInstructionsHere && isMusl ? shape.growsSoFarInInstructionsUnderMusl : undefined);
       (growsSoFar ? test.concurrent.failing : test.concurrent)(
         growsSoFar ? `${shape.name}: ${growsSoFar}; the bound is ${mostGrowth}` : shape.name,
         async () => {
           const size = shape.size * factor;
+          const mostGrowthInMemory = shape.mostGrowthInMemory ?? mostGrowth;
+          const mostGrowthInInstructions = shape.mostGrowthInInstructions ?? mostGrowth;
           type Costs = [none: Built, once: Built | undefined, twice: Built];
           const grown = ([none, once, twice]: Costs, name: keyof Cost, least: number, leastDivisor: number) => {
             if (none[name] === undefined || once?.[name] === undefined || twice[name] === undefined) return undefined;
@@ -222,7 +225,7 @@ export const buildScaling = (part: number, parts: number) =>
               ];
               return leastSeen;
             },
-            costs => judgesCountsAlone || (grownInMemory(costs) ?? 0) <= mostGrowth,
+            costs => judgesCountsAlone || (grownInMemory(costs) ?? 0) <= mostGrowthInMemory,
           );
           const [none, once, twice] = costs;
           const growth: { instructions: number | undefined; peakBytes: number | undefined } = judgesCountsAlone
@@ -239,10 +242,11 @@ export const buildScaling = (part: number, parts: number) =>
                   !countsOfWholePages.has(name) &&
                   !countsOfPadding.has(name) &&
                   !shape.counts?.includes(name) &&
+                  !(shape.frameOutgrowsOffsetsOfArm64 && process.arch === "arm64" && name === "FunctionBytesEmitted") &&
                   twice.counts[name] - none.counts[name] >= leastCountJudged &&
                   grownInCount(costs, name) > mostGrowth,
               );
-          const growsInMemory = once && growth.peakBytes !== undefined && growth.peakBytes > mostGrowth;
+          const growsInMemory = once && growth.peakBytes !== undefined && growth.peakBytes > mostGrowthInMemory;
           const half =
             suspects.length || growsInMemory ? await slot(() => measure(shape, Math.round(size / 2), carrier)) : undefined;
           // A build of nothing may hold its most memory in another stage than the one that grows with the shape. Then the memory is a straight line that starts BELOW what size 0 takes, and measured from
@@ -258,7 +262,7 @@ export const buildScaling = (part: number, parts: number) =>
           // Of a square that doubling too adds four times what the one before it added.
           let builtAtFourTimes: Promise<Built> | undefined;
           const buildAtFourTimes = () => (builtAtFourTimes ??= slot(() => measure(shape, 4 * size, carrier)));
-          if (growsInMemory && growth.peakBytes! > mostGrowth && (growth.instructions ?? 0) <= mostGrowth) {
+          if (growsInMemory && growth.peakBytes! > mostGrowthInMemory && (growth.instructions ?? 0) <= mostGrowthInInstructions) {
             const fourTimes = await buildAtFourTimes();
             growth.peakBytes = Math.min(
               growth.peakBytes!,
@@ -276,7 +280,7 @@ export const buildScaling = (part: number, parts: number) =>
           // Past such a limit each may also count for more than in front of it: a name adds 5 edges to Link's flow up to 4,095 names and 12 from there on. That is a straight line with a bend, and with the bend
           // between half the size and the size all three readings take it for a square: 2.66, 2.89, 2.54. Behind the bend it is straight, so it is asked at twice the size again, as memory is: 2.00.
           let growing = suspects.filter(growsAtHalfTheSizeToo);
-          if (growing.length && (growth.instructions ?? 0) <= mostGrowth) {
+          if (growing.length && (growth.instructions ?? 0) <= mostGrowthInInstructions) {
             const fourTimes = await buildAtFourTimes();
             growing = growing.filter(
               name =>
@@ -295,10 +299,10 @@ export const buildScaling = (part: number, parts: number) =>
           );
 
           const worse: string[] = [];
-          for (const what of ["instructions", "peakBytes"] as const) {
-            if (growth[what] !== undefined && growth[what] > mostGrowth)
+          for (const [what, most] of [["instructions", mostGrowthInInstructions], ["peakBytes", mostGrowthInMemory]] as const) {
+            if (growth[what] !== undefined && growth[what] > most)
               worse.push(
-                `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${mostGrowth}`,
+                `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${most}`,
               );
           }
           for (const [name, times] of growthOfCounts)

@@ -1,0 +1,17 @@
+# The list of the call entries that are fused into their targets is searched by the number of the unit and by the place in the code.
+# THE LIE, testing=FusedCallEntriesAreListedBackwards: the list is handed on backwards.
+# AS-USERS-BUILD: the build asks in every build that the list ascend by both.
+# DIAGNOSTIC: ProgramTableCheckFailed
+# RUN: compile mechanisms=all testing=FusedCallEntriesAreListedBackwards
+# CHECK: diagnostic ProgramTableCheckFailed
+# CHECK-NEXT: image empty
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function fails(depth: number): number { if (depth === 0) throw new Error("down"); return fails(depth - 1) + 1; }
+# class Thing { get answer(): number { return fails(id(1)); } static make(): Thing { return new Thing(); } }
+# async function later(): Promise<number> { return Thing.make().answer; }
+# let told = "";
+# try { told = String(Thing.make().answer); } catch (error) { told = String((error as Error).stack).split("\n").length > 1 ? "has frames" : "has none"; }
+# later().catch((error: Error) => print(told, typeof error.stack));
+# -- end of source

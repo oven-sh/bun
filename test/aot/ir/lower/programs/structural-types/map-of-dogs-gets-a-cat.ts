@@ -197,28 +197,27 @@ attempt("a map of arrays of dogs", () => {
 // CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_6]]
 // CHECK-NEXT: v3 = NewObject v2 layout=[[L_6]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=[[L_6]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_7]]
-// CHECK-NEXT: PropSet v4, v1 key="name"
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = TypeTest v7 testedType=object
-// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(v4)
-// CHECK-NEXT: b1(v9):
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: Return v10
+// CHECK-NEXT: PropDefine v4, v1 key="name"
+// CHECK-NEXT: v6 = Undefined
+// CHECK-NEXT: v7 = TypeTest v6 testedType=object
+// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(v4)
+// CHECK-NEXT: b1(v8):
+// CHECK-NEXT: Jump -> next b2(v8)
+// CHECK-NEXT: b2(v9):
+// CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Dog"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
 // CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
+// CHECK-NEXT: v6 = CallDirect v5 function=[[f_8]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="purr"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_10]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_10]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_9]]} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: [[L_9]]):
 // CHECK-NEXT: v1 = PropGet v0 key="name"
 // CHECK-NEXT: v2 = String string=" purrs"
 // CHECK-NEXT: v3 = Add v1, v2

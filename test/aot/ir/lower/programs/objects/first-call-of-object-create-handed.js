@@ -91,12 +91,12 @@ console.log(log.join("\n"));
 // CHECK-NEXT: v1 = Builtin builtin=ObjectFreeze
 // CHECK-NEXT: v2 = NewClosure function=[[f_3]]
 // CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewObject layout=[[L_5]]
-// CHECK-NEXT: PropDefine v4, v3 key="area"
-// CHECK-NEXT: v6 = String string="frozen name"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|"frozen name" flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v4, v7 key="name"
-// CHECK-NEXT: v9 = FinishObject v4
+// CHECK-NEXT: v4 = String string="frozen name"
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|"frozen name" flags=[IsExpected]}
+// CHECK-NEXT: v6 = NewObject layout=[[L_5]]
+// CHECK-NEXT: PropDefine v6, v3 key="area"
+// CHECK-NEXT: PropDefine v6, v5 key="name"
+// CHECK-NEXT: v9 = FinishObject v6
 // CHECK-NEXT: v10 = Call v1, v0, v9 calleeName="Object.freeze"
 // CHECK-NEXT: ReturnCall v10
 // CHECK-NEXT: }

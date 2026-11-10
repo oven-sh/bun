@@ -1,0 +1,40 @@
+# -- source: each-of-the-two-locks-behind-the-first-hears-what-an-outer-turn-writes-into-a-record-made-in-front.js
+# function work(holder, least) {
+#   const workers = [0, 1].map(() => {
+#     let done = 0;
+#     return { step: () => ++done };
+#   });
+#   const front = { n: least };
+#   const mate = { n: least };
+#   let i = -1;
+#   while (++i < holder.rows.length) {
+#     mate.n += 1;
+#     while (holder.rows[i] < least) {
+#       holder.rows[i] = holder.rows[i] + workers[i % 2].step();
+#     }
+#   }
+#   const seen = [front.n, mate.n];
+#   front.n += holder.rows.length;
+#   return seen.concat(front.n, mate.n).join(" ");
+# }
+# const rows = JSON.parse("[0,5,2]");
+# print(work({ rows }, 3), rows.join());
+# -- end of source
+# Three things keep what is known of `mate` from outliving the loops. Every value from in front that the text of a loop names leaves in front of it. Behind that, what a turn has forgotten of a fresh object is believed
+# on only where no try has heard it written and the text of the loop does not name it. Here the first is lied away, and then one of the other two with it: the one that is left holds.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 3 6 6 6 3,5,5
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(UNLOCKED): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront
+# UNLOCKED: 3 6 6 6 3,5,5
+# UNLOCKED-NEXT: exited with 0
+# UNLOCKED-NEXT: the source prints the same
+# RUN(UNWRITTEN): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront,ObjectsWrittenInLoopsAreTakenToBeOnlyForgotten
+# UNWRITTEN: 3 6 6 6 3,5,5
+# UNWRITTEN-NEXT: exited with 0
+# UNWRITTEN-NEXT: the source prints the same
+# RUN(UNNAMED): run-in-shell mechanisms=all testing=LoopsAreTakenToNameNothingFromInFront,ObjectsNamedInLoopsAreTakenToBeOnlyForgotten
+# UNNAMED: 3 6 6 6 3,5,5
+# UNNAMED-NEXT: exited with 0
+# UNNAMED-NEXT: the source prints the same

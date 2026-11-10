@@ -38,6 +38,7 @@ test/cli/test/isolation-one-module-fetched-twice.test.ts: --isolate: the default
 test/cli/test/isolation-one-module-fetched-twice.test.ts: --isolate: two import() calls of one file at once
 # isolation.test.ts, by what stands behind its lines.
 # These import a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
+test/cli/test/isolation.test.ts: --isolate: Module._extensions handlers > a transpile that a finished file left running reads no freed list of extensions
 test/cli/test/isolation.test.ts: --isolate: a macro runs in every file when a plugin is registered
 test/cli/test/isolation.test.ts: --isolate: collects globals pinned by leaked handles > a macro left loaded
 test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--isolate)
@@ -78,6 +79,10 @@ test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object 
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --parallel=1: a later test file can require() it
+# These store a loader in Module._extensions for a `.js` file that has TypeScript in it. A compiled run reads a file whose path is written out by the file's own extension at the build, as docs/compiler/compatibility.mdx says, and the build stops there with TS8016.
+test/cli/test/isolation.test.ts: --isolate: Module._extensions handlers > a require() that a built-in loader for another extension answers leaves no source for the next file
+test/cli/test/isolation.test.ts: --isolate: Module._extensions handlers > a require() that a function for another extension answers leaves no source for the next file
+test/cli/test/isolation.test.ts: --isolate: Module._extensions handlers > an import() of a path that a handler loaded gets no source of that load in the next file
 test/cli/test/test-changed.test.ts: bun test --changed --watch > editing one of several dirty test files reruns only that one
 test/cli/test/test-changed.test.ts: bun test --changed --watch > restarts and reruns only affected tests when a dependency changes
 test/cli/test/test-changed.test.ts: bun test --changed --watch > trigger file path handed to restarted runs has a 128-bit random hex suffix

@@ -298,6 +298,8 @@ With `--update-snapshots`, Bun removes entries that no test uses anymore from a 
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 
+Earlier versions also wrote a property matcher into the object before they printed it. If a getter of the object reads a property that a matcher matched, the old snapshot holds text that the getter made from the matcher, such as `Row[object ExpectAny]`. Bun now prints the object as it is, so that entry fails until `--update-snapshots` rewrites it.
+
 ## Best Practices
 
 ### Keep Snapshots Small

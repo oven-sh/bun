@@ -179,29 +179,45 @@ describe("bundler", () => {
     md5OfUint8Array: "900150983cd24fb0d6963f7d28e17f72",
     hmac: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
     hmacWithArrayBufferKey: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
+    hmacWithDataViewKey: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
     pbkdf2: "653cc888d937efe22810a5cbdb25a5bd",
     encrypted: "4c55a6ffda2e565b40c2051d3d067614",
     decrypted: "hello",
+    cbc: "f230676c38a7d716ebed81718e4fc8aa",
+    gcm: "3b817c0fa9:7ef3cdbe510337cbe05016fa1582e394",
+    ecdhSecretsAgree: true,
     randomBytesDiffer: true,
   });
   itBundled("browser/NodeCryptoPolyfill", {
     files: {
       "/entry.js": /* js */ `
-        import { createHash, createHmac, randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv } from "node:crypto";
+        import { createHash, createHmac, randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv, createECDH } from "node:crypto";
         import { Buffer } from "node:buffer";
         const abc = new TextEncoder().encode("abc");
+        const hmacKey = new TextEncoder().encode("key");
         const key = Buffer.alloc(16, 1);
         const cipher = createCipheriv("aes-128-ecb", key, "");
         const decipher = createDecipheriv("aes-128-ecb", key, "");
+        const cbc = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 2));
+        const gcm = createCipheriv("aes-128-gcm", key, Buffer.alloc(12, 2));
+        const alice = createECDH("secp256k1");
+        const bob = createECDH("secp256k1");
+        alice.generateKeys();
+        bob.generateKeys();
         console.log(JSON.stringify({
           sha256: createHash("sha256").update("abc").digest("hex"),
           sha256OfDataView: createHash("sha256").update(new DataView(abc.buffer)).digest("hex"),
           md5OfUint8Array: createHash("md5").update(abc).digest("hex"),
           hmac: createHmac("sha1", "key").update("abc").digest("hex"),
-          hmacWithArrayBufferKey: createHmac("sha1", new TextEncoder().encode("key").buffer).update("abc").digest("hex"),
+          hmacWithArrayBufferKey: createHmac("sha1", hmacKey.buffer).update("abc").digest("hex"),
+          hmacWithDataViewKey: createHmac("sha1", new DataView(hmacKey.buffer)).update("abc").digest("hex"),
           pbkdf2: pbkdf2Sync("password", "salt", 10, 16, "sha256").toString("hex"),
           encrypted: Buffer.concat([cipher.update("hello"), cipher.final()]).toString("hex"),
           decrypted: Buffer.concat([decipher.update("4c55a6ffda2e565b40c2051d3d067614", "hex"), decipher.final()]).toString(),
+          cbc: Buffer.concat([cbc.update("hello"), cbc.final()]).toString("hex"),
+          gcm: Buffer.concat([gcm.update("hello"), gcm.final()]).toString("hex") + ":" + gcm.getAuthTag().toString("hex"),
+          ecdhSecretsAgree:
+            alice.computeSecret(bob.getPublicKey()).toString("hex") === bob.computeSecret(alice.getPublicKey()).toString("hex"),
           randomBytesDiffer: randomBytes(16).toString("hex") !== randomBytes(16).toString("hex"),
         }));
       `,
@@ -225,7 +241,9 @@ describe("bundler", () => {
     randomFillSync: [false, true, false],
     randomFillSyncOfElements: [false, true, false],
     randomFill: true,
+    randomFillFromOffset: [false, true],
     randomBytes: 8,
+    errorCodes: ["ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE"],
   });
   itBundled("browser/NodeCryptoPolyfillDefaultImport", {
     files: {
@@ -238,6 +256,13 @@ describe("bundler", () => {
         crypto.randomFillSync(new Uint8Array(view.buffer, 16, 16));
         const elements = new Uint8Array(48);
         crypto.randomFillSync(new Uint16Array(elements.buffer, 16, 8), 2, 4);
+        const codeOf = fn => {
+          try {
+            fn();
+          } catch (error) {
+            return error.code;
+          }
+        };
         console.log(JSON.stringify({
           createHash: crypto.createHash("sha256").update("abc").digest("hex"),
           missing: named.filter(name => crypto[name] !== namespace[name]),
@@ -253,9 +278,20 @@ describe("bundler", () => {
           randomFill: await new Promise(resolve => {
             crypto.randomFill(new Uint8Array(16), (error, bytes) => resolve(error ?? filled(bytes, 0, 16)));
           }),
+          randomFillFromOffset: await new Promise(resolve => {
+            crypto.randomFill(new Uint8Array(16), 8, (error, bytes) => {
+              resolve(error ?? [filled(bytes, 0, 8), filled(bytes, 8, 16)]);
+            });
+          }),
           randomBytes: await new Promise(resolve => {
             crypto.randomBytes(8, (error, bytes) => resolve(error ?? bytes.length));
           }),
+          errorCodes: [
+            codeOf(() => crypto.timingSafeEqual(new Uint8Array(1), new Uint8Array(2))),
+            codeOf(() => crypto.randomFillSync(new Uint8Array(4), 5)),
+            codeOf(() => crypto.randomFillSync(new Uint8Array(4), 2, 3)),
+            codeOf(() => crypto.randomFillSync("not a buffer")),
+          ],
         }));
       `,
     },

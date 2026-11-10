@@ -19,13 +19,19 @@ const firstCopyOf = new Map<string, string>();
       if (!fs.existsSync(manifest)) continue;
       const { name, version } = JSON.parse(fs.readFileSync(manifest, "utf8"));
       const id = `${name}@${version}`;
-      if (first.has(id)) firstCopyOf.set(dir, first.get(id)!);
-      else first.set(id, dir);
+      if (first.has(id)) {
+        firstCopyOf.set(dir, first.get(id)!);
+        continue;
+      }
+      first.set(id, dir);
       if (fs.existsSync(`${dir}/node_modules`)) scan(`${dir}/node_modules`);
     }
   };
   scan(fs.realpathSync("node_modules").replaceAll("\\", "/"));
 }
+
+// Packages of these polyfills read the Buffer global, which a browser does not have. They get the sibling polyfill's.
+const readsBufferGlobal = new Set(["crypto"]);
 
 function browserMap(file: string) {
   for (let dir = path.dirname(file); dir !== path.dirname(dir); dir = path.dirname(dir)) {
@@ -80,6 +86,7 @@ for (const name of allFiles) {
         "process.env.READABLE_STREAM": "'enable'",
         "process.browser": "true",
         "global": "globalThis",
+        ...(readsBufferGlobal.has(polyfill) && { "Buffer": "__bun_Buffer" }),
       },
       plugins: [resolveForPolyfill(polyfill)],
       metafile: true,
@@ -101,6 +108,10 @@ for (const name of allFiles) {
 
       if (outfile.includes("__require")) {
         throw new Error("Unexpected __require in " + name);
+      }
+
+      if (outfile.includes("__bun_Buffer")) {
+        outfile = `import { Buffer as __bun_Buffer } from "buffer";${outfile}`;
       }
 
       for (const { path: specifier } of new Bun.Transpiler().scanImports(outfile)) {

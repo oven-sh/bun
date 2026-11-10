@@ -3343,7 +3343,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     named.appendVector(evict.abandonedModules);
     keys.removeAllMatching([&](const String& key) { return plugins.modulesToEvictOnceLoaded.contains(key); });
     bool hasImportCalls = !evict.all && !(plugins.importCalls.isEmpty() && plugins.importCallsOfCommonJS.isEmpty());
-    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled && !evict.endsMockOverCompiledFileThatHadRun && (evict.unmocked.isEmpty() || !hasImportCalls)) {
+    // A mock that ends with nothing under its key matters to what called import() for it, and to nothing else.
+    bool hasCallersOfUnmocked = hasImportCalls && evict.unmocked.containsIf([&](const String& key) { return plugins.importCalls.contains(key) || plugins.importCallsOfCommonJS.contains(key); });
+    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled && !evict.endsMockOverCompiledFileThatHadRun && !hasCallersOfUnmocked) {
         for (auto& key : named) {
             if (plugins.modulesToEvictOnceLoaded.contains(key))
                 plugins.modulesToEvictWithCallers.add(key);
@@ -3516,9 +3518,15 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
         if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
             return false;
-        // Nothing evaluates a test file a second time: it stays while it runs, and once it has ended JSMock__replaceModuleOfTestFile() leaves its exports in its place.
-        if (importer == plugins.testFileKey && (testFile == plugins.testFile || replaceableModuleOfTestFile(globalObject, importer)))
-            return false;
+        // Nothing evaluates a test file a second time. The one that runs stays. One that has ended stays until JSMock__replaceModuleOfTestFile() puts its exports in its place.
+        if (plugins.testFiles.contains(importer)) {
+            if (testFile == plugins.testFile)
+                return false;
+            if (replaceableModuleOfTestFile(globalObject, importer)) {
+                plugins.testFilesToReplace.add(importer);
+                return false;
+            }
+        }
         bool stayed = staysInRegistry.remove(importer);
         stayed |= staysInRequireCache.remove(importer);
         isQueued = evicted.add(importer).isNewEntry || stayed;
@@ -3550,12 +3558,13 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             hold(key);
         auto takeCaller = [&](const String& key, const String& importer) {
             // A module that made a mock would make it again: it goes once the test file has ended, with JSMock__replaceModuleOfTestFile().
-            if (callersGo.contains(importer) || plugins.modulesThatMocked.contains(fileOfModuleKey(importer)) || (evict.onlyCallersIn && !evict.onlyCallersIn->contains(importer)))
+            if (plugins.modulesThatMocked.contains(fileOfModuleKey(importer)) || (evict.onlyCallersIn && !evict.onlyCallersIn->contains(importer)))
                 return;
             bool isQueued;
             if (take(key, importer, isQueued))
                 hold(importer);
         };
+        UncheckedKeyHashMap<String, Vector<String>> requireKeysOfFile;
         for (size_t walked = 0; walked < held.size(); ++walked) {
             String key = held[walked];
             if (auto importers = importersOf.find(key); importers != importersOf.end()) {
@@ -3578,9 +3587,15 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                     plugins.importCalls.remove(callers);
             }
             if (auto files = plugins.importCallsOfCommonJS.find(key); files != plugins.importCallsOfCommonJS.end()) {
-                for (auto& importer : requireKeys.values()) {
-                    if (files->value.contains(fileOfModuleKey(importer)))
-                        takeCaller(key, importer);
+                if (requireKeysOfFile.isEmpty()) {
+                    for (auto& importer : requireKeys.values())
+                        requireKeysOfFile.ensure(fileOfModuleKey(importer), [] { return Vector<String>(); }).iterator->value.append(importer);
+                }
+                for (auto& file : files->value) {
+                    if (auto importers = requireKeysOfFile.find(file); importers != requireKeysOfFile.end()) {
+                        for (auto& importer : importers->value)
+                            takeCaller(key, importer);
+                    }
                 }
             }
         }
@@ -3664,6 +3679,23 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         moveLoadedModule(globalObject, originalModuleKey(package), package);
         RETURN_IF_EXCEPTION(scope, );
     }
+    // A CommonJS module that has left the require cache has to call import() again to count as one that called it.
+    if (!plugins.importCallsOfCommonJS.isEmpty()) {
+        UncheckedKeyHashSet<String> cached;
+        bool hasLeft = evict.all;
+        for (auto& key : requireKeys.values()) {
+            if (evicted.contains(key) && !stay.contains(key) && !staysInRequireCache.contains(key))
+                hasLeft = true;
+            else
+                cached.add(fileOfModuleKey(key));
+        }
+        if (hasLeft) {
+            plugins.importCallsOfCommonJS.removeIf([&](auto& calls) {
+                calls.value.removeIf([&](const String& file) { return evict.all ? !(evict.exceptPackages && isInNodeModules(file)) : !cached.contains(file); });
+                return calls.value.isEmpty();
+            });
+        }
+    }
     plugins.modulesToEvictWithCallers.clear();
     for (auto& key : stay) {
         if (evict.all || callersGo.contains(key))
@@ -3691,6 +3723,9 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vecto
 
 static void evictModulesGivenTheOriginal(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock&& stopped)
 {
+    // The modules that wait for a load go first, with all that called import() for them: the factory's chain says nothing of those.
+    if (!globalObject->onLoadPlugins.modulesToEvictWithCallers.isEmpty())
+        Bun::evictModulesThatHaveLoaded(globalObject);
     ModulesToEvict evict { WTF::move(stopped.givenTheOriginal) };
     // A module that the factory loaded may have called import() for one of them. One that was loaded before, and called import() for the factory, keeps nothing of them.
     evict.onlyCallersIn = &stopped.importChain;
@@ -6988,6 +7023,17 @@ extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::Gl
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
     auto modulesThatMocked = std::exchange(plugins.modulesThatMocked, {});
+    // A test file that has ended and imported a module which has gone since: see `take` in evictModulesAndTheirImporters().
+    while (!plugins.testFilesToReplace.isEmpty()) {
+        for (auto& file : std::exchange(plugins.testFilesToReplace, {})) {
+            auto* record = replaceableModuleOfTestFile(globalObject, file);
+            if (!record)
+                continue;
+            replaceModuleWithItsExports(globalObject, record);
+            if (scope.exception() && !scope.tryClearException()) [[unlikely]]
+                return;
+        }
+    }
     if (modulesThatMocked.isEmpty())
         return;
     String testFile = path->toWTFString();

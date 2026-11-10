@@ -157,8 +157,10 @@ public:
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // The key of the test file that is running, and after its end until the next one begins.
         String testFileKey;
-        // The keys of the test files that have begun. Nothing evaluates one of them a second time.
+        // The keys of the test files that have begun. evictModulesAndTheirImporters() leaves one that it reaches as an importer: see `take` there.
         WTF::UncheckedKeyHashSet<String> testFiles = {};
+        // Those of them that have ended and imported a module which has gone since: JSMock__replaceModuleOfTestFile() puts their exports in their place.
+        WTF::UncheckedKeyHashSet<String> testFilesToReplace = {};
         // The modules that have called import() for each key, for evictModulesAndTheirImporters(): the loader keeps no edge for an import(). A collected record may have left its address to another: the Weak tells.
         using ImportCallers = WTF::UncheckedKeyHashMap<JSC::AbstractModuleRecord*, JSC::Weak<JSC::AbstractModuleRecord>>;
         WTF::UncheckedKeyHashMap<String, ImportCallers> importCalls = {};
@@ -189,6 +191,14 @@ public:
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
+
+        // The modules of a module graph that is left are gone with it.
+        void forgetImportCalls()
+        {
+            importCalls.clear();
+            importCallsOfCommonJS.clear();
+            testFilesToReplace.clear();
+        }
 
         void clear()
         {

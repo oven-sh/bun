@@ -4907,6 +4907,61 @@ describe.concurrent("a module that got a mock from import() is evaluated again w
     );
   });
 
+  test("it is a module that mock.module() patched in place", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `${counted} let who; export const extra = 0; export const run = async () => (who ??= (await import("./dep")).who)();`,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as app from "./app";
+          const run = app.run;
+          mock.module("./dep", () => ({ who: () => "fake 1" }));
+          mock.module("./app", () => ({ extra: 1, run }));
+          test("gets the mock of this file", async () => {
+            expect([await run(), app.extra, globalThis.appLoads]).toEqual(["fake 1", 1, 1]);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { extra, run } from "./app";
+          test("gets the original", async () => {
+            expect([await run(), extra, globalThis.appLoads]).toEqual(["real", 0, 2]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // A CommonJS module is known by its file. The module that called import() has gone, and the one that is loaded in its place has called nothing.
+  test("a CommonJS module that is loaded again and calls import() no more stays loaded", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.cjs": `${counted} exports.run = async () => (await import("./dep.ts")).who();`,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app.cjs";
+          mock.module("./dep.ts", () => ({ who: () => "fake 1" }));
+          test("it calls import()", async () => expect([await run(), globalThis.appLoads]).toEqual(["fake 1", 1]));
+        `,
+        "2.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import "./app.cjs";
+          mock.module("./dep.ts", () => ({ who: () => "fake 2" }));
+          test("it is loaded again and calls nothing", () => expect(globalThis.appLoads).toBe(2));
+        `,
+        "3.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app.cjs";
+          test("it stayed loaded", async () => expect([await run(), globalThis.appLoads]).toEqual(["real", 2]));
+        `,
+      },
+      3,
+    );
+  });
+
   // Such a module counts as one that keeps what it loaded: whether it does can't be seen.
   test("a module that only passes on what import() gave it is evaluated again too", async () => {
     const uses = (n: number, mocked: boolean) => `
@@ -5012,26 +5067,35 @@ describe.concurrent("a test file stays loaded when a module that it imports call
     },
   );
 
-  test("a file that mocked nothing, under the mock of a preload", async () => {
+  test.each([
+    ["called import() for", `let dep; export const run = async () => (dep ??= await import("./dep")).who();`],
+    ["imports", `import { who } from "./dep"; export const run = async () => who();`],
+  ])("a file that has ended and mocked nothing, when a later file mocks what its import %s", async (_, app) => {
     await expectFixturesToPass(
       {
-        "unrelated.ts": `export const unrelated = "real";`,
-        "throws.ts": `throw new Error("boom");`,
-        "app.ts": `export const load = () => import("./throws");`,
-        "preload.ts": `import { mock } from "bun:test"; mock.module("./unrelated.ts", () => ({ unrelated: "fake" }));`,
+        "dep.ts": files["dep.ts"],
+        "app.ts": app,
         "a.test.ts": `
           import { expect, test } from "bun:test";
-          import { load } from "./app";
+          import { run } from "./app";
           globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
           export const value = "of the first file";
-          test("a module that it imports calls import() for a module that throws", async () => {
-            await expect(load()).rejects.toThrow("boom");
-          });
+          test("a", async () => expect(await run()).toBe("real"));
         `,
-        "b.test.ts": files["b.test.ts"],
+        "b.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app";
+          mock.module("./dep", () => ({ who: () => "fake" }));
+          test("b", async () => expect(await run()).toBe("fake"));
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { value } from "./a.test";
+          import { run } from "./app";
+          test("c", async () => expect([value, globalThis.firstFileLoads, await run()]).toEqual(["of the first file", 1, "real"]));
+        `,
       },
-      2,
-      ["--preload", "./preload.ts"],
+      3,
     );
   });
 });
@@ -5769,7 +5833,7 @@ const undoneWithLoadsInFlight = (user: string) => () => {
     "slow.js": `export const s = "slow";`,
     "user.js": user,
   };
-  // Two of the tests below are for import statements alone.
+  // Three of the tests below are for import statements alone.
   const withStatements = test.skipIf(user.includes("await import("));
   const next = `
     import { expect, test } from "bun:test";
@@ -5871,7 +5935,8 @@ const undoneWithLoadsInFlight = (user: string) => () => {
     );
   });
 
-  test("mocks whose factories have not been called when the file fails to load", async () => {
+  // Nothing loads user.js under a mock here, so its form changes nothing.
+  withStatements("mocks whose factories have not been called when the file fails to load", async () => {
     using dir = tempDir("mock-module-undo", {
       ...modules,
       "k2.js": `export const y = "real2";`,

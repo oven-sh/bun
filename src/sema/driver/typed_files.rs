@@ -1407,6 +1407,7 @@ struct TypedText {
     text: Vec<u8>,
     dropped_casts: usize,
     has_default_export: bool,
+    has_empty_export: bool,
     modules_of_untyped_values: Vec<Vec<u8>>,
     source: Option<Vec<u8>>,
 }
@@ -1415,6 +1416,7 @@ struct Bundle<'a> {
     modules: &'a [ModuleTypes],
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
+    adds_empty_export: bool,
 }
 
 struct Written<'a, 's> {
@@ -1953,7 +1955,6 @@ struct Linked {
     modules_of_untyped_values: Vec<Vec<u8>>,
     emitted_enums: FxHashMap<(u32, u32), Vec<u8>>,
     enum_names: FxHashMap<(u32, u32), Vec<u8>>,
-    is_entry_module: bool,
 }
 
 fn link(
@@ -2178,10 +2179,7 @@ fn link(
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-    let mut linked = Linked {
-        is_entry_module: entry.is_some_and(|types| types.is_module),
-        ..Linked::default()
-    };
+    let mut linked = Linked::default();
     let mut ambient_values: Vec<(usize, Vec<Piece>)> = Vec::new();
     let unique = |name: &[u8], taken: &mut FxHashSet<Vec<u8>>| {
         let mut candidate = name.to_vec();
@@ -3001,6 +2999,7 @@ fn add_types(
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
+        adds_empty_export: bundle.adds_empty_export,
         insertions: Insertions { list: Vec::new() },
         dropped_casts: 0,
         hoisted: Vec::new(),
@@ -3023,6 +3022,7 @@ struct Transfer<'t, 'a, 's> {
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
+    adds_empty_export: bool,
     insertions: Insertions,
     dropped_casts: usize,
     hoisted: Vec<u8>,
@@ -4002,7 +4002,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .add(first.start, Order::Line, std::mem::take(&mut self.hoisted));
         }
         // `// @bun` in front of a bundle says that its text runs as it is written, as an ES module. The typed file is TypeScript:
-        // it goes without those bytes. Where the entry point is a module, `export {}` says so if no export of the bundle does.
+        // it goes without those bytes, and `export {}` says that it is a module if no export of the bundle does.
         let mark = find_transpiled_mark_alone(javascript);
         let mut text = self
             .insertions
@@ -4011,11 +4011,11 @@ impl<'a> Transfer<'_, 'a, '_> {
             return Err(TypedFilesError::NoFinalLineBreak);
         }
         text.extend_from_slice(&self.hoisted);
-        let has_export = || {
-            let mut statements = output_file.ids(output_file.body);
-            statements.any(|statement| output_file.is_export_declaration(statement))
-        };
-        if mark.is_some() && self.linked.is_entry_module && !has_export() {
+        let mut statements = output_file.ids(output_file.body);
+        let has_empty_export = mark.is_some()
+            && self.adds_empty_export
+            && !statements.any(|statement| output_file.is_export_declaration(statement));
+        if has_empty_export {
             if !text.ends_with(b"\n") {
                 text.push(b'\n');
             }
@@ -4026,6 +4026,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             text,
             dropped_casts: self.dropped_casts,
             has_default_export,
+            has_empty_export,
             modules_of_untyped_values: self.linked.modules_of_untyped_values.clone(),
             source: None,
         })
@@ -4141,8 +4142,6 @@ pub enum Target {
 pub struct ModuleTypes {
     pub path: Box<[u8]>,
     pub text: Box<[u8]>,
-    /// `Module::is_module`: the declarations at its top level are its own.
-    pub is_module: bool,
     pub references: Vec<(u32, Target)>,
     pub enum_objects: Vec<u32>,
     pub exports: Vec<(Box<[u8]>, Target)>,
@@ -4281,7 +4280,6 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
     }
     .type_ranges();
     let path = paths[file.idx()].clone()?;
-    let is_module = checker.p.files.module(file).is_module();
     Some(checker.with_services(file, None, |services| {
         let mut references = Vec::new();
         let mut globals = Vec::new();
@@ -4477,7 +4475,6 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
         ModuleTypes {
             path,
             text: hir.text[..].into(),
-            is_module,
             references,
             enum_objects,
             exports,
@@ -4552,6 +4549,8 @@ pub struct TypedFiles {
     pub typed: Vec<(Vec<u8>, Vec<u8>)>,
     pub declarations_while_checked: Vec<(Vec<u8>, Vec<u8>)>,
     pub dropped_casts: usize,
+    /// The typed files that end with an `export {}` that their bundle does not have.
+    pub empty_exports: usize,
 }
 
 fn inside<'a>(directory: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
@@ -4609,6 +4608,7 @@ fn typed_outputs(
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
+    adds_empty_export: bool,
 ) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
@@ -4618,6 +4618,7 @@ fn typed_outputs(
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
+            adds_empty_export,
         };
         let typed =
             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
@@ -4712,11 +4713,13 @@ pub fn annotate_implicit_any(
     is_changed
 }
 
+/// `adds_empty_export`: a typed file whose bundle starts with `// @bun` and has no export ends with `export {}`.
 pub fn build_typed_files(
     outdir: &[u8],
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
+    adds_empty_export: bool,
 ) -> Result<TypedFiles, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = TypedFiles {
@@ -4724,18 +4727,21 @@ pub fn build_typed_files(
         typed: Vec::new(),
         declarations_while_checked: Vec::new(),
         dropped_casts: 0,
+        empty_exports: 0,
     };
     for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(
         outdir,
         outputs,
         modules,
         emitted_declarations,
+        adds_empty_export,
     )?) {
         let name_of = |path: &[u8]| {
             path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..]
                 .to_vec()
         };
         found.dropped_casts += typed.dropped_casts;
+        found.empty_exports += usize::from(typed.has_empty_export);
         found
             .modules_of_untyped_values
             .extend(typed.modules_of_untyped_values);

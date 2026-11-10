@@ -521,3 +521,22 @@ fn narrow_ids_come_back_from_a_block() {
         assert_eq!(narrow.id_at(ids.len()), None);
     }
 }
+
+#[test]
+fn the_mark_alone_is_its_seven_bytes_on_a_line_of_their_own() {
+    let rows: [(&[u8], Option<core::ops::Range<usize>>); 9] = [
+        (b"// @bun\nexport {};\n", Some(0..7)),
+        (b"// @bun\r\nexport {};\r\n", Some(0..7)),
+        (b"// @bun", Some(0..7)),
+        (b"#!/usr/bin/env bun\n// @bun\nmain();\n", Some(19..26)),
+        (b"// @bun @bun-cjs\n(function () {})\n", None),
+        (b"// @bun \n", None),
+        (b"// @bundled by acme\n", None),
+        (b"// @bunny/index.ts\n", None),
+        (b"\n// @bun\n", None),
+    ];
+    for (text, expected) in rows {
+        let found = find_transpiled_mark_alone(text);
+        assert_eq!(found, expected, "{:?}", core::str::from_utf8(text));
+    }
+}

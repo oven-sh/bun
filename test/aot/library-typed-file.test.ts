@@ -140,6 +140,8 @@ export function area(shape: Shape): Sizes.Size {
 
 // The bundles of such a package start with `// @bun`, and Bun runs a file with that line as it is written. Its .aot.ts files are TypeScript.
 describe.concurrent("a package that bun compile --library --target=bun wrote", () => {
+  const printed = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null });
+
   test("runs from its .aot.ts files under bun run --aot, bun --aot, --conditions=aot and bun test --aot", async () => {
     using dir = tempDir("aot-library-typed-file-for-bun", {
       ...library,
@@ -154,12 +156,11 @@ test("total", () => expect(total([{ kind: "circle", size: 1 }])).toBe(3));
     expect(readFileSync(path, "utf8")).toStartWith("// @bun\n");
     writeFileSync(path, readFileSync(path, "utf8").replace("3 * shape.size", "4 * shape.size"));
     for (const flags of [["run", "--aot"], ["--aot"], ["--conditions=aot"]])
-      expect(await spawned([bunExe(), ...flags, "app.ts"], app, env)).toMatchObject({
-        stdout: "7 1.2.3\n",
-        exitCode: 0,
-      });
-    expect(await spawned([bunExe(), "app.ts"], app, env)).toMatchObject({ stdout: "8 1.2.3\n", exitCode: 0 });
-    expect(await spawned([bunExe(), "test", "--aot", "app.test.ts"], app, env)).toMatchObject({ exitCode: 0 });
+      expect(await spawned([bunExe(), ...flags, "app.ts"], app, env)).toEqual(printed("7 1.2.3\n"));
+    expect(await spawned([bunExe(), "app.ts"], app, env)).toEqual(printed("8 1.2.3\n"));
+    const tested = await spawned([bunExe(), "test", "--aot", "app.test.ts"], app, env);
+    expect(tested.stderr).toMatch(/ 1 pass\r?\n 0 fail\r?\n/);
+    expect(tested.exitCode).toBe(0);
   });
 
   test("is transpiled like any TypeScript, by bun run --aot as for an executable", async () => {
@@ -177,9 +178,8 @@ class Version {
     });
     await install(String(dir), ["src/index.ts", "src/version.ts", "--target=bun"]);
     expect(await compile(String(dir))).toEqual(USED);
-    expect(await spawned([bunExe(), "run", "--aot", "app.ts"], join(String(dir), "app"), env)).toMatchObject({
-      stdout: "7 1.2.3\n",
-      exitCode: 0,
-    });
+    expect(await spawned([bunExe(), "run", "--aot", "app.ts"], join(String(dir), "app"), env)).toEqual(
+      printed("7 1.2.3\n"),
+    );
   });
 });

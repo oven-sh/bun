@@ -303,7 +303,7 @@ pub(crate) fn typed_files_for_build(
             }
         }
     };
-    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[]);
+    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[], true);
     let untyped_modules = without_emitted_declarations
         .as_ref()
         .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
@@ -346,7 +346,7 @@ pub(crate) fn typed_files_for_build(
     let emitted_modules = emitted_modules.take();
     let found = match emitted_modules.is_empty() {
         true => without_emitted_declarations,
-        false => build_typed_files(outdir, &outputs, modules, &emitted_modules),
+        false => build_typed_files(outdir, &outputs, modules, &emitted_modules, true),
     };
     let mut warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(
@@ -360,11 +360,24 @@ pub(crate) fn typed_files_for_build(
         Ok(found) => found,
         Err(why) => return warn(format_args!("{why}")),
     };
-    let report = check(
+    let mut report = check(
         &mut found.typed,
         &found.declarations_while_checked,
         &newest_lib,
     );
+    // `export {}` makes what a file without imports and exports declares local. Where the typed files have errors with it,
+    // they are written, and judged, without it.
+    if first_error(&report).is_some()
+        && found.empty_exports > 0
+        && let Ok(plain) = build_typed_files(outdir, &outputs, modules, &emitted_modules, false)
+    {
+        found = plain;
+        report = check(
+            &mut found.typed,
+            &found.declarations_while_checked,
+            &newest_lib,
+        );
+    }
     if let Some(first) = first_error(&report) {
         let path = bundler_path(&first.path);
         let separator = std::path::MAIN_SEPARATOR_STR.as_bytes();

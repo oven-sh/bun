@@ -244,6 +244,23 @@ export { join };
       expect(await greeting(root)).toBe("hello you");
     });
 
+    test("splitting: a chunk without an export ends with export {} too", async () => {
+      using dir = tempDir("build-api-dts-target-bun-chunk-no-export", {
+        ...project,
+        "src/setup.ts": `import { join } from "./join";\njoin("set", "up");\n`,
+        "src/first.ts": `import "./setup";\nexport const first: number = 1;\n`,
+        "src/second.ts": `import "./setup";\nexport const second: number = 2;\n`,
+      });
+      const root = String(dir);
+      const entrypoints = [join(root, "src/first.ts"), join(root, "src/second.ts")];
+      const outputs = await build(root, { entrypoints, splitting: true });
+      const chunk = outputs.find(output => output.kind === "chunk")!;
+      const javascript = (await chunk.text()).split("\n");
+      expect([javascript[0], javascript.some(line => line.startsWith("export"))]).toEqual(["// @bun", false]);
+      const typed = await lines(outputs, chunk.path.replace(/\.js$/, ".aot.ts"));
+      expect([typed[0], ...typed.slice(-2)]).toEqual(["", "export {};", ""]);
+    });
+
     test("a banner that begins like the line stays on the line below", async () => {
       using dir = tempDir("build-api-dts-banner", project);
       const root = String(dir);
@@ -253,36 +270,67 @@ export { join };
       expect(await greeting(root)).toBe("hello you");
     });
 
-    test("an entry point that is a module without an export: ends with export {}, and is an ES module as the bundle is", async () => {
-      using dir = tempDir("build-api-dts-module-entry", {
+    test("a bundle without an export, of TypeScript or of JavaScript: ends with export {}, and is an ES module as the bundle is", async () => {
+      using dir = tempDir("build-api-dts-no-export", {
         ...project,
         "package.json": JSON.stringify({ name: "greeter", type: "commonjs" }),
-        "src/cli.ts": `#!/usr/bin/env bun\nimport { join } from "./join";\njoin("greeter", "cli");\n`,
+        "src/cli.ts": `#!/usr/bin/env bun\nimport "./setup";\nimport { join } from "./join";\njoin("greeter", "cli");\n`,
+        // A file without import and export declares its names for every file. No file here reads `order` as a global.
+        "src/setup.ts": `var order = [1, 2].reverse();\n`,
+        "src/tool.js": `import { join } from "./join";\njoin("greeter", "tool");\n`,
       });
       const root = String(dir);
-      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts")] });
+      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts"), join(root, "src/tool.js")] });
       const [javascript, typed] = [await lines(outputs, "cli.js"), await lines(outputs, "cli.aot.ts")];
       expect(javascript.slice(0, 2)).toEqual(["#!/usr/bin/env bun", "// @bun"]);
       expect(typed.slice(0, 2)).toEqual(["#!/usr/bin/env bun", ""]);
       expect(typed.slice(-2)).toEqual(["export {};", ""]);
+      expect((await lines(outputs, "tool.aot.ts")).slice(-2)).toEqual(["export {};", ""]);
       // What Bun takes for CommonJS has one export, "default": its module.exports.
-      for (const name of ["cli.js", "cli.aot.ts"])
+      for (const name of ["cli.js", "cli.aot.ts", "tool.js", "tool.aot.ts"])
         expect(Object.keys(await import(join(root, "out", name)))).toEqual([]);
     });
 
-    test("an entry point that is a script, and one with an export: nothing is added", async () => {
-      using dir = tempDir("build-api-dts-script-entry", {
+    test("a bundle for another target does not start with that line, and nothing is added", async () => {
+      using dir = tempDir("build-api-dts-other-target", {
         ...project,
-        // In a script this adds to the interface of `window`. In a module it would declare another interface.
-        "src/polyfill.ts": `interface Window {\n  greeter: string;\n}\nwindow.greeter = "hello";\n`,
+        "src/cli.ts": `import { join } from "./join";\njoin("greeter", "cli");\n`,
       });
       const root = String(dir);
-      const outputs = await build(root, { entrypoints: [join(root, "src/polyfill.ts"), join(root, "src/index.ts")] });
-      for (const name of ["polyfill", "index"]) {
+      const outputs = await build(root, { target: "node", entrypoints: [join(root, "src/cli.ts")] });
+      const [javascript, typed] = [await lines(outputs, "cli.js"), await lines(outputs, "cli.aot.ts")];
+      expect(javascript).not.toContain("// @bun");
+      expect([typed[0], typed.at(-2)]).toEqual([javascript[0], javascript.at(-2)]);
+    });
+
+    test("a script whose names other code reads as globals: the files are written without export {}", async () => {
+      using dir = tempDir("build-api-dts-script", {
+        ...project,
+        // In a script this adds to the interface of `window`. In a module it declares another interface,
+        // and `window.greeter` is then an error in the .aot.ts file.
+        "src/polyfill.ts": `interface Window {\n  greeter: string;\n}\nwindow.greeter = "hello";\n`,
+        "src/cli.ts": `import "./polyfill";\nconsole.log(window.greeter);\n`,
+      });
+      const root = String(dir);
+      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts"), join(root, "src/index.ts")] });
+      for (const name of ["cli", "index"]) {
         const [javascript, typed] = [await lines(outputs, name + ".js"), await lines(outputs, name + ".aot.ts")];
         expect(typed[0]).toBe("");
         expect(typed.at(-2)).toBe(javascript.at(-2));
       }
+    });
+
+    test("a module that declares a global under declare global: ends with export {}", async () => {
+      using dir = tempDir("build-api-dts-declare-global", {
+        ...project,
+        "src/polyfill.ts": `declare global {\n  interface Window {\n    greeter: string;\n  }\n}\nwindow.greeter = "hello";\nexport {};\n`,
+        "src/cli.ts": `import "./polyfill";\nconsole.log(window.greeter);\n`,
+      });
+      const root = String(dir);
+      const outputs = await build(root, { entrypoints: [join(root, "src/cli.ts")] });
+      const typed = await lines(outputs, "cli.aot.ts");
+      expect([typed[0], ...typed.slice(-2)]).toEqual(["", "export {};", ""]);
+      expect(typed).toContain("declare global {");
     });
   });
 });

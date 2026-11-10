@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::resolve::JsxEmit;
+use std::collections::hash_map::Entry;
 
 /// The single property of `JSX.ElementAttributesProperty` or `JSX.ElementChildrenAttribute`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -631,8 +632,6 @@ impl<'p, 's> Checker<'p, 's> {
             literal: run,
             ..Shape::new_in(self.arena)
         };
-        // The names in `pending.props`, in the same order.
-        let mut pending_names = OrderedSet::default();
         let flush = |c: &mut Self, spread: &mut Option<TypeId>, pending: &mut Shape<'s>| {
             if pending.props.is_empty() {
                 return;
@@ -650,11 +649,12 @@ impl<'p, 's> Checker<'p, 's> {
                 segment
             });
         };
+        let mut places = crate::util::FxHashMap::<Atom, usize>::default();
         for p in jsx.attrs.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
                 flush(self, &mut spread, &mut pending);
-                pending_names = OrderedSet::default();
+                places.clear();
                 let ty = self.type_of_expr(file, prop.value);
                 let ty = self.reduced(ty);
                 if self.is_any(ty) {
@@ -689,9 +689,12 @@ impl<'p, 's> Checker<'p, 's> {
             };
             // Attributes with the same name are declarations of one symbol, and `compareSymbols`
             // orders by the first declaration.
-            match pending_names.insert_full(name) {
-                (_, true) => pending.props.push(attribute),
-                (earlier, false) => pending.props[earlier] = attribute,
+            match places.entry(name) {
+                Entry::Occupied(place) => pending.props[*place.get()] = attribute,
+                Entry::Vacant(place) => {
+                    place.insert(pending.props.len());
+                    pending.props.push(attribute);
+                }
             }
         }
         let children = self.jsx_child_types(file, e);

@@ -1,0 +1,33 @@
+# import { jest } from "bun:test"; jest.useFakeTimers(); setTimeout(() => {}, 1000);
+# No test run. useFakeTimers() puts its fakes on the global object and on process, so a function of the runner that fakes the timers and is in reach has written each of the nine places, like a store
+# that is spelled. If Link took setTimeout for a constant, compiled code would call the real one and the run time would hold the place read-only: the fake timers would fake nothing, without a word.
+# The control: timers-are-constants-where-no-fake-timers-are-in-reach.ir.
+# RUN: link lookups
+# CHECK-NOT: lookup taken-for-constant SetTimeout
+# CHECK: lookup written ClearTimeout
+# CHECK: lookup written SetInterval
+# CHECK: lookup written SetTimeout
+# CHECK: lookup written ProcessNextTick
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunTestJest
+    v1 = PropGet v0 key="useFakeTimers"
+    v2 = Convert v1 declared={type=builtin(BunTestJestUseFakeTimers) flags=[IsExpected]}
+    v3 = Call v2, v0 calleeKey="useFakeTimers" calleeName="jest.useFakeTimers"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="setTimeout" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(SetTimeout) flags=[IsExpected]}
+    v7 = NewClosure function=f1
+    v8 = Integer integer=1000
+    v9 = Call v6, -, v7, v8 calleeName="setTimeout"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

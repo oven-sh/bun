@@ -47,6 +47,8 @@ pub(super) fn collect_reports(
     let input = report_input(build, options, used, trimming);
     let mut summary = Vec::new();
     report::write_summary(&input, &mut summary);
+    let mut developer_options = Vec::new();
+    report::write_developer_options(&options.option_words, &mut developer_options);
     let mut untyped_note = Vec::new();
     report::write_untyped_note(&build.statistics, &mut untyped_note);
 
@@ -62,8 +64,11 @@ pub(super) fn collect_reports(
     CompileOutcome {
         output_files: Vec::new(),
         graph_bytes: None,
+        #[cfg(unix)]
+        unnamed_file: None,
         metafile: None,
         summary,
+        developer_options,
         report_messages,
         trim_log_lines: Vec::new(),
         executable: None,

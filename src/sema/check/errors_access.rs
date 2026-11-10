@@ -6,7 +6,6 @@
 //! `checkVariableLikeDeclaration` with `getBindingElementTypeFromParentType` for binding elements, in TypeScript
 //! 7.1's checker.go.
 
-use super::aot::DiagnosticSubject;
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -710,11 +709,10 @@ impl<'p> Checker<'p, '_> {
         if !matches!(self.hir(file)[literal_member].key, PropKey::Computed(_)) {
             return self
                 .bound(file)
-                .declarations_of_literal_member(literal_member)[0];
+                .first_declaration_of_literal_member(literal_member);
         }
-        let declarations = self.declarations_of_member(file, Decl::Property(literal_member));
-        match declarations.first() {
-            Some(&(_, Decl::Property(first))) => first,
+        match self.first_declaration_of_member(file, Decl::Property(literal_member)) {
+            Some((_, Decl::Property(first))) => first,
             _ => literal_member,
         }
     }
@@ -1029,11 +1027,7 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
-        // What was made of a name that the brought declarations declare lacks the member by their word alone.
-        diagnostic.subject = match self.is_expression_brought(file, e) {
-            true => DiagnosticSubject::BroughtDeclaration,
-            false => subject,
-        };
+        diagnostic.subject = subject;
         // `addErrorOrSuggestion`
         diagnostic.is_suggestion = is_unchecked_js && diagnostic.code == 2568;
         (!diagnostic.is_suggestion || self.captures_suggestions()).then_some(diagnostic)

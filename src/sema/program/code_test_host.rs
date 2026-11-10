@@ -66,6 +66,7 @@ pub(super) struct StatementsHost {
     pub(super) max_macro_values: usize,
     pub(super) macro_round_count: AtomicUsize,
     pub(super) transformed: &'static [&'static str],
+    pub(super) evaluated_texts: &'static [&'static str],
     pub(super) events: Guarded<Vec<HostEvent>>,
     pub(super) is_case_sensitive: bool,
     pub(super) threads: usize,
@@ -94,6 +95,7 @@ impl Default for StatementsHost {
             max_macro_values: 0,
             macro_round_count: AtomicUsize::new(0),
             transformed: &[],
+            evaluated_texts: &[],
             events: Guarded::new(Vec::new()),
             is_case_sensitive: true,
             threads: 1,
@@ -476,6 +478,10 @@ impl CodeHost for StatementsHost {
         self.record(HostEvent::FinishedFile(request.path.to_vec()));
         let implied = self.find_by_path(&self.implied, request.path);
         implied.cloned().unwrap_or_default()
+    }
+
+    fn is_evaluated_text(&self, path: &[u8]) -> bool {
+        self.evaluated_texts.iter().any(|it| it.as_bytes() == path)
     }
 
     fn follows_imports_on_request(&self) -> bool {

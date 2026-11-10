@@ -1,0 +1,17 @@
+# A LOSS STANDS HERE. Two objects are created below the literal and only one of them (L1) takes `_body`. Both created layouts are written of `this`, and the lone read is built as written: one operation needs a place that every receiver agrees on. With the one creation alone it is a GetSlotOrUndefined.
+# So a file that creates another object below a literal changes the members of the literal, as an heir in another file changes the methods of a class; there the read stays typed.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 cycle
+# CHECK-NEXT: parameter 0 expected=L1|L2 declared
+# RUN(GETTER): walk f1 mechanisms=all
+# GETTER: = PropGet v0 key="_body"
+# -- source: this-of-a-member-written-in-a-literal-with-two-creations-below-of-which-one-takes-the-name.js
+# const reply = { get body() { return this._body; }, set body(value) { this._body = value; } };
+# globalThis.kept = reply;
+# const made = Object.create(reply);
+# made.body = 1;
+# const other = Object.create(reply);
+# other.tag = 1;
+# globalThis.keptToo = other;
+# console.log(made.body);
+# -- end of source

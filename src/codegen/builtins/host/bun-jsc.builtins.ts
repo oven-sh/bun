@@ -90,7 +90,7 @@ const functions = {
     throws: true,
     uses: { bytes: [b.readsContents()] },
     reads: ["TypedArrayStorage", "TypedArrayElements", ...externalState],
-    writes: externalState,
+    writes: ["TypedArrayStorage", ...externalState],
     implementation: b.generic,
   },
   drainMicrotasks: { returns: b.undefined, capability: "js", throws: true, implementation: b.generic },

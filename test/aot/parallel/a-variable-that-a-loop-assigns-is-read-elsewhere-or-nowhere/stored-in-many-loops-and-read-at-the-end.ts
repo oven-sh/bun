@@ -1,0 +1,3 @@
+const n = (value: number) => Number(process.argv[8] ?? value);
+function run(limit: number) { let last = 0; for (let a = 0; a < limit; a++) last = 1; for (let b = 0; b < limit - 1; b++) last = 2; for (let c = 0; c < limit - 2; c++) last = 3; for (let d = 0; d < limit - 3; d++) last = 4; for (let e = 0; e < limit - 4; e++) last = 5; for (let f = 0; f < limit - 5; f++) last = 6; for (let g = 0; g < limit - 6; g++) last = 7; for (let h = 0; h < limit - 7; h++) last = 8; for (let i = 0; i < limit - 8; i++) last = 9; for (let j = 0; j < limit - 9; j++) last = 10; return last; }
+console.log(run(n(0)), run(n(1)), run(n(4)), run(n(9)), run(n(12)));

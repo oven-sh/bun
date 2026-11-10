@@ -1,0 +1,24 @@
+# const whole = (function () { return this; })(); Bun.inspect(whole)
+# The `this` of a sloppy function that is called without a receiver is the global object. No operation spells it, so no finding of the body waits for the word that flow
+# has brought it to a use. The formatter is native code and walks whatever the global object leads to: where it is handed a built-in, that built-in is lost, however it came.
+# RUN: link lookups
+# CHECK: lookup let-go GlobalThis
+
+module m0 path="main.cjs" displayPath="main.cjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Builtin builtin=Bun
+    v3 = PropGet v2 key="inspect"
+    v4 = Convert v3 declared={type=builtin(BunInspect) flags=[IsExpected]}
+    v5 = Call v4, v2, v1 calleeKey="inspect"
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0
+    Return v1
+}

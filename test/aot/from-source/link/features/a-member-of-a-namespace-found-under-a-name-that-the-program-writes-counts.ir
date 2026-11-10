@@ -6,6 +6,6 @@
 # -- end of source
 # OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
 # RUN: features
-# CHECK: by BunColor named
+# CHECK: by BunColor found-by-name
 # RUN(NEVER): features
 # NEVER-NOT: by BunColor named-at-run-time

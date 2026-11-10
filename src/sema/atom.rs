@@ -739,7 +739,7 @@ impl<'s> InternerPerThread<'s> {
 
     /// The calling thread's interner.
     #[inline]
-    fn own(&self) -> &Interner<'s> {
+    pub fn own(&self) -> &Interner<'s> {
         let (owner_number, at) = OWN.get();
         match self.all.get(at) {
             Some(own) if owner_number == self.number => own,

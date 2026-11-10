@@ -16,7 +16,7 @@
 # The functions are in the hands of code that nobody has seen, so anything may be stored under `prototype` of each. Each is the one function object of its function.
 # While a guard of the class holds, what `new` makes stands below the object that the class table has registered. The allocation names it as that of a class does, nothing reads `prototype`, and nothing looks at the new cell to learn what stands above it.
 # f4 = keepsDog, f6 = keepsPoint, f8 = keepsTwoPoints, L0 = Dog, L1 = Point
-# The body of Dog begins with a call, so its allocation lists nothing and the guard of `prototype` is asked by itself. Where it has ended the turn begins again in the slow copy, which builds the construction without the guard.
+# The body of Dog begins with a call, so its allocation lists nothing and the guard of `prototype` is asked by itself. Where it has ended the turn begins again in the slow copy, which builds the construction without the guard and takes the sum, an int32 in the typed copy, in a box.
 # RUN(DOG): walk f4 mechanisms=all
 # DOG-LABEL: code f4:Body
 # DOG: BeginMemberGuards layout=L0
@@ -25,6 +25,7 @@
 # DOG-NEXT: Branch {{*}}notTaken [[ended]]()
 # DOG: [[made]]: {{*}} = NewObject layout=L0
 # DOG: [[ended]]() frequency=Rare isInLoop=true:
+# DOG-NEXT: = Box
 # DOG-NEXT: Jump
 # DOG-NOT: HasLayoutPrototype [[made]]
 # The front of the typed copy begins the guards of Dog for `total`. They begin once, so no turn begins them again.

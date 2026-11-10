@@ -1,0 +1,18 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# const list = [1, 2, 3];
+# list.push(id(-7));
+# function last(): number { return list[list.length - 1]!; }
+# print(last() < 0 ? "negative" : "at least nothing");
+# print("went on");
+# -- end of source
+# THE LIE: Link takes what the shell's `id` gives for undefined, so all that it sees go into the list are written integers that are not negative: int[0, 2147483647], and that is what it says of the result of last() too. The list holds -7. The read is asked for an int32 and says no more. The result is believed to lie in the range by whoever calls: so the door of the result asks for the range, and stops.
+# RUN: run-in-shell mechanisms=all
+# CHECK: negative
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UnseenCodeAnswersUndefined
+# LIE: the result of a call is not of the type that the compiler has proven of it.
+# LIE-NOT: went on
+# LIE: crashed

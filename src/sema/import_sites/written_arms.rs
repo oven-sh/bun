@@ -2,7 +2,9 @@ use crate::atom::Atom;
 use crate::bind::{Binding, BindingInitializer, Bound, SymbolId};
 use crate::fold::{Constant, Decisions, FoldedValue};
 use crate::hir::{BinOp, Branches, ExprId, ExprKind, File};
-use crate::import_sites::{ImportSite, ImportSiteKind, is_name_read_by_transpiler};
+use crate::import_sites::{
+    ImportSite, ImportSiteKind, is_linked_by_bundler, is_name_read_by_transpiler,
+};
 use smallvec::{SmallVec, smallvec};
 
 pub fn find_names_read_by_transpiler(
@@ -11,15 +13,27 @@ pub fn find_names_read_by_transpiler(
     decisions: &Decisions<'_>,
     site: &ImportSite,
 ) -> SmallVec<[Atom; 2]> {
-    let mut names = SmallVec::new();
     if site.specifier_node.is_none()
+        || !is_linked_by_bundler(hir, bound, site.kind)
         || !is_name_read_by_transpiler(hir, bound, decisions, site.kind)
     {
-        return names;
+        return SmallVec::new();
     }
-    let mut pending: SmallVec<[ExprId; 4]> = smallvec![site.specifier_node];
+    find_names_folded_by_transpiler(hir, decisions, site.specifier_node)
+}
+
+pub fn find_names_folded_by_transpiler(
+    hir: &File<'_>,
+    decisions: &Decisions<'_>,
+    name: ExprId,
+) -> SmallVec<[Atom; 2]> {
+    let mut names = SmallVec::new();
+    let mut pending: SmallVec<[ExprId; 4]> = smallvec![name];
     while let Some(expression) = pending.pop() {
         let expression = hir.skip_type_assertions(expression);
+        if decisions.is_dead_expr(expression) {
+            continue;
+        }
         if !decisions.is_constant_under_minify_syntax(hir, expression) {
             if let ExprKind::Cond { branches, .. } = hir[expression].kind {
                 let Branches { yes, no } = hir.branches(branches);

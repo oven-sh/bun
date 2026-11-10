@@ -12,6 +12,7 @@ use std::alloc::{Allocator, Global};
 use std::hash::Hasher;
 use std::hint::cold_path;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// rustc's hash, which `bun_collections::AutoContext` also uses. It suits the keys here, which are
@@ -188,11 +189,6 @@ impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
         }
     }
 
-    #[inline]
-    pub(crate) fn contains(&self, key: K) -> bool {
-        self.index_of(key).is_some()
-    }
-
     /// Returns `index_of(key)`, and true if this call added the key.
     #[inline]
     pub(crate) fn insert_full(&mut self, key: K) -> (usize, bool) {
@@ -276,6 +272,7 @@ impl PositionSet {
 pub enum List<'p, T> {
     Permanent(&'p [T]),
     Own(Vec<T>),
+    Shared(Arc<Vec<T>>),
     One(T),
 }
 
@@ -289,6 +286,10 @@ impl<T> std::ops::Deref for List<'_, T> {
                 cold_path();
                 own
             }
+            List::Shared(shared) => {
+                cold_path();
+                shared
+            }
             List::One(one) => std::slice::from_ref(one),
         }
     }
@@ -300,6 +301,7 @@ impl<T: Clone> List<'_, T> {
         match self {
             List::Permanent(borrowed) => borrowed.to_vec(),
             List::Own(own) => own,
+            List::Shared(shared) => Arc::unwrap_or_clone(shared),
             List::One(one) => vec![one],
         }
     }
@@ -325,6 +327,7 @@ impl<T: Clone> From<List<'_, T>> for Box<[T]> {
         match list {
             List::Permanent(borrowed) => borrowed.into(),
             List::Own(own) => own.into(),
+            List::Shared(shared) => shared.as_slice().into(),
             List::One(one) => Box::new([one]),
         }
     }

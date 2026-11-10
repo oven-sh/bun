@@ -113,6 +113,10 @@ impl<'s> Checker<'_, 's> {
         self.is_in_compile_build(file) && self.files.role(file) == FileRole::Inferred
     }
 
+    pub(in crate::check) fn is_out_of_sight_of_checked_files(&self, file: FileId) -> bool {
+        self.is_inferred_file(file) && !self.files.module(file).is_in_types_program
+    }
+
     pub(in crate::check) fn follows_untyped_variables(&self, file: FileId) -> bool {
         self.module_options(file).no_implicit_any || self.is_inferred_file(file)
     }

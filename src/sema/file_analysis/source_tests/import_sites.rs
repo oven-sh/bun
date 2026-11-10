@@ -156,6 +156,127 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (
+        "a.cjs",
+        r#"let aliased; function load() { try { aliased = require; aliased("a"); } catch {} } load();"#,
+        &["a"],
+    ),
+    ("a.cjs", r#"with (scope) { require("a"); }"#, &["a"]),
+    (
+        "a.cjs",
+        r#"function load(require) { with (scope) { require("a"); } }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"var aliased; aliased = require; aliased = other; aliased("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"for (let load of others) { load("a"); load = require; }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"for (var load in others) { load("a"); load = require; }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"for (let load; ; ) { load = require; load("a"); break; }"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"try { run(); } catch (load) { load("a"); load = require; }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"function take(load) { load("a"); load = require; } take(other);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("module"); let load = require; load = createRequire(__filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const get = () => createRequire(import.meta.url); get()("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function get() { return createRequire(import.meta.url); } get()("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let get = () => createRequire(import.meta.url); get = other; get()("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const get = async () => createRequire(import.meta.url); get()("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; function ask() { load ??= createRequire(import.meta.url); return load("a"); } ask();"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; const get = () => (load ??= createRequire(import.meta.url)); get()("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; try { load = createRequire(import.meta.url); } catch { load = undefined; } load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; try { load = createRequire(import.meta.url); } catch { load = other; } load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; load = createRequire(import.meta.url); [load] = others; load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; export let load; load = createRequire(import.meta.url); load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; load = createRequire(import.meta.url); eval(text); load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; let load; load = createRequire(elsewhere); load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = typeof createRequire === "function" ? createRequire(import.meta.url) : undefined; load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = c ? createRequire(import.meta.url) : other; load("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = c ? createRequire(import.meta.url) : null; load?.("a");"#,
+        &["a"],
+    ),
+    (
         "a.mts",
         r#"import { createRequire } from "node:module"; const load = createRequire(elsewhere); load("a");"#,
         &[],
@@ -690,6 +811,206 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"var url = given => given || elsewhere; var m = require("module"); var load = m.createRequire(url(x, y)); load("a");"#,
         &["module"],
     ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { const load = createRequire(url); return load("./a.json"); } read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const read = (url: string) => createRequire(url)("./a.json"); read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } read(import.meta.url); read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } function outer(url: string) { return read(url); } outer(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("module"); function read(file) { return createRequire(file)("./a.json"); } read(__filename);"#,
+        &["module", "./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; export function read(url: string) { return createRequire(url)("./a.json"); } read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, other: 1 }); read({ url: import.meta.url });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function h0(url: string) { return createRequire(url)("./a.json"); } function h1(url: string) { return h0(url); } function h2(url: string) { return h1(url); } function h3(url: string) { return h2(url); } function h4(url: string) { return h3(url); } h4(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string, n: number): unknown { return n ? read(url, n - 1) : createRequire(url)("./a.json"); } read(import.meta.url, 1);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function one(url: string): unknown { return two(url) ?? createRequire(url)("./a.json"); } function two(url: string): unknown { return one(url); } one(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } function between(url: string) { return read(url); } function label(p: { url: string }) { return between(p.url); } const LABEL = label({ url: import.meta.url }); export { between as b, label as a, LABEL as t };"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ url }: { url: string }) { return createRequire(url)("./a.json"); } read({ url: import.meta.url });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ at: { url } }: { at: { url: string } }) { return createRequire(url)("./a.json"); } read({ at: { url: import.meta.url } });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function left(url: string) { return read(url); } function right(url: string) { return read(url); } function read(url: string) { return createRequire(url)("./a.json"); } function top(url: string) { return [left(url), right(url)]; } top(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } read(import.meta.url); read(other);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { url = other; return createRequire(url)("./a.json"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } [import.meta.url].map(read);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string = other) { return createRequire(url)("./a.json"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } read(...list);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } "#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string): unknown { return read(url) ?? createRequire(url)("./a.json"); }"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } function outer(url: string) { return read(url); } outer(import.meta.url); outer(other);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { p.url = other; return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { change(p); return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string; set(): void }) { p.set(); return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, set: change });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url?: string }) { delete p.url; return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, ...other });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, ["url"]: other });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ get url() { return import.meta.url; } });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } const given = { url: import.meta.url }; read(given);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url }); read({ url: other });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ url = other }: { url?: string }) { return createRequire(url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ url }: { url: string }) { return createRequire(url)("./a.json"); } read(given);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.cjs"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.ts"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("a"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json?raw"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("pkg/a.json"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("../a.json"); } read(import.meta.url);"#,
+        &["../a.json"],
+    ),
 ];
 
 const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
@@ -1108,6 +1429,38 @@ const ASKED_OF_DATA_FILES: &[(&str, &str, &[(&str, &str)])] = &[
     ("a.cjs", r#"require(require("./c.json")[key]);"#, &[]),
 ];
 
+const ASKED_OF_OWN_EXPORTS: &[(&str, &[&str])] = &[
+    (
+        "const table = (exports.table = { a: './a' }); require(table[x]);",
+        &["table"],
+    ),
+    (
+        "const table = (module.exports.table = { a: './a' }); require(table[x]);",
+        &["table"],
+    ),
+    (
+        "const table = (module.exports = { a: './a' }); require(table[x]);",
+        &["exports"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); this.table.a = other; require(table[x]);",
+        &[],
+    ),
+    ("const table = { a: './a' }; require(table[x]);", &[]),
+    ("exports.table = { a: './a' }; require('./a');", &[]),
+];
+
+#[test]
+fn what_is_followed_through_the_exports_asks_who_else_touches_them() {
+    for &(text, expected) in ASKED_OF_OWN_EXPORTS {
+        analyzed("a.cjs", text, |s| {
+            let asked = s.analysis.asked_of_own_exports.iter();
+            let asked: Vec<&str> = asked.map(|&it| s.workspace.text(it)).collect();
+            assert_eq!(asked, expected, "{text}");
+        });
+    }
+}
+
 #[test]
 fn names_of_loads_ask_for_texts_of_other_files() {
     for &(path, text, expected) in ASKED_OF_DATA_FILES {
@@ -1176,6 +1529,52 @@ fn call_of_require_made_for_own_file_is_site() {
                 _ => None,
             });
             assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
+        });
+    }
+}
+
+#[test]
+fn require_made_of_handed_url_is_site_where_it_names_json_alone() {
+    let programs = [
+        (
+            r#"function read(url: string) { return createRequire(url)(name); } read(import.meta.url);"#,
+            0,
+        ),
+        (
+            r#"function read(url: string) { const load = createRequire(url); load(name); return load("./a.json"); } read(import.meta.url);"#,
+            1,
+        ),
+        (
+            r#"function read() { return createRequire(import.meta.url)(name); } read();"#,
+            1,
+        ),
+        (
+            r#"function read(url: string, names: string[]) { const load = createRequire(url); for (const name of names) load(name); } read(import.meta.url, ["./a.json", "../a.json"]);"#,
+            1,
+        ),
+        (
+            r#"function read(url: string, names: string[]) { const load = createRequire(url); for (const name of names) load(name); } read(import.meta.url, ["./a.json", "./a.cjs"]);"#,
+            0,
+        ),
+        (
+            r#"function read(url: string) { return createRequire(url)("./" + name + ".json"); } read(import.meta.url);"#,
+            0,
+        ),
+        (
+            r#"function read(url: string) { return createRequire(url)(flag ? "./a.json" : "./b.json"); } read(import.meta.url);"#,
+            1,
+        ),
+        (
+            r#"function read(url: string) { return createRequire(url)(flag ? "./a.json" : "./b.cjs"); } read(import.meta.url);"#,
+            0,
+        ),
+    ];
+    for (text, count) in programs {
+        let text = format!(r#"import {{ createRequire }} from "node:module"; {text}"#);
+        analyzed("a.mts", &text, |s| {
+            let sites = s.analysis.import_sites.iter();
+            let required = sites.filter(|site| matches!(site.kind, ImportSiteKind::Require(_)));
+            assert_eq!(required.count(), count, "{text}");
         });
     }
 }
@@ -1290,6 +1689,36 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
         "a.mts",
         r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("./a");"#,
         Some(None),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.ts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"process.getBuiltinModule("node:module").createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(join(fileURLToPath(new URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(join(fileURLToPath(new URL(".", import.meta.url), other), "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "./own.mjs"; createRequire(join(fileURLToPath(new URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        None,
     ),
 ];
 
@@ -1457,6 +1886,14 @@ const TARGET: Fold<'static> = Fold {
 
 const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     (
+        "const uses = { a: './a', quiet() {}, b: './b' }; for (const name in uses) if (typeof uses[name] === 'string') require(uses[name]);",
+        &["./a", "./b"],
+    ),
+    (
+        "let table = { a: './a' }; table ??= null; require(table.a);",
+        &["./a"],
+    ),
+    (
         "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
         &["./a/*.js"],
     ),
@@ -1589,12 +2026,176 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         &["./a.node", "./b.node"],
     ),
     (
-        "const table = { a: 1, b: 2 }; for (const name in table) require(name);",
-        &["a", "b"],
+        "var uses = { a(found) {}, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses = { a(found) {}, b: found => found }; for (const name of Object.keys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses; uses = { a(found) {}, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name of Object.getOwnPropertyNames(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name of Reflect.ownKeys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses = { a(found) {}, b: found => found }; var names = Object.keys(uses); for (const name of names) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const [name, use] of Object.entries(uses)) use(require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const pair of Object.entries(uses)) pair[1](require(`./${pair[0]}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; Object.entries(uses).forEach(([name, use]) => use(require(`./${name}.node`)));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses; function go() { for (const name of Object.keys(uses)) uses[name](require(`./${name}.node`)); } uses = { a(found) {} }; go(); uses = { b(found) {} }; go();",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name in uses) if (uses.hasOwnProperty(name)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name of Object?.keys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "if (x) { var uses = { a(found) {} }; } else { var uses = { b(found) {} }; } for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
     ),
     (
         "const table = { a: 1, b: 2 }; for (const name in table) require(`./${name}.node`);",
         &["./a.node", "./b.node"],
+    ),
+    (
+        "const table = { a: 1, b: 2 }; for (const name in table) require(name);",
+        &["a", "b"],
+    ),
+    (
+        "const uses = { a: 1 }; const names = Object.keys(uses); require(`./${names.length}.node`);",
+        &["./*.node", "./a.node", "./undefined.node"],
+    ),
+    (
+        "const table = (module.exports = { a: './a', b: './b' }); require(table[x]);",
+        &["./a", "./b"],
+    ),
+    (
+        "function load({ files }) { for (const file of files) require(file); } load({ files: ['./a', './b'] });",
+        &["./a", "./b"],
+    ),
+    (
+        "let table; x && (table = { a: './a' }); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const { plugins } = { plugins: ['./a', './b'] }; for (const plugin of plugins) require(plugin);",
+        &["./a", "./b"],
+    ),
+    (
+        "const found = [{ name: 'a', file: './a' }, { name: 'b', file: './b' }].find(it => it.name === x); require(found.file);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [x ? null : { name: './a' }, { name: './b' }].filter(it => it)) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [{ name: './a', tags: ['x'] }, { name: './b' }].filter(it => it.tags && it.tags.includes('x'))) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [{ name: './a', isOn: () => true }, { name: './b' }].filter(it => !it.isOn || it.isOn())) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [{ name: './a', on: 1 }, { name: './b' }].filter(it => it.hasOwnProperty('on'))) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "function isFirst() { return x; } for (const it of [{ name: './a', matches: isFirst }].filter(it => it.matches())) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "const isOn = it => it.on !== false; for (const it of [{ name: './a', on: x }].filter(it => isOn(it))) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "const known = name => name.length > 3; for (const it of [{ name: './a' }].filter(({ name }) => known(name))) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "let far; const uses = far = { a(found) {} }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node"],
+    ),
+    (
+        "const uses = { a() { uses.b = 1; } }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {} }; uses.b = found => found; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const found = [{ name: 'a', file: './a' }].find(it => { it.seen = true; return it.name === x; }); require(found.file);",
+        &["./a"],
+    ),
+    (
+        "var helper = (this && this.helper) || function () {}; const table = (exports.table = { a: './a' }); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); exports.load = function () { return arguments.length; }; (0, exports.load)(); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); if (!module.parent && process.argv.length > x) require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (module.exports = { a: './a' }); if (require.main === module) this.ran = exports.ran = true; require(table.a);",
+        &["./a"],
+    ),
+    (
+        "function load() {} class Walk {} exports.a = exports.b = void 0; exports.load = load; exports.Walk = Walk; exports.size = 1; const table = (exports.table = { a: './a' }); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); if (require.main === module) require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); exports.load = () => require(table.a);",
+        &["./a"],
+    ),
+    (
+        "let table = null; table ||= { a: './a' }; require(table.a);",
+        &["./a"],
+    ),
+    (
+        "function load(files = ['./a', './b']) { for (const file of files) require(file); } load();",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const [os, it] of [['one', { name: './a' }]].filter(([os]) => os !== x)) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "function load({ files, log }) { for (const file of files) log(require(file)); } load({ files: ['./a'], log: x });",
+        &["./a"],
     ),
     (
         "const uses = { a(found) { return found; }, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
@@ -1615,11 +2216,105 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
 ];
 
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "let table = { a: './a' }; function get() { return (table ??= null); } get().a = './c'; require(table.a);",
+    "let table = { x: { a: './a' } }; hand((table ||= {}).x); require(table.x.a);",
+    "const uses = { quiet() {} }; for (const name in uses) require(uses[name]);",
+    "const Reflect = other; const uses = { a(found) {}, b: found => found }; for (const name of Reflect.ownKeys(uses)) require(name);",
+    "var uses = { a(found) {}, b: found => found }; uses = other; for (const name in uses) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const name of Object.keys?.(uses)) require(name);",
+    "var names = ['a']; names = other; for (const name of names) require(name);",
+    "const uses = { a: {} }; for (const [name, use] of Object.entries(uses)) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const [name = other] of Object.entries(uses)) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const [...name] of Object.entries(uses)) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const [name] of other) require(name);",
+    "const uses = { a() { this[0] = other; } }; for (const pair of Object.entries(uses)) pair[1](require(pair[0]));",
+    "const uses = { a(found) {} }; uses.__defineGetter__('b', () => other); for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses.__defineSetter__('b', other); for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses.valueOf()['b'] = other; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses[other](); for (const name in uses) uses[name](require(name));",
+    "const uses = {}; uses.toLocaleString(); for (const name in uses) require(name);",
+    "const uses = { a(found) {} }; uses.valueOf``.b = other; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; const same = uses.valueOf``; same.b = other; for (const name in uses) uses[name](require(name));",
+    "var uses = { a(found) {} }; var uses = other; for (const name in uses) require(name);",
+    "const Object = other; const uses = { a(found) {} }; for (const name of Object?.keys(uses)) require(name);",
+    "module.exports.b = other; if (x) { var exports = { a(found) {} }; } else if (y) { var exports = { c(found) {} }; } for (const name in exports) exports[name](require(name));",
+    "module.exports.b = other; if (x) { var exports = { a(found) {} }; } for (const name in exports) exports[name](require(name));",
+    "function load(uses = other) { if (x) { var uses = { a(found) {} }; } for (const name in uses) uses[name](require(name)); }",
+    "var uses = { a(found) {} }; { function uses() {} uses.b = other; } for (const name in uses) uses[name](require(name));",
+    "function load() { if (x) { var uses = { a(found) {} }; } { function uses() {} uses.b = other; } for (const name in uses) uses[name](require(name)); }",
+    "if (x) { var uses = { a(found) {} }; } for (var uses = { b(found) {} } in {}); for (const name in uses) uses[name](require(name));",
+    "const laid = '__defineGetter__'; var uses; uses = { [laid](found) {} }; uses = { a(found) {} }; uses.__defineGetter__('b', () => other); for (const name of Object.keys(uses)) uses[name](require(name));",
+    "var uses; uses = { __defineSetter__(found) {} }; uses = { a(found) {} }; uses.__defineSetter__('b', () => {}); for (const name of Object.keys(uses)) require(name);",
+    "const uses = { a(found) {} }; Object.defineProperty(uses.valueOf``, 'b', { enumerable: true, value: other }); for (const name of Object.keys(uses)) uses[name](require(name));",
+    "var uses = { a(found) {} }; switch (x) { case 1: function uses() {} uses.b = other; } for (const name in uses) uses[name](require(name));",
+    "[{ a(found, code) { eval(code); } }].forEach(uses => { for (const name in uses) uses[name](require(name), x); });",
+    "const uses = module.exports = { a(found) {} }; module.exports.b = other; for (const name in uses) uses[name](require(name));",
+    "let far; const uses = far = { a(found) {} }; far.b = other; for (const name in uses) uses[name](require(name));",
+    "let uses; const far = uses = { a(found) {} }; far.b = other; for (const name in uses) uses[name](require(name));",
+    "const names = module.exports = ['a']; module.exports.push(other); for (const name of names) require(name);",
+    "const uses = [{ a(found) {} }].find(table => { table.b = other; return true; }); for (const name in uses) uses[name](require(name));",
+    "const { table: uses, table: far } = { table: { a(found) {} } }; far.b = other; for (const name in uses) uses[name](require(name));",
+    "function load({ table: uses, table: far }) { far.b = other; for (const name in uses) uses[name](require(name)); } load({ table: { a(found) {} } });",
+    "new Set([{ a(found) {} }]).forEach((uses, far) => { far.b = other; for (const name in uses) uses[name](require(name)); });",
+    "[{ a(found) {} }].forEach((far, index, all) => { far.b = other; const uses = all[0]; for (const name in uses) uses[name](require(name)); });",
+    "let later; const far = [{ a(found) {} }].find(uses => { later = () => { for (const name in uses) uses[name](require(name)); }; return true; }); far.b = other;",
+    "let later; const far = [{ a(found) {} }].filter(uses => { later = () => { for (const name in uses) uses[name](require(name)); }; return true; }); far[0].b = other;",
+    "for (const it of [{ name: 'a' }].filter(it => { it.name = other; return true; })) require(it.name);",
+    "const isOn = it => { it.name = other; return true; }; for (const it of [{ name: 'a' }].filter(it => isOn(it))) require(it.name);",
+    "function grow() { this.name = other; } for (const it of [{ name: 'a', grow }].filter(it => it.grow())) require(it.name);",
+    "for (const it of [{ name: 'a' }].filter(it => it)) { change(it); require(it.name); }",
+    "const kept = [{ name: 'a' }].filter(it => it); kept[0].name = other; for (const it of kept) require(it.name);",
+    "const uses = { a(found) {} }; Object.entries(uses).filter(pair => { pair[0] = other; return true; }).forEach(([name, use]) => use(require(name)));",
+    "for (const [name] of (x ? [] : Object.entries({ a: 1 })).filter(pair => { pair[0] = other; return true; })) require(name);",
+    "const uses = { a: require('./change') }; for (const pair of Object.entries(uses)) { pair[1](x); require(pair[0]); }",
+    "const { use } = require('./use'); for (const row of [['./a', use]]) row[1](require(row[0]));",
+    "const uses = { name: 'a', self: ({}).valueOf }; const again = uses.self(); again.name = other; require(uses.name);",
+    "const uses = { a(found) {} }; uses.b = other; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses[other] = found => found; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; x(uses.b = found => found); for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses.b = function () { this.c = other; }; for (const name in uses) uses[name](require(name));",
+    "const table = (exports.table = { a: './a' }); exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); change(exports); require(table.a);",
+    "const names = (exports.listed = ['a']); this.listed.push(other); for (const name of names) require(name);",
+    "const names = (exports.listed = ['a']); exports.grow = function () { this.listed.push(other); }; exports.grow(); for (const name of names) require(name);",
+    "const names = (exports.listed = ['a']); Object.defineProperty(exports, 'grow', { get() { return this.listed.push(other); } }); exports.grow; for (const name of names) require(name);",
+    "const table = (exports.table = { a: './a' }); this.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); change(this); require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.valueOf().table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = require('./change'); exports.change(); require(table.a);",
+    "const table = (exports.table = { a: './a' }); Object.defineProperty(exports, 'change', require('./descriptor')); require(table.a);",
+    "const table = (exports.table = { a: './a' }); arguments[0].table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); (() => arguments[0])().table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); require(__filename).table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = require('./change'); exports.change``; require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.__proto__ = require('./proto'); exports.other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); process.mainModule.exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); change(process); require(table.a);",
+    "const table = (exports.table = { a: './a' }); globalThis.process.mainModule.exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); function change() { eval(x); } require(table.a);",
+    "const table = (exports.table = { a: './a' }); module.children[0].exports.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); !change(module); require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = require('./change'); require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); Object.defineProperty(exports, 'change', { value: require('./change') }); require(table.a);",
+    "const table = (exports.table = { a: './a' }); class Walk { step() { this.table.a = other; } } exports.step = Walk.prototype.step; require(table.a);",
+    "const table = (exports.table = { a: './a' }); class Walk { static step() { this.table.a = other; } } exports.step = Walk.step; require(table.a);",
+    "const table = (exports.table = { a: './a' }); class Walk { [(this.table.a = other, 'k')]() {} } require(table.a);",
+    "let kept; const table = (exports.table = { a: './a' }); !(kept = module); kept.exports.table.a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); arguments[2].exports.a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); require(__filename).a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); require.main.exports.a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); process.mainModule.exports.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); require.main.exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); require.cache[x].exports.table.a = other; require(table.a);",
+    "const table = { entry: { path: './b' } }; export const { entry } = table; import(table.entry.path);",
+    "const table = { entry: { path: './b' } }; try { throw 0; } catch (entry) { var { entry } = table; entry.path = other; } import(table.entry.path);",
+    "const table = { entry: { path: './b' } }; function change({ entry }, more = 0) { var entry; entry.path = other; } change(table); import(table.entry.path);",
+    "let kept; const [...[first]] = (kept = [{ path: './b' }]); first.path = other; import(kept[0].path);",
     "const uses = { a() { this.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { (() => this)().b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { super.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a: other }; for (const name in uses) uses[name](require(name));",
-    "const uses = { a() { uses.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { eval(x); } }; for (const name in uses) uses[name](require(name));",
     "const table = { __proto__: more, a: 1 }; for (const name in table) require(name);",
     "const table = { a: 1, ...more }; for (const name in table) require(name);",
@@ -1648,16 +2343,35 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const table = { a: { b: './a' } }; for (const inner of Object.values(table)) change(inner); require(table.a.b);",
     "for (const name in table) require(name);",
     "for await (const name of ['./a']) require(name);",
-    "let name = './a'; while (c) name += 'b'; require(name);",
-    "let name = './a'; const grow = () => { name += 'b'; }; require(name);",
     "let name = './a'; name += name; require(name);",
     "let name = './a'; [name] = x; require(name);",
     "const load = id => require(id); load('./a'); hand(load);",
     "function find() { return find(); } require(find());",
     "async function find() { return './a'; } require(find());",
+    "export {}; const base = flag ? import.meta.url : 'file:///nowhere/'; import(new URL('./a.mjs', base).href);",
 ];
 
 const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
+    (
+        "let name = './a'; while (c) name += 'b'; require(name);",
+        &["./a*"],
+    ),
+    (
+        "let name = './a'; const grow = () => { name += 'b'; }; require(name);",
+        &["./a*"],
+    ),
+    (
+        "for (let name = './a', i = 0; i < 3; i++) { name += 'b'; require(name + '.js'); }",
+        &["./a*.js"],
+    ),
+    (
+        "for (let name = './a', i = 0; i < 3; i++, name += 'b') require(name + '.js');",
+        &["./a*.js"],
+    ),
+    (
+        "for (let name of ['./a', './c']) { name += 'b'; require(name + '.js'); }",
+        &["./a.js", "./ab.js", "./c.js", "./cb.js"],
+    ),
     (
         "const names = ['A']; names.forEach((name, index, all) => { all[index] = x; }); require(['./lib', names[0] + '.js'].join('/'));",
         &["./lib/*.js"],
@@ -2328,6 +3042,624 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
     }
     for &text in CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN {
         assert!(describe_paths_of_changed_files(text).is_empty(), "{text}");
+    }
+}
+
+const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; readFileSync(fileURLToPath(new URL('../a.txt', import.meta.url)), 'utf8');",
+        &["./../a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; fs.readFile(join(import.meta.dirname, 'b', 'a.txt'), done);",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFile } from 'node:fs/promises'; import { join } from 'node:path'; await readFile(join(import.meta.dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import * as fs from 'node:fs'; import { join } from 'node:path'; await fs.promises.readFile(join(import.meta.dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'); const path = require('path'); fs.createReadStream(path.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { openSync } from 'node:fs'; import { join } from 'node:path'; openSync(join(import.meta.dirname, 'a.txt')); openSync(join(import.meta.dirname, 'b.txt'), 'r');",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; const file = Bun.file(join(import.meta.dir, 'a.txt')); await file.text(); await Bun.file(join(import.meta.dir, 'b.json')).json();",
+        &["./a.txt", "./b.json"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(options) { return readFileSync(new URL('./a.txt', options.url)); } read({ url: import.meta.url });",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url); read(other);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL(flag ? './a.txt' : './b.txt', import.meta.url));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; const read = (base, name) => readFileSync(new URL(name, base)); read(import.meta.url, './b.txt'); read(import.meta.url, './a.txt');",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL(flag ? './a.txt' : name, import.meta.url));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; export function read(options = {}) { const base = options.base ?? import.meta.url; return readFileSync(new URL('./a.txt', base)); }",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(flag ? one : other);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; let file; if (flag) file = other; else file = join(import.meta.dirname, 'a.txt'); readFileSync(file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url); read(other ?? 'file:///nowhere/');",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', 'file:///nowhere/'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync('a.txt'); readFileSync('./a.txt'); readFileSync('/p/a.txt');",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; readFileSync(join(import.meta.dirname, name));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; readFileSync(join(process.cwd(), 'a.txt'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url).href);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; if (false) readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from './mine.js'; readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "export {}; function readFileSync() {} readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "export {}; other.readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(...all);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { openSync } from 'node:fs'; openSync(new URL('./a.txt', import.meta.url), 'w'); openSync(new URL('./a.txt', import.meta.url), 'r+'); openSync(new URL('./a.txt', import.meta.url), flags);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { existsSync, statSync } from 'node:fs'; existsSync(new URL('./a.txt', import.meta.url)); statSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./a.txt', import.meta.url), text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; Bun.file(join(import.meta.dir, 'a.txt')); await Bun.write(Bun.file(join(import.meta.dir, 'a.txt')), text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; await other.file(join(import.meta.dir, 'a.txt')).text();",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "export {}; await response.json(); await response.text();",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { openSync, constants } from 'node:fs'; openSync(new URL('./a.txt', import.meta.url), constants.O_RDONLY);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | fs.constants.O_CREAT);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDWR);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | flags);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 1));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; const constants = { O_RDONLY: 1 }; fs.openSync(new URL('./a.txt', import.meta.url), constants.O_RDONLY);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import os from 'node:os'; fs.openSync(new URL('./a.txt', import.meta.url), os.constants.O_RDONLY);",
+        &[],
+    ),
+];
+
+#[test]
+fn paths_from_its_own_folder_that_a_file_spells_to_calls_which_read_what_is_there() {
+    for &(name, text, paths) in PATHS_OF_FILES_READ {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let read = s.analysis.paths_of_files_read.iter();
+            let described: Vec<String> = read
+                .map(|&(_, path)| s.workspace.text(path).to_string())
+                .collect();
+            assert_eq!(described, paths, "{text}");
+            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
+                && s.analysis.asked_of_other_files.is_empty()
+                && s.analysis.asked_of_data_files.is_empty()
+                && s.analysis.asked_of_own_exports.is_empty();
+            assert!(lays_nothing_else, "{text}");
+        });
+    }
+}
+
+const FILES_READ_BESIDE_THE_FILE_THAT_CALLS: &[(&str, &[&str], &[&str])] = &[
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export const read = (options, base) => readFileSync(fileURLToPath(new URL('../a.txt', base)));",
+        &["read 1 ./../a.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./data.txt', base)); } export { read as t };",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; import path from 'node:path'; const NOTES = 'notes.json'; export function read(base) { const folder = path.dirname(fileURLToPath(base)); for (const found of [path.resolve(folder, NOTES), path.resolve(folder, '..', NOTES)]) { try { return readFileSync(found); } catch {} } }",
+        &["read 0 ./../notes.json", "read 0 ./notes.json"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); } read(import.meta.url);",
+        &["read 0 ./data.txt"],
+        &["read 0"],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; import path from 'node:path'; export function read(base) { return readFileSync(base ? path.join(import.meta.dirname, 'a.txt') : fileURLToPath(new URL('./b.txt', base))); }",
+        &["read 0 ./b.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export function read(base) { return readFileSync(fileURLToPath(base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export function read(base) { return readFileSync(fileURLToPath(base).slice(0, -1) + 'data.txt'); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL(base.slice(0, -1) + 'data.txt')); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export function read(base) { return readFileSync(fileURLToPath(base).replace(/[^/]$/, '') + 'data.txt'); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { base = other; return readFileSync(new URL('./data.txt', base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base, name) { return readFileSync(new URL(name, base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { arguments[0] = other; return readFileSync(new URL('./data.txt', base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./data.txt', base)); } read(import.meta.url);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(import.meta.url);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(1, import.meta.url);",
+        &[],
+        &["read 1"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(...list, import.meta.url);",
+        &[],
+        &[],
+    ),
+    (
+        "import * as lib from './lib.mjs'; lib.read(import.meta.url);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; if (false) read(import.meta.url);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(import.meta.dirname);",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(new URL('./data.txt', options.moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options = {}) { const base = options.base ?? import.meta.url; return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 base ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(new URL('./data.txt', options)); }",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(new URL(options.name, options.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(flag ? new URL('./a.txt', options.moduleUrl) : new URL('./b.txt', options)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ moduleUrl: import.meta.url });",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(1, { name: 'x', base: import.meta.url });",
+        &[],
+        &["read 1 base"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ [key]: import.meta.url }); read({ get base() { return import.meta.url; } }); read({ inner: { base: import.meta.url } });",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { options.url = other; return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { delete options.url; return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { Object.assign(options, { url: other }); return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; function change(o) { o.url = other; } export function read(options) { change(options); return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { options.url ??= other; return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { log(options.name); return readFileSync(new URL('./data.txt', options.url)); }",
+        &["read 0 url ./data.txt"],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, url: other });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, ...far });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, [key]: other });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, get url() { return other; } });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ ...far, url: other, url: import.meta.url, name: 'x' });",
+        &[],
+        &["read 0 url"],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { moduleUrl = other; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { const set = () => { moduleUrl = other; }; set(); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ [key]: moduleUrl }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ ...rest }) { return readFileSync(new URL('./data.txt', rest.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { log(moduleUrl); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(name, { moduleUrl: base }) { return readFileSync(new URL('./data.txt', base)); }",
+        &["read 1 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl = other }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ inner: { moduleUrl } }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ ...rest }) { return readFileSync(new URL('./data.txt', rest.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read([moduleUrl]) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(flag ? new URL('./a.txt', options.moduleUrl) : new URL('./b.txt', options.other)); }",
+        &["read 0 moduleUrl ./a.txt"],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ moduleUrl: import.meta.url, get early() { return 1; } });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ get early() { return 1; }, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ set early(value) {}, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ change() {}, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ __proto__: far, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ change: () => 1, moduleUrl: import.meta.url });",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { name, moduleUrl: base } = options; log(name); return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { log(options.name); const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { moduleUrl = other } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { [key]: moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { ...rest } = options; return readFileSync(new URL('./data.txt', rest.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { moduleUrl, ...rest } = options; log(rest); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { inner: { moduleUrl } } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { let { moduleUrl } = options; moduleUrl = other; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { options.moduleUrl = other; const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { change(options); const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { other: moduleUrl } = options; log(options.moduleUrl); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 other ./data.txt"],
+        &[],
+    ),
+];
+
+#[test]
+fn files_that_a_function_reads_beside_the_file_whose_url_it_is_handed() {
+    for &(text, read, handed) in FILES_READ_BESIDE_THE_FILE_THAT_CALLS {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
+            let name = |symbol| s.workspace.text(s.bound.symbol(symbol).name);
+            let mut described: Vec<String> = (s.analysis.files_read_beside_callers.iter())
+                .map(|it| {
+                    let path = s.workspace.text(it.path);
+                    let property = it.property.map(|it| format!("{} ", s.workspace.text(it)));
+                    let property = property.unwrap_or_default();
+                    format!("{} {} {property}{path}", name(it.function), it.place)
+                })
+                .collect();
+            described.sort();
+            assert_eq!(described, read, "{text}");
+            let described: Vec<String> = (s.analysis.own_urls_handed.iter())
+                .map(|it| {
+                    let property = it.property.map(|it| format!(" {}", s.workspace.text(it)));
+                    let property = property.unwrap_or_default();
+                    format!("{} {}{property}", name(it.function), it.place)
+                })
+                .collect();
+            assert_eq!(described, handed, "{text}");
+            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
+                && s.analysis.asked_of_other_files.is_empty()
+                && s.analysis.asked_of_data_files.is_empty()
+                && s.analysis.asked_of_own_exports.is_empty();
+            assert!(lays_nothing_else, "{text}");
+        });
     }
 }
 

@@ -1,4 +1,4 @@
-# neither loop writes a list, so the row stands in front of the outer loop, the inner loop is built once in the typed copy, and storage and length stand in front of the outer head
+# neither loop writes a list, so the row stands in front of the outer loop, the inner loop is built once in the typed copy, and storage and length stand in front of the outer head; whether the list holds fractions is asked there once as well, and both reads take the answer
 # f1 = sumsAgainAndAgain
 # -- source: list-tested-in-front-of-the-outer-loop-is-not-asked-again.ts
 # declare function sink(...values: unknown[]): void; // @ts-expect-error
@@ -10,6 +10,7 @@
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Double
 # CHECK-NOT: = HasArrayStorage
 # CHECK: = GetArrayStorage
+# CHECK-NEXT: [[kind]]: {{*}}= HasArrayStorage {{*}}arrayStorage=Double traits
 # CHECK-NOT: = HasArrayStorage
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = HasArrayStorage
@@ -19,5 +20,5 @@
 # CHECK-NOT: = HasArrayStorage
 # CHECK-NOT: = GetArrayStorage
 # CHECK-NOT: = GetArrayLength
-# CHECK: = GetArrayElement {{*}}level=Proven
+# CHECK: = GetArrayElement {{*}}, [[kind]] arrayStorage=Double level=Proven
 # CHECK: = GetArrayElement {{*}}level=Proven

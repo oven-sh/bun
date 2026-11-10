@@ -10,16 +10,5 @@
     "StringLastIndexOf",
     "EscapeUnescape",
     "URICoding"
-  ],
-  "keptToday": [
-    "StringLocaleCase",
-    "NumberPrecisionMethods",
-    "StringPadding",
-    "StringHTML",
-    "StringNormalize",
-    "StringWellFormed",
-    "StringRepeat",
-    "StringLastIndexOf",
-    "URICoding"
   ]
 }

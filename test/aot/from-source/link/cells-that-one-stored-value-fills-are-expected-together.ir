@@ -1,0 +1,41 @@
+# -- source: cells-that-one-stored-value-fills-are-expected-together.js
+# class Reply {
+#   constructor(start) { this.replyCode = start; this.replySent = false; }
+#   askHeader(name) { return name.length + this.replyCode; }
+# }
+# class Other {
+#   constructor(start) { this.otherMark = start; }
+# }
+# const asking = {
+#   get status() { return this.inner.replyCode; },
+#   ask(name) { return this.inner.askHeader(name); },
+# };
+# const silent = { tag: 1 };
+# function wrap(inner) {
+#   const first = Object.create(asking);
+#   const second = Object.create(silent);
+#   first.inner = second.inner = inner;
+#   first.other = second;
+#   return first;
+# }
+# const listeners = {};
+# function on(name, listener) { listeners[name] = listener; }
+# function emit(name, value) { return listeners[name](value); }
+# on("reply", inner => { const made = wrap(inner); return made.status + made.ask("abc") + made.other.tag; });
+# on("other", other => other.otherMark);
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += emit("reply", new Reply(i)) + emit("other", new Other(i));
+# print(sum);
+# -- end of source
+# One value is stored into two cells; names are asked of one of them alone.
+# RUN(HELD): link held fields mechanisms=all
+# HELD: field L5.0 "inner" appended proven=L0
+# HELD: field L6.0 "inner" appended proven=L0
+# RUN(COUNTS): link held counts mechanisms=all
+# COUNTS: counts cells of fields expected by the names asked of what lies in them | 2
+# RUN(PROVING): link fields mechanisms=all
+# PROVING-NOT: "inner" appended proven=L
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 34
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 34

@@ -841,7 +841,7 @@ impl Checker<'_, '_> {
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
         let (mut names, mut states) = (OrderedSet::default(), SmallVec::<[u8; 4]>::new());
         // 1 for an instance member, 2 for a static member.
-        let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
+        let mut private_names: FxHashMap<Atom, u8> = FxHashMap::default();
         for m in members.iter() {
             let member = &hir[m];
             let is_static = member.flags.contains(Flags::STATIC);
@@ -900,14 +900,10 @@ impl Checker<'_, '_> {
                 }
             }
             if check_private_names && let (Some(name), PropKey::Private(_)) = (name, member.key) {
-                let at = private_names.iter().position(|it| it.0 == name);
-                let at = at.unwrap_or_else(|| {
-                    private_names.push((name, 0));
-                    private_names.len() - 1
-                });
-                let before = private_names[at].1;
-                private_names[at].1 |= if is_static { 2 } else { 1 };
-                if before != 3 && private_names[at].1 == 3 {
+                let sides = private_names.entry(name).or_insert(0);
+                let before = *sides;
+                *sides |= if is_static { 2 } else { 1 };
+                if before != 3 && *sides == 3 {
                     let class = DiagnosticClass::EarlyError;
                     self.report_duplicate_member_errors(file, members, name, None, 2804, class);
                 }

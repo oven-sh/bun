@@ -21,3 +21,10 @@
 # CHECK-NEXT: a0 9
 # CHECK-NEXT: 4096 a0 0 0
 # CHECK-NEXT: exited with 0
+# RUN(EFFECTS): run-in-shell testing=CheckEffectsAtRunTime
+# EFFECTS: 0 4096 a0 b0 b4094
+# EFFECTS-NEXT: 7 7 true true 4094
+# EFFECTS-NEXT: true undefined 4095 b0
+# EFFECTS-NEXT: a0 9
+# EFFECTS-NEXT: 4096 a0 0 0
+# EFFECTS-NEXT: exited with 0

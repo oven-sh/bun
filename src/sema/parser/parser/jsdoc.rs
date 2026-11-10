@@ -248,6 +248,22 @@ fn can_have_param_tag(mut comment: &[u8]) -> bool {
     false
 }
 
+/// What `is_read_by_checker` answers if every `@` of `text` with the name of a tag behind it is a tag of a JSDoc
+/// comment.
+pub(crate) fn guess_is_read_by_checker(text: &[u8]) -> bool {
+    if !strings::contains(text, b"arguments") && !strings::contains(text, b"\\u") {
+        return false;
+    }
+    let mut rest = text;
+    while let Some(at) = strings::index_of_char(rest, b'@') {
+        rest = &rest[at as usize + 1..];
+        if rest.starts_with(b"param") || rest.starts_with(b"arg") {
+            return true;
+        }
+    }
+    false
+}
+
 /// True if the JSDoc comments of a TypeScript file have to be read. `comments` is every comment in `text`.
 ///
 /// `checkUnmatchedJSDocParameters` reports nothing in TypeScript, but for a function with a `@param` tag

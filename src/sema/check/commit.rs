@@ -134,13 +134,16 @@ pub(super) struct Commits<'s> {
     /// `tables_written_immediately`
     immediate_tables: u128,
     /// `Program::commit_totals`
-    totals: [AtomicU64; 7],
+    totals: [AtomicU64; 10],
     /// `Program::count_entries_found`
     counts_entries_found: AtomicBool,
 }
 
 /// A commit that has waited for the mutex for longer than this has slept. `Mutex::lock` spins for a few microseconds.
 const LONGEST_WAIT_AWAKE: Duration = Duration::from_micros(50);
+
+/// A commit that has held the mutex for longer than this counts as a long hold in `Program::commit_totals`.
+const LONGEST_SHORT_HOLD: Duration = Duration::from_millis(1);
 
 /// What `Commits::prepare` has made of a task's `Log`.
 pub(super) struct PreparedLog {
@@ -221,6 +224,12 @@ impl<'s> Commits<'s> {
         if waited > LONGEST_WAIT_AWAKE {
             self.totals[6].fetch_add(1, Ordering::Relaxed);
         }
+        if held > LONGEST_SHORT_HOLD {
+            let more = [1, held.as_nanos() as u64, stored[0] + stored[1]];
+            for (total, more) in self.totals[7..].iter().zip(more) {
+                total.fetch_add(more, Ordering::Relaxed);
+            }
+        }
         let (waited, held) = (waited.as_nanos() as u64, held.as_nanos() as u64);
         let more = [1, stored[0] + stored[1], held, waited, stored[1]];
         for (total, more) in self.totals.iter().zip(more) {
@@ -229,7 +238,7 @@ impl<'s> Commits<'s> {
     }
 
     /// `Program::commit_totals`
-    pub(super) fn totals(&self) -> [u64; 7] {
+    pub(super) fn totals(&self) -> [u64; 10] {
         (self.totals.each_ref()).map(|total| total.load(Ordering::Relaxed))
     }
 
@@ -591,9 +600,10 @@ pub(super) enum NotShared {
 impl<'s> Program<'s> {
     /// So far: commits, the entries that they stored, the nanoseconds that all tasks together held the mutex of
     /// `Checker::commit` and waited for it, how many of the entries are under nodes and symbols, and how many of those a
-    /// task other than the one that stored them has found (`count_entries_found`), and how many of the commits slept
-    /// in front of the mutex.
-    pub fn commit_totals(&self) -> [u64; 7] {
+    /// task other than the one that stored them has found (`count_entries_found`), how many of the commits slept
+    /// in front of the mutex, and of the commits that held it for longer than a millisecond their number, their
+    /// nanoseconds and the entries that they stored.
+    pub fn commit_totals(&self) -> [u64; 10] {
         self.commits.totals()
     }
 

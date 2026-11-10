@@ -1,0 +1,21 @@
+# A literal descriptor with a getter, defined in sight on the prototype object of a constructor function, is a member as `get sent() {}` in a class body is. A read that passes the name enters the getter; it no longer lets the whole class go.
+# -- source: main.js
+# const kSent = Symbol("sent");
+# function Reply() { this[kSent] = false; }
+# Object.defineProperty(Reply.prototype, "sent", { get() { return this[kSent]; } });
+# function ask(reply) { return reply.sent; }
+# let count = 0;
+# for (let turn = 0; turn < 10; turn++) { const reply = new Reply(); count += ask(reply) ? 1 : 2; }
+# print(count);
+# -- end of source
+# RUN: link members layouts mechanisms=all
+# CHECK: on-prototype L0 "sent" getter=f
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# The number of `ask` is to be filled in by who lays the test.
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-NOT: PropGet {{*}}key="sent"
+# FORM: = AreMembersUnchanged conditions=[{layout=L0 key="sent"}]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 20
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 20

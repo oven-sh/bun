@@ -155,7 +155,12 @@ impl Resolver<'_, '_> {
             let id = id.filter(|&id| table::exists_on(id, input.platform));
             self.commonjs
                 .set(variable, id.map(|id| BuiltinPath { id, mutability }));
-            if has_direct_eval || uses_arguments {
+            let is_held_in_variable = is_stored
+                && matches!(
+                    variable,
+                    CommonJsVariable::Module | CommonJsVariable::Require
+                );
+            if has_direct_eval || uses_arguments || is_held_in_variable {
                 self.expose_commonjs_variable(variable);
             }
             self.exposes_own_module_object |= is_stored && variable != CommonJsVariable::Exports;
@@ -169,35 +174,46 @@ impl Resolver<'_, '_> {
 
     fn is_stored_with_module_exports(&self, target: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        let Parent::Expr(outer) = bound.parent_of_expr(target) else {
+        let plain_store = |store: ExprId| match hir[store].kind {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => Some((target, hir.skip_type_assertions(value))),
+            _ => None,
+        };
+        let names_module_exports = |name: ExprId| {
+            hir.member_key(name).is_some()
+                && matches!(self.state(name), ExprState::Builtin(value)
+                    if value.kind == HolderKind::Object && value.path.id == BuiltinId::ModuleObjectExports)
+        };
+        let Parent::Expr(own) = bound.parent_of_expr(target) else {
             return false;
         };
-        let ExprKind::Assign {
-            op: None,
-            target: stored,
-            value,
-        } = hir[outer].kind
-        else {
+        let Some((stored, value)) = plain_store(own) else {
             return false;
         };
-        let ExprKind::Assign {
-            op: None,
-            target: inner,
-            ..
-        } = hir[hir.skip_type_assertions(value)].kind
-        else {
+        if stored != target {
             return false;
+        }
+        let stands_outside =
+            plain_store(value).is_some_and(|(inner, _)| names_module_exports(inner));
+        let outermost = match bound.parent_of_expr(own) {
+            _ if stands_outside => own,
+            Parent::Expr(outer) => match plain_store(outer) {
+                Some((name, value)) if value == own && names_module_exports(name) => outer,
+                _ => return false,
+            },
+            _ => return false,
         };
-        let Parent::Stmt(statement) = bound.parent_of_expr(outer) else {
-            return false;
+        let statement = match bound.parent_of_expr(outermost) {
+            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+                statement
+            }
+            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()],
+            _ => return false,
         };
-        let names_module_exports = hir.member_key(inner).is_some()
-            && matches!(self.state(inner), ExprState::Builtin(value)
-                if value.kind == HolderKind::Object && value.path.id == BuiltinId::ModuleObjectExports);
-        stored == target
-            && names_module_exports
-            && matches!(hir[statement].kind, StmtKind::Expr(_))
-            && bound.parent_of_stmt(statement) == Parent::File
+        bound.parent_of_stmt(statement) == Parent::File
     }
 
     pub(super) fn classify_stores_to_exports(&mut self) {

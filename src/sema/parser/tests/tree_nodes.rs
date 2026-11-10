@@ -237,6 +237,7 @@ const GRAMMAR_EARLY_ERRORS: &[(&str, u32)] = &[
     ("function f() { switch (a) { default: default: } }", 1113),
     ("a?.b`t`;", 1358),
     ("new.x;", 17012),
+    ("function f() { new.t\\u0061rget; }", 17012),
 ];
 
 fn parsed(path: &str, text: &str, test: impl for<'s> FnOnce(&Workspace<'s>, &File<'s>) + Send) {

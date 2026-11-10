@@ -2,6 +2,7 @@
 //! import resolves to, which declarations in different files merge into one symbol, what an alias
 //! resolves to.
 
+mod aliases_in_progress;
 mod ambient_patterns;
 mod code_barrels;
 mod code_file;
@@ -791,6 +792,7 @@ pub struct Files<'s> {
     /// The modules with one of `ModuleSymbolLinks::export_collisions` in another file. Filled by
     /// `link`.
     pub modules_with_nested_export_collisions: &'s [Sym],
+    aliases_from_nested_export_collisions: &'s [(Sym, FileId)],
     /// Sorted by file and identifier. The runs for one identifier are in the order they began. Filled by `link`.
     failed_lookups: &'s [FailedLookup<'s>],
     /// The file order in which declarations of one symbol in several files are considered: it
@@ -906,10 +908,20 @@ pub struct Files<'s> {
     /// The global `Array` or `ReadonlyArray` declares a member whose name begins with a digit. Only
     /// then can `T[][0]` be anything but `T`.
     pub arrays_have_numeric_members: bool,
+    /// `note_types_that_program_leads_to`
+    leads_to_bun_types: bool,
     /// See `declarations_of_first_clone`.
     declarations_of_first_clone: ArenaHashMap<'s, Sym, usize>,
     /// What the content mappers' failures and responses add to `GetProgramDiagnostics`.
     pub content_mapper_errors: &'s content_mapper::Closed,
+}
+
+/// A package of declarations that a build names by itself where the project's `types` do not.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum TypesNamedByBuild {
+    Bun,
+    /// Bun's types refer to Node's, which refer to undici's.
+    Node,
 }
 
 /// `Files::global_type`
@@ -3573,9 +3585,7 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
 /// the result depends on the order in which a resolver is queried.
 struct AliasResolver<'a, 's> {
     files: &'a Files<'s>,
-    /// `typeResolutions` and `resolutionResults`: each alias in progress, and whether no cycle
-    /// through it has been found.
-    in_flight: std::cell::RefCell<Vec<(Sym, bool)>>,
+    in_flight: std::cell::RefCell<aliases_in_progress::AliasesInProgress>,
     /// How many of `in_flight`, from the first, were in progress when the stack ran out.
     out_of_stack: std::cell::Cell<usize>,
     /// The number of times an alias was read while in progress, or was rejected because the stack
@@ -6391,11 +6401,17 @@ impl<'s> Files<'s> {
         // `singleThreadedWorkGroup.fns`: the tasks that `filesParser.start` has queued, each with
         // the `depth` it was called with. The task that's queued last runs first. With several
         // threads tsgo runs them in any order.
+        // A root that a compile loads only because it may be evaluated is no text of the program's own. It begins where a file
+        // of a package does, so that what the program also loads has the depth that it has without this root.
+        let is_evaluated_text = |file: FileId| {
+            let name = all_found.files[file.idx()].path.pretty;
+            compile.is_some_and(|compile| compile.host.is_evaluated_text(name))
+        };
         let mut queued: Vec<(SubTask, u32)> = (starts[libs_end..roots_end].iter())
             .chain(&starts[..libs_end])
             .map(|&file| SubTask {
                 file,
-                increases_depth: false,
+                increases_depth: is_evaluated_text(file),
                 is_elided_on_depth: false,
                 package: None,
             })
@@ -7481,6 +7497,7 @@ impl<'s> Files<'s> {
             modules_resolved_at_merge: &[],
             records_module_links: false,
             modules_with_nested_export_collisions: &[],
+            aliases_from_nested_export_collisions: &[],
             failed_lookups: &[],
             parents_in_other_files: map_in(arena),
 
@@ -7496,6 +7513,7 @@ impl<'s> Files<'s> {
             components: Components::EMPTY,
             global_types: &[],
             arrays_have_numeric_members: false,
+            leads_to_bun_types: false,
             program_errors: session.keep(program_errors),
             content_mapper_errors: session.keep(closed_mapping),
             include_errors: session.keep(include_errors),
@@ -7708,19 +7726,23 @@ impl<'s> Files<'s> {
         bind_time: BindTime,
     ) -> (hir::File<'s>, Bound<'s>) {
         let _work = bun_core::current_work::working_on(bun_core::current_work::Step::Load, path);
+        let mut whole = None;
         if bind_time == BindTime::WhenReached
             && !is_lib
             && let Some(mut hir) = host.parse_top_level(arena, path, &text, atoms, options)
-            && hir.has_module_syntax
-            && let Some(specifiers) = bind::specifiers_of_closed_module(&hir)
         {
-            if !options.keeps_comments {
-                hir.comments = Default::default();
+            if hir.has_module_syntax
+                && let Some(specifiers) = bind::specifiers_of_closed_module(&hir)
+            {
+                if !options.keeps_comments {
+                    hir.comments = Default::default();
+                }
+                hir.text = text;
+                return (hir, Bound::unbound_in(arena, specifiers));
             }
-            hir.text = text;
-            return (hir, Bound::unbound_in(arena, specifiers));
+            whole = (hir.rare_syntax & hir::rare::LEFT_OUT == 0).then_some(hir);
         }
-        let mut hir = host.parse(arena, path, &text, atoms, options);
+        let mut hir = whole.unwrap_or_else(|| host.parse(arena, path, &text, atoms, options));
         if !options.keeps_comments {
             hir.comments = Default::default();
         }
@@ -10594,23 +10616,75 @@ impl<'s> Files<'s> {
 
     /// True if some file may be `is_brought`.
     pub fn brings_declarations(&self) -> bool {
-        self.options.type_root_of_last_resort.is_some() || self.options.names_bun_types_by_itself
+        self.options.type_root_of_last_resort.is_some() || self.names_types_that_nothing_leads_to()
+    }
+
+    fn names_types_that_nothing_leads_to(&self) -> bool {
+        self.options.names_bun_types_by_itself && !self.leads_to_bun_types
+    }
+
+    fn types_named_by_build(&self, file: FileId) -> Option<TypesNamedByBuild> {
+        let package = self.module(file).package_json_directory;
+        let is_named = |name: &[u8]| self.atoms.bytes(package).ends_with(name);
+        if package.is_none() {
+            None
+        } else if is_named(b"/@types/bun") || is_named(b"/bun-types") {
+            Some(TypesNamedByBuild::Bun)
+        } else if is_named(b"/@types/node") || is_named(b"/undici-types") {
+            Some(TypesNamedByBuild::Node)
+        } else {
+            None
+        }
+    }
+
+    /// TypeScript reads installed declarations that `types` do not name where its own program leads to them: from the
+    /// roots of the project by an import in any form or by a `/// <reference types>`, in a package's declarations too. They
+    /// are the project's own then. A build loads more than that: the source that a package runs, an entry point that the
+    /// project leaves out. And it resolves otherwise: of a package that offers its source to a build, and of a referenced
+    /// project, it reads the source where TypeScript reads the declarations. So the walk passes through the project's own
+    /// sources and through declarations, and through nothing else: a hole here costs a report, never a build.
+    pub fn note_types_that_program_leads_to(&mut self, is_root_of_project: &dyn Fn(&[u8]) -> bool) {
+        if !self.options.names_bun_types_by_itself {
+            return;
+        }
+        let is_read = |&file: &FileId| {
+            let module = self.module(file);
+            let is_of_project =
+                !module.is_from_external_library && module.redirect_for_resolution.is_none();
+            match module.role {
+                FileRole::TypesOnly => true,
+                FileRole::Checked => is_of_project,
+                FileRole::Inferred => is_of_project && self.options.allow_js,
+            }
+        };
+        let is_root = |&file: &FileId| is_root_of_project(self.module(file).file_name());
+        let file_ids = (0..self.modules.len()).map(|index| FileId(index as u32));
+        let mut pending: Vec<FileId> = file_ids.filter(is_root).filter(is_read).collect();
+        let mut is_reached = vec![false; self.modules.len()];
+        let mut leads_to_bun_types = false;
+        while let Some(file) = pending.pop() {
+            if self.types_named_by_build(file) == Some(TypesNamedByBuild::Bun) {
+                leads_to_bun_types = true;
+                break;
+            }
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(self.module(file).edges.iter().copied().filter(is_read));
+            }
+        }
+        self.leads_to_bun_types = leads_to_bun_types;
     }
 
     /// A file of the declarations that a build brings along where the project has not installed them
-    /// (`Options::type_root_of_last_resort`), or has not named them (`Options::names_bun_types_by_itself`).
+    /// (`Options::type_root_of_last_resort`), or has neither named them (`Options::names_bun_types_by_itself`) nor leads to
+    /// them.
     pub fn is_brought(&self, file: FileId) -> bool {
-        let package = self.module(file).package_json_directory;
-        if self.options.names_bun_types_by_itself && package.is_some() {
-            let is_named = |name: &[u8]| self.atoms.bytes(package).ends_with(name);
+        if self.names_types_that_nothing_leads_to() {
             let types = self.options.types.as_deref().unwrap_or_default();
             let names_node = types.iter().any(|name| name == b"node");
-            // Bun's types refer to Node's, which refer to undici's.
-            if is_named(b"/@types/bun")
-                || is_named(b"/bun-types")
-                || !names_node && (is_named(b"/@types/node") || is_named(b"/undici-types"))
-            {
-                return true;
+            match self.types_named_by_build(file) {
+                Some(TypesNamedByBuild::Bun) => return true,
+                Some(TypesNamedByBuild::Node) if !names_node => return true,
+                Some(TypesNamedByBuild::Node) | None => {}
             }
         }
         let Some(root) = &self.options.type_root_of_last_resort else {
@@ -10940,6 +11014,47 @@ impl<'s> Files<'s> {
         self.files_with_rejected_merges
             .extend(parts.map(|part| part.file));
         self.is_linked = true;
+        let aliases = self.find_aliases_from_nested_export_collisions();
+        self.aliases_from_nested_export_collisions = slice_in(&aliases, self.arena);
+    }
+
+    fn find_aliases_from_nested_export_collisions(&self) -> Vec<(Sym, FileId)> {
+        let nested = self.modules_with_nested_export_collisions;
+        let mut found = Vec::new();
+        if nested.is_empty() {
+            return found;
+        }
+        for &file in self.order.iter() {
+            let aliases = (self.module(file).bound.symbols).with_flags(SymFlags::ALIAS);
+            for &decl in aliases.flat_map(|symbol| symbol.decls.iter()) {
+                let reads_exports = match decl {
+                    Decl::ImportNamespace(_) => true,
+                    // `{ default as d }` is another syntax for the default import, except in a binding pattern.
+                    _ => (self.external_module_member_of(file, decl)).is_some_and(|it| {
+                        it.2 != known::default || matches!(decl, Decl::Require(_))
+                    }),
+                };
+                if reads_exports
+                    && let Some(module) = self.module_of_alias_declaration(file, decl)
+                    && nested.binary_search(&module).is_ok()
+                {
+                    found.push((module, file));
+                }
+            }
+        }
+        found.shared_sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// The files in which the target of an alias is looked up in `getExportsOfModule(module)`, either by
+    /// `getExternalModuleMember` or by `resolveESModuleSymbol` for `import * as ns`. `module` is one of
+    /// `modules_with_nested_export_collisions`.
+    pub fn files_with_alias_from_exports_of(&self, module: Sym) -> impl Iterator<Item = FileId> {
+        let aliases = self.aliases_from_nested_export_collisions;
+        let first = aliases.partition_point(|it| it.0 < module);
+        let of_module = aliases[first..].iter().take_while(move |it| it.0 == module);
+        of_module.map(|it| it.1)
     }
 
     /// Links each component as soon as the components it imports are published. Each component gets its own resolver
@@ -11843,15 +11958,13 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         // pushed since.
         let is_pushed = {
             let mut in_flight = self.in_flight.borrow_mut();
-            let start = in_flight.iter().position(|begun| begun.0 == sym);
+            let start = in_flight.place_of(sym);
             if let Some(start) = start {
-                for begun in &mut in_flight[start..] {
-                    begun.1 = false;
-                }
+                in_flight.note_cycle_from(start);
             }
             let is_pushed = start.is_none() && bun_core::StackCheck::init().is_safe_to_recurse();
             if is_pushed {
-                in_flight.push((sym, true));
+                in_flight.push(sym);
             } else if start.is_none() {
                 self.out_of_stack.set(in_flight.len());
             }
@@ -11885,13 +11998,13 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
             };
         }
         // `popTypeResolution`
-        let begun = self.in_flight.borrow_mut().pop();
+        let is_in_cycle = self.in_flight.borrow_mut().pop();
         let left = self.in_flight.borrow().len();
         if left < self.out_of_stack.get() {
             self.out_of_stack.set(left);
             links.ran_out_of_stack = true;
         }
-        if links.ran_out_of_stack || !begun.is_some_and(|begun| begun.1) {
+        if links.ran_out_of_stack || is_in_cycle {
             links.alias_target = None;
             links.is_circular = true;
         }
@@ -11968,7 +12081,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     }
 
     fn is_alias_in_progress(&self, sym: Sym) -> bool {
-        self.in_flight.borrow().iter().any(|begun| begun.0 == sym)
+        self.in_flight.borrow().place_of(sym).is_some()
     }
 
     fn has_resolved_symbol(&self, file: FileId, e: ExprId) -> bool {
@@ -11983,7 +12096,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     fn note_failed_lookup(&self, file: FileId, e: ExprId) {
         if let Some(buffer) = &self.buffer {
             let in_flight = self.in_flight.borrow();
-            let in_progress: SmallVec<[Sym; 4]> = in_flight.iter().map(|begun| begun.0).collect();
+            let in_progress: SmallVec<[Sym; 4]> = in_flight.aliases().iter().copied().collect();
             buffer.borrow_mut().failed_lookups.push(FailedLookup {
                 file,
                 identifier: e,

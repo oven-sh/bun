@@ -3517,7 +3517,10 @@ impl File<'_> {
         if self.kind == FileKind::Declaration {
             return true;
         }
-        if !self.has_ambient_nodes() || !self.ambient_or_type_ranges().contain(self.start(node)) {
+        if !self.has_ambient_nodes()
+            || self.ambient_ranges_hold_every_ambient_node()
+                && !self.ambient_or_type_ranges().contain(self.start(node))
+        {
             return false;
         }
         let mut is_modifier = false;
@@ -3529,6 +3532,30 @@ impl File<'_> {
             node = self.parent(node);
         }
         false
+    }
+
+    fn ambient_ranges_hold_every_ambient_node(&self) -> bool {
+        let cell = &self.lazy.cells.ambient_ranges_hold_every_ambient_node;
+        *cell.get_or_init(|| {
+            let ranges = self.ambient_or_type_ranges();
+            let lies_outside =
+                |flags: Flags, pos: u32| flags.contains(Flags::AMBIENT) && !ranges.contain(pos);
+            !self.params.iter().any(|it| lies_outside(it.flags, it.pos))
+                && !(self.type_params.iter()).any(|it| lies_outside(it.flags, it.start))
+                && !self.fns.iter().any(|it| lies_outside(it.flags, it.start))
+                && !self
+                    .classes
+                    .iter()
+                    .any(|it| lies_outside(it.flags, it.start))
+                && !self
+                    .var_decls
+                    .iter()
+                    .any(|it| lies_outside(it.flags, it.loc.pos))
+                && !self
+                    .modifiers
+                    .iter()
+                    .any(|it| lies_outside(it.kind.flag(), it.pos))
+        })
     }
 
     fn has_ambient_nodes(&self) -> bool {

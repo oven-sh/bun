@@ -11,5 +11,5 @@
 # FORM-LABEL: code f1:Body
 # FORM: StringBuilderBegin
 # FORM: StringBuilderToString
-# FORM: = NewArray
+# FORM-NOT: CallList
 # FORM: = NewArray

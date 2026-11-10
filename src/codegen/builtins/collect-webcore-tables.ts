@@ -76,6 +76,7 @@ export function prototypeBehindGlobalListsAllMembers(global: string): true | und
     `Bun::reifyStaticPropertyTable(vm, ${cppClass}::info(), ${cppClass}PrototypeTableValues, *this);`,
     putsTag,
     putsEntriesUnderIterator,
+    `Bun::WebStreams::installInspectCustom(vm, this, js${cppClass.slice(2)}Prototype_inspectCustom);`,
   ]);
   const linesOf = (part: string): string[] =>
     part

@@ -275,6 +275,9 @@ impl Checker<'_, '_> {
         {
             self.forget_nodes_of_leaf(previous);
         }
+        if self.task.file != Some(file) {
+            self.flow_memo.let_kept_walks_go();
+        }
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
@@ -426,9 +429,6 @@ impl Checker<'_, '_> {
         let semantic = semantic.into_iter();
         let mut semantic: Vec<Reported> =
             (semantic.filter_map(|d| self.settled(d, &mut directives))).collect();
-        for diagnostic in &mut semantic {
-            self.lay_subject_by_what_error_stands_at(diagnostic);
-        }
         let mut expected_errors = self.expected_errors(file);
         self.remove_expected_errors_in_dead_code(
             file,
@@ -2616,13 +2616,12 @@ impl Checker<'_, '_> {
         maybe_missing_await: bool,
         code: u32,
         args: &[Arg<'_>],
-    ) -> &mut Reported {
+    ) {
         let did_you_forget = self.new_diagnostic(at, 2773, &[]);
         let diagnostic = self.error_at(at, code, args);
         if maybe_missing_await {
             diagnostic.add_related_info(did_you_forget);
         }
-        diagnostic
     }
 
     /// `reportOperatorErrorUnless`
@@ -2833,10 +2832,7 @@ impl Checker<'_, '_> {
         let maybe_missing_await =
             awaited.is_some_and(|awaited| self.is_assignable(awaited, numeric));
         let at = self.span_of_parenthesized_expr(file, operand);
-        // The message names nothing. It is the type of the operand that it rests on.
-        let subject = self.subject_of_arguments(&[Arg::Type(ty)]);
-        self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[])
-            .subject = subject;
+        self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[]);
         false
     }
 
@@ -2994,11 +2990,7 @@ impl Checker<'_, '_> {
             }
             let (at, code, name) = c.object_possibly_null_error(file, node, error);
             let args: Vec<Arg> = name.iter().map(|name| Arg::Bytes(name)).collect();
-            let is_brought = c.is_expression_brought(file, node);
-            let diagnostic = c.error_at(at, code, &args);
-            if is_brought {
-                diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
-            }
+            c.error_at(at, code, &args);
         })
     }
 

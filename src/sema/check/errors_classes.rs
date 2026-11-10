@@ -7,7 +7,6 @@
 //! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration` and `checkConstructorDeclaration`
 //! in TypeScript 7.1's checker.go.
 
-use super::aot::DiagnosticSubject;
 use super::*;
 use crate::bind::MemberOwner;
 
@@ -88,11 +87,7 @@ impl<'p> Checker<'p, '_> {
                     .iter()
                     .all(|&returned| self.is_identical(returned, base));
                 if !all_the_same && let Some(at) = self.span_to_report_base_at(file, c) {
-                    let is_brought = self.is_expression_brought(file, class.extends);
-                    let diagnostic = self.error_at(at, 2510, &[]);
-                    if is_brought {
-                        diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
-                    }
+                    self.error_at(at, 2510, &[]);
                 }
             }
         }
@@ -415,12 +410,7 @@ impl<'p> Checker<'p, '_> {
         let at = self.span_of_overrider(file, member);
         if !is_abstract {
             let must = if member.param.is_some() { 4115 } else { 4114 };
-            let declared = self.value_declaration_of_prop(base_prop);
-            let is_brought = declared.is_some_and(|(of, _)| self.files().is_brought(of));
-            let diagnostic = self.error_at(at, code(must), &[Arg::Type(base)]);
-            if is_brought {
-                diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
-            }
+            self.error_at(at, code(must), &[Arg::Type(base)]);
         } else if member.flags.contains(Flags::ABSTRACT) {
             self.error_at(at, 4116, &[Arg::Type(base)]);
         }

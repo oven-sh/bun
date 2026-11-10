@@ -1,0 +1,18 @@
+# -- source: what-a-for-of-hands-to-a-sum-alone-is-read-as-a-number.ts
+# declare function sink(value: unknown): void;
+# function sum(list: number[]): number { let s = 0; for (const v of list) s += v; return s; }
+# function both(list: number[]): string { let s = 0, t = ""; for (const v of list) { s += v; t += String(v); } return s + t; }
+# sink(sum([1, 2, 3]) + both([4, 5]));
+# -- end of source
+# In the typed copy of the loop the step reads an element inside the length of a list that holds raw numbers. Its only reader adds it to a number, which takes undefined for NaN: so a hole is read as
+# NaN and the element is a number from the start, as it is where the same loop is written by index. It used to be a number or undefined, told apart and made a clean NaN in every turn.
+# Where the element has a second reader it stays what it was: String(v) of a hole is "undefined".
+# f1 = sum, f2 = both
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[element]]: {{*}} @Double = GetArrayElement {{*}}[keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK: = Add {{*}}, [[element]] form=Numbers
+# RUN(TWICE): walk f2 mechanisms=all
+# TWICE-LABEL: code f2:Body
+# TWICE-NOT: readsHoleAsNaN

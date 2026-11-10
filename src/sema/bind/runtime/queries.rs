@@ -125,13 +125,16 @@ impl<S: Storage> BoundIn<S> {
         {
             return false;
         }
+        let mut declared = self.runtime.declarations.declared_symbols.iter();
+        if declared
+            .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
+        {
+            return false;
+        }
         let stores = &references.stores[..];
         let first_store = stores.partition_point(|store| store.symbol < symbol);
-        let mut declared = self.runtime.declarations.declared_symbols.iter();
         let mut own_declarations = self.symbol(symbol).decls.iter();
-        declared
-            .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
-            || own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
+        own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
             || flags.intersects(other_ways)
             || has_bit(&references.eval_visible_symbols, symbol.idx())
             || (stores.get(first_store)).is_some_and(|store| store.symbol == symbol)
@@ -566,6 +569,17 @@ impl Bound<'_> {
 
     pub fn file_uses_arguments(&self) -> bool {
         self.runtime.file_uses_arguments
+    }
+
+    pub fn lets_made_requires_out_of_sight(&self, ask: impl FnOnce() -> bool) -> bool {
+        *self
+            .runtime
+            .lets_made_requires_out_of_sight
+            .get_or_init(ask)
+    }
+
+    pub fn stores(&self) -> &[SymbolStore] {
+        &self.runtime.references.stores[..]
     }
 
     pub fn may_require_get_members(&self, compute: impl FnOnce() -> bool) -> bool {

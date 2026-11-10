@@ -920,6 +920,25 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Union(keys) = self.data(index)
             && !self.is_boolean(index)
         {
+            let read_at = match access_node {
+                AccessNode::ElementAccess(file, e)
+                    if !access_flags.intersects(AccessFlags::WRITING | AccessFlags::CONTEXTUAL) =>
+                {
+                    Some((file, e))
+                }
+                _ => None,
+            };
+            if let Some((file, e)) = read_at
+                && let Some(declared) = self.types_of_properties_under_keys.get(&(holder, index))
+            {
+                let declared = std::sync::Arc::clone(declared);
+                let types: SmallVec<[TypeId; 8]> = declared
+                    .iter()
+                    .map(|&ty| self.flow_type_of_reference(file, e, ty))
+                    .collect();
+                return Some(self.union_with_alias(&types, alias));
+            }
+            let cycles_before = self.cycles;
             let mut types: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(keys.len());
             let mut was_missing_prop = false;
             for &key in keys.iter() {
@@ -943,6 +962,9 @@ impl<'p, 's> Checker<'p, 's> {
             if was_missing_prop {
                 return None;
             }
+            if read_at.is_some() && self.cycles == cycles_before {
+                self.keep_types_of_properties_under_keys(holder, index, &keys[..]);
+            }
             return Some(if access_flags.contains(AccessFlags::WRITING) {
                 self.intersection_with_alias(&types, alias)
             } else {
@@ -955,6 +977,36 @@ impl<'p, 's> Checker<'p, 's> {
             access_node,
             access_flags,
         )
+    }
+
+    fn keep_types_of_properties_under_keys(
+        &mut self,
+        holder: TypeId,
+        index: TypeId,
+        keys: &[TypeId],
+    ) {
+        let cycles_before = self.cycles;
+        let mut seen = crate::util::FxHashSet::default();
+        let mut declared = Vec::new();
+        for &key in keys {
+            let Some(name) = self.property_name_of_type(key) else {
+                return;
+            };
+            let Some((prop, mapper)) = self.get_property_of_type(holder, name) else {
+                return;
+            };
+            let ty = self.type_of_prop(prop, mapper);
+            if ty == TypeId::UNRESOLVED {
+                return;
+            }
+            if seen.insert(ty) {
+                declared.push(ty);
+            }
+        }
+        if self.cycles == cycles_before {
+            self.types_of_properties_under_keys
+                .insert((holder, index), declared.into());
+        }
     }
 
     /// The start of `getIndexedAccessTypeOrUndefined`. If the reduced `obj` has only a string index

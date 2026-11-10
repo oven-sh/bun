@@ -105,6 +105,17 @@ struct Use {
     is_self_reference: bool,
 }
 
+/// The result of `Checker::private_property_read`.
+enum PropertyRead {
+    /// The receiver's type didn't resolve.
+    Unresolved,
+    /// The name is that of no private member.
+    NotPrivate,
+    /// A private member, and this access only writes it: it isn't marked.
+    OnlyWritten,
+    Private(Sym),
+}
+
 impl Checker<'_, '_> {
     /// The end of `Resolve` with `isUse`: it has found `found` for the name at `pos` of `file`, looked up with
     /// `meaning`. Only the file's own declarations are marked, because no other file reports them.
@@ -727,6 +738,7 @@ impl Checker<'_, '_> {
 
     /// `markPropertyAsReferenced` for the property `name` of `receiver`, accessed in `file`. `at` is the `a.b` or `a[b]`
     /// that accesses it, if any. `from_this` is the assignment, for a property named in the pattern of `({ b } = this)`.
+    /// True if the name is that of no private member, which depends on `receiver` and `name` alone.
     pub(super) fn mark_property_as_referenced(
         &mut self,
         file: FileId,
@@ -734,18 +746,20 @@ impl Checker<'_, '_> {
         name: Atom,
         at: Option<ExprId>,
         from_this: Option<ExprId>,
-    ) {
+    ) -> bool {
         if !self.can_mark_properties_as_referenced(file) {
-            return;
+            return false;
         }
         let is_this_type = matches!(self.data(receiver), TypeData::ThisParam(_));
         let receiver = self.apparent_type(receiver);
-        let Some(symbol) = self.private_property_read(file, receiver, name, at) else {
-            return;
+        let symbol = match self.private_property_read(file, receiver, name, at) {
+            PropertyRead::Private(symbol) => symbol,
+            PropertyRead::NotPrivate => return true,
+            PropertyRead::Unresolved | PropertyRead::OnlyWritten => return false,
         };
         let options = self.module_options(symbol.file);
         if !(options.no_unused_locals || options.no_unused_parameters) {
-            return;
+            return false;
         }
         let files = self.files();
         if symbol.file != file {
@@ -753,7 +767,7 @@ impl Checker<'_, '_> {
             let is_in_time =
                 |visited| files.rank_of_file(visited) <= files.rank_of_file(symbol.file);
             if !self.task.file.is_some_and(is_in_time) {
-                return;
+                return false;
             }
             if self.p.reference_kinds.flags(symbol) == 0 {
                 self.p.properties_referenced_before.lock().insert(symbol);
@@ -771,9 +785,10 @@ impl Checker<'_, '_> {
             })
         {
             // A self-reference from inside any declaration of the member isn't a reference.
-            return;
+            return false;
         }
         self.property_referenced(symbol);
+        false
     }
 
     /// `symbolReferenceLinks.Get(symbol).referenceKinds |= SymbolFlagsAll`
@@ -821,20 +836,27 @@ impl Checker<'_, '_> {
         receiver: TypeId,
         name: Atom,
         at: Option<ExprId>,
-    ) -> Option<Sym> {
+    ) -> PropertyRead {
         // `createUnionOrIntersectionProperty`: a private property must exist in every member of a union. If all members
         // have the same property, the result is the first member's property. Otherwise there's no property, or a
         // synthesized one, and that one is marked.
         let mut found: Option<(&Prop, MapperId)> = None;
         for &part in self.parts(receiver) {
             let part = self.apparent_type(part);
-            let (mut prop, mut mapper) = self.prop_ref(part, name)?;
+            if part == TypeId::UNRESOLVED {
+                return PropertyRead::Unresolved;
+            }
+            let Some((mut prop, mut mapper)) = self.prop_ref(part, name) else {
+                return PropertyRead::NotPrivate;
+            };
             if let PropSource::Intersected(_, list) = &prop.source {
-                let first = list.first()?;
+                let Some(first) = list.first() else {
+                    return PropertyRead::NotPrivate;
+                };
                 if list.iter().any(|other| {
                     !self.is_same_property(first, MapperId::IDENTITY, other, MapperId::IDENTITY)
                 }) {
-                    return None;
+                    return PropertyRead::NotPrivate;
                 }
                 (prop, mapper) = (first, MapperId::IDENTITY);
             }
@@ -851,17 +873,20 @@ impl Checker<'_, '_> {
                     _ => false,
                 };
                 if !is_private {
-                    return None;
+                    return PropertyRead::NotPrivate;
                 }
                 found = Some((prop, mapper));
                 continue;
             };
             if !self.is_same_property(first.0, first.1, prop, mapper) {
-                return None;
+                return PropertyRead::NotPrivate;
             }
         }
-        let PropSource::Symbol(symbol) = found?.0.source else {
-            return None;
+        let Some((prop, _)) = found else {
+            return PropertyRead::NotPrivate;
+        };
+        let PropSource::Symbol(symbol) = prop.source else {
+            return PropertyRead::NotPrivate;
         };
         // A write-only access isn't a reference, unless the write calls a setter.
         if at.is_some_and(|e| self.bound(file).is_write_only_access(self.hir(file), e))
@@ -869,9 +894,9 @@ impl Checker<'_, '_> {
                 .flags_of_property(symbol)
                 .contains(SymFlags::SET_ACCESSOR)
         {
-            return None;
+            return PropertyRead::OnlyWritten;
         }
-        Some(symbol)
+        PropertyRead::Private(symbol)
     }
 
     /// True if `createUnionOrIntersectionProperty` treats the two as the same property: same declaration, same type.

@@ -2,7 +2,8 @@
 # function Point(x) { this.x = x; }
 # Point.prototype.size = function () { return this.x; };
 # let answers = "";
-# for (let turn = 0; turn < 8; turn++) {
+# const turns = JSON.parse("8");
+# for (let turn = 0; turn < turns; turn++) {
 #     if (turn === when) change(Point);
 #     const point = new Point(turn);
 #     answers += "," + point.size();

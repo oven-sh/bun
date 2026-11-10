@@ -883,9 +883,10 @@ pub struct Options {
     /// Class fields are emitted as in the source: the target supports them and no option overrides
     /// that.
     pub emit_standard_class_fields: bool,
-    /// A build leaves class fields where they are written whatever the target, so the two options above are on for it.
-    /// True where `tsc` would have them off: what it only reports of a field that is defined is not reported.
-    pub defines_class_fields_for_build_alone: bool,
+    /// The two options above as `tsc` has them. A build leaves class fields where they are written whatever the target, so it
+    /// turns both on. What `tsc` only reports of a field that is defined goes by these.
+    pub reports_define_for_class_fields: bool,
+    pub reports_standard_class_fields: bool,
     /// `GetIsolatedModules`: `isolatedModules`, or `verbatimModuleSyntax`.
     pub isolated_modules: bool,
     /// `isolatedModules` itself.
@@ -1273,6 +1274,8 @@ impl Options {
         let use_define = specified(b"useDefineForClassFields");
         options.use_define_for_class_fields = use_define.unwrap_or(has_class_fields);
         options.emit_standard_class_fields = use_define != Some(false) && has_class_fields;
+        options.reports_define_for_class_fields = options.use_define_for_class_fields;
+        options.reports_standard_class_fields = options.emit_standard_class_fields;
         options.isolated_modules_reported = flag(b"isolatedModules");
         options.verbatim_module_syntax = flag(b"verbatimModuleSyntax");
         options.isolated_modules =

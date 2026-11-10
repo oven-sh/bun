@@ -1,0 +1,34 @@
+# print({}); the export viewSource of bun:ffi, in a program that does not hold that module: the host laid what lies there.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="other.js" displayPath="other.js" body=f1
+module m2 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m1 fields=[{key="viewSource" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunFfi
+    v1 = PropGet v0 key="viewSource"
+    v2 = Builtin builtin=GlobalThis
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = PropGet v2 key="print" [isFreeName]
+    v6 = Call v5, -, v4 calleeName="print"
+    Return v1
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 module=m2 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

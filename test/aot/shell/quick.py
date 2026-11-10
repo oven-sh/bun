@@ -186,7 +186,7 @@ def run_program(program):
         return "NO IR: " + " | ".join(failed.said.strip().split("\n")[:2])[:200]
 
     build_env = {name[len("BUN_"):] if name.startswith("BUN_JSC_") else name: value for name, value in options.get("buildEnv", {}).items()}
-    words = ["check=validate-references", "threads=2", *words, *os.environ.get("WORDS", "").split()]
+    words = ["check=verify-each-stage", "threads=2", *words, *os.environ.get("WORDS", "").split()]
     try:
         entries = toolchain.compile_image(ir, image, words, cwd=cwd, env={**build_env, **os.environ})
     except toolchain.ToolFailed as failed:

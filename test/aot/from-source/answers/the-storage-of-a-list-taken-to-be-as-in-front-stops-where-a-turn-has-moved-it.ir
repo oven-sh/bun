@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const turns: number = JSON.parse("4");
+# function sum(list: number[], turns: number): number { let total = 0; for (let i = 0; i < turns; i++) { if (i === 2) { list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.push(9.5); list.fill(9.5); } total += list[i]!; } return total; }
+# const list = [1.5, 2.5, 3.5, 4.5];
+# print(sum(list, turns), list.length);
+# -- end of source
+# One turn pushes until the list has no room left and its elements move, and fills it. The pushes are written out: a loop that goes by the length would never end under the lie.
+# The lie, testing=StorageAndLengthsAreTakenToBeAsInFront: the turns of a loop are taken to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front. The last two turns read the elements where they lay: nothing has been collected since, and nothing is stored there.
+# Under testing=TestsEveryPosition (--aot-harden=ignore-told-ranges) and testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same records are built at the same places, and what was read in front is held against the cell in the turn: the process stops by name.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 23 16
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime
+# HELD: 23 16
+# HELD-NEXT: exited with 0
+# The lie as built: another answer, and nobody stops.
+# RUN(SILENT): run-in-shell mechanisms=all testing=StorageAndLengthsAreTakenToBeAsInFront
+# SILENT: 12 16
+# SILENT-NEXT: exited with 0
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,StorageAndLengthsAreTakenToBeAsInFront
+# POSITIONS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# POSITIONS: crashed with
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,StorageAndLengthsAreTakenToBeAsInFront
+# PROOFS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# PROOFS: crashed with

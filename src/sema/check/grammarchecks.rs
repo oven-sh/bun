@@ -12,6 +12,7 @@ use crate::bind::{FnOwner, MemberOwner};
 use crate::resolve::{ModuleKind, ScriptTarget};
 use crate::util::number_repeated;
 use smallvec::SmallVec;
+use std::collections::hash_map::Entry;
 
 // `DeclarationMeaning`
 const GET_ACCESSOR: u8 = 1;
@@ -938,8 +939,7 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         let mut has_proto_setter = false;
-        // The names so far, and the kinds of the properties that have each name.
-        let (mut seen, mut kinds) = (OrderedSet::default(), SmallVec::<[u8; 8]>::new());
+        let mut seen = crate::util::FxHashMap::<Atom, u8>::default();
         let text = &hir.text[..];
         for p in properties.iter() {
             let prop = &hir[p];
@@ -1023,12 +1023,13 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let (at, is_new) = seen.insert_full(effective_name);
-            if is_new {
-                kinds.push(current_kind);
-                continue;
-            }
-            let existing = &mut kinds[at];
+            let existing = match seen.entry(effective_name) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(current_kind);
+                    continue;
+                }
+                Entry::Occupied(occupied) => occupied.into_mut(),
+            };
             let name = hir.name(hir.node(p));
             if current_kind & *existing & METHOD != 0 {
                 let (start, end) = self.get_error_range_for_node(file, name);

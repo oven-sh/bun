@@ -451,7 +451,7 @@ impl Checker<'_, '_> {
                 AccessNode::Name(name),
             )
             .unwrap_or(TypeId::ERROR);
-        let ty = self.narrow_destructured_assignment(file, property.value, element_type);
+        let ty = self.narrow_destructured_assignment(file, property.value, None, element_type);
         self.check_destructuring_assignment(file, property.value, ty)
     }
 
@@ -557,7 +557,8 @@ impl Checker<'_, '_> {
                 if has_default_value {
                     assigned_type = self.type_with_ne_undefined(assigned_type);
                 }
-                let ty = self.narrow_destructured_assignment(file, element, assigned_type);
+                let index = Some(element_index);
+                let ty = self.narrow_destructured_assignment(file, element, index, assigned_type);
                 self.check_destructuring_assignment(file, element, ty)
             }
             _ => self.check_destructuring_assignment(file, element, element_type),

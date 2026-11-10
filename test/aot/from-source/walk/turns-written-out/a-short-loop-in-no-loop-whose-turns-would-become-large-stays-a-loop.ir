@@ -1,0 +1,24 @@
+# Eight turns that read two lists handed in: the text of a turn is short, but each read of a list out of sight becomes a test of its kind, a test of its length and a way out. Written out in a function of its own they were larger AND slower than the loop: it stays a loop.
+# Three such turns are written out as before, and so are eight inside another loop, where the text alone decides as it did.
+# -- source: main.js
+# function eight(a, b) { let sum = 0; for (let i = 0; i < 8; i++) sum += a[i] * b[i]; return sum; }
+# function three(a, b) { let sum = 0; for (let i = 0; i < 3; i++) sum += a[i] * b[i]; return sum; }
+# function eightInLoop(a, b, turns) { let sum = 0; for (let k = 0; k < turns; k++) { for (let i = 0; i < 8; i++) sum += a[i] * b[i]; } return sum; }
+# const a = [1, 2, 3, 4, 5, 6, 7, 8], b = [8, 7, 6, 5, 4, 3, 2, 1];
+# print(eight(a, b) + " " + three(a, b) + " " + eightInLoop(a, b, 2));
+# -- end of source
+# f1 = eight, f2 = three, f3 = eightInLoop
+# RUN(EIGHT): walk f1 mechanisms=all-Inlining
+# EIGHT-LABEL: code f1:Body
+# EIGHT: int[0, 8] @Int32) isInLoop=true isLoopHead=true
+# RUN(THREE): walk f2 mechanisms=all-Inlining
+# THREE-LABEL: code f2:Body
+# THREE-NOT: isLoopHead=true
+# RUN(AROUND): walk f3 mechanisms=all-Inlining
+# AROUND-LABEL: code f3:Body
+# AROUND-NOT: int[0, 8] @Int32) isInLoop=true isLoopHead=true
+# RUN(COUNT): compile ShortLoopsLeftAsLoopsForWhatTheyBecome mechanisms=all-Inlining
+# COUNT: statistic ShortLoopsLeftAsLoopsForWhatTheyBecome 2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 120 40 240
+# ANSWERS-NEXT: exited with 0

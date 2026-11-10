@@ -74,6 +74,68 @@ fn every_other_use_gets_at_the_entries() {
 }
 
 #[test]
+fn an_entry_that_is_handed_on_in_a_test_run_has_its_key_noted() {
+    const SCRIPT_OF_TEST_RUN: Setup = Setup {
+        runs_tests: true,
+        ..SCRIPT
+    };
+    let count_keys = |setup: Setup, source: &str| {
+        with_case(setup, source, |case| {
+            let resolved = &case.resolved;
+            let taken_out = resolved.keys_taken_out_of_module_cache().len();
+            (resolved.keys_of_entries_handed_on().len(), taken_out)
+        })
+    };
+    for (declared, table) in TABLES {
+        for (written, expected) in [
+            ("plugin(TABLE[key])", 1),
+            ("[TABLE[key]]", 1),
+            ("Object.defineProperty(TABLE[key], 'exports', plugin)", 1),
+            ("Object.defineProperties(TABLE[key], plugin)", 1),
+            ("Reflect.deleteProperty(TABLE[key], 'exports')", 1),
+            ("delete TABLE[key].exports", 1),
+            ("delete TABLE[key][plugin]", 1),
+            ("TABLE[key].__defineGetter__('exports', plugin)", 1),
+            ("const entry = TABLE[key]; plugin(entry)", 1),
+            ("const entry = TABLE[key]; delete entry.exports", 1),
+            ("const entry = TABLE[key]; const other = entry", 1),
+            ("const entry = TABLE[key]; plugin = () => entry", 1),
+            ("let entry = TABLE[key]; entry = plugin", 1),
+            ("const entry = TABLE[key]", 0),
+            ("const { exports } = TABLE[key]", 0),
+            ("const { ...rest } = TABLE[key]", 0),
+            (
+                "const entry = TABLE[key]; const { exports: { a } } = entry",
+                0,
+            ),
+            (
+                "const entry = TABLE[key]; entry ? entry.exports.a : plugin",
+                0,
+            ),
+            ("const entry = TABLE[key]; entry.exports = plugin", 0),
+            ("const entry = TABLE[key]; plugin = () => entry.loaded", 0),
+            ("TABLE[key].exports", 0),
+            ("TABLE[key]?.exports", 0),
+            ("TABLE[key].exports.member", 0),
+            ("TABLE[key].exports = plugin", 0),
+            ("TABLE[key].loaded", 0),
+            ("typeof TABLE[key]", 0),
+            ("!TABLE[key]", 0),
+            ("TABLE[key] === undefined", 0),
+            ("if (TABLE[key]) plugin()", 0),
+        ] {
+            let source = format!("{declared} {};", written.replace("TABLE", table));
+            assert_eq!(
+                count_keys(SCRIPT_OF_TEST_RUN, &source),
+                (expected, 0),
+                "{source}"
+            );
+            assert_eq!(count_keys(SCRIPT, &source), (0, 0), "{source}");
+        }
+    }
+}
+
+#[test]
 fn table_stored_in_a_variable_goes_out_of_sight() {
     for table in ["Module._cache", "Module._extensions"] {
         let source = format!(

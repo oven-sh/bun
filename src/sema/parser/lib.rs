@@ -25,8 +25,8 @@ use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
     COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches,
-    parse_for_compile, summarize, summarize_as, summarize_in, summarize_top_level, with_summary,
-    with_summary_in_place,
+    parse_for_compile, parse_for_compile_in, summarize, summarize_as, summarize_in,
+    summarize_top_level, with_summary, with_summary_in_place,
 };
 
 /// Why the parser rejected a text.
@@ -254,11 +254,29 @@ pub(crate) fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Rejected> {
+    let can_read_jsdoc =
+        options.reads_jsdoc && !options.is_javascript && !options.is_declaration_file;
+    // Whether the comments of a TypeScript file get read depends on all of its comments. The text says what it will
+    // most likely be, and the comments that the parse has found say whether that was right.
+    if can_read_jsdoc
+        && !options.skips_function_blocks
+        && parser::jsdoc::guess_is_read_by_checker(text)
+    {
+        scratch.reads_typescript_jsdoc = true;
+        let parsed = parser::run(text, options, Some(atoms), scratch);
+        scratch.reads_typescript_jsdoc = false;
+        if let Ok(parsed) = parsed {
+            if parser::jsdoc::is_read_by_checker(text, &parsed.file.comments) {
+                return Ok(parsed);
+            }
+            scratch.recycle(parsed.file);
+        }
+    }
     let parsed = parser::run(text, options, Some(atoms), scratch)?;
-    // Whether the comments of a TypeScript file get read depends on all of its comments, so that needs a second parse.
-    if !options.reads_jsdoc
-        || options.is_javascript
-        || options.is_declaration_file
+    // Nobody reads the comments of a tree of which something was left out.
+    let is_left_out = parsed.file.rare_syntax & bun_sema::hir::rare::LEFT_OUT != 0;
+    if !can_read_jsdoc
+        || is_left_out
         || !parser::jsdoc::is_read_by_checker(text, &parsed.file.comments)
     {
         return Ok(parsed);
@@ -297,6 +315,100 @@ pub fn appears_to_be_binary(text: &[u8], is_jsx: bool) -> bool {
         let mut diagnostics = parsed.file.diagnostics.iter();
         diagnostics.any(|it| it.code == FILE_APPEARS_TO_BE_BINARY)
     })
+}
+
+#[cfg(test)]
+mod entries_tests {
+    use super::parser::ENTRIES;
+    use super::{summarize, summarize_top_level};
+    use bun_sema::atom::Interner;
+    use bun_sema::hir::rare;
+    use bun_sema::session::Session;
+
+    /// How often the parser is entered for `text`, how many statements the tree has, and whether it says that something
+    /// was left out.
+    fn count_entries(text: &str, is_short: bool) -> (u32, usize, bool) {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let (path, text) = (&b"/project/a.ts"[..], text.as_bytes());
+        let before = ENTRIES.get();
+        let file = match is_short {
+            true => summarize_top_level(arena, path, None, text, &atoms, false, false, false),
+            false => Some(summarize(
+                arena, path, None, text, &atoms, false, false, false, false,
+            )),
+        };
+        let file = file.expect("the text has no errors");
+        let leaves_out = file.rare_syntax & rare::LEFT_OUT != 0;
+        (ENTRIES.get() - before, file.stmts.len(), leaves_out)
+    }
+
+    #[test]
+    fn the_short_form_enters_a_text_once_and_says_what_it_left_out() {
+        let head = "import a from './a';\n";
+        for (rest, statements, leaves_out) in [
+            (
+                "export const b = a;\nexport function f() { return b; }",
+                1,
+                true,
+            ),
+            ("export const c = () => import('./c');", 2, false),
+            (
+                "export function f() { return 1; }\nexport const c = 'import';",
+                3,
+                true,
+            ),
+            ("export * from './b';\nexport { c } from './c';", 3, false),
+        ] {
+            let text = format!("{head}{rest}");
+            assert_eq!(
+                count_entries(&text, true),
+                (1, statements, leaves_out),
+                "{rest}"
+            );
+        }
+        assert_eq!(
+            count_entries("const b = 2;\nexport const a = 1;", true),
+            (1, 2, false)
+        );
+    }
+
+    #[test]
+    fn a_short_tree_that_left_nothing_out_has_the_statements_of_the_whole_tree() {
+        for text in [
+            "export * from './a';\nexport * from './b';",
+            "import a from './a';\nexport const c = [a, () => import('./c')];",
+            "declare global { interface Held { a: number } }\nexport {};",
+        ] {
+            let (short, whole) = (count_entries(text, true), count_entries(text, false));
+            assert_eq!((short, whole.2), ((1, whole.1, false), false), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_comments_that_are_read_are_known_before_the_first_token() {
+        for (text, entries) in [
+            ("export const a = 1;", 1),
+            (
+                "/** @param a one */\nexport function f(a: number) { return a; }",
+                1,
+            ),
+            (
+                "/** @param a one */\nexport function f(a: number) { return arguments.length + a; }",
+                1,
+            ),
+            ("/** @augments A {@link B} */\nexport class C {}", 1),
+            (
+                "export const s = '@param';\nexport function f() { return arguments.length; }",
+                2,
+            ),
+        ] {
+            assert_eq!(count_entries(text, false).0, entries, "{text}");
+        }
+        let waits = "import './a';\n/** @param a one */\n\
+                     export function f(a: number) { return arguments.length + a; }";
+        assert_eq!(count_entries(waits, true), (1, 1, true));
+    }
 }
 
 #[cfg(test)]

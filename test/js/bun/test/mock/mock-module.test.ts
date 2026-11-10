@@ -1084,6 +1084,42 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
+  test("require preserves Jest ESM factories and mock.module default unwrapping", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "marked.test.ts": `
+          import { expect, jest, mock, test } from "bun:test";
+
+          test.each(["./mod", "node:os"])("Jest factory exports: %s", async specifier => {
+            const exports = { __esModule: true, default: "own default", named: () => "mocked" };
+            jest.doMock(specifier, () => exports);
+            expect(require(specifier)).toBe(exports);
+            const namespace = await import(specifier);
+            expect(namespace.default).toBe(exports.default);
+            expect(namespace.named).toBe(exports.named);
+          });
+
+          test.each(["./other.ts", "node:path"])("mock.module default: %s", specifier => {
+            const replacement = { named: "mocked" };
+            mock.module(specifier, () => ({ __esModule: true, default: replacement }));
+            expect(require(specifier)).toBe(replacement);
+          });
+
+          test.each(["./self.ts", "node:util"])("mock.module self default: %s", specifier => {
+            const exports = { __esModule: true, default: undefined, named: "mocked" };
+            exports.default = exports;
+            mock.module(specifier, () => exports);
+            expect(require(specifier)).toBe(exports);
+          });
+        `,
+        "other.ts": `export const named = "real";`,
+        "self.ts": `export const named = "real";`,
+      },
+      6,
+    );
+  });
+
   const report = {
     "report.ts": `export const title = "real report";`,
     "report.cjs": `exports.title = "real report";`,

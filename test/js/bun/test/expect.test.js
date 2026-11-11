@@ -20,6 +20,9 @@ const test_skipIf = (/** @type {boolean} */ cond) => (cond ? test.skip : test);
 /** Helper function which just type-casts to any */
 const ANY = (/** @type {any} */ arg) => arg;
 
+// The message of a failed toMatchObject(), as Jest and Bun write it and as Vitest writes it.
+const toMatchObjectFailed = /toMatchObject|match object/;
+
 describe("expect()", () => {
   if (typeof Bun !== "undefined") {
     test("()", () => {
@@ -3883,10 +3886,10 @@ describe("expect()", () => {
       expect([1, 2]).not.toMatchObject(expect.arrayContaining([3]));
       expect({ a: 1 }).toMatchObject(expect.anything());
       expect({ a: 1 }).toMatchObject(expect.any(Object));
-      expect(() => expect({ a: 1 }).toMatchObject(expect.objectContaining({ c: 1 }))).toThrow();
-      expect(() => expect({ a: 1 }).not.toMatchObject(expect.objectContaining({ a: 1 }))).toThrow();
-      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Array))).toThrow();
-      expect(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object))).toThrow();
+      expect(() => expect({ a: 1 }).toMatchObject(expect.objectContaining({ c: 1 }))).toThrow(toMatchObjectFailed);
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.objectContaining({ a: 1 }))).toThrow(toMatchObjectFailed);
+      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Array))).toThrow(toMatchObjectFailed);
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object))).toThrow(toMatchObjectFailed);
       // matchers inside the matcher
       expect({ a: { b: 1 }, c: "x" }).toMatchObject(expect.objectContaining({ a: { b: expect.any(Number) } }));
       expect({ a: { b: 1 }, c: "x" }).not.toMatchObject(expect.objectContaining({ a: { b: expect.any(String) } }));
@@ -3913,8 +3916,8 @@ describe("expect()", () => {
       expect(expect.objectContaining({ a: 1 })).toMatchObject({ a: 1, b: 2 });
       expect(expect.objectContaining({ a: 2 })).not.toMatchObject({ a: 1, b: 2 });
       expect(expect.arrayContaining([1])).toMatchObject([1, 2]);
-      expect(() => expect(expect.any(Array)).toMatchObject({ a: 1 })).toThrow();
-      expect(() => expect(expect.any(Object)).not.toMatchObject({ a: 1 })).toThrow();
+      expect(() => expect(expect.any(Array)).toMatchObject({ a: 1 })).toThrow(toMatchObjectFailed);
+      expect(() => expect(expect.any(Object)).not.toMatchObject({ a: 1 })).toThrow(toMatchObjectFailed);
       await expect(Promise.resolve(expect.any(Object))).resolves.toMatchObject({ a: 1 });
     });
 
@@ -3933,12 +3936,12 @@ describe("expect()", () => {
       if (no) {
         expect({ a: 1 }).not.toMatchObject(no());
         expect(no()).not.toMatchObject({});
-        expect(() => expect({ a: 1 }).toMatchObject(no())).toThrow();
+        expect(() => expect({ a: 1 }).toMatchObject(no())).toThrow(toMatchObjectFailed);
       }
       if (yes) {
         expect({ a: 1 }).toMatchObject(yes());
         expect(yes()).toMatchObject({ a: 1 });
-        expect(() => expect(yes()).not.toMatchObject({ a: 1 })).toThrow();
+        expect(() => expect(yes()).not.toMatchObject({ a: 1 })).toThrow(toMatchObjectFailed);
       }
     });
 
@@ -5620,15 +5623,15 @@ describe("expect()", () => {
         test.each(matchers)("%s is asked as the expected value", (_, matcher) => {
           expect({ n: 1 }).toMatchObject(matcher);
           expect({ n: 2 }).not.toMatchObject(matcher);
-          expect(() => expect({ n: 2 }).toMatchObject(matcher)).toThrow();
-          expect(() => expect({ n: 1 }).not.toMatchObject(matcher)).toThrow();
+          expect(() => expect({ n: 2 }).toMatchObject(matcher)).toThrow(toMatchObjectFailed);
+          expect(() => expect({ n: 1 }).not.toMatchObject(matcher)).toThrow(toMatchObjectFailed);
         });
 
         test.each(matchers)("%s is asked as the received value", (_, matcher) => {
           expect(matcher).toMatchObject({ n: 1 });
           expect(matcher).not.toMatchObject({ n: 2 });
-          expect(() => expect(matcher).toMatchObject({ n: 2 })).toThrow();
-          expect(() => expect(matcher).not.toMatchObject({ n: 1 })).toThrow();
+          expect(() => expect(matcher).toMatchObject({ n: 2 })).toThrow(toMatchObjectFailed);
+          expect(() => expect(matcher).not.toMatchObject({ n: 1 })).toThrow(toMatchObjectFailed);
         });
 
         test("it is called as a method, with the other value", () => {
@@ -5705,8 +5708,8 @@ describe("expect()", () => {
             Object.defineProperty({ k: { a: expect.any(Number) } }, "asymmetricMatch", { value: () => answer });
           expect(received).toMatchObject(says(true));
           expect(received).not.toMatchObject(says(false));
-          expect(() => expect(received).not.toMatchObject(says(true))).toThrow();
-          expect(() => expect(received).toMatchObject(says(false))).toThrow();
+          expect(() => expect(received).not.toMatchObject(says(true))).toThrow(toMatchObjectFailed);
+          expect(() => expect(received).toMatchObject(says(false))).toThrow(toMatchObjectFailed);
           // Jest and Vitest read it for the message of a failure.
           if (isBun) expect(read).toBe(0);
           // Under a key too: the matcher answers for its pair, and the assertion passes on the other key.
@@ -5733,7 +5736,8 @@ describe("expect()", () => {
             using dir = tempDir("expect-whole-matcher", { "rows.test.js": source });
             await using proc = Bun.spawn({
               cmd: [bunExe(), "test", "rows.test.js"],
-              env: bunEnv,
+              // A new snapshot is written only outside CI.
+              env: { ...bunEnv, CI: "false" },
               cwd: String(dir),
               stdout: "pipe",
               stderr: "pipe",
@@ -5830,6 +5834,8 @@ describe("expect()", () => {
               test("waits", async () => {
                 const matcher = expect(later({ a: 1, b: 2 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 }));
                 console.log("| returns a promise:", matcher instanceof Promise, await matcher);
+                const stored = expect({ a: 1 }).toMatchSnapshot(expect.toHaveLater("a"));
+                console.log("| property matchers return a promise:", stored instanceof Promise, await stored);
                 const rows = {
                   "resolvesTo says yes": () => expect(later({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 })),
                   "resolvesTo says no": () => expect(later({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 2 })),
@@ -5839,6 +5845,8 @@ describe("expect()", () => {
                   "an async matcher of expect.extend says yes": () => expect({ a: 1 }).toMatchObject(expect.toHaveLater("a")),
                   "an async matcher of expect.extend says no": () => expect({ a: 1 }).toMatchObject(expect.toHaveLater("b")),
                   "not, an async matcher of expect.extend says no": () => expect({ a: 1 }).not.toMatchObject(expect.toHaveLater("b")),
+                  "property matchers, an async matcher says no": () => expect({ a: 1 }).toMatchSnapshot(expect.toHaveLater("b")),
+                  "property matchers, resolvesTo says no": () => expect(later({ a: 1 })).toMatchSnapshot(expect.resolvesTo.objectContaining({ a: 2 })),
                 };
                 for (const [row, run] of Object.entries(rows)) console.log("| " + row + ":", await outcome(run));
               });
@@ -5846,6 +5854,7 @@ describe("expect()", () => {
             expect(result).toEqual({
               rows: [
                 "| returns a promise: true undefined",
+                "| property matchers return a promise: true undefined",
                 "| resolvesTo says yes: passes",
                 "| resolvesTo says no: fails",
                 "| not, resolvesTo says no: passes",
@@ -5854,6 +5863,8 @@ describe("expect()", () => {
                 "| an async matcher of expect.extend says yes: passes",
                 "| an async matcher of expect.extend says no: fails",
                 "| not, an async matcher of expect.extend says no: passes",
+                "| property matchers, an async matcher says no: fails",
+                "| property matchers, resolvesTo says no: fails",
               ],
               failed: [],
               exitCode: 0,

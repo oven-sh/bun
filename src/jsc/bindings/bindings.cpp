@@ -351,8 +351,7 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
     return false;
 }
 
-// Whether matchAsymmetricMatcher() asks `cell`. A Response, a URL and every other DOM wrapper has the cell type of these classes and is none of them.
-// Out of line: inlined, the eight addresses are loaded ahead of every comparison that could meet such a cell.
+// Whether matchAsymmetricMatcher() asks `cell`: other DOM wrappers share the cell type. Out of line to keep the eight addresses out of the callers' hot paths.
 static NEVER_INLINE bool isExpectMatcher(JSCell* cell)
 {
     using namespace Bun::Bindgen::Generated;
@@ -838,9 +837,7 @@ static ALWAYS_INLINE bool rootPairMayHaveAsymmetricMatcher(JSGlobalObject* globa
         // A matcher is not asked about itself: to Jest and Vitest the two values are identical.
         return value != pattern;
     }
-    // Any property or script that names `asymmetricMatch` refs this atom, so a single ref means no object has one.
-    // The first expect.toSatisfy() or expect.extend() matcher of the process is such a property: its prototype has the method.
-    // Under --aot the atom is static and has no count, so this never skips.
+    // Any property or script that names `asymmetricMatch` refs this atom, so a single ref means no object has the method.
     if (WebCore::builtinNames(globalObject->vm()).asymmetricMatchPublicName().impl()->hasOneRef())
         return false;
     return oneOfRootPairMayHaveAsymmetricMatchMethod(globalObject, value, pattern);
@@ -2552,9 +2549,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
-// A matcher answered for (value, pattern), so nothing compared their properties and nothing was recorded. Records what the key walk
-// records where all of it matches: the Expect matchers under the own enumerable string keys of the pattern that the value has too,
-// at any depth. Those are the keys that deepMerge() of jest-snapshot reads. Asks and compares nothing.
+// Records the Expect matchers under the own enumerable string keys of `pattern` that `value` has too, at any depth. Compares nothing.
 static void recordMatchersOfAnsweredPattern(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>>& visited, JSObject* value, JSObject* pattern)
 {
     VM& vm = globalObject->vm();
@@ -2589,8 +2584,7 @@ static void recordMatchersOfAnsweredPattern(JSGlobalObject* globalObject, ThrowS
     }
 }
 
-// For the two whole values of snapshot property matchers, when a matcher that is not an Expect matcher as the pattern said yes.
-// Returns false if it threw.
+// A matcher said yes for the two whole values of snapshot property matchers, so no key was compared or recorded. Returns false if this threw.
 static NEVER_INLINE bool recordMatchersOfAnsweredRootPair(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue value, JSValue pattern)
 {
     // An expect.not matcher turns the answer of a check that threw into a yes.
@@ -2610,8 +2604,7 @@ enum class SubsetPair : uint8_t {
     PrivateField,
 };
 
-// One (value, pattern) pair of the subset walk. With `enableAsymmetricMatchers` (toMatchObject(), snapshot property matchers and the
-// sample of expect.objectContaining(), not Bun.deepMatch()) a matcher on either side answers for the pair before anything of it is compared.
+// One (value, pattern) pair of the subset walk. With `enableAsymmetricMatchers`, a matcher on either side answers before anything is compared.
 template<bool enableAsymmetricMatchers, SubsetPair pair>
 static ALWAYS_INLINE bool subsetPairMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, bool isMatchingObjectContaining, JSValue value, JSValue pattern, JSObject* holder = nullptr, JSObject* patternHolder = nullptr, const Identifier* name = nullptr)
 {
@@ -2692,9 +2685,7 @@ static ALWAYS_INLINE bool subsetPairMatches(JSGlobalObject* globalObject, ThrowS
     return same;
 }
 
-/**
- * @brief `Bun.deepMatch(a, b)`
- */
+// `Bun.deepMatch(a, b)`
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,

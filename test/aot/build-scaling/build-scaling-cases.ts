@@ -128,6 +128,7 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<B
             ...(shape.isRefused ? [] : ["--explain=statistics"]),
             ...carrier,
             entry,
+            ...(shape.moreEntries?.(size) ?? []),
             "--outfile",
             executable,
           ],
@@ -187,6 +188,7 @@ export const buildScaling = (part: number, parts: number) =>
           const nothing = JSON.stringify([
             shape.write(0),
             shape.entry,
+            shape.moreEntries?.(0),
             shape.flags,
             shape.isBundledFirst,
             shape.isTestRun,

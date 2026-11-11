@@ -13,6 +13,8 @@ export type Shape = {
   size: number;
   /** The entry point. */
   entry: string;
+  /** The entry points that the build is given behind `entry`, by the size. */
+  moreEntries?: (size: number) => string[];
   /** `bun build --target=bun` makes one file of the program first, and that file is what is compiled. */
   isBundledFirst?: true;
   /** The build reports errors at every size, also at 0, and makes no executable. */
@@ -273,6 +275,34 @@ function recordsMadeInOrdersOfTheirOwn(size: number, names: string) {
   );
 }
 
+const numbered = (index: number) => String(index).padStart(5, "0");
+// Files some folders down that each name a Worker file beside them, by the name of its JavaScript file, in a function that starts a Worker from it, and
+// a main.js that imports them all. Where nothing is started, main.js takes a number from each file and nobody calls the function. The names are of one
+// length, as in what a bundler writes: two paths are told apart where they first differ, and at once where their lengths do.
+function filesThatEachNameAWorkerFile(count: number, extensionOfWorkers: "js" | "ts", isStarted: boolean) {
+  const folder = "packages/application/source/workers";
+  const taken = isStarted ? "start" : "value";
+  const files: Record<string, string> = {};
+  for (let index = 0; index < count; index++) {
+    files[`${folder}/w${numbered(index)}.${extensionOfWorkers}`] = `postMessage(${index});\n`;
+    files[`${folder}/p${numbered(index)}.js`] =
+      `export const value${index} = ${index};\n` +
+      `export const start${index} = () => new Worker(new URL("./w${numbered(index)}.js", import.meta.url));\n`;
+  }
+  files["main.js"] =
+    lines(count, index => `import { ${taken}${index} } from "./${folder}/p${numbered(index)}.js";`) +
+    `const all = [${upTo(count, index => `${taken}${index}`).join(", ")}];\n` +
+    (isStarted ? `if (process.argv.length > 9) all[0]();\n` : "") +
+    `console.log(all.length);\n`;
+  return files;
+}
+
+// A main.js that holds a start of a Worker for each of the files that `path` names from the folder of main.js.
+const fileThatStartsWorkers = (count: number, path: (index: number) => string) =>
+  `const all = [\n${lines(count, index => `  () => new Worker(new URL("./${path(index)}", import.meta.url)),`)}];\n` +
+  `if (process.argv.length > 9) all[0]();\n` +
+  `console.log(all.length);\n`;
+
 export const shapes: Shape[] = [
   {
     // Whether a key is a number by its syntax was asked of every store into each variable of the key, and of the variables of what is stored, four variables deep, anew for
@@ -450,6 +480,181 @@ export const shapes: Shape[] = [
         `console.log(all.length);\n`;
       return files;
     },
+  },
+  // Each file starts a Worker from a file of its own. The load writes down the path that each such name has in the executable, and each was held against the
+  // path of every file of the program: names x files. The program at size 0 holds one such file, so that every size has paid for what the first Worker
+  // brings of the library.
+  {
+    name: "files that each start a Worker from a file of their own",
+    counted: "files",
+    size: 600,
+    entry: "main.js",
+    write: size => filesThatEachNameAWorkerFile(size + 1, "js", true),
+  },
+  // The same files, whose Worker files are TypeScript. The name of the JavaScript file is the path of no file of the executable: it stays a second name
+  // of its file, and was held against every file to the end of the path.
+  {
+    name: "files that each start a Worker from a TypeScript file of their own, by the name of its JavaScript file",
+    counted: "files",
+    size: 600,
+    entry: "main.js",
+    write: size => filesThatEachNameAWorkerFile(size + 1, "ts", true),
+  },
+  // The same files, and nobody calls the functions that name them: the build leaves every Worker file out. The second name of each such file was taken
+  // away in a pass of its own over all the second names: files left out x names.
+  {
+    name: "files that each name a TypeScript Worker file of their own in a function that nobody calls",
+    counted: "files",
+    size: 2000,
+    entry: "main.js",
+    write: size => filesThatEachNameAWorkerFile(size + 1, "ts", false),
+  },
+  // One file of a program that lies one folder below the working directory starts a Worker from each of the other files, by its name from the working
+  // directory. Such a name is the path of no file of the executable and stays a second name of its file. The engine reports each start with the name it
+  // has, and each was held against every entry point and every second name: starts x names. Each second name was then held against every entry point
+  // for the file that it leads to.
+  {
+    name: "files that one file starts a Worker from, each by its name from the working directory above the program",
+    counted: "files",
+    size: 1000,
+    entry: "application/main.js",
+    write: size => ({
+      ...Object.fromEntries(upTo(size + 1, index => [`application/source/workers/w${numbered(index)}.js`, `postMessage(${index});\n`])),
+      "application/main.js":
+        `const all = [\n${lines(size + 1, index => `  () => new Worker("./application/source/workers/w${numbered(index)}.js"),`)}];\n` +
+        `if (process.argv.length > 9) all[0]();\n` +
+        `console.log(all.length);\n`,
+    }),
+  },
+  // Each Worker file lies in a folder whose package.json names another file as its main file. What each such folder leads to was held against every
+  // entry point: folders x entry points.
+  {
+    name: "files that one file starts a Worker from, each in a folder whose package.json names another main file",
+    counted: "files",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      ...Object.fromEntries(
+        upTo(size + 1, index => [
+          [`packages/p${numbered(index)}/package.json`, `{ "name": "p${numbered(index)}", "main": "./index.js" }\n`],
+          [`packages/p${numbered(index)}/index.js`, `module.exports = ${index};\n`],
+          [`packages/p${numbered(index)}/worker.js`, `postMessage(${index});\n`],
+        ]).flat(),
+      ),
+      "main.js": fileThatStartsWorkers(size + 1, index => `packages/p${numbered(index)}/worker.js`),
+    }),
+  },
+  // Each Worker file is the main file of a package of node_modules. For each folder of the program and each such package, the build asked for the package
+  // below the folder, also where the folder has no node_modules: folders x packages.
+  {
+    name: "files that one file starts a Worker from, each the main file of a package",
+    counted: "files",
+    size: 600,
+    entry: "main.js",
+    write: size => ({
+      ...Object.fromEntries(
+        upTo(size + 1, index => [
+          [`node_modules/p${numbered(index)}/package.json`, `{ "name": "p${numbered(index)}", "main": "./worker.js" }\n`],
+          [`node_modules/p${numbered(index)}/worker.js`, `postMessage(${index});\n`],
+        ]).flat(),
+      ),
+      "main.js": fileThatStartsWorkers(size + 1, index => `node_modules/p${numbered(index)}/worker.js`),
+    }),
+  },
+  // The same packages as an isolated install lays them out: each in a folder of the store that has a node_modules of its own. Every such folder is asked
+  // for every package.
+  {
+    name: "files that one file starts a Worker from, each the main file of a package of an isolated install",
+    counted: "files",
+    size: 300,
+    entry: "main.js",
+    growsSoFarInInstructions: "2.52 times in instructions",
+    write: size => {
+      const store = (index: number) => `node_modules/.bun/p${numbered(index)}@1.0.0/node_modules/p${numbered(index)}`;
+      return {
+        ...Object.fromEntries(
+          upTo(size + 1, index => [
+            [`${store(index)}/package.json`, `{ "name": "p${numbered(index)}", "main": "./worker.js" }\n`],
+            [`${store(index)}/worker.js`, `postMessage(${index});\n`],
+          ]).flat(),
+        ),
+        "main.js": fileThatStartsWorkers(size + 1, index => `${store(index)}/worker.js`),
+      };
+    },
+  },
+  // Each file holds sixteen functions that start a Worker from the name that their one caller hands on. The engine reports each such start as one without a
+  // name, and each was held against every start that the load had followed to a file: starts x starts. With one such function to a file the build does not
+  // show it: a file costs a hundred thousand times what one comparison does.
+  {
+    name: "functions that each start a Worker from the name that their one caller hands on, sixteen to a file",
+    counted: "files",
+    size: 300,
+    entry: "main.js",
+    write: size => {
+      const files: Record<string, string> = { "w.js": `postMessage("up");\n` };
+      const count = size + 1;
+      for (let index = 0; index < count; index++) {
+        files[`p/p${index}.js`] =
+          lines(16, way => `function begin${way}(file) { return new Worker(file); }`) +
+          `export const start${index} = () => [${upTo(16, way => `begin${way}(new URL("../w.js", import.meta.url))`).join(", ")}];\n`;
+      }
+      files["main.js"] =
+        lines(count, index => `import { start${index} } from "./p/p${index}.js";`) +
+        `const all = [${upTo(count, index => `start${index}`).join(", ")}];\n` +
+        `if (process.argv.length > 9) all[0]();\n` +
+        `console.log(all.length);\n`;
+      return files;
+    },
+  },
+  // Each function starts a Worker from what a call answers, which the build cannot follow, and the build warns of each. Every warning made the table of
+  // lines of the file anew to say where it is: warnings x lines. The second shape starts the Worker of node:worker_threads, of which the load warns itself.
+  ...[false, true].map(
+    (isOfNode): Shape => ({
+      name: `functions that each start a Worker ${isOfNode ? "of node:worker_threads " : ""}from a value that the build cannot follow`,
+      counted: "functions",
+      size: 2000,
+      entry: "main.js",
+      write: size => ({
+        "main.js":
+          (isOfNode ? `import { Worker } from "node:worker_threads";\n` : "") +
+          lines(size + 1, index => `function start${index}() { return new Worker(prompt("${index}")); }`) +
+          `if (process.argv.length > 9) {\n${lines(size + 1, index => `  start${index}();`)}}\n` +
+          `console.log(1);\n`,
+      }),
+    }),
+  ),
+  // Each file is an entry point of the build and starts a Worker. Such a file goes by the name that the command line gave it, and each was held against
+  // every entry point of the command line, whose paths were made anew for it: files x entry points.
+  {
+    name: "files given as entry points that each start a Worker",
+    counted: "entry points",
+    size: 200,
+    entry: "main.js",
+    moreEntries: size => upTo(size, index => `./e${index}.js`),
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js": `if (process.argv.length > 9) new Worker(new URL("./w.js", import.meta.url));\nconsole.log("main");\n`,
+      ...Object.fromEntries(
+        upTo(size, index => [`e${index}.js`, `if (process.argv.length > 9) new Worker(new URL("./w.js", import.meta.url));\nconsole.log(${index});\n`]),
+      ),
+    }),
+  },
+  // The same in a test run, which gives the build every test file as an entry point.
+  {
+    name: "test files that each start a Worker, in a test run",
+    counted: "test files",
+    size: 200,
+    entry: "suite",
+    isTestRun: true,
+    write: size => ({
+      "suite/w.js": `postMessage("up");\n`,
+      ...Object.fromEntries(
+        upTo(size + 1, index => [
+          `suite/e${index}.test.js`,
+          `import { expect, test } from "bun:test";\ntest("t${index}", () => {\n  if (process.argv.length > 99) new Worker(new URL("./w.js", import.meta.url));\n  expect(${index}).toBe(${index});\n});\n`,
+        ]),
+      ),
+    }),
   },
   // A name that a test may have laid on Object.prototype is not absent above the classes. Each such name that was read off an object out of many layouts walked every one of those layouts, and said
   // the same of each that does not have the name: names x layouts. On a suite of 4,444 test files 1,072 names more took Link 48.8 G instructions more.

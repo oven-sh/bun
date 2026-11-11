@@ -1447,6 +1447,18 @@ impl Written<'_, '_> {
         self.text(start, end).trim_ascii().to_vec()
     }
 
+    /// A member or a parameter up to `end` as it stands behind `declare`: with no decorator, and with no `override`.
+    fn declared(&self, modifiers: &[Modifier], start: u32, end: u32) -> Vec<u8> {
+        let syntax = &self.syntax;
+        let start = syntax.after_decorators(modifiers, start);
+        let is_override = |modifier: &&Modifier| modifier.kind.flag() == Flags::OVERRIDE;
+        let Some(written) = modifiers.iter().find(is_override) else {
+            return self.text(start, end);
+        };
+        let behind = syntax.after_trivia(syntax.token_end(written.pos));
+        [self.text(start, written.pos), self.text(behind, end)].concat()
+    }
+
     /// A member with no annotation up to its name or `?`, and then the type that the check of the sources noted.
     fn noted_member(&self, member: &Member) -> Option<Vec<u8>> {
         let syntax = &self.syntax;
@@ -1455,8 +1467,7 @@ impl Written<'_, '_> {
         let mut slots = Vec::new();
         syntax.member_slots(member, &mut slots);
         let modifiers = syntax.file.modifier_list(member.modifiers);
-        let start = syntax.after_decorators(modifiers, member.start);
-        let name = self.text(start, slots.last()?.end);
+        let name = self.declared(modifiers, member.start, slots.last()?.end);
         Some([&name[..], b": ", noted].concat())
     }
 
@@ -3968,8 +3979,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                     {
                         let typed = if member.ty.is_some() {
                             let modifiers = file.modifier_list(member.modifiers);
-                            let start = syntax.after_decorators(modifiers, member.start);
-                            Some(module.text(start, syntax.type_span(member.ty).1))
+                            let end = syntax.type_span(member.ty).1;
+                            Some(module.declared(modifiers, member.start, end))
                         } else {
                             module.noted_member(member)
                         };
@@ -3999,12 +4010,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                         };
                         if !output_members.contains_key(&(index as u32, binding.key)) {
                             let modifiers = file.modifier_list(file.param_modifiers(id));
-                            let start = syntax.after_decorators(modifiers, parameter.pos);
-                            add(
-                                0,
-                                &[&b"declare "[..], &module.text(start, binding.end), b";"]
-                                    .concat(),
-                            );
+                            let typed = module.declared(modifiers, parameter.pos, binding.end);
+                            add(0, &[&b"declare "[..], &typed, b";"].concat());
                         }
                     }
                 }

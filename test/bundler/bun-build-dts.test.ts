@@ -270,10 +270,9 @@ export const shown: Options = new Settings("a");
 
   test("useDefineForClassFields: false: a member without a value is declared with the type of the sources", async () => {
     const options = { strict: true, useDefineForClassFields: false };
+    const more = { noImplicitOverride: true, module: "esnext", moduleResolution: "bundler", target: "esnext" };
     using dir = tempDir("build-dts-no-define", {
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: { ...options, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
-      }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, ...more, types: [] } }),
       "package.json": JSON.stringify({ name: "greeter", version: "1.0.0", compilerOptions: options }),
       "src/index.ts": `declare const __DEV__: boolean;
 export class Counter {
@@ -289,17 +288,35 @@ export class Counter {
     return ++this.count;
   }
 }
+export class Named extends Counter {
+  override mode;
+  override label: string;
+  constructor(override count: number) {
+    super();
+    this.label = "n";
+    if (__DEV__) this.mode = "named";
+  }
+}
 `,
     });
     const flags = ["--dts", "--define", "__DEV__=false"];
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    // The bundle has none of the three fields.
+    // The bundle has none of these fields. `declare` allows no `override` (TS1243).
     expect(written(dir, "index.aot.ts").match(/^  declare .*$/gm)).toEqual([
       "  declare mode: string | undefined;",
       "  declare count: number;",
       "  declare label: string;",
+      "  declare mode: string | undefined;",
+      "  declare label: string;",
+      "  declare count: number;",
     ]);
+    // The tsconfig.json has no "include", so index.aot.ts is a source of this project too.
+    const checked = await bun(String(dir), "check");
+    expect({ said: (checked.stdout + checked.stderr).match(/TS\d+[^\n]*/g), exitCode: checked.exitCode }).toEqual({
+      said: null,
+      exitCode: 0,
+    });
   });
 
   test("experimentalDecorators: a line that index.aot.ts adds for a member has none of its decorators", async () => {

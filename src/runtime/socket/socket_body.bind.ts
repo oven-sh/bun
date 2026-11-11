@@ -148,7 +148,7 @@ export const upgradeTLSDeferred = b.fn({
   },
 });
 /**
- * Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`.
+ * Returns the `TLSSocket` and the listeners for the duplex's `data`, `end` and `close`.
  * The options are those of `upgradeTLSDeferred`. UpgradedDuplex.rs keeps the duplex, calls its `pause`, `resume`, `write` and `end`
  * and reads `_readableState.ended`, `writableEnded` and `destroyed`.
  */

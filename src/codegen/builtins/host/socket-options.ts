@@ -107,7 +107,7 @@ const dataOfServer = [b.nativeCell(socketDataCell), b.undefined];
 
 // SocketConfig.bind.ts and SSLConfig.bind.ts: a dictionary. Each member is read under its name and is of its type or refused, but these:
 // `hostname`, `host` and `port` are converted, so is a String object as `binaryType`, and `ca`, `cert`, `key` and `crl` of `tls` may be a sequence, which is iterated.
-// Listener.rs describes a `secureContext` that is none in its message: whatever is there may be printed.
+// SecureContext.rs describes a `secureContext` that is none in its message: whatever is there may be printed.
 export const socketOptions = [
   b.storedIn(b.nativeCell(socketOptionsCell)),
   b.reachableValuesStoredIn(b.nativeCell(socketOptionsCell)),

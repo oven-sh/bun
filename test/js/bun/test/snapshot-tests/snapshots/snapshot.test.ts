@@ -2969,17 +2969,19 @@ describe.concurrent("the arguments of a matcher that expect.extend() made, in Vi
       return printed;
     }
   `;
+  // More than the 5 s that a test has by default: the test in the child can print to the end of the stack, or 536 MB.
+  const timeoutOfChild = 60_000;
   async function logOf(test: string) {
     using dir = tempDir("snapshot-custom-matcher", {
       "a.test.js": `import { test, expect } from "vitest";\n${toBeFoo}\n${print}\ntest("t", () => {${test}});`,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test"],
+      cmd: [bunExe(), "test", "--timeout", String(timeoutOfChild)],
       env: { ...bunEnv, CI: "true" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 30_000,
+      timeout: timeoutOfChild / 2,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const log = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));

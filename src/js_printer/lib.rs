@@ -1337,8 +1337,7 @@ pub struct Options<'a> {
     pub commonjs_named_exports: Option<&'a CommonJSNamedExports>,
     /// This file has a CommonJS module object: `exports.x` prints as the source wrote it.
     pub commonjs_named_exports_deoptimized: bool,
-    /// This file has no module object and its CommonJS exports were lifted to
-    /// ESM, so its namespace stands in for a source `module.exports`.
+    /// The namespace of this lifted file stands in for a source `module.exports`.
     pub commonjs_module_exports_is_namespace: bool,
     pub commonjs_named_exports_ref: Ref,
     pub commonjs_module_ref: Ref,
@@ -4606,8 +4605,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// A source `module.exports`. Code can replace that property at run
-        /// time, so the `exports` binding of a wrapper cannot stand in for it.
+        /// A source `module.exports`. Code can replace it, so `exports` is no stand-in for it.
         fn print_module_dot_exports(&mut self) {
             if self.options.commonjs_module_exports_is_namespace
                 || !self.options.commonjs_module_ref.is_valid()

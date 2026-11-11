@@ -235,8 +235,7 @@ impl Default for New {
 
 #[derive(Clone, Copy)]
 pub enum Special {
-    /// `module.exports` as written, or the `exports_<file>` namespace in a
-    /// file whose CommonJS exports were lifted to ESM.
+    /// A source `module.exports`: as written, or the namespace in a file lifted to ESM.
     ModuleExports,
     /// `import.meta.hot`
     HotEnabled,
@@ -568,9 +567,7 @@ impl CommonJSExportIdentifier {
     }
 }
 
-/// Which of `exports` or `module.exports` the source wrote. A file that keeps
-/// its CommonJS module object prints the same one: code can replace
-/// `module.exports` at run time, and the `exports` binding does not follow it.
+/// Which of `exports` or `module.exports` the source wrote. A wrapped file prints that one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CommonJSExportIdentifierBase {
     Exports,

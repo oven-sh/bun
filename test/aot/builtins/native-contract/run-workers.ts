@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TargetReport } from "./check-target";
+import type { ViewReport } from "./check-views";
 import type { Unreachable } from "./targets";
 import type { WorkerRequest } from "./worker";
 
-export type Report = TargetReport | Unreachable;
+export type Report = TargetReport | ViewReport | Unreachable;
 export type Results = {
   reports: Map<string, Report>;
   // The targets during which a process ended or stopped making progress.
@@ -17,6 +18,9 @@ export type RunOptions = {
   folder: string;
   filter: string;
   workerCount: number;
+  // The file beside this one that each process runs. Without it: worker.ts.
+  worker?: string;
+  toldQuiet?: string;
 };
 
 /** For a process that makes a hundred thousand short calls and is gone in seconds. */
@@ -74,7 +78,7 @@ async function waitFor(worker: Bun.Subprocess, currentPath: string): Promise<voi
 // A target that twice ends its process or does not come back is left out of the next attempt, which goes on behind it. Once can be the
 // machine: under load a call may starve. So may a step of the set-up, and no attempt can go on behind one of those.
 async function runWorker(options: RunOptions, index: number, results: Results): Promise<void> {
-  const { executable, environment, folder, filter, workerCount } = options;
+  const { executable, environment, folder, filter, workerCount, worker: workerFile = "worker.ts", toldQuiet } = options;
   const requestPath = join(folder, `request.${index}.json`);
   const reportsPath = join(folder, `reports.${index}.jsonl`);
   const currentPath = `${reportsPath}.current`;
@@ -83,13 +87,13 @@ async function runWorker(options: RunOptions, index: number, results: Results): 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const reports = new Map<string, Report>();
     readReports(reportsPath, reports);
-    writeFileSync(requestPath, JSON.stringify({ filter, index, count: workerCount, finished: [...reports.keys(), ...ended] } satisfies WorkerRequest));
+    writeFileSync(requestPath, JSON.stringify({ filter, index, count: workerCount, finished: [...reports.keys(), ...ended], toldQuiet } satisfies WorkerRequest));
     writeFileSync(currentPath, '""');
     // What a function does to the files that its operands name stays in a folder that nothing else uses.
     const workingFolder = join(folder, `work.${index}.${attempt}`);
     mkdirSync(workingFolder);
     const worker = Bun.spawn({
-      cmd: [executable, "--expose-internals", join(import.meta.dir, "worker.ts"), requestPath, reportsPath],
+      cmd: [executable, "--expose-internals", join(import.meta.dir, workerFile), requestPath, reportsPath],
       cwd: workingFolder,
       env: { ...environment, ...settingsOfEngine, AWS_ENDPOINT: "http://127.0.0.1:1", S3_ENDPOINT: "http://127.0.0.1:1" },
       stdin: "ignore",

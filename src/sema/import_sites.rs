@@ -11,18 +11,21 @@ mod scan;
 mod statements;
 #[cfg(all(test, not(miri)))]
 mod tests;
+mod touched_exports;
 mod written_arms;
 
 pub use call_sites::{
-    RequireCall, RequireCallForm, does_import_meta_resolve_ask_resolver,
-    ends_in_call_that_reads_frame_of_caller, find_module_printed_as_require, find_require_call,
-    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
-    is_name_written_out,
+    RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
+    does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
+    find_module_printed_as_require, find_require_call, is_linked_by_bundler,
+    is_module_call_of_plugin, is_name_read_by_transpiler, is_name_written_out,
+    may_spell_word_that_mock_looks_for, names_word_that_mock_looks_for,
 };
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,
     may_construct_worker,
 };
+pub use call_sites::{is_load_found_late, is_site_of_handed_url};
 pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,
 };
@@ -35,21 +38,28 @@ pub use jsx::{
 pub use macro_calls::{macro_callee, macro_import_symbols};
 pub use made_requires::{
     ExportedRequire, OwnRequire, find_base_that_a_call_made_of_own_file, find_exported_requires,
-    find_holder_of_require_made_for_choice, find_other_values_of_own_require, find_own_require,
-    find_result_expression, holds_import_meta_require, is_call_of_create_require,
+    find_holder_of_require_made_for_choice, find_made_requires_that_go_out_of_sight,
+    find_other_values_of_own_require, find_own_require, find_result_expression,
+    gives_first_argument_to_own_require, holds_import_meta_require, is_call_of_create_require,
     is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
     is_made_require, is_require_made_for_own_file, may_be_modified,
     may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
     may_still_be_undefined,
 };
-pub(crate) use made_requires::{find_imported_export, names_own_file, settled_symbol};
+pub(crate) use made_requires::{OtherUse, find_imported_export, names_own_file, settled_symbol};
 pub use parameters::{
-    find_names_exported_for, find_parameter_named, find_values_of_parameter,
+    ExportedNames, find_names_exported_for, find_parameter_named, find_values_of_parameter,
     find_values_passed_for, is_exported,
 };
 pub(crate) use scan::collect_import_sites;
+pub use statements::find_statement_sites;
 pub(crate) use statements::is_runtime_import;
-pub use written_arms::{find_names_read_by_transpiler, find_written_arms};
+pub(crate) use touched_exports::{
+    is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
+};
+pub use written_arms::{
+    find_names_folded_by_transpiler, find_names_read_by_transpiler, find_written_arms,
+};
 
 use crate::atom::{Atom, Interner};
 use crate::bind::{Bound, SymbolId};
@@ -128,6 +138,22 @@ pub struct ExportedFileChanger {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CallerRelativeRead {
+    pub function: SymbolId,
+    pub place: u32,
+    pub property: Option<Atom>,
+    pub path: Atom,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct OwnUrlArgument {
+    pub argument: ExprId,
+    pub function: SymbolId,
+    pub place: u32,
+    pub property: Option<Atom>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ExportedText {
     pub export: Atom,
     pub text: Atom,
@@ -185,10 +211,17 @@ pub(crate) struct ImportScan<'s> {
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
+    pub module_relative_reads: &'s [(ExprId, Atom)],
+    pub caller_relative_reads: &'s [CallerRelativeRead],
+    pub known_load_names: &'s [(ExprId, Atom)],
+    pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
-    pub asked_of_other_files: &'s [(Atom, Atom)],
-    pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub names_out_of_data_files: &'s [(Atom, ExprId)],
+    pub other_file_queries: &'s [(Atom, Atom)],
+    pub data_file_queries: &'s [(Atom, Atom)],
+    pub own_export_queries: &'s [Atom],
+    pub names_from_data_files: &'s [(Atom, ExprId, bool)],
+    pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
+    pub options_of_resolves_with_unread_folders: &'s [ExprId],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],

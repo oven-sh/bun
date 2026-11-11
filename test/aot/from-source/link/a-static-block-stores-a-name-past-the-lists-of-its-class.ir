@@ -1,0 +1,14 @@
+# A store in a static block makes an own property of the class object, and the class does not escape by it.
+# -- source: main.js
+# class Base { static { this.extra = 1; } }
+# class Heir extends Base {}
+# class Beside {}
+# class Last {}
+# print(Heir.extra, new Beside(), new Last());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L1 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L2
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L3

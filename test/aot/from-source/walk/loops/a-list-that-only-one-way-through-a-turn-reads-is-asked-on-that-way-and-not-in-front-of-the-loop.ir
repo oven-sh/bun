@@ -1,0 +1,34 @@
+# -- source: a-list-that-only-one-way-through-a-turn-reads-is-asked-on-that-way-and-not-in-front-of-the-loop.ts
+# declare function sink(value: unknown): void;
+# function inOneArm(given: number[], extra: number[] | undefined, mask: number): number {
+#   let a = 0;
+#   for (let i = 0; i < given.length; i++) { if (given[i]! & mask) a = (a + extra![i]!) | 0; a = (a + given[i]!) | 0; }
+#   return a;
+# }
+# function inEveryTurn(given: number[], extra: number[] | undefined, mask: number): number {
+#   let a = 0;
+#   for (let i = 0; i < given.length; i++) { a = (a + extra![i]!) | 0; if (given[i]! & mask) a = (a + given[i]!) | 0; }
+#   return a;
+# }
+# const ones = JSON.parse("[1, 1, 1, 1, 1]") as number[], masks = JSON.parse("[0, 1]") as number[];
+# const lists = [undefined, ones];
+# sink([inOneArm(ones, lists[masks[0]!], masks[0]!), inOneArm(ones, lists[masks[1]!], masks[1]!), inEveryTurn(ones, lists[masks[1]!], masks[0]!)].join(" "));
+# -- end of source
+# The sibling of a-guess-that-only-one-way-through-a-turn-leans-on-is-not-asked-in-front-of-the-loop.ir, for lists. `extra` is undefined in the first call and no turn of it reads `extra[i]`. Asked in front,
+# "is it an array" failed and all turns ran in the other copy: three times the instructions. It came there by two roads: findListsReadInLoop() listed every list that any block of the loop reads, and
+# tryBranchInPreheader() laid a test in front from whatever arm the walk of the typed copy stood in. The loop is still bought for `given`: the row is asked whether it leaves the lists as they are
+# with `extra` among them, since its read is typed on its own way, where a failing test begins the turn again in the other copy.
+# f1 = inOneArm, f2 = inEveryTurn; v1 = extra. The test's VALUE may be made in front, since the loop does not change `extra`; what counts is where the BRANCH on it stands: in f1 a jump follows the test.
+# OPTIONS: check=Validate
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = TypeTest v1 testedType=Array
+# CHECK-NEXT: Jump ->
+# CHECK-LABEL: code f2:Body
+# CHECK: = TypeTest v1 testedType=Array
+# CHECK-NEXT: Branch
+# CHECK: isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 5 10 5
+# SHELL: exited with 0

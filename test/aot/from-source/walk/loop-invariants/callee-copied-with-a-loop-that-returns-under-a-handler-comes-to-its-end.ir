@@ -12,6 +12,5 @@
 # sink(deed(300));
 # -- end of source
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: = GetSlot {{*}}key="most"

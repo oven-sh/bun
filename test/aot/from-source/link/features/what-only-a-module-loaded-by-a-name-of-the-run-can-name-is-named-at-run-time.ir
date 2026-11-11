@@ -5,5 +5,5 @@
 # -- end of source
 # OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
 # RUN: features
-# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# DIAGNOSTIC: NonConstantImportPath 1
 # CHECK: by BunColor named-at-run-time at f0 v

@@ -1,3 +1,4 @@
+use super::inline_star::{InlineStar, InlineStarInput, find_inline_stars};
 use super::{CommonJsInput, find_literal_exported_under_name};
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
@@ -10,7 +11,8 @@ use crate::modules::order::FileText;
 use crate::modules::{InnerModule, ModuleRef};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{
-    AssignmentTarget, Binding, Bound, CodeUnit, CommonJsVariable, FnOwner, Parent, SymbolId,
+    AssignmentTarget, Binding, BindingInitializer, Bound, CodeUnit, CommonJsVariable, FnOwner,
+    Parent, SymbolId,
 };
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
@@ -162,6 +164,7 @@ pub(super) struct SummaryWalk<'a, 'b, 's> {
     renames_exports: bool,
     mentions_original_exports: bool,
     understood_calls: Vec<CallId>,
+    inline_stars: Vec<InlineStar>,
     methods_with_super: Vec<FnId>,
     first_return: OnceCell<u32>,
     end_of_head: OnceCell<u32>,
@@ -309,6 +312,17 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             renames_exports: false,
             mentions_original_exports: false,
             understood_calls: Vec::new(),
+            inline_stars: match inner {
+                Some(_) => Vec::new(),
+                None => find_inline_stars(&InlineStarInput {
+                    file,
+                    atoms: &files.atoms,
+                    hir: files.hir(file),
+                    bound,
+                    builtins,
+                    known_helpers: input.bind.known_helpers,
+                }),
+            },
             methods_with_super: Vec::new(),
             first_return: OnceCell::new(),
             end_of_head: OnceCell::new(),
@@ -613,7 +627,7 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         let escapes = mentions.any(|mention| {
             mention.owner == ModuleObjectOwner::OwnFile
                 && match mention.object_use {
-                    ModuleObjectUse::HandedOn | ModuleObjectUse::HolderHandedOn => true,
+                    ModuleObjectUse::Escaped | ModuleObjectUse::HolderEscaped => true,
                     ModuleObjectUse::Object => !self.is_only_compared(mention.expr),
                     ModuleObjectUse::Field(_)
                     | ModuleObjectUse::Tested
@@ -855,7 +869,50 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         }
     }
 
+    fn add_inline_star(&mut self, star: InlineStar) -> bool {
+        let is_listed = |stored: &StoredName| matches!(*stored, StoredName::AllOf { statement, .. } if statement == star.statement);
+        if self.summary.names.iter().any(is_listed) {
+            return true;
+        }
+        let BindingInitializer::Expression(loaded) =
+            self.bound.binding_initializer(self.hir, star.holder)
+        else {
+            return false;
+        };
+        let loaded = self.hir.skip_type_assertions(loaded);
+        let site = self.analysis.import_site_of_call(loaded);
+        let site = site.filter(|&site| {
+            matches!(
+                self.analysis.import_sites[site].kind,
+                ImportSiteKind::Require(_)
+            )
+        });
+        let in_every_run = self.find_statement_in_every_run(star.call);
+        let (Some(site), Some(statement)) = (site, in_every_run) else {
+            return false;
+        };
+        if statement != star.statement || !self.bound.is_stable_binding(star.holder) {
+            return false;
+        }
+        self.summary.names.push(StoredName::AllOf {
+            statement,
+            site: site as u32,
+        });
+        self.note_origin_of_new_names(star.call, OriginKind::Call);
+        true
+    }
+
     fn look_at_mention(&mut self, mention: ExprId, kind: Mention) {
+        let around = self
+            .inline_stars
+            .iter()
+            .find(|star| star.holds(self.hir, mention));
+        if let Some(&star) = around {
+            let is_followed = kind == Mention::ExportsName && self.add_inline_star(star);
+            self.mentions_original_exports |= kind == Mention::ExportsName;
+            self.summary.object_escapes |= !is_followed;
+            return;
+        }
         let (outermost, parent) = self.parent(mention);
         if self
             .bound

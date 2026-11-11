@@ -1,0 +1,15 @@
+# f1 = difference
+# -- source: swap-through-an-array-literal.ts
+# function difference(a: number, b: number): number {
+#   if (a < b) [a, b] = [b, a];
+#   return a - b;
+# }
+# declare const input: any;
+# (globalThis as any).answer = difference(+input, +input);
+# -- end of source
+# The compiler before this one: 9 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 7, patches 0, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 9

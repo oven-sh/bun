@@ -364,13 +364,10 @@ const files = {
       expect(removedFrom(await trimmed("styled-route.ts")).length).toBeGreaterThanOrEqual(atLeastOnLinux(110));
     });
 
-    test.failing(
-      "a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: the bundler is kept by 1 call of Bun.serve, the goal is 0",
-      async () => {
-        const ran = await started(await trimmed("styled-route.ts"));
-        expect(ran.stdout).toContain("style: the bundler and the dev server were removed by --trim");
-      },
-    );
+    test("a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: the bundler is removed", async () => {
+      const ran = await started(await trimmed("styled-route.ts"));
+      expect(ran.stdout).toContain("style: the bundler and the dev server were removed by --trim");
+    });
 
     test("a server whose options ask for neither bundler nor transpiler serves", async () => {
       expect(await started(await trimmed("serves.ts"))).toEqual({
@@ -384,15 +381,10 @@ const files = {
       expect(removedFrom(await trimmed("serves.ts")).length).toBeGreaterThanOrEqual(atLeastOnLinux(110));
     });
 
-    test.failing(
-      "a server whose options ask for neither has no bundler and no transpiler: 2 features are kept, the goal is 0",
-      async () => {
-        const built = await trimmed("serves.ts");
-        expect(removedFrom(built)).toEqual(
-          expect.arrayContaining([featureOf("Bun.build"), featureOf("Bun.Transpiler")]),
-        );
-      },
-    );
+    test("a server whose options ask for neither has no bundler and no transpiler", async () => {
+      const built = await trimmed("serves.ts");
+      expect(removedFrom(built)).toEqual(expect.arrayContaining([featureOf("Bun.build"), featureOf("Bun.Transpiler")]));
+    });
 
     test("a server that calls reload() answers as the whole executable does", async () => {
       const whole = await started(await build("reloads.ts", "--aot"));
@@ -404,15 +396,10 @@ const files = {
       expect(removedFrom(await trimmed("reloads.ts")).length).toBeGreaterThanOrEqual(atLeastOnLinux(110));
     });
 
-    test.failing(
-      "reload() never needs the development server, whatever its routes ask for: 2 features are kept, the goal is 0",
-      async () => {
-        const built = await trimmed("reloads.ts");
-        expect(removedFrom(built)).toEqual(
-          expect.arrayContaining([featureOf("Bun.build"), featureOf("Bun.Transpiler")]),
-        );
-      },
-    );
+    test("reload() never needs the development server, whatever its routes ask for", async () => {
+      const built = await trimmed("reloads.ts");
+      expect(removedFrom(built)).toEqual(expect.arrayContaining([featureOf("Bun.build"), featureOf("Bun.Transpiler")]));
+    });
 
     test("a program that calls Bun.build() can bundle CSS and use the React Compiler", async () => {
       const whole = await plain("bundles-a-component.ts");
@@ -446,12 +433,9 @@ const files = {
       );
     });
 
-    test.failing(
-      "a server that never names bun:test has none of it, whatever names it reads off values nobody knows: 1 feature is kept, the goal is 0",
-      async () => {
-        expect(removedFrom(await trimmed("serves-values-nobody-knows.ts"))).toContain(featureNamed("Test"));
-      },
-    );
+    test("a server that never names bun:test has none of it, whatever names it reads off values nobody knows", async () => {
+      expect(removedFrom(await trimmed("serves-values-nobody-knows.ts"))).toContain(featureNamed("Test"));
+    });
 
     test("a native library leaves none of its texts in the file when its features are removed", async () => {
       expect(textsOfLibrariesIn(readFileSync(bunExe()))).toEqual(

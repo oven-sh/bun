@@ -59,11 +59,28 @@ impl FileLowering<'_, '_, '_, '_> {
             return function;
         }
         debug_assert!(header.body.code.is_empty(), "a header has no body");
-        if !self.inputs.options.embeds_function_text {
-            header.text = SourceRange::default();
+        if !self.inputs.options.embeds_function_source {
+            header.source_range = SourceRange::default();
         }
+        self.place_declared_records(key, header.position);
         self.functions.add(function, header);
         function
+    }
+
+    fn place_declared_records(&mut self, key: FunctionKey, position: u32) {
+        let FunctionKey::Source(source) = key else {
+            return;
+        };
+        let waiting = core::mem::take(&mut self.declared_records_without_position);
+        for (function, mut declared) in waiting {
+            if function == source.function {
+                declared.position = position;
+                self.fragment.add_declared_record(declared);
+            } else {
+                self.declared_records_without_position
+                    .push((function, declared));
+            }
+        }
     }
 
     pub(crate) fn reference_function(&mut self, key: FunctionKey) -> FunctionId {

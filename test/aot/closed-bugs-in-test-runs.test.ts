@@ -14,6 +14,7 @@ const scenes: Record<string, { flags: string[]; says: string }> = {
   "3026-module-written-by-a-test-requires-a-mocked-module": { flags: [], says: "RESULT" },
   "3088-json-required-in-a-fresh-realm": { flags: ["--isolate"], says: "R " },
   "3092-module-written-by-a-test-then-imported-by-a-literal": { flags: [], says: "SAID" },
+  "3625-a-name-that-a-file-of-the-ring-hands-on-while-its-own-file-has-not-begun": { flags: [], says: "SAID" },
 };
 const stored = join(import.meta.dir, "closed-bugs-in-test-runs");
 

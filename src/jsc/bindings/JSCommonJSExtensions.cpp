@@ -152,7 +152,7 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Bun::willStoreLoaderOfExtension(globalObject, StringView(*name));
+    Bun::willSetExtensionLoader(globalObject, StringView(*name));
     RETURN_IF_EXCEPTION(scope, void());
     BunString ext = Bun::toString(name);
     JSC::CallData callData = JSC::getCallData(value);

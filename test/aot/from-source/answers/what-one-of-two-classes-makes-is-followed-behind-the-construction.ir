@@ -1,0 +1,26 @@
+# -- source: main.js
+# class A { k = 1; constructor(more) { this.more = more; } }
+# class B { k = 2; constructor(more) { this.more = more; } }
+# function make(i, more) { const C = i & 1 ? A : B; return new C(more); }
+# const first = make(1, 10);
+# first.k = "text";
+# const second = make(2, "more");
+# delete second.k;
+# print(first.k + make(1, 1).k + make(2, 2).k);
+# print(second.k);
+# print(first.more + second.more + new A(0.5).more);
+# print(first instanceof A && second instanceof B && !(first instanceof B));
+# -- end of source
+# What `new C` gives is what the two constructors give. If it were less, the store and the delete behind it would be held against neither class, `k` would stay a whole number that construction alone writes, and `more` what `new A(0.5)` passes.
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: text12
+# ANSWER-NEXT: undefined
+# ANSWER-NEXT: 10more0.5
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: text12
+# CHECKED-NEXT: undefined
+# CHECKED-NEXT: 10more0.5
+# CHECKED-NEXT: true
+# CHECKED-NEXT: exited with 0

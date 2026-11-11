@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
-    Binding, BindingKind, CommonJsVariable, InitialState, ScopeId, ScopeKind, SymbolId,
+    Binding, BindingKind, CommonJsVariable, Decl, InitialState, ScopeId, ScopeKind, SymbolId,
     has_simple_parameter_list,
 };
 use bun_sema::check::aot::ClassRef;
@@ -17,6 +17,7 @@ use crate::ir::{
     PropertyKey, StringId, Type, TypeTable,
 };
 use crate::lower::{FileLowering, class};
+use crate::modules::ModuleKind;
 
 pub(in crate::lower) fn environment_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -40,6 +41,7 @@ pub(in crate::lower) fn environment_layout(
             kind: LayoutKind::Environment,
             module: Some(file.module_id()),
             fields,
+            place: Some(file.scopes.bindings_declared_in_front_of(scope)),
             ..Layout::default()
         };
         file.fragment.define_layout(layout, definition);
@@ -68,9 +70,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut position = self.stored_position(binding);
         if let BindingRef::Symbol(id) = binding {
             let file = self.file;
-            if self.is_checked()
-                && position.ty == TypeTable::ANYTHING
-                && self.inputs.modules.holder(file, id).is_none()
+            if position.ty == TypeTable::ANYTHING && self.inputs.modules.holder(file, id).is_none()
             {
                 position = self.compute_inferred_position(Sym { file, id });
             }
@@ -119,13 +119,30 @@ impl FileLowering<'_, '_, '_, '_> {
         if placement.is_some_and(|placement| placement.is_immutable) {
             flags |= FieldFlags::IS_IMMUTABLE;
         }
+        let declared = self.location_position(binding);
         Field {
             key: Some(key),
-            declared: self.location_position(binding),
+            declared: self.mark_variable_of_module(binding, declared),
             flags,
             variable_name: self.written_name(binding),
             ..Field::default()
         }
+    }
+
+    pub(in crate::lower) fn mark_variable_of_module(
+        &self,
+        binding: BindingRef,
+        mut declared: DeclaredType,
+    ) -> DeclaredType {
+        let BindingRef::Symbol(symbol) = binding else {
+            return declared;
+        };
+        let file_scope = self.bound.scope_of_declaration(self.hir, Decl::File);
+        let scope = self.bound.symbol_scope(symbol).some().unwrap_or(file_scope);
+        if scope == file_scope && self.inputs.modules.kind(self.file) == ModuleKind::SourceText {
+            declared.flags |= PositionFlags::IS_VARIABLE_OF_MODULE;
+        }
+        declared
     }
 
     pub(in crate::lower) fn written_name(&mut self, binding: BindingRef) -> Option<StringId> {
@@ -247,9 +264,7 @@ fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> Dec
             let class = bound.member_class(member);
             let class = class.expect("a field initializer belongs to a member of a class");
             let is_static = file.hir[member].flags.contains(Flags::STATIC);
-            if (!is_static && class::is_called_by_evaluated_text(file, class))
-                || bound.is_field_assigned_behind_class(member)
-            {
+            if !is_static && class::is_called_by_evaluated_text(file, class) {
                 return DeclaredType::untyped();
             }
             let class = ClassRef {

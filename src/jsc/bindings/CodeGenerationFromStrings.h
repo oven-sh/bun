@@ -51,7 +51,7 @@ inline ASCIILiteral codeGenerationFromStringsDisallowedMessage()
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
     // Ahead of the message of --trim: where the compiled program refuses text, keeping the interpreter changes nothing.
     if (Bun__isCodeGenerationDisallowedByCompiledProgram())
-        return JSC::AOT::evaluationRefusedMessage();
+        return JSC::AOT::rejectedEvaluationMessage();
     if (Bun__isCodeGenerationDisallowedByTrimming())
         return "Code generation from strings disallowed for this context: eval() and new Function() were removed by --trim because your code never uses them. To keep them, add \"interpreter\" to compile.trim.allow in Bun.build()."_s;
 #endif

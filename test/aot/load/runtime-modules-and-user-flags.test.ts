@@ -23,14 +23,15 @@ type Ended = Awaited<ReturnType<typeof spawned>>;
 
 /**
  * A build that succeeds reports no mistake and makes no remark, and writes nothing to stderr.
- * AOT_BUILD_FLAGS gives each build with --aot more flags. Such a build may say on stderr what it was built with, and with --explain it makes remarks.
+ * spawned() gives a build with --aot the flags of AOT_BUILD_FLAGS too. Such a build may say on stderr what it was built with, and with --explain it makes remarks.
  */
-function expectBuilt(built: Ended) {
-  const reported = moreBuildFlags.length ? /^(error|warn)\b/ : /^(error|warn|note)\b/;
+function expectBuilt(built: Ended, command: string[]) {
+  const hasMoreFlags = moreBuildFlags.length > 0 && command.includes("--aot");
+  const reported = hasMoreFlags ? /^(error|warn)\b/ : /^(error|warn|note)\b/;
   const diagnostics = (built.stdout + built.stderr).split(/\r?\n/).filter(line => reported.test(line));
   expect({ diagnostics, stderr: built.stderr, exitCode: built.exitCode, signal: built.signal }).toEqual({
     diagnostics: [],
-    stderr: moreBuildFlags.length ? expect.any(String) : "",
+    stderr: hasMoreFlags ? expect.any(String) : "",
     exitCode: 0,
     signal: null,
   });
@@ -154,9 +155,8 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
         });
         const folder = String(dir);
         const program = join(folder, exe("program"));
-        expectBuilt(
-          await spawned([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", program], folder, BUILD),
-        );
+        const command = [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", program];
+        expectBuilt(await spawned(command, folder, BUILD), command);
         expect(await spawned([program], folder, COMPILED)).toEqual({
           stdout: "function,object,object,object,object\n",
           stderr: "",
@@ -175,13 +175,8 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
           using dir = tempDir("aot-load-user-flags", { "main.mjs": source });
           const folder = String(dir);
           const program = join(folder, exe(mode));
-          expectBuilt(
-            await spawned(
-              [bunExe(), "build", "--compile", ...modeFlags, ...flags, "main.mjs", "--outfile", program],
-              folder,
-              BUILD,
-            ),
-          );
+          const command = [bunExe(), "build", "--compile", ...modeFlags, ...flags, "main.mjs", "--outfile", program];
+          expectBuilt(await spawned(command, folder, BUILD), command);
           const ran = await spawned([program, argument], folder, env);
           expect({ ...ran, stdout: withoutTimestamps(ran.stdout) }).toEqual({
             stderr: "",
@@ -214,7 +209,7 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
           }).toEqual({ stdout: "", stderr: ends.refused, exitCode: 1, signal: null, wroteExecutable: false });
           return;
         }
-        expectBuilt(built);
+        expectBuilt(built, command);
         expect(await spawned([program], folder, COMPILED)).toEqual({
           stdout: ends.stdout,
           stderr: "",

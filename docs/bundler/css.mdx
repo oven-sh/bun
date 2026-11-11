@@ -906,8 +906,8 @@ Bun cannot declare these layers ahead of an external import, so they come after 
 - A layer with no name: an `@layer` block with no name, or a file that you import with the `layer` keyword and no name, such as `@import "./a.css" layer;`. An external import inside such a file gets an anonymous layer of its own.
 - A layer that a file declares inside `@media` or `@supports`.
 - A layer under two media queries or two `supports()` conditions, from two levels of `@import`.
-- A layer with no `supports()` condition that comes after a layer with one. Browsers older than Chrome 122, Firefox 115 and Safari 17.5 ignore an `@import` that has `supports()`.
-- A layer that comes after an external import, if the same URL is imported again later.
+- A layer with no `supports()` condition that comes after a layer or an external import with one. Browsers older than Chrome 122, Firefox 115 and Safari 17.5 ignore an `@import` that has `supports()`.
+- A layer between two imports of the same external URL, unless that import has a layer and this layer is outside it. Bun keeps only the last of the two imports.
 - Every layer that your files declare after one of these.
 
 To set the order yourself, start the entry file with an `@layer` statement that names the layers in order, ahead of its first `@import`. Bun keeps that statement ahead of every external import. Give a name to a layer that has none.

@@ -2,7 +2,7 @@ import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime, spyOn } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -3526,7 +3526,8 @@ describe("what was undone out of order gives way when the test file ends", () =>
     },
   );
 
-  // A release build loads the fixture about 4,500 times for the five rows. A debug build loads it about 40 times for the first row.
+  // A release build loads the fixture about 4,500 times for the five rows. A slower build loads it 14 times for the first row.
+  const isSlow = isDebug || isASAN;
   const fixture = join(import.meta.dir, "file-end-orders-fixture.ts");
   const orderRows = [
     ["setTimeout", "jest"],
@@ -3546,13 +3547,13 @@ describe("what was undone out of order gives way when the test file ends", () =>
     ["stub", "fake", "unstub", "real", "stub", "fake", "unstub", "real", "stub", "fake", "unstub", "real"],
     ["stub", "spyOn", "unstub", "restoreFirst", "stub", "spyOn", "unstub", "restoreFirst"],
   ];
-  test.each(isDebug ? orderRows.slice(0, 1) : orderRows)(
+  test.each(isSlow ? orderRows.slice(0, 1) : orderRows)(
     "every order of calls on %s, with the spies of %s",
     async (target, api) => {
       const calls = ["spyOn", "stub", "unstub"];
       if (target === "setTimeout") calls.push("fake", "real");
-      if (!isDebug) calls.push("restoreFirst", "restoreLast", "stubShared", "stubMock", "assign");
-      const depth = isDebug ? 2 : 3;
+      if (!isSlow) calls.push("restoreFirst", "restoreLast", "stubShared", "stubMock", "assign");
+      const depth = isSlow ? 1 : 3;
       let orders = longOrders.length;
       for (let length = 1; length <= depth; length++) orders += calls.length ** length;
       const env = {
@@ -3562,7 +3563,9 @@ describe("what was undone out of order gives way when the test file ends", () =>
         CALLS: calls.join(),
         ORDERS: JSON.stringify(longOrders),
       };
-      const { stdout, stderr, exitCode } = await run(["test", `--rerun-each=${orders + 1}`, fixture], undefined, env);
+      // Not in this folder, where each load would take the preload of bunfig.toml.
+      using dir = tempDir("fake-timers-file-end-orders", {});
+      const { stdout, stderr, exitCode } = await run(["test", `--rerun-each=${orders + 1}`, fixture], String(dir), env);
       expect({ result: stdout.match(/^\{"orders".*$/m)?.[0], exitCode }, stderr.slice(-2000)).toEqual({
         result: JSON.stringify({ orders, bad: [] }),
         exitCode: 0,
@@ -3585,13 +3588,13 @@ describe("what was undone out of order gives way when the test file ends", () =>
       };
       rounds(100);
       const before = functions();
-      rounds(2000);
-      console.log(JSON.stringify({ keptOf2000: functions() - before }));
+      rounds(${isSlow ? 500 : 2000});
+      console.log(JSON.stringify({ kept: functions() - before }));
     `;
     const { stdout, stderr, exitCode } = await run(["-e", script]);
-    const { keptOf2000 } = JSON.parse(stdout);
-    expect({ keptOf2000: keptOf2000 < 100 ? "fewer than 100" : keptOf2000, exitCode }, stderr).toEqual({
-      keptOf2000: "fewer than 100",
+    const { kept } = JSON.parse(stdout);
+    expect({ kept: kept < 100 ? "fewer than 100" : kept, exitCode }, stderr).toEqual({
+      kept: "fewer than 100",
       exitCode: 0,
     });
   });

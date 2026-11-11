@@ -403,6 +403,8 @@ test/bundler/compile-node-compile-cache.test.ts: NODE_COMPILE_CACHE is ignored b
 test/bundler/compile-sourcemap-internal.test.ts: compile --sourcemap remaps stack frames to original line:col
 # fake-timers.test.ts. `delete Date.prototype.constructor` throws in an executable: built-in objects are read-only, as docs/compiler/compatibility.mdx says.
 test/js/bun/test/fake-timers/fake-timers.test.ts: the functions useFakeTimers() replaces > useRealTimers() doesn't crash after Date.prototype.constructor was deleted
+# So does an assignment to it: the test file puts a Proxy there, and that write fails its run.
+test/js/bun/test/fake-timers/fake-timers.test.ts: what was undone out of order gives way when the test file ends > runs no getter and no trap of a Proxy
 # These give a child 50 ms to be killed in. harness/children-under-aot.ts gives every child that it compiles two minutes: nothing of --aot.
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawn({ timeout }) armed under fake timers survives useRealTimers()
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawn({ timeout }) kills the child while fake timers are active

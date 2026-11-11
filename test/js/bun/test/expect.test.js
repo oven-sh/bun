@@ -1441,6 +1441,662 @@ describe("expect()", () => {
         signalCode: null,
       });
     });
+
+    // The lines of the failure message after the first one, or "passes".
+    const toThrowResult = (/** @type {() => unknown} */ fn) => {
+      try {
+        fn();
+      } catch (e) {
+        return stripVTControlCharacters(ANY(e).message).split("\n").filter(Boolean).slice(1).join(" | ");
+      }
+      return "passes";
+    };
+
+    test("toThrow(Class) fails for a thrown symbol, and prints it", () => {
+      const thrower = () => {
+        throw Symbol("boom");
+      };
+      expect({
+        "toThrow(TypeError)": toThrowResult(() => expect(thrower).toThrow(TypeError)),
+        "not.toThrow(TypeError)": toThrowResult(() => expect(thrower).not.toThrow(TypeError)),
+      }).toEqual({
+        "toThrow(TypeError)": "Expected constructor: TypeError | Received constructor:  | Received value: Symbol(boom)",
+        "not.toThrow(TypeError)": "passes",
+      });
+    });
+
+    test("a thrown object without a message matches no string and no RegExp", () => {
+      for (const thrown of [{}, { a: 1 }, []]) {
+        const thrower = () => {
+          throw thrown;
+        };
+        expect({
+          'toThrow("undefined")': toThrowResult(() => expect(thrower).toThrow("undefined")).split(" | ")[0],
+          "toThrow(/undefined/)": toThrowResult(() => expect(thrower).toThrow(/undefined/)).split(" | ")[0],
+          'not.toThrow("undefined")': toThrowResult(() => expect(thrower).not.toThrow("undefined")),
+          "not.toThrow(/undefined/)": toThrowResult(() => expect(thrower).not.toThrow(/undefined/)),
+        }).toEqual({
+          'toThrow("undefined")': 'Expected substring: "undefined"',
+          "toThrow(/undefined/)": "Expected pattern: /undefined/",
+          'not.toThrow("undefined")': "passes",
+          "not.toThrow(/undefined/)": "passes",
+        });
+      }
+    });
+
+    test("a RegExp without test() matches no message", () => {
+      const pattern = Object.assign(/bad/, { test: undefined });
+      const thrower = () => {
+        throw new Error("bad");
+      };
+      expect({
+        "toThrow(pattern)": toThrowResult(() => expect(thrower).toThrow(pattern)),
+        "not.toThrow(pattern)": toThrowResult(() => expect(thrower).not.toThrow(pattern)),
+      }).toEqual({
+        "toThrow(pattern)": 'Expected pattern: /bad/ | Received message: "bad"',
+        "not.toThrow(pattern)": "passes",
+      });
+    });
+
+    describe("toThrow() with a value that is not a string, a RegExp, a class or a matcher", () => {
+      /** @type {Record<string, string>} */
+      const files = {};
+      /** @type {{ lines: string[], stderr: string, exitCode: number | null }} */
+      let printed;
+      // Each test below has a test file of its own in one `bun test` run.
+      bunTest.beforeAll(async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("expect-to-throw", files);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test"],
+          env: { ...bunEnv, CI: "false" },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        printed = { lines: stdout.split("\n"), stderr, exitCode };
+      });
+      test("the run of the test files below passes", () => {
+        // If it fails, what it printed on stderr names the test and the error.
+        const { exitCode, stderr } = printed;
+        expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+      });
+      /** Adds a test file to that run, and a test that holds the lines that the file printed. */
+      const testFile = (/** @type {string} */ title, /** @type {string} */ source, /** @type {string[]} */ lines) => {
+        const file = `${Object.keys(files).length}.test.js`;
+        // In the file, console.log() names the file first.
+        const named = `const console = { log: (...words) => globalThis.console.log(${JSON.stringify(file + " |")}, ...words) };`;
+        files[file] = named + source;
+        test(title, () => {
+          const own = printed.lines
+            .filter(line => line.startsWith(file + " | "))
+            .map(line => line.slice(file.length + 3));
+          expect(own).toEqual(lines);
+        });
+      };
+
+      const fixture = `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        import path from "node:path";
+        class CodeError extends Error {
+          constructor(message, code) {
+            super(message);
+            this.code = code;
+          }
+        }
+        class Subclass extends Error {}
+        class WithStaticMessage extends Error {
+          static message = "m";
+        }
+        class TypeErrorSubclass extends TypeError {}
+        class WithNameGetter extends Error {
+          get name() {
+            return "WithNameGetter";
+          }
+        }
+        class WithMessageGetter extends Error {
+          #text;
+          constructor(text) {
+            super();
+            this.#text = text;
+          }
+          get message() {
+            return this.#text;
+          }
+        }
+        class NoErrorWithMessageGetter {
+          #text;
+          constructor(text) {
+            this.#text = text;
+          }
+          get message() {
+            return this.#text;
+          }
+        }
+        class AcceptsAnything {
+          static [Symbol.hasInstance]() {
+            return true;
+          }
+        }
+        const aggregate = message => new AggregateError([new Error(message)], "m");
+        const thrownBy = fn => {
+          try {
+            fn();
+          } catch (error) {
+            return error;
+          }
+        };
+        const twin = exception => new DOMException(exception.message, exception.name);
+        const atobError = () => thrownBy(() => atob("%%%"));
+        const aborted = () => AbortSignal.abort().reason;
+        const pathError = () => thrownBy(() => path.join(1));
+        const notFound = specifier => thrownBy(() => require(specifier));
+        const withMessage = message => Object.assign(new Error("m"), { message });
+
+        const outcome = async fn => {
+          try {
+            await fn();
+            return "passes";
+          } catch (error) {
+            return Bun.stripANSI(error.message).startsWith("expect(") ? "fails" : "throws " + error.message;
+          }
+        };
+        // "passes": toThrow() passes and .not.toThrow() fails. "fails": the opposite.
+        // With everyForm, toThrowError(), .rejects and .resolves have to answer the same.
+        const verdict = async (expect, thrown, expected, everyForm = false) => {
+          const thrower = () => {
+            throw thrown();
+          };
+          const plain = { "toThrow": await outcome(() => expect(thrower).toThrow(expected(expect))) };
+          const negated = { "not.toThrow": await outcome(() => expect(thrower).not.toThrow(expected(expect))) };
+          if (everyForm) {
+            plain["toThrowError"] = await outcome(() => expect(thrower).toThrowError(expected(expect)));
+            plain["rejects.toThrow"] = await outcome(() => expect(Promise.reject(thrown())).rejects.toThrow(expected(expect)));
+            plain["resolves.toThrow"] = await outcome(() => expect(Promise.resolve(thrower)).resolves.toThrow(expected(expect)));
+            negated["rejects.not.toThrow"] = await outcome(() =>
+              expect(Promise.reject(thrown())).rejects.not.toThrow(expected(expect)),
+            );
+          }
+          const results = [...new Set(Object.values(plain))];
+          const negatedResults = [...new Set(Object.values(negated))];
+          const opposite = { passes: "fails", fails: "passes" }[results[0]] ?? results[0];
+          if (results.length === 1 && negatedResults.length === 1 && negatedResults[0] === opposite) return results[0];
+          return Object.entries({ ...plain, ...negated }).map(([form, result]) => form + " " + result).join(", ");
+        };
+      `;
+      const refused = (/** @type {string} */ value) => `throws Expected value must be string or Error: ${value}`;
+
+      // [what is thrown, what toThrow() gets, the verdict in "bun:test", the verdict in "vitest"]
+      // The "vitest" verdict is what Vitest 5.0.3 answers, unless a comment says otherwise.
+      /** @typedef {Record<string, [thrown: string, expected: string, bun: string, vitest: string]>} Rows */
+      const testVerdicts = (/** @type {string} */ title, /** @type {Rows} */ rows, everyForm = false) =>
+        testFile(
+          title,
+          `
+            ${fixture}
+            const rows = {
+              ${Object.entries(rows)
+                .map(
+                  ([name, [thrown, expected]]) =>
+                    `${JSON.stringify(name)}: [() => (${thrown}), expect => (${expected})],`,
+                )
+                .join("\n")}
+            };
+            for (const [module, { test, expect }] of Object.entries({ bun, vitest })) {
+              test(module, async () => {
+                for (const [name, [thrown, expected]] of Object.entries(rows)) {
+                  console.log(module, "|", name, "|", await verdict(expect, thrown, expected, ${everyForm}));
+                }
+              });
+            }
+          `,
+          [
+            ...Object.entries(rows).map(([name, [, , bun]]) => `bun | ${name} | ${bun}`),
+            ...Object.entries(rows).map(([name, [, , , vitest]]) => `vitest | ${name} | ${vitest}`),
+          ],
+        );
+
+      testVerdicts("vitest compares it like toEqual(), bun:test compares the message", {
+        "the same error": [`new Error("m")`, `new Error("m")`, "passes", "passes"],
+        "another message": [`new Error("m")`, `new Error("n")`, "fails", "fails"],
+        "another class": [`new TypeError("m")`, `new Error("m")`, "passes", "fails"],
+        "a subclass": [`new Subclass("m")`, `new Error("m")`, "passes", "passes"],
+        "another cause": [`new Error("m", { cause: 2 })`, `new Error("m", { cause: 1 })`, "passes", "fails"],
+        "a cause that only the expected error has": [
+          `new Error("m")`,
+          `new Error("m", { cause: 1 })`,
+          "passes",
+          "fails",
+        ],
+        "a cause that only the thrown error has": [
+          `new Error("m", { cause: 1 })`,
+          `new Error("m")`,
+          "passes",
+          "passes",
+        ],
+        "another own property": [`new CodeError("m", 2)`, `new CodeError("m", 1)`, "passes", "fails"],
+        "other errors in an AggregateError": [`aggregate("b")`, `aggregate("a")`, "passes", "fails"],
+        "an object with the message of the error": [`new Error("m")`, `{ message: "m" }`, "passes", "fails"],
+        "an object with another message": [`new Error("m")`, `{ message: "n" }`, "fails", "fails"],
+        "an equal object": [`{ a: 1 }`, `{ a: 1 }`, "fails", "passes"],
+        "another object": [`{ a: 1 }`, `{ a: 2 }`, "fails", "fails"],
+        "an equal array": [`[1]`, `[1]`, "fails", "passes"],
+        "an error for a thrown string": [`"m"`, `new Error("m")`, "passes", "fails"],
+        "an empty object for a Map": [`new Map()`, `{}`, "fails", "fails"],
+
+        // A class is not compared. The thrown value has to be an instance of it, and in "bun:test" a class with a `message` is an object with a `message`.
+        "the class of the error": [`new TypeError("m")`, `TypeError`, "passes", "passes"],
+        "another class with the message of the error": [`new Error("m")`, `WithStaticMessage`, "passes", "fails"],
+        "the class of an error with another message": [
+          `new WithStaticMessage("n")`,
+          `WithStaticMessage`,
+          "fails",
+          "passes",
+        ],
+        "a class that accepts the empty string that is thrown": [`""`, `AcceptsAnything`, "passes", "fails"],
+        "a Proxy of the class of the error": [`new TypeError("m")`, `new Proxy(TypeError, {})`, "passes", "passes"],
+        "a Proxy of another class": [`new TypeError("m")`, `new Proxy(RangeError, {})`, "fails", "fails"],
+
+        // A `message` that is an object, or that a getter returns.
+        "an equal object as the message": [
+          `{ message: { nested: 1 } }`,
+          `{ message: { nested: 1 } }`,
+          "fails",
+          "passes",
+        ],
+        "another object as the message": [`{ message: { nested: 1 } }`, `{ message: { nested: 2 } }`, "fails", "fails"],
+        "a matcher as the message": [
+          `{ message: "abc" }`,
+          `{ message: expect.stringContaining("b") }`,
+          "fails",
+          "passes",
+        ],
+        "a matcher as the message, which does not match": [
+          `{ message: "abc" }`,
+          `{ message: expect.stringContaining("z") }`,
+          "fails",
+          "fails",
+        ],
+        "an error with an equal object as the message": [
+          `withMessage({ nested: 1 })`,
+          `withMessage({ nested: 1 })`,
+          "fails",
+          "fails",
+        ],
+        "the same message from a getter": [
+          `new WithMessageGetter("m")`,
+          `new WithMessageGetter("m")`,
+          "passes",
+          "passes",
+        ],
+        "another message from a getter": [`new WithMessageGetter("m")`, `new WithMessageGetter("n")`, "fails", "fails"],
+        // Vitest compares the `message` of two errors, and only the own enumerable properties of other objects.
+        "another message from a getter of a class that is no error": [
+          `new NoErrorWithMessageGetter("m")`,
+          `new NoErrorWithMessageGetter("n")`,
+          "fails",
+          "passes",
+        ],
+        // Vitest has no ResolveMessage.
+        "the same import that is not found": [
+          `notFound("./missing-a.js")`,
+          `notFound("./missing-a.js")`,
+          "passes",
+          "passes",
+        ],
+        "another import that is not found": [
+          `notFound("./missing-a.js")`,
+          `notFound("./missing-b.js")`,
+          "fails",
+          "fails",
+        ],
+      });
+
+      testVerdicts("vitest compares two DOMExceptions by message, name and cause", {
+        "a DOMException with the same message": [`new DOMException("m")`, `new DOMException("m")`, "passes", "passes"],
+        "a DOMException with another message": [`new DOMException("m")`, `new DOMException("n")`, "fails", "fails"],
+        "a DOMException with another name": [
+          `new DOMException("m", "AbortError")`,
+          `new DOMException("m", "DataError")`,
+          "passes",
+          "fails",
+        ],
+        "a DOMException with another cause": [
+          `new DOMException("m", { cause: 1 })`,
+          `new DOMException("m", { cause: 2 })`,
+          "passes",
+          "fails",
+        ],
+        "a DOMException with an equal cause": [
+          `new DOMException("m", { cause: { a: 1 } })`,
+          `new DOMException("m", { cause: { a: 1 } })`,
+          "passes",
+          "passes",
+        ],
+        "a DOMException with a cause that only the thrown one has": [
+          `new DOMException("m", { cause: 1 })`,
+          `new DOMException("m")`,
+          "passes",
+          "passes",
+        ],
+        "a DOMException like the one atob() throws": [`atobError()`, `twin(atobError())`, "passes", "passes"],
+        "another name for the one atob() throws": [
+          `atobError()`,
+          `new DOMException(atobError().message, "AbortError")`,
+          "passes",
+          "fails",
+        ],
+        "a DOMException like the reason of AbortSignal.abort()": [`aborted()`, `twin(aborted())`, "passes", "passes"],
+        "an error with the message of the DOMException": [`new DOMException("m")`, `new Error("m")`, "passes", "fails"],
+        "an empty object for a DOMException": [`new DOMException("m")`, `{}`, "fails", "fails"],
+        // Vitest 5.0.3 fails this row: it compares the own properties too.
+        "a DOMException with another own property": [
+          `Object.assign(new DOMException("m"), { extra: 1 })`,
+          `Object.assign(new DOMException("m"), { extra: 2 })`,
+          "passes",
+          "passes",
+        ],
+      });
+
+      testVerdicts("vitest takes a number, a boolean, a bigint or a symbol, and bun:test refuses it", {
+        "the same number": [`1`, `1`, refused("1"), "passes"],
+        "another number": [`1`, `2`, refused("2"), "fails"],
+        "a number for a thrown error": [`new Error("1")`, `1`, refused("1"), "fails"],
+        "the same boolean": [`true`, `true`, refused("true"), "passes"],
+        "another boolean": [`true`, `false`, refused("false"), "fails"],
+        "the same bigint": [`1n`, `1n`, refused("1n"), "passes"],
+        "a number for a thrown bigint": [`1n`, `1`, refused("1"), "fails"],
+        "the same symbol": [`Symbol.for("s")`, `Symbol.for("s")`, refused("Symbol(s)"), "passes"],
+        "another symbol with the same description": [`Symbol("s")`, `Symbol("s")`, refused("Symbol(s)"), "fails"],
+        // Vitest throws a TypeError of its own.
+        "null": [`null`, `null`, refused("null"), refused("null")],
+      });
+
+      // Vitest 5.0.3 answers the opposite of the "vitest" verdict on each row. toEqual() answers like toThrow().
+      testVerdicts("vitest answers like toEqual() where Vitest answers otherwise", {
+        "a TypeError for a subclass of TypeError": [
+          `new TypeErrorSubclass("m")`,
+          `new TypeError("m")`,
+          "passes",
+          "fails",
+        ],
+        "an error for a class with a name getter": [`new WithNameGetter("m")`, `new Error("m")`, "passes", "passes"],
+        "an error for a class with a message getter": [
+          `new WithMessageGetter("m")`,
+          `new Error("m")`,
+          "passes",
+          "fails",
+        ],
+        "an empty message for an error without a message": [`new Error()`, `new Error("")`, "passes", "fails"],
+        "an error with the code of the one path.join() throws": [
+          `pathError()`,
+          `Object.assign(new TypeError(pathError().message), { code: pathError().code })`,
+          "passes",
+          "fails",
+        ],
+      });
+
+      testVerdicts(
+        "toThrowError(), .rejects.toThrow() and .resolves.toThrow() answer like toThrow()",
+        {
+          "the same error": [`new Error("m")`, `new Error("m")`, "passes", "passes"],
+          "another message": [`new Error("m")`, `new Error("n")`, "fails", "fails"],
+          "another class": [`new TypeError("m")`, `new Error("m")`, "passes", "fails"],
+          "an equal object": [`{ a: 1 }`, `{ a: 1 }`, "fails", "passes"],
+          "the class of the error": [`new TypeError("m")`, `TypeError`, "passes", "passes"],
+          "a DOMException with another name": [
+            `new DOMException("m", "AbortError")`,
+            `new DOMException("m", "DataError")`,
+            "passes",
+            "fails",
+          ],
+          "a DOMException like the reason of AbortSignal.abort()": [`aborted()`, `twin(aborted())`, "passes", "passes"],
+          "the same number": [`1`, `1`, refused("1"), "passes"],
+          "null": [`null`, `null`, refused("null"), refused("null")],
+        },
+        true,
+      );
+
+      // toEqual() follows Jest in that hook too.
+      testFile(
+        'a hook from "bun:test" compares the message, also for a test from "vitest"',
+        `
+            import { beforeEach } from "bun:test";
+            import { test, expect } from "vitest";
+            const outcome = fn => {
+              try {
+                fn();
+                return "passes";
+              } catch {
+                return "fails";
+              }
+            };
+            const thrower = () => {
+              throw new Error("m", { cause: 1 });
+            };
+            const outcomes = () =>
+              [
+                outcome(() => expect(thrower).toThrow(new Error("m"))),
+                outcome(() => expect(thrower).toThrow(new TypeError("m"))),
+                outcome(() => expect(new Error("m", { cause: 1 })).toEqual(new Error("m"))),
+              ].join(" ");
+            beforeEach(() => console.log("hook:", outcomes()));
+            test("vitest", () => console.log("test:", outcomes()));
+          `,
+        ["hook: passes passes fails", "test: passes fails passes"],
+      );
+
+      testFile(
+        "vitest asks the equality testers first, and compares as without them if none decides",
+        `
+            ${fixture}
+            const { test, expect } = vitest;
+            test("vitest", async () => {
+              const thrown = () => new CodeError("m", 1);
+              const otherMessage = () => new CodeError("n", 1);
+              const otherCode = () => new CodeError("m", 2);
+              const toEqual = expected => outcome(() => expect(thrown()).toEqual(expected()));
+              console.log("before:", await verdict(expect, thrown, otherMessage), await toEqual(otherMessage));
+              // Decides for two CodeErrors, and for nothing else.
+              expect.addEqualityTesters([
+                (a, b) => (a instanceof CodeError && b instanceof CodeError ? a.code === b.code : undefined),
+              ]);
+              console.log("another message:", await verdict(expect, thrown, otherMessage), await toEqual(otherMessage));
+              console.log("another code:", await verdict(expect, thrown, otherCode), await toEqual(otherCode));
+              const undecided = {
+                "another message of a DOMException": [() => new DOMException("m"), () => new DOMException("n")],
+                "a DOMException like the reason of AbortSignal.abort()": [aborted, () => twin(aborted())],
+                "another message from a getter": [() => new WithMessageGetter("m"), () => new WithMessageGetter("n")],
+              };
+              for (const [name, [thrown, expected]] of Object.entries(undecided)) {
+                console.log(name + ":", await verdict(expect, thrown, expected));
+              }
+            });
+          `,
+        [
+          "before: fails fails",
+          "another message: passes passes",
+          "another code: fails fails",
+          "another message of a DOMException: fails",
+          "a DOMException like the reason of AbortSignal.abort(): passes",
+          "another message from a getter: fails",
+        ],
+      );
+
+      testFile(
+        "vitest prints a differing message, or the difference like toEqual()",
+        `
+            import { test, expect } from "vitest";
+            const message = fn => {
+              try {
+                fn();
+              } catch (error) {
+                return Bun.stripANSI(error.message);
+              }
+            };
+            const thrower = value => () => {
+              throw value;
+            };
+            test("messages", () => {
+              for (const text of [
+                message(() => expect(thrower(new TypeError("m"))).toThrow(new Error("m"))),
+                message(() => expect(thrower(new Error("m"))).toThrow(new Error("n"))),
+                message(() => expect(thrower(new DOMException("m"))).toThrow(new DOMException("n"))),
+                message(() => expect(thrower(new Error("m", { cause: 2 }))).toThrow(new Error("m", { cause: 1 }))),
+                message(() => expect(thrower(new Error("m"))).not.toThrow(new Error("m"))),
+                message(() => expect(thrower({ a: 1 })).toThrow({ a: 2 })),
+                message(() => expect(() => {}).toThrow({ a: 2 })),
+                message(() => expect(() => {}).toThrow(new Error("m"))),
+                message(() => expect(() => {}).toThrow({ message: "m", code: 1 })),
+                message(() => expect(() => {}).toThrow(2)),
+              ]) console.log(JSON.stringify(text));
+            });
+          `,
+        [
+          "expect(received).toThrow(expected)\n\nExpected: [Error: m]\nReceived: [TypeError: m]\n",
+          'expect(received).toThrow(expected)\n\nExpected message: "n"\nReceived message: "m"\n',
+          'expect(received).toThrow(expected)\n\nExpected message: "n"\nReceived message: "m"\n',
+          // The two errors print the same: https://github.com/oven-sh/bun/pull/37764
+          "expect(received).toThrow(expected)\n\nExpected: [Error: m]\nReceived: [Error: m]\n",
+          "expect(received).not.toThrow(expected)\n\nExpected: not [Error: m]\n",
+          'expect(received).toThrow(expected)\n\n  {\n-   "a": 2,\n+   "a": 1,\n  }\n\n- Expected  - 1\n+ Received  + 1\n',
+          "expect(received).toThrow(expected)\n\nExpected value: {\n  a: 2,\n}\n\nReceived function did not throw\nReceived value: undefined\n",
+          'expect(received).toThrow(expected)\n\nExpected message: "m"\n\nReceived function did not throw\nReceived value: undefined\n',
+          'expect(received).toThrow(expected)\n\nExpected value: {\n  message: "m",\n  code: 1,\n}\n\nReceived function did not throw\nReceived value: undefined\n',
+          "expect(received).toThrow(expected)\n\nExpected value: 2\n\nReceived function did not throw\nReceived value: undefined\n",
+        ].map(text => JSON.stringify(text)),
+      );
+
+      // Prints the pairs for which toThrow() and .not.toThrow() both pass or both fail.
+      testFile(
+        ".not.toThrow() passes exactly when toThrow() fails",
+        `
+            import * as bun from "bun:test";
+            import * as vitest from "vitest";
+            const passes = fn => {
+              try {
+                fn();
+                return true;
+              } catch {
+                return false;
+              }
+            };
+            class Subclass extends Error {}
+            const thrown = {
+              "an error": () => new Error("m"),
+              "a TypeError": () => new TypeError("m"),
+              "an object with a message": () => ({ message: "m" }),
+              "an object": () => ({}),
+              "a string": () => "m",
+              "zero": () => 0,
+              "undefined": () => undefined,
+            };
+            const expected = {
+              "nothing": () => [],
+              "a string": () => ["m"],
+              "another string": () => ["undefined"],
+              "a RegExp": () => [/m/],
+              "another RegExp": () => [/undefined/],
+              "a RegExp without test()": () => [Object.assign(/m/, { test: undefined })],
+              "a class": () => [TypeError],
+              "another class": () => [Subclass],
+              "a Proxy of a class": () => [new Proxy(TypeError, {})],
+              "an error": () => [new Error("m")],
+              "another error": () => [new TypeError("n")],
+              "an object": () => [{}],
+              "expect.anything()": expect => [expect.anything()],
+              "expect.any(TypeError)": expect => [expect.any(TypeError)],
+              "expect.objectContaining()": expect => [expect.objectContaining({ message: "m" })],
+              "an object with asymmetricMatch()": () => [{ asymmetricMatch: () => true }],
+            };
+            for (const [module, { test, expect }] of Object.entries({ bun, vitest })) {
+              test(module, () => {
+                let pairs = 0;
+                for (const [thrownName, value] of Object.entries(thrown)) {
+                  for (const [expectedName, args] of Object.entries(expected)) {
+                    const thrower = () => {
+                      throw value();
+                    };
+                    const plain = passes(() => expect(thrower).toThrow(...args(expect)));
+                    const negated = passes(() => expect(thrower).not.toThrow(...args(expect)));
+                    pairs++;
+                    if (plain === negated) console.log(module, "|", thrownName, "|", expectedName, "|", plain ? "both pass" : "both fail");
+                  }
+                }
+                console.log(module, "|", pairs, "pairs");
+              });
+            }
+          `,
+        ["bun | 112 pairs", "vitest | 112 pairs"],
+      );
+
+      const reads = (/** @type {string} */ module) => [
+        `${module} | toThrow() | passes after 0 reads | passes`,
+        `${module} | toThrow(Class) | passes after 0 reads | passes`,
+        `${module} | toThrow(expect.anything()) | passes after 0 reads | passes`,
+        `${module} | not.toThrow(Class) | passes after 0 reads | passes`,
+        `${module} | toThrow("m") | passes after 1 reads | throws from the getter`,
+        `${module} | toThrow(/m/) | passes after 1 reads | throws from the getter`,
+        `${module} | not.toThrow("x") | passes after 1 reads | throws from the getter`,
+      ];
+      testFile(
+        "the message of the thrown value is read only to compare it",
+        `
+            import * as bun from "bun:test";
+            import * as vitest from "vitest";
+            class AcceptsAnything {
+              static [Symbol.hasInstance]() {
+                return true;
+              }
+            }
+            class AcceptsNothing {
+              static [Symbol.hasInstance]() {
+                return false;
+              }
+            }
+            const outcome = fn => {
+              try {
+                fn();
+                return "passes";
+              } catch (error) {
+                return Bun.stripANSI(error.message).startsWith("expect(") ? "fails" : "throws " + error.message;
+              }
+            };
+            for (const [module, { test, expect }] of Object.entries({ bun, vitest })) {
+              test(module, () => {
+                const forms = {
+                  "toThrow()": thrower => expect(thrower).toThrow(),
+                  "toThrow(Class)": thrower => expect(thrower).toThrow(AcceptsAnything),
+                  "toThrow(expect.anything())": thrower => expect(thrower).toThrow(expect.anything()),
+                  "not.toThrow(Class)": thrower => expect(thrower).not.toThrow(AcceptsNothing),
+                  'toThrow("m")': thrower => expect(thrower).toThrow("m"),
+                  "toThrow(/m/)": thrower => expect(thrower).toThrow(/m/),
+                  'not.toThrow("x")': thrower => expect(thrower).not.toThrow("x"),
+                };
+                for (const [form, call] of Object.entries(forms)) {
+                  let reads = 0;
+                  const counted = {
+                    get message() {
+                      reads++;
+                      return "m";
+                    },
+                  };
+                  const throwing = {
+                    get message() {
+                      throw new Error("from the getter");
+                    },
+                  };
+                  const result = outcome(() => call(() => { throw counted; }));
+                  console.log(module, "|", form, "|", result, "after", reads, "reads |", outcome(() => call(() => { throw throwing; })));
+                }
+              });
+            }
+          `,
+        [...reads("bun"), ...reads("vitest")],
+      );
+    });
   }
 
   test("deepEquals derived strings and strings", () => {

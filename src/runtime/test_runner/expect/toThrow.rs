@@ -1,14 +1,192 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::{BuiltinName, JSGlobalObject, JSType, JSValue, JsResult};
 use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_core::strings;
 
+use super::DiffFormatter;
 use super::Expect;
 use super::Promise;
 use super::get_signature;
 use super::throw;
+
+/// What `toThrow(expected)` compares the thrown value with.
+#[derive(Clone, Copy)]
+enum Comparison {
+    Substring(JSValue),
+    Pattern(JSValue),
+    /// An asymmetric matcher, and what it answered about the thrown value.
+    Matcher(JSValue, bool),
+    Class(JSValue),
+    /// The `message` of the expected object. The thrown value's has to be the same value.
+    Message(JSValue),
+    /// Compared like `toEqual()` does.
+    Value(JSValue),
+}
+
+struct Thrown {
+    value: JSValue,
+    /// `None` until it is read.
+    message: Option<Option<JSValue>>,
+}
+
+impl Thrown {
+    /// The `message` of a thrown object. A thrown primitive is its own message.
+    fn message(&mut self, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
+        if let Some(message) = self.message {
+            return Ok(message);
+        }
+        let message = if self.value.is_object() {
+            self.value.fast_get(global, BuiltinName::Message)?
+        } else {
+            Some(JSValue::from_cell(self.value.to_js_string(global)?))
+        };
+        self.message = Some(message);
+        Ok(message)
+    }
+
+    /// Vitest asks no class and no matcher about a falsy thrown value: `thrown && thrown instanceof expected`.
+    #[inline(always)]
+    fn is_asked(&self, expect: &Expect) -> bool {
+        self.value.is_object() || self.value.to_boolean() || !expect.is_vitest()
+    }
+}
+
+/// The `message` to compare before deep equality, which calls no `message` getter: a DOMException's, a ResolveMessage's, an error class's.
+fn message_checked_first(global: &JSGlobalObject, expected: JSValue) -> JsResult<Option<JSValue>> {
+    // Deep equality compares the properties of a plain object, which is a `CompiledObject` under `--aot`.
+    if !expected.is_object() || matches!(expected.js_type(), JSType::FinalObject | JSType::CompiledObject) {
+        return Ok(None);
+    }
+    expected.fast_get(global, BuiltinName::Message)
+}
+
+/// Whether to compare a value as Vitest does. Deep equality follows the entry that runs, and a hook from "bun:test" runs for tests from "vitest" too.
+fn compares_like_vitest(expect: &Expect, global: &JSGlobalObject) -> bool {
+    global.bun_vm().is_running_vitest_entry && expect.is_vitest()
+}
+
+fn is_dom_exception(value: JSValue) -> bool {
+    value.get_class_info_name() == Some(b"DOMException")
+}
+
+/// `None` if neither value is a DOMException. The `message` is not compared.
+fn dom_exceptions_equal(global: &JSGlobalObject, thrown: JSValue, expected: JSValue) -> JsResult<Option<bool>> {
+    let equal = match (is_dom_exception(thrown), is_dom_exception(expected)) {
+        (false, false) => return Ok(None),
+        (true, true) => {
+            let name = thrown.fast_get(global, BuiltinName::name)?.unwrap_or(JSValue::UNDEFINED);
+            let expected_name = expected.fast_get(global, BuiltinName::name)?.unwrap_or(JSValue::UNDEFINED);
+            name.is_same_value(expected_name, global)?
+                && match expected.get(global, "cause")? {
+                    Some(expected_cause) => {
+                        let cause = thrown.get(global, "cause")?.unwrap_or(JSValue::UNDEFINED);
+                        cause.jest_deep_equals(expected_cause, global)?
+                    }
+                    None => true,
+                }
+        }
+        _ => false,
+    };
+    Ok(Some(equal))
+}
+
+impl Comparison {
+    /// A matcher is asked about `thrown` here, because its answer is what tells it from another object.
+    #[inline(always)] // `to_throw` is optimized for size: it inlines `of`, `matches` and `is_asked` only by force.
+    fn of(expect: &Expect, global: &JSGlobalObject, expected: JSValue, thrown: Option<&Thrown>) -> JsResult<Comparison> {
+        debug_assert!(!expected.is_empty());
+        // Jest's and Vitest's order: a class, a pattern, then an asymmetric matcher.
+        let is_function = expected.is_object() && expected.js_type().is_function();
+        let is_pattern = expected.is_reg_exp();
+        if expected.is_object() && !is_function && !is_pattern {
+            let answer = match thrown {
+                Some(thrown) if thrown.is_asked(expect) => expected.jest_asymmetric_match(thrown.value, global)?,
+                _ => (Expect::is_asymmetric_matcher(expected) || expected.has_asymmetric_match_method(global))
+                    .then_some(false),
+            };
+            if let Some(matched) = answer {
+                return Ok(Comparison::Matcher(expected, matched));
+            }
+        }
+        if expected.is_string() {
+            return Ok(Comparison::Substring(expected));
+        }
+        if is_pattern {
+            return Ok(Comparison::Pattern(expected));
+        }
+
+        // `to_throw` lets a number, boolean, bigint or symbol through only for Vitest's rule.
+        if !expected.is_object() {
+            return Ok(Comparison::Value(expected));
+        }
+        // Vitest compares any other value like toEqual() does.
+        if compares_like_vitest(expect, global) {
+            // A callable Proxy is a class to Vitest: `typeof expected === "function"`.
+            let is_class = is_function || expected.is_callable();
+            return Ok(if is_class { Comparison::Class(expected) } else { Comparison::Value(expected) });
+        }
+        // Jest 30 also compares the cause and the class: https://github.com/oven-sh/bun/issues/8479
+        Ok(match expected.fast_get(global, BuiltinName::Message)? {
+            Some(message) => Comparison::Message(message),
+            None => Comparison::Class(expected),
+        })
+    }
+
+    /// A `Value` whose `message` is the difference becomes a `Message`, which is what the failure then names.
+    #[inline(always)]
+    fn matches(&mut self, expect: &Expect, global: &JSGlobalObject, thrown: &mut Thrown) -> JsResult<bool> {
+        match *self {
+            Comparison::Substring(substring) => {
+                let Some(message) = thrown.message(global)? else { return Ok(false) };
+                let substring = substring.to_utf8(global)?;
+                let message = message.to_utf8(global)?;
+                Ok(strings::contains(message.slice(), substring.slice()))
+            }
+            Comparison::Pattern(pattern) => {
+                let Some(message) = thrown.message(global)? else { return Ok(false) };
+                let Some(test_fn) = pattern.get(global, "test")? else { return Ok(false) };
+                Ok(test_fn.call(global, pattern, &[message])?.to_boolean())
+            }
+            Comparison::Matcher(_, matched) => Ok(matched),
+            Comparison::Class(class) => Ok(thrown.is_asked(expect) && thrown.value.is_instance_of(global, class)?),
+            Comparison::Message(expected_message) => {
+                let Some(message) = thrown.message(global)? else { return Ok(false) };
+                message.is_same_value(expected_message, global)
+            }
+            Comparison::Value(expected) => {
+                if thrown.value.is_object() && expected.is_object() {
+                    // Vitest asks the equality testers before it compares anything. Deep equality asks them again if none decides.
+                    if let Some(equal) = Expect::run_equality_testers(global, thrown.value, expected)? {
+                        return Ok(equal);
+                    }
+                    if let Some(expected_message) = message_checked_first(global, expected)? {
+                        let message = thrown.message(global)?.unwrap_or(JSValue::UNDEFINED);
+                        if !message.is_same_value(expected_message, global)? {
+                            *self = Comparison::Message(expected_message);
+                            return Ok(false);
+                        }
+                    }
+                    // Deep equality compares where a native DOMException was created, and never its `name`.
+                    if let Some(equal) = dom_exceptions_equal(global, thrown.value, expected)? {
+                        return Ok(equal);
+                    }
+                }
+                thrown.value.jest_deep_equals(expected, global)
+            }
+        }
+    }
+
+    /// What a failure calls the expected string, RegExp or `message`.
+    fn noun(self) -> &'static str {
+        match self {
+            Comparison::Substring(_) => "substring",
+            Comparison::Pattern(_) => "pattern",
+            _ => "message",
+        }
+    }
+}
 
 impl Expect {
     #[optimize(size)]
@@ -30,18 +208,20 @@ impl Expect {
             if value.is_undefined() {
                 break 'brk JSValue::ZERO;
             }
-            if value.is_undefined_or_null() || (!value.is_object() && !value.is_string()) {
-                let mut fmt = Formatter::new(global).with_quote_strings(true);
-                return Err(global.throw(format_args!(
-                    "Expected value must be string or Error: {}",
-                    value.to_fmt(&mut fmt),
-                )));
-            }
             if !value.is_object() {
-                // `.toThrow("")` behaves the same as `.toThrow()`
-                let s = value.to_js_string(global)?;
-                if s.length() == 0 {
-                    break 'brk JSValue::ZERO;
+                if value.is_string() {
+                    // `.toThrow("")` behaves the same as `.toThrow()`
+                    let s = value.to_js_string(global)?;
+                    if s.length() == 0 {
+                        break 'brk JSValue::ZERO;
+                    }
+                } else if value.is_null() || !compares_like_vitest(&this, global) {
+                    // Vitest also takes a number, boolean, bigint or symbol.
+                    let mut fmt = Formatter::new(global).with_quote_strings(true);
+                    return Err(global.throw(format_args!(
+                        "Expected value must be string or Error: {}",
+                        value.to_fmt(&mut fmt),
+                    )));
                 }
             }
             break 'brk value;
@@ -55,412 +235,297 @@ impl Expect {
         let resolved_without_throwing = this.flags.get().promise() == Promise::Resolves
             && !received.js_type().is_function()
             && (!received.is_any_error() || this.is_vitest());
-        let (result_, return_value_from_function) = if resolved_without_throwing {
+        let (thrown, return_value_from_function) = if resolved_without_throwing {
             (None, received)
         } else {
             this.get_value_as_to_throw(global, received)?
         };
 
-        let did_throw = result_.is_some();
-
-        if not && !did_throw {
+        if not && thrown.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
-
-        // Jest's and Vitest's order: a class, a pattern, then an asymmetric matcher, which is asked about the thrown value itself.
-        if expected_value.is_object() && !expected_value.js_type().is_function() && !expected_value.is_reg_exp() {
-            // Vitest doesn't ask about a falsy thrown value: `thrown && matcher.asymmetricMatch(thrown)`.
-            let asked = result_.filter(|thrown| thrown.is_object() || thrown.to_boolean() || !this.is_vitest());
-            let matched = match asked {
-                Some(thrown) => expected_value.jest_asymmetric_match(thrown, global)?,
-                None => (Expect::is_asymmetric_matcher(expected_value) || expected_value.has_asymmetric_match_method(global))
-                    .then_some(false),
-            };
-            if let Some(matched) = matched {
-                if matched != not {
-                    return Ok(JSValue::UNDEFINED);
-                }
-
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", not);
-                let mut formatter = Formatter::new(global).with_quote_strings(true);
-                let mut formatter2 = super::make_formatter(global);
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected value: {}<green>{}<r>\n{}Received value: <red>{}<r>\n",
-                    if not { "not " } else { "" },
-                    expected_value.to_fmt(&mut formatter2),
-                    if did_throw { "" } else { "\nReceived function did not throw\n" },
-                    result_.unwrap_or(return_value_from_function).to_fmt(&mut formatter),
-                );
-            }
-        }
-
-        if not {
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
-            let result: JSValue = result_.unwrap();
-            let mut formatter = Formatter::new(global).with_quote_strings(true);
-
-            if expected_value.is_empty() || expected_value.is_undefined() {
-                let signature_no_args: &'static str = get_signature("toThrow", "", true);
-                if let Some(err) = result.to_error() {
-                    let name: JSValue = err
-                        .get_truthy(global, "name")?
-                        .unwrap_or(JSValue::UNDEFINED);
-                    let message: JSValue = err
-                        .get_truthy(global, "message")?
-                        .unwrap_or(JSValue::UNDEFINED);
-                    let mut formatter2 = super::make_formatter(global);
-                    return throw!(
-                        this,
-                        global,
-                        signature_no_args,
-                        "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
-                        name.to_fmt(&mut formatter),
-                        message.to_fmt(&mut formatter2),
-                    );
-                }
-
-                // non error thrown
-                return throw!(
-                    this,
-                    global,
-                    signature_no_args,
-                    "\n\nThrown value: <red>{}<r>\n",
-                    result.to_fmt(&mut formatter),
-                );
-            }
-
-            if expected_value.is_string() {
-                let received_message: JSValue = (if result.is_object() {
-                    result.fast_get(global, bun_jsc::BuiltinName::Message)?
-                } else {
-                    Some(JSValue::from_cell(result.to_js_string(global)?))
-                })
-                .unwrap_or(JSValue::UNDEFINED);
-
-                // partial match
-                {
-                    let expected_slice = expected_value.to_utf8(global)?;
-                    let received_slice = received_message.to_utf8(global)?;
-                    if !strings::contains(received_slice.slice(), expected_slice.slice()) {
-                        return Ok(JSValue::UNDEFINED);
-                    }
-                }
-
-                let mut formatter2 = super::make_formatter(global);
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected substring: not <green>{}<r>\nReceived message: <red>{}<r>\n",
-                    expected_value.to_fmt(&mut formatter),
-                    received_message.to_fmt(&mut formatter2),
-                );
-            }
-
-            if expected_value.is_reg_exp() {
-                let received_message: JSValue = (if result.is_object() {
-                    result.fast_get(global, bun_jsc::BuiltinName::Message)?
-                } else {
-                    Some(JSValue::from_cell(result.to_js_string(global)?))
-                })
-                .unwrap_or(JSValue::UNDEFINED);
-
-                // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
-                if let Some(test_fn) = expected_value.get(global, "test")? {
-                    let matches = test_fn.call(global, expected_value, &[received_message])?;
-                    if !matches.to_boolean() {
-                        return Ok(JSValue::UNDEFINED);
-                    }
-                }
-
-                let mut formatter2 = super::make_formatter(global);
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected pattern: not <green>{}<r>\nReceived message: <red>{}<r>\n",
-                    expected_value.to_fmt(&mut formatter),
-                    received_message.to_fmt(&mut formatter2),
-                );
-            }
-
-            if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-                let received_message: JSValue = (if result.is_object() {
-                    result.fast_get(global, bun_jsc::BuiltinName::Message)?
-                } else {
-                    Some(JSValue::from_cell(result.to_js_string(global)?))
-                })
-                .unwrap_or(JSValue::UNDEFINED);
-
-                // no partial match for this case
-                if !expected_message.is_same_value(received_message, global)? {
-                    return Ok(JSValue::UNDEFINED);
-                }
-
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected message: not <green>{}<r>\n",
-                    expected_message.to_fmt(&mut formatter),
-                );
-            }
-
-            if !result.is_instance_of(global, expected_value)? {
+        let mut thrown = thrown.map(|value| Thrown { value, message: None });
+        // `toThrow()`, `toThrow(undefined)` and `toThrow("")` compare nothing: anything thrown will do.
+        let mut comparison = if expected_value.is_empty() {
+            None
+        } else {
+            Some(Comparison::of(&this, global, expected_value, thrown.as_ref())?)
+        };
+        let Some(thrown) = thrown.as_mut() else {
+            return this.throw_did_not_throw(global, comparison, return_value_from_function);
+        };
+        let Some(comparison) = comparison.as_mut() else {
+            if !not {
                 return Ok(JSValue::UNDEFINED);
             }
+            return this.throw_threw(global, thrown.value);
+        };
+        if comparison.matches(&this, global, thrown)? != not {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if not {
+            this.throw_thrown_matches(global, thrown, *comparison)
+        } else {
+            this.throw_thrown_differs(global, thrown, *comparison)
+        }
+    }
 
-            let expected_class = expected_value.get_class_name(global)?;
-            // `Symbol.hasInstance` can accept a thrown value that isn't an object.
-            let received_message = if result.is_object() {
-                result.fast_get(global, bun_jsc::BuiltinName::Message)?
-            } else {
-                None
-            };
-            if let Some(received_message) = received_message {
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
-                    expected_class,
-                    received_message.to_fmt(&mut formatter),
-                );
-            }
+    /// `toThrow(...)` on a function that threw nothing.
+    #[cold]
+    #[optimize(size)]
+    fn throw_did_not_throw(
+        &self,
+        global: &JSGlobalObject,
+        comparison: Option<Comparison>,
+        returned: JSValue,
+    ) -> JsResult<JSValue> {
+        let mut formatter = Formatter::new(global).with_quote_strings(true);
+        let mut formatter2 = super::make_formatter(global);
+
+        let Some(comparison) = comparison else {
+            let signature: &'static str = get_signature("toThrow", "", false);
             return throw!(
-                this,
+                self,
                 global,
                 signature,
-                "\n\nExpected constructor: not <green>{}<r>\n\nReceived value: <red>{}<r>\n",
-                expected_class,
-                result.to_fmt(&mut formatter),
+                "\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                returned.to_fmt(&mut formatter),
+            );
+        };
+        // An expected error is named by its `message`.
+        let comparison = match comparison {
+            Comparison::Value(expected) => {
+                message_checked_first(global, expected)?.map_or(comparison, Comparison::Message)
+            }
+            _ => comparison,
+        };
+
+        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+        match comparison {
+            Comparison::Substring(expected) | Comparison::Pattern(expected) | Comparison::Message(expected) => throw!(
+                self,
+                global,
+                signature,
+                "\n\nExpected {}: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                comparison.noun(),
+                expected.to_fmt(&mut formatter),
+                returned.to_fmt(&mut formatter2),
+            ),
+            Comparison::Matcher(expected, _) | Comparison::Value(expected) => throw!(
+                self,
+                global,
+                signature,
+                "\n\nExpected value: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                expected.to_fmt(&mut formatter2),
+                returned.to_fmt(&mut formatter),
+            ),
+            Comparison::Class(class) => {
+                let expected_class = class.get_class_name(global)?;
+                throw!(
+                    self,
+                    global,
+                    signature,
+                    "\n\nExpected constructor: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                    expected_class,
+                    returned.to_fmt(&mut formatter),
+                )
+            }
+        }
+    }
+
+    /// `.not.toThrow()` on a function that threw.
+    #[cold]
+    #[optimize(size)]
+    fn throw_threw(&self, global: &JSGlobalObject, thrown: JSValue) -> JsResult<JSValue> {
+        let signature: &'static str = get_signature("toThrow", "", true);
+        let mut formatter = Formatter::new(global).with_quote_strings(true);
+        if let Some(err) = thrown.to_error() {
+            let name: JSValue = err.get_truthy(global, "name")?.unwrap_or(JSValue::UNDEFINED);
+            let message: JSValue = err.get_truthy(global, "message")?.unwrap_or(JSValue::UNDEFINED);
+            let mut formatter2 = super::make_formatter(global);
+            return throw!(
+                self,
+                global,
+                signature,
+                "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
+                name.to_fmt(&mut formatter),
+                message.to_fmt(&mut formatter2),
             );
         }
 
-        if did_throw {
-            if expected_value.is_empty() || expected_value.is_undefined() {
-                return Ok(JSValue::UNDEFINED);
-            }
+        // non error thrown
+        throw!(
+            self,
+            global,
+            signature,
+            "\n\nThrown value: <red>{}<r>\n",
+            thrown.to_fmt(&mut formatter),
+        )
+    }
 
-            let result: JSValue = if let Some(r) = result_.unwrap().to_error() {
-                r
-            } else {
-                result_.unwrap()
-            };
-
-            let received_message_opt: Option<JSValue> = if result.is_object() {
-                result.fast_get(global, bun_jsc::BuiltinName::Message)?
-            } else {
-                Some(JSValue::from_cell(result.to_js_string(global)?))
-            };
-
-            if expected_value.is_string() {
-                if let Some(received_message) = received_message_opt {
-                    // partial match
-                    let expected_slice = expected_value.to_utf8(global)?;
-                    let received_slice = received_message.to_utf8(global)?;
-                    if strings::contains(received_slice.slice(), expected_slice.slice()) {
-                        return Ok(JSValue::UNDEFINED);
-                    }
-                }
-
-                // error: message from received error does not match expected string
-                let mut formatter = Formatter::new(global).with_quote_strings(true);
-
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-
-                let mut formatter2 = super::make_formatter(global);
-                if let Some(received_message) = received_message_opt {
+    /// `toThrow(expected)` on a function that threw something else.
+    #[cold]
+    #[optimize(size)]
+    fn throw_thrown_differs(
+        &self,
+        global: &JSGlobalObject,
+        thrown: &mut Thrown,
+        comparison: Comparison,
+    ) -> JsResult<JSValue> {
+        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+        let mut formatter = Formatter::new(global).with_quote_strings(true);
+        let mut formatter2 = super::make_formatter(global);
+        match comparison {
+            Comparison::Substring(expected) | Comparison::Pattern(expected) => {
+                if let Some(message) = thrown.message(global)? {
                     return throw!(
-                        this,
+                        self,
                         global,
                         signature,
-                        "\n\nExpected substring: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_value.to_fmt(&mut formatter),
-                        received_message.to_fmt(&mut formatter2),
+                        "\n\nExpected {}: <green>{}<r>\nReceived message: <red>{}<r>\n",
+                        comparison.noun(),
+                        expected.to_fmt(&mut formatter),
+                        message.to_fmt(&mut formatter2),
                     );
                 }
-
-                return throw!(
-                    this,
+                throw!(
+                    self,
                     global,
                     signature,
-                    "\n\nExpected substring: <green>{}<r>\nReceived value: <red>{}<r>",
-                    expected_value.to_fmt(&mut formatter),
-                    result.to_fmt(&mut formatter2),
-                );
+                    "\n\nExpected {}: <green>{}<r>\nReceived value: <red>{}<r>",
+                    comparison.noun(),
+                    expected.to_fmt(&mut formatter),
+                    thrown.value.to_fmt(&mut formatter2),
+                )
             }
-
-            if expected_value.is_reg_exp() {
-                if let Some(received_message) = received_message_opt {
-                    // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
-                    if let Some(test_fn) = expected_value.get(global, "test")? {
-                        let matches = test_fn.call(global, expected_value, &[received_message])?;
-                        if matches.to_boolean() {
-                            return Ok(JSValue::UNDEFINED);
-                        }
-                    }
-                }
-
-                // error: message from received error does not match expected pattern
-                let mut formatter = Formatter::new(global).with_quote_strings(true);
-
-                let mut formatter2 = super::make_formatter(global);
-                if let Some(received_message) = received_message_opt {
-                    let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            Comparison::Matcher(matcher, _) => throw!(
+                self,
+                global,
+                signature,
+                "\n\nExpected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
+                matcher.to_fmt(&mut formatter2),
+                thrown.value.to_fmt(&mut formatter),
+            ),
+            Comparison::Message(expected_message) => {
+                if let Some(message) = thrown.message(global)? {
                     return throw!(
-                        this,
-                        global,
-                        signature,
-                        "\n\nExpected pattern: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_value.to_fmt(&mut formatter),
-                        received_message.to_fmt(&mut formatter2),
-                    );
-                }
-
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected pattern: <green>{}<r>\nReceived value: <red>{}<r>",
-                    expected_value.to_fmt(&mut formatter),
-                    result.to_fmt(&mut formatter2),
-                );
-            }
-
-            // If it's not an object, we are going to crash here.
-            debug_assert!(expected_value.is_object());
-
-            if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-
-                if let Some(received_message) = received_message_opt {
-                    if received_message.is_same_value(expected_message, global)? {
-                        return Ok(JSValue::UNDEFINED);
-                    }
-                }
-
-                // error: message from received error does not match expected error message.
-                let mut formatter = Formatter::new(global).with_quote_strings(true);
-                let mut formatter2 = super::make_formatter(global);
-
-                if let Some(received_message) = received_message_opt {
-                    return throw!(
-                        this,
+                        self,
                         global,
                         signature,
                         "\n\nExpected message: <green>{}<r>\nReceived message: <red>{}<r>\n",
                         expected_message.to_fmt(&mut formatter),
-                        received_message.to_fmt(&mut formatter2),
+                        message.to_fmt(&mut formatter2),
                     );
                 }
-
-                return throw!(
-                    this,
+                throw!(
+                    self,
                     global,
                     signature,
                     "\n\nExpected message: <green>{}<r>\nReceived value: <red>{}<r>\n",
                     expected_message.to_fmt(&mut formatter),
-                    result.to_fmt(&mut formatter2),
-                );
+                    thrown.value.to_fmt(&mut formatter2),
+                )
             }
-
-            if result.is_instance_of(global, expected_value)? {
-                return Ok(JSValue::UNDEFINED);
-            }
-
-            // error: received error not instance of received error constructor
-            let mut formatter = Formatter::new(global).with_quote_strings(true);
-            let expected_class = expected_value.get_class_name(global)?;
-            let received_class = result.get_class_name(global)?;
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-
-            if let Some(received_message) = received_message_opt {
-                return throw!(
-                    this,
+            Comparison::Class(class) => {
+                let expected_class = class.get_class_name(global)?;
+                let received_class = thrown.value.get_class_name(global)?;
+                // A symbol has no string to show as its message.
+                let message = if thrown.value.is_symbol() { None } else { thrown.message(global)? };
+                if let Some(message) = message {
+                    return throw!(
+                        self,
+                        global,
+                        signature,
+                        "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
+                        expected_class,
+                        received_class,
+                        message.to_fmt(&mut formatter),
+                    );
+                }
+                throw!(
+                    self,
                     global,
                     signature,
-                    "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
+                    "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
                     expected_class,
                     received_class,
-                    received_message.to_fmt(&mut formatter),
-                );
+                    thrown.value.to_fmt(&mut formatter),
+                )
             }
-
-            return throw!(
-                this,
-                global,
-                signature,
-                "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
-                expected_class,
-                received_class,
-                result.to_fmt(&mut formatter),
-            );
+            Comparison::Value(expected) => {
+                let diff_formatter = DiffFormatter::new(global, thrown.value, expected, false)?;
+                throw!(self, global, signature, "\n\n{}\n", diff_formatter)
+            }
         }
+    }
 
-        // did not throw
-        let result = return_value_from_function;
+    /// `.not.toThrow(expected)` on a function that threw what `expected` describes.
+    #[cold]
+    #[optimize(size)]
+    fn throw_thrown_matches(
+        &self,
+        global: &JSGlobalObject,
+        thrown: &mut Thrown,
+        comparison: Comparison,
+    ) -> JsResult<JSValue> {
+        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
         let mut formatter = Formatter::new(global).with_quote_strings(true);
         let mut formatter2 = super::make_formatter(global);
-
-        if expected_value.is_empty() || expected_value.is_undefined() {
-            let signature: &'static str = get_signature("toThrow", "", false);
-            return throw!(
-                this,
+        match comparison {
+            Comparison::Substring(expected) | Comparison::Pattern(expected) => {
+                let message = thrown.message(global)?.unwrap_or(JSValue::UNDEFINED);
+                throw!(
+                    self,
+                    global,
+                    signature,
+                    "\n\nExpected {}: not <green>{}<r>\nReceived message: <red>{}<r>\n",
+                    comparison.noun(),
+                    expected.to_fmt(&mut formatter),
+                    message.to_fmt(&mut formatter2),
+                )
+            }
+            Comparison::Matcher(matcher, _) => throw!(
+                self,
                 global,
                 signature,
-                "\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                result.to_fmt(&mut formatter),
-            );
-        }
-
-        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-
-        if expected_value.is_string() {
-            return throw!(
-                this,
+                "\n\nExpected value: not <green>{}<r>\nReceived value: <red>{}<r>\n",
+                matcher.to_fmt(&mut formatter2),
+                thrown.value.to_fmt(&mut formatter),
+            ),
+            Comparison::Message(expected_message) => throw!(
+                self,
                 global,
                 signature,
-                "\n\nExpected substring: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                expected_value.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter2),
-            );
-        }
-
-        if expected_value.is_reg_exp() {
-            return throw!(
-                this,
-                global,
-                signature,
-                "\n\nExpected pattern: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                expected_value.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter2),
-            );
-        }
-
-        if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-            return throw!(
-                this,
-                global,
-                signature,
-                "\n\nExpected message: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                "\n\nExpected message: not <green>{}<r>\n",
                 expected_message.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter2),
-            );
+            ),
+            Comparison::Class(class) => {
+                let expected_class = class.get_class_name(global)?;
+                // `Symbol.hasInstance` can accept a thrown value that isn't an object.
+                let message = if thrown.value.is_object() { thrown.message(global)? } else { None };
+                if let Some(message) = message {
+                    return throw!(
+                        self,
+                        global,
+                        signature,
+                        "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
+                        expected_class,
+                        message.to_fmt(&mut formatter),
+                    );
+                }
+                throw!(
+                    self,
+                    global,
+                    signature,
+                    "\n\nExpected constructor: not <green>{}<r>\n\nReceived value: <red>{}<r>\n",
+                    expected_class,
+                    thrown.value.to_fmt(&mut formatter),
+                )
+            }
+            Comparison::Value(expected) => {
+                let diff_formatter = DiffFormatter::new(global, thrown.value, expected, true)?;
+                throw!(self, global, signature, "\n\n{}\n", diff_formatter)
+            }
         }
-
-        let expected_class = expected_value.get_class_name(global)?;
-        throw!(
-            this,
-            global,
-            signature,
-            "\n\nExpected constructor: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-            expected_class,
-            result.to_fmt(&mut formatter),
-        )
     }
 }

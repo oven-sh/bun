@@ -107,6 +107,15 @@ fn spaces<'a>(count: usize) -> Doc<'a> {
     Doc::Text(Cow::Owned(vec![b' '; count]))
 }
 
+/// `len` backticks.
+fn fence<'a>(len: usize) -> Doc<'a> {
+    const BACKTICKS: &[u8; 64] = &[b'`'; 64];
+    match BACKTICKS.get(..len) {
+        Some(fence) => Doc::from(fence),
+        None => Doc::from(vec![b'`'; len]),
+    }
+}
+
 /// Prettier's `replaceEndOfLine(text, separator)`
 fn replace_end_of_line<'a>(text: &'a [u8], separator: impl Fn() -> Doc<'a>) -> Doc<'a> {
     if !bun_core::strings::contains_char(text, b'\n') {
@@ -215,17 +224,6 @@ fn runs_of(text: &[u8], marker: u8) -> impl Iterator<Item = usize> {
 /// The longest run of `marker` in `text`.
 fn max_continuous_count(text: &[u8], marker: u8) -> usize {
     runs_of(text, marker).max().unwrap_or(0)
-}
-
-/// Prettier's `getMinNotPresentContinuousCount`
-fn min_not_present_continuous_count(text: &[u8], marker: u8) -> usize {
-    let mut present: smallvec::SmallVec<[usize; 8]> = runs_of(text, marker).collect();
-    crate::sort::sort(&mut present[..]);
-    present.dedup();
-    (1..)
-        .zip(present.iter())
-        .find(|(count, len)| count != *len)
-        .map_or(present.len() + 1, |(count, _)| count)
 }
 
 /// `[\p{Space_Separator}\t\n\f\r]`
@@ -1886,7 +1884,9 @@ impl<'a> Printer<'a, '_> {
             }
             code = Cow::Owned(escaped);
         }
-        let backticks = vec![b'`'; min_not_present_continuous_count(&code, b'`')];
+        // The parser counted the fence: Prettier's `getMinNotPresentContinuousCount` of the code, unless a backtick
+        // that is text comes before the span (`BacktickRuns` in `parse.rs`).
+        let backticks = || fence(node.number as usize);
         let is_space_or_line_break = |byte: &u8| matches!(byte, b'\n' | b' ');
         let needs_padding = code.first() == Some(&b'`')
             || code.last() == Some(&b'`')
@@ -1902,15 +1902,9 @@ impl<'a> Printer<'a, '_> {
                 }
                 lines.push(Doc::from(line.to_vec()));
             }
-            return docs![
-                backticks.clone(),
-                padding,
-                Doc::Array(lines),
-                padding,
-                backticks
-            ];
+            return docs![backticks(), padding, Doc::Array(lines), padding, backticks()];
         }
-        docs![backticks.clone(), padding, code, padding, backticks]
+        docs![backticks(), padding, code, padding, backticks()]
     }
 
     /// The text after the opening fence of the code block `node`.

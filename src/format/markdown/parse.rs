@@ -537,6 +537,9 @@ struct Builder<'t> {
     guarded_break: Option<GuardedBreak>,
     /// For oxfmt: the current line is one that it prints verbatim.
     is_on_verbatim_line: bool,
+    /// The backtick runs in the open paragraph, heading or cell that are text: no code span after them may have a
+    /// fence of that length.
+    stray_backticks: BacktickRuns,
 }
 
 /// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
@@ -570,22 +573,70 @@ enum Follower {
     Other,
 }
 
-/// The first `len` bytes of `rest`, a line that starts with a code span, with as few backticks in front as the span's
-/// content allows.
-fn with_printed_backticks(rest: &[u8], len: usize) -> Vec<u8> {
+/// The lengths of some runs of backticks. A code span's fence must not be the length of a run in its content, nor of a
+/// run before it in its paragraph that isn't a fence: `A stray ` backtick and then ``code``` is one code span, and
+/// `A stray ` backtick and then `code`` is another one. Prettier 3.9.9 looks at the content only and prints the
+/// second, in a heading, a table cell or a link too.
+#[derive(Copy, Clone, Default)]
+struct BacktickRuns {
+    /// Bit `n - 1` for a run of `n` backticks. Bit 63 for a run of 64 or more.
+    lengths: u64,
+    /// The longest run of 64 or more.
+    longest: u32,
+}
+
+impl BacktickRuns {
+    fn of(text: &[u8]) -> BacktickRuns {
+        let mut runs = BacktickRuns::default();
+        let mut rest = text;
+        while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'`') {
+            let len = rest[at..].iter().take_while(|&&byte| byte == b'`').count();
+            runs.add(len);
+            rest = &rest[at + len..];
+        }
+        runs
+    }
+
+    fn add(&mut self, len: usize) {
+        self.lengths |= 1 << (len.clamp(1, 64) - 1);
+        if len >= 64 {
+            self.longest = self.longest.max(len as u32);
+        }
+    }
+
+    fn with(self, other: BacktickRuns) -> BacktickRuns {
+        BacktickRuns {
+            lengths: self.lengths | other.lengths,
+            longest: self.longest.max(other.longest),
+        }
+    }
+
+    /// The shortest fence that is none of them: Prettier's `getMinNotPresentContinuousCount` of the content, if none
+    /// of the text before the span has that many.
+    fn fence_len(self) -> usize {
+        match self.lengths.trailing_ones() {
+            shorter @ 0..63 => shorter as usize + 1,
+            _ => self.longest.max(63) as usize + 1,
+        }
+    }
+}
+
+/// The first `len` bytes of `rest`, a line that starts with a code span, with as many backticks in front as the span
+/// is printed with.
+fn with_printed_backticks(rest: &[u8], len: usize, strays: BacktickRuns) -> Vec<u8> {
     let run_at = |at: usize| rest[at..].iter().take_while(|&&byte| byte == b'`').count();
     let source_run = run_at(0);
-    let (mut lengths, mut at) = (0u64, source_run);
+    let mut at = source_run;
     while let Some(skipped) = bun_core::strings::index_of_char_usize(&rest[at..], b'`') {
         at += skipped;
         let run = run_at(at);
         if run == source_run {
             break;
         }
-        lengths |= 1 << (run.clamp(1, 64) - 1);
         at += run;
     }
-    let mut line = vec![b'`'; lengths.trailing_ones() as usize + 1];
+    let content = rest.get(source_run..at).unwrap_or_default();
+    let mut line = vec![b'`'; BacktickRuns::of(content).with(strays).fence_len()];
     line.extend_from_slice(rest.get(source_run..len).unwrap_or_default());
     line
 }
@@ -1557,7 +1608,7 @@ impl Builder<'_> {
         let line = match follower {
             Follower::Code => {
                 let rest = text.get(it.line.0 as usize..).unwrap_or_default();
-                printed = with_printed_backticks(rest, line.len());
+                printed = with_printed_backticks(rest, line.len(), self.stray_backticks);
                 &printed[..]
             }
             _ => line,
@@ -1837,6 +1888,7 @@ impl RendererImpl for Builder<'_> {
             BlockType::P | BlockType::H | BlockType::Table | BlockType::Th | BlockType::Td => {
                 self.end_guarded_break(Follower::Other);
                 self.is_on_verbatim_line = false;
+                self.stray_backticks = BacktickRuns::default();
                 self.end_text();
                 self.can_start_with_check.set(false);
                 let node = self.spans.pop();
@@ -1965,8 +2017,11 @@ impl RendererImpl for Builder<'_> {
         match kind {
             Kind::InlineCode => {
                 let value = self.code_value(marker_end, closing_start);
+                let fence_len = BacktickRuns::of(self.tree.str(self.text, value))
+                    .with(self.stray_backticks)
+                    .fence_len();
                 if let Some(node) = self.tree.get_mut(node) {
-                    node.value = value;
+                    (node.value, node.number) = (value, fence_len as u32);
                 }
             }
             Kind::LinkReference | Kind::ImageReference => {
@@ -1986,6 +2041,17 @@ impl RendererImpl for Builder<'_> {
 
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
         let is_white = |byte: &u8| is_space(*byte);
+        let matches_source =
+            self.inline_range.1.saturating_sub(self.inline_range.0) as usize == content.len();
+        // A backtick string without a closer is text, and the parser reports it on its own. One that's escaped
+        // doesn't match its source and isn't one.
+        if text_type == TextType::Normal
+            && matches_source
+            && content.first() == Some(&b'`')
+            && content.iter().all(|&byte| byte == b'`')
+        {
+            self.stray_backticks.add(content.len());
+        }
         if self.is_in_image() {
             match text_type {
                 TextType::Normal | TextType::Code | TextType::Html | TextType::Latexmath => {
@@ -2018,12 +2084,7 @@ impl RendererImpl for Builder<'_> {
                 push_without_nul(content, self.nul, &mut value);
                 self.add_text(&value, false);
             }
-            TextType::Normal => {
-                let matches_source = self.inline_range.1.saturating_sub(self.inline_range.0)
-                    as usize
-                    == content.len();
-                self.add_text(content, matches_source);
-            }
+            TextType::Normal => self.add_text(content, matches_source),
             // A code span's value is sliced from the text when it ends.
             TextType::Code | TextType::Latexmath => {}
             TextType::NullChar => self.add_text(self.nul, false),
@@ -2243,6 +2304,7 @@ pub(crate) fn parse_lines(
         },
         guarded_break: None,
         is_on_verbatim_line: false,
+        stray_backticks: BacktickRuns::default(),
     };
     render_with_extensions(
         &text[first_line..],

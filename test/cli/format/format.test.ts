@@ -2209,6 +2209,68 @@ describe.concurrent("bun fmt", () => {
       });
     });
 
+    describe("the fence of a code span", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. A code span ends at the first run of as many
+      // backticks as it starts with, so a run before it that is text, with no closer of its own, makes a span of
+      // anything up to the next run of its length. Prettier counts the backticks in the code alone, and where it
+      // prints as many as that run has, the run becomes the opener.
+      test.each([
+        [
+          "A stray ` backtick and then ``code``\n",
+          "A stray ` backtick and then ``code``\n",
+          "A stray ` backtick and then `code`\n",
+        ],
+        ["# a ` b ``c``\n", "# a ` b ``c``\n", "# a ` b `c`\n"],
+        [
+          "| h |\n| - |\n| a ` b ``c`` |\n",
+          "| h           |\n| ----------- |\n| a ` b ``c`` |\n",
+          "| h         |\n| --------- |\n| a ` b `c` |\n",
+        ],
+        ["[a ` b](u) ``c``\n", "[a ` b](u) ``c``\n", "[a ` b](u) `c`\n"],
+        ["![a ` b](u) ``c``\n", "![a ` b](u) ``c``\n", "![a ` b](u) `c`\n"],
+        ["*a ` b* ``c`` ``d``\n", "_a ` b_ ``c`` ``d``\n", "_a ` b_ `c` `d`\n"],
+        ["a ` b `` c ```d```\n", "a ` b `` c ```d```\n", "a ` b `` c `d`\n"],
+        ["a ` b\n    ``c`` d\n", "a ` b\n``c`` d\n", "a ` b\n`c` d\n"],
+        // Only the runs before a span count.
+        ["``a`` ` ``b``\n", "`a` ` ``b``\n", "`a` ` `b`\n"],
+        // Prettier is right about these: an escaped backtick is no run, and a run with a closer is a span.
+        ["a \\` b ``c``\n", "a \\` b `c`\n", null],
+        ["x ` y ` z ``c``\n", "x `y` z `c`\n", null],
+        ["a ` b\n\n``c``\n", "a ` b\n\n`c`\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before));
+        const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": after, "b.mdx": after });
+        expect(result.exitCode).toBe(0);
+        const byOxfmt = await format(files, ["--flavor=oxfmt"], { reads: Object.keys(files) });
+        expect(byOxfmt.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": after, "b.mdx": after });
+        expect(byOxfmt.exitCode).toBe(0);
+      });
+
+      test("starts a line that is paragraph text because it's indented", async () => {
+        // The indentation goes, and with three backticks the line would start a code block, so the line break before
+        // it becomes a space. Prettier 3.9.9 prints one backtick, and the stray one closes it.
+        const before = "a ` and `` then\n    ````x\n    y```` more\n";
+        const after = "a ` and `` then ```x\n    y``` more\n";
+        expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before).replace("then\n", "then "));
+        const files = { "a.md": before, "b.md": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("in a JSDoc comment, with oxfmt's `jsdoc`", async () => {
+        // A description with nothing of Markdown in it is wrapped as text. The emphasis makes this one a tree.
+        const text = "/** A stray ` backtick and then ``code`` in _emphasis_ */\nlet a;\n";
+        const files = { ".oxfmtrc.json": `{ "jsdoc": {} }`, "a.js": text };
+        const result = await format(files, [], { reads: ["a.js"] });
+        expect(result.files).toEqual({ "a.js": text });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
     describe("spaces and tabs at the end of a line of code", () => {
       // They're part of the code. Prettier 3.9.9 and oxfmt 0.72.0 remove them.
       const blocks = {

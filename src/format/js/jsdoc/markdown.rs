@@ -257,28 +257,6 @@ fn restore_placeholders(text: Vec<u8>, placeholders: &[&[u8]]) -> Vec<u8> {
 
 // ───────────────────────────── inline content ─────────────────────────────
 
-/// Prettier's `getMinNotPresentContinuousCount`, for backticks.
-fn min_not_present_backtick_run(text: &[u8]) -> usize {
-    let mut present: Vec<bool> = Vec::new();
-    let mut current = 0usize;
-    for &byte in text.iter().chain(b" ") {
-        if byte == b'`' {
-            current += 1;
-        } else if current > 0 {
-            if present.len() <= current {
-                present.resize(current + 1, false);
-            }
-            present[current] = true;
-            current = 0;
-        }
-    }
-    present
-        .iter()
-        .skip(1)
-        .position(|is_present| !is_present)
-        .map_or_else(|| present.len().max(1), |at| at + 1)
-}
-
 struct Serializer<'a> {
     tree: &'a Tree,
     /// The text that was parsed.
@@ -362,7 +340,7 @@ impl<'a> Serializer<'a> {
             Kind::Delete => wrapped(b"~~", out),
             Kind::InlineCode => {
                 let value = self.str(node.value);
-                let delimiter_len = min_not_present_backtick_run(value);
+                let delimiter_len = node.number as usize;
                 let is_space_or_newline = |byte: Option<&u8>| matches!(byte, Some(b' ' | b'\n'));
                 let needs_padding = value.starts_with(b"`")
                     || value.ends_with(b"`")

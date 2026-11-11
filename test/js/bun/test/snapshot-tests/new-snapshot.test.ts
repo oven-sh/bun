@@ -256,7 +256,7 @@ describe("toMatchSnapshot(properties) with a matcher as one of the two whole val
     },
   );
 
-  test("nothing is asked or compared after the answer", async () => {
+  test.concurrent("nothing is asked or compared after the answer", async () => {
     using dir = tempDir("snapshot-whole-matcher-asks", {
       "rows.test.js": `
         import { test, expect } from "bun:test";

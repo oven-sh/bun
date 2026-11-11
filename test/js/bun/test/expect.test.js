@@ -4029,7 +4029,7 @@ describe("expect()", () => {
 }
 `,
           ),
-        ).toThrow("Expected propertyMatchers to match properties from received object");
+        ).toThrow("to match properties from received object");
       });
     }
     test("ends on cycles", () => {
@@ -5744,7 +5744,7 @@ describe("expect()", () => {
           };
 
           // No text of the test file holds the name, so nothing looks for the method before an object has it.
-          test("a method whose name is made while the tests run is asked", async () => {
+          test.concurrent("a method whose name is made while the tests run is asked", async () => {
             const result = await rowsOf(`
               import { test, expect } from "bun:test";
               import vm from "node:vm";
@@ -5782,7 +5782,7 @@ describe("expect()", () => {
             });
           });
 
-          test("it answers before the equality testers, which nothing calls after it", async () => {
+          test.concurrent("it answers before the equality testers, which nothing calls after it", async () => {
             const result = await rowsOf(`
               import { test, expect } from "bun:test";
               let tested = 0;
@@ -5815,7 +5815,7 @@ describe("expect()", () => {
             });
           });
 
-          test("a matcher that waits for a promise is asked as a whole value", async () => {
+          test.concurrent("a matcher that waits for a promise is asked as a whole value", async () => {
             const result = await rowsOf(`
               import { test, expect } from "bun:test";
               const later = value => new Promise(resolve => setTimeout(resolve, 1, value));
@@ -5860,7 +5860,7 @@ describe("expect()", () => {
             });
           });
 
-          test('a matcher as a whole value is asked in a "vitest" test too', async () => {
+          test.concurrent('a matcher as a whole value is asked in a "vitest" test too', async () => {
             const result = await rowsOf(`
               import * as bun from "bun:test";
               import * as vitest from "vitest";

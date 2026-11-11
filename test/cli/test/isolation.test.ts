@@ -1533,7 +1533,7 @@ describe.concurrent("bun test --isolate=modules", () => {
     await passes(
       {
         "a.test.js": `
-          const { writeFileSync } = require("node:fs");
+          import { writeFileSync } from "node:fs";
           let ended = false;
           afterAll(() => {
             ended = true;
@@ -1561,7 +1561,7 @@ describe.concurrent("bun test --isolate=modules", () => {
           });
         `,
         "b.test.js": `
-          const { existsSync } = require("node:fs");
+          import { existsSync } from "node:fs";
           test("b", () => {
             const left = ["removeListener", "exit", "zz_late"]
               .flatMap(name => process.listeners(name).map(listener => name + " " + listener.name))

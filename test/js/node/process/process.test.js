@@ -4293,32 +4293,64 @@ describe("the native emitter of process", () => {
     );
   });
 
-  // The emitters of node:events give the first three lines. node throws for a call with the name alone.
+  // The emitters of node:events give every line but the last one: node throws for a call with the name alone.
   it.concurrent(
     "calls the 'removeListener' listeners with the object that the listener is taken off through",
     async () => {
       expect(
         await runEmitterScript(`
+        const out = [];
+        let meanwhile = null;
+        function f() {}
+        function g() {}
+        // Says which of two objects is \`this\`, then runs what waits in \`meanwhile\`.
+        const hears = (first, second, names) =>
+          function (name) {
+            if (!String(name).startsWith("zz")) return;
+            out.push(name + ": this is " + (this === first ? names[0] : this === second ? names[1] : String(this)));
+            const now = meanwhile;
+            meanwhile = null;
+            if (now) now();
+          };
         // \`b\` is below \`a\` and finds its \`_events\`: the two share one emitter.
         const a = Object.create(Object.getPrototypeOf(process));
         // Three of them: in node:events the count of \`a\` alone must stay above zero.
         for (const name of ["keep1", "keep2", "keep3"]) a.on(name, () => {});
         const b = Object.create(a);
-        const out = [];
-        function f() {}
-        b.on("removeListener", function (name) {
-          if (String(name).startsWith("zz")) out.push(name + ": this is " + (this === a ? "a" : this === b ? "b" : String(this)));
-        });
+        b.on("removeListener", hears(a, b, "ab"));
         b.on("zz_remove", f);
         a.removeListener("zz_remove", f);
         b.on("zz_all", f);
         a.removeAllListeners("zz_all");
         a.on("zz_off", f);
         b.off("zz_off", f);
+        // Between the two removals the listener adds a listener through \`b\`. The second removal still comes from \`a\`.
+        a.on("zz_two", f);
+        a.on("zz_two", g);
+        meanwhile = () => b.on("added", f);
+        a.removeAllListeners("zz_two");
+        // The same between two once() listeners that one emit fires.
+        a.once("zz_fired", f);
+        a.once("zz_fired", g);
+        meanwhile = () => b.on("added", f);
+        a.emit("zz_fired");
+        // A listener of the emit adds a listener through \`b\`. The once() listener behind it is still announced with \`a\`.
+        function adds() {
+          b.on("added", f);
+        }
+        a.on("zz_emit", adds);
+        a.once("zz_emit", g);
+        a.emit("zz_emit");
+        a.off("zz_emit", adds);
+        // The same for removeAllListeners(), on a second pair. Its names are the first ones of \`c\`: so the count of \`c\` alone stays above zero.
+        const c = Object.create(Object.getPrototypeOf(process));
+        for (const name of ["zz_no_name", "zz_no_name_too", "keep"]) c.on(name, f);
+        const d = Object.create(c);
+        d.on("removeListener", hears(c, d, "cd"));
+        meanwhile = () => d.on("added", f);
+        c.removeAllListeners();
         b.on("zz_name_alone", f);
         a.removeListener("zz_name_alone");
-        b.on("zz_no_name", f);
-        a.removeAllListeners();
         console.log(out.join("\\n"));
       `),
       ).toEqual(
@@ -4326,8 +4358,15 @@ describe("the native emitter of process", () => {
           "zz_remove: this is a",
           "zz_all: this is a",
           "zz_off: this is b",
+          "zz_two: this is a",
+          "zz_two: this is a",
+          "zz_fired: this is a",
+          "zz_fired: this is a",
+          "zz_emit: this is a",
+          "zz_emit: this is a",
+          "zz_no_name: this is c",
+          "zz_no_name_too: this is c",
           "zz_name_alone: this is a",
-          "zz_no_name: this is a",
         ),
       );
     },

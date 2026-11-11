@@ -62,13 +62,13 @@ static NEVER_INLINE void throwTerminationIfRequested(ScriptExecutionContext* con
     vm.throwTerminationException();
 }
 
-void EventEmitter::removeListenerForBindings(const Identifier& eventType, JSC::JSValue eventName, RefPtr<EventListener>&& listener)
+void EventEmitter::removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, RemovalAnnouncement announcement)
 {
     if (!listener)
         return;
 
     bool mayAnnounce = m_eventTargetData.mayHaveRemoveListenerListeners;
-    removeListener(eventType, *listener, ListenerRemoval::Announce, eventName);
+    removeListener(eventType, *listener, ListenerRemoval::Announce, announcement);
     if (mayAnnounce) [[unlikely]]
         throwTerminationIfRequested(scriptExecutionContext());
 }
@@ -95,7 +95,7 @@ NEVER_INLINE bool EventEmitter::hasRemoveListenerListenersToCall()
     return !clientData(vm)->isStoppingOrStopped(vm) && !vm.hasTerminationRequest();
 }
 
-NEVER_INLINE void EventEmitter::announceRemoval(const Identifier& eventType, EventListener& removed, JSC::JSValue eventName)
+NEVER_INLINE void EventEmitter::announceRemoval(const Identifier& eventType, EventListener& removed, RemovalAnnouncement announcement)
 {
     // The map no longer marks the function: whoever passed `removed` keeps it alive until here.
     JSC::JSObject* function = removed.jsFunction();
@@ -111,62 +111,62 @@ NEVER_INLINE void EventEmitter::announceRemoval(const Identifier& eventType, Eve
     }
 
     MarkedArgumentBuffer arguments;
-    arguments.append(eventName ? eventName : JSC::identifierToSafePublicJSValue(vm, eventType));
+    arguments.append(announcement.eventName ? announcement.eventName : JSC::identifierToSafePublicJSValue(vm, eventType));
     arguments.append(function);
-    fireEventListeners(builtinNames(vm).removeListenerPublicName(), arguments);
+    fireEventListeners(builtinNames(vm).removeListenerPublicName(), arguments, announcement.receiver);
 }
 
 // Every removal of one listener ends here. The hook runs first, so a 'removeListener' listener finds the signal handler of a last listener uninstalled.
-ALWAYS_INLINE void EventEmitter::didRemoveListener(const Identifier& eventType, EventListener& removed, ListenerRemoval mode, JSC::JSValue eventName)
+ALWAYS_INLINE void EventEmitter::didRemoveListener(const Identifier& eventType, EventListener& removed, ListenerRemoval mode, RemovalAnnouncement announcement)
 {
     didChangeListeners(eventType);
     if (announcesRemovals(mode)) [[unlikely]]
-        announceRemoval(eventType, removed, eventName);
+        announceRemoval(eventType, removed, announcement);
 }
 
-bool EventEmitter::removeListener(const Identifier& eventType, EventListener& listener, ListenerRemoval mode, JSC::JSValue eventName)
+bool EventEmitter::removeListener(const Identifier& eventType, EventListener& listener, ListenerRemoval mode, RemovalAnnouncement announcement)
 {
     auto* data = eventTargetData();
     if (!data)
         return false;
 
     if (data->eventListenerMap.remove(eventType, listener)) {
-        didRemoveListener(eventType, listener, mode, eventName);
+        didRemoveListener(eventType, listener, mode, announcement);
         return true;
     }
     return false;
 }
 
-ALWAYS_INLINE bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration, ListenerRemoval mode, JSC::JSValue eventName)
+ALWAYS_INLINE bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration, ListenerRemoval mode, RemovalAnnouncement announcement)
 {
     auto* data = eventTargetData();
     if (!data)
         return false;
 
     if (data->eventListenerMap.remove(eventType, registration)) {
-        didRemoveListener(eventType, registration.callback(), mode, eventName);
+        didRemoveListener(eventType, registration.callback(), mode, announcement);
         return true;
     }
     return false;
 }
 
-void EventEmitter::removeAllListenersForBindings(const Identifier& eventType, JSC::JSValue eventName)
+void EventEmitter::removeAllListenersForBindings(const Identifier& eventType, RemovalAnnouncement announcement)
 {
     bool mayAnnounce = m_eventTargetData.mayHaveRemoveListenerListeners;
-    removeAllListeners(eventType, ListenerRemoval::Announce, eventName);
+    removeAllListeners(eventType, ListenerRemoval::Announce, announcement);
     if (mayAnnounce) [[unlikely]]
         throwTerminationIfRequested(scriptExecutionContext());
 }
 
-void EventEmitter::removeAllListenersForBindings()
+void EventEmitter::removeAllListenersForBindings(JSC::JSValue receiver)
 {
     bool mayAnnounce = m_eventTargetData.mayHaveRemoveListenerListeners;
-    removeAllListeners(ListenerRemoval::Announce);
+    removeAllListeners(ListenerRemoval::Announce, receiver);
     if (mayAnnounce) [[unlikely]]
         throwTerminationIfRequested(scriptExecutionContext());
 }
 
-bool EventEmitter::removeAllListeners(ListenerRemoval mode)
+bool EventEmitter::removeAllListeners(ListenerRemoval mode, JSC::JSValue receiver)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -180,12 +180,12 @@ bool EventEmitter::removeAllListeners(ListenerRemoval mode)
         auto& removeListenerEvent = builtinNames(vm).removeListenerPublicName();
         for (auto& eventType : getEventNames()) {
             if (eventType != removeListenerEvent)
-                removeAllListeners(eventType, mode);
+                removeAllListeners(eventType, mode, { .receiver = receiver });
             // A termination ended a 'removeListener' listener. The rest stays, as where an exception leaves node's loop.
             if (vm.hasTerminationRequest()) [[unlikely]]
                 return any;
         }
-        removeAllListeners(removeListenerEvent, mode);
+        removeAllListeners(removeListenerEvent, mode, { .receiver = receiver });
         if (vm.hasTerminationRequest()) [[unlikely]]
             return any;
     }
@@ -201,7 +201,7 @@ bool EventEmitter::removeAllListeners(ListenerRemoval mode)
     return any;
 }
 
-bool EventEmitter::removeAllListeners(const Identifier& eventType, ListenerRemoval mode, JSC::JSValue eventName)
+bool EventEmitter::removeAllListeners(const Identifier& eventType, ListenerRemoval mode, RemovalAnnouncement announcement)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -219,9 +219,9 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType, ListenerRemov
             auto& registration = *registrations[i - 1];
             JSC::EnsureStillAliveScope function(registration.callback().jsFunction());
             if (registration.isOnce())
-                removeListener(eventType, registration, mode, eventName);
+                removeListener(eventType, registration, mode, announcement);
             else
-                removeListener(eventType, registration.callback(), mode, eventName);
+                removeListener(eventType, registration.callback(), mode, announcement);
         }
         return true;
     }
@@ -336,7 +336,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, JSC::JSValue thisValue)
 {
 
     auto* data = eventTargetData();
@@ -359,7 +359,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, thisValue);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
@@ -367,7 +367,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments, JSC::JSValue thisValue)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -376,8 +376,10 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     auto& context = *scriptExecutionContext();
     VM& vm = context.vm();
 
-    auto* thisObject = protectedThis->m_thisObject.get();
-    JSC::JSValue thisValue = thisObject ? thisObject : JSC::jsUndefined();
+    if (!thisValue) {
+        auto* thisObject = protectedThis->m_thisObject.get();
+        thisValue = thisObject ? thisObject : JSC::jsUndefined();
+    }
     auto fired = false;
 
     for (auto& registeredListener : listeners) {
@@ -401,7 +403,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             if (registeredListener->hasFired()) [[unlikely]]
                 continue;
             registeredListener->markAsFired();
-            removeListener(eventType, *registeredListener, ListenerRemoval::Announce);
+            removeListener(eventType, *registeredListener, ListenerRemoval::Announce, { .receiver = thisValue });
             // A termination ended a 'removeListener' listener: this listener does not run behind it.
             if (vm.hasTerminationRequest()) [[unlikely]]
                 break;

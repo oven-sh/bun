@@ -1896,6 +1896,6 @@
     "aot/texts-matched-across-awaits.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts",
     "aot/values-held-across-many-calls.test.ts",
-    "aot/a-spy-on-the-length-or-name-of-a-function-stays-and-is-what-bind-reads.test.ts"
+    "aot/a-spy-on-what-a-compiled-function-answers-for-but-does-not-store.test.ts"
   ]
 }

@@ -321,27 +321,12 @@ private:
     std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> m_allow;
 };
 
-static NEVER_INLINE void reifyOwnPropertyOfFunctionSlow(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // An empty descriptor defines a key that the function lacks.
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, key, slot);
-    RETURN_IF_EXCEPTION(scope, );
-    if (!hasOwn)
-        return;
-    scope.release();
-    object->methodTable()->defineOwnProperty(object, globalObject, key, PropertyDescriptor(), false);
-}
-
-// A function's defineOwnProperty() lays its `length`, `name` or `prototype` into its storage and records that a program changes it, also when the descriptor defines nothing. A direct store does neither: bind() would go on taking `length` and `name` from the code, and `new` the old `prototype`.
-static ALWAYS_INLINE void reifyOwnPropertyOfFunction(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
+// A direct store goes past what a function records about its `length`, `name` and `prototype`: bind() would go on taking `length` and `name` from the code, and `new` the old `prototype`. The function's defineOwnProperty() records it, also when the descriptor defines nothing. Where the function lacks the key, that defines `undefined`, which the store replaces.
+static ALWAYS_INLINE void willStoreOwnPropertyOfFunction(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
 {
     auto& names = *JSC::getVM(globalObject).propertyNames;
     if ((key == names.length || key == names.name || key == names.prototype) && isJSFunctionOrCompiledCallee(object)) [[unlikely]]
-        reifyOwnPropertyOfFunctionSlow(globalObject, object, key);
+        object->methodTable()->defineOwnProperty(object, globalObject, key, PropertyDescriptor(), false);
 }
 
 static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
@@ -360,7 +345,7 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
         return;
     }
 
-    reifyOwnPropertyOfFunction(globalObject, object, key);
+    willStoreOwnPropertyOfFunction(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, );
 
     if (attributes & PropertyAttribute::Accessor) {
@@ -3268,9 +3253,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         return JSValue::encode(original);
     }
 
-    // A compiled function answers for its `length` and `name` before it has them in its storage.
-    reifyOwnPropertyOfFunction(globalObject, object, propertyKey);
-    RETURN_IF_EXCEPTION(scope, {});
     unsigned spyAttributes = 0;
     JSValue storage = getOwnPropertyStorage(globalObject, object, propertyKey, spyAttributes);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3280,7 +3262,17 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     if (object->type() == CompiledObjectType)
         answersForItsElements = false;
 #endif
-    if (storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey))) {
+    bool answersAheadOfItsStorage = storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey));
+#if ENABLE(AOT)
+    // A compiled function reads its storage first. What it answers for from elsewhere (a static field of its class, its `length`, its `name`), it lays down there once it is asked to.
+    if (answersAheadOfItsStorage && vm.hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(object)) {
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+        willStoreOwnPropertyOfFunction(globalObject, object, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        answersAheadOfItsStorage = !object->getDirect(vm, propertyKey);
+    }
+#endif
+    if (answersAheadOfItsStorage) {
         throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` property because it cannot be redefined"_s));
         return {};
     }

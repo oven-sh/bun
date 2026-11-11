@@ -16,9 +16,9 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
-  "aot/a-spy-on-the-length-or-name-of-a-function-stays-and-is-what-bind-reads.test.ts": {
-    "default": 5000,
-    "asan": 20000
+  "aot/a-spy-on-what-a-compiled-function-answers-for-but-does-not-store.test.ts": {
+    "default": 40000,
+    "asan": 160000
   },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,

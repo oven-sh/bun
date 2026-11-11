@@ -826,5 +826,4 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig:
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 
-
 #endif

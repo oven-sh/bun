@@ -21,6 +21,36 @@ a[Abc]
   .ffffffffffffffffffffffffff()
   .gggggggggggggggggg();
 const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = require("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+ñá
+  .ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+x = Boolean(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+);
+define([
+  "aaaaaaaaaaaaaaaaaaaaaaaaa",
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "ccccccccccccccccccccccccc",
+], function (a, b, c) {});
+beforeEach(
+  function (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ) {},
+);
+x = graphql(
+  schema,
+  `
+    {
+      a {
+        b
+      }
+    }
+  `,
+);
 
 -------------------
 { printWidth: 100 }
@@ -41,5 +71,34 @@ a[Abc]
   .ffffffffffffffffffffffffff()
   .gggggggggggggggggg();
 const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = require("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+ñá
+  .ddddddddddddddddddddddd()
+  .eeeeeeeeeeeeeeeeeeeeeeee()
+  .ffffffffffffffffffffffffff()
+  .gggggggggggggggggg();
+x = Boolean(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+);
+define([
+  "aaaaaaaaaaaaaaaaaaaaaaaaa",
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "ccccccccccccccccccccccccc",
+], function (a, b, c) {});
+beforeEach(
+  function (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ) {},
+);
+x = graphql(
+  schema,
+  `
+    {
+      a {
+        b
+      }
+    }
+  `,
+);
 
 ===================== End =====================

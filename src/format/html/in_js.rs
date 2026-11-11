@@ -31,7 +31,7 @@ fn is_angular_component_template(parent: AstNodes<'_>) -> bool {
 fn has_html_tag<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
     matches!(parent, AstNodes::TaggedTemplateExpression(tagged)
         if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
-            if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"))
+            if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(name) if name.is("html"))))
 }
 
 /// True if the template `e` might be formatted as HTML. Of the comments that mark a template as HTML, this only

@@ -138,18 +138,21 @@ fn computed_key_side<'a>(key: Key<'a>, f: &Formatter<'a>) -> LeftSide {
     }
 }
 
-/// True if a comment is inside the brackets of the computed `key`.
+/// True if a comment is printed inside the brackets of the computed `key`: one that the key owns, wherever it is
+/// written, or one anywhere inside it, as in `[-/* c */ 1]`.
 fn computed_key_has_comments<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
         return false;
     }
-    match key.kind() {
+    let inner_span = key.inner_span(f.file());
+    let owns_comments = match key.kind() {
         KeyKind::Computed(e) => has_comments(e, f),
         _ => {
-            let comments = f.comments().of_name(key.inner_span(f.file()).start);
+            let comments = f.comments().of_name(inner_span.start);
             !comments.leading.is_empty() || !comments.trailing.is_empty()
         }
-    }
+    };
+    owns_comments || f.comments().has_comment_in_span(inner_span)
 }
 
 /// See [`LeftSide`]: a key that isn't computed, which [`write_member_name`] has just written and measured as `width`,
@@ -172,11 +175,9 @@ fn is_computed_key_one_string<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
         return is_plain_expression(e, f);
     }
     // A template is printed with a `lineSuffixBoundary`.
-    let span = key.span(f.file());
     !f.source_text()
-        .text_for(&span)
-        .get(1..)
-        .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"))
+        .text_for(&key.inner_span(f.file()))
+        .starts_with(b"`")
 }
 
 /// See [`is_computed_key_one_string`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`, `a<T>`.

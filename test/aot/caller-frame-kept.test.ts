@@ -1,6 +1,8 @@
-// `vi.importActual("./dep")`, `jest.requireActual("./dep")`, `vi.doMock("./dep", ..)`, `expect(a).toMatchInlineSnapshot()`: native code of the test runner
-// finds the file or the position of the call in the frame of its caller. In a test run Bun's transpiler prints none of them as a tail call, which
-// would drop that frame, so a compiled test run makes none either. Plain `bun test` says what is right.
+// `vi.importActual("./dep")`, `jest.requireActual("./dep")`, `vi.doMock("./dep", ..)`, `mock.module("./dep", ..)`, `expect(a).toMatchInlineSnapshot()`,
+// `expect.addEqualityTesters(..)`, `expect.addSnapshotSerializer(..)`: native code of the test runner finds the file or the position of the call in
+// the frame of its caller. In a test run Bun's transpiler prints none of them as a tail call, which would drop that frame, so a compiled test run
+// makes none either. A `mock.module(path, ..)` whose path the call does not write as a string stays a tail call in both, and so does a
+// `mock.module("./dep", ..)` where another call ends the function too. Plain `bun test` says what is right.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -17,7 +19,9 @@ const project = {
   "dep.cjs": `exports.where = "beside the test file";`,
   "sub/dep.ts": `export const where = "beside the helper";`,
   "sub/dep.cjs": `exports.where = "beside the helper";`,
-  "sub/helper.ts": `import { expect, jest, vi } from "bun:test";
+  "handed.ts": `export const where = "beside the test file";`,
+  "sub/handed.ts": `export const where = "beside the helper";`,
+  "sub/helper.ts": `import { expect, jest, mock, vi } from "bun:test";
     export const arrow = () => vi.importActual<any>("./dep");
     export const throughName = () => { const loaded = vi.importActual<any>("./dep"); return loaded; };
     export function declared() { return vi.importActual<any>("./dep"); }
@@ -30,6 +34,20 @@ const project = {
     export const made = () => jest.createMockFromModule("./dep.cjs") as any;
     export const mockIt = () => vi.doMock("./dep", () => ({ where: "mocked" }));
     export const unmockIt = () => vi.doUnmock("./dep");
+    export const mockModule = () => mock.module("./dep", () => ({ where: "mock of mock.module()" }));
+    export const handOn = (path: string) => mock.module(path, () => ({ where: "mocked" }));
+    export function holdInName() { const path = "./dep"; return mock.module(path, undefined as any); }
+    export function holdBehindAnotherName(flag: boolean) {
+      const path = "./dep";
+      const on = flag;
+      const result = on && mock.module(path, undefined as any);
+      return result;
+    }
+    export const handOnInOneArm = (path: any) => (path ? mock.module(path, undefined as any) : mock.module("./dep", undefined as any));
+    const tag = (strings: TemplateStringsArray) => mock.module(strings[0], undefined as any);
+    export const tagInOneArm = (on: any) => (on ? tag\`./dep\` : mock.module("./dep", undefined as any));
+    export const addTester = (tester: (a: unknown, b: unknown) => boolean | undefined) => expect.addEqualityTesters([tester]);
+    export const addSerializer = (serializer: { test(value: unknown): boolean; serialize(): string }) => expect.addSnapshotSerializer(serializer);
     export const withoutName = () => vi.unmock();
     export const snapshot = (value: unknown) => expect(value).toMatchInlineSnapshot();
     export const snapshotOfError = (thrower: () => void) => expect(thrower).toThrowErrorMatchingInlineSnapshot();`,
@@ -47,11 +65,26 @@ const project = {
       console.log("mocked:", (await import("./sub/dep")).where, ".", (await import("./dep")).where);
       helper.unmockIt();
     });
+    test("mock.module()", async () => {
+      helper.mockModule();
+      console.log("mock.module():", (await import("./sub/dep")).where, ".", (await import("./dep")).where);
+    });
+    test("a path that is handed on", async () => {
+      helper.handOn("./handed");
+      console.log("handed on:", (await import("./sub/handed")).where, ".", (await import("./handed")).where);
+    });
+    test("what a helper adds to expect is the helper's", () => {
+      helper.addTester((a, b) => (a === "one" && b === "another" ? true : undefined));
+      helper.addSerializer({ test: value => value === "a value", serialize: () => "printed by the serializer of the helper" });
+    });
     test("frames", () => {
-      try {
-        helper.withoutName();
-      } catch (error) {
-        console.log((error as Error).stack!.split("\\n").slice(1, 3).map(line => line.trim().split(" ")[1]).join(" < "));
+      for (const name of ["withoutName", "holdInName", "holdBehindAnotherName", "handOnInOneArm", "tagInOneArm"] as const) {
+        try {
+          helper[name](true);
+        } catch (error) {
+          const frames = (error as Error).stack!.split("\\n").slice(1, 3).map(line => line.trim().split(" ")[1]);
+          console.log(name + ":", frames.join(" < "));
+        }
       }
     });
     test("snapshots in another file", () => {
@@ -70,6 +103,16 @@ const project = {
     test("snapshots", () => {
       check(1);
       throughName("two");
+    });
+    test("what the helper added in the file before is still here", () => {
+      let equal = true;
+      try {
+        expect("one").toEqual("another");
+      } catch {
+        equal = false;
+      }
+      console.log("tester of the helper:", equal);
+      expect("a value").toMatchInlineSnapshot();
     });`,
 };
 
@@ -93,11 +136,24 @@ test("as one program", async () => {
   expect(plain.results).toEqual([
     "pass loads",
     "pass mocks",
+    "pass mock.module()",
+    "pass a path that is handed on",
+    "pass what a helper adds to expect is the helper's",
     "pass frames",
     "pass snapshots in another file",
     "pass snapshots",
+    "pass what the helper added in the file before is still here",
   ]);
   expect(plain.printed).toContain("arrow: beside the helper");
+  expect(plain.printed).toContain("mock.module(): mock of mock.module() . beside the test file");
+  expect(plain.printed).toContain("handed on: beside the helper . mocked");
+  expect(plain.printed).toContain("withoutName: unmock < withoutName");
+  expect(plain.printed).toContain("holdInName: module < <anonymous>");
+  expect(plain.printed).toContain("holdBehindAnotherName: module < <anonymous>");
+  expect(plain.printed).toContain("handOnInOneArm: module < <anonymous>");
+  expect(plain.printed).toContain("tagInOneArm: module < <anonymous>");
+  expect(plain.printed).toContain("tester of the helper: true");
   expect(plain.written).toContain("toMatchInlineSnapshot(`1`)");
+  expect(plain.written).toContain("toMatchInlineSnapshot(`printed by the serializer of the helper`)");
   expect(await runTests(asOneProgram, "--aot")).toEqual(plain);
 });

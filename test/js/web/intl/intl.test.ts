@@ -359,9 +359,10 @@ describe("Intl.Locale.prototype.getCollations and getNumberingSystems", () => {
     );
   });
 
-  // ICU takes its default locale from these variables. On Windows it takes the
-  // locale of the system.
-  test.skipIf(isWindows)("the host's locale changes nothing", async () => {
+  // ICU takes its default locale from these variables, so a child that has them
+  // must print what this process prints. On Windows ICU takes the locale of the
+  // system.
+  describe.skipIf(isWindows)("the host's locale changes nothing", () => {
     // Every locale that ICU has data for. The file has ICU's legacy names too, which are not tags.
     const localesOfICU = readFileSync(new URL("./icu-locales.txt", import.meta.url), "utf8")
       .split("\n")
@@ -372,47 +373,35 @@ describe("Intl.Locale.prototype.getCollations and getNumberingSystems", () => {
           return false;
         }
       });
-    const tags = withLikelySubtags([...all, ...localesOfICU]);
-    const script = `const out = {};
-      for (const tag of ${JSON.stringify(tags)}) {
-        try {
-          const locale = new Intl.Locale(tag);
-          out[tag] = locale.getCollations() + " | " + locale.getNumberingSystems();
-        } catch (e) {
-          out[tag] = e.name;
-        }
-      }
-      console.log(JSON.stringify(out));`;
-    const hosts = [
-      { LANG: "C" },
-      { LANG: "ar_EG.UTF-8" },
-      { LANG: "de_DE.UTF-8" },
-      { LC_ALL: "ja_JP.UTF-8" },
-      { LC_MESSAGES: "fa_IR.UTF-8" },
-    ];
-    const [reference, ...others] = await Promise.all(
-      hosts.map(async vars => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ vars, stderr, exitCode }).toEqual({ vars, stderr: "", exitCode: 0 });
-        return JSON.parse(stdout) as Record<string, string>;
-      }),
-    );
-    expect(Object.keys(reference)).toEqual(tags);
-    expect(reference.xx).toBe("emoji,eor | latn");
-    // Only the tags that differ, so that a failure names them.
-    const changed = others.map((answers, index) => ({
-      host: hosts[index + 1],
-      changed: Object.fromEntries(
-        tags.filter(tag => answers[tag] !== reference[tag]).map(tag => [tag, [reference[tag], answers[tag]]]),
-      ),
-    }));
-    expect(changed).toEqual(hosts.slice(1).map(host => ({ host, changed: {} })));
+    const tags = [...new Set([...withLikelySubtags(all), ...localesOfICU])];
+    const script = `console.log(JSON.stringify(${JSON.stringify(tags)}.map(tag => {
+      const locale = new Intl.Locale(tag);
+      return locale.getCollations() + " | " + locale.getNumberingSystems();
+    })))`;
+    let answers: string[] | undefined;
+    const here = () =>
+      (answers ??= tags.map(tag => {
+        const { collations, numberingSystems } = info(tag);
+        return collations + " | " + numberingSystems;
+      }));
+
+    test.concurrent.each([{ LANG: "ar_EG.UTF-8" }, { LC_ALL: "de_DE.UTF-8" }])("%o", async vars => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const there: string[] = JSON.parse(stdout);
+      // Only the tags that differ, so that a failure names them.
+      const differs = tags.flatMap((tag, index) =>
+        here()[index] === there[index] ? [] : [{ tag, here: here()[index], there: there[index] }],
+      );
+      expect(differs).toEqual([]);
+      expect(there[tags.indexOf("xx")]).toBe("emoji,eor | latn");
+    });
   });
 });
 

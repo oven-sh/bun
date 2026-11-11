@@ -157,8 +157,6 @@ if ($debug) {
  */
 function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options);
-  const windowsBatchFileError = options.windowsBatchFileError;
-  if (windowsBatchFileError) throw windowsBatchFileError;
   validateTimeout(options.timeout);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
@@ -1434,6 +1432,10 @@ class ChildProcess extends EventEmitter {
       }
       return;
     }
+
+    // node rejects a batch file where it would spawn the process, after it validates the options: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L400
+    const windowsBatchFileError = options.windowsBatchFileError;
+    if (windowsBatchFileError) throw windowsBatchFileError;
 
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,

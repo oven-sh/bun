@@ -147,13 +147,34 @@ describe("the error of a Windows batch file without `shell`", () => {
       });
     });
   }
+
+  // node validates the options before its binding rejects the file: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L789-L797
+  for (const [name, run, code] of [
+    ["spawn() with an invalid timeout", () => spawn(file, [], { timeout: -1 }), "ERR_OUT_OF_RANGE"],
+    ["spawn() with an invalid signal", () => spawn(file, [], { signal: 5 as any }), "ERR_INVALID_ARG_TYPE"],
+    ["spawn() with an invalid killSignal", () => spawn(file, [], { killSignal: "NOPE" as any }), "ERR_UNKNOWN_SIGNAL"],
+    [
+      "spawn() with an invalid serialization",
+      () => spawn(file, [], { serialization: "x" as any }),
+      "ERR_INVALID_ARG_VALUE",
+    ],
+    [
+      "fork() with an invalid timeout",
+      () => fork("does-not-exist.js", [], { execPath: file, timeout: -1 }),
+      "ERR_OUT_OF_RANGE",
+    ],
+  ] as const) {
+    test(`${name} throws for the option`, onlyOnWindows, () => {
+      assert.strictEqual(thrownBy(run).code, code);
+    });
+  }
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExeAtLeast } = await import("harness");
-  // Node.js runs a TypeScript file as it is from v22.18.0.
-  const node = nodeExeAtLeast("22.18.0");
+  // Node.js runs a TypeScript file as it is from v22.18.0, and parses the `await using` below from v24.0.0.
+  const node = nodeExeAtLeast("24.0.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

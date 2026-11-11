@@ -50,12 +50,20 @@ test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals afte
 test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals after vi.mock mocks a loaded module and one of its imports
 test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > what vi.importActual() loaded before the module was mocked ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > what vi.importActual() loaded before the module was mocked ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is made again by a factory that fails
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is made again, and patches a name that only the second had patched
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is removed while the second stays
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is removed, then the second
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first made is the last to patch
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the module that re-exports it, then the one that re-exports that
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the other way round
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the second without a factory
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > vi.doMock() takes the place of the first
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by a preload, as its mock: the imports of the file get the mock
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by an earlier test file: the imports of the file get the mock
+# The next one: plain runs the barrel again for the next test file, compiled does not. Compiled, the test of the fixture fails too: the end of the mock of the
+# built-in module puts its export back under the mock of the barrel (runner-suites.known.txt).
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is a mock of a builtin module, and its handle is disposed while the second stays
 # The next one: a require() gives up on a mock whose factory has not settled, an import() of the same file is in flight, and the modules are reset. Every test of the fixture passes. Compiled, one body runs
 # behind the last line of the test and races the end of the process: some lists hold it and some do not. With a wait as the last line of the test every list holds it. The list of plain is the same in every run.
 ~ test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given

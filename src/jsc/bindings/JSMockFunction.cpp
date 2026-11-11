@@ -885,6 +885,28 @@ public:
         didUninstall();
     }
 
+    // What had laid the value that this spy of a namespace export calls through to has ended under the spy: the spy stands over what that one had found.
+    void setSpyOriginal(JSGlobalObject* globalObject, JSValue original)
+    {
+        auto& vm = this->vm();
+        JSValue previous = m_spyOriginal.get();
+        if (!previous || previous == original)
+            return;
+        m_spyOriginal.set(vm, this, original);
+        auto kind = original.isCallable() ? JSMockImplementation::Kind::Call : JSMockImplementation::Kind::ReturnValue;
+        if (m_initialImplementation.get() == previous) {
+            if (kind == JSMockImplementation::Kind::Call)
+                m_initialImplementation.set(vm, this, original);
+            else
+                m_initialImplementation.clear();
+        }
+        auto* fallback = tryJSDynamicCast<JSMockImplementation*, Unknown>(m_configuration.fallbackImplmentation);
+        if (!fallback || fallback->underlyingValue.get() != previous)
+            return;
+        setFallbackImplementation(kind, original);
+        this->updatePrototype(globalObject);
+    }
+
     static void clearAll(Zig::GlobalObject*);
     static void resetAll(Zig::GlobalObject*);
     static void restoreAll(Zig::GlobalObject*);
@@ -989,6 +1011,14 @@ private:
             ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
 #if ENABLE(AOT)
             if (JSC::AOT::isModuleNamespace(target)) {
+                JSCell* ownerAbove = nullptr;
+                auto end = JSC::AOT::removeExportOverride(target, identifier.impl(), this, &ownerAbove);
+                RETURN_IF_EXCEPTION(scope, );
+                JSValue found;
+                if (ownerAbove && JSC::AOT::exportFoundByOverride(target, identifier.impl(), ownerAbove, found) && found)
+                    RELEASE_AND_RETURN(scope, didHandExportOverrideTo(globalObject, ownerAbove, found));
+                if (end != JSC::ExportOverrideEnd::NotOverridden)
+                    return;
                 bool isBack = JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
                 RETURN_IF_EXCEPTION(scope, );
                 // The spy was laid there, so the export takes a value. A spy that stays answers undefined to every later test of the process, and nobody hears of it.
@@ -997,9 +1027,14 @@ private:
                 return;
             }
 #endif
-            scope.release();
-            if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
-                moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
+            auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target);
+            if (!moduleNamespaceObject)
+                return;
+            JSCell* ownerAbove = nullptr;
+            auto end = moduleNamespaceObject->removeExportOverride(globalObject, identifier, this, &ownerAbove);
+            RETURN_IF_EXCEPTION(scope, );
+            if (end == JSModuleNamespaceObject::ExportOverrideEnd::HandedOver)
+                RELEASE_AND_RETURN(scope, didHandExportOverrideTo(globalObject, moduleNamespaceObject, identifier, ownerAbove));
             return;
         }
 
@@ -2803,6 +2838,22 @@ __attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject
     return result;
 }
 
+void didHandExportOverrideTo(JSC::JSGlobalObject* globalObject, JSC::JSCell* ownerAbove, JSC::JSValue found)
+{
+    if (auto* spy = dynamicDowncast<JSMockFunction>(ownerAbove))
+        spy->setSpyOriginal(globalObject, found);
+}
+
+void didHandExportOverrideTo(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, JSC::PropertyName name, JSC::JSCell* ownerAbove)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue found;
+    bool stands = moduleNamespace->exportFoundByOverride(globalObject, name, ownerAbove, found);
+    RETURN_IF_EXCEPTION(scope, );
+    if (stands && found)
+        RELEASE_AND_RETURN(scope, didHandExportOverrideTo(globalObject, ownerAbove, found));
+}
+
 JSC::JSValue mockObject(Zig::GlobalObject* globalObject, JSC::JSValue value, bool spy, bool leaveOriginalAlone)
 {
     return automock(globalObject, value, AutomockRole::Exports, spy, leaveOriginalAlone);
@@ -3125,16 +3176,23 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
 #endif
 
-    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
-    auto replaceExport = [&](JSValue replacement) {
+    // True if the object is a module namespace object. Its exports are replaced in the module that declares them. The spy owns what it lays there,
+    // so it and a module mock of the same export end in any order: see JSModuleNamespaceObject::layExportOverride().
+    auto replaceExport = [&](JSMockFunction* spy) {
+        JSValue replacement = spy;
         if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            moduleNamespaceObject->layExportOverride(globalObject, propertyKey, replacement, spy);
             return true;
         }
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
-            bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
+            // The spy owns what it lays over a variable of the program. An export that is kept elsewhere is stored without an owner, and the spy puts back what it replaced.
+            bool isReplaced = JSC::AOT::layExportOverride(object, propertyKey.impl(), replacement, spy);
             RETURN_IF_EXCEPTION(scope, true);
+            if (!isReplaced) {
+                isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
+                RETURN_IF_EXCEPTION(scope, true);
+            }
             if (!isReplaced)
                 throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::uncompiledCallerFile(vm, callframe)));
             return true;

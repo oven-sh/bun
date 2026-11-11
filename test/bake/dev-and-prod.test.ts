@@ -1,4 +1,5 @@
 // Tests which apply to both dev and prod. They are run twice.
+import { expect } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
 
@@ -60,6 +61,84 @@ devAndProductionTest("invalid html does not crash 1", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
+// https://github.com/oven-sh/bun/issues/18526
+const pageWithPrintStylesheet = ({ print = "print.css", headEnd = "</head>" }) => `
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <link rel="stylesheet" href="screen.css">
+      <link rel="stylesheet" href="${print}" media="print">
+      <script type="module" src="index.ts"></script>
+    ${headEnd}
+    <body></body>
+  </html>
+`;
+const serveStaticPlugin = (setup: string) => ({
+  "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+  "plugin.ts": `
+    import { join } from "node:path";
+    export default {
+      name: "print",
+      setup(build) {
+        ${setup}
+      },
+    };
+  `,
+});
+for (const [shape, files] of Object.entries<Record<string, string>>({
+  "": {
+    "index.html": pageWithPrintStylesheet({}),
+    "print.css": `.print { color: black; }`,
+  },
+  " in a document with no head end tag": {
+    "index.html": pageWithPrintStylesheet({ headEnd: "" }),
+    "print.css": `.print { color: black; }`,
+  },
+  " when a plugin loads the stylesheet": {
+    "index.html": pageWithPrintStylesheet({}),
+    "print.css": `the plugin replaces this text`,
+    ...serveStaticPlugin(
+      `build.onLoad({ filter: /print\\.css$/ }, () => ({ contents: ".print { color: black; }", loader: "css" }));`,
+    ),
+  },
+  " when a plugin resolves the stylesheet": {
+    "index.html": pageWithPrintStylesheet({ print: "print-alias" }),
+    "real-print.css": `.print { color: black; }`,
+    ...serveStaticPlugin(
+      `build.onResolve({ filter: /^print-alias$/ }, () => ({ path: join(import.meta.dir, "real-print.css") }));`,
+    ),
+  },
+})) {
+  devAndProductionTest("stylesheet link with media applies its stylesheet for that media only" + shape, {
+    files: {
+      "screen.css": `.screen { color: red; }`,
+      "index.ts": `console.log("ready");`,
+      ...files,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("ready");
+      // The media of each rule: that of its <link> in development, that of its "@media" block in production.
+      const rules = await c.js<{ selector: string; media: string }[]>`
+        const rules = [];
+        for (const link of document.querySelectorAll("link")) {
+          for (const deadline = Date.now() + ${2000 * WAIT_MULTIPLIER}; !link.sheet; await new Promise(resolve => setTimeout(resolve, 10))) {
+            if (Date.now() > deadline) throw new Error("stylesheet did not load: " + link.outerHTML);
+          }
+          for (const rule of link.sheet.cssRules) {
+            if (rule.selectorText) rules.push({ selector: rule.selectorText, media: link.media });
+            else for (const inner of rule.cssRules) rules.push({ selector: inner.selectorText, media: rule.conditionText });
+          }
+        }
+        return rules.sort((a, b) => a.selector.localeCompare(b.selector));
+      `;
+      expect(rules).toEqual([
+        { selector: ".print", media: "print" },
+        { selector: ".screen", media: "" },
+      ]);
+    },
+  });
+}
 devAndProductionTest("missing head end tag works fine", {
   files: {
     "public/index.html": `

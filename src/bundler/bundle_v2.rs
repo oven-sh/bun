@@ -404,6 +404,19 @@ pub mod bv2_impl {
         /// INTERNAL_PREFIX ++ "/asset" = "/_bun/asset".
         pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
 
+        /// The id of the asset that the dev server serves a stylesheet as: `{ASSET_PREFIX}/{id in hex}.css`.
+        pub fn css_asset_id(path: &crate::bun_fs::Path<'_>) -> u64 {
+            bun_wyhash::hash(path.key_for_incremental_graph())
+        }
+
+        /// A stylesheet that the `<link>`s of an HTML page load only under a `media` condition.
+        pub struct HtmlMediaLink {
+            /// `css_asset_id` of the stylesheet.
+            pub asset: u64,
+            /// The value for the `media` attribute of the tag that the dev server writes, with `"` escaped.
+            pub media: Box<[u8]>,
+        }
+
         /// TYPE_ONLY moved
         /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
         #[derive(Clone)]
@@ -5994,7 +6007,7 @@ pub mod bv2_impl {
             let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point]) {
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point], &[]) {
                     Ok(order) => css_orders.push((*entry_point, order)),
                     Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
                 }
@@ -7959,6 +7972,8 @@ pub mod bv2_impl {
             source_index: IndexInt,
             code: Box<[u8]>,
             script_injection_offset: u32,
+            /// Dev server only.
+            media_links: Box<[bake_types::HtmlMediaLink]>,
         },
     }
 

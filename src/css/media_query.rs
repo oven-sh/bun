@@ -666,7 +666,7 @@ impl FeatureIdTrait for MediaFeatureId {
 
 impl MediaList {
     /// Returns whether the media query list always matches.
-    pub(crate) fn always_matches(&self) -> bool {
+    pub fn always_matches(&self) -> bool {
         // If the media list is empty, it always matches.
         self.media_queries.is_empty() || self.media_queries.iter().all(MediaQuery::always_matches)
     }
@@ -1448,6 +1448,15 @@ impl MediaList {
         }
 
         Ok(MediaList { media_queries })
+    }
+
+    /// Parses all of `text` as a media query list, such as the value of an HTML `media` attribute.
+    pub fn parse_string<'a>(text: &'a [u8], arena: &'a bun_alloc::Arena) -> Result<MediaList> {
+        let mut input = css::ParserInput::new(text, arena);
+        let mut parser = Parser::new(&mut input, None, Default::default(), None);
+        let list = MediaList::parse(&mut parser, &css::ParserOptions::default(None))?;
+        parser.expect_exhausted()?;
+        Ok(list)
     }
 }
 

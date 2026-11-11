@@ -21,6 +21,7 @@ use super::{
 };
 use crate::bake::dev_server::{CachedFileIndex, HotUpdateContext};
 use crate::bake::{self, Side};
+use bun_bundler::bake_types::HtmlMediaLink;
 
 /// `bun.GenericIndex(u30, File)` — file index into `bundled_files`.
 ///
@@ -213,6 +214,12 @@ enum EdgeAttachmentResult {
 enum FreeCssMode {
     UnrefCss,
     IgnoreCss,
+}
+
+/// The tag of `links[link]` goes before the tag of `current_css_files[before]`.
+pub(crate) struct MediaLinkTag {
+    pub(crate) link: usize,
+    pub(crate) before: usize,
 }
 
 /// `Route` on the server must also be registered in `DevServer::route_lookup`.
@@ -1335,6 +1342,36 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.trace_imports(edge.imported, gts, goal)?;
         }
         Ok(())
+    }
+
+    /// `trace_imports(html_file, gts, FindCss)` that leaves out of `current_css_files` a stylesheet that only `links` load.
+    pub(crate) fn trace_css_of_html_route(
+        &mut self,
+        html_file: FileIndex<SIDE>,
+        links: &[HtmlMediaLink],
+        gts: &mut GraphTraceState,
+    ) -> Result<Vec<MediaLinkTag>, crate::Error> {
+        let mut tags: Vec<MediaLinkTag> = Vec::with_capacity(links.len());
+        gts.bits(SIDE).set(html_file.get() as usize);
+        let mut it = self.edge_lists[html_file.get() as usize].first_import;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            it = edge.next_import;
+            let link = match &self.bundled_files.values()[edge.imported.get() as usize].content {
+                Content::CssRoot(id) => links.iter().position(|link| link.asset == *id),
+                _ => None,
+            };
+            match link {
+                Some(link) => tags.push(MediaLinkTag {
+                    link,
+                    before: self.current_css_files.len(),
+                }),
+                None => self.trace_imports(edge.imported, gts, TraceImportGoal::FindCss)?,
+            }
+        }
+        // A script that imports the stylesheet applies it for every medium.
+        tags.retain(|tag| !self.current_css_files.contains(&links[tag.link].asset));
+        Ok(tags)
     }
 
     // ────────────────────────────────────────────────────────────────────────

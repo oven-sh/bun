@@ -117,6 +117,40 @@ console.log(x);`,
     expect(styleCloseCount).toBe(1);
   });
 
+  // https://github.com/oven-sh/bun/issues/18526
+  test("a stylesheet link with media is in the <style>, under its media", async () => {
+    using dir = tempDir("compile-browser-link-media", {
+      "index.html": `<!DOCTYPE html>
+<html>
+<head>
+<link rel="stylesheet" href="./screen.css">
+<link rel="stylesheet" type="text/css" href="./print.css" media="print">
+<link rel="stylesheet" href="./more.css">
+</head>
+<body><script src="./app.js"></script></body>
+</html>`,
+      "screen.css": `body { color: red; }`,
+      "print.css": `body { color: black; }`,
+      "more.css": `body { margin: 0; }`,
+      "from-script.css": `body { padding: 0; }`,
+      "app.js": `import "./from-script.css";`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+      minify: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+    const html = await result.outputs[0].text();
+    expect(html.match(/<style[^]*?<\/style>|<link[^>]*>/g)).toEqual([
+      `<style>body{color:red}@media print{body{color:#000}}body{margin:0}body{padding:0}\n</style>`,
+    ]);
+  });
+
   test("deep import chain with re-exports and multiple files", async () => {
     using dir = tempDir("compile-browser-deep-chain", {
       "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,

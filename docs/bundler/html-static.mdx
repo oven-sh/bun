@@ -211,6 +211,60 @@ import "./more-styles.css";
 
 This generates `./app.css` and `./app.js` in the output directory. Bun bundles all CSS files imported from JavaScript into a single CSS file per entry point. If you import the same CSS file from multiple JavaScript files, Bun includes it only once in the output CSS file.
 
+### Stylesheet links with `media`
+
+Bun combines the stylesheets of a page into one CSS file. The stylesheet of a `<link>` with a `media` attribute goes into that file inside an `@media` block, so it applies for the same media as on your page.
+
+<CodeGroup>
+
+```html index.html icon="file-code"
+<head>
+  <link rel="stylesheet" href="./screen.css" />
+  <link rel="stylesheet" href="./print.css" media="print" />
+</head>
+```
+
+```css screen.css icon="file-code"
+body {
+  color: red;
+}
+```
+
+```css print.css icon="file-code"
+body {
+  color: black;
+}
+```
+
+</CodeGroup>
+
+This outputs:
+
+```css index-[hash].css icon="file-code"
+/* screen.css */
+body {
+  color: red;
+}
+
+/* print.css */
+@media print {
+  body {
+    color: #000;
+  }
+}
+```
+
+The stylesheet applies for every medium in these cases:
+
+- The link also has `onload`, such as `media="print" onload="this.media='all'"`. The handler changes `media` when the stylesheet has loaded.
+- The link also has `disabled`.
+- Bun cannot parse the value of `media` as a media query list, or the value has a character reference such as `&gt;`. `bun build` prints a warning.
+- Another `<link>` or a script of the page loads the same stylesheet without `media`.
+
+The `media` of the link also applies to each `@import` in the stylesheet. An `@import` of a URL that has a condition of its own becomes an `@import` of a `data:` stylesheet, as it does under an `@import` with a condition.
+
+The built page has one `<link>`, to the combined CSS file. A script that changes the `media` of your `<link>` at runtime has no `<link>` to change.
+
 ## Plugins
 
 The dev server supports plugins.

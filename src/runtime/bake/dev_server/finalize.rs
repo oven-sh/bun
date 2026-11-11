@@ -406,8 +406,10 @@ fn finalize_bundle_inner(
             // file follows those edges to rebundle this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =
                 CachedFileIndex::from(Some(file_index));
-            dev.client_graph
-                .restore_failed_css_root(file_index, hash(entry_key));
+            dev.client_graph.restore_failed_css_root(
+                file_index,
+                bundler::bake_types::css_asset_id(&entry_source.path),
+            );
             // This lets a server route's trace reach the failed client file.
             if metadata.imported_on_server {
                 dev.server_graph
@@ -450,7 +452,7 @@ fn finalize_bundle_inner(
             .path
             .key_for_incremental_graph();
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
-        let h = hash(key);
+        let h = bundler::bake_types::css_asset_id(&ctx.sources[index.get() as usize].path);
         // Track css files that look like tailwind files.
         // Note: hoisted before `replace_asset_path` because that consumes
         // `code.buffer`.
@@ -495,6 +497,7 @@ fn finalize_bundle_inner(
         let bundler::CompileResult::Html {
             code: compile_result_code,
             script_injection_offset: compile_result_offset,
+            media_links,
             ..
         } = chunk.compile_results_for_chunk.get_mut(0)
         else {
@@ -547,6 +550,7 @@ fn finalize_bundle_inner(
         // boxed slice behind in the chunk — nothing reads it after this.
         html.bundled_html_text = Some(std::mem::take(compile_result_code));
         html.script_injection_offset = Some(route_bundle::ByteOffset::init(compile_result_offset));
+        html.media_links = std::mem::take(media_links);
 
         chunk
             .entry_point
@@ -946,10 +950,9 @@ fn finalize_bundle_inner(
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
             for chunk in css_chunks.iter().filter(|c| css_chunk_printed(c)) {
-                let key = sources[chunk.entry_point.source_index() as usize]
-                    .path
-                    .key_for_incremental_graph();
-                let content_hash = hash(key);
+                let content_hash = bundler::bake_types::css_asset_id(
+                    &sources[chunk.entry_point.source_index() as usize].path,
+                );
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);

@@ -10156,11 +10156,35 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
+/// POSIX: a trailing separator requires the final component to be a directory,
+/// so `unlinkat(path, 0)` can never remove it. Linux reports ENOENT / EISDIR /
+/// ENOTDIR from that call; gVisor before google/gvisor@a462ffdfe8 reports
+/// ENOTDIR before it looks the path up. Open the path as a directory instead.
+/// The separators come off first: `openat("link/", O_DIRECTORY | O_NOFOLLOW)`
+/// follows the link, `openat("link", ...)` does not.
+#[cfg(not(windows))]
+fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind) {
+    let mut end = sub_path.len();
+    while end > 1 && sub_path[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == sub_path.len() {
+        return (sub_path, kind_hint);
+    }
+    (&sub_path[..end], sys::FileKind::Directory)
+}
+
+#[cfg(windows)]
+fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind) {
+    (sub_path, kind_hint)
+}
+
 pub(crate) fn zig_delete_tree(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
+    let (sub_path, kind_hint) = delete_tree_target(sub_path, kind_hint);
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,

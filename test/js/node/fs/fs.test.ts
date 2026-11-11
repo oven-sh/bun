@@ -6798,6 +6798,152 @@ const outcome = async fn => {
   expect(exitCode).toBe(0);
 });
 
+// A path that ends in "/" must name a directory. rm used to send it to
+// unlinkat(2) without AT_REMOVEDIR, a call that can never remove it, and read
+// the errno to tell a missing path from a directory. The child script runs the
+// same cases with and without a shim that answers that call the way gVisor
+// before google/gvisor@a462ffdfe8 does (ENOTDIR for every such path, before
+// the lookup).
+const rmTrailingSlashChild = `
+const fs = require("node:fs");
+const sync = fn => {
+  try {
+    fn();
+    return "ok";
+  } catch (e) {
+    return e.code + " " + e.syscall;
+  }
+};
+const settle = fn => fn().then(() => "ok", e => e.code + " " + e.syscall);
+const callback = (p, options) =>
+  new Promise(resolve => fs.rm(p, options, e => resolve(e ? e.code + " " + e.syscall : "ok")));
+const rf = { recursive: true, force: true };
+
+(async () => {
+  const out = {};
+  out.unlinkSync = sync(() => fs.unlinkSync("missing/"));
+
+  out.missingSync = sync(() => fs.rmSync("missing/", rf));
+  out.missingPromises = await settle(() => fs.promises.rm("missing/", rf));
+  out.missingCallback = await callback("missing/", rf);
+  out.missingNoForce = sync(() => fs.rmSync("missing/", { recursive: true }));
+
+  fs.mkdirSync("parent");
+  out.missingUnderDir = sync(() => fs.rmSync("parent/.vite/", rf));
+
+  fs.mkdirSync("empty");
+  out.emptyDir = sync(() => fs.rmSync("empty/", rf));
+  out.emptyDirLeft = fs.existsSync("empty");
+
+  fs.mkdirSync("tree/deeper", { recursive: true });
+  fs.writeFileSync("tree/deeper/file.txt", "x");
+  out.tree = await settle(() => fs.promises.rm("tree//", rf));
+  out.treeLeft = fs.existsSync("tree");
+
+  // A trailing slash on a regular file is ENOTDIR, as in node, and the file stays.
+  fs.writeFileSync("file.txt", "x");
+  out.file = sync(() => fs.rmSync("file.txt/", rf));
+  out.fileLeft = fs.existsSync("file.txt");
+
+  // A trailing slash on a symlink to a directory is not followed: the target keeps its contents.
+  fs.mkdirSync("target");
+  fs.writeFileSync("target/keep.txt", "x");
+  fs.symlinkSync("target", "link");
+  out.link = sync(() => fs.rmSync("link/", rf));
+  out.linkTargetLeft = fs.readdirSync("target");
+  out.linkLeft = fs.lstatSync("link").isSymbolicLink();
+  console.log(JSON.stringify(out));
+})();
+`;
+const rmTrailingSlashExpected = {
+  missingSync: "ok",
+  missingPromises: "ok",
+  missingCallback: "ok",
+  missingNoForce: "ENOENT lstat",
+  missingUnderDir: "ok",
+  emptyDir: "ok",
+  emptyDirLeft: false,
+  tree: "ok",
+  treeLeft: false,
+  file: "ENOTDIR rm",
+  fileLeft: true,
+  link: "ENOTDIR rm",
+  linkTargetLeft: ["keep.txt"],
+  linkLeft: true,
+};
+
+it.skipIf(isWindows)("fs.rm on a trailing-slash path", async () => {
+  using dir = tempDir("rm-trailing-slash", { "child.js": rmTrailingSlashChild });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ unlinkSync: "ENOENT unlink", ...rmTrailingSlashExpected });
+  expect(exitCode).toBe(0);
+});
+
+// The shim applies the old gVisor rule to libc's unlink/unlinkat. glibc-only,
+// same as the shims above.
+it.skipIf(!isGlibc || !cc)("fs.rm on a trailing-slash path does not depend on the unlink errno (#48559)", async () => {
+  using dir = tempDir("rm-trailing-slash-shim", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <string.h>
+
+static int trailing_slash(const char *path) {
+  size_t n = strlen(path);
+  return n > 1 && path[n - 1] == '/';
+}
+
+int unlinkat(int dirfd, const char *path, int flags) {
+  static int (*next)(int, const char *, int);
+  if (!next) next = dlsym(RTLD_NEXT, "unlinkat");
+  if (!(flags & AT_REMOVEDIR) && trailing_slash(path)) {
+    errno = ENOTDIR;
+    return -1;
+  }
+  return next(dirfd, path, flags);
+}
+
+int unlink(const char *path) {
+  return unlinkat(AT_FDCWD, path, 0);
+}
+`,
+    "child.js": rmTrailingSlashChild,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build unlink shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // unlinkSync proves the shim interposed.
+  expect(JSON.parse(stdout)).toEqual({ unlinkSync: "ENOTDIR unlink", ...rmTrailingSlashExpected });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.Stat constructor", () => {
   expect(new (Stats as any)()).toMatchObject({
     "atimeMs": undefined,

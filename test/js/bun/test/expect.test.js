@@ -1501,7 +1501,7 @@ describe("expect()", () => {
     describe("toThrow() with a value that is not a string, a RegExp, a class or a matcher", () => {
       /** @type {Record<string, string>} */
       const files = {};
-      /** @type {{ lines: string[], exitCode: number | null }} */
+      /** @type {{ lines: string[], stderr: string, exitCode: number | null }} */
       let printed;
       // Each test below has a test file of its own in one `bun test` run.
       bunTest.beforeAll(async () => {
@@ -1514,8 +1514,13 @@ describe("expect()", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        printed = { lines: stdout.split("\n"), exitCode };
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        printed = { lines: stdout.split("\n"), stderr, exitCode };
+      });
+      test("the run of the test files below passes", () => {
+        // If it fails, what it printed on stderr names the test and the error.
+        const { exitCode, stderr } = printed;
+        expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
       });
       /** Adds a test file to that run, and a test that holds the lines that the file printed. */
       const testFile = (/** @type {string} */ title, /** @type {string} */ source, /** @type {string[]} */ lines) => {
@@ -1527,7 +1532,7 @@ describe("expect()", () => {
           const own = printed.lines
             .filter(line => line.startsWith(file + " | "))
             .map(line => line.slice(file.length + 3));
-          expect({ lines: own, exitCode: printed.exitCode }).toEqual({ lines, exitCode: 0 });
+          expect(own).toEqual(lines);
         });
       };
 

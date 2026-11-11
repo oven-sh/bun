@@ -5055,8 +5055,22 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
-    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    noteModuleEvaluation(globalObject, moduleLoader);
+    // A mock of `bun test` is stored in a module whose body has yet to end: see Bun::willRunModuleBody().
+    auto& storedAheadOfBodies = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
+    if (!storedAheadOfBodies.isEmpty()) [[unlikely]] {
+        JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::willRunModuleBody>(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    // Asked again: the body may have made the mock itself.
+    if (!storedAheadOfBodies.isEmpty()) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, result);
+        JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didRunModuleBody>(globalObject, moduleRecordValue);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    RELEASE_AND_RETURN(scope, result);
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -5075,6 +5089,12 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(globalObject, moduleLoader);
+    // As in GlobalObject::moduleLoaderEvaluate.
+    auto& storedAheadOfBodies = globalObject->onLoadPlugins.exportsStoredAheadOfBodies;
+    if (!storedAheadOfBodies.isEmpty()) [[unlikely]] {
+        JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::willRunModuleBody>(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
@@ -5082,6 +5102,10 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     // dispatching here. Don't call back into native code (which opens an
     // ExceptionValidationScope) with an exception still pending.
     RETURN_IF_EXCEPTION(scope, result);
+    if (!storedAheadOfBodies.isEmpty()) [[unlikely]] {
+        JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didRunModuleBody>(globalObject, moduleRecordValue);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
         // For a module with top-level `await`, JSC compiles the body as a

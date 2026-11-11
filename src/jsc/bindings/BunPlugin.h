@@ -3,6 +3,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
@@ -158,6 +159,25 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // What mocks stored in exports whose module body has yet to end: see storeAgainOverEndedBody(). The end of the body, the end of the mock and clear() release the handles.
+        struct ExportStoredAheadOfBody {
+            // The export as the mock that stored first names it, under each of its names, and JSModuleMock::originalExports of that mock.
+            JSC::Strong<JSC::JSObject> moduleNamespace;
+            Vector<JSC::Identifier> names;
+            JSC::Strong<JSC::JSObject> originals;
+            // What Bun stored there last: a later mock, a spy, or the end of either.
+            JSC::Strong<JSC::Unknown> value;
+            // That value is what the variable held: the mock is made of the module's own exports. Nothing is stored again for it.
+            bool isOfModule { false };
+        };
+        struct ModuleStoredAheadOfBody {
+            JSC::Strong<JSC::JSCell> module;
+            // By the offset of the variable in the environment of the module.
+            WTF::UncheckedKeyHashMap<unsigned, ExportStoredAheadOfBody, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> exports;
+            // The body waits at an `await`, and a reaction to its promise comes back to it.
+            bool isAwaited { false };
+        };
+        WTF::UncheckedKeyHashMap<JSC::JSCell*, ModuleStoredAheadOfBody> exportsStoredAheadOfBodies = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -190,6 +210,7 @@ public:
             loadRootFetches.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            exportsStoredAheadOfBodies.clear();
 #if ENABLE(AOT)
             pendingCompiledMocks.clear();
             compiledMockFactories.clear();
@@ -350,6 +371,11 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
+// Stores `value` in the export: a spy, or what the spy found there. A mock that stored there ahead of the end of the module's body stores the same again behind it.
+void storeExportOfModule(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name, JSC::JSValue value);
+// GlobalObject::moduleLoaderEvaluate() calls these around a module body while OnLoad::exportsStoredAheadOfBodies is not empty: each body that has ended holds its mocks again.
+void willRunModuleBody(Zig::GlobalObject*);
+void didRunModuleBody(Zig::GlobalObject*, JSC::JSValue moduleRecord);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.
 JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);

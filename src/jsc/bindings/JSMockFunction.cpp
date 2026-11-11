@@ -999,7 +999,7 @@ private:
 #endif
             scope.release();
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
-                moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
+                Bun::storeExportOfModule(globalObject, moduleNamespaceObject, identifier, original);
             return;
         }
 
@@ -3128,7 +3128,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
     auto replaceExport = [&](JSValue replacement) {
         if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            Bun::storeExportOfModule(globalObject, moduleNamespaceObject, propertyKey, replacement);
             return true;
         }
 #if ENABLE(AOT)

@@ -68,8 +68,7 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
-/// Ends what the test file made, and keeps what a preload made. If `next_load_shares_global` is false, `global` is
-/// thrown away, so nothing is undone.
+/// Keeps what a preload made. If `next_load_shares_global` is false, `global` is thrown away, so nothing is undone.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
     if let Some(runner) = Jest::runner() {
         if !next_load_shares_global {
@@ -87,8 +86,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     ViUtils__forgetDynamicImports(global);
 }
 
-/// `--isolate=modules` leaves the module graph of a test file after its last run, and the preloads run again for the
-/// next file. This ends what a preload made, and what the file made after `on_test_file_end`.
+/// `--isolate=modules`, after the last run of a file: ends what a preload made, and what the file made since then.
 pub(crate) fn on_module_graph_leave(global: &JSGlobalObject) {
     run(global, JSMock__didLeaveModuleGraph);
     run(global, ViUtils__unstubAllEnvs);

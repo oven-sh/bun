@@ -4285,8 +4285,7 @@ impl Drop for RestoreOnlyAfterFile<'_> {
 enum NextLoad {
     /// `--isolate`, after the last run of a file: nothing. The global object is thrown away.
     NewGlobal,
-    /// `--isolate=modules`, after the last run of a file: the global object. The module graph of the file is left, and
-    /// the preloads run again.
+    /// `--isolate=modules`, after the last run of a file: the global object. The preloads run again.
     NewModuleGraph,
     /// No isolation, or another `--rerun-each` run of the file: the global object and the module graph.
     SameModuleGraph,

@@ -820,8 +820,7 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     // Preloads run again for the next file and re-register their plugins and mocks.
     globalObject->onLoadPlugins.clear();
     globalObject->onResolvePlugins.clear();
-    // What the preloads stubbed is forgotten too. An original that is still recorded belongs to a stub that was made
-    // after the runner undid the stubs, and would be stale for the next file.
+    // And their stubs. A stub recorded after the runner undid the stubs would give the next file a stale original.
     globalObject->mockModule.forgetStubs();
     // The runner restores the working directory.
     globalObject->processObject()->clearCachedCwd();

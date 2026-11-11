@@ -448,8 +448,7 @@ public:
     bool isSpy { false };
     // `prototype` is still the CustomValue shared by all mocks, which creates the object on first read.
     bool hasLazyPrototype { true };
-    // A preload or its beforeAll() made it. The end of a test file leaves it alone, unless the preloads run again
-    // for the next file.
+    // A preload or its beforeAll() made it, so it ends when the preloads run again and not when a test file ends.
     bool isMadeByPreload { false };
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;

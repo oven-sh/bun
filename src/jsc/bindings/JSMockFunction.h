@@ -68,8 +68,7 @@ public:
     // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
-    // True from when the preloads are due to run until the first test after that starts. A preload runs in between,
-    // and so does the first run of its beforeAll(). A later run of that hook (--rerun-each) finds this false.
+    // A preload, or the first run of a beforeAll() of one, can only run while this is true. The first test clears it.
     bool preloadMayBeRunning { true };
 
     // Forgets what was stubbed, and leaves a stub that is still in place where it is.

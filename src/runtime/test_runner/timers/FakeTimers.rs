@@ -1753,9 +1753,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     FakeTimers::take_off_stale_fakes(global);
 }
 
-/// `--isolate=modules` leaves the module graph of a test file, and the preloads run again for the next file. A system
-/// time that was set with no fake timers ends here: a preload's, or one the file set after `on_test_file_end`. Fake
-/// timers end in `forget_realm`.
+/// `--isolate=modules`: ends a system time that was set with no fake timers. Fake timers end in `forget_realm`.
 pub(crate) fn on_module_graph_leave(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; a field read only.
     let active = unsafe { (*timer_all()).fake_timers.active };

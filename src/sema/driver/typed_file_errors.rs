@@ -3,8 +3,7 @@
 use crate::{Diagnostic, Report};
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 
-/// What the build of a program that installs the package reports of it: an error of syntax stops that build, and a type
-/// error is counted against the package.
+/// Whether the build of a program that installs the package reports it: an error of syntax, or a type error.
 fn counts(reported: &Diagnostic) -> bool {
     let effect = effect_of(
         FileOrigin::DependencySource,
@@ -18,9 +17,7 @@ pub fn first_error(report: &Report) -> Option<&Diagnostic> {
     report.diagnostics.iter().find(|reported| counts(reported))
 }
 
-/// `report` has an error. `with_bun_types` is a check of the same texts, `files` of them, in the program that loads them: it
-/// has the types of Bun and reads every file as a module. That program decides, and its first error is the one to name. Where
-/// it has no error and has not judged every file either, the first error of `report` stands.
+/// The error that decides: the first of `with_bun_types`, or of `report` where `with_bun_types` did not judge every file.
 pub fn first_error_with_bun_types<'a>(
     report: &'a Report,
     with_bun_types: &'a Report,

@@ -100,13 +100,15 @@ impl NotedModuleTypes {
 
 type Texts = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// The types of Bun as the compiler carries them: the type root that they lie below, and each file with its text.
+type CarriedBunTypes = (&'static [u8], Texts);
+
 /// The program that the typed files are type checked in.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum CheckedIn {
     /// Their own: the files, under what the package.json says of them.
     OwnProgram,
-    /// The one that loads them: it has the types of Bun, and every file is a module.
-    ProgramWithBunTypes,
+    /// The one that loads them: with the types of Bun (`Some`: the compiler's copy of them), and every file a module.
+    ProgramWithBunTypes(Option<CarriedBunTypes>),
 }
 
 const AS_PROGRAM_WITH_BUN_TYPES: [&[u8]; 4] = [b"--moduleDetection", b"force", b"--types", b"bun"];
@@ -300,12 +302,10 @@ pub(crate) fn typed_files_for_build(
         let mut already_read = already_read(cwd, &mut texts.map(|file| (&file.0[..], &file.1[..])));
         let mut options = Vec::new();
         let mut plan_options = PlanOptions::default();
-        if checked_in == CheckedIn::ProgramWithBunTypes {
+        if let CheckedIn::ProgramWithBunTypes(carried) = checked_in {
             options = bun_sema_driver::parse_command_line(&AS_PROGRAM_WITH_BUN_TYPES, cwd)
                 .compiler_options;
-            if !has_bun_types_installed_above(outdir_without_slash)
-                && let Some((type_root, files)) = bun_aot::load::carried_bun_types()
-            {
+            if let Some((type_root, files)) = carried {
                 plan_options.type_root_of_last_resort = Some(type_root);
                 already_read.extend(files);
             }
@@ -395,15 +395,21 @@ pub(crate) fn typed_files_for_build(
         &found.declarations_while_checked,
         &newest_lib,
     );
-    // A program that loads these files has the types of Bun, and reads each file as a module. Where the check without them
-    // finds an error, the check in such a program decides.
-    let with_bun_types = first_error(&report).map(|_| {
+    // Every program that loads these files has the types of Bun and reads each file as a module: that program decides.
+    let with_bun_types = first_error(&report).and_then(|_| {
+        let carried = match has_bun_types_installed_above(outdir_without_slash) {
+            true => None,
+            false => Some(bun_aot::load::carried_bun_types()?),
+        };
         let texts = [&found.typed, &found.declarations_while_checked, &newest_lib];
         let paths = entry_paths(&found.typed, &newest_lib);
-        check_once(&paths, texts, CheckedIn::ProgramWithBunTypes)
+        let checked_in = CheckedIn::ProgramWithBunTypes(carried);
+        Some(check_once(&paths, texts, checked_in))
     });
-    let first = (with_bun_types.as_ref())
-        .and_then(|it| first_error_with_bun_types(&report, it, found.typed.len()));
+    let first = match &with_bun_types {
+        Some(it) => first_error_with_bun_types(&report, it, found.typed.len()),
+        None => first_error(&report),
+    };
     if let Some(first) = first {
         let path = bundler_path(&first.path);
         let separator = std::path::MAIN_SEPARATOR_STR.as_bytes();

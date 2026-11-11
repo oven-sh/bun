@@ -73,9 +73,12 @@ public:
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
     void close();
-    // Called on the entangled peer when this side closes: dispatches a
-    // 'close' event and releases the event-loop ref so the loop can idle.
+    // Called by the pipe's drain once the peer closed and everything it sent was
+    // consumed: dispatches a 'close' event and releases the event-loop ref so the loop can idle.
     void peerClosed();
+    // Called by the pipe's drain when the peer closed and this port does not read the
+    // messages queued ahead of that close.
+    void peerCloseHeld();
     void dispatchCloseEvent();
 
     // Transfer machinery.
@@ -152,6 +155,8 @@ private:
     bool m_startDeferredUntilEntrySettled { false };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
+    // Not while that close waits behind messages the port does not read
+    // (virtualHasPendingActivity()).
     std::atomic<bool> m_hasCloseEventListener { false };
     bool m_hasRef { false };
 

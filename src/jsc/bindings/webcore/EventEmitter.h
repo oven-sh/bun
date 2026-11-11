@@ -22,6 +22,12 @@ namespace WebCore {
 class DOMWrapperWorld;
 class JSEventListener;
 
+// Whether 'removeListener' listeners are called: the JS methods and a once() listener that fires announce, native teardown is silent.
+enum class ListenerRemoval : bool {
+    Silent,
+    Announce,
+};
+
 struct EventEmitterData {
     WTF_MAKE_NONCOPYABLE(EventEmitterData);
     WTF_MAKE_TZONE_ALLOCATED(EventEmitterData);
@@ -30,7 +36,10 @@ public:
     EventEmitterData() = default;
     IdentifierEventListenerMap eventListenerMap;
     bool isFiringEventListeners { false };
+    // Set when a 'removeListener' listener is added. While it is clear, a removal has nobody to tell and looks no further.
+    bool mayHaveRemoveListenerListeners { false };
 };
+static_assert(sizeof(EventEmitterData) == sizeof(IdentifierEventListenerMap) + sizeof(void*), "the flags share the word after the map");
 
 class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEmitter>, public RefCounted<EventEmitter>, public ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(EventEmitter);
@@ -46,15 +55,18 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 
-    bool removeAllListeners();
+    bool removeAllListeners(ListenerRemoval);
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
-    WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
+    // `eventName` is the name as the program passed it: the first argument of the 'removeListener' event.
+    WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, JSC::JSValue eventName, RefPtr<EventListener>&&);
+    WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType, JSC::JSValue eventName);
+    WEBCORE_EXPORT void removeAllListenersForBindings();
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
-    WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
+    // Without `eventName` the 'removeListener' listeners get `eventType` as a string or a symbol.
+    WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&, ListenerRemoval, JSC::JSValue eventName = {});
+    WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType, ListenerRemoval, JSC::JSValue eventName = {});
 
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
 
@@ -78,7 +90,7 @@ public:
 
     const EventEmitterData* eventTargetData() const;
 
-    IdentifierEventListenerMap& eventListenerMap() { return ensureEventEmitterData().eventListenerMap; }
+    template<typename Visitor> void visitJSEventListeners(Visitor& visitor) { m_eventTargetData.eventListenerMap.visitJSEventListeners(visitor); }
 
     void setThisObject(JSC::JSValue thisObject)
     {
@@ -87,6 +99,13 @@ public:
         if (thisObject.isCell()) {
             m_thisObject = JSC::Weak<JSC::JSObject>(thisObject.getObject());
         }
+    }
+
+    // For the JS methods that do not store their receiver otherwise: the 'removeListener' listeners get it as `this`.
+    void setThisObjectIfAnnouncing(JSC::JSValue thisObject)
+    {
+        if (m_eventTargetData.mayHaveRemoveListenerListeners) [[unlikely]]
+            setThisObject(thisObject);
     }
 
 private:
@@ -102,7 +121,12 @@ private:
     {
     }
 
-    bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
+    bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&, ListenerRemoval, JSC::JSValue eventName = {});
+    void didChangeListeners(const Identifier& eventType);
+    void didRemoveListener(const Identifier& eventType, EventListener& removed, ListenerRemoval, JSC::JSValue eventName);
+    void announceRemoval(const Identifier& eventType, EventListener& removed, JSC::JSValue eventName);
+    bool announcesRemovals(ListenerRemoval mode) { return mode == ListenerRemoval::Announce && m_eventTargetData.mayHaveRemoveListenerListeners && hasRemoveListenerListenersToCall(); }
+    bool hasRemoveListenerListenersToCall();
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;

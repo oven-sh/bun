@@ -2880,6 +2880,9 @@ private:
                 return false;
         }
 
+        if (arrayBuffer->isResizableNonShared() && !ArrayBufferView::verifySubRangeLength(arrayBuffer->maxByteLength().value(), byteOffset, length.value_or(0), elementSize))
+            return false;
+
         switch (arrayBufferViewSubtag) {
         case DataViewTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, DataView::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());

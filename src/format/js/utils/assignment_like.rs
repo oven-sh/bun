@@ -122,10 +122,8 @@ fn is_short_text(elements: &[FormatElement], threshold: u32) -> bool {
 
 /// See [`LeftSide`]: the computed `key`, which has just been written with its brackets.
 ///
-/// oxfmt measures the source text in the brackets, whatever it is, without the comments around it. That text can be
-/// wider or narrower than what is printed (`[.5]`, `[\u{61}]`, `['\'']`), so oxfmt lays the property out differently
-/// on its second run. Here a key that is one piece of text is measured as printed, like the rest of the document, so
-/// that the second run agrees with the first.
+/// oxfmt measures the source text in the brackets, without the comments around it, so its second run measures
+/// `[0.5]` where the first measured `[.5]`. A key that is one piece of text is measured as printed in that flavor too.
 fn computed_key_side<'a>(key: Key<'a>, f: &Formatter<'a>) -> LeftSide {
     let is_one_string = is_computed_key_one_string(key, f);
     if f.options().flavor.is_oxfmt() && (!is_one_string || computed_key_has_comments(key, f)) {
@@ -138,8 +136,7 @@ fn computed_key_side<'a>(key: Key<'a>, f: &Formatter<'a>) -> LeftSide {
     }
 }
 
-/// True if a comment is printed inside the brackets of the computed `key`: one that the key owns, wherever it is
-/// written, or one anywhere inside it, as in `[-/* c */ 1]`.
+/// True if a comment is printed inside the brackets of the computed `key`: `[a] /* c */:`, `[-/* c */ 1]`.
 fn computed_key_has_comments<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
         return false;
@@ -155,10 +152,8 @@ fn computed_key_has_comments<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     owns_comments || f.comments().has_comment_in_span(inner_span)
 }
 
-/// See [`LeftSide`]: a key that isn't computed, which [`write_member_name`] has just written and measured as `width`,
-/// the name as printed.
-///
-/// oxfmt only looks at the name, not at the comments around it. Prettier sees both, and they are in the written elements.
+/// See [`LeftSide`]: a key that isn't computed, which [`write_member_name`] has just written and measured as `width`.
+/// oxfmt only looks at the name. Prettier also sees the comments around it, which are in the written elements.
 fn member_name_side(width: usize, f: &Formatter<'_>) -> LeftSide {
     match f.options().flavor.is_oxfmt() {
         true => LeftSide::measured(width, f),
@@ -166,10 +161,9 @@ fn member_name_side(width: usize, f: &Formatter<'_>) -> LeftSide {
     }
 }
 
-/// True if the computed `key`, with its brackets, is printed as a single piece of text, with no group in it and nothing
-/// that can break. Prettier checks that `cleanDoc(keyDoc)` is a string. The IR here has no group around `{}`, `[]`, a
-/// function or a template where Prettier's document has one, so that is decided from the syntax, and only the width is
-/// read off the elements. A group that the IR does have, around the operand of `-` with a comment, is in the elements.
+/// True if the computed `key`, with its brackets, is printed as a single piece of text: Prettier's `cleanDoc(keyDoc)`
+/// is a string. Decided from the syntax, because the IR has no group around `{}`, `[]`, a function or a template where
+/// Prettier's document has one.
 fn is_computed_key_one_string<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     if let KeyKind::Computed(e) = key.kind() {
         return is_plain_expression(e, f);

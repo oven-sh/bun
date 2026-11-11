@@ -1,59 +1,51 @@
 // shim for using process in browser
 var queue = [];
+var batch = [];
+var index = 0;
 var draining = false;
-var currentQueue;
-var queueIndex = -1;
+var scheduled = false;
 
-function cleanUpNextTick() {
-  if (!draining || !currentQueue) {
-    return;
-  }
-  draining = false;
-  if (currentQueue.length) {
-    queue = currentQueue.concat(queue);
-  } else {
-    queueIndex = -1;
-  }
-  if (queue.length) {
-    drainQueue();
-  }
+// node runs ticks before queued promise jobs. A browser has no hook for that, so the drain is one microtask.
+function scheduleDrain() {
+  scheduled = true;
+  queueMicrotask(drainQueue);
 }
 
 function drainQueue() {
-  if (draining) {
-    return;
-  }
-  var timeout = setTimeout(cleanUpNextTick, 0);
+  scheduled = false;
   draining = true;
-  var len = queue.length;
-  while (len) {
-    currentQueue = queue;
-    queue = [];
-    while (++queueIndex < len) {
-      if (currentQueue) {
-        var item = currentQueue[queueIndex];
-        item.fun.apply(null, item.array);
+  try {
+    // Ticks queued mid-drain run in the same pass, like node. A fresh array per batch lets finished ticks be freed.
+    for (;;) {
+      while (index < batch.length) {
+        var item = batch[index++];
+        item.fun.apply(undefined, item.args);
       }
+      if (!queue.length) break;
+      batch = queue;
+      queue = [];
+      index = 0;
     }
-    queueIndex = -1;
-    len = queue.length;
+  } finally {
+    // On a throw, `index` is past the callback that threw. The rest of the batch runs first in the next drain.
+    if (index >= batch.length) {
+      batch = [];
+      index = 0;
+    }
+    draining = false;
+    if (batch.length || queue.length) scheduleDrain();
   }
-  currentQueue = null;
-  draining = false;
-  clearTimeout(timeout, 0);
 }
 
-export function nextTick(fun) {
-  var args = new Array(arguments.length - 1);
-  if (arguments.length > 1) {
-    for (var i = 1; i < arguments.length; i++) {
-      args[i - 1] = arguments[i];
-    }
+export function nextTick(fun, ...args) {
+  if (typeof fun !== "function") {
+    var received = fun === null ? "null" : typeof fun;
+    var err = new TypeError('The "callback" argument must be of type function. Received ' + received);
+    err.code = "ERR_INVALID_ARG_TYPE";
+    throw err;
   }
   queue.push({ fun, args });
-  if (queue.length === 1 && !draining) {
-    setTimeout(drainQueue, 0);
-  }
+  if (!draining && !scheduled) scheduleDrain();
 }
 
 export const title = "browser";

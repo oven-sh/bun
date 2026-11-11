@@ -68,51 +68,33 @@ export function format(f, ...args) {
 // Returns a modified function which warns once by default.
 // If --no-deprecation is set, then it is a no-op.
 export function deprecate(fn, msg) {
-  if (typeof process === "undefined" || process?.noDeprecation === true) {
+  var proc = globalThis.process;
+  if (proc == null || proc.noDeprecation === true) {
     return fn;
   }
 
   var warned = false;
   function deprecated(...args) {
     if (!warned) {
-      if (process.throwDeprecation) {
+      if (proc.throwDeprecation) {
         throw new Error(msg);
-      } else if (process.traceDeprecation) {
+      } else if (proc.traceDeprecation) {
         console.trace(msg);
       } else {
         console.error(msg);
       }
       warned = true;
     }
-    return fn.apply(this, ...args);
+    return fn.apply(this, args);
   }
 
   return deprecated;
 }
 
-// This function has been edited to be tree-shakable and minifiable
-export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debugEnv) => (
-  ((debugEnv = typeof process !== "undefined" && process.env.NODE_DEBUG) &&
-    (debugEnv = debugEnv
-      .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/,/g, "$|^")
-      .toUpperCase()),
-  (debugEnvRegex = new RegExp("^" + debugEnv + "$", "i"))),
-  set => {
-    set = set.toUpperCase();
-    if (!debugs[set]) {
-      if (debugEnvRegex.test(set)) {
-        debugs[set] = function (...args) {
-          console.error("%s: %s", set, pid, format.apply(null, ...args));
-        };
-      } else {
-        debugs[set] = function () {};
-      }
-    }
-    return debugs[set];
-  }
-))();
+// A browser build has no NODE_DEBUG, so no section prints.
+export function debuglog(set) {
+  return function () {};
+}
 
 /**
  * Echos the value of a value. Tries to print the value out
@@ -336,7 +318,7 @@ function formatError(value) {
 function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
   var output = [];
   for (var i = 0, l = value.length; i < l; ++i) {
-    if (hasOwnProperty(value, String(i))) {
+    if (hasOwn(value, String(i))) {
       output.push(formatProperty(ctx, value, recurseTimes, visibleKeys, String(i), true));
     } else {
       output.push("");
@@ -364,7 +346,7 @@ function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
       str = ctx.stylize("[Setter]", "special");
     }
   }
-  if (!hasOwnProperty(visibleKeys, key)) {
+  if (!hasOwn(visibleKeys, key)) {
     name = "[" + key + "]";
   }
   if (!str) {
@@ -498,9 +480,15 @@ export function isPrimitive(arg) {
   );
 }
 
-// Compatibility with the buffer polyfill:
+// Browsers have no Buffer global, so detect the buffer polyfill by its methods.
 export function isBuffer(arg) {
-  return arg instanceof Buffer;
+  return (
+    typeof arg === "object" &&
+    arg !== null &&
+    typeof arg.copy === "function" &&
+    typeof arg.fill === "function" &&
+    typeof arg.readUInt8 === "function"
+  );
 }
 
 function objectToString(o) {
@@ -564,15 +552,17 @@ export function _extend(origin, add) {
   return origin;
 }
 
-function hasOwnProperty(obj, prop) {
+function hasOwn(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.util.promisify.custom")), x))(
+const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+
+export const promisify = /* @__PURE__ */ (x => ((x.custom = kCustomPromisifiedSymbol), x))(
   function promisify(original) {
     if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
 
-    if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
+    if (original[kCustomPromisifiedSymbol]) {
       var fn = original[kCustomPromisifiedSymbol];
 
       if (typeof fn !== "function") {
@@ -586,6 +576,14 @@ export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.u
         configurable: true,
       });
       return fn;
+    }
+
+    // A page's own timers have no `promisify.custom` function. The generic form would pass the callback last.
+    if (original === globalThis.setTimeout) {
+      return (delay, value) => new Promise(resolve => original(resolve, delay, value));
+    }
+    if (original === globalThis.setImmediate) {
+      return value => new Promise(resolve => original(resolve, value));
     }
 
     function fn(...args) {
@@ -614,13 +612,12 @@ export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.u
 
     Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
 
-    if (kCustomPromisifiedSymbol)
-      Object.defineProperty(fn, kCustomPromisifiedSymbol, {
-        value: fn,
-        enumerable: false,
-        writable: false,
-        configurable: true,
-      });
+    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+      value: fn,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
     return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
   },
 );
@@ -653,16 +650,15 @@ export function callbackify(original) {
     }
     var self = this;
     var cb = function (...args) {
-      return maybeCb.apply(self, ...args);
+      return maybeCb.apply(self, args);
     };
-    // In true node style we process the callback on `nextTick` with all the
-    // implications (stack, `uncaughtException`, `async_hooks`)
+    // Like process.nextTick in Node, a throw from the callback is an uncaught error, not a rejection.
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb.bind(null, null, ret));
+        queueMicrotask(cb.bind(null, null, ret));
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected.bind(null, rej, cb));
+        queueMicrotask(callbackifyOnRejected.bind(null, rej, cb));
       },
     );
   }
@@ -675,13 +671,3 @@ export function callbackify(original) {
 
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
-export default {
-  TextEncoder,
-  TextDecoder,
-  promisify,
-  log,
-  inherits,
-  _extend,
-  callbackifyOnRejected,
-  callbackify,
-};

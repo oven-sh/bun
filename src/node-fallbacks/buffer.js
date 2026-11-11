@@ -24,8 +24,10 @@ export const INSPECT_MAX_BYTES = 50;
 export const kMaxLength = 0x7fffffff;
 export const kStringMaxLength = 0x1fffffe8;
 
-export const btoa = /* @__PURE__ */ globalThis.btoa;
-export const atob = /* @__PURE__ */ globalThis.atob;
+// A browser throws "Illegal invocation" when these are called as a method, so the exports do not pass `this`.
+const bufferBtoa = data => globalThis.btoa(data);
+const bufferAtob = data => globalThis.atob(data);
+export { bufferAtob as atob, bufferBtoa as btoa };
 export const File = /* @__PURE__ */ globalThis.File;
 export const Blob = /* @__PURE__ */ globalThis.Blob;
 

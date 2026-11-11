@@ -30,9 +30,6 @@ const firstCopyOf = new Map<string, string>();
   scan(fs.realpathSync("node_modules").replaceAll("\\", "/"));
 }
 
-// Packages of these polyfills read the Buffer global, which a browser does not have. They get the sibling polyfill's.
-const readsBufferGlobal = new Set(["crypto"]);
-
 function browserMap(file: string) {
   for (let dir = path.dirname(file); dir !== path.dirname(dir); dir = path.dirname(dir)) {
     const manifest = path.join(dir, "package.json");
@@ -70,28 +67,64 @@ const resolveForPolyfill = (polyfill: string): Bun.BunPlugin => ({
 
 const requireShim = /var __require=\(\(x\)=>typeof require<"u"\?require:.*?is not supported'\)\}\);/;
 
+const hostProcess = 'globalThis.process?.versions?.node&&typeof globalThis.process.nextTick=="function"';
+
+// Free `process` / `Buffer` in the npm packages: rename, then bind with the line for the output format.
+const injectedGlobals = [
+  {
+    defines: ["process", "global.process"],
+    id: "__bun_process",
+    // A Node.js-like host keeps its own process. A page, also one with a partial `process` shim, gets the polyfill.
+    esm: `import __bun_process_polyfill from "process";var __bun_process=${hostProcess}?globalThis.process:__bun_process_polyfill;`,
+    cjs: `var __bun_process=${hostProcess}?globalThis.process:(m=>m.default||m)(require("process"));`,
+  },
+  {
+    defines: ["Buffer"],
+    id: "__bun_Buffer",
+    esm: 'import { Buffer as __bun_Buffer } from "buffer";',
+    cjs: 'var __bun_Buffer = require("buffer").Buffer;',
+  },
+];
+
+// Node.js globals that a browser does not have and that no polyfill binds. A polyfill that reads one fails the build.
+const notInABrowser = ["setImmediate", "clearImmediate", "__dirname", "__filename"];
+
 let commands: Promise<void>[] = [];
 
 for (const name of allFiles) {
   const polyfill = name.slice(0, -".js".length);
+
+  const source = fs.readFileSync(name, "utf8");
+
+  // A source that sets `module.exports` stays CommonJS, so `require()` of the polyfill returns that value.
+  const format = /^module\.exports\s*=/m.test(source) ? "cjs" : "esm";
+
+  // An ES module without a default export gets one that has every named export.
+  const named = new Bun.Transpiler().scan(source).exports;
+  const needsDefault = format === "esm" && !named.includes("default");
+
   commands.push(
     Bun.build({
       entrypoints: [name],
+      files: needsDefault ? { [path.resolve(name)]: `${source}\nexport default { ${named} };` } : {},
       outdir,
       target: "browser",
-      format: name.includes("stream") ? "cjs" : "esm",
+      format,
       minify: { syntax: true, whitespace: true },
       define: {
         "process.env.NODE_DEBUG": "false",
         "process.browser": "true",
         "global": "globalThis",
-        ...(readsBufferGlobal.has(polyfill) && { "Buffer": "__bun_Buffer" }),
+        ...Object.fromEntries(injectedGlobals.flatMap(g => g.defines.map(d => [d, g.id]))),
+        ...Object.fromEntries(notInABrowser.map(global => [global, `__bun_no_${global}`])),
       },
       plugins: [resolveForPolyfill(polyfill)],
       metafile: true,
       throw: true,
     }).then(async ({ metafile }) => {
       if (!metafile) throw new Error("This bun has no Bun.build({ metafile })");
+      const exported = Object.values(metafile.outputs).flatMap(output => output.exports ?? []);
+      if (format === "esm" && !exported.includes("default")) throw new Error(`${name} has no default export`);
       const inlined = Object.keys(metafile.inputs).filter(input => input.startsWith("node:"));
       if (inlined.length > 0) {
         throw new Error(`${name} bundles ${inlined.join(", ")} from the bun that runs codegen`);
@@ -108,8 +141,13 @@ for (const name of allFiles) {
         throw new Error("Unexpected __require in " + name);
       }
 
-      if (outfile.includes("__bun_Buffer")) {
-        outfile = `import { Buffer as __bun_Buffer } from "buffer";${outfile}`;
+      for (const global of notInABrowser) {
+        if (outfile.includes(`__bun_no_${global}`)) throw new Error(`${name} reads the global \`${global}\``);
+      }
+
+      for (const { id, esm, cjs } of injectedGlobals) {
+        if (!outfile.includes(id)) continue;
+        outfile = (format === "cjs" ? cjs : esm) + outfile;
       }
 
       for (const { path: specifier } of new Bun.Transpiler().scanImports(outfile)) {

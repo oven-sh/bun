@@ -40,6 +40,6 @@ ignorePatterns = [
 ]
 
 [lint]
-# `bun lint` lints src/js.
+# `bun lint` lints src/js and the browser polyfills in src/node-fallbacks.
 config = "oxlint.json"
-ignorePatterns = ["/*", "!/src", "/src/*", "!/src/js"]
+ignorePatterns = ["/*", "!/src", "/src/*", "!/src/js", "!/src/node-fallbacks"]

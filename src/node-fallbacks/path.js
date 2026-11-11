@@ -116,7 +116,7 @@ export function resolve() {
     var path;
     if (i >= 0) path = arguments[i];
     else {
-      if (cwd === undefined) cwd = process.cwd();
+      if (cwd === undefined) cwd = globalThis.process?.cwd?.() ?? "/";
       path = cwd;
     }
 

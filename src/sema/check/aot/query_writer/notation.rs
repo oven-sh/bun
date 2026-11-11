@@ -261,6 +261,10 @@ impl Writer<'_, '_, '_, '_> {
                 wrapped("Builtin", &self.builtin_text(class, arguments))
             }
             ShapeKind::Class(class) => wrapped("Class", &self.class_location(class)),
+            ShapeKind::ConstructorFunctionInstance(function) => wrapped(
+                "ConstructorFunctionInstance",
+                &self.function_location(function),
+            ),
             ShapeKind::Object => b"Object".to_vec(),
             ShapeKind::Union(types) => wrapped("Union", &self.type_list_text(types, b" | ")),
             ShapeKind::Int32 { base } => wrapped("Int32", &self.queries.type_text(base)),

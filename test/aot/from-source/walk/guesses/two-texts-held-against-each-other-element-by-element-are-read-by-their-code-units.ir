@@ -1,0 +1,21 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var order = { go(a, b) { var n = Math.min(a.length, b.length); for (var i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return a.length - b.length; } };
+# var same = { go(a, b) { if (a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; } };
+# var rows = [["abc", "abd"], ["abc", "abc"], ["ab", "abc"], ["", ""], ["a\u{1F600}", "a\u{1F601}"], ["éx", "ex"], ["abc", ["a", "b", "c"]], [["a", "b"], "ab"], ["12", [1, 2]], ["ab", new Uint8Array([97, 98])], [new String("ab"), "ab"], ["x".repeat(40) + "y", "x".repeat(40) + "z"], ["k" + JSON.parse('"lm"'), "klm"]];
+# print(rows.map(function (row) { return order[key](row[0], row[1]) + ":" + same[key](row[0], row[1]); }).join());
+# -- end of source
+# Two rows held against each other element by element may be two texts: prefixes, orders, differences are written so. The front named lists, bytes and views; two texts failed every question and ran closed:
+# 83 instructions a turn, plain Bun 37. A text is the last member of that front, and in its copy the other holder is asked for a text: both are read by their code units: 17 a turn.
+# f1 = order.go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: = GetStringCodeUnit
+# CHECK: = GetStringCodeUnit
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -1:false,0:true,-1:false,0:true,-1:false,1:false,0:true,0:true,1:false,1:false,0:true,-1:false,0:true
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: -1:false,0:true,-1:false,0:true,-1:false,1:false,0:true,0:true,1:false,1:false,0:true,-1:false,0:true
+# NONE-NEXT: exited with 0

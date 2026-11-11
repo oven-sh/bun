@@ -55,6 +55,8 @@ impl Walker<'_, '_> {
         }
         let in_constructor =
             class::fields_evaluated_in_constructor(hir, bound, compiled, signed, class);
+        self.fields_evaluated_in_constructors
+            .extend(in_constructor.iter().copied());
         let function_of_field = |member: MemberId| match in_constructor.binary_search(&member) {
             Ok(_) => constructor,
             Err(_) => instance_initializer,
@@ -216,15 +218,11 @@ impl Walker<'_, '_> {
     fn push_field_assigned_behind_class(&mut self, member: MemberId, around_class: Context) {
         let scope = self.bound.field_initializer_scope(member);
         let scope = scope.expect("a field that is assigned has a value");
-        let context = Context {
-            lexical_scope: self.lexical_owners[scope.idx()],
-            ..around_class
-        };
-        self.enter_scope(scope, context);
-        self.use_this(around_class);
-        let function = context.function;
+        debug_assert_eq!(self.lexical_owners[scope.idx()], around_class.lexical_scope);
+        self.enter_scope(scope, around_class);
+        let function = around_class.function;
         self.walk.function_of_field.push((member, function));
-        self.push_expressions([self.hir[member].init], context);
+        self.push_expressions([self.hir[member].init], around_class);
     }
 
     fn add_accessor_functions(

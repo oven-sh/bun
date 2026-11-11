@@ -71,6 +71,7 @@ pub struct TranspileSettings {
     pub experimental_decorators: bool,
     pub emits_decorator_metadata: bool,
     pub use_define_for_class_fields: Option<bool>,
+    pub bun_run_assigns_class_fields: bool,
 }
 
 pub(in crate::resolve) struct CodeConfig<'h> {
@@ -140,6 +141,7 @@ pub(in crate::resolve) struct ConfigCaches<'h> {
     default_settings: OnceLock<&'h TranspileSettings>,
     aot_package_settings: Memo<&'h [u8], &'h TranspileSettings>,
     is_development: OnceLock<bool>,
+    bun_run_assigns_class_fields: OnceLock<bool>,
 }
 
 impl<'h> ConfigCaches<'h> {
@@ -151,6 +153,7 @@ impl<'h> ConfigCaches<'h> {
             default_settings: OnceLock::new(),
             aot_package_settings: Memo::new(are_small),
             is_development: OnceLock::new(),
+            bun_run_assigns_class_fields: OnceLock::new(),
         }
     }
 }
@@ -341,6 +344,7 @@ impl<'h> Resolver<'h> {
             experimental_decorators: stated.experimental_decorators,
             emits_decorator_metadata: stated.emits_decorator_metadata,
             use_define_for_class_fields: stated.use_define_for_class_fields,
+            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
         });
         *by_directory.insert_ref(self.keep(directory), settings)
     }
@@ -433,6 +437,22 @@ impl<'h> Resolver<'h> {
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,
             use_define_for_class_fields: config.use_define_for_class_fields,
+            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
+        })
+    }
+
+    fn load_config_that_bun_run_takes(&self) -> Option<ParsedConfig> {
+        let working_directory = &self.code_options().working_directory;
+        let find_in_working_directory = || self.find_config_file(working_directory);
+        let path = self.override_path().or_else(find_in_working_directory);
+        path.and_then(|path| self.load_merged(&path))
+    }
+
+    fn bun_run_assigns_class_fields(&self) -> bool {
+        let caches = self.config_caches();
+        *caches.bun_run_assigns_class_fields.get_or_init(|| {
+            let taken = self.load_config_that_bun_run_takes();
+            taken.and_then(|taken| taken.use_define_for_class_fields) == Some(false)
         })
     }
 
@@ -442,10 +462,8 @@ impl<'h> Resolver<'h> {
             if let Some(forced) = options.forced_jsx_development {
                 return forced;
             }
-            let find_in_working_directory = || self.find_config_file(&options.working_directory);
-            let path = self.override_path().or_else(find_in_working_directory);
-            let merged = path.and_then(|path| self.load_merged(&path));
-            let written = merged.and_then(|merged| merged.jsx.is_development);
+            let taken = self.load_config_that_bun_run_takes();
+            let written = taken.and_then(|taken| taken.jsx.is_development);
             written.unwrap_or(options.jsx.is_development)
         })
     }

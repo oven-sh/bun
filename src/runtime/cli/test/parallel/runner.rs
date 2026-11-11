@@ -584,6 +584,8 @@ pub(crate) struct WorkerCommands {
     pub(crate) pending_path: Vec<u8>,
     /// `first_loads` of the process that ran in this one's place before it.
     pub(crate) pending_first_loads: Vec<u8>,
+    /// A compiled run with `--update-timings`.
+    pending_is_growth_written: bool,
     running: Option<RunningFile>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
@@ -658,6 +660,7 @@ impl ChannelOwner for WorkerCommands {
                 self.pending_path.extend_from_slice(rd.str());
                 self.pending_first_loads.clear();
                 self.pending_first_loads.extend_from_slice(rd.str());
+                self.pending_is_growth_written = rd.u32() != 0;
             }
             frame::Kind::Shutdown => self.done = true,
             _ => {}
@@ -739,7 +742,7 @@ impl<'a> WorkerLoop<'a> {
                 before: *self.reporter.summary(),
                 before_unhandled: self.reporter.jest.unhandled_errors_between_tests,
                 started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
-                resident_at_start: start_measuring_growth(),
+                resident_at_start: start_measuring_growth(vm, self.cmds.pending_is_growth_written),
             });
 
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
@@ -832,9 +835,16 @@ struct Growth {
 
 /// Sets the highest resident size that the kernel remembers back to the present one, and answers that. A compiled run asks; only
 /// Linux can.
-fn start_measuring_growth() -> Option<ResidentAtStart> {
+///
+/// What the file before left behind is still resident until a collection finds it. Counted at the start and freed while this file
+/// grows, it would be taken off this file's growth. So where the growth is written the worker lets go of it first.
+#[cfg_attr(not(target_os = "linux"), expect(unused_variables))]
+fn start_measuring_growth(vm: &VirtualMachine, is_written: bool) -> Option<ResidentAtStart> {
     #[cfg(target_os = "linux")]
     if crate::cli::run_compiled::runs_compiled_code() {
+        if is_written {
+            vm.garbage_collect_from_js(true);
+        }
         let [peak, all, of_files, of_shared_memory] =
             read_kilobytes([b"VmHWM:", b"VmRSS:", b"RssFile:", b"RssShmem:"])?;
         let flags = bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
@@ -906,6 +916,7 @@ pub(crate) fn run_as_worker(
             pending_idx: None,
             pending_path: Vec::new(),
             pending_first_loads: Vec::new(),
+            pending_is_growth_written: false,
             running: None,
             done: false,
         },

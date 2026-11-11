@@ -1,0 +1,9 @@
+# `util.deprecate(...bad);` in a loop of untyped code: a guess stands at the call (a method off an object of which only a guess is held) and nobody reads what the call gives: the call has no name behind its walk.
+# The ways that part on whether the spread value is a list as made meet behind the call with nothing in their hands. The build stopped here: "a jump hands on what has no type".
+# The statistic counts such calls in the library too, so its number goes with how much of the library node:util brings in: no number is held.
+# -- source: main.js
+# const util = require("node:util"); for (const bad of [[() => {}, "m"], [() => {}, "n"]]) { util.deprecate(...bad); print("ok"); }
+# -- end of source
+# RUN(BUILDS): compile SpreadCallsSpecializedForArrays mechanisms=all
+# BUILDS-NOT: a jump hands on what has no type
+# BUILDS: statistic SpreadCallsSpecializedForArrays {{*}}

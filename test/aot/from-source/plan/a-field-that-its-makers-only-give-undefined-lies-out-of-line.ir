@@ -12,7 +12,6 @@
 # console.log(Object.keys(next).join() + (root.members === undefined ? " left" : " filled") + (next.members === undefined ? " left" : " filled") + (next.only === undefined ? " left" : " filled"));
 # -- end of source
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject size=64 extension=
 # CHECK-NEXT: slot 0 "flags" {{*}}Inline offset=24
 # CHECK-NEXT: slot 1 "name" {{*}}Inline offset=32

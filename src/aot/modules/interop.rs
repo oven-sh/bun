@@ -16,7 +16,7 @@ pub struct Interop {
     pub kind: ModuleKind,
     pub export_rule: SyntheticExportRule,
     pub require_result: RequireResult,
-    pub answers_loader_with_namespace: bool,
+    pub loader_returns_namespace: bool,
 }
 
 impl Interop {
@@ -61,7 +61,7 @@ impl Interop {
             kind,
             export_rule,
             require_result,
-            answers_loader_with_namespace: false,
+            loader_returns_namespace: false,
         }
     }
 

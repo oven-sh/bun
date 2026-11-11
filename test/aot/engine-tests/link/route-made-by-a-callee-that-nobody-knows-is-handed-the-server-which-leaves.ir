@@ -1,0 +1,69 @@
+# Bun.serve({ routes: { "/made": new globalThis.Kept() }, fetch: request => new Response("x") }); console.error(new Error("made up"))
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f5 unreached
+
+layout L0 fields=[{key="/made" declared={type=anything}}]
+layout L1 fields=[{key="routes" declared={type=anything}}, {key="fetch" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+module m3 path="/$bun/js/builtins/Peek.ts" displayPath="/$bun/js/builtins/Peek.ts" flags=[IsLibrary]
+module m4 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+runtimefunction id=PeekPeek function=f4
+runtimefunction id=UtilInspectStylizeWithNoColor function=f5
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    v2 = Convert v1 declared={type=builtin(BunServe) flags=[IsExpected]}
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="Kept"
+    v5 = Construct v4 calleeName="globalThis.Kept"
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewClosure function=f1
+    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Call v2, v0, v10 calleeKey="serve" calleeName="Bun.serve"
+    v12 = PropGet v3 key="console" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
+    v14 = PropGet v13 key="error"
+    v15 = Convert v14 declared={type=builtin(ConsoleError) flags=[IsExpected]}
+    v16 = PropGet v3 key="Error" [isFreeName]
+    v17 = Convert v16 declared={type=builtin(Error) flags=[IsExpected]}
+    v18 = String string="made up"
+    v19 = Construct v17, -, v18 calleeName="Error"
+    v20 = Call v15, v13, v19 calleeKey="error" calleeName="console.error"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="fetch" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Response" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Response) flags=[IsExpected]}
+    v4 = String string="x"
+    v5 = Construct v3, -, v4 calleeName="Response"
+    Return v5
+}
+function f2 name="scan" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="toJSON" module=m2 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="peek" module=m3 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=PeekPeek thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m4 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

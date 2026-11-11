@@ -164,7 +164,7 @@ attempt("every other index", () => {
 
 // GENERATED: doubled storeAt present sumOfPresent
 // CHECK-LABEL: function {{*}}name="doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: v1 = PropGet v0 key="map"
 // CHECK-NEXT: v2 = NewClosure function=[[f_1]]
@@ -172,7 +172,7 @@ attempt("every other index", () => {
 // CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="storeAt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: number, v2: number):
 // CHECK-NEXT: ElemSet v0, v1, v2
 // CHECK-NEXT: v4 = PropGet v0 key="length"
@@ -180,7 +180,7 @@ attempt("every other index", () => {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="present"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: v1 = Data data=[[d_2]]
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
@@ -205,7 +205,7 @@ attempt("every other index", () => {
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumOfPresent"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: v1 = Integer
 // CHECK-NEXT: v2 = Convert v1 declared={type=number}

@@ -247,6 +247,7 @@ fn every_reference_of_a_published_function_can_be_verified() {
             let can_be_verified = match reference {
                 Reference::Helper(helper) => published.contains(&helper),
                 Reference::Global(path) => find_global(path).is_some(),
+                Reference::Holder => true,
             };
             assert!(
                 can_be_verified,
@@ -993,6 +994,47 @@ fn a_branch_that_a_locked_built_in_rules_out_is_no_alternative() {
     assert_eq!(count_held(CREATE_BINDING), [1]);
     let asks_something_else = CREATE_BINDING.replace("Object.create ?", "globalThis.flag ?");
     assert_eq!(count_held(&asks_something_else), [2]);
+}
+
+#[test]
+fn a_guard_that_gives_undefined_is_dropped_only_where_the_operator_behind_it_goes_on() {
+    let held = |source: &str| {
+        bindings_in("/a.cjs", source, |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    let once = (1, Certainty::OnceInitialized);
+    let uncertain = (1, Certainty::MayHoldOtherValues);
+    assert_eq!(held(CREATE_BINDING), [once]);
+    let guard = "(this && this.__createBinding)";
+    let joined =
+        |by: &str| CREATE_BINDING.replace(&format!("{guard} ||"), &format!("{guard} {by}"));
+    assert_eq!(held(&joined("??")), [once]);
+    assert_eq!(held(&joined("&&")), []);
+    assert_eq!(held(&joined("&& 1 ||")), [once]);
+    assert_eq!(held(&joined("|| 1 &&")), [uncertain]);
+    assert_eq!(held(&joined("|| 1 ? null :")), []);
+    assert_eq!(held(&joined("|| this.nothing ? null :")), [uncertain]);
+    let chosen = CREATE_BINDING.replace(
+        &format!("{guard} ||"),
+        &format!("!this.nothing ? {guard} :"),
+    );
+    assert_eq!(held(&chosen), [uncertain]);
+    let behind = CREATE_BINDING.replace(&format!("{guard} ||"), &format!("1 && {guard} ||"));
+    assert_eq!(held(&behind), [uncertain]);
+    let in_es_module = |source: String| {
+        bindings_in("/a.mjs", &format!("{source}export {{}};"), |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    assert_eq!(in_es_module(CREATE_BINDING.to_string()), [once]);
+    assert_eq!(in_es_module(joined("&&")), []);
+    assert_eq!(in_es_module(joined("&& 1 ||")), [once]);
+    let star_over_nothing = format!("{}{EXPORT_STAR}", joined("&&"));
+    let relies = find_in("/a.cjs", &star_over_nothing);
+    assert!(relies.functions().all(|(_, known)| known.shape
+        != Shape::ExportStarBindsNamesTheTargetLacks
+        || !known.relies_on_facts));
 }
 
 #[test]

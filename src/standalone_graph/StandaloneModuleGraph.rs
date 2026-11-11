@@ -20,7 +20,9 @@ use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, ImageFile};
+use bun_resolver::compiled_program::{
+    CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
+};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
@@ -34,7 +36,7 @@ use crate::executable_request::{
 };
 pub use crate::executable_request::{
     ExecutableDetails, ExecutableOutcome, ExecutableRequest, GraphRequest, to_graph_bytes,
-    write_executable,
+    with_graph_slices, write_executable,
 };
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
@@ -217,6 +219,7 @@ impl StandaloneModuleGraph {
         self.files
             .get(name)
             .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
+            .or_else(|| self.files.get(&self.key_of_file_above_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
@@ -226,18 +229,27 @@ impl StandaloneModuleGraph {
         self.lookup_file(name)
     }
 
+    /// What a program reads as data: not the file of a compiled entry point, which is in the graph for its name alone.
+    pub fn find_data(&self, name: &[u8]) -> Option<&File> {
+        let file = self.find_ref(name)?;
+        (!self.is_file_of_compiled_entry_point(file)).then_some(file)
+    }
+
     pub fn contains_file(&self, name: &[u8]) -> bool {
         self.find_ref(name).is_some()
     }
 
     pub fn stat(&self, name: &[u8]) -> Option<Stat> {
         if let Some(file) = self.find_ref(name) {
-            return Some(file.stat());
+            let mut stat = file.stat();
+            self.fill_stat_for_file_system_alone(file.name, &mut stat);
+            return Some(stat);
         }
-        if self.find_dir(name) {
-            return Some(dir_stat());
-        }
-        None
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let key = self.directory_key(name, &mut buffer)?;
+        let mut stat = dir_stat();
+        self.fill_stat_for_file_system_alone(key, &mut stat);
+        Some(stat)
     }
 
     pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
@@ -262,6 +274,9 @@ impl StandaloneModuleGraph {
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         let mut buf = bun_paths::path_buffer_pool::get();
         if let Some(key) = self.directory_key(name, &mut buf) {
+            if let Some((shared, _)) = self.find_folders_named_alike(name, key) {
+                return Ok(keep_key_of_directory_with_code_alone(&shared));
+            }
             return Ok(match self.dirs.get_index(key) {
                 Some(index) => &self.dirs.keys()[index],
                 None => keep_key_of_directory_with_code_alone(key),
@@ -278,7 +293,24 @@ impl StandaloneModuleGraph {
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let name = self.directory_key(name, &mut buf)?;
+        let found = self.directory_key(name, &mut buf)?;
+        let mut listed = self.list_folder(found, recursive);
+        let others = self.find_folders_named_alike(name, found);
+        for folder in others.iter().flat_map(|it| &it.1) {
+            let more = self.list_folder(folder, recursive);
+            let is_new = |entry: &(Box<[u8]>, bool)| !listed.iter().any(|it| it.0 == entry.0);
+            let more: Vec<_> = more.into_iter().filter(is_new).collect();
+            listed.extend(more);
+        }
+        for entry in self.list_assets_named_at_root(found, recursive) {
+            if !listed.iter().any(|it| it.0 == entry.0) {
+                listed.push(entry);
+            }
+        }
+        Some(listed)
+    }
+
+    pub(crate) fn list_folder(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
         let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
         prefix.extend_from_slice(name);
         prefix.push(b'/');
@@ -337,7 +369,7 @@ impl StandaloneModuleGraph {
         for (k, v) in seen.iter() {
             out.push((Box::<[u8]>::from(&k[..]), *v));
         }
-        Some(out)
+        out
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
@@ -348,7 +380,9 @@ impl StandaloneModuleGraph {
         if self.compiled_program.is_none() || self.files.contains_key(name) {
             return self.files.get_mut(name);
         }
-        let key = self.key_of_asset_named_at_root(name)?;
+        let key = self
+            .key_of_asset_named_at_root(name)
+            .or_else(|| self.key_of_file_above_root(name))?;
         self.files.get_mut(&key)
     }
 }
@@ -1653,6 +1687,22 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
+/// The bunfs key under which modules beside a file above the root directory are mounted.
+fn key_above_root(
+    prefix: &[u8],
+    program: Option<&CompiledProgramInput<'_>>,
+    output_file: &OutputFile,
+) -> Option<Vec<u8>> {
+    let dest_path = module_dest_path(output_file);
+    let program = program.filter(|_| dest_path.starts_with(b"../"))?;
+    join_public_file_path(
+        prefix,
+        program.levels_above_root as usize,
+        prefix,
+        dest_path,
+    )
+}
+
 /// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and
 /// length, so the graph has to fit in 4 GiB. A debug build can lower the limit through
 /// `BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES` so a test reaches it without a 4 GiB input.
@@ -1694,6 +1744,9 @@ pub(crate) fn to_bytes(
             bstr::BStr::new(&output_file.dest_path)
         ));
         string_builder.count_z(prefix);
+        if let Some(key) = key_above_root(prefix, program, output_file) {
+            string_builder.fmt_count(format_args!("{}\0", bstr::BStr::new(&key)));
+        }
         if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
                 // This is an over-estimation to ensure that we allocate
@@ -2051,11 +2104,16 @@ pub(crate) fn to_bytes(
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        module.name = string_builder.fmt_append_count_z(format_args!(
-            "{}{}",
-            bstr::BStr::new(prefix),
-            bstr::BStr::new(module_dest_path(output_file))
-        ));
+        module.name = match key_above_root(prefix, program, output_file) {
+            Some(key) => {
+                string_builder.fmt_append_count_z(format_args!("{}", bstr::BStr::new(&key)))
+            }
+            None => string_builder.fmt_append_count_z(format_args!(
+                "{}{}",
+                bstr::BStr::new(prefix),
+                bstr::BStr::new(module_dest_path(output_file))
+            )),
+        };
         // The bytecode cache was generated under the bytecode output file's
         // path; the runtime must present exactly the same path to hit it.
         if output_file.bytecode_index != u32::MAX {

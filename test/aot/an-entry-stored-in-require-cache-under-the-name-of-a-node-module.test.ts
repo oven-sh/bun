@@ -87,7 +87,7 @@ const loadedByImports = {
 };
 
 const refusal = (name: string) =>
-  `Cannot store an entry under '${name}' in require.cache: the build read no store under that key, so require("${name}") was compiled to answer with the module`;
+  `Cannot store an entry under '${name}' in require.cache: the build saw no store under that key, so require("${name}") always returns the compiled module`;
 
 const ways: [string, Record<string, string>][] = [["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }]];
 
@@ -141,7 +141,7 @@ test.concurrent("in an executable the store throws an error that names the modul
   expect(built.exitCode).toBe(0);
   const { stdout, exitCode } = await run([executable], String(dir));
   expect(stdout.split("\n")).toEqual([
-    `${refusal("url")}. Spell the key where it is stored: require.cache["url"] = entry. In a test, mock.module("url", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
+    `${refusal("url")}. Write the key out where you store it, as in require.cache["url"] = entry, or use mock.module() in a test. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
     "function",
     "nobody requires zlib: stored",
     "",

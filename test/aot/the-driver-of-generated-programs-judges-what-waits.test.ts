@@ -57,7 +57,7 @@ printValue("kind", typeof helper, helper());
 printValue("fault", typeof MARK === "number" ? 2 : 1);
 export {};
 `;
-const printsTheTextOfAFunction = `const printValue = console.log;
+const printsFunctionSource = `const printValue = console.log;
 const record = { method() { return 1; } };
 printValue("text", String(record.method));
 export {};
@@ -169,10 +169,10 @@ describe("compile/aot/the driver of generated programs", () => {
     expect(run.exitCode).toBe(0);
   }, 300_000);
 
-  test("passes over the text of a function and keeps what else differs where `typeof` says function", async () => {
+  test("ignores function source and keeps other differences where `typeof` says function", async () => {
     using folder = tempDir("aot-the-driver-knows-the-text-of-a-function", {
       "programs/p0.ts": aNumberChangesBesideAPrintedTypeof,
-      "programs/p1.ts": printsTheTextOfAFunction,
+      "programs/p1.ts": printsFunctionSource,
       "work/.keep": "",
     });
     const within = (name: string) => join(String(folder), name);
@@ -201,7 +201,7 @@ describe("compile/aot/the driver of generated programs", () => {
       ),
     );
     expect(run.stdout).toContain(`"taken":2,`);
-    expect(run.stdout).toContain(`"function text":1`);
+    expect(run.stdout).toContain(`"function source":1`);
     const kept = readdirSync(within("finds")).filter(name => !/^(?:counters-|index\.txt$)/.test(name));
     expect(kept).toEqual([expect.stringMatching(/^stdout-[0-9a-f]{8}$/)]);
     const [size] = readdirSync(within(join("finds", kept[0])));

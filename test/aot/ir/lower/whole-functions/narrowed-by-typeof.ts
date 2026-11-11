@@ -7,7 +7,7 @@ export function describe(value: string | number): string {
 
 // GENERATED: describe
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=string
 // CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)

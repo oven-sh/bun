@@ -1,0 +1,33 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# interface Pair { a: number; readonly x: number; readonly y: number }
+# function make(i: number): Pair { return { a: i, get x(): number { return this.a + 1; }, get y(): number { return this.a + 2; } }; }
+# function both(i: number) { let held = i; return { get v(): number { return held; }, set v(n: number) { held = n; } }; }
+# function alone(i: number) { return { get only(): number { return i; } }; }
+# function say(o: object): string { return Object.keys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k)!; return k + (d.get ? "g" : "") + (d.set ? "s" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(); }
+# const made = make(JSON.parse("3")); const two = both(JSON.parse("4")); two.v = two.v + 1;
+# print(made.x, made.y, say(made), two.v, say(two), alone(JSON.parse("6")).only, say(alone(1)));
+# -- end of source
+# `{ a: i, get x() { .. }, get y() { .. } }`: the layout has a slot for each accessor, the walk knows the functions and, of an object that it has just made, the order of its keys. The run time was entered all the same, and found
+# each field by its name, tested each function against the field's type, made a list on the heap and went through the table of key orders, at every evaluation: 1,292 instructions for this literal; plain Bun takes 677.
+# A getter and a setter under one name make one pair. The pair, the slot and the order word are written by the road that Object.defineProperty with a written descriptor takes.
+# f1 = make, f2 = both, f3 = alone
+# RUN: walk f1 f2 f3 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: DefineAccessors
+# CHECK: = DefineOwnProperty {{*}} descriptorFlags=[HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable, HasGet] orderWordAfter=
+# CHECK: = DefineOwnProperty {{*}} descriptorFlags=[HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable, HasGet] orderWordAfter=
+# CHECK-NOT: DefineAccessors
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: DefineAccessors
+# CHECK: = DefineOwnProperty {{*}} descriptorFlags=[HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable, HasGet, HasSet] orderWordAfter=
+# CHECK-NOT: = DefineOwnProperty
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: DefineGetter
+# CHECK: = DefineOwnProperty {{*}} descriptorFlags=[HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable, HasGet] orderWordAfter=
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4 5 aec,xgec,ygec 5 vgsec 6 onlygec
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 4 5 aec,xgec,ygec 5 vgsec 6 onlygec
+# NONE-NEXT: exited with 0

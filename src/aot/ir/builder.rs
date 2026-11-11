@@ -89,6 +89,47 @@ pub struct BuilderScratch {
     pub(super) listed_values: Vec<ValueId>,
     pub(super) ssa: SsaState,
     pub(super) finish: FinishScratch,
+    pub(super) targets_by_block: TargetsByBlock,
+}
+
+const MAX_TARGETS_GONE_THROUGH: usize = 8;
+
+#[derive(Default)]
+pub(super) struct TargetsByBlock {
+    terminators: Vec<(u32, u32)>,
+    places: Vec<(BlockId, u32)>,
+}
+
+impl TargetsByBlock {
+    fn add(&mut self, first_target: u32, targets: &[PendingTarget]) {
+        if targets.len() > MAX_TARGETS_GONE_THROUGH {
+            let first = self.places.len();
+            self.terminators.push((first_target, first as u32));
+            let blocks = targets.iter().map(|target| target.block);
+            self.places.extend(blocks.zip(first_target..));
+            self.places[first..].sort_unstable();
+        }
+    }
+
+    pub(super) fn find(&self, own: &Range<u32>, block: BlockId) -> Option<&[(BlockId, u32)]> {
+        if own.len() <= MAX_TARGETS_GONE_THROUGH {
+            return None;
+        }
+        let listed = self
+            .terminators
+            .binary_search_by_key(&own.start, |listed| listed.0);
+        let listed = listed.expect("a terminator with many targets is listed");
+        let places = &self.places[self.terminators[listed].1 as usize..][..own.len()];
+        let places = &places[places.partition_point(|place| place.0 < block)..];
+        Some(&places[..places.partition_point(|place| place.0 == block)])
+    }
+
+    pub(super) fn recycle(self) -> TargetsByBlock {
+        TargetsByBlock {
+            terminators: recycle_vector(self.terminators, MAX_SPARE_BLOCKS),
+            places: recycle_vector(self.places, MAX_SPARE_BLOCKS),
+        }
+    }
 }
 
 #[inline]
@@ -280,6 +321,8 @@ pub struct FunctionBuilder {
     stands_in_tail_position: bool,
     pub(super) ssa: SsaState,
     pub(super) finish_scratch: FinishScratch,
+    pub(super) targets_by_block: TargetsByBlock,
+    last_in_front_of_entry: u32,
 }
 
 impl FunctionBuilder {
@@ -297,6 +340,8 @@ impl FunctionBuilder {
             stands_in_tail_position: false,
             ssa: scratch.ssa,
             finish_scratch: scratch.finish,
+            targets_by_block: scratch.targets_by_block,
+            last_in_front_of_entry: NO_VALUE,
         };
         let entry = builder.create_block(None);
         for index in 0..builder.function.entry_parameter_count() {
@@ -553,7 +598,11 @@ impl FunctionBuilder {
         let pending = &mut self.blocks[place.block.index()];
         pending.value_count += 1;
         pending.value_word_count += word_count;
-        let next = match place.behind {
+        let behind = match place.behind {
+            NO_VALUE if place.block == ENTRY_BLOCK => self.last_in_front_of_entry,
+            behind => behind,
+        };
+        let next = match behind {
             NO_VALUE => core::mem::replace(&mut pending.first_value, id),
             behind => core::mem::replace(&mut self.values[behind as usize].next, id),
         };
@@ -594,6 +643,9 @@ impl FunctionBuilder {
         let at = self.end_of_words() - word_count;
 
         let id = value.to_word();
+        if at_front && block == ENTRY_BLOCK && self.last_in_front_of_entry == NO_VALUE {
+            self.last_in_front_of_entry = id;
+        }
         let mut next = NO_VALUE;
         let pending = &mut self.blocks[block.index()];
         if pending.first_value == NO_VALUE {
@@ -648,6 +700,8 @@ impl FunctionBuilder {
             let target = self.create_target(edge);
             self.targets.push(target);
         }
+        let own = &self.targets[first_target as usize..];
+        self.targets_by_block.add(first_target, own);
         for edge in edges {
             self.ssa.add_predecessor(edge.block, block);
         }

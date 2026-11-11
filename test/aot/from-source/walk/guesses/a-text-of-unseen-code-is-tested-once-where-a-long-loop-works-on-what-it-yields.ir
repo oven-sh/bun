@@ -1,0 +1,39 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function pack(text: string, out: Uint8Array, salt: number): number {
+#   let at = 0, sum = 0, last = 0;
+#   for (let i = 0; i < text.length; i++) {
+#     let code = text.charCodeAt(i); last = salt;
+#     if (code >= 0xd800 && code < 0xdc00 && i + 1 < text.length) {
+#       const low = text.charCodeAt(i + 1);
+#       if (low >= 0xdc00 && low < 0xe000) { code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00); i++; }
+#     }
+#     if (code < 0x80) out[at++] = code;
+#     else if (code < 0x800) { out[at++] = 0xc0 | (code >> 6); out[at++] = 0x80 | (code & 63); }
+#     else if (code < 0x10000) { out[at++] = 0xe0 | (code >> 12); out[at++] = 0x80 | ((code >> 6) & 63); out[at++] = 0x80 | (code & 63); }
+#     else { out[at++] = 0xf0 | (code >> 18); out[at++] = 0x80 | ((code >> 12) & 63); out[at++] = 0x80 | ((code >> 6) & 63); out[at++] = 0x80 | (code & 63); }
+#     sum = ((sum << 5) - sum + (code ^ (code >> 3))) & 0xffffff;
+#     sum = (sum ^ (code << 2) ^ (code >> 7)) & 0xffffff;
+#     sum = ((sum >> 1) + ((code & 15) << 4) + ((code >> 4) & 15)) & 0xffffff;
+#     sum = (sum + ((code * 3) & 255) + ((code * 5) & 255) + ((code * 7) & 255)) & 0xffffff;
+#     sum = (sum ^ ((code + 11) & 1023) ^ ((code + 13) & 1023) ^ ((code + 17) & 1023)) & 0xffffff;
+#   }
+#   return at * 1000000 + (sum % 1000) * 1000 + (last & 255);
+# }
+# const texts: string[] = JSON.parse('["ab c","\\u00e9\\u20ac x","\\ud83d\\ude00!"]');
+# const out = new Uint8Array(64);
+# (globalThis as any).kept = pack;
+# print(pack(texts[0], out, 3), pack(texts[1], out, 3), pack(texts[2], out, 3));
+# -- end of source
+# The texts come out of JSON.parse(), so nothing is proven of `text`. The loop looks at it four times, and nearly all of its long body works on what those looks yield. A guard at the entry was judged by the four looks
+# alone and refused for the length of the body; the side of each look where `text` is no text met the usual way again, so `code` was anything and every comparison, shift and store took a value of any kind.
+# The operators of a loop on what a text yields lean on the guard as the looks do. The twin beside this file works on other numbers and keeps its one body.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: code f1:Body
+# WALK: b0(v0: string @JSValue
+# RUN(UNITS): units-with-code mechanisms=all
+# UNITS: unit f1:SlowBody
+# UNITS: unit f1:ParameterGuard
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4126003 7929003 5521003
+# ANSWERS-NEXT: exited with 0

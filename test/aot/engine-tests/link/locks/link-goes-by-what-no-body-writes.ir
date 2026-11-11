@@ -1,0 +1,29 @@
+# `Promise` and `console` are globals that a program may replace, and so is `console.log`. No body of this program writes them, so Link takes each for what the table says lies there, and the program locks each when it starts
+# The object that console.log is passed is only looked at, and the function that the construction is passed is entered by the row alone
+# new Promise(run); console.log({ x: "s" });
+# RUN: locks
+# CHECK: locked Promise constant link
+# CHECK: locked Console constant link
+# CHECK: locked ConsoleLog constant link
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Promise" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Construct v1, -, v2
+    v4 = PropGet v0 key="console" [isFreeName]
+    v5 = PropGet v4 key="log"
+    v6 = String string="s"
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = Call v5, v4, v8 calleeKey="log"
+    Return v3
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

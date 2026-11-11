@@ -10,6 +10,15 @@ declare function $tryPutByValDirect(out: unknown[], k: number, value: unknown): 
 declare function $tryFillNewArray(out: unknown[], value: unknown): boolean;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $isJSArray(value: unknown): boolean;
+declare function $arrayStorageKind(a: unknown[]): number;
+declare const $arrayStorageInt32: number;
+declare const $arrayStorageDouble: number;
+declare const $arrayStorageContiguous: number;
+declare function $getOwnDoubleIndex(a: unknown[], k: number): number;
+declare function $getOwnContiguousIndex<T>(a: unknown[], k: number): T;
+declare function $getOwnInt32Index(a: unknown[], k: number): number;
+declare function $hasContiguousIndex(a: unknown[], k: number): boolean;
+declare const $mostArgumentsReservedOnStack: number;
 
 // Array(length) throws where the length is a number that no list can have. What the program evaluates behind it comes behind this.
 $visibility = "Private";
@@ -72,6 +81,95 @@ export function arrayFromList(list: unknown, mapper: unknown): unknown[] {
   return Array.from(list as Iterable<unknown>, mapper as (value: unknown, index: number) => unknown);
 }
 
+// Math.max and Math.min over a list that is spread or applied, where every place of it is filled and holds a number that is no NaN. undefined leaves the list to the call as written.
+// Undefined of anything else: nothing has been done by then, and the call goes as the program wrote it. So does a long list: whether its elements fit on the stack is asked by the call alone, which refuses it where they do not.
+// In storage for doubles a hole reads as NaN, and a hole is read through the prototype chain: a NaN that is read there, hole or number, leaves the list to the call as written.
+// They compare by themselves: what they answer is held to the rows of Math.max and Math.min, so it may not lean on those rows.
+// Nothing runs between the read of the length and the last read of a place, and storage of these three kinds is as long as its list: no place is asked whether it lies inside.
+$visibility = "Private";
+export function maxOfList(spread: unknown): number | undefined {
+  if (!$isJSArray(spread)) return undefined;
+  const list = spread as unknown[];
+  const length = list.length >>> 0;
+  if (length > $mostArgumentsReservedOnStack) return undefined;
+  const kind = $arrayStorageKind(list);
+  if (kind === $arrayStorageDouble) {
+    let best = -Infinity;
+    for (let index = 0; index < length; index++) {
+      const item = $getOwnDoubleIndex(list, index);
+      if (item !== item) return undefined;
+      if (item > best) best = item;
+      else if (item === 0 && best === 0) best = best + item;
+    }
+    return best;
+  }
+  if (kind === $arrayStorageInt32) {
+    if (length === 0) return -Infinity;
+    let best = -2147483648;
+    for (let index = 0; index < length; index++) {
+      const isFilled: boolean = $hasContiguousIndex(list, index);
+      if (!isFilled) return undefined;
+      const integer = $getOwnInt32Index(list, index);
+      if (integer > best) best = integer;
+    }
+    return best;
+  }
+  if (kind !== $arrayStorageContiguous) return undefined;
+  let best = -Infinity;
+  for (let index = 0; index < length; index++) {
+    const isFilled: boolean = $hasContiguousIndex(list, index);
+    if (!isFilled) return undefined;
+    const item = $getOwnContiguousIndex<unknown>(list, index);
+    if (typeof item !== "number") return undefined;
+    if (item !== item) return undefined;
+    if (item > best) best = item;
+    else if (item === 0 && best === 0) best = best + item;
+  }
+  return best;
+}
+
+$visibility = "Private";
+export function minOfList(spread: unknown): number | undefined {
+  if (!$isJSArray(spread)) return undefined;
+  const list = spread as unknown[];
+  const length = list.length >>> 0;
+  if (length > $mostArgumentsReservedOnStack) return undefined;
+  const kind = $arrayStorageKind(list);
+  if (kind === $arrayStorageDouble) {
+    let best = Infinity;
+    for (let index = 0; index < length; index++) {
+      const item = $getOwnDoubleIndex(list, index);
+      if (item !== item) return undefined;
+      if (item < best) best = item;
+      else if (item === 0 && best === 0) best = -(-best - item);
+    }
+    return best;
+  }
+  if (kind === $arrayStorageInt32) {
+    if (length === 0) return Infinity;
+    let best = 2147483647;
+    for (let index = 0; index < length; index++) {
+      const isFilled: boolean = $hasContiguousIndex(list, index);
+      if (!isFilled) return undefined;
+      const integer = $getOwnInt32Index(list, index);
+      if (integer < best) best = integer;
+    }
+    return best;
+  }
+  if (kind !== $arrayStorageContiguous) return undefined;
+  let best = Infinity;
+  for (let index = 0; index < length; index++) {
+    const isFilled: boolean = $hasContiguousIndex(list, index);
+    if (!isFilled) return undefined;
+    const item = $getOwnContiguousIndex<unknown>(list, index);
+    if (typeof item !== "number") return undefined;
+    if (item !== item) return undefined;
+    if (item < best) best = item;
+    else if (item === 0 && best === 0) best = -(-best - item);
+  }
+  return best;
+}
+
 // Array.from({ length })
 $visibility = "Private";
 export function arrayOfUndefined(length: unknown): undefined[] {
@@ -123,7 +221,8 @@ export function filledArray(length: unknown, value: unknown): unknown[] {
     }
   }
   const made = new Array<unknown>(length as number);
-  return made.fill(value);
+  made.fill(value);
+  return made;
 }
 
 // Array(length).fill(value).map(mapper), where the mapper does not take the list and checkedArrayLength has passed the length.

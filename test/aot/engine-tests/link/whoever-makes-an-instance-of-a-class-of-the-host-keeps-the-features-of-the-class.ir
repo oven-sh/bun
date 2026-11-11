@@ -1,0 +1,22 @@
+# new WebSocket("ws://localhost:1"); Bun.spawnSync(["true"]).resourceUsage()
+# A control of a-member-of-a-class-of-the-host-that-nobody-makes-keeps-none-of-the-features-of-the-class.ir: the call makes the child and what it has used, and is listed with their features.
+# RUN: features
+# CHECK: by BunSpawnSync named
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="WebSocket" [isFreeName]
+    v2 = String string="ws://localhost:1"
+    v3 = Construct v1, -, v2
+    v4 = Builtin builtin=Bun
+    v5 = PropGet v4 key="spawnSync"
+    v6 = String string="true"
+    v7 = NewArray v6
+    v8 = Call v5, v4, v7 calleeKey="spawnSync"
+    v9 = PropGet v8 key="resourceUsage"
+    v10 = Call v9, v8 calleeKey="resourceUsage"
+    Return v10
+}

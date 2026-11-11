@@ -1,0 +1,9 @@
+import { test, vi } from "bun:test";
+const key = require.resolve("./part.cjs");
+const kind = (got, held) => got === held ? "the namespace" : got === held.default ? "the exports" : Object.prototype.toString.call(got) + " " + Object.keys(got).join(",");
+import * as held from "./part.cjs";
+test("t", async () => {
+  require.cache[key] = undefined;
+  const got = require("./part.cjs");
+  console.log("| " + kind(got, held) + " | " + got.x + " | runs " + globalThis.runs + " | entry " + typeof require.cache[key]);
+});

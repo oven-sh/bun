@@ -50,6 +50,7 @@ fn settings_with(
         experimental_decorators,
         emits_decorator_metadata,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     }
 }
 

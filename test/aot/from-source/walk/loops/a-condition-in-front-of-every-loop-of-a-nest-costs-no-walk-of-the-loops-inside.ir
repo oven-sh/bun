@@ -16,11 +16,12 @@
 # sink(sum(limits[0] | 0, limits[1] | 0));
 # -- end of source
 # The guess for `a` enters each head inside through a meeting block. A head did not know then that it took a guess in: where the int32 came round it climbed by itself and was walked again, and so was each head around in its turn,
-# with all the loops inside it: 87 walks for eight loops, 4,287 for sixty-four. What enters is looked through like what comes round: the misfit goes up all the heads at once and the walk goes on: three walks a loop.
+# with all the loops inside it: 87 walks for eight loops, 4,287 for sixty-four. What enters is looked through like what comes round: the misfit goes up all the heads at once and the walk goes on: three walks a loop, and one more of the innermost, which meets its own wish at once.
 # f1 = sum
 # OPTIONS: check=Validate
-# RUN: compile WalksOfLoops
-# CHECK: statistic WalksOfLoops 24
+# RUN: compile LoopVisits
+# Since operators on bits alone bring `a` round, it starts as an int32 at every head and misfits nowhere: two walks a loop, and one more of the innermost.
+# CHECK: statistic LoopVisits 17
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: -6
 # SHELL: exited with 0

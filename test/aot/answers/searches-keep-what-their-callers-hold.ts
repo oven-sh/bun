@@ -4,12 +4,10 @@
 // # f1 = positions, f2 = tell
 // # LIBRARY: own
 // # RUN(FORM): walk f1 mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM-LABEL: code f1:Body
 // # FORM: isLoopHead=true
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 9 of 9 of 9
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;

@@ -604,7 +604,7 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
     let outside_language = [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
-    let only_when_named = bun_trim::features_kept_only_when_named();
+    let only_when_named = bun_trim::features_retained_by_name();
     match cause {
         LoadsModuleByName => FeatureSet::from_features(&[Feature::DataFileLoaders]),
         LoadsCodeByName => {
@@ -673,7 +673,11 @@ fn check_plan(
     }
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {
-        if seed.contains(Feature::Bundler) {
+        let may_enter_all_of_bundler = used.names_bun_build
+            || used.has_cause(UnseenCodeCause::ReportMissing)
+            || used.has_cause(UnseenCodeCause::FlowResultDisabled)
+            || (request.allow.iter()).any(|name| name.features().contains(Feature::Bundler));
+        if seed.contains(Feature::Bundler) && may_enter_all_of_bundler {
             seed.union_with(&FeatureSet::from_features(&[
                 Feature::Check,
                 Feature::AotCompiler,

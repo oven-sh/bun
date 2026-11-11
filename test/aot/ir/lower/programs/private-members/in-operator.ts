@@ -53,7 +53,7 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 
 // GENERATED: make H C once negated
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v2 = NewObject layout=[[L_2]]
@@ -87,7 +87,7 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 // CHECK-NEXT: Return v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="H"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_18]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_18]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_19]]
@@ -95,7 +95,7 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] captures=[{type=number variableName="n"}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_20]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] captures=[{type=number variableName="n"}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_20]]] {
 // CHECK-NEXT: b0(v0: number, v1: classtoken, v2: anything):
 // CHECK-NEXT: v3 = GetConstructPrototype v2 layout=[[L_3]]
 // CHECK-NEXT: v4 = NewObject v3 layout=[[L_3]]
@@ -104,7 +104,7 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="once"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_22]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_22]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_2]], v1: function, v2: undefined|null|[[f_22]]):
 // CHECK-NEXT: v3 = Call v2 calleeName="f"
 // CHECK-NEXT: v4 = TypeTest v3 testedType=object
@@ -124,9 +124,9 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 // CHECK-NEXT: Unreachable
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="negated"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
-// CHECK-NEXT: v3 = RequireObject v2 runtimeError=PrivateStaticTestOfNonObject
+// CHECK-NEXT: v3 = RequireObject v2 runtimeError=StaticPrivateInNotObject
 // CHECK-NEXT: v4 = StrictEq v3, v0
 // CHECK-NEXT: v5 = ToBoolean v4
 // CHECK-NEXT: v6 = LogicalNot v5

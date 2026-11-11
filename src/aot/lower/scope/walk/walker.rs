@@ -369,6 +369,7 @@ impl<'x, 's> Walker<'x, 's> {
             pending_stores: Vec::new(),
             unconditional_calls_of_super: Default::default(),
             fields_evaluated_in_constructors: Default::default(),
+            places_of_this_super_and_return: Default::default(),
             clock: 0,
             number_walked: 0,
             is_only_called_or_tested: vec![false; hir.exprs.len()],

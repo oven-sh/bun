@@ -453,15 +453,17 @@ static void* const replacementsOfLibcFunctions[numberOfLibcFunctions] = {
 #define LIBC_THROW
 #endif
 #define LIBC_FUNCTION extern "C" __attribute__((visibility("default")))
+// Not inlined, so that the return address is the caller's.
+#define CALLER_CHECKING_LIBC_FUNCTION LIBC_FUNCTION NEVER_INLINE
 
-LIBC_FUNCTION int sigaction(int signalNumber, const struct sigaction* __restrict action, struct sigaction* __restrict previousAction) LIBC_THROW
+CALLER_CHECKING_LIBC_FUNCTION int sigaction(int signalNumber, const struct sigaction* __restrict action, struct sigaction* __restrict previousAction) LIBC_THROW
 {
     if (Bun::isInExecutable(__builtin_return_address(0))) [[likely]]
         return Bun::callLibcSigaction(signalNumber, action, previousAction);
     return Bun::setSignalAction(signalNumber, action, previousAction);
 }
 
-LIBC_FUNCTION Bun::SignalHandler signal(int signalNumber, Bun::SignalHandler handler) LIBC_THROW
+CALLER_CHECKING_LIBC_FUNCTION Bun::SignalHandler signal(int signalNumber, Bun::SignalHandler handler) LIBC_THROW
 {
     if (Bun::isInExecutable(__builtin_return_address(0))) [[likely]]
         return Bun::callLibcSignal(signalNumber, handler);
@@ -493,14 +495,14 @@ LIBC_FUNCTION int sigignore(int signalNumber) LIBC_THROW
     return Bun::ignoreSignal(signalNumber);
 }
 
-LIBC_FUNCTION int pthread_sigmask(int how, const sigset_t* __restrict set, sigset_t* __restrict previousSet) LIBC_THROW
+CALLER_CHECKING_LIBC_FUNCTION int pthread_sigmask(int how, const sigset_t* __restrict set, sigset_t* __restrict previousSet) LIBC_THROW
 {
     if (Bun::isInExecutable(__builtin_return_address(0))) [[likely]]
         return Bun::findNextDefinition<int(int, const sigset_t*, sigset_t*)>(Bun::LibcFunction::PthreadSigmask)(how, set, previousSet);
     return Bun::setSignalMask<Bun::LibcFunction::PthreadSigmask>(how, set, previousSet);
 }
 
-LIBC_FUNCTION int sigprocmask(int how, const sigset_t* __restrict set, sigset_t* __restrict previousSet) LIBC_THROW
+CALLER_CHECKING_LIBC_FUNCTION int sigprocmask(int how, const sigset_t* __restrict set, sigset_t* __restrict previousSet) LIBC_THROW
 {
     if (Bun::isInExecutable(__builtin_return_address(0))) [[likely]]
         return Bun::findNextDefinition<int(int, const sigset_t*, sigset_t*)>(Bun::LibcFunction::Sigprocmask)(how, set, previousSet);

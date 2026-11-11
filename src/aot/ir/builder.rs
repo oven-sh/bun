@@ -4,7 +4,8 @@ use super::entry_parameters::EntryPosition;
 use super::finish::FinishScratch;
 use super::generated::{
     BlockFrequency, BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION,
-    TerminatorKind, ValueHead, visit_terminator_fields, visit_value_fields,
+    TerminatorKind, ValueHead, WRITTEN_POSITION_FOLLOWS, visit_terminator_fields,
+    visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId, optional_id_to_word};
 use super::ssa::SsaState;
@@ -318,6 +319,8 @@ pub struct FunctionBuilder {
     pub(super) listed_values: Vec<ValueId>,
     pub(super) current_block: BlockId,
     pub(super) position: Option<u32>,
+    construction_start: Option<u32>,
+    is_position_held: bool,
     stands_in_tail_position: bool,
     pub(super) ssa: SsaState,
     pub(super) finish_scratch: FinishScratch,
@@ -337,6 +340,8 @@ impl FunctionBuilder {
             listed_values: scratch.listed_values,
             current_block: ENTRY_BLOCK,
             position: None,
+            construction_start: None,
+            is_position_held: false,
             stands_in_tail_position: false,
             ssa: scratch.ssa,
             finish_scratch: scratch.finish,
@@ -522,7 +527,26 @@ impl FunctionBuilder {
 
     #[inline]
     pub fn set_position(&mut self, position: Option<u32>) {
-        self.position = position;
+        if !self.is_position_held {
+            self.position = position;
+        }
+    }
+
+    #[inline]
+    pub fn hold_position(&mut self, is_held: bool) {
+        self.is_position_held = is_held;
+    }
+
+    pub fn emit_at_site<R>(&mut self, position: u32, emit: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = self.position.replace(position);
+        let emitted = emit(self);
+        self.position = outer;
+        emitted
+    }
+
+    pub fn set_construction_start(&mut self, start: u32) {
+        let is_elsewhere = !self.is_position_held && self.position != Some(start);
+        self.construction_start = is_elsewhere.then_some(start);
     }
 
     #[inline]
@@ -548,16 +572,19 @@ impl FunctionBuilder {
             self.seal(block);
             self.switch_to(block);
         }
-        let mark = if self.stands_in_tail_position {
-            STANDS_IN_TAIL_POSITION
-        } else {
-            0
-        };
+        let mut marks = 0;
+        if self.stands_in_tail_position {
+            marks |= STANDS_IN_TAIL_POSITION;
+        }
+        let construction_start = self.construction_start.take();
+        if construction_start.is_some() {
+            marks |= WRITTEN_POSITION_FOLLOWS;
+        }
         let head = ValueHead {
-            opcode: opcode as u32 | mark,
+            opcode: opcode as u32 | marks,
             position: self.position,
         };
-        self.append_value(self.current_block, head, fields, false)
+        self.append_value(self.current_block, head, fields, construction_start, false)
     }
 
     pub fn place(&self) -> Place {
@@ -625,7 +652,7 @@ impl FunctionBuilder {
             opcode: opcode.to_wire(),
             position,
         };
-        self.append_value(block, head, fields, at_front)
+        self.append_value(block, head, fields, None, at_front)
     }
 
     #[inline]
@@ -634,12 +661,14 @@ impl FunctionBuilder {
         block: BlockId,
         head: ValueHead,
         fields: &[u32],
+        second_position: Option<u32>,
         at_front: bool,
     ) -> ValueId {
         let value = self.next_value_id();
         head.append_to(&mut PushedWords(&mut self.words));
         push_words(&mut self.words, fields);
-        let word_count = (ValueHead::WORDS + fields.len()) as u32;
+        push_words(&mut self.words, second_position.as_slice());
+        let word_count = (ValueHead::WORDS + fields.len() + second_position.iter().len()) as u32;
         let at = self.end_of_words() - word_count;
 
         let id = value.to_word();
@@ -674,7 +703,8 @@ impl FunctionBuilder {
             return None;
         }
         let head = self.words[pending.at as usize];
-        let opcode = Opcode::from_wire(head & !STANDS_IN_TAIL_POSITION);
+        let opcode =
+            Opcode::from_wire(head & !(STANDS_IN_TAIL_POSITION | WRITTEN_POSITION_FOLLOWS));
         debug_assert!(opcode.is_some(), "an operation begins with its opcode");
         opcode
     }

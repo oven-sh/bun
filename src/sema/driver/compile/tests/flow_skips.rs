@@ -27,6 +27,7 @@ fn ask_for_names(text: &str, far_walk: u32) -> (Vec<String>, usize) {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };
@@ -455,6 +456,7 @@ fn ask_for_every_expression_from_the_last(text: &str, far_walk: u32) -> Vec<Stri
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };

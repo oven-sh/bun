@@ -2584,13 +2584,14 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks);
 __attribute__((minsize)) static void rerankAfter(Zig::GlobalObject* globalObject, Vector<JSC::JSPromise*>& fetches)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (fetches.isEmpty()) {
-        fetches.append(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
-        fetches.last()->fulfill(vm, jsUndefined());
-    }
     globalObject->onLoadPlugins.loadsBeingFetched++;
-    auto* countdown = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsNumber(fetches.size()), jsNumber(globalObject->onLoadPlugins.timesRanked));
+    auto* countdown = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsNumber(std::max<size_t>(fetches.size(), 1)), jsNumber(globalObject->onLoadPlugins.timesRanked));
     JSC::JSFunction* settled = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionGiveTurnsToModuleMocks, ImplementationVisibility::Private);
+    if (fetches.isEmpty()) {
+        auto* now = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        now->fulfill(vm, jsUndefined());
+        now->performPromiseThenWithContext(vm, globalObject, settled, settled, jsUndefined(), countdown);
+    }
     for (auto* fetch : fetches)
         fetch->performPromiseThenWithContext(vm, globalObject, settled, settled, jsUndefined(), countdown);
     fetches.shrink(0);

@@ -110,12 +110,18 @@ it("process.title with UTF-16 characters", () => {
 });
 
 it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
+  const accessors = ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"];
   using dir = tempDir("load-env-accessors", {
-    ".env": "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
+    // Not ".env", which bun loads by itself.
+    "accessors.env":
+      "TZ=UTC\nNODE_TLS_REJECT_UNAUTHORIZED=1\nBUN_CONFIG_VERBOSE_FETCH=false\n" +
+      "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
     "index.js": `
-      process.loadEnvFile();
-      // HTTP_PROXY always exists on process.env as a custom accessor even
-      // when the variable is unset; loadEnvFile must still apply it.
+      const accessors = ${JSON.stringify(accessors)};
+      // process.env has an accessor for each of these names, set or not. It reads undefined while the variable is unset.
+      console.log(accessors.map(name => process.env[name]).join());
+      process.loadEnvFile("accessors.env");
+      console.log(accessors.map(name => process.env[name]).join());
       console.log(process.env.HTTP_PROXY);
       // An existing empty-string value takes precedence over the file.
       console.log(JSON.stringify(process.env.EMPTY_WINS));
@@ -124,8 +130,7 @@ it("process.loadEnvFile can set accessor-backed keys and respects empty values",
   });
 
   const env = { ...bunEnv, EMPTY_WINS: "" };
-  delete env.HTTP_PROXY;
-  delete env.http_proxy;
+  for (const name of ["HTTP_PROXY", "http_proxy", ...accessors]) delete env[name];
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env,
@@ -134,7 +139,10 @@ it("process.loadEnvFile can set accessor-backed keys and respects empty values",
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: 'http://from-dotenv:8080\n""\nfresh\n', exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({
+    stdout: ',,\nUTC,1,false\nhttp://from-dotenv:8080\n""\nfresh\n',
+    exitCode: 0,
+  });
 });
 
 it("process.loadEnvFile sets a variable that process.env only seems to have", async () => {

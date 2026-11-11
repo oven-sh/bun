@@ -158,11 +158,6 @@ interface CustomEvent<T = any> {
   initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void;
 }
 
-interface DOMException {
-  /** @deprecated */
-  readonly code: number;
-}
-
 /**
  * @deprecated Renamed to `BuildMessage`
  */

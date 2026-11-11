@@ -5,6 +5,7 @@
 /// <reference types="node" />
 
 /// <reference path="./globals.d.ts" />
+/// <reference path="./web-globals.d.ts" />
 /// <reference path="./s3.d.ts" />
 /// <reference path="./fetch.d.ts" />
 /// <reference path="./bun.d.ts" />

@@ -166,36 +166,6 @@ declare module "bun" {
         ? {}
         : Fallback
       : Fallback;
-
-    interface FallbackFormData {
-      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/append) */
-      append(name: string, value: string | Blob): void;
-      append(name: string, value: string): void;
-      append(name: string, blobValue: Blob, filename?: string): void;
-      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/delete) */
-      delete(name: string): void;
-      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/get) */
-      get(name: string): Bun.FormDataEntryValue | null;
-      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/getAll) */
-      getAll(name: string): Bun.FormDataEntryValue[];
-      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/has) */
-      has(name: string): boolean;
-      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/set) */
-      set(name: string, value: string | Blob): void;
-      set(name: string, value: string): void;
-      set(name: string, blobValue: Blob, filename?: string): void;
-      forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
-    }
-
-    interface FallbackFormDataIterable {
-      /** Returns a list of keys in the list. */
-      keys(): IterableIterator<string>;
-      /** Returns a list of values in the list. */
-      values(): IterableIterator<Bun.FormDataEntryValue>;
-      /** Returns an array of key, value pairs for every entry in the list. */
-      entries(): IterableIterator<[string, Bun.FormDataEntryValue]>;
-      [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>;
-    }
   }
 }
 
@@ -335,9 +305,7 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface Crypto {
-  readonly subtle: SubtleCrypto;
-
+interface Crypto extends Bun.__internal.LibOrFallbackCrypto {
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/getRandomValues) */
   getRandomValues<T extends ArrayBufferView | null>(array: T): T;
 
@@ -580,13 +548,7 @@ declare function removeEventListener(
 /**
  * An event that provides information about an error in a script or in a file.
  */
-interface ErrorEvent extends Event {
-  readonly colno: number;
-  readonly error: any;
-  readonly filename: string;
-  readonly lineno: number;
-  readonly message: string;
-}
+interface ErrorEvent extends Bun.__internal.LibOrFallbackErrorEvent {}
 
 declare var ErrorEvent: {
   prototype: ErrorEvent;
@@ -594,14 +556,7 @@ declare var ErrorEvent: {
 };
 
 /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
-interface CloseEvent extends Event {
-  /** Returns the WebSocket connection close code provided by the server. */
-  readonly code: number;
-  /** Returns the WebSocket connection close reason provided by the server. */
-  readonly reason: string;
-  /** Returns true if the connection closed cleanly; false otherwise. */
-  readonly wasClean: boolean;
-}
+interface CloseEvent extends Bun.__internal.LibOrFallbackCloseEvent {}
 
 declare var CloseEvent: {
   prototype: CloseEvent;
@@ -617,10 +572,7 @@ declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface CustomEvent<T = any> extends Event {
-  /** Any custom data the event was created with. Typically used for synthetic events. */
-  readonly detail: T;
-}
+interface CustomEvent<T = any> extends Bun.__internal.LibOrFallbackCustomEvent<T> {}
 
 declare var CustomEvent: {
   prototype: CustomEvent;
@@ -650,11 +602,7 @@ interface EventMap {
   // exit: Event;
 }
 
-interface AddEventListenerOptions extends Bun.EventListenerOptions {
-  once?: boolean;
-  passive?: boolean;
-  signal?: AbortSignal;
-}
+interface AddEventListenerOptions extends Bun.__internal.LibOrFallbackAddEventListenerOptions {}
 
 /**
  * Low-level JavaScriptCore API for accessing the native ES module loader (not a Bun API)
@@ -751,39 +699,20 @@ declare var Loader: {
   resolve: (specifier: string, referrer: string) => string;
 };
 
-interface QueuingStrategy<T = any> {
-  highWaterMark?: number;
-  size?: QueuingStrategySize<T>;
-}
+interface QueuingStrategy<T = any> extends Bun.__internal.LibOrFallbackQueuingStrategy<T> {}
 
-interface QueuingStrategyInit {
-  /**
-   * The high water mark for the new queuing strategy.
-   *
-   * The value is not validated ahead of time. If it is negative, NaN, or not a
-   * number, the stream constructor the strategy is passed to throws.
-   */
-  highWaterMark: number;
-}
+interface QueuingStrategyInit extends Bun.__internal.LibOrFallbackQueuingStrategyInit {}
 
 /** A built-in byte-length queuing strategy for use when constructing streams. */
-interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
-  readonly highWaterMark: number;
-  // changed from QueuingStrategySize<BufferSource>
-  // to avoid conflict with lib.dom.d.ts
-  readonly size: QueuingStrategySize<ArrayBufferView>;
-}
+interface ByteLengthQueuingStrategy extends Bun.__internal.LibOrFallbackByteLengthQueuingStrategy {}
 
 declare var ByteLengthQueuingStrategy: {
   prototype: ByteLengthQueuingStrategy;
   new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
 };
 
-interface ReadableStreamDefaultController<R = any> {
-  readonly desiredSize: number | null;
-  close(): void;
+interface ReadableStreamDefaultController<R = any> extends Bun.__internal.LibOrFallbackReadableStreamDefaultController {
   enqueue(chunk?: R): void;
-  error(e?: any): void;
 }
 
 interface ReadableStreamDirectController {
@@ -828,14 +757,13 @@ declare var ReadableStreamDefaultController: {
   new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
+interface ReadableStreamDefaultReader<R = any> extends Bun.__internal.LibOrFallbackReadableStreamDefaultReader {
   read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
   /**
    * Only available in Bun. If there are multiple chunks in the queue, returns all of them at once.
    * Returns a promise only if the data is not immediately available.
    */
   readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
-  releaseLock(): void;
 }
 
 declare var ReadableStreamDefaultReader: {
@@ -843,10 +771,7 @@ declare var ReadableStreamDefaultReader: {
   new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
 };
 
-interface ReadableStreamGenericReader {
-  readonly closed: Promise<void>;
-  cancel(reason?: any): Promise<void>;
-}
+interface ReadableStreamGenericReader extends Bun.__internal.LibOrFallbackReadableStreamGenericReader {}
 
 interface ReadableStreamDefaultReadDoneResult {
   done: true;
@@ -866,14 +791,9 @@ interface ReadableStreamDefaultReadValueResult<T> {
  * for the duration of the pipe, preventing any other consumer from acquiring
  * a reader.
  */
-interface ReadableWritablePair<R = any, W = any> {
-  readable: ReadableStream<R>;
-  writable: WritableStream<W>;
-}
+interface ReadableWritablePair<R = any, W = any> extends Bun.__internal.LibOrFallbackReadableWritablePair<R, W> {}
 
-interface WritableStreamDefaultController {
-  error(e?: any): void;
-}
+interface WritableStreamDefaultController extends Bun.__internal.LibOrFallbackWritableStreamDefaultController {}
 
 declare var WritableStreamDefaultController: {
   prototype: WritableStreamDefaultController;
@@ -881,13 +801,7 @@ declare var WritableStreamDefaultController: {
 };
 
 /** The object returned by `WritableStream.getWriter()`. Once created, it locks the writer to the `WritableStream`, ensuring that no other streams can write to the underlying sink. */
-interface WritableStreamDefaultWriter<W = any> {
-  readonly closed: Promise<void>;
-  readonly desiredSize: number | null;
-  readonly ready: Promise<void>;
-  abort(reason?: any): Promise<void>;
-  close(): Promise<void>;
-  releaseLock(): void;
+interface WritableStreamDefaultWriter<W = any> extends Bun.__internal.LibOrFallbackWritableStreamDefaultWriter {
   write(chunk?: W): Promise<void>;
 }
 
@@ -896,10 +810,7 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
-interface TransformStream<I = any, O = any> {
-  readonly readable: ReadableStream<O>;
-  readonly writable: WritableStream<I>;
-}
+interface TransformStream<I = any, O = any> extends Bun.__internal.LibOrFallbackTransformStream<I, O> {}
 
 declare var TransformStream: {
   prototype: TransformStream;
@@ -910,11 +821,9 @@ declare var TransformStream: {
   ): TransformStream<I, O>;
 };
 
-interface TransformStreamDefaultController<O = any> {
-  readonly desiredSize: number | null;
+interface TransformStreamDefaultController<O = any>
+  extends Bun.__internal.LibOrFallbackTransformStreamDefaultController {
   enqueue(chunk?: O): void;
-  error(reason?: any): void;
-  terminate(): void;
 }
 
 declare var TransformStreamDefaultController: {
@@ -952,18 +861,10 @@ declare var TransformStreamDefaultController: {
  * stream is canceled and the destination aborted, unless `preventCancel` or
  * `preventAbort` is set.
  */
-interface StreamPipeOptions {
-  preventAbort?: boolean;
-  preventCancel?: boolean;
-  preventClose?: boolean;
-  signal?: AbortSignal;
-}
+interface StreamPipeOptions extends Bun.__internal.LibOrFallbackStreamPipeOptions {}
 
 /** A built-in chunk-counting queuing strategy for use when constructing streams. */
-interface CountQueuingStrategy extends QueuingStrategy {
-  readonly highWaterMark: number;
-  readonly size: QueuingStrategySize;
-}
+interface CountQueuingStrategy extends Bun.__internal.LibOrFallbackCountQueuingStrategy {}
 
 declare var CountQueuingStrategy: {
   prototype: CountQueuingStrategy;
@@ -974,13 +875,7 @@ interface QueuingStrategySize<T = any> {
   (chunk?: T): number;
 }
 
-interface Transformer<I = any, O = any> {
-  flush?: Bun.TransformerFlushCallback<O>;
-  readableType?: undefined;
-  start?: Bun.TransformerStartCallback<O>;
-  transform?: Bun.TransformerTransformCallback<I, O>;
-  writableType?: undefined;
-}
+interface Transformer<I = any, O = any> extends Bun.__internal.LibOrFallbackTransformer<I, O> {}
 
 interface Dict<T> {
   [key: string]: T | undefined;
@@ -1001,35 +896,7 @@ interface ErrnoException extends Error {
  * An abnormal event (called an exception) that occurs when calling a method or
  * accessing a property of a web API
  */
-interface DOMException extends Error {
-  readonly message: string;
-  readonly name: string;
-  readonly INDEX_SIZE_ERR: 1;
-  readonly DOMSTRING_SIZE_ERR: 2;
-  readonly HIERARCHY_REQUEST_ERR: 3;
-  readonly WRONG_DOCUMENT_ERR: 4;
-  readonly INVALID_CHARACTER_ERR: 5;
-  readonly NO_DATA_ALLOWED_ERR: 6;
-  readonly NO_MODIFICATION_ALLOWED_ERR: 7;
-  readonly NOT_FOUND_ERR: 8;
-  readonly NOT_SUPPORTED_ERR: 9;
-  readonly INUSE_ATTRIBUTE_ERR: 10;
-  readonly INVALID_STATE_ERR: 11;
-  readonly SYNTAX_ERR: 12;
-  readonly INVALID_MODIFICATION_ERR: 13;
-  readonly NAMESPACE_ERR: 14;
-  readonly INVALID_ACCESS_ERR: 15;
-  readonly VALIDATION_ERR: 16;
-  readonly TYPE_MISMATCH_ERR: 17;
-  readonly SECURITY_ERR: 18;
-  readonly NETWORK_ERR: 19;
-  readonly ABORT_ERR: 20;
-  readonly URL_MISMATCH_ERR: 21;
-  readonly QUOTA_EXCEEDED_ERR: 22;
-  readonly TIMEOUT_ERR: 23;
-  readonly INVALID_NODE_TYPE_ERR: 24;
-  readonly DATA_CLONE_ERR: 25;
-}
+interface DOMException extends Bun.__internal.LibOrFallbackDOMException {}
 declare var DOMException: {
   prototype: DOMException;
   new (message?: string, name?: string): DOMException;
@@ -1574,9 +1441,7 @@ declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeO
  */
 declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
 
-interface EventSourceInit {
-  withCredentials?: boolean;
-}
+interface EventSourceInit extends Bun.__internal.LibOrFallbackEventSourceInit {}
 
 interface PromiseConstructor {
   /**
@@ -1619,26 +1484,11 @@ interface Navigator {
 
 declare var navigator: Navigator;
 
-interface BlobPropertyBag {
-  /** Set a default "type". Not yet implemented. */
-  type?: string;
-  /** Not implemented in Bun yet. */
-  // endings?: "transparent" | "native";
-}
+interface BlobPropertyBag extends Bun.__internal.LibOrFallbackBlobPropertyBag {}
 
 interface WorkerOptions extends Bun.WorkerOptions {}
 
-interface Blob {
-  /**
-   * The size of this Blob in bytes
-   */
-  readonly size: number;
-
-  /**
-   * The MIME type of this Blob
-   */
-  readonly type: string;
-
+interface Blob extends Bun.__internal.LibOrFallbackBlob {
   /**
    * Returns a new `Blob` with the bytes from `start` up to but not including
    * `end`. Negative indices count from the end.
@@ -1681,16 +1531,6 @@ interface Blob {
    * closely to the `BodyMixin` API.
    */
   formData(): Promise<FormData>;
-
-  /**
-   * Returns a promise that resolves to the contents of the blob as a string
-   */
-  text(): Promise<string>;
-
-  /**
-   * Returns a promise that resolves to the contents of the blob as an ArrayBuffer
-   */
-  arrayBuffer(): Promise<ArrayBuffer>;
 
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes). Equivalent to `new Uint8Array(await blob.arrayBuffer())`
@@ -1830,10 +1670,7 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
  */
-interface AbortController {
-  readonly signal: AbortSignal;
-  abort(reason?: any): void;
-}
+interface AbortController extends Bun.__internal.LibOrFallbackAbortController {}
 declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {
@@ -1842,12 +1679,7 @@ declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface AbortSignal extends EventTarget {
-  readonly aborted: boolean;
-  onabort: ((this: AbortSignal, ev: Event) => any) | null;
-  readonly reason: any;
-  throwIfAborted(): void;
-}
+interface AbortSignal extends Bun.__internal.LibOrFallbackAbortSignal {}
 declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   "AbortSignal",
   {
@@ -1871,10 +1703,7 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface FormData
-  extends
-    Bun.__internal.LibOrFallback<Bun.__internal.FallbackFormData>,
-    Bun.__internal.LibIterableOrFallback<Bun.__internal.FallbackFormDataIterable> {}
+interface FormData extends Bun.__internal.LibOrFallbackFormData, Bun.__internal.LibIterableOrFallbackFormData {}
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
@@ -1979,20 +1808,7 @@ declare var URLSearchParams: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface MessageChannel {
-  /**
-   * Returns the first MessagePort object.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port1)
-   */
-  readonly port1: MessagePort;
-  /**
-   * Returns the second MessagePort object.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port2)
-   */
-  readonly port2: MessagePort;
-}
+interface MessageChannel extends Bun.__internal.LibOrFallbackMessageChannel {}
 declare var MessageChannel: Bun.__internal.UseLibDomIfAvailable<
   "MessageChannel",
   { prototype: MessageChannel; new (): MessageChannel }

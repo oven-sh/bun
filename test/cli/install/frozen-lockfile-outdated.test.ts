@@ -411,6 +411,48 @@ describe.concurrent("--frozen-lockfile fails when", () => {
     });
   });
 
+  // A rule on the same name under another parent does not explain the binding. A rule that applies to the row does: a
+  // lockfile from Bun 1.4 can hold a row that disobeys its rule, and a frozen install still installs it.
+  test.each([
+    ["another parent", { "a-dep>no-deps": "1.0.0" }, 1, "1.1.0"],
+    ["this parent", { "one-range-dep>no-deps": "1.0.0" }, 0, "1.0.0"],
+  ] as const)(
+    "bun.lock binds a package's dependency outside its range, with a scoped override on %s",
+    async (_, overrides, frozenExitCode, nested) => {
+      const { packageDir, lock } = await installed({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.1", "no-deps": "2.0.0", "one-range-dep": "1.0.0" },
+        overrides,
+      });
+      const entry = new RegExp(
+        `\\n *"one-range-dep\\/no-deps": \\["no-deps@${nested.replaceAll(".", "\\.")}", [^\\n]*\\n`,
+      );
+      expect(lock).toMatch(entry);
+      const stale = lock.replace(entry, "\n");
+      await write(join(packageDir, "bun.lock"), stale);
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+      if (frozenExitCode === 1) {
+        expect(frozen.stderr).toContain(frozenError);
+        expect(frozen.stderr).toContain(
+          "note: bun.lock resolves no-deps ^1.0.0 of one-range-dep@1.0.0 to no-deps@2.0.0",
+        );
+      } else {
+        expect(frozen.stderr).not.toContain("error:");
+      }
+      expect(await lockText(packageDir)).toBe(stale);
+      expect(frozen.exitCode).toBe(frozenExitCode);
+
+      const plain = await bun(packageDir, "install");
+      expect(plain.stderr).toContain("Saved lockfile");
+      expect(await lockText(packageDir)).toBe(lock);
+      expect(await loadedVersion(packageDir, "node_modules/one-range-dep", "no-deps")).toBe(nested);
+      expect(plain.exitCode).toBe(0);
+    },
+  );
+
   // The same merge on an optional dependency, with the entry of the dependent's own name: test-postinstall-skip@2.0.0 has
   // the optional dependency test-postinstall-skip-native@2.0.0, and the merge kept the 1.0.0 entry of that name.
   test("bun.lock binds a package's optional dependency to a version that its range rules out", async () => {

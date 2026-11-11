@@ -709,8 +709,7 @@ pub fn install_with_manager(
             retain_rows_to_resolve_again(manager, &mut outside, root_package_json_path);
         }
         if is_frozen {
-            // A hook of the other package manager can bind a row of a migrated lockfile outside
-            // its range.
+            // A hook of the other package manager can bind a migrated row outside its range.
             if load_result.migrated_from().is_none() {
                 frozen_refused_row = first_row_frozen_refuses(&manager.lockfile, &outside);
             }
@@ -725,7 +724,7 @@ pub fn install_with_manager(
             had_any_diffs |= !moved_outside_ranges.is_empty();
         }
 
-        // After the repair, which can bring a patched version back. Before the scanner can exit.
+        // After the repair brings a patched version back, before the scanner can exit.
         if !manager.options.dry_run {
             Output::flush();
             crate::update_transitive::warn_orphaned_patches(manager);
@@ -2450,9 +2449,7 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
     }
 }
 
-/// Returns the rows bound to a version that their effective range (`dedupe::effective_version`)
-/// does not allow, each with the package it resolves to. A merge or an edit of the lockfile leaves
-/// such a row.
+/// The rows bound to a version outside their effective range, each with the package it resolves to.
 #[inline(never)]
 fn rows_outside_ranges(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -2532,8 +2529,7 @@ fn retain_rows_to_resolve_again(
     }
     outside.retain(|&(row, package_id)| {
         let dependency = &dependencies[row as usize];
-        // A peer, and an optional row that Bun 1.4 bound by name when it never resolved, only
-        // move if their package would otherwise be dropped.
+        // A peer, or an optional row Bun 1.4 bound by name, moves only if its package would be dropped.
         if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
             return !held.is_set(package_id as usize);
         }
@@ -2553,16 +2549,14 @@ fn retain_rows_to_resolve_again(
     });
 }
 
-/// The first row of `outside` that no `overrides` rule names. A frozen install accepts a row of a
-/// name a rule names, as it did before any row was checked: Bun 1.4 wrote rows that disobey one.
+/// The first row of `outside` that no rule applies to. Bun 1.4 wrote rows that disobey a rule.
 fn first_row_frozen_refuses(
     lockfile: &Lockfile,
     outside: &[(DependencyID, PackageID)],
 ) -> Option<DependencyID> {
     (outside.iter()).map(|&(row, _)| row).find(|&row| {
-        !lockfile
-            .overrides
-            .has_rule_for_name(lockfile.buffers.dependencies[row as usize].name_hash)
+        let dependency = &lockfile.buffers.dependencies[row as usize];
+        crate::dedupe::applied_override(lockfile, row, dependency).is_none()
     })
 }
 

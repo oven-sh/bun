@@ -738,8 +738,7 @@ pub(crate) fn effective_version_as_yarn(
     version_under(lockfile, dep, rule)
 }
 
-/// Whether the npm package `name` at `resolution` is outside the npm range a row asks for. False
-/// for another name (an `npm:` alias) and for an empty or `*` range, which take `latest` as is.
+/// Whether npm package `name` at `resolution` is outside `range`. Not for another name or `*`.
 pub(crate) fn version_outside_range(
     range: &dependency::Version,
     range_buf: &[u8],

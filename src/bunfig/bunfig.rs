@@ -24,6 +24,7 @@ use bun_options_types::context::{
     TestEnvironment, TestGlobals,
 };
 use bun_options_types::global_cache::GlobalCache;
+use bun_options_types::jsx;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
 
@@ -1127,22 +1128,19 @@ impl<'a> Parser<'a, '_> {
         }
 
         // ── jsx ──────────────────────────────────────────────────────────────
-        let mut jsx_factory: Box<[u8]> = Box::default();
-        let mut jsx_fragment: Box<[u8]> = Box::default();
-        let mut jsx_import_source: Box<[u8]> = Box::default();
-        let mut jsx_runtime = api::JsxRuntime::Automatic;
-        let mut jsx_dev = true;
+        let mut jsx_runtime: Option<jsx::Runtime> = None;
+        let mut jsx_development: Option<bool> = None;
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
-                    jsx_runtime = api::JsxRuntime::Classic;
+                    jsx_runtime = Some(jsx::Runtime::Classic);
                 } else if value == b"react-jsx" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = false;
+                    jsx_runtime = Some(jsx::Runtime::Automatic);
+                    jsx_development = Some(false);
                 } else if value == b"react-jsxDEV" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = true;
+                    jsx_runtime = Some(jsx::Runtime::Automatic);
+                    jsx_development = Some(true);
                 } else {
                     self.add_error(
                         expr.loc,
@@ -1151,44 +1149,30 @@ impl<'a> Parser<'a, '_> {
                 }
             }
         }
-        if let Some(expr) = json.get(b"jsxImportSource") {
-            if let Some(value) = expr.as_string(self.bump) {
-                jsx_import_source = Box::<[u8]>::from(value);
-            }
+        // A name that is empty or not a string states nothing.
+        let jsx_name = |key: &[u8]| {
+            json.get(key)?
+                .as_string(self.bump)
+                .filter(|name| !name.is_empty())
+        };
+        let jsx_members = |key: &[u8], default| jsx::MemberList::stated(jsx_name(key)?, default);
+        let jsx_import_source = jsx_name(b"jsxImportSource");
+        let jsx_fragment = jsx_members(b"jsxFragment", jsx::defaults::FRAGMENT);
+        let jsx_factory = jsx_members(b"jsxFactory", jsx::defaults::FACTORY);
+
+        // Every bunfig.toml leaves a layer, also one without a JSX key.
+        let stated = self.ctx.args.jsx.bunfig.get_or_insert_default();
+        // The `jsx` of a later file replaces that of an earlier one, also when the later file has none.
+        stated.runtime = jsx_runtime;
+        stated.development = jsx_development;
+        if let Some(name) = jsx_import_source {
+            stated.import_source = Some(jsx::ImportSource::new(name));
         }
-        if let Some(expr) = json.get(b"jsxFragment") {
-            if let Some(value) = expr.as_string(self.bump) {
-                jsx_fragment = Box::<[u8]>::from(value);
-            }
+        if jsx_fragment.is_some() {
+            stated.fragment = jsx_fragment;
         }
-        if let Some(expr) = json.get(b"jsxFactory") {
-            if let Some(value) = expr.as_string(self.bump) {
-                jsx_factory = Box::<[u8]>::from(value);
-            }
-        }
-        {
-            if let Some(jsx) = self.ctx.args.jsx.as_mut() {
-                if !jsx_factory.is_empty() {
-                    jsx.factory = jsx_factory;
-                }
-                if !jsx_fragment.is_empty() {
-                    jsx.fragment = jsx_fragment;
-                }
-                if !jsx_import_source.is_empty() {
-                    jsx.import_source = jsx_import_source;
-                }
-                jsx.runtime = jsx_runtime;
-                jsx.development = jsx_dev;
-            } else {
-                self.ctx.args.jsx = Some(api::Jsx {
-                    factory: jsx_factory,
-                    fragment: jsx_fragment,
-                    import_source: jsx_import_source,
-                    runtime: jsx_runtime,
-                    development: jsx_dev,
-                    ..Default::default()
-                });
-            }
+        if jsx_factory.is_some() {
+            stated.factory = jsx_factory;
         }
 
         if let Some(expr) = json.get(b"debug") {

@@ -1562,7 +1562,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zstd",
  "const_format",
- "enumset",
  "libc",
  "scopeguard",
  "strum",

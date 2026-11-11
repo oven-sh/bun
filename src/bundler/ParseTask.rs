@@ -248,8 +248,10 @@ impl<'a> ParseTask<'a> {
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
+    /// `jsx`: `BundleOptions::jsx_for(resolve_result)`, or `BundleOptions::jsx` for a file that takes the program's JSX options.
     pub(crate) fn init(
         resolve_result: &_resolver::Result<'_>,
+        jsx: options::jsx::Pragma,
         path: Fs::Path<'a>,
         source_index: Index,
         // Take `&mut` so the stored BACKREF retains
@@ -274,10 +276,7 @@ impl<'a> ParseTask<'a> {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
-            // nominal type (`bun_options_types::jsx::Pragma`). Preserves
-            // jsxImportSource/runtime/etc. from tsconfig.json.
-            jsx: resolve_result.jsx.clone(),
+            jsx,
             source_index,
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
@@ -2432,14 +2431,7 @@ pub mod parse_worker {
 
         let output_format = topts.output_format;
 
-        // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
-        // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
-        // applies the `_None → Automatic` runtime fold the old `From` bridge did so
-        // parser-side `== Automatic` checks keep their semantics.
-        let mut opts = ParserOptions::init(
-            crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
-            loader,
-        );
+        let mut opts = ParserOptions::init(task.jsx.clone(), loader);
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on

@@ -10,6 +10,7 @@ use std::io::Write as _;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
+use bun_options_types::jsx;
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
@@ -477,32 +478,27 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));
     }
-    if let Some(jsx) = &ctx.args.jsx {
-        if !jsx.factory.is_empty() {
-            argv.push(print_z(format_args!(
-                "--jsx-factory={}",
-                bstr::BStr::new(&jsx.factory)
-            ))?);
-        }
-        if !jsx.fragment.is_empty() {
-            argv.push(print_z(format_args!(
-                "--jsx-fragment={}",
-                bstr::BStr::new(&jsx.fragment)
-            ))?);
-        }
-        if !jsx.import_source.is_empty() {
-            argv.push(print_z(format_args!(
-                "--jsx-import-source={}",
-                bstr::BStr::new(&jsx.import_source)
-            ))?);
-        }
-        argv.push(print_z(format_args!(
-            "--jsx-runtime={}",
-            jsx_runtime_tag_name(jsx.runtime)
-        ))?);
-        if jsx.side_effects {
-            argv.push(lit(b"--jsx-side-effects\0"));
-        }
+    // Only the `--jsx-*` flags as typed: each worker reads the same bunfig.toml itself.
+    let typed = &ctx.args.jsx.flags;
+    let value_flag = |name: &[u8], value: &[u8]| dupe_z(&[name, value].concat());
+    // `React.createElement` again from its parsed members.
+    let dotted = |members: &jsx::MemberList| members.iter().collect::<Vec<_>>().join(&b'.');
+    if let Some(factory) = &typed.factory {
+        argv.push(value_flag(b"--jsx-factory=", &dotted(factory)));
+    }
+    if let Some(fragment) = &typed.fragment {
+        argv.push(value_flag(b"--jsx-fragment=", &dotted(fragment)));
+    }
+    if let Some(import_source) = &typed.import_source {
+        argv.push(value_flag(b"--jsx-import-source=", import_source.package()));
+    }
+    match typed.runtime {
+        Some(jsx::Runtime::Automatic) => argv.push(lit(b"--jsx-runtime=automatic\0")),
+        Some(jsx::Runtime::Classic) => argv.push(lit(b"--jsx-runtime=classic\0")),
+        None => {}
+    }
+    if typed.side_effects == Some(true) {
+        argv.push(lit(b"--jsx-side-effects\0"));
     }
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));
@@ -554,16 +550,6 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::md => "md",
         L::xml => "xml",
         L::_none => "_none",
-    }
-}
-
-/// Local shim for `@tagName(jsx.runtime)`.
-fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'static str {
-    use bun_options_types::schema::api::JsxRuntime as J;
-    match r {
-        J::Automatic => "automatic",
-        J::Classic => "classic",
-        J::_none => "_none",
     }
 }
 

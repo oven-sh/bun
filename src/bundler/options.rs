@@ -1304,7 +1304,12 @@ pub struct BundleOptions<'a> {
     /// `Runtime::Features::init_bundler_feature_flags` (freed on Drop).
     pub bundler_feature_flags: Option<Box<StringSet>>,
     pub loaders: LoaderHashTable,
+    /// `jsx_user` and `jsx_cwd` resolved. After setup, `lay_over_jsx` is its one writer.
     pub jsx: jsx::Pragma,
+    /// `transform_options.jsx` as one layer: what bunfig.toml, the `--jsx-*` flags and `Bun.build()` give.
+    pub jsx_user: jsx::Stated,
+    /// What the working directory's tsconfig.json and the environment state, later over earlier.
+    pub jsx_cwd: jsx::Stated,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
@@ -1535,8 +1540,19 @@ impl<'a> BundleOptions<'a> {
     pub(crate) fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
-            self.jsx.development = !value;
+            self.set_jsx_development(!value);
         }
+    }
+
+    /// `development` as the environment chooses it: `NODE_ENV`, `--production`, the mode of a server.
+    pub fn set_jsx_development(&mut self, development: bool) {
+        self.lay_over_jsx(&jsx::Stated::of_development(development));
+    }
+
+    /// Lays `layer` over `jsx_cwd` and resolves `jsx` from the layers again.
+    pub(crate) fn lay_over_jsx(&mut self, layer: &jsx::Stated) {
+        self.jsx_cwd.lay_over(layer);
+        self.jsx = jsx::Pragma::resolve(&[&self.jsx_user, &self.jsx_cwd]);
     }
 
     pub(crate) fn forced_jsx_development(&self) -> bool {
@@ -1545,6 +1561,34 @@ impl<'a> BundleOptions<'a> {
             ForceNodeEnv::Production => false,
             ForceNodeEnv::Unspecified => self.jsx.development,
         }
+    }
+
+    /// `jsx` with what `tsconfig` states laid over it.
+    pub fn jsx_under(&self, tsconfig: &jsx::Stated) -> jsx::Pragma {
+        jsx::Pragma::resolve(&[&self.jsx_user, &self.jsx_cwd, tsconfig])
+    }
+
+    /// The `Pragma` of the file that `result` names. A bundle then writes its own `development` over it.
+    pub(crate) fn jsx_for(&self, result: &bun_resolver::Result<'_>) -> jsx::Pragma {
+        use bun_resolver::JsxLayer;
+        // Lowest rank first: each configuration that `result` lists is over `jsx_cwd`.
+        let mut stated = jsx::Stated::default();
+        if result.jsx.of_build {
+            stated.lay_over(&self.jsx_user);
+            stated.lay_over(&self.jsx_cwd);
+        }
+        for layer in result.jsx.layers.iter().flatten() {
+            match layer {
+                JsxLayer::TSConfig(tsconfig) => stated.lay_over(&tsconfig.jsx),
+                // Of what ranks below a package with the "aot" condition, only `development` stays.
+                JsxLayer::AotPackage(own) => {
+                    let development = jsx::Pragma::from(stated).development;
+                    stated = jsx::Stated::of_development(development);
+                    stated.lay_over(&own.jsx);
+                }
+            }
+        }
+        jsx::Pragma::from(stated)
     }
 
     /// Per-worker deep clone — replaces the prior bitwise
@@ -1578,6 +1622,8 @@ impl<'a> BundleOptions<'a> {
                 .map(|s| Box::new(bun_core::handle_oom(s.clone()))),
             loaders: bun_core::handle_oom(self.loaders.clone()),
             jsx: self.jsx.clone(),
+            jsx_user: self.jsx_user.clone(),
+            jsx_cwd: self.jsx_cwd.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
             use_define_for_class_fields: self.use_define_for_class_fields,
@@ -1824,6 +1870,7 @@ impl<'a> BundleOptions<'a> {
                 .map(|s| s.as_ref())
                 .collect::<Vec<&[u8]>>(),
         );
+        let jsx_user = transform.jsx.layer();
 
         let mut opts = BundleOptions {
             footer: Cow::Borrowed(b""),
@@ -1850,7 +1897,9 @@ impl<'a> BundleOptions<'a> {
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
-            jsx: jsx::Pragma::default(),
+            jsx: jsx::Pragma::resolve(&[&jsx_user]),
+            jsx_user,
+            jsx_cwd: jsx::Stated::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
@@ -1968,10 +2017,6 @@ impl<'a> BundleOptions<'a> {
             // ownership — `URL<'_>` borrows its input; `OwnedURL` owns the href and
             // callers borrow via `.url()`.
             opts.origin = bun_url::OwnedURL::from_href(origin.clone());
-        }
-
-        if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
 
         if !transform.extension_order.is_empty() {
@@ -2099,6 +2144,119 @@ impl<'a> BundleOptions<'a> {
         }
         Ok(opts)
     }
+}
+
+#[cfg(test)]
+#[test]
+#[cfg_attr(miri, ignore)]
+fn jsx_for_lays_the_configuration_of_a_file_over_the_options_of_the_program() {
+    use bun_resolver::{JsxConfig, JsxLayer, TSConfigJSON, TSConfigRef};
+    use std::sync::Arc;
+
+    fn named(name: &[u8]) -> Option<jsx::MemberList> {
+        let names: Box<[Box<[u8]>]> = Box::new([Box::from(name)]);
+        Some(names.into())
+    }
+    fn config(stated: &jsx::Stated) -> Arc<TSConfigJSON> {
+        let mut config = TSConfigJSON::default();
+        config.jsx = stated.clone();
+        Arc::new(config)
+    }
+    fn tsconfig(stated: &jsx::Stated) -> Option<JsxLayer> {
+        Some(JsxLayer::TSConfig(TSConfigRef::Override(config(stated))))
+    }
+    /// The options of a file of the build that lists `layers`.
+    fn jsx_of(options: &BundleOptions<'_>, layers: [Option<JsxLayer>; 3]) -> String {
+        show(&options.jsx_for(&bun_resolver::Result {
+            jsx: JsxConfig {
+                of_build: true,
+                layers,
+            },
+            ..Default::default()
+        }))
+    }
+    fn show(pragma: &jsx::Pragma) -> String {
+        let first =
+            |list: &jsx::MemberList| bstr::BStr::new(list.first().unwrap_or_default()).to_string();
+        format!(
+            "{:?} development={} {} {} {}",
+            pragma.runtime,
+            pragma.development,
+            first(&pragma.factory),
+            first(&pragma.fragment),
+            bstr::BStr::new(pragma.package_name()),
+        )
+    }
+
+    Fs::FileSystem::init(None).ok().expect("file system");
+    let mut log = bun_ast::Log::init();
+    let transform = api::TransformOptions {
+        jsx: jsx::Sources {
+            bunfig: Some(jsx::Stated {
+                runtime: Some(jsx::Runtime::Classic),
+                factory: named(b"user"),
+                fragment: named(b"user"),
+                import_source: Some(jsx::ImportSource::new(b"user")),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut options = BundleOptions::from_api(&mut log, transform)
+        .ok()
+        .expect("options");
+    // The tsconfig.json of the working directory, then `NODE_ENV=production`.
+    options.lay_over_jsx(&jsx::Stated {
+        fragment: named(b"cwd"),
+        ..Default::default()
+    });
+    options.set_jsx_development(false);
+
+    // A file that lists no configuration takes the options of the program, and one outside the build the defaults.
+    assert_eq!(
+        jsx_of(&options, [None, None, None]),
+        "Classic development=false user cwd user"
+    );
+    assert_eq!(
+        show(&options.jsx_for(&bun_resolver::Result::default())),
+        "Automatic development=true React React react"
+    );
+
+    // Each tsconfig.json that a file lists is over the program and over the one listed before it.
+    let own = jsx::Stated {
+        runtime: Some(jsx::Runtime::Automatic),
+        development: Some(true),
+        factory: named(b"own"),
+        ..Default::default()
+    };
+    let later = jsx::Stated {
+        factory: named(b"later"),
+        import_source: Some(jsx::ImportSource::new(b"later")),
+        ..Default::default()
+    };
+    assert_eq!(
+        jsx_of(&options, [tsconfig(&own), None, None]),
+        "Automatic development=true own cwd user"
+    );
+    assert_eq!(
+        jsx_of(&options, [tsconfig(&own), tsconfig(&later), None]),
+        "Automatic development=true later cwd later"
+    );
+
+    // A package with the "aot" condition takes `development` and nothing else of what ranks below it.
+    let package = |stated: &jsx::Stated| Some(JsxLayer::AotPackage(config(stated)));
+    assert_eq!(
+        jsx_of(
+            &options,
+            [tsconfig(&later), package(&jsx::Stated::default()), None]
+        ),
+        "Automatic development=false React React react"
+    );
+    assert_eq!(
+        jsx_of(&options, [package(&own), None, None]),
+        "Automatic development=true own React react"
+    );
 }
 
 impl Drop for BundleOptions<'_> {

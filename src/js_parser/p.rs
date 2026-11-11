@@ -3330,9 +3330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = import_source.text.slice();
-            self.options.jsx.classic_import_source = text.to_vec().into();
-            self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
-            self.options.jsx.set_import_source();
+            self.options.jsx.set_import_source(text);
         }
 
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {

@@ -35,8 +35,7 @@ fn change_directory(cwd: &[u8]) {
     }
 }
 
-/// Returns the value of one of `bun`'s own flags `names`, which precede `command`: `--cwd <dir>`, `--cwd=<dir>`,
-/// `-c=<path>`. The last one wins. `bun -c fmt` is `--check` of `fmt`, so the last flag has no value.
+/// The last value of one of `bun`'s own flags `names` before `command`: `--cwd <dir>`, `--cwd=<dir>`, `-c=<path>`.
 fn value_before(command: &[u8], names: &[&[u8]]) -> Option<&'static [u8]> {
     let mut found = None;
     let mut args = arguments_before(command).into_iter();

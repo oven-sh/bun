@@ -1490,8 +1490,7 @@ pub(crate) mod command {
         let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
         let is_of_bun = |arg: &[u8], place: usize| match strings::split_once_char(arg, b'=') {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
-            // `bun -c bunfig.toml lint`: the path is the next argument. Last before the command, `-c` is `--check` of
-            // `bun fmt`.
+            // `bun -c bunfig.toml lint` takes the path. `bun -c fmt` is `fmt --check`.
             None => {
                 matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent")
                     || (arg == b"-c" && place + 1 < at)

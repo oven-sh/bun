@@ -4265,6 +4265,1523 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
   });
 });
 
+// The loader keeps no edge for an import() as it does for an import statement, so what a module got from one is found another way.
+// app.ts counts its evaluations. The test files import it by a statement, and the last of them mocks nothing.
+describe.concurrent("a module that got a mock from import() is evaluated again when the mock is gone", () => {
+  const counted = `globalThis.appLoads = (globalThis.appLoads ?? 0) + 1;`;
+  const dep = `export function who() { return "real"; }`;
+  const lazy = `${counted} let dep; export const run = async () => (dep ??= await import("./dep")).who();`;
+  const mid = `import { who } from "./dep"; export const via = () => who();`;
+  const mocks = (n: number, loads: number, mockIt = "mock.module", specifier = "./dep") => `
+    import { expect, jest, mock, test, vi } from "bun:test";
+    import { run } from "./app";
+    ${mockIt}("${specifier}", () => ({ who: () => "fake ${n}" }));
+    test("gets the mock of this file", async () => {
+      expect([await run(), globalThis.appLoads]).toEqual(["fake ${n}", ${loads}]);
+    });
+  `;
+  const plain = (loads: number) => `
+    import { expect, test } from "bun:test";
+    import { run } from "./app";
+    test("gets the original", async () => {
+      expect([await run(), globalThis.appLoads]).toEqual(["real", ${loads}]);
+    });
+  `;
+  const threeFiles = (mockIt?: string, specifier?: string) => ({
+    "1.test.ts": mocks(1, 1, mockIt, specifier),
+    "2.test.ts": mocks(2, 2, mockIt, specifier),
+    "3.test.ts": plain(3),
+  });
+
+  const holders: Record<string, Record<string, string>> = {
+    "the namespace, from its first call": { "app.ts": lazy },
+    "the namespace, from its own load": {
+      "app.ts": `${counted} const dep = await import("./dep"); export const run = async () => dep.who();`,
+    },
+    "the promise": {
+      "app.ts": `${counted} let dep; export const run = async () => (await (dep ??= import("./dep"))).who();`,
+    },
+    "one export": {
+      "app.ts": `${counted} let who; export const run = async () => (who ??= (await import("./dep")).who)();`,
+    },
+    "the namespace, in a CommonJS module": {
+      "app.cjs": `${counted} let dep; exports.run = async () => (dep ??= await import("./dep")).who();`,
+    },
+    "a module that imports the mock": {
+      "app.ts": `${counted} let mid; export const run = async () => (mid ??= await import("./mid")).via();`,
+      "mid.ts": mid,
+    },
+    "the promise of a module that exports the mock again": {
+      "app.ts": `${counted} const barrel = import("./barrel"); export const run = async () => (await barrel).who();`,
+      "barrel.ts": `export * from "./dep";`,
+    },
+    "what a lowered import statement gave it": {
+      "app.ts": `
+        import { vi } from "bun:test";
+        import { who } from "./dep";
+        ${counted}
+        vi.hoisted(() => {});
+        export const run = async () => who();
+      `,
+    },
+  };
+  const cases = Object.keys(holders).flatMap(holder =>
+    ["mock.module", "vi.mock", "jest.mock"].map(mockIt => [holder, mockIt] as const),
+  );
+
+  test.each(cases)("it kept %s: %s", async (holder, mockIt) => {
+    await expectFixturesToPass({ "dep.ts": dep, ...holders[holder], ...threeFiles(mockIt) }, 3);
+  });
+
+  // Such code is in no module scope, so import() names its caller by the file alone.
+  test.each(
+    Object.entries({
+      "new Function": `new Function("path", "return import(path)")`,
+      "an indirect eval": `(0, eval)("path => import(path)")`,
+    }),
+  )("it kept what import() gave to code from %s", async (_, load) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `
+          ${counted}
+          const load = ${load};
+          let dep;
+          export const run = async () => (dep ??= await load(import.meta.dir + "/dep.ts")).who();
+        `,
+        ...threeFiles(),
+      },
+      3,
+    );
+  });
+
+  test("the mock of a package", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "./index.js" }),
+        "node_modules/dep/index.js": dep,
+        "app.ts": `${counted} let dep; export const run = async () => (dep ??= await import("dep")).who();`,
+        ...threeFiles("mock.module", "dep"),
+      },
+      3,
+    );
+  });
+
+  test("a mock that a helper made", async () => {
+    const helped = (n: number) => `
+      import "./mocks${n}";
+      import { expect, test } from "bun:test";
+      import { run } from "./app";
+      test("gets the mock of this file", async () => {
+        expect([await run(), globalThis.appLoads]).toEqual(["fake ${n}", ${n}]);
+      });
+    `;
+    const helper = (n: number) => `
+      import { mock } from "bun:test";
+      mock.module("./dep", () => ({ who: () => "fake ${n}" }));
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        ...holders["the namespace, from its own load"],
+        "mocks1.ts": helper(1),
+        "mocks2.ts": helper(2),
+        "1.test.ts": helped(1),
+        "2.test.ts": helped(2),
+        "3.test.ts": plain(3),
+      },
+      3,
+    );
+  });
+
+  test("also when an earlier file loaded it and never called import()", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app";
+          test("loads it", () => expect(run).toBeFunction());
+        `,
+        "2.test.ts": mocks(2, 1),
+        "3.test.ts": mocks(3, 2),
+        "4.test.ts": plain(3),
+      },
+      4,
+    );
+  });
+
+  // What it has then is the module itself, which a mock updates in place. It is evaluated again all the same, as a module with an import statement is.
+  test.each([
+    ["mock.module", 1, 2, 3],
+    ["vi.mock", 2, 3, 4],
+    ["jest.mock", 2, 3, 4],
+  ] as const)("an earlier file called import() with no mock: %s", async (mockIt, second, third, last) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": plain(1),
+        "2.test.ts": mocks(2, second, mockIt),
+        "3.test.ts": mocks(3, third, mockIt),
+        "4.test.ts": plain(last),
+      },
+      4,
+    );
+  });
+
+  test.each(
+    Object.entries({
+      "itself": { "app.ts": lazy },
+      "by a module it imports": holders["a module that imports the mock"],
+    }),
+  )("an earlier file loaded it with no mock, and this file calls vi.doMock(): %s", async (_, holder) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        ...holder,
+        "1.test.ts": plain(1),
+        "2.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            test("gets the mock of this file", async () => {
+              vi.doMock("./dep", () => ({ who: () => "fake 2" }));
+              const { run } = await import("./app");
+              expect([await run(), globalThis.appLoads]).toEqual(["fake 2", 2]);
+            });
+          `,
+        "3.test.ts": plain(3),
+      },
+      3,
+    );
+  });
+
+  // app.ts is not taken while its test file runs, as in Vitest. It goes when the file has ended, also when the mock ended before that.
+  test.each(
+    Object.entries({
+      "vi.doUnmock()": `
+        vi.doMock("./dep", () => ({ who: () => "fake" }));
+        expect(await load()).toEqual(["fake", 1]);
+        vi.doUnmock("./dep");
+      `,
+      "a second vi.doMock()": `
+        vi.doMock("./dep", () => ({ who: () => "fake" }));
+        expect(await load()).toEqual(["fake", 1]);
+        vi.doMock("./dep", () => ({ who: () => "second" }));
+      `,
+      "the block of a disposable vi.doMock()": `
+        {
+          using _ = vi.doMock("./dep", () => ({ who: () => "fake" }));
+          expect(await load()).toEqual(["fake", 1]);
+        }
+      `,
+    }),
+  )("the mock ended while the test file ran: %s", async (_, steps) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          const load = async () => [await (await import("./app")).run(), globalThis.appLoads];
+          test("gets the mock, which ends in this test", async () => {
+            ${steps}
+          });
+        `,
+        "2.test.ts": plain(2),
+      },
+      2,
+    );
+  });
+
+  // The factory's import of wrap.ts gives g.ts the original of ./dep, and g.ts goes when the factory has returned. What called import() for g.ts goes once the file has ended.
+  test.each(
+    Object.entries({
+      "a module that awaits import() of it": {
+        "wrap.ts": `const g = await import("./g"); export const realWho = () => g.realWho();`,
+        load: `import("./wrap")`,
+      },
+      "a helper that keeps each import()": {
+        "wrap.ts": `const kept = {}; export const load = path => (kept[path] ??= import(path));`,
+        load: `(await import("./wrap")).load(import.meta.dir + "/g.ts")`,
+      },
+    }),
+  )("a module that a factory loaded doesn't reach the next file through %s", async (_, { load, ...modules }) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "k.ts": `export const k = "real k";`,
+        "g.ts": `import * as real from "./dep"; import { k } from "./k"; export const realWho = () => real.who() + " [" + k + "]";`,
+        ...modules,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("./k", () => ({ k: "fake k" }));
+          mock.module("./dep", async () => {
+            const g = await ${load};
+            return { who: () => "fake over " + g.realWho() };
+          });
+          test("the mock is made from the original", async () => {
+            expect((await import("./dep")).who()).toBe("fake over real [fake k]");
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          test("gets the originals", async () => {
+            expect((await ${load}).realWho()).toBe("real [real k]");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // The second mock.module() ends the first mock while its factory waits. chain.ts has the original for the sake of that factory.
+  test("a module that a replaced factory loaded doesn't reach the next file through a module that called import() for it", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "chain.ts": `import { who } from "./dep"; export const via = () => who();`,
+        "app.ts": `let chain; export const run = async () => (chain ??= await import("./chain")).via();`,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("the factory gets the original", async () => {
+            const called = Promise.withResolvers();
+            const gate = Promise.withResolvers();
+            mock.module("./dep", async () => {
+              called.resolve(await (await import("./app")).run());
+              await gate.promise;
+              return { who: () => "first" };
+            });
+            const first = import("./dep");
+            expect(await called.promise).toBe("real");
+            mock.module("./dep", () => ({ who: () => "second" }));
+            gate.resolve();
+            await first.catch(() => {});
+          });
+        `,
+        "2.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("./dep", () => ({ who: () => "fake 2" }));
+          test("gets the mock of this file", async () => {
+            expect(await (await import("./app")).run()).toBe("fake 2");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // The test file holds app.ts from its import statement, so app.ts stays while the file runs, and plugin.ts gets that instance. app.ts goes when the file has ended.
+  test.each(["mock.module", "vi.doMock"])(
+    "a module of an earlier file that the running file holds stays one instance: %s()",
+    async mockIt => {
+      await expectFixturesToPass(
+        {
+          "dep.ts": dep,
+          "app.ts": `
+            ${counted}
+            let dep;
+            export const run = async () => (dep ??= await import("./dep")).who();
+            export const registry = [];
+            export class Oops extends Error {}
+          `,
+          "plugin.ts": `
+            import { registry, Oops } from "./app";
+            registry.push("plugin");
+            export const fail = () => { throw new Oops(); };
+          `,
+          "1.test.ts": plain(1),
+          "2.test.ts": `
+            import { expect, mock, test, vi } from "bun:test";
+            import { registry, Oops } from "./app";
+            ${mockIt}("./dep", () => ({ who: () => "fake" }));
+            test("plugin.ts gets the instance that the test file has", async () => {
+              const { fail } = await import("./plugin");
+              expect(fail).toThrow(Oops);
+              expect([registry, globalThis.appLoads]).toEqual([["plugin"], 1]);
+            });
+          `,
+          "3.test.ts": plain(2),
+        },
+        3,
+      );
+    },
+  );
+
+  // The regression from #44833: Bun 1.4.4 passes these. They assert the values alone, because 1.4.4 evaluated app.ts once.
+  test.each(
+    ["the namespace, from its first call", "the promise"].flatMap(holder =>
+      ["mock.module", "vi.mock", "jest.mock"].map(mockIt => [holder, mockIt] as const),
+    ),
+  )("the next file gets its own mock through a module that kept %s: %s", async (holder, mockIt) => {
+    const uses = (n: number) => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      import { run } from "./app";
+      ${mockIt}("./dep", () => ({ who: () => "fake ${n}" }));
+      test("gets the mock of this file", async () => expect(await run()).toBe("fake ${n}"));
+    `;
+    await expectFixturesToPass({ "dep.ts": dep, ...holders[holder], "1.test.ts": uses(1), "2.test.ts": uses(2) }, 2);
+  });
+
+  test.each(["node:path", "path"])("it kept a builtin that it imported as %j", async spelling => {
+    const uses = (n: number, mocked: boolean) => `
+      import { expect, mock, test } from "bun:test";
+      import { run } from "./app";
+      ${mocked ? `mock.module("node:path", () => ({ basename: () => "fake ${n}" }));` : ""}
+      test("gets what this file has", async () => {
+        expect([await run(), globalThis.appLoads]).toEqual(["${mocked ? `fake ${n}` : "real"}", ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "app.ts": `${counted} let path; export const run = async () => (path ??= await import("${spelling}")).basename("a/real");`,
+        "1.test.ts": uses(1, true),
+        "2.test.ts": uses(2, true),
+        "3.test.ts": uses(3, false),
+      },
+      3,
+    );
+  });
+
+  test("it is the original of a partly mocked module", async () => {
+    const partly = (n: number) => `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("./dep", () => ({ who: () => "fake ${n}" }));
+      vi.mock("./app", async importOriginal => ({ ...(await importOriginal()), extra: ${n} }));
+      test("gets the mock of this file", async () => {
+        const app = await import("./app");
+        expect([await app.run(), app.extra, globalThis.appLoads]).toEqual(["fake ${n}", ${n}, ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": partly(1),
+        "2.test.ts": partly(2),
+        "3.test.ts": plain(3),
+      },
+      3,
+    );
+  });
+
+  test("its key has a query", async () => {
+    const queried = (n: number, expected: string, mocked: boolean) => `
+      import { expect, mock, test } from "bun:test";
+      ${mocked ? `mock.module("./dep", () => ({ who: () => "${expected}" }));` : ""}
+      test("gets what this file has", async () => {
+        const { run } = await import("./app.ts?v=1");
+        expect([await run(), globalThis.appLoads]).toEqual(["${expected}", ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": queried(1, "fake 1", true),
+        "2.test.ts": queried(2, "fake 2", true),
+        "3.test.ts": queried(3, "real", false),
+      },
+      3,
+    );
+  });
+
+  // The runs of one file share its modules, also under --isolate.
+  test.each(isolationFlags)("each --rerun-each run gets its own mock %j", async flags => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "rerun.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app";
+          const n = (globalThis.runs = (globalThis.runs ?? 0) + 1);
+          mock.module("./dep", () => ({ who: () => "fake " + n }));
+          test("gets the mock of this run", async () => {
+            expect([await run(), globalThis.appLoads]).toEqual(["fake " + n, n]);
+          });
+        `,
+      },
+      2,
+      [...flags, "--rerun-each=2"],
+    );
+  });
+
+  test("each --rerun-each run calls the spy that its test put on the mock", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `let kept; export const run = async () => (await (kept ??= import("./dep"))).who();`,
+        "rerun.test.ts": `
+          import { afterEach, expect, mock, spyOn, test, vi } from "bun:test";
+          import { run } from "./app";
+          vi.mock("./dep", () => ({ who: () => "fake" }));
+          afterEach(() => mock.restore());
+          test("gets the spy of this run", async () => {
+            const spy = spyOn(await import("./dep"), "who").mockReturnValue("spy");
+            expect([await run(), spy.mock.calls.length]).toEqual(["spy", 1]);
+          });
+        `,
+      },
+      2,
+      ["--rerun-each=2"],
+    );
+  });
+
+  test("a module that keeps import() of a module nothing mocks stays loaded", async () => {
+    const other = `
+      import { other } from "./other";
+      test("other.ts was evaluated once", () => expect([other(), globalThis.otherLoads]).toEqual(["untouched", 1]));
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "untouched.ts": `export const untouched = "untouched";`,
+        "other.ts": `
+          globalThis.otherLoads = (globalThis.otherLoads ?? 0) + 1;
+          const kept = await import("./untouched");
+          export const other = () => kept.untouched;
+        `,
+        "1.test.ts": mocks(1, 1) + other,
+        "2.test.ts": mocks(2, 2) + other,
+        "3.test.ts": plain(3) + other,
+      },
+      6,
+    );
+  });
+
+  test("a later file that imports the test file doesn't run it again", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": `
+          globalThis.testFileLoads = (globalThis.testFileLoads ?? 0) + 1;
+          export const value = "of the first file";
+          ${mocks(1, 1)}
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          test("gets what the first file exported", async () => {
+            expect([(await import("./1.test.ts")).value, globalThis.testFileLoads]).toEqual(["of the first file", 1]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("two modules that keep import() of two modules", async () => {
+    const keeper = (n: number) => `
+      globalThis.loads${n} = (globalThis.loads${n} ?? 0) + 1;
+      let dep; export const run${n} = async () => (dep ??= await import("./dep${n}")).who();
+    `;
+    await expectFixturesToPass(
+      {
+        "dep1.ts": `export const who = () => "real 1";`,
+        "dep2.ts": `export const who = () => "real 2";`,
+        "keeper1.ts": keeper(1),
+        "keeper2.ts": keeper(2),
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run1 } from "./keeper1";
+          import { run2 } from "./keeper2";
+          mock.module("./dep1", () => ({ who: () => "fake 1" }));
+          test("the first is mocked", async () => {
+            expect([await run1(), await run2(), globalThis.loads1, globalThis.loads2]).toEqual(["fake 1", "real 2", 1, 1]);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("the second is mocked", async () => {
+            vi.doMock("./dep2", () => ({ who: () => "fake 2" }));
+            const { run2 } = await import("./keeper2");
+            const { run1 } = await import("./keeper1");
+            expect([await run1(), await run2(), globalThis.loads1, globalThis.loads2]).toEqual(["real 1", "fake 2", 2, 2]);
+          });
+        `,
+        "3.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run1 } from "./keeper1";
+          import { run2 } from "./keeper2";
+          test("neither is mocked", async () => {
+            expect([await run1(), await run2(), globalThis.loads1, globalThis.loads2]).toEqual(["real 1", "real 2", 2, 3]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("Bun.plugin.clearAll() in an earlier file", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": lazy,
+        "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app";
+          test("gets the original", async () => {
+            expect([await run(), globalThis.appLoads]).toEqual(["real", 1]);
+            Bun.plugin.clearAll();
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("gets the mock of this file", async () => {
+            vi.doMock("./dep", () => ({ who: () => "fake 2" }));
+            const { run } = await import("./app");
+            expect([await run(), globalThis.appLoads]).toEqual(["fake 2", 2]);
+          });
+        `,
+        "3.test.ts": plain(3),
+      },
+      3,
+    );
+  });
+
+  // vi.doMock() moves the loaded package to another key, and the end of the mock moves it back: what a module was given moves with it.
+  test("the package that it keeps was set aside for a mock", async () => {
+    const keeper = (name: string) => `
+      globalThis.${name}Loads = (globalThis.${name}Loads ?? 0) + 1;
+      let dep; export const ${name} = async () => (dep ??= await import("dep")).who();
+    `;
+    const both = (expected: string) => `
+      import { expect, mock, test } from "bun:test";
+      import { early } from "./early";
+      import { late } from "./late";
+      test("gets what this file has", async () => {
+        expect([await early(), await late(), globalThis.earlyLoads, globalThis.lateLoads, globalThis.depLoads]).toEqual(${expected});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "./index.js" }),
+        "node_modules/dep/index.js": `globalThis.depLoads = (globalThis.depLoads ?? 0) + 1; ${dep}`,
+        "early.ts": keeper("early"),
+        "late.ts": keeper("late"),
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { early } from "./early";
+          test("the module that had the package keeps it", async () => {
+            expect(await early()).toBe("real");
+            vi.doMock("dep", () => ({ who: () => "fake 1" }));
+            const { late } = await import("./late");
+            expect([await early(), await late(), globalThis.earlyLoads, globalThis.lateLoads, globalThis.depLoads]).toEqual(["real", "fake 1", 1, 1, 1]);
+          });
+        `,
+        "2.test.ts": both(`["real", "real", 1, 2, 1]`),
+        "3.test.ts": `mock.module("dep", () => ({ who: () => "fake 3" }));` + both(`["fake 3", "fake 3", 1, 2, 1]`),
+        "4.test.ts": both(`["real", "real", 2, 3, 1]`),
+      },
+      4,
+    );
+  });
+
+  test("a module that caught the failure of an import() that no mock caused stays loaded", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "optional.ts": `throw new Error("not supported here");`,
+        "other.ts": `export const other = "real";`,
+        "app.ts": `
+          ${counted}
+          let optional = null;
+          try { optional = await import("./optional"); } catch {}
+          export const has = () => optional !== null;
+        `,
+        "1.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as app from "./app";
+          mock.module("./dep", () => ({ who: () => "fake" }));
+          test("while mocks come and go in this file", async () => {
+            vi.doMock("./other", () => ({ other: "fake" }));
+            expect((await import("./other")).other).toBe("fake");
+            vi.doUnmock("./other");
+            expect((await import("./other")).other).toBe("real");
+            expect([app.has(), (await import("./app")) === app, globalThis.appLoads]).toEqual([false, true, 1]);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { has } from "./app";
+          test("and in the next file", () => expect([has(), globalThis.appLoads]).toEqual([false, 1]));
+        `,
+      },
+      2,
+    );
+  });
+
+  test.each(
+    Object.entries({
+      "its factory threw": {
+        mock: `vi.mock("./dep", () => { throw new Error("the factory failed"); });`,
+        modules: {
+          "app.ts": `
+            ${counted}
+            let dep;
+            try { dep = await import("./dep"); } catch { dep = { who: () => "fallback" }; }
+            export const run = async () => dep.who();
+          `,
+        },
+      },
+      "a module that imports the mock threw": {
+        mock: `vi.mock("./dep", () => ({ other: 1 }));`,
+        modules: {
+          "app.ts": `
+            ${counted}
+            let mid;
+            try { mid = await import("./mid"); } catch { mid = { via: () => "fallback" }; }
+            export const run = async () => mid.via();
+          `,
+          "mid.ts": `
+            import * as dep from "./dep";
+            if (typeof dep.who !== "function") throw new Error("dep has no who()");
+            export const via = () => dep.who();
+          `,
+        },
+      },
+    }),
+  )("it caught the failure of an import() that a mock caused: %s", async (_, { mock, modules }) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        ...modules,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { run } from "./app";
+          ${mock}
+          test("gets its fallback", async () => expect([await run(), globalThis.appLoads]).toEqual(["fallback", 1]));
+        `,
+        "2.test.ts": plain(2),
+      },
+      2,
+    );
+  });
+
+  // require() loads app.ts at once, so the factory is called inside the call of import(), and import() itself throws.
+  test("it caught the failure of an import() that threw while require() loaded it", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `
+          ${counted}
+          const dep = import("./dep").catch(() => ({ who: () => "fallback" }));
+          export const run = async () => (await dep).who();
+        `,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          vi.doMock("./dep", () => { throw new Error("the factory failed"); });
+          const { run } = require("./app.ts");
+          test("gets its fallback", async () => expect([await run(), globalThis.appLoads]).toEqual(["fallback", 1]));
+        `,
+        "2.test.ts": plain(2),
+      },
+      2,
+    );
+  });
+
+  test("a module that calls import() for the module that makes the mock", async () => {
+    const uses = (n: number) => `
+      import { expect, test } from "bun:test";
+      import "./setup";
+      test("gets the mock", async () => {
+        expect([(await import("./dep")).who(), globalThis.setupLoads, globalThis.mocksLoads]).toEqual(["fake", ${n}, ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "mocks.ts": `
+          import { mock } from "bun:test";
+          globalThis.mocksLoads = (globalThis.mocksLoads ?? 0) + 1;
+          mock.module("./dep", () => ({ who: () => "fake" }));
+        `,
+        "setup.ts": `globalThis.setupLoads = (globalThis.setupLoads ?? 0) + 1; await import("./mocks");`,
+        "1.test.ts": uses(1),
+        "2.test.ts": uses(2),
+      },
+      2,
+    );
+  });
+
+  test("a CommonJS test file that loads it ahead of bun:test", async () => {
+    const commonJS = (n: number) => `
+      const { run } = require("./app.cjs");
+      const { expect, mock, test } = require("bun:test");
+      mock.module("./dep.ts", () => ({ who: () => "fake ${n}" }));
+      test("gets the mock of this file", async () => {
+        expect([await run(), globalThis.appLoads]).toEqual(["fake ${n}", ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "mid.ts": mid,
+        "app.cjs": `${counted} const mid = import("./mid.ts"); exports.run = async () => (await mid).via();`,
+        "1.test.cjs": commonJS(1),
+        "2.test.cjs": commonJS(2),
+      },
+      2,
+    );
+  });
+
+  test("vi.doUnmock() of a mock whose factory has yet to settle", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `const { who } = await import("./dep"); export const seen = who();`,
+        "1.test.ts": `
+          import { test, vi } from "bun:test";
+          test("leaves a module waiting for the mock", async () => {
+            const called = Promise.withResolvers();
+            vi.doMock("./dep", () => (called.resolve(), new Promise(() => {})));
+            void import("./app");
+            await called.promise;
+            vi.doUnmock("./dep");
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          test("the next file loads both again", async () => {
+            expect([(await import("./dep")).who(), (await import("./app")).seen]).toEqual(["real", "real"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // w.ts waits for its load when the mock of k.ts ends, and late.ts calls import() for it after that. Then a factory stops inside the require() that the body of y.ts makes, and that walk takes w.ts.
+  test("a module that waits for a load goes with its callers when a factory stops inside require()", async () => {
+    await expectFixturesToPass(
+      {
+        "k.ts": `export const k = "real k";`,
+        "m.ts": `export const m = "real m";`,
+        "uses-m.ts": `import { m } from "./m"; export const seen = () => m;`,
+        "e.ts": `export { m } from "./m";`,
+        "slow-y.ts": `export {};`,
+        "slow-w.ts": `export {};`,
+        "y.ts": `import "./slow-y"; export const m = require("./e.ts").m;`,
+        "w.ts": `import { k } from "./k"; import "./slow-w"; export const seen = () => k;`,
+        "early.ts": `let w; export const run = async () => (await (w ??= import("./w"))).seen();`,
+        "late.ts": `${counted} let w; export const run = async () => (await (w ??= import("./w"))).seen();`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as early from "./early";
+          test("the load settles while a mock stands", async () => {
+            const gates = {
+              y: { requested: Promise.withResolvers<void>(), mayLoad: Promise.withResolvers<void>() },
+              w: { requested: Promise.withResolvers<void>(), mayLoad: Promise.withResolvers<void>() },
+            };
+            Bun.plugin({
+              name: "hold the slow modules",
+              setup(build) {
+                build.onLoad({ filter: /slow-[yw]\\.ts$/ }, async ({ path }) => {
+                  const gate = gates[path.endsWith("slow-y.ts") ? "y" : "w"];
+                  gate.requested.resolve();
+                  await gate.mayLoad.promise;
+                  return { contents: "export {};", loader: "ts" };
+                });
+              },
+            });
+            vi.doMock("./k", () => ({ k: "fake k" }));
+            vi.doMock("./m", () => ({ m: "fake m", seen: require("./uses-m").seen() }));
+            await import("./k");
+            const y = import("./y");
+            const first = early.run();
+            await Promise.all([gates.y.requested.promise, gates.w.requested.promise]);
+            vi.doUnmock("./k");
+            const late = (await import("./late")).run();
+            gates.y.mayLoad.resolve();
+            gates.w.mayLoad.resolve();
+            expect([await first, await late, (await y).m, globalThis.appLoads]).toEqual(["fake k", "fake k", "fake m", 1]);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./late";
+          test("the next file loads both again", async () => {
+            expect([await run(), globalThis.appLoads]).toEqual(["real k", 2]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  const factoryThatLoads = (more = "") => `() => (${more}{ m: "fake m", seen: require("./uses-m").seen() })`;
+  // The same, for a caller that another module holds. What called import() for w.ts goes when the test file has ended, with its importers.
+  const keepsW = `let w; export const run = async () => (await (w ??= import("./w"))).seen()`;
+  test.each([
+    [
+      "a CommonJS module that requires a module that called import()",
+      {
+        "w.ts": `import { k } from "./k"; import "./gate"; export const seen = () => k;`,
+        "g.cjs": `const h = require("./h.ts"); exports.run = () => h.run();`,
+      },
+      [`require("./g.cjs")`, `require("./e.ts");`],
+      "fake k/fake n",
+      "real k/real n",
+    ],
+    [
+      "a module whose body ran at that stop, and that imports a module that called import()",
+      {
+        "w.ts": `import { k } from "./k"; import "./g"; import "./gate"; export const seen = () => k;`,
+        "g.ts": `import { run as inner } from "./h"; export const run = () => inner(); globalThis.loadE();`,
+      },
+      [`await import("./h")`, ``, `await import("./g")`],
+      "fake k/fake n",
+      "real k/real n",
+    ],
+    [
+      "a CommonJS module that called import() after the mock had ended",
+      {
+        "w.ts": `import { k } from "./k"; import "./dep"; import "./gate"; export const seen = () => k;`,
+        "dep.ts": `export const m = require("./e.ts").m;`,
+        "h.cjs": `let w; exports.run = async () => (await (w ??= import("./w.ts"))).seen();`,
+      },
+      [`require("./h.cjs")`, ``],
+      "fake k",
+      "real k",
+    ],
+  ])(
+    "the next file reads no ended mock through %s, when a factory stops inside require()",
+    async (_, modules, [helper, stop, helperOfNextFile = helper], inFirstFile, inNextFile) => {
+      await expectFixturesToPass(
+        {
+          "k.ts": `export const k = "real k";`,
+          "n.ts": `export const n = "real n";`,
+          "m.ts": `export const m = "real m";`,
+          "gate.ts": `export const g = "real g";`,
+          "uses-m.ts": `import { m } from "./m"; export const seen = () => m;`,
+          "e.ts": `export { m } from "./m";`,
+          "h.ts": `import { n } from "./n"; ${keepsW} + "/" + n;`,
+          ...modules,
+          "1.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            test("w.ts waits for its load when the mock of k.ts ends", async () => {
+              const gate = Promise.withResolvers<void>();
+              globalThis.loadE = () => require("./e.ts").m;
+              vi.doMock("./k", () => ({ k: "fake k" }));
+              vi.doMock("./n", () => ({ n: "fake n" }));
+              vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
+              vi.doMock("./m", ${factoryThatLoads()});
+              await import("./k");
+              const helper = ${helper};
+              const first = import("./w");
+              await gate.promise;
+              vi.doUnmock("./k");
+              const late = helper.run();
+              ${stop}
+              expect([(await first).seen(), await late]).toEqual(["fake k", ${JSON.stringify(inFirstFile)}]);
+            });
+          `,
+          "2.test.ts": `
+            import { expect, test } from "bun:test";
+            test("the next file", async () => {
+              const helper = ${helperOfNextFile};
+              expect(await helper.run()).toBe(${JSON.stringify(inNextFile)});
+            });
+          `,
+        },
+        2,
+      );
+    },
+  );
+
+  // l.js has loaded when its test file ends, and r.js above it still waits for a plugin. The runner waits for that load too: the next file would join it otherwise.
+  test("the next file reads no ended mock through a module whose importer was loading when its test file ended", async () => {
+    await expectFixturesToPass(
+      {
+        "m.js": `export const m = "real";`,
+        "slow1.js": `export const slow = 1;`,
+        "slow2.js": `export const slow = 2;`,
+        "c.js": `let m; export const run = async () => (await (m ??= import("./m.js"))).m;`,
+        "l.js": `import { run } from "./c.js"; import { slow } from "./slow1.js"; export const seen = async () => (await run()) + slow;`,
+        "r.js": `import { seen as inner } from "./l.js"; import { slow } from "./slow2.js"; export const seen = async () => (await inner()) + slow;`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("leaves an import that waits for a plugin at two levels", async () => {
+            const called = [Promise.withResolvers(), Promise.withResolvers()];
+            const turn = () => new Promise(resolve => setImmediate(resolve));
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow[12]\.js$/ }, async ({ path }) => {
+                  const outer = path.endsWith("slow2.js");
+                  called[+outer].resolve();
+                  await turn();
+                  if (outer) await turn();
+                });
+              },
+            });
+            vi.doMock("./m.js", () => ({ m: "mock" }));
+            expect(await (await import("./c.js")).run()).toBe("mock");
+            void import("./r.js");
+            await Promise.all(called.map(load => load.promise));
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./r.js";
+          test("the next file gets the original", async () => {
+            expect(await seen()).toBe("real12");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  // vi.doMock() patches the package in place for the test file that runs, so x.ts stays, whatever has called import().
+  test("a module that runs when vi.doMock() patches a package that it imports stays one instance", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", type: "module", main: "./index.js" }),
+        "node_modules/pkg/index.js": `export const name = "real pkg";`,
+        "calls-import.ts": `export const other = import("./other");`,
+        "other.ts": `export {};`,
+        "x.ts": `${counted} import { name } from "pkg"; globalThis.mockPkg(); export const seen = () => name;`,
+        "1.test.ts": `
+          import { test } from "bun:test";
+          import "pkg";
+          test("an earlier file loads the package", () => {});
+        `,
+        "2.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("x.ts mocks the package in its body", async () => {
+            await (await import("./calls-import")).other;
+            globalThis.mockPkg = () => vi.doMock("pkg", () => ({ name: "fake pkg" }));
+            const first = await import("./x");
+            const again = await import("./x");
+            expect([first === again, globalThis.appLoads, first.seen()]).toEqual([true, 1, "fake pkg"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // user.js imports h.js, which called import() for the mocked module. Its load waits for a plugin when the test file ends, and the runner waits for it as for any load in flight.
+  test("the next file reads no ended mock through a module that was loading when its test file ended", async () => {
+    await expectFixturesToPass(
+      {
+        "k.js": `export const x = "real";`,
+        "slow.js": `export const slow = "slow";`,
+        "h.js": `let k; export const run = async () => (await (k ??= import("./k.js"))).x;`,
+        "user.js": `import { run } from "./h.js"; import { slow } from "./slow.js"; export const seen = async () => (await run()) + "/" + slow;`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("leaves an import that waits for a plugin", async () => {
+            const called = Promise.withResolvers();
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow\\.js$/ }, async () => {
+                  called.resolve();
+                  await new Promise(resolve => setImmediate(resolve));
+                });
+              },
+            });
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            expect(await (await import("./h.js")).run()).toBe("mock");
+            void import("./user.js");
+            await called.promise;
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./user.js";
+          test("the next file gets the original", async () => {
+            expect(await seen()).toBe("real/slow");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test.each(
+    Object.entries({
+      "import()": `path => import(path)`,
+      "new Function": `new Function("path", "return import(path)")`,
+    }),
+  )("another key of its file stays loaded: it called %s", async (_, load) => {
+    const twin = (n: number, mocked: boolean) => `
+      import { expect, mock, test } from "bun:test";
+      import { run } from "./app";
+      import { id } from "./app.ts?twin";
+      ${mocked ? `mock.module("./dep", () => ({ who: () => "fake ${n}" }));` : ""}
+      test("only the module that called import() is evaluated again", async () => {
+        expect([await run(), id, globalThis.appLoads]).toEqual(["${mocked ? `fake ${n}` : "real"}", 2, ${n + 1}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `
+          ${counted}
+          export const id = globalThis.appLoads;
+          const load = ${load};
+          let dep;
+          export const run = async () => (dep ??= await load(import.meta.dir + "/dep.ts")).who();
+        `,
+        "1.test.ts": twin(1, true),
+        "2.test.ts": twin(2, true),
+        "3.test.ts": twin(3, false),
+      },
+      3,
+    );
+  });
+
+  test("a package that calls import() for a module of the project", async () => {
+    const routes = (n: number, mocked: boolean) => `
+      import { expect, mock, test } from "bun:test";
+      import { run } from "./app";
+      ${mocked ? `mock.module("./dep", () => ({ who: () => "fake ${n}" }));` : ""}
+      test("the package is evaluated again with the module that it loaded", async () => {
+        expect([await run(), globalThis.loaderLoads, globalThis.appLoads]).toEqual(["${mocked ? `fake ${n}` : "real"}", ${n}, ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "node_modules/loader/package.json": JSON.stringify({ name: "loader", type: "module", main: "./index.js" }),
+        "node_modules/loader/index.js": `
+          globalThis.loaderLoads = (globalThis.loaderLoads ?? 0) + 1;
+          const loaded = new Map();
+          export const load = path => loaded.get(path) ?? (loaded.set(path, import(path)), loaded.get(path));
+        `,
+        "dep.ts": dep,
+        "mid.ts": mid,
+        "app.ts": `${counted} import { load } from "loader"; export const run = async () => (await load(import.meta.dir + "/mid.ts")).via();`,
+        "1.test.ts": routes(1, true),
+        "2.test.ts": routes(2, true),
+        "3.test.ts": routes(3, false),
+      },
+      3,
+    );
+  });
+
+  test("it is a module that mock.module() patched in place", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `${counted} let who; export const extra = 0; export const run = async () => (who ??= (await import("./dep")).who)();`,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as app from "./app";
+          const run = app.run;
+          mock.module("./dep", () => ({ who: () => "fake 1" }));
+          mock.module("./app", () => ({ extra: 1, run }));
+          test("gets the mock of this file", async () => {
+            expect([await run(), app.extra, globalThis.appLoads]).toEqual(["fake 1", 1, 1]);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { extra, run } from "./app";
+          test("gets the original", async () => {
+            expect([await run(), extra, globalThis.appLoads]).toEqual(["real", 0, 2]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // A CommonJS module is known by its file. The module that called import() has gone, and the one that is loaded in its place has called nothing.
+  test("a CommonJS module that is loaded again and calls import() no more stays loaded", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.cjs": `${counted} exports.run = async () => (await import("./dep.ts")).who();`,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app.cjs";
+          mock.module("./dep.ts", () => ({ who: () => "fake 1" }));
+          test("it calls import()", async () => expect([await run(), globalThis.appLoads]).toEqual(["fake 1", 1]));
+        `,
+        "2.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import "./app.cjs";
+          mock.module("./dep.ts", () => ({ who: () => "fake 2" }));
+          test("it is loaded again and calls nothing", () => expect(globalThis.appLoads).toBe(2));
+        `,
+        "3.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app.cjs";
+          test("it stayed loaded", async () => expect([await run(), globalThis.appLoads]).toEqual(["real", 2]));
+        `,
+      },
+      3,
+    );
+  });
+
+  // Such a module counts as one that keeps what it loaded: whether it does can't be seen.
+  test("a module that only passes on what import() gave it is evaluated again too", async () => {
+    const uses = (n: number, mocked: boolean) => `
+      import { expect, mock, test } from "bun:test";
+      import { fresh } from "./fresh";
+      ${mocked ? `mock.module("./dep", () => ({ who: () => "fake ${n}" }));` : ""}
+      test("its counter starts over", async () => {
+        const first = await fresh(import.meta.dir + "/mid.ts");
+        const second = await fresh(import.meta.dir + "/mid.ts");
+        expect([first.via(), first === second, globalThis.freshLoads]).toEqual(["${mocked ? `fake ${n}` : "real"}", false, ${n}]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "mid.ts": mid,
+        "fresh.ts": `
+          globalThis.freshLoads = (globalThis.freshLoads ?? 0) + 1;
+          let n = 0;
+          export const fresh = path => import(path + "?n=" + n++);
+        `,
+        "1.test.ts": uses(1, true),
+        "2.test.ts": uses(2, true),
+        "3.test.ts": uses(3, false),
+      },
+      3,
+    );
+  });
+});
+
+// A test file that has begun is never evaluated a second time, whatever of its imports goes.
+describe.concurrent("a test file stays loaded when a module that it imports called import() for a mock", () => {
+  const files = {
+    "dep.ts": `export const who = () => "real";`,
+    "app.ts": `let dep; export const run = async () => (dep ??= await import("./dep")).who();`,
+    "b.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./a.test";
+      test("the first file is not run again", () => expect([value, globalThis.firstFileLoads]).toEqual(["of the first file", 1]));
+    `,
+  };
+  const first = `
+    import { expect, test, vi } from "bun:test";
+    import { run } from "./app";
+    globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
+    export const value = "of the first file";
+  `;
+  test.each(
+    Object.entries({
+      "vi.doUnmock() in a test": `
+        test("mocks and unmocks", async () => {
+          vi.doMock("./dep", () => ({ who: () => "fake" }));
+          expect(await run()).toBe("fake");
+          vi.doUnmock("./dep");
+        });
+      `,
+      "a second vi.doMock() in a test": `
+        test("mocks twice", async () => {
+          vi.doMock("./dep", () => ({ who: () => "first" }));
+          expect(await run()).toBe("first");
+          vi.doMock("./dep", () => ({ who: () => "second" }));
+        });
+      `,
+      "vi.doUnmock() while the file loads": `
+        vi.doMock("./dep", () => ({ who: () => "fake" }));
+        const got = await run();
+        vi.doUnmock("./dep");
+        test("mocked and unmocked", () => expect(got).toBe("fake"));
+      `,
+    }),
+  )("%s", async (_, body) => {
+    await expectFixturesToPass({ ...files, "a.test.ts": first + body }, 2);
+  });
+
+  test.each(["mocks a module", "mocks nothing"])(
+    "a function of a file that has ended calls import(), and that file %s",
+    async how => {
+      await expectFixturesToPass(
+        {
+          "db.ts": `export const who = () => "real";`,
+          "app.ts": `import { who } from "./db"; export const createApp = () => ({ db: who() });`,
+          "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
+          ${how === "mocks a module" ? `mock.module("./db", () => ({ who: () => "fake a" }));` : ""}
+          export const makeApp = async () => (await import("./app")).createApp();
+          test("a", async () => expect((await makeApp()).db).toBe("${how === "mocks a module" ? "fake a" : "real"}"));
+        `,
+          "b.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { makeApp } from "./a.test";
+          mock.module("./db", () => ({ who: () => "fake b" }));
+          test("b", async () => expect([(await makeApp()).db, globalThis.firstFileLoads]).toEqual(["fake b", 1]));
+        `,
+          "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { makeApp } from "./a.test";
+          test("c", async () => expect([(await makeApp()).db, globalThis.firstFileLoads]).toEqual(["real", 1]));
+        `,
+        },
+        3,
+      );
+    },
+  );
+
+  test.each([
+    ["called import() for", `let dep; export const run = async () => (dep ??= await import("./dep")).who();`],
+    ["imports", `import { who } from "./dep"; export const run = async () => who();`],
+  ])("a file that has ended and mocked nothing, when a later file mocks what its import %s", async (_, app) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": files["dep.ts"],
+        "app.ts": app,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app";
+          globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
+          export const value = "of the first file";
+          test("a", async () => expect(await run()).toBe("real"));
+        `,
+        "b.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app";
+          mock.module("./dep", () => ({ who: () => "fake" }));
+          test("b", async () => expect(await run()).toBe("fake"));
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { value } from "./a.test";
+          import { run } from "./app";
+          test("c", async () => expect([value, globalThis.firstFileLoads, await run()]).toEqual(["of the first file", 1, "real"]));
+        `,
+      },
+      3,
+    );
+  });
+
+  // The walk finds such a file by the record of the mock that it is linked to, not as an importer of a module that goes.
+  test("a file that has ended, when a later file takes the preload's mock that it imports out of require.cache", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": files["dep.ts"],
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./dep", () => ({ who: () => "of the preload" }));
+        `,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { who } from "./dep";
+          globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
+          export const value = "of the first file";
+          test("a", () => expect(who()).toBe("of the preload"));
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          test("b", () => void delete require.cache[require.resolve("./dep")]);
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { value } from "./a.test";
+          test("c", () => expect([value, globalThis.firstFileLoads]).toEqual(["of the first file", 1]));
+        `,
+      },
+      3,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  // Such a file has yet to have its own turn, so it goes like any module that holds the mock, and its turn evaluates it with the originals.
+  test.each([
+    ["calls import() for", `let dep; export const run = async () => (dep ??= await import("./dep")).who();`],
+    ["imports", `import { who } from "./dep"; export const run = async () => who();`],
+  ])("a later test file that it imports, and that %s what it mocks, runs in its own turn", async (_, holder) => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": files["dep.ts"],
+        "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./b.test";
+          mock.module("./dep", () => ({ who: () => "fake a" }));
+          test("a", async () => expect(await run()).toBe("fake a"));
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          ${holder}
+          const loads = (globalThis.laterFileLoads = (globalThis.laterFileLoads ?? 0) + 1);
+          test("b", async () => expect([await run(), loads]).toEqual(loads === 1 ? ["fake a", 1] : ["real", 2]));
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./b.test";
+          test("c", async () => expect([await run(), globalThis.laterFileLoads]).toEqual(["real", 2]));
+        `,
+      },
+      4,
+    );
+  });
+
+  // Under --isolate=modules each test file has its own module graph. There the file of an earlier test file is a module like any other.
+  test("a module whose file ran as a test file is evaluated again in the module graph of a later file", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const value = "real";`,
+        "shared.test.ts": `
+          import { expect, test } from "bun:test";
+          import { value } from "./dep";
+          export const read = () => value;
+          if (!globalThis.isUsedByAnotherFile) test("reads the original", () => expect(read()).toBe("real"));
+        `,
+        "user.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("gets the mock, and then the original", async () => {
+            globalThis.isUsedByAnotherFile = true;
+            vi.doMock("./dep", () => ({ value: "fake" }));
+            const first = await import("./shared.test.ts");
+            vi.doUnmock("./dep");
+            const second = await import("./shared.test.ts");
+            expect([first.read(), second.read(), first === second]).toEqual(["fake", "real", false]);
+          });
+        `,
+      },
+      2,
+      ["--isolate=modules"],
+    );
+  });
+
+  // A CommonJS test file goes with what it requires, as before. What called import() takes no test file with it.
+  test("a CommonJS file that has ended, when a later file mocks what its require() called import() for", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": files["dep.ts"],
+        "app.cjs": `let dep; exports.run = async () => (dep ??= await import("./dep.ts")).who();`,
+        "a.test.cjs": `
+          const { expect, test } = require("bun:test");
+          const { run } = require("./app.cjs");
+          globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
+          exports.value = "of the first file";
+          test("a", async () => expect(await run()).toBe("real"));
+        `,
+        "b.test.cjs": `
+          const { expect, mock, test } = require("bun:test");
+          mock.module("./dep.ts", () => ({ who: () => "fake" }));
+          test("b", async () => expect(await require("./app.cjs").run()).toBe("fake"));
+        `,
+        "c.test.cjs": `
+          const { expect, test } = require("bun:test");
+          const { value } = require("./a.test.cjs");
+          test("c", async () => {
+            expect([value, globalThis.firstFileLoads, await require("./app.cjs").run()]).toEqual(["of the first file", 1, "real"]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+});
+
+// build.module() evicts the module that is loaded under the id with its importers, as the laying of a mock does. What an earlier test file loaded, and that called import() for the id, goes too.
+test.concurrent(
+  "a module that kept import() of a virtual module of Bun.plugin gets the one that a later file registers",
+  async () => {
+    const registers = (n: number) => `
+    import { plugin } from "bun";
+    import { expect, test } from "bun:test";
+    test("gets the module of this file", async () => {
+      plugin({ name: "virtual ${n}", setup(build) { build.module("virtual", () => ({ exports: { value: ${n} }, loader: "object" })); } });
+      const { use } = await import("./user");
+      expect([await use(), globalThis.appLoads]).toEqual([${n}, ${n}]);
+    });
+  `;
+    await expectFixturesToPass(
+      {
+        "app.ts": `
+        globalThis.appLoads = (globalThis.appLoads ?? 0) + 1;
+        let virtual;
+        export const run = async () => (virtual ??= await import("virtual")).value;
+      `,
+        "user.ts": `import { run } from "./app"; export const use = () => run();`,
+        "1.test.ts": registers(1),
+        "2.test.ts": registers(2),
+        "3.test.ts": `
+        import { expect, test } from "bun:test";
+        import { use } from "./user";
+        test("a file that registers nothing gets the one that is registered", async () => {
+          expect([await use(), globalThis.appLoads]).toEqual([2, 2]);
+        });
+      `,
+      },
+      3,
+    );
+  },
+);
+
+// Only what called import() for a module that a mock changed goes. A module that imports the mock by a statement is evaluated as often as before.
+describe.concurrent("a call of import() for a module that nothing mocks changes nothing", () => {
+  const recorded = {
+    "other.ts": `export const other = 1;`,
+    "lazy.ts": `export const load = () => import("./other");`,
+  };
+
+  test("a module that calls import() for a module after its mock has ended", async () => {
+    await expectFixturesToPass(
+      {
+        ...recorded,
+        "dep.ts": `export const who = () => "real";`,
+        "app.ts": `
+          globalThis.appLoads = (globalThis.appLoads ?? 0) + 1;
+          let dep;
+          export const run = async () => (dep ??= await import("./dep")).who();
+        `,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { load } from "./lazy";
+          test("gets the original", async () => {
+            await load();
+            vi.doMock("./dep", () => ({ who: () => "fake" }));
+            vi.doUnmock("./dep");
+            expect(await (await import("./app")).run()).toBe("real");
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app";
+          test("app.ts is evaluated once", async () => expect([await run(), globalThis.appLoads]).toEqual(["real", 1]));
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a module that is loading when its import mocks a module of an earlier file", async () => {
+    await expectFixturesToPass(
+      {
+        ...recorded,
+        "db.ts": `export const q = () => "real";`,
+        "mocks.ts": `import { mock } from "bun:test"; mock.module("./db", () => ({ q: () => "fake" }));`,
+        "service.ts": `
+          import "./mocks";
+          import { q } from "./db";
+          globalThis.serviceLoads = (globalThis.serviceLoads ?? 0) + 1;
+          export const run = () => q();
+        `,
+        "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import { q } from "./db";
+          import { load } from "./lazy";
+          test("loads the module with no mock", async () => expect([(await load()).other, q()]).toEqual([1, "real"]));
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { run } from "./service";
+          test("service.ts is evaluated once", async () => {
+            expect([run(), (await import("./service")).run === run, globalThis.serviceLoads]).toEqual(["fake", true, 1]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+});
+
 describe.concurrent("a mocked module that exports then", () => {
   const files = {
     "real.ts": `
@@ -4956,12 +6473,17 @@ describe.concurrent("a module that is evicted while it is still loading", () => 
   });
 });
 
-describe.concurrent("a test file's module mocks are undone when it ends, even with loads in flight", () => {
+// `user` is user.js, which gets the two modules from import statements or from import().
+const undoneWithLoadsInFlight = (user: string) => () => {
   const modules = {
     "k.js": `export const x = "real";`,
     "slow.js": `export const s = "slow";`,
-    "user.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+    "user.js": user,
   };
+  // Three of the tests below are for import statements alone.
+  const withStatements = test.skipIf(user.includes("await import("));
+  // What a second import of user.js gives in the test file that ended the mock. A module that called import() is not taken while its test file runs.
+  const again = user.includes("await import(") ? "mock/slow" : "real/slow";
   const next = `
     import { expect, test } from "bun:test";
     import { seen } from "./user.js";
@@ -4998,7 +6520,8 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     );
   });
 
-  test("a load that has imported a mock has settled before the next file is loaded", async () => {
+  // The runner waits for a load in flight before it loads the next file. A module that is suspended at its own `await import()` is not one, as at any top-level await.
+  withStatements("a load that has imported a mock has settled before the next file is loaded", async () => {
     await expectFixturesToPass(
       {
         ...modules,
@@ -5061,7 +6584,8 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     );
   });
 
-  test("mocks whose factories have not been called when the file fails to load", async () => {
+  // Nothing loads user.js under a mock here, so its form changes nothing.
+  withStatements("mocks whose factories have not been called when the file fails to load", async () => {
     using dir = tempDir("mock-module-undo", {
       ...modules,
       "k2.js": `export const y = "real2";`,
@@ -5129,7 +6653,7 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
             await called.promise;
             vi.doUnmock("./k.js");
             gate.resolve();
-            expect([(await user).seen, (await import("./user.js")).seen, (await import("./k.js")).x]).toEqual(["mock/slow", "real/slow", "real"]);
+            expect([(await user).seen, (await import("./user.js")).seen, (await import("./k.js")).x]).toEqual(["mock/slow", "${again}", "real"]);
           });
         `,
       },
@@ -5175,7 +6699,8 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     );
   });
 
-  test("a load that never finishes doesn't block the next file if a timer is left running", async () => {
+  // With import() in user.js a run under --aot never ends here, and each lane of test/aot that holds this file would wait a minute for it.
+  withStatements("a load that never finishes doesn't block the next file if a timer is left running", async () => {
     await expectFixturesToPass(
       {
         ...modules,
@@ -5213,7 +6738,19 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
       ["--timeout=100", "--preload", "./preload.js", "./a.test.js", "./b.test.js"],
     );
   });
-});
+};
+describe.concurrent(
+  "a test file's module mocks are undone when it ends, even with loads in flight",
+  undoneWithLoadsInFlight(
+    `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+  ),
+);
+describe.concurrent(
+  "a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import()",
+  undoneWithLoadsInFlight(
+    `const { x } = await import("./k.js"); const { s } = await import("./slow.js"); export const seen = x + "/" + s;`,
+  ),
+);
 
 describe.concurrent("a test file's module mocks are undone when it ends, for modules that import one another", () => {
   const apis = ["vi.doMock", "mock.module", "jest.doMock"];
@@ -5245,14 +6782,21 @@ describe.concurrent("a test file's module mocks are undone when it ends, for mod
     );
   });
 
-  test.each(apis)(
-    "the next file gets the originals after a file mocks a loaded module and then one of its imports: %s",
-    async api => {
+  test.each(
+    apis.flatMap(api => [
+      [api, ""],
+      [api, ", for modules that await import()"],
+    ]),
+  )(
+    "the next file gets the originals after a file mocks a loaded module and then one of its imports: %s%s",
+    async (api, how) => {
+      const from = (names: string, path: string) =>
+        how ? `const ${names} = await import("${path}");` : `import ${names} from "${path}";`;
       await expectFixturesToPass(
         {
           "j.js": `export const y = "real-j";`,
-          "k.js": `import { y } from "./j.js"; export const x = "real-k:" + y; export const live = () => y;`,
-          "l.js": `import { x, live } from "./k.js"; export const top = () => x + "/" + live();`,
+          "k.js": `${from("{ y }", "./j.js")} export const x = "real-k:" + y; export const live = () => y;`,
+          "l.js": `${from("{ x, live }", "./k.js")} export const top = () => x + "/" + live();`,
           "q.cjs": `const k = require("./k.js"); exports.top = () => k.x + "/" + k.live();`,
           "a.test.js": `
           import { test } from "bun:test";
@@ -5960,7 +7504,60 @@ describe.concurrent("a test file that has mocked modules", () => {
       2,
     );
   });
+
+  test("nor when its import statements lead to the mock", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const x = "real";`,
+        "user.js": `import { x } from "./dep.js"; export const seen = () => x;`,
+        "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { seen } from "./user.js";
+          mock.module("./dep.js", () => ({ x: "mock" }));
+          globalThis.loaded = (globalThis.loaded ?? 0) + 1;
+          export const value = 42;
+          test("a", () => expect(seen()).toBe("mock"));
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { value } from "./a.test.js";
+          import { seen } from "./user.js";
+          test("b", () => expect([value, globalThis.loaded, seen()]).toEqual([42, 1, "real"]));
+        `,
+      },
+      2,
+    );
+  });
 });
+
+test.concurrent(
+  "a mock deleted from require.cache by user code doesn't reach the next file through a module that called import() for it",
+  async () => {
+    const uses = (n: number, mocked: boolean) => `
+      import { expect, mock, test } from "bun:test";
+      import { run } from "./app";
+      ${mocked ? `mock.module("./dep", () => ({ who: () => "fake ${n}" }));` : ""}
+      test("gets what this file has", async () => {
+        expect([await run(), globalThis.appLoads]).toEqual(["${mocked ? `fake ${n}` : "real"}", ${n}]);
+        delete require.cache[require.resolve("./dep")];
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export function who() { return "real"; }`,
+        "app.ts": `
+          globalThis.appLoads = (globalThis.appLoads ?? 0) + 1;
+          let dep;
+          export const run = async () => (dep ??= await import("./dep")).who();
+        `,
+        "1.test.ts": uses(1, true),
+        "2.test.ts": uses(2, true),
+        "3.test.ts": uses(3, false),
+      },
+      3,
+    );
+  },
+);
 
 describe.concurrent("a module that is being fetched as a mock whose factory has not returned", () => {
   const changes = `[

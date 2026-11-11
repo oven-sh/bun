@@ -4355,13 +4355,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
+    JSC::Identifier referrerKey;
     int64_t referrerAsyncOrder = -1;
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
         auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
+        referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
             : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
         referrerAsyncOrder = loader->asyncEvaluationOrderForKey(referrerKey);
@@ -4379,6 +4380,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     globalObject->onResolvePlugins.isResolvingImportCall = false;
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    // Ahead of the load, which can throw inside this call: a caller that catches that keeps its fallback, and counts as one that called.
+    if (isBunTest) [[unlikely]]
+        Bun::didCallImport(globalObject, loader, referrerKey.string(), key.string());
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadKind::Import);

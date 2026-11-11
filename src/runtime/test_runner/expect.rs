@@ -2,6 +2,7 @@ use crate::test_runner::jest::FileColumns as _;
 use core::cell::Cell;
 use core::fmt;
 
+use bun_collections::AutoBitSet;
 use bun_core::Output;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
@@ -2249,6 +2250,32 @@ impl ContainOutcome {
     }
 }
 
+/// Which list the outer loop of [`Expect::lists_cover_each_other`] walks.
+#[derive(Clone, Copy)]
+pub(crate) enum WalkFirst {
+    /// `toContainAllValues`: each `expected` item looks for a received value.
+    Expected,
+    /// `toContainAllKeys`: each received key looks for an `expected` item.
+    Received,
+}
+
+impl WalkFirst {
+    /// Maps (expected, received) to (outer, inner), and (inner, outer) to (received, expected).
+    #[inline]
+    fn pair(self, a: JSValue, b: JSValue) -> (JSValue, JSValue) {
+        match self {
+            WalkFirst::Expected => (a, b),
+            WalkFirst::Received => (b, a),
+        }
+    }
+
+    #[inline]
+    fn equals(self, global: &JSGlobalObject, outer_element: JSValue, inner_element: JSValue) -> JsResult<bool> {
+        let (received_element, expected_element) = self.pair(inner_element, outer_element);
+        received_element.jest_deep_equals(expected_element, global)
+    }
+}
+
 impl Expect {
     /// Shared body for the eight `toContain{Key,Keys,AllKeys,AnyKeys,Value,
     /// Values,AllValues,AnyValues}` matchers. Handles the common envelope —
@@ -2312,6 +2339,57 @@ impl Expect {
                 received.to_fmt(&mut f2),
             )
         }
+    }
+
+    /// Whether every element of `received` deep-equals an element of `expected`, and the reverse.
+    #[inline(never)] // No `#[optimize(size)]`: it keeps `get_index` and `jest_deep_equals` out of line in the walk.
+    pub(crate) fn lists_cover_each_other(
+        global: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        count: u64,
+        first: WalkFirst,
+    ) -> JsResult<bool> {
+        let (outer, inner) = first.pair(expected, received);
+        let count = count as u32;
+
+        let mut taken = AutoBitSet::init_empty(count as usize)?;
+        let mut itr = outer.array_iterator(global)?;
+        'outer: while let Some(outer_element) = itr.next()? {
+            for i in 0..count {
+                if first.equals(global, outer_element, inner.get_index(global, i)?)? {
+                    taken.set(i as usize);
+                    continue 'outer;
+                }
+            }
+            return Ok(false);
+        }
+        if taken.count() == count as usize {
+            return Ok(true);
+        }
+        Self::leftover_is_covered(global, outer, inner, count, first, &taken)
+    }
+
+    /// Whether each inner element the walk left untaken deep-equals an outer element.
+    #[cold]
+    #[optimize(size)]
+    fn leftover_is_covered(
+        global: &JSGlobalObject,
+        outer: JSValue,
+        inner: JSValue,
+        count: u32,
+        first: WalkFirst,
+        taken: &AutoBitSet,
+    ) -> JsResult<bool> {
+        'leftover: for i in 0..count {
+            if taken.is_set(i as usize) { continue; }
+            let leftover = inner.get_index(global, i)?;
+            for j in 0..count {
+                if first.equals(global, outer.get_index(global, j)?, leftover)? { continue 'leftover; }
+            }
+            return Ok(false);
+        }
+        Ok(true)
     }
 }
 

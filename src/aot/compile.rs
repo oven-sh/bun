@@ -57,7 +57,7 @@ use crate::module_keys::is_name_of_text;
 use crate::module_list::ModuleList;
 use crate::modules::ModuleGraph;
 use crate::options::{Options, PathOptions};
-use crate::report::{ModuleOrigin, SourceTexts};
+use crate::report::{ModuleLocator, ModuleOrigin, SourceTexts};
 use crate::statistics::{
     LimitValues, Stage, StageClock, Statistics, log_part_of_time_outside_stages,
     log_time_outside_stages,
@@ -69,11 +69,13 @@ use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::FileId;
 use bun_sema::resolve::CodeHost;
 use bun_sema::session::Session;
+use bun_sema::util::FxHashSet;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches,
     for_each_parallel_in_runs, run_on_one_thread_while,
 };
 use bun_sys::{Fd, File};
+use core::cell::OnceCell;
 use core::fmt;
 use core::time::Duration;
 use std::num::NonZeroUsize;
@@ -287,12 +289,29 @@ pub fn link_program(
     Ok(LinkedProgram { program, summary })
 }
 
-fn is_witness_among(witness: &Witness, places: &[(Vec<u8>, u32)], texts: &SourceTexts) -> bool {
-    position_of(witness.location).is_some_and(|position| {
-        let path = texts.path(position.module);
-        let mut places = places.iter();
-        places.any(|place| place.0 == path && place.1 == position.offset)
-    })
+/// Places in the texts of the program, each a path and an offset. The first question makes a set of them.
+struct Places<'p> {
+    list: &'p [(Vec<u8>, u32)],
+    set: OnceCell<FxHashSet<(&'p [u8], u32)>>,
+}
+
+impl<'p> Places<'p> {
+    fn new(list: &'p [(Vec<u8>, u32)]) -> Places<'p> {
+        Places {
+            list,
+            set: OnceCell::new(),
+        }
+    }
+
+    fn holds(&self, witness: &Witness, texts: &SourceTexts) -> bool {
+        position_of(witness.location).is_some_and(|position| {
+            let places = self.set.get_or_init(|| {
+                let places = self.list.iter();
+                places.map(|place| (&place.0[..], place.1)).collect()
+            });
+            places.contains(&(texts.path(position.module), position.offset))
+        })
+    }
 }
 
 fn starts_workers_out_of_sight(engine: &EngineResult) -> bool {
@@ -336,9 +355,23 @@ fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../")
 }
 
-fn names_one_of<'f>(
+struct PathsOfFiles<'f> {
+    public: FxHashSet<&'f [u8]>,
+    source: FxHashSet<&'f [u8]>,
+}
+
+impl<'f> PathsOfFiles<'f> {
+    fn new(files: impl Iterator<Item = &'f EntryPointPaths> + Clone) -> PathsOfFiles<'f> {
+        PathsOfFiles {
+            public: files.clone().map(|file| &file.public_path[..]).collect(),
+            source: files.map(|file| &file.source_path[..]).collect(),
+        }
+    }
+}
+
+fn names_one_of(
     name: &[u8],
-    mut files: impl Iterator<Item = &'f EntryPointPaths>,
+    files: &PathsOfFiles<'_>,
     paths: &PathOptions,
     levels_above_root: usize,
 ) -> bool {
@@ -359,12 +392,10 @@ fn names_one_of<'f>(
         }
         false => Vec::new(),
     };
-    files.any(|file| {
-        file.public_path == name
-            || file.source_path == name
-            || Some(&file.source_path) == on_disk.as_ref()
-            || looked_under.contains(&file.public_path)
-    })
+    files.public.contains(name)
+        || files.source.contains(name)
+        || on_disk.is_some_and(|path| files.source.contains(&path[..]))
+        || (looked_under.iter()).any(|path| files.public.contains(&path[..]))
 }
 
 pub fn compile(
@@ -731,18 +762,6 @@ impl<'a> Build<'a> {
         });
     }
 
-    fn is_start_followed_by_load(&self, witness: &Witness, texts: &SourceTexts) -> bool {
-        position_of(witness.location).is_some_and(|position| {
-            texts.origin(position.module) == ModuleOrigin::Runtime
-                || is_witness_among(witness, &self.started_workers.followed_at, texts)
-        })
-    }
-
-    fn may_start_from_disk(&self, witness: &Witness, texts: &SourceTexts) -> bool {
-        self.options.aot.loads_code_from_disk
-            && !is_witness_among(witness, &self.started_workers.named_at, texts)
-    }
-
     fn finish_started_workers(&mut self, engine: &EngineResult, output: &FrontEndOutput) {
         let options = self.options;
         if options.load.runs_tests {
@@ -751,31 +770,43 @@ impl<'a> Build<'a> {
         if starts_workers_out_of_sight(engine) {
             self.started_workers.code = CodeOfWorkers::Unseen;
         }
+        let texts = &output.texts;
+        let mut locator = ModuleLocator::new(texts);
+        let followed_at = Places::new(&self.started_workers.followed_at);
+        let named_at = Places::new(&self.started_workers.named_at);
+        let is_followed_by_load = |witness: &Witness| {
+            position_of(witness.location).is_some_and(|position| {
+                texts.origin(position.module) == ModuleOrigin::Runtime
+                    || followed_at.holds(witness, texts)
+            })
+        };
+        let may_start_from_disk =
+            |witness: &Witness| options.aot.loads_code_from_disk && !named_at.holds(witness, texts);
         for record in engine.worker_starts_without_name() {
-            if self.is_start_followed_by_load(&record.witness, &output.texts) {
+            if is_followed_by_load(&record.witness) {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;
             self.diagnostics
-                .add_worker_start_without_name(&record.witness, &output.texts);
+                .add_worker_start_without_name(&record.witness, &mut locator);
         }
+        let mut compiled = None;
         if options.aot.checks_only {
             return;
         }
         for record in engine.worker_starts_from_urls() {
-            let is_followed = self.is_start_followed_by_load(&record.witness, &output.texts);
-            if !is_followed && !self.may_start_from_disk(&record.witness, &output.texts) {
+            if !is_followed_by_load(&record.witness) && !may_start_from_disk(&record.witness) {
                 self.started_workers.code = CodeOfWorkers::Unseen;
                 self.diagnostics
-                    .add_worker_start_without_name(&record.witness, &output.texts);
+                    .add_worker_start_without_name(&record.witness, &mut locator);
             }
         }
         for record in engine.worker_entries() {
             let name = engine.text(record.path);
-            let compiled = output
-                .entry_points
-                .iter()
-                .chain(&self.started_workers.names);
+            let compiled = compiled.get_or_insert_with(|| {
+                let names = &self.started_workers.names;
+                PathsOfFiles::new(output.entry_points.iter().chain(names))
+            });
             let levels = self.started_workers.levels_above_root;
             if names_one_of(name, compiled, &options.paths, levels) {
                 continue;
@@ -786,7 +817,7 @@ impl<'a> Build<'a> {
                 false => (Code::WorkerFileNotCompiled, &[name]),
             };
             self.diagnostics
-                .add_at_witness(code, arguments, &record.witness, &output.texts);
+                .add_at_witness(code, arguments, &record.witness, &mut locator);
         }
     }
 

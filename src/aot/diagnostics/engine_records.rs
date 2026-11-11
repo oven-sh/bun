@@ -72,12 +72,12 @@ impl Diagnostics {
         code: Code,
         arguments: &[&[u8]],
         witness: &Witness,
-        texts: &SourceTexts,
+        locator: &mut ModuleLocator<'_>,
     ) {
         let diagnostic = Diagnostic::new(code, None, arguments);
         let reported = to_driver_diagnostic(None, &diagnostic);
         let reported = match position_of(witness.location) {
-            Some(position) => ModuleLocator::new(texts).locate(position, reported),
+            Some(position) => locator.locate(position, reported),
             None => reported,
         };
         self.add_message(
@@ -86,9 +86,13 @@ impl Diagnostics {
         );
     }
 
-    pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {
+    pub(crate) fn add_worker_start_without_name(
+        &mut self,
+        witness: &Witness,
+        locator: &mut ModuleLocator<'_>,
+    ) {
         if witness.function_id().is_some() {
-            self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);
+            self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, locator);
         }
     }
 

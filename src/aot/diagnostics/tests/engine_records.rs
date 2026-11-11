@@ -118,8 +118,10 @@ fn internal_text(record: &InternalErrorRecord, engine_text: &str) -> String {
 }
 
 fn add_at_witness(code: Code, arguments: &[&[u8]], location: SourceLocation) -> Diagnostics {
+    let texts = texts();
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_at_witness(code, arguments, &witness(location), &texts());
+    let mut locator = ModuleLocator::new(&texts);
+    diagnostics.add_at_witness(code, arguments, &witness(location), &mut locator);
     diagnostics
 }
 
@@ -381,8 +383,10 @@ fn warning_at_witness_in_module_without_source_has_no_location() {
 
 #[test]
 fn worker_start_of_no_place_warns_nobody() {
+    let texts = texts();
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_worker_start_without_name(&witness(NO_LOCATION), &texts());
+    let mut locator = ModuleLocator::new(&texts);
+    diagnostics.add_worker_start_without_name(&witness(NO_LOCATION), &mut locator);
     assert!(written(diagnostics).msgs.is_empty());
 }
 
@@ -392,8 +396,10 @@ fn worker_start_at_place_warns_there() {
         function: 0,
         ..witness(at(PROGRAM, 7))
     };
+    let texts = texts();
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_worker_start_without_name(&seen, &texts());
+    let mut locator = ModuleLocator::new(&texts);
+    diagnostics.add_worker_start_without_name(&seen, &mut locator);
     let sentence = sentence_of(Code::WorkerStartedFromUnknownValue, &[]);
     assert_eq!(
         describe(&written(diagnostics)),

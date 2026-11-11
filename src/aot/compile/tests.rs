@@ -7,9 +7,10 @@ use super::*;
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{InternalError, log_diagnostic};
-use crate::engine::MissingModuleRecord;
 use crate::engine::testing::ResultRecords;
+use crate::engine::{MissingModuleRecord, SourceLocation};
 use crate::ir::generated::{FunctionFlags, ModuleKind};
+use crate::ir::ids::ABSENT_WORD;
 use crate::ir::{
     FunctionId, Id, ModuleId, OpaqueKind, Program, Type, print_function, print_program,
 };
@@ -20,7 +21,7 @@ use crate::load::source_provider::{
     SourceFile, SourceProvider, WithoutServices,
 };
 use crate::load::{ProjectId, host_platform};
-use crate::report::ModuleOrigin;
+use crate::report::{ModuleOrigin, ModuleSource};
 use crate::statistics::{LimitValues, Stage, StatisticId};
 use bstr::{BStr, ByteSlice};
 use bun_ast::{Kind, Loader, Log};
@@ -1729,6 +1730,75 @@ fn function_source_folds_constants() {
     ] {
         assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
     }
+}
+
+#[test]
+fn place_of_a_witness_is_sought_by_path_and_offset() {
+    let source = |path: &str| Some(ModuleSource::new(path.as_bytes(), b"text;\n"));
+    let texts = SourceTexts::new(vec![source("/p/a.ts"), source("/p/b.ts")]);
+    let list = [(b"/p/a.ts".to_vec(), 7), (b"/p/b.ts".to_vec(), 3)];
+    let places = Places::new(&list);
+    let rows = [
+        ((0, 7), true),
+        ((1, 3), true),
+        ((0, 3), false),
+        ((1, 7), false),
+        ((0, 8), false),
+        ((ABSENT_WORD, 7), false),
+    ];
+    let mut wrong = Vec::new();
+    for ((module, position), is_held) in rows {
+        let witness = Witness {
+            function: ABSENT_WORD,
+            value: ABSENT_WORD,
+            location: SourceLocation { module, position },
+        };
+        if places.holds(&witness, &texts) != is_held {
+            wrong.push((module, position));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+#[test]
+fn name_of_a_worker_entry_is_sought_among_each_kind_of_path() {
+    let paths = PathOptions {
+        module_prefix: b"/$bunfs/root/".to_vec(),
+        root_directory: b"/project".to_vec(),
+        entry_point_names: Vec::new(),
+        entry_point_file_names: Vec::new(),
+    };
+    let file = |public_path: &[u8], source_path: &[u8]| EntryPointPaths {
+        public_path: public_path.to_vec(),
+        source_path: source_path.to_vec(),
+    };
+    let files = [
+        file(b"/$bunfs/root/main.js", b"/project/main.js"),
+        file(b"/$bunfs/root/lib/w.js", b"/moved/w.js"),
+        file(b"/elsewhere/v.js", b"/project/lib/v.js"),
+        file(b"./app/u.js", b"/moved/u.js"),
+    ];
+    // Each name that is found is found by one kind of path alone.
+    let rows: [(&[u8], bool); 10] = [
+        (b"/elsewhere/v.js", true),
+        (b"/moved/w.js", true),
+        (b"/$bunfs/root/lib/v.js", true),
+        (b"file:///$bunfs/root/lib/v.js", true),
+        (b"./lib/w.js", true),
+        (b"./app/../app/u.js", true),
+        (b"/$bunfs/root/lib/u.js", false),
+        (b"/moved/v.js", false),
+        (b"./lib/u.js", false),
+        (b"lib/w.js", false),
+    ];
+    let files = PathsOfFiles::new(files.iter());
+    let mut wrong = Vec::new();
+    for (name, is_found) in rows {
+        if names_one_of(name, &files, &paths, 0) != is_found {
+            wrong.push(BStr::new(name));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]

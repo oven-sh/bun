@@ -4193,6 +4193,30 @@ describe("bulk drain runs the user pull() against the already-reset queue", () =
   });
 });
 
+// readMany() leaves the pull after a full batch to the next read, so a TransformStream whose
+// batch was taken still has [[backpressure]] set while its readable queue has room again.
+test("TransformStream: enqueue() after readMany() took a full queue", async () => {
+  const script = `
+    let controller;
+    const ts = new TransformStream({ start(c) { controller = c; } }, undefined, { highWaterMark: 2 });
+    const writer = ts.writable.getWriter();
+    const reader = ts.readable.getReader();
+    await writer.write("a");
+    await writer.write("b");
+    const batch = await reader.readMany();
+    controller.enqueue("c");
+    const next = await reader.read();
+    console.log(JSON.stringify({ batch: batch.value, next: next.value }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: '{"batch":["a","b"],"next":"c"}',
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // https://github.com/oven-sh/bun/pull/33193 — a reentrant next()/return() from a
 // synchronous pull() must chain onto the in-flight iteration instead of racing it.
 describe("ReadableStream async iterator reentrancy", () => {

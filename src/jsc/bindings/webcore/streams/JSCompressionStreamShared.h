@@ -23,6 +23,12 @@ std::optional<CompressionFormat> parseCompressionFormat(JSC::JSGlobalObject*, JS
 struct CodecOptions {
     size_t highWaterMark;
     std::optional<int32_t> level;
+    // Bytes of output the readable side queues ahead of a reader: highWaterMark, at most the
+    // default, so 0 means none and Infinity does not lift it. The Streams set-up value is 0
+    // (a write waits for a read). Node.js sizes its readable side in bytes instead
+    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L504-L506),
+    // and programs that await their writes before they read depend on that.
+    double readableHighWaterMark() const;
 };
 // One pass over the optional second constructor argument (read like a queuing strategy; `size` is
 // ignored). highWaterMark (bytes, default 64 KiB) bounds one codec step's output. level, read only

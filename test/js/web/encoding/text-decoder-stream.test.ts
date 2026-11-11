@@ -314,3 +314,65 @@ test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", a
     TextDecoder.prototype.decode = original;
   }
 });
+
+// The stream is set up with a readable highWaterMark of 0
+// (https://streams.spec.whatwg.org/#transformstream-set-up), so a chunk is decoded when a read
+// asks for it, and a write waits for that read.
+{
+  // https://github.com/web-platform-tests/wpt/blob/91d0bab/encoding/streams/backpressure.any.js
+  const microtasksRun = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  test("write() should not complete until read relieves backpressure for TextDecoderStream", async () => {
+    const stream = new TextDecoderStream();
+    const writer = stream.writable.getWriter();
+    const reader = stream.readable.getReader();
+    const events: string[] = [];
+    await microtasksRun();
+    const writePromise = writer.write(new Uint8Array([65]));
+    writePromise.then(() => events.push("write"));
+    await microtasksRun();
+    events.push("paused");
+    await reader.read();
+    events.push("read");
+    await writePromise;
+    expect(events, "write should happen after read").toEqual(["paused", "read", "write"]);
+  });
+
+  test("additional writes should wait for backpressure to be relieved for class TextDecoderStream", async () => {
+    const stream = new TextDecoderStream();
+    const writer = stream.writable.getWriter();
+    const reader = stream.readable.getReader();
+    const events: string[] = [];
+    await microtasksRun();
+    const readPromise1 = reader.read();
+    readPromise1.then(() => events.push("read1"));
+    const writePromise1 = writer.write(new Uint8Array([65]));
+    const writePromise2 = writer.write(new Uint8Array([65]));
+    writePromise1.then(() => events.push("write1"));
+    writePromise2.then(() => events.push("write2"));
+    await microtasksRun();
+    events.push("paused");
+    const readPromise2 = reader.read();
+    readPromise2.then(() => events.push("read2"));
+    await Promise.all([writePromise1, writePromise2, readPromise1, readPromise2]);
+    expect(events, "writes should not happen before read2").toEqual(["read1", "write1", "paused", "read2", "write2"]);
+  });
+
+  test("pipeThrough(new TextDecoderStream()) pulls its source once before any read", async () => {
+    let pulls = 0;
+    const { promise: pulledTwice, resolve } = Promise.withResolvers<void>();
+    const source = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (++pulls === 2) resolve();
+          controller.enqueue(new Uint8Array([65]));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const decoded = source.pipeThrough(new TextDecoderStream());
+    expect(await Promise.race([pulledTwice.then(() => "twice"), Bun.sleep(0).then(() => "once")])).toBe("once");
+    expect(pulls).toBe(1);
+    await decoded.cancel();
+  });
+}

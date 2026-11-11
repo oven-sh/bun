@@ -52,6 +52,11 @@ std::optional<CompressionFormat> parseCompressionFormat(JSGlobalObject* globalOb
 // node:zlib stream adapter (src/js/internal/streams/iter/transform.ts).
 static constexpr double kDefaultCodecHighWaterMark = 64 * 1024;
 
+double CodecOptions::readableHighWaterMark() const
+{
+    return std::min(static_cast<double>(highWaterMark), kDefaultCodecHighWaterMark);
+}
+
 CodecOptions parseCodecOptions(JSGlobalObject* globalObject, JSValue strategy, std::optional<CompressionFormat> levelFormat)
 {
     auto& vm = getVM(globalObject);
@@ -183,6 +188,14 @@ struct CodecStepResult {
     bool sinkBackpressure { false };
 };
 
+// Queues one piece of output. The readable queue of these streams is measured in bytes
+// (CodecOptions::readableHighWaterMark), so every enqueue goes through here.
+static void codecEnqueuePiece(JSGlobalObject* globalObject, JSTransformStream* stream, JSArrayBufferView* piece)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    RELEASE_AND_RETURN(scope, transformStreamDefaultControllerEnqueueSized(globalObject, stream->m_controller.get(), piece, static_cast<double>(piece->byteLength())));
+}
+
 // One step on this thread, delivered straight into the native sink when one is attached
 // (no JSUint8Array), otherwise enqueued. `input` is only passed on a chunk's first step. A codec
 // error or failed delivery throws.
@@ -201,7 +214,7 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     RETURN_IF_EXCEPTION(scope, step);
     auto* view = dynamicDowncast<JSArrayBufferView>(out);
     if (view && view->length()) {
-        transformStreamDefaultControllerEnqueue(globalObject, stream->m_controller.get(), out);
+        codecEnqueuePiece(globalObject, stream, view);
         RETURN_IF_EXCEPTION(scope, step);
     }
     return step;
@@ -433,7 +446,7 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     }
     auto* view = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(copied), 0, outLen);
     RETURN_IF_EXCEPTION(scope, step);
-    transformStreamDefaultControllerEnqueue(globalObject, stream->m_controller.get(), JSValue(view));
+    codecEnqueuePiece(globalObject, stream, view);
     RETURN_IF_EXCEPTION(scope, step);
     return step;
 }

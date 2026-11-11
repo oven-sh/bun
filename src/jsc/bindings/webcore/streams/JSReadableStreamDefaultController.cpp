@@ -542,7 +542,8 @@ void readableStreamDefaultControllerClose(JSGlobalObject* globalObject, JSReadab
     }
 }
 
-void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
+// `producerChunkSize` is engaged when the producer sizes the chunk itself.
+static ALWAYS_INLINE void readableStreamDefaultControllerEnqueueImpl(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk, std::optional<double> producerChunkSize)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -554,7 +555,10 @@ void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSRead
         RETURN_IF_EXCEPTION(scope, void());
     } else {
         double chunkSize = 1;
-        if (JSObject* sizeAlgorithm = controller->m_strategySizeAlgorithm.get()) {
+        if (producerChunkSize) {
+            ASSERT(!controller->m_strategySizeAlgorithm);
+            chunkSize = *producerChunkSize;
+        } else if (JSObject* sizeAlgorithm = controller->m_strategySizeAlgorithm.get()) {
             auto callData = JSC::getCallData(sizeAlgorithm);
             ASSERT(callData.type != JSC::CallData::Type::None);
             JSC::MarkedArgumentBuffer args;
@@ -581,6 +585,16 @@ void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSRead
         }
     }
     RELEASE_AND_RETURN(scope, readableStreamDefaultControllerCallPullIfNeeded(globalObject, controller));
+}
+
+void readableStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
+{
+    readableStreamDefaultControllerEnqueueImpl(globalObject, controller, chunk, std::nullopt);
+}
+
+void readableStreamDefaultControllerEnqueueSized(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk, double chunkSize)
+{
+    readableStreamDefaultControllerEnqueueImpl(globalObject, controller, chunk, chunkSize);
 }
 
 void readableStreamDefaultControllerError(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue error)

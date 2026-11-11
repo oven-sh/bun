@@ -175,9 +175,11 @@ declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: CompressionStream;
     /**
      * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
-     * output one input chunk produces per step: the largest piece a reader receives per `read()`,
-     * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
-     * its own size per step. Its `level` selects the compression level: 0-9 for the zlib formats,
+     * output one input chunk produces per step: the largest piece a reader receives per `read()`.
+     * A chunk larger than that may produce up to its own size per step. It also bounds, up to
+     * 64 KiB, the output that is queued while nothing reads it: a `write()` completes until that
+     * much is queued, then waits for a read. `0` queues nothing, so each write waits for a read,
+     * as in browsers. Its `level` selects the compression level: 0-9 for the zlib formats,
      * 0-11 for brotli (quality), 1-22 for zstd. Omitted means the format's default
      * (zlib default, brotli 11, zstd 3).
      */
@@ -192,9 +194,11 @@ declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: DecompressionStream;
     /**
      * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
-     * output one input chunk produces per step: the largest piece a reader receives per `read()`,
-     * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
-     * its own size per step.
+     * output one input chunk produces per step: the largest piece a reader receives per `read()`.
+     * A chunk larger than that may produce up to its own size per step. It also bounds, up to
+     * 64 KiB, the output that is queued while nothing reads it: a `write()` completes until that
+     * much is queued, then waits for a read. `0` queues nothing, so each write waits for a read,
+     * as in browsers.
      */
     new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): DecompressionStream;
   }

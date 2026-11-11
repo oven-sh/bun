@@ -398,6 +398,8 @@ bool readableStreamDefaultControllerShouldCallPull(JSReadableStreamDefaultContro
 void readableStreamDefaultControllerClearAlgorithms(JSReadableStreamDefaultController*); // userJS: no — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerClose(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue chunk); // userJS: yes (user size(); throws) — JSReadableStreamDefaultController.cpp
+// The same for a controller with no size algorithm whose producer sizes the chunk itself.
+void readableStreamDefaultControllerEnqueueSized(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue chunk, double chunkSize); // userJS: yes (read request, pull); throws — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerError(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue error); // userJS: yes — JSReadableStreamDefaultController.cpp
 std::optional<double> readableStreamDefaultControllerGetDesiredSize(JSReadableStreamDefaultController*); // userJS: no (nullopt = spec null) — JSReadableStreamDefaultController.cpp
 bool readableStreamDefaultControllerHasBackpressure(JSReadableStreamDefaultController*); // userJS: no — JSReadableStreamDefaultController.cpp
@@ -505,10 +507,14 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 
 // TransformStreamOperations.cpp
 
+// https://streams.spec.whatwg.org/#transformstream-set-up: "Let readableHighWaterMark be 0."
+inline constexpr double transformStreamSetUpReadableHighWaterMark = 0;
 // Initializes an already-allocated JSTransformStream SUBCLASS as a TransformStream with the
-// given native transformer kind (writable/readable HWM = 1/1, no size algorithms, trivial
-// start). The controller's algorithmContext is `stream` itself.
-void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
+// given native transformer kind (writable HWM 1, no size algorithms, trivial start). Each class
+// states its readable HWM: the set-up value above, or a byte budget for a class that sizes the
+// chunks it enqueues (transformStreamDefaultControllerEnqueueSized). The controller's
+// algorithmContext is `stream` itself.
+void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind, double readableHighWaterMark); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamErrorWritableAndUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
@@ -527,6 +533,8 @@ JSC::JSPromise* transformStreamDefaultSourcePullAlgorithm(JSC::JSGlobalObject*, 
 void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultController*); // userJS: no — JSTransformStreamDefaultController.cpp
 // Per spec, a readable-side enqueue failure errors the writable and throws [[readable]].[[storedError]].
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
+// The same for a native transformer that sizes its own output (readableStreamDefaultControllerEnqueueSized).
+void transformStreamDefaultControllerEnqueueSized(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk, double chunkSize); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
 void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 // Performs a release ClearAlgorithms deferred, once nothing holds the native state any more.
 void nativeTransformReleaseStateIfIdle(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp

@@ -393,7 +393,8 @@ void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultCon
     controller->m_algorithmContext.clear();
 }
 
-void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
+// `producerChunkSize` is engaged when the transformer sizes the chunk itself.
+static ALWAYS_INLINE void transformStreamDefaultControllerEnqueueImpl(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk, std::optional<double> producerChunkSize)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -403,7 +404,10 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
         throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
         return;
     }
-    readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
+    if (producerChunkSize)
+        readableStreamDefaultControllerEnqueueSized(globalObject, readableController, chunk, *producerChunkSize);
+    else
+        readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         // Spec steps 4-5: "If enqueueResult is an abrupt completion, perform
         // ! TransformStreamErrorWritableAndUnblockWrite(stream, enqueueResult.[[Value]]) and throw
@@ -417,11 +421,22 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
         throwException(globalObject, scope, storedError ? storedError : jsUndefined());
         return;
     }
-    bool backpressure = readableStreamDefaultControllerHasBackpressure(readableController);
-    if (backpressure != stream->m_backpressure) {
-        ASSERT(backpressure);
+    // [[backpressure]] can already be set with room in the queue: a full readMany() batch
+    // defers the readable's next pull (drainQueueEntriesInto), and that pull is what clears it.
+    if (!stream->m_backpressure && readableStreamDefaultControllerHasBackpressure(readableController))
         RELEASE_AND_RETURN(scope, transformStreamSetBackpressure(globalObject, stream, true));
-    }
+}
+
+void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
+{
+    // The codecs' readable queue is measured in bytes.
+    ASSERT(controller->m_transformerKind != TransformerKind::Compression && controller->m_transformerKind != TransformerKind::Decompression);
+    transformStreamDefaultControllerEnqueueImpl(globalObject, controller, chunk, std::nullopt);
+}
+
+void transformStreamDefaultControllerEnqueueSized(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk, double chunkSize)
+{
+    transformStreamDefaultControllerEnqueueImpl(globalObject, controller, chunk, chunkSize);
 }
 
 void transformStreamDefaultControllerError(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue error)

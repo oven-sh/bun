@@ -782,8 +782,8 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(out).toBe(input);
   });
 
-  // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
-  // write completes before any reader is attached.
+  // The readable side queues output ahead of a reader (see "output queued ahead of a
+  // reader" below), so a write completes before any reader is attached.
   test("a single write completes without a reader attached", async () => {
     const cs = new CompressionStream("gzip");
     const writer = cs.writable.getWriter();
@@ -791,25 +791,6 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     void writer.close();
     const out = await Array.fromAsync(cs.readable);
     expect(out.length).toBeGreaterThan(0);
-  });
-
-  // Backpressure still kicks in once the readable queue is full.
-  test("a second write stays pending until the readable side is drained", async () => {
-    const cs = new CompressionStream("gzip");
-    const writer = cs.writable.getWriter();
-    const reader = cs.readable.getReader();
-
-    await writer.write(new Uint8Array(1024));
-    const second = writer.write(new Uint8Array(1024));
-    const raced = await Promise.race([second.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
-    expect(raced).toBe("pending");
-
-    const { value } = await reader.read();
-    expect(value!.byteLength).toBeGreaterThan(0);
-    await second;
-
-    void writer.close();
-    while (!(await reader.read()).done) {}
   });
 
   // DecompressionStream rejects trailing bytes after the compressed data. Concatenated
@@ -827,6 +808,245 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     ).text();
 
     expect(decoded).toBe("hello world");
+  });
+});
+
+// The readable side of both streams queues up to 64 KiB of output with nobody reading (the
+// stream's highWaterMark if that is smaller), measured in bytes. A program can therefore
+// await its writes, and close(), before it reads, as it can on Node.js (whose readable side
+// is a ByteLengthQueuingStrategy of 65536) and on Bun 1.3. The Streams set-up value, which
+// browsers use, is 0: there the first write waits for a read. Past the budget a write waits
+// here too.
+describe("output queued ahead of a reader", () => {
+  const isPending = (promise: Promise<unknown>) =>
+    Promise.race([promise.then(() => false), Bun.sleep(0).then(() => true)]);
+
+  // Level 0 writes stored blocks, so each 1 KiB part of the result inflates to about 1 KiB.
+  function storedParts(plain: Buffer) {
+    const stored = zlib.deflateRawSync(plain, { level: 0 });
+    const parts: Buffer[] = [];
+    for (let offset = 0; offset < stored.length; offset += 1024) parts.push(stored.subarray(offset, offset + 1024));
+    return parts;
+  }
+
+  // `count` records of 1 KiB, each starting with its index.
+  function numberedRecords(count: number) {
+    const records = Buffer.alloc(count * 1024, 0x61);
+    for (let i = 0; i < count; i++) records.writeUInt32BE(i, i * 1024);
+    return records;
+  }
+  const recordOrder = (records: Buffer) =>
+    Array.from({ length: Math.floor(records.length / 1024) }, (_, i) => records.readUInt32BE(i * 1024));
+  const inOrder = (count: number) => Array.from({ length: count }, (_, i) => i);
+
+  function incompressible(length: number) {
+    const bytes = Buffer.alloc(length);
+    for (let i = 0, x = 0x12345678; i < length; i++) {
+      x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
+      bytes[i] = x >>> 24;
+    }
+    return bytes;
+  }
+
+  test.each([
+    [undefined, 64 * 1024],
+    [16 * 1024, 16 * 1024],
+    [1024 * 1024, 64 * 1024],
+    [Infinity, 64 * 1024],
+  ])("highWaterMark %p: reader-less writes are accepted until %i bytes are queued", async (highWaterMark, budget) => {
+    const parts = storedParts(Buffer.alloc(128 * 1024, "x"));
+    const ds = new DecompressionStream("deflate-raw", highWaterMark === undefined ? undefined : { highWaterMark });
+    const writer = ds.writable.getWriter();
+    let accepted = 0;
+    let write = writer.write(parts[0]);
+    while (accepted < parts.length - 1 && !(await isPending(write))) write = writer.write(parts[++accepted]);
+
+    const reader = ds.readable.getReader();
+    const queued = await reader.readMany();
+    // readMany() reports the queue in the unit of its strategy: bytes.
+    expect(queued.size).toBe(queued.value.reduce((total, piece) => total + piece.byteLength, 0));
+    expect(queued.size).toBeGreaterThanOrEqual(budget);
+    expect(queued.size).toBeLessThan(budget + 1024);
+
+    // The write past the budget waited for a read.
+    const { value } = await reader.read();
+    expect(value!.byteLength).toBeGreaterThan(0);
+    expect(await write).toBeUndefined();
+  });
+
+  test("highWaterMark 0 queues nothing ahead: the first write waits for a read", async () => {
+    const ds = new DecompressionStream("deflate-raw", { highWaterMark: 0 });
+    const writer = ds.writable.getWriter();
+    const write = writer.write(storedParts(Buffer.alloc(4096, "x"))[0]);
+    expect(await isPending(write)).toBe(true);
+    expect(writer.desiredSize).toBe(0);
+
+    const { value } = await ds.readable.getReader().read();
+    expect(value!.byteLength).toBeGreaterThan(0);
+    expect(await write).toBeUndefined();
+  });
+
+  // readMany() leaves the pull after a full batch to the next read, so the flush here runs with
+  // the stream still marked as backpressured and the queue empty again.
+  test("close() right after readMany() took a full queue flushes the rest", async () => {
+    const input = incompressible(128 * 1024);
+    const chunk = (i: number) => input.subarray(i * 1024, (i + 1) * 1024);
+    let fills = 0;
+    {
+      const writer = new CompressionStream("gzip").writable.getWriter();
+      while (!(await isPending(writer.write(chunk(fills))))) fills++;
+    }
+
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    for (let i = 0; i < fills; i++) await writer.write(chunk(i));
+    const reader = cs.readable.getReader();
+    const pieces = (await reader.readMany()).value;
+    const closed = writer.close();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pieces.push(value);
+    }
+    expect(await closed).toBeUndefined();
+    expect(zlib.gunzipSync(Buffer.concat(pieces)).equals(input.subarray(0, fills * 1024))).toBe(true);
+  });
+
+  // From #31728.
+  test("awaiting writes before reading does not deadlock", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    await writer.write(new TextEncoder().encode("hello"));
+    await writer.write(new TextEncoder().encode("world"));
+    await writer.close();
+    const compressed = Buffer.concat(await Array.fromAsync(cs.readable));
+
+    const ds = new DecompressionStream("gzip");
+    const writer2 = ds.writable.getWriter();
+    await writer2.write(compressed);
+    await writer2.close();
+    expect(Buffer.concat(await Array.fromAsync(ds.readable)).toString()).toBe("helloworld");
+  });
+
+  // A function that awaits a write the stream never completes is never resumed: the process
+  // exits with status 0 and prints nothing. So this runs the program as a script.
+  test("await write(), await close(), then read runs to the end in every format and direction", async () => {
+    const program = `
+      const zlib = require("node:zlib");
+      const deflaters = { gzip: zlib.gzipSync, deflate: zlib.deflateSync, "deflate-raw": zlib.deflateRawSync, brotli: zlib.brotliCompressSync, zstd: zlib.zstdCompressSync };
+      const inflaters = { gzip: zlib.gunzipSync, deflate: zlib.inflateSync, "deflate-raw": zlib.inflateRawSync, brotli: zlib.brotliDecompressSync, zstd: zlib.zstdDecompressSync };
+      const collect = async readable => Buffer.concat(await Array.fromAsync(readable));
+      for (const format of Object.keys(deflaters)) {
+        (async () => {
+          const stream = new CompressionStream(format), writer = stream.writable.getWriter();
+          await writer.write(Buffer.from("hello "));
+          await writer.write(Buffer.from("world"));
+          await writer.close();
+          console.log(format, "compress:", inflaters[format](await collect(stream.readable)).toString());
+        })();
+        (async () => {
+          const input = deflaters[format](Buffer.from("hello world"));
+          const stream = new DecompressionStream(format), writer = stream.writable.getWriter();
+          await writer.write(input.subarray(0, 6));
+          await writer.write(input.subarray(6));
+          await writer.close();
+          console.log(format, "decompress:", (await collect(stream.readable)).toString());
+        })();
+      }
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", program], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n").sort()).toEqual(
+      ["brotli", "deflate", "deflate-raw", "gzip", "zstd"].flatMap(format => [
+        `${format} compress: hello world`,
+        `${format} decompress: hello world`,
+      ]),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // The text codecs follow the Streams set-up (a write waits for a read), so this chain runs
+  // only because the compressor behind the pipe takes what the encoder produces.
+  test("three awaited writes into a TextEncoderStream piped through gzip complete before the read", async () => {
+    const encoder = new TextEncoderStream();
+    const compressed = encoder.readable.pipeThrough(new CompressionStream("gzip"));
+    const writer = encoder.writable.getWriter();
+    await writer.write("a");
+    await writer.write("b");
+    await writer.write("c");
+    await writer.close();
+    expect(zlib.gunzipSync(await new Response(compressed).bytes()).toString()).toBe("abc");
+  });
+
+  // The writable side still holds one chunk (#39480): a producer that waits for writer.ready
+  // stops at the budget of queued output instead of running ahead by a count of chunks.
+  test("a producer gated on writer.ready is held to the budget", async () => {
+    const cs = new CompressionStream("deflate-raw");
+    const writer = cs.writable.getWriter();
+    const input = incompressible(256 * 1024);
+    let accepted = 0;
+    while (accepted < 256 && !(await isPending(writer.ready))) {
+      void writer.write(input.subarray(accepted * 1024, (accepted + 1) * 1024));
+      accepted++;
+    }
+    expect(accepted * 1024).toBeGreaterThan(64 * 1024);
+    expect(accepted * 1024).toBeLessThan(input.length);
+  });
+
+  // A native sink that consumes the readable is attached to the codec, which then writes its
+  // output straight to the sink. The pump writes what was queued before that, and the sink can
+  // make it wait with part of the queue still unwritten; the codec must not write ahead of it.
+  describe("handed to a native sink with output already queued", () => {
+    // Echoes the upload. `afterAttach` runs once fetch() has taken the stream, which it does
+    // when it has a connection.
+    async function upload(readable: ReadableStream<Uint8Array>, afterAttach: () => unknown) {
+      await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.arrayBuffer()) });
+      const response = fetch(server.url, { method: "POST", body: readable, duplex: "half" } as RequestInit);
+      while (!readable.locked) await Bun.sleep(0);
+      await afterAttach();
+      return Buffer.from(await (await response).arrayBuffer());
+    }
+
+    test("chunks written after the upload starts follow the queued pieces", async () => {
+      const records = numberedRecords(160);
+      const parts = storedParts(records);
+      const ds = new DecompressionStream("deflate-raw");
+      const writer = ds.writable.getWriter();
+      let written = 0;
+      while (written < 32) void writer.write(parts[written++]);
+      const echoed = await upload(ds.readable, () => {
+        while (written < parts.length) void writer.write(parts[written++]);
+        void writer.close();
+      });
+      expect(recordOrder(echoed)).toEqual(inOrder(160));
+      expect(echoed.length).toBe(records.length);
+    });
+
+    test("a chunk parked between steps continues after the queued pieces", async () => {
+      // Two gzip members: 16 stored records, then one chunk that inflates to 512 KiB in 64 KiB steps.
+      const records = numberedRecords(16 + 512);
+      const stored = zlib.gzipSync(records.subarray(0, 16 * 1024), { level: 0 });
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      for (let offset = 0; offset < stored.length; offset += 1024)
+        void writer.write(stored.subarray(offset, offset + 1024));
+      void writer.write(zlib.gzipSync(records.subarray(16 * 1024)));
+      void writer.close();
+      const echoed = await upload(ds.readable, () => {});
+      expect(recordOrder(echoed)).toEqual(inOrder(16 + 512));
+      expect(echoed.length).toBe(records.length);
+    });
+
+    test("close() after the upload starts flushes after the queued pieces", async () => {
+      const plain = incompressible(32 * 1024);
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      for (let offset = 0; offset < plain.length; offset += 1024)
+        void writer.write(plain.subarray(offset, offset + 1024));
+      const echoed = await upload(cs.readable, () => writer.close());
+      expect(zlib.gunzipSync(echoed).equals(plain)).toBe(true);
+    });
   });
 });
 

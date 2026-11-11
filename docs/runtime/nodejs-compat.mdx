@@ -257,7 +257,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
 
-🟢 Fully implemented.
+🟢 Fully implemented. As in Node.js, up to 64 KiB of output is queued while nothing reads it, so a `writer.write()` can complete before the first read (in browsers it waits for one). `writer.desiredSize` starts at `1`, not `65536`: a producer that waits for `writer.ready` is stopped by that queue.
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 
@@ -285,7 +285,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
 
-🟢 Fully implemented.
+🟢 Fully implemented. It queues output like [`CompressionStream`](#compressionstream).
 
 ### [`ErrorEvent`](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent)
 

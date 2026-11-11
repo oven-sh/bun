@@ -38,8 +38,8 @@ public:
         // Nullable: the unwritten batch tail stashed on sink backpressure; drained on onReady.
         PendingBatch,
         // Nullable: the byte-producing JSTransformStream subclass whose transform arms
-        // write output straight to this sink. Set at attach; onReady flips its
-        // m_backpressure back to false, onClose/finally detaches it.
+        // write output straight to this sink. Set at attach; onReady resumes an arm that
+        // waits for the sink, onClose/finally detaches it.
         NativeTransform,
     };
 
@@ -83,6 +83,9 @@ public:
     bool m_started : 1 { false };
     // Set when rsisWriteChunk suspends on sink backpressure; cleared when onReady resumes.
     bool m_waitingOnSink : 1 { false };
+    // The stream is a native byte transform that still holds output from before the pump
+    // began; its sink is attached once that output has gone through the pump.
+    bool m_nativeTransformAttachPending : 1 { false };
 
 private:
     JSReadStreamIntoSinkOperation(JSC::VM&, JSC::Structure*);

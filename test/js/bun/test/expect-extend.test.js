@@ -9,7 +9,7 @@
 
 import { bunEnv, bunExe, tempDir, withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
-var { isBun, expect, describe, test, it } = await test_interop();
+var { isBun, expect, describe, test, it, jest } = await test_interop();
 
 //expect.addSnapshotSerializer(alignedAnsiStyleSerializer);
 
@@ -671,7 +671,7 @@ describe("MatcherContext", () => {
       ]);
     });
 
-    // Expected values measured on jest-matcher-utils 30.5.1.
+    // Expected values measured on jest-matcher-utils 30.5.1, except for `expect.any(Number)`: Jest prints a diff for it.
     test.each([
       [[1, 1], null],
       [[1, 2], null],
@@ -743,6 +743,194 @@ describe("MatcherContext", () => {
       );
       expect(() => utils.diff(value, {})).toThrow(thrown);
       expect(() => utils.diff({}, value)).toThrow(thrown);
+    });
+
+    describe("diff with a matcher as the expected value", () => {
+      /** @type {import("bun:test").MatcherContext["equals"]} */
+      let equals;
+      expect.extend({
+        _toGiveItsEquals() {
+          equals = this.equals;
+          return { pass: true };
+        },
+      });
+      expect()._toGiveItsEquals();
+
+      const mismatch = "  Comparing two different types of values. Expected object but received number.";
+      const onPrototype = method => {
+        class Matcher {}
+        Matcher.prototype.asymmetricMatch = method;
+        return Matcher;
+      };
+      // The shape of a jest-mock-extended matcher.
+      const withExpectedType = method => {
+        class Matcher {
+          $$typeof = Symbol.for("jest.asymmetricMatcher");
+          asymmetricMatch = method;
+          getExpectedType() {
+            throw new Error("diff() must not call getExpectedType()");
+          }
+        }
+        return new Matcher();
+      };
+
+      // Measured on jest-matcher-utils 30.5.2, which differs on the last five rows. It calls getExpectedType() and prints
+      // "Expected undefined but received number." for a jest-mock-extended matcher. It returns `null` for the getter,
+      // the Proxy, the Error and the Blob, which Bun's `toEqual()` doesn't read as matchers.
+      test.each([
+        ["a plain object", method => ({ asymmetricMatch: method }), null],
+        ["an instance of a class", method => new (onPrototype(method))(), null],
+        ["an instance of a subclass", method => new (class extends onPrototype(method) {})(), null],
+        [
+          "an instance of a class, as an own property",
+          method =>
+            new (class {
+              asymmetricMatch = method;
+            })(),
+          null,
+        ],
+        [
+          "an object without a prototype",
+          method => Object.assign(Object.create(null), { asymmetricMatch: method }),
+          null,
+        ],
+        [
+          "an object with Jest's $$typeof",
+          method => ({ $$typeof: Symbol.for("jest.asymmetricMatcher"), asymmetricMatch: method }),
+          null,
+        ],
+        ["a plain object, as a bound function", method => ({ asymmetricMatch: method.bind(null) }), null],
+        ["an object with Jest's $$typeof and getExpectedType()", withExpectedType, null],
+        [
+          "a plain object, as a getter",
+          method => ({
+            get asymmetricMatch() {
+              return method;
+            },
+          }),
+          mismatch,
+        ],
+        ["a Proxy", method => new Proxy({ asymmetricMatch: method }, {}), mismatch],
+        ["an Error", method => Object.assign(new Error("e"), { asymmetricMatch: method }), mismatch],
+        ["a Blob", method => Object.assign(new Blob([]), { asymmetricMatch: method }), mismatch],
+      ])("asymmetricMatch on %s", (_, make, text) => {
+        const asymmetricMatch = jest.fn(() => true);
+        const expected = make(asymmetricMatch);
+        const diff = utils.diff(expected, 5);
+        expect(diff && Bun.stripANSI(diff)).toBe(text);
+        expect(asymmetricMatch).not.toHaveBeenCalled();
+
+        // `this.equals(5, expected)` calls the method of exactly the values that `diff` returns null for.
+        const isMatcher = text === null;
+        expect(equals(5, expected)).toBe(isMatcher);
+        expect(asymmetricMatch).toHaveBeenCalledTimes(isMatcher ? 1 : 0);
+      });
+
+      test.each([
+        ["s"],
+        [undefined],
+        [null],
+        [{ a: 1 }],
+        [[1]],
+        [{ asymmetricMatch: () => true }],
+        [expect.any(Number)],
+      ])("is null when the received value is %p", received => {
+        expect(utils.diff({ asymmetricMatch: () => false }, received)).toBeNull();
+      });
+
+      test("doesn't run a getter, a Proxy trap or the method", () => {
+        const ran = [];
+        const asymmetricMatch = jest.fn(() => true);
+        const traps = {};
+        for (const trap of ["get", "has", "ownKeys", "getOwnPropertyDescriptor", "getPrototypeOf"]) {
+          traps[trap] = (...args) => {
+            ran.push(trap);
+            return Reflect[trap](...args);
+          };
+        }
+        const withGetter = {
+          get asymmetricMatch() {
+            ran.push("getter");
+            return asymmetricMatch;
+          },
+        };
+        expect([
+          utils.diff(new Proxy({ asymmetricMatch }, traps), 5),
+          utils.diff(withGetter, 5),
+          utils.diff({ asymmetricMatch }, 5),
+          // With a matcher as the expected value, `diff` prints neither value.
+          utils.diff({ asymmetricMatch }, new Proxy({ asymmetricMatch }, traps)),
+          utils.diff({ asymmetricMatch }, withGetter),
+        ]).toEqual([expect.any(String), expect.any(String), null, null, null]);
+        expect(ran).toEqual([]);
+        expect(asymmetricMatch).not.toHaveBeenCalled();
+      });
+
+      test("is null for a received value that throws when it is printed", () => {
+        const received = new Proxy(
+          {},
+          {
+            ownKeys() {
+              throw new Error("from the trap");
+            },
+          },
+        );
+        expect(utils.diff({ asymmetricMatch: () => true }, received)).toBeNull();
+      });
+
+      test("is decided by the object as it is at the call", () => {
+        const isNull = expected => utils.diff(expected, 5) === null;
+        const object = { a: 1 };
+        const answers = [isNull(object)];
+        object.asymmetricMatch = () => true;
+        answers.push(isNull(object));
+        object.asymmetricMatch = 1;
+        answers.push(isNull(object));
+        object.asymmetricMatch = () => true;
+        answers.push(isNull(object));
+        delete object.asymmetricMatch;
+        answers.push(isNull(object));
+        expect(answers).toEqual([false, true, false, true, false]);
+
+        class Late {}
+        const late = new Late();
+        expect(isNull(late)).toBe(false);
+        Late.prototype.asymmetricMatch = () => true;
+        expect(isNull(late)).toBe(true);
+      });
+
+      test("a matcher that isn't the expected value is compared", () => {
+        const isEven = { asymmetricMatch: value => value % 2 === 0 };
+        const text = (...args) => Bun.stripANSI(utils.diff(...args));
+        expect(text(isEven, isEven)).toBe("Compared values have no visual difference.");
+        expect(text(3, isEven)).toBe("  Comparing two different types of values. Expected number but received object.");
+        expect(
+          text({ n: isEven }, { n: 3 })
+            .split("\n")
+            .filter(line => /^[-+]/.test(line)),
+        ).toEqual([
+          '-   "n": {',
+          '-     "asymmetricMatch": [Function],',
+          "-   },",
+          '+   "n": 3,',
+          "- Expected  - 3",
+          "+ Received  + 1",
+        ]);
+      });
+
+      // Bun returns null for every built-in matcher. Jest 30.5.2 prints a type mismatch for 5 of these 8 calls.
+      test.each([
+        ["expect.any()", expect.any(Number)],
+        ["expect.anything()", expect.anything()],
+        ["expect.stringContaining()", expect.stringContaining("a")],
+        ["expect.stringMatching()", expect.stringMatching(/a/)],
+        ["expect.objectContaining()", expect.objectContaining({ a: 1 })],
+        ["expect.arrayContaining()", expect.arrayContaining([1])],
+        ["expect.closeTo()", expect.closeTo(1)],
+        ["a matcher of expect.extend()", expect._toBeDivisibleBy(2)],
+      ])("is still null for %s", (_, matcher) => {
+        expect(utils.diff(matcher, "x")).toBeNull();
+      });
     });
 
     // Expected values measured on jest-matcher-utils 30.5.1.

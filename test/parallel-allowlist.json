@@ -367,7 +367,6 @@
     "cli/test/isolation.test.ts",
     "cli/test/parallel.test.ts",
     "cli/test/path-ignore-patterns.test.ts",
-    "cli/test/test-aot-deep-equality.test.ts",
     "cli/test/test-changed.test.ts",
     "cli/test/test-filter-lifecycle-snapshot.test.ts",
     "cli/test/test-timeout-behavior.test.ts",

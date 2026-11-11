@@ -5389,6 +5389,18 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
 }
 
+static void retireDerivedRealms(Zig::GlobalObject* globalObject)
+{
+    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
+        if (!derived)
+            continue;
+        derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+        // Jobs are GC roots until they are dequeued, and only an evaluation in the context drains a queue of its own.
+        if (auto* context = dynamicDowncast<Bun::NodeVMGlobalObject>(derived.get()); context && context->hasOwnMicrotaskQueue())
+            context->dropOwnMicrotaskQueue();
+    }
+}
+
 // `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
 // (as WebCore does for a stopped document), and the realm reports ScriptExecutionStatus::Stopped so
 // its deferred work (FinalizationRegistry cleanup, wasm completions) is dropped too. Work the file
@@ -5398,10 +5410,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     // Again, to catch realms that close handlers created since the first pass.
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    }
+    retireDerivedRealms(globalObject);
 }
 
 // `bun test --isolate=modules`: the global object is kept, but realms the finished file created from it are retired.
@@ -5409,10 +5418,7 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    }
+    retireDerivedRealms(globalObject);
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

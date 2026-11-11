@@ -2424,6 +2424,75 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
+  // Only an evaluation in the context drains its queue, and what is queued is a GC root.
+  const contextWithQueuedJob = `
+    import vm from "node:vm";
+    vm.runInContext("Promise.resolve(1)", vm.createContext({}, { microtaskMode: "afterEvaluate" })).then(() => {});
+  `;
+
+  test("a job left in the queue of a microtaskMode: afterEvaluate context", async () => {
+    using dir = tempDir("isolate-leak-own-queue", makeLeakFixture(contextWithQueuedJob));
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test.each(isolateFlags)("%s: a context with a job left in its own queue", async flag => {
+    const files: Record<string, string> = {};
+    for (let i = 1; i <= LEAK_FILE_COUNT; i++)
+      files[`file_${i}.test.js`] = `import { test } from "bun:test";${contextWithQueuedJob}test("${i}", () => {});`;
+    files["z.test.js"] = `
+      import { heapStats } from "bun:jsc";
+      import { test } from "bun:test";
+      test("counts", async () => {
+        let contexts;
+        for (let round = 0; round < 5 && !(contexts <= 2); round++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+          contexts = heapStats().objectTypeCounts.NodeVMGlobalObject ?? 0;
+        }
+        console.log("CONTEXTS=" + contexts);
+      });
+    `;
+    using dir = tempDir("isolate-leak-own-queue-contexts", files);
+    const { stdout, stderr, exitCode } = await runTests(String(dir), [flag], []);
+    expect(stderr).toContain(`${LEAK_FILE_COUNT + 1} pass`);
+    expect(Number(stdout.match(/CONTEXTS=(\d+)/)?.[1])).toBeLessThanOrEqual(2);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a microtaskMode: afterEvaluate context that outlives its file does not drain the queue of the next", async () => {
+    using dir = tempDir("isolate-own-queue-outlives", {
+      "a.test.js": `
+        import { test } from "bun:test";
+        import vm from "node:vm";
+        test("a", () => {
+          test[Symbol.for("context")] = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+        });
+      `,
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        import vm from "node:vm";
+        test("b", async () => {
+          const context = test[Symbol.for("context")];
+          console.log("KEPT=" + !!context);
+          const order = [];
+          queueMicrotask(() => order.push("microtask"));
+          if (context) vm.runInContext("1", context);
+          order.push("sync");
+          await 1;
+          expect(order).toEqual(["sync", "microtask"]);
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.js"],
+    );
+    expect(stderr).toContain("2 pass");
+    expect(stdout).toContain("KEPT=true");
+    expect(exitCode).toBe(0);
+  });
+
   test("long setTimeout/setInterval left pending", async () => {
     using dir = tempDir(
       "isolate-leak-timers",

@@ -1915,11 +1915,15 @@ it("Readable.fromWeb over a fetch body: a 'data' listener throw is an unhandledR
   const script = `
     const { Readable } = require("node:stream");
     let ue = 0, ur = 0, bytes = 0;
-    process.on("uncaughtException", (e, origin) => { ue++; console.log("unexpected: " + origin + " " + e.message); });
+    // Either report is the last event this script waits for.
+    process.on("uncaughtException", (e, origin) => {
+      ue++;
+      console.log("unexpected: " + origin + " " + e.message);
+      setImmediate(() => process.exit());
+    });
     process.on("unhandledRejection", e => {
       ur++;
       if (e.message !== "data-throw") console.log("unexpected: " + e.message);
-      // The rejection is the last event this script waits for.
       setImmediate(() => process.exit());
     });
     process.on("exit", () => console.log("bytes=" + bytes + " ue=" + ue + " ur=" + ur));

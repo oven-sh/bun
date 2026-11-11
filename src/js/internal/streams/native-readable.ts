@@ -258,6 +258,8 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
   if (result > 0) {
     const slice = chunk.subarray(0, result);
     chunk = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
+    // Set before push(): a listener throw must not leave the delivered slice as the next pull buffer.
+    stream[kRemainingChunk] = chunk;
     if (slice.byteLength > 0) {
       pushAndCheck(stream, slice);
     }

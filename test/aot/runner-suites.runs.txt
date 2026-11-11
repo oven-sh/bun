@@ -7,8 +7,9 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
-# The next one: a file that mocks is imported under a query. Compiled does not compile such a file with the tests, and mock.module() in it throws: the test files that import it do not run.
-test/js/bun/test/mock/mock-module.test.ts: a module that mocks and is imported with a query mocks for every test file that imports it
+# The next two: a file that mocks is imported under a query. Compiled does not compile such a file with the tests, and mock.module() in it throws: the test files that import it do not run.
+test/js/bun/test/mock/mock-module.test.ts: a module that mocks and is imported with a query mocks for every test file that imports it: a CommonJS module
+test/js/bun/test/mock/mock-module.test.ts: a module that mocks and is imported with a query mocks for every test file that imports it: an ES module
 # These: the top-level code of a module makes a mock through a function of another file. Plain runs that module again for the next test file that imports it, and for the next run of --rerun-each. Compiled runs a body once. A test of the fixture fails for it.
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > is run again without a module whose function is handed its module object
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > is run again without a module whose function the JIT inlines into its body
@@ -27,6 +28,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks t
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload that ends in the call
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, below a constructor that has yet to return from super()
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module that is imported with a query
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module that the body of another module requires
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a module that is imported with a query
 test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function that another module of the test file made a global

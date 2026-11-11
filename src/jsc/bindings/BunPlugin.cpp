@@ -4284,29 +4284,31 @@ __attribute__((minsize)) static void addModulesWhoseBodyRuns(JSC::VM& vm, JSC::C
 {
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         JSC::CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock)
+        JSC::CallFrame* frame = visitor->callFrame();
+        bool isESModule = codeBlock && codeBlock->codeType() == JSC::ModuleCode;
+        // evaluateCommonJSModuleOnce() calls the body of a CommonJS module with (exports, require, module, __filename, __dirname).
+        auto* commonJSModule = codeBlock && !isESModule && frame->argumentCount() > 4 ? dynamicDowncast<Bun::JSCommonJSModule>(frame->uncheckedArgument(2)) : nullptr;
+        if (!isESModule && !commonJSModule)
             return WTF::IterationStatus::Continue;
         const JSC::SourceOrigin& sourceOrigin = codeBlock->ownerExecutable()->sourceOrigin();
         const URL& url = sourceOrigin.url();
         if (sourceOrigin.isNull() || !url.isValid() || !url.protocolIsFile())
             return WTF::IterationStatus::Continue;
-        if (codeBlock->codeType() == JSC::ModuleCode) {
+        if (isESModule) {
             // The key that the loader has the module under can end in a query, which the path of its file leaves out.
             auto* callee = visitor->callee().isCell() ? dynamicDowncast<JSC::JSCallee>(visitor->callee().asCell()) : nullptr;
             auto* environment = callee ? dynamicDowncast<JSC::JSModuleEnvironment>(callee->scope()) : nullptr;
             modules.add(environment ? environment->moduleRecord()->moduleKey().string() : url.fileSystemPath());
             return WTF::IterationStatus::Continue;
         }
-        // evaluateCommonJSModuleOnce() calls the body of a CommonJS module with its module object as `module`.
-        JSC::CallFrame* frame = visitor->callFrame();
-        auto* commonJSModule = frame->argumentCount() > 2 ? dynamicDowncast<Bun::JSCommonJSModule>(frame->uncheckedArgument(2)) : nullptr;
-        JSValue filename = commonJSModule ? commonJSModule->filename() : JSValue();
-        // Any function can be handed a module object: the body is the frame that runs that module's file. `file` is in the set already.
-        if (filename && filename.isString() && url.path() != file) {
-            String path = url.fileSystemPath();
-            if (asString(filename)->tryGetValue().data == path)
-                modules.add(WTF::move(path));
-        }
+        JSValue filename = commonJSModule->filename();
+        if (!filename || !filename.isString() || !frame->uncheckedArgument(3).isString())
+            return WTF::IterationStatus::Continue;
+        // Any function can be called so. The body gets the key of its module as `__filename`, and runs the file that the key names in front of its query.
+        String key = asString(filename)->tryGetValue().data;
+        String path = url.path() == file ? file : url.fileSystemPath();
+        if (asString(frame->uncheckedArgument(3))->tryGetValue().data == key && key.startsWith(path) && (key.length() == path.length() || key[path.length()] == '?'))
+            modules.add(WTF::move(key));
         return WTF::IterationStatus::Continue;
     });
 }

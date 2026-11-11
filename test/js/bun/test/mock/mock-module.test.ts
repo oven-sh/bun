@@ -7691,6 +7691,15 @@ describe.concurrent("a module whose top-level code mocks through a function of a
         args: viaPreload,
       },
     ],
+    [
+      "a function of a preload, from a CommonJS module that is imported with a query",
+      {
+        files: { ...preloaded(), "setup.cjs": setupInCommonJS },
+        loads: { wrapper: 1, setup: 2 },
+        head: `import "./setup.cjs?query";`,
+        args: viaPreload,
+      },
+    ],
   ])(
     "mocks for every test file that imports it: %s",
     async (_, { files, loads, head = `import "./setup";`, args = [] }) => {
@@ -7896,14 +7905,41 @@ describe.concurrent("a module whose top-level code mocks through a function of a
       viaPreload,
     );
   });
+
+  // The function of helper.cjs gets the module object of its own file, as the body of that file does.
+  test("leaves a CommonJS module loaded whose function is handed its module object for a hook of the test file", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        ...preloaded(),
+        "helper.cjs": `
+          const { join } = require("node:path");
+          ${count("helper")}
+          exports.self = module;
+          exports.mockDep = (exports, require, module) => {
+            globalThis.mockModule(join(__dirname, "dep.ts"), ${factory});
+          };
+        `,
+        ...testFiles(
+          `import { beforeAll } from "bun:test"; import helper from "./helper.cjs"; beforeAll(() => helper.mockDep(null, null, helper.self));`,
+          { wrapper: 1, helper: 1 },
+        ),
+      },
+      3,
+      viaPreload,
+    );
+  });
 });
 
 // The loader has such a module under a key that ends in the query, which the path of its file leaves out.
-test.concurrent(
-  "a module that mocks and is imported with a query mocks for every test file that imports it",
-  async () => {
+test.concurrent.each([
+  ["an ES module", "setup.ts", `import { mock } from "bun:test";`],
+  ["a CommonJS module", "setup.cjs", `const { mock } = require("bun:test");`],
+])(
+  "a module that mocks and is imported with a query mocks for every test file that imports it: %s",
+  async (_, setup, mock) => {
     const file = (mocks: boolean, loads: number) => `
-      ${mocks ? `import "./setup.ts?query";` : ""}
+      ${mocks ? `import "./${setup}?query";` : ""}
       import { expect, test } from "bun:test";
       test("the module", async () => {
         expect([(await import("./dep")).who(), globalThis.loads]).toEqual(${JSON.stringify([mocks ? "mock" : "real", loads])});
@@ -7912,8 +7948,8 @@ test.concurrent(
     await expectFixturesToPass(
       {
         "dep.ts": `export function who() { return "real"; }`,
-        "setup.ts": `
-          import { mock } from "bun:test";
+        [setup]: `
+          ${mock}
           globalThis.loads = (globalThis.loads ?? 0) + 1;
           mock.module("./dep.ts", () => ({ who: () => "mock" }));
         `,

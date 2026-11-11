@@ -3325,11 +3325,13 @@ struct ModulesOfTestFile {
     UncheckedKeyHashMap<String, Bun::JSCommonJSModule*> requiredUnder;
     // The wrapper of a require()d ES module isn't among the children of the module that required it first: only m_parent links the two.
     UncheckedKeyHashMap<Bun::JSCommonJSModule*, Vector<String, 1>> requiredFirstBy;
+    // No module of the require cache: then no `require` of an ES module has got anything that a pass could keep, and none is looked for.
+    bool hasRequiredModules { false };
 };
 
 // Calls `functor` with the key of each module that the ones registered under `key` are linked to: what the record imports, and what require() got for the module. A key may be null.
 template<typename Functor>
-static void forEachModuleLinkedFrom(Zig::GlobalObject* globalObject, const ModulesOfTestFile& modules, const RegisteredKeys& registeredKeys, const RequireKeys& requireKeys, const String& key, const Functor& functor)
+static void forEachModuleLinkedFrom(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const ModulesOfTestFile& modules, const RegisteredKeys& registeredKeys, const RequireKeys& requireKeys, const String& key, const Functor& functor)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3356,7 +3358,7 @@ static void forEachModuleLinkedFrom(Zig::GlobalObject* globalObject, const Modul
         }
     };
 
-    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key));
+    auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
     if (auto* record = entry ? entry->record() : nullptr) {
         functor(specifierOfUnwaitedModuleMockKey(key));
         for (auto& resolved : record->resolvedRequests().values())
@@ -3370,7 +3372,7 @@ static void forEachModuleLinkedFrom(Zig::GlobalObject* globalObject, const Modul
                 functor(imported->moduleKey().string());
 #endif
         }
-        if (auto* requirer = requirerOfESModule(vm, record)) {
+        if (auto* requirer = modules.hasRequiredModules ? requirerOfESModule(vm, record) : nullptr) {
             forEachRequired(requirer);
             RETURN_IF_EXCEPTION(scope, );
         }
@@ -3379,12 +3381,15 @@ static void forEachModuleLinkedFrom(Zig::GlobalObject* globalObject, const Modul
         forEachRequired(commonJSModule);
 }
 
-__attribute__((minsize)) static ModulesOfTestFile modulesOfTestFile(Zig::GlobalObject* globalObject, const RegisteredKeys& registeredKeys, const RequireKeys& requireKeys)
+// Not minsize, as the rest of the pass is: this walks every module that the file holds, once for each mock call that asks.
+static ModulesOfTestFile modulesOfTestFile(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const RegisteredKeys& registeredKeys, const RequireKeys& requireKeys)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& plugins = globalObject->onLoadPlugins;
     ModulesOfTestFile modules;
+    // A compiled file is no module of the require cache, and a requirer may still list it.
+    modules.hasRequiredModules = !requireKeys.isEmpty() || vm.hasCompiledCode();
     Vector<String> work;
     auto hold = [&](const String& key) {
         if (!key.isNull() && modules.held.add(key).isNewEntry)
@@ -3421,7 +3426,7 @@ __attribute__((minsize)) static ModulesOfTestFile modulesOfTestFile(Zig::GlobalO
 
     while (!work.isEmpty()) {
         String key = work.takeLast();
-        forEachModuleLinkedFrom(globalObject, modules, registeredKeys, requireKeys, key, hold);
+        forEachModuleLinkedFrom(globalObject, loader, modules, registeredKeys, requireKeys, key, hold);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return modules;
@@ -3599,7 +3604,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     std::optional<ModulesOfTestFile> ofTestFile;
     auto isHeld = [&](const String& module) {
         if (!ofTestFile)
-            ofTestFile = modulesOfTestFile(globalObject, registeredKeys, requireKeys);
+            ofTestFile = modulesOfTestFile(globalObject, loader, registeredKeys, requireKeys);
         return !scope.exception() && ofTestFile->held.contains(module);
     };
 
@@ -3702,7 +3707,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             RETURN_IF_EXCEPTION(scope, );
             if (wasHeld) {
                 Vector<String> linked;
-                forEachModuleLinkedFrom(globalObject, *ofTestFile, registeredKeys, requireKeys, key, [&](const String& module) {
+                forEachModuleLinkedFrom(globalObject, loader, *ofTestFile, registeredKeys, requireKeys, key, [&](const String& module) {
                     if (!module.isNull())
                         linked.append(module);
                 });

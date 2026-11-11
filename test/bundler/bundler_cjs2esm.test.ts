@@ -962,6 +962,54 @@ describe("bundler", () => {
       },
       run: { stdout: "true" },
     });
+    // tsc emits `export =` as the last statement, so a read that runs right
+    // after it still sees the first object. Bun emits `export =` in place.
+    itBundled("cjs2esm/LiveModuleExportsTypeScriptExportEqualsThenRead", {
+      todo: true,
+      files: {
+        "/entry.mjs": `import "./lib.cts"; console.log(globalThis.seen);`,
+        "/lib.cts": `function f() {} export = f; globalThis.seen = typeof module.exports;`,
+      },
+      run: { stdout: "object" },
+    });
+    // `var module = require("react")` becomes an import, and the wrapper then
+    // has no `module` parameter to print.
+    itBundled("cjs2esm/LiveModuleExportsWrapperWithoutModuleParameter", {
+      files: {
+        "/entry.mjs": `import lib from "./lib.cjs"; console.log(JSON.stringify(lib));`,
+        "/lib.cjs": `module.exports.a = 1;\nvar module = require("react");`,
+        "/node_modules/react/index.js": `exports.x = 1;`,
+        "/node_modules/react/package.json": `{ "name": "react", "version": "18.3.1", "main": "index.js" }`,
+      },
+      run: { stdout: `{"a":1}` },
+    });
+    // An ES module has no module object and nothing of it was lifted, so
+    // `module` stays unbound there, for a read as for an assignment.
+    for (const format of ["esm", "iife"] as const) {
+      itBundled(`cjs2esm/ModuleExportsInAnESModule${format === "iife" ? "Iife" : ""}`, {
+        format,
+        files: {
+          "/entry.mjs": `
+            import * as probeThenAssign from "./probe-then-assign.mjs";
+            import * as probe from "./probe.mjs";
+            globalThis.keep = [probeThenAssign, probe];
+            console.log(JSON.stringify(probeThenAssign.default), probeThenAssign.seen, probe.seen);
+          `,
+          "/probe-then-assign.mjs": `
+            const api = { v: 1 };
+            export default api;
+            export let seen;
+            try { seen = typeof module.exports; } catch (e) { seen = e.name; }
+            if (seen === "object") module.exports = api;
+          `,
+          "/probe.mjs": `
+            export let seen;
+            try { seen = typeof module.exports; } catch (e) { seen = e.name; }
+          `,
+        },
+        run: { stdout: `{"v":1} ReferenceError ReferenceError` },
+      });
+    }
     // The dev server's module format, for a dependency and for an entry point.
     for (const [name, entryPoints] of [
       ["Dependency", ["/entry.mjs"]],

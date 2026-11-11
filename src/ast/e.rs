@@ -235,8 +235,8 @@ impl Default for New {
 
 #[derive(Clone, Copy)]
 pub enum Special {
-    /// `module.exports` as written in a file that has a CommonJS module object,
-    /// the `exports_<file>` namespace in a file lifted to ESM.
+    /// `module.exports` as written, or the `exports_<file>` namespace in a
+    /// file whose CommonJS exports were lifted to ESM.
     ModuleExports,
     /// `import.meta.hot`
     HotEnabled,

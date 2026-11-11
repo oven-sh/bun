@@ -472,13 +472,10 @@ describe("operations and attributes of the web interfaces", () => {
     return { seen: stdout.startsWith("{") || stdout.startsWith("[") ? JSON.parse(stdout) : stdout, stderr, exitCode };
   }
 
-  test.concurrent("are configurable on every global interface", async () => {
+  test.concurrent("are configurable on every global interface, but for three that Bun reads by name", async () => {
     const script = `
       // Bun's own classes are no web interfaces.
       const classesOfBun = ["BuildError", "BuildMessage", "HTMLRewriter", "ResolveError", "ResolveMessage"];
-      // Bun's native code calls these two by name, so no program can replace them: Bun.readableStreamToFormData()
-      // calls the first, and console.log() of a FormData the second.
-      const calledByBun = ["FormData.from", "FormData.prototype.toJSON"];
       const locked = [];
       for (const name of Object.getOwnPropertyNames(globalThis)) {
         const constructor = globalThis[name];
@@ -489,13 +486,17 @@ describe("operations and attributes of the web interfaces", () => {
             const descriptor = Object.getOwnPropertyDescriptor(holder, key);
             // A constant is a number. It stays locked, and so does the prototype of a constructor.
             const isMember = key !== "prototype" && ("get" in descriptor || typeof descriptor.value === "function");
-            if (isMember && !descriptor.configurable && !calledByBun.includes(path + "." + key)) locked.push(path + "." + key);
+            if (isMember && !descriptor.configurable) locked.push(path + "." + key);
           }
         }
       }
-      console.log(JSON.stringify(locked));
+      console.log(JSON.stringify(locked.sort()));
     `;
-    expect(await seenBy(script)).toEqual({ seen: [], stderr: "", exitCode: 0 });
+    // No standard has these three, and Bun reads each by name, so no program can replace it.
+    // Bun.readableStreamToFormData() calls the first, and console.log() of a FormData the second. node:worker_threads
+    // reads the third from the Worker that it wraps, and routes the messages between threads by it.
+    const readByBun = ["FormData.from", "FormData.prototype.toJSON", "Worker.prototype.threadId"];
+    expect(await seenBy(script)).toEqual({ seen: readByBun, stderr: "", exitCode: 0 });
   });
 
   test.concurrent("can be redefined, deleted and put back", async () => {

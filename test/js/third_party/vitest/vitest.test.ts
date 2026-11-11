@@ -119,7 +119,9 @@ const vitestConfig = [
 // vitest resolves itself, its plugins, and the project's "vitest" import
 // through node_modules, so link the packages installed in test/node_modules
 // into the temporary project.
-function createVitestProject(files = { "src/math.ts": mathSource, "test/math.test.ts": mathTest }) {
+function createVitestProject(
+  files: Record<string, string> = { "src/math.ts": mathSource, "test/math.test.ts": mathTest },
+) {
   const dir = tempDir("vitest-project", {
     "package.json": JSON.stringify({ name: "vitest-fixture", private: true, type: "module" }),
     "vitest.config.ts": vitestConfig,

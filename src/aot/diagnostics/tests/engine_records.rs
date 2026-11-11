@@ -1,7 +1,7 @@
 use bun_ast::{Kind, Log};
 
 use super::super::Diagnostics;
-use super::super::engine_records::internal_error_text;
+use super::super::engine_records::{internal_error_text, package_with_slow_code};
 use super::{describe, kinds_and_texts, text, written};
 use crate::diagnostic_codes::Code;
 use crate::engine::{
@@ -146,6 +146,43 @@ fn engine_warning_prints_number_and_compiled_line() {
     let location = log.msgs[0].data.location.as_ref().expect("a location");
     assert_eq!(location.line_text.as_deref(), Some(&b"second;"[..]));
     assert_eq!((log.errors, log.warnings), (0, 1));
+}
+
+#[test]
+fn slow_code_is_counted_only_in_packages() {
+    let slow = UserDiagnosticKind::RegExpPatternNotConstant;
+    let texts = texts();
+    let package_of = |kind, location| {
+        let record = user_diagnostic(kind, location);
+        package_with_slow_code(&record, &texts).map(<[u8]>::to_vec)
+    };
+    assert_eq!(package_of(slow, at(DEPENDENCY, 0)), Some(b"b".to_vec()));
+    assert_eq!(package_of(slow, at(PROGRAM, 0)), None);
+    assert_eq!(package_of(slow, at(RUNTIME, 0)), None);
+    assert_eq!(package_of(slow, NO_LOCATION), None);
+    assert_eq!(package_of(WARNING, at(DEPENDENCY, 0)), None);
+    assert_eq!(package_of(ERROR, at(DEPENDENCY, 0)), None);
+}
+
+#[test]
+fn package_is_named_by_its_innermost_folder() {
+    let package_at = |path: &str| {
+        let texts = SourceTexts::new(vec![source(path, "x;\n", ModuleOrigin::Dependency)]);
+        let record = user_diagnostic(UserDiagnosticKind::RegExpPatternNotConstant, at(0, 0));
+        package_with_slow_code(&record, &texts)
+            .map(|name| String::from_utf8_lossy(name).into_owned())
+    };
+    assert_eq!(package_at("node_modules/b/b.js").as_deref(), Some("b"));
+    assert_eq!(
+        package_at("/p/node_modules/@scope/name/dist/x.js").as_deref(),
+        Some("@scope/name")
+    );
+    assert_eq!(
+        package_at("/p/node_modules/a/node_modules/b/i.js").as_deref(),
+        Some("b")
+    );
+    assert_eq!(package_at("/p/packages/linked/i.js"), None);
+    assert_eq!(package_at("/p/node_modules/file.js"), None);
 }
 
 #[test]

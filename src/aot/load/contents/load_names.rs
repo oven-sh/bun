@@ -1,26 +1,30 @@
+use std::cell::OnceCell;
 use std::sync::OnceLock;
 
 use bun_ast::Target;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, CommonJsVariable, Decl, FnOwner, Parent, SymbolId,
+};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue, MadeByCall};
 use bun_sema::hir::{
-    BinOp, Branches, CallId, ExprId, ExprKind, File, FnId, FnKind, ImportId, PropId, PropKey,
-    PropKind, Span, StmtKind,
+    BinOp, Branches, CallId, ExprId, ExprKind, File, FnId, FnKind, ImportId, PatKind, PropId,
+    PropKey, PropKind, Span, StmtKind,
 };
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, ends_in_call_that_reads_frame_of_caller,
-    find_names_exported_for, find_parameter_named, find_values_of_parameter, find_written_arms,
+    ExportedNames, ImportSite, ImportSiteKind, ImportSpecifier,
+    ends_in_call_that_reads_frame_of_caller, find_names_exported_for, find_parameter_named,
+    find_values_of_parameter, find_written_arms, gives_first_argument_to_own_require,
     is_name_read_by_transpiler, is_name_written_out,
 };
 use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{
     CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
 };
-use bun_sema::util::{FxHashMap, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 use super::entry_points::is_relative_path;
@@ -41,7 +45,7 @@ pub(crate) struct NamedModule {
     pub module: RuntimeModule,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct LoadUnderParameter {
     pub property: Atom,
     pub place: u32,
@@ -53,6 +57,7 @@ pub(crate) struct TextPassedToProperty {
     pub property: Atom,
     pub place: u32,
     pub text: Atom,
+    pub loaded_at: Option<u32>,
 }
 
 #[derive(Default)]
@@ -71,10 +76,13 @@ pub(crate) struct NamedLoads {
     pub unknown_names_at: Vec<u32>,
     pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub written_arms_of_unknown_names: Vec<(Atom, bool)>,
+    pub guessed_arms: Vec<Atom>,
+    pub arms_of_makers_called_first: Vec<Atom>,
     pub files_missing_at_build_at: Vec<u32>,
     pub data_missing_at_build_at: Vec<u32>,
     pub under_parameters: Vec<LoadUnderParameter>,
     pub texts_passed_to_properties: Vec<TextPassedToProperty>,
+    pub whole_exports_at: Option<u32>,
 }
 
 struct LoadsThroughImportedLoaders {
@@ -687,72 +695,176 @@ pub(super) fn is_written_as_value(request: &FinishedFile<'_, '_>, mut expression
     }
 }
 
-fn find_property_written_for(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<Atom> {
-    let kind = hir.runtime_function_kind(function);
-    let value = match (kind, bound.fns[function.idx()].owner) {
-        (FnKind::Method, FnOwner::Member(member)) => return hir[member].key.name(),
-        (FnKind::Expr | FnKind::Arrow | FnKind::Method, FnOwner::Expr(value)) => value,
-        _ => return None,
-    };
-    match bound.parent_of_expr(value) {
-        Parent::Prop(property) if hir[property].kind != PropKind::Spread => {
-            hir[property].key.name()
-        }
-        Parent::MemberInit(member) => hir[member].key.name(),
-        Parent::Expr(above) => match hir[above].kind {
-            ExprKind::Assign {
-                op: None,
-                target,
-                value: assigned,
-            } if assigned == value => match hir[hir.skip_type_assertions(target)].kind {
-                ExprKind::Dot { name, .. } => Some(name),
-                _ => None,
+fn push_properties_that_hold(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mut value: ExprId,
+    properties: &mut SmallVec<[Atom; 2]>,
+) {
+    loop {
+        let (name, above) = match bound.parent_of_expr(value) {
+            Parent::Prop(property) if hir[property].kind != PropKind::Spread => {
+                (hir[property].key.name(), None)
+            }
+            Parent::MemberInit(member) => (hir[member].key.name(), None),
+            Parent::Expr(above) => match hir[above].kind {
+                ExprKind::Assign {
+                    op: None,
+                    target,
+                    value: assigned,
+                } if assigned == value => {
+                    let name = match hir[hir.skip_type_assertions(target)].kind {
+                        ExprKind::Dot { name, .. } => Some(name),
+                        _ => None,
+                    };
+                    (name, Some(above))
+                }
+                _ => return,
             },
-            _ => None,
-        },
-        _ => None,
+            _ => return,
+        };
+        if let Some(name) = name
+            && !properties.contains(&name)
+        {
+            properties.push(name);
+        }
+        let Some(above) = above else {
+            return;
+        };
+        value = above;
     }
 }
 
-fn find_loads_under_parameter(
+fn find_parameter_that_names_load(
     request: &FinishedFile<'_, '_>,
     site: &ImportSite,
-) -> SmallVec<[LoadUnderParameter; 2]> {
-    let (hir, bound) = (request.hir, request.bound);
+) -> Option<(FnId, u32, bool)> {
     let requires = matches!(
         site.kind,
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
     );
     let loads = requires || matches!(site.kind, ImportSiteKind::ImportCall(_));
     if !loads || site.specifier != ImportSpecifier::Unknown {
-        return SmallVec::new();
+        return None;
     }
-    let name = hir.skip_type_assertions(site.specifier_node);
-    let Some((function, place)) = find_parameter_named(hir, bound, name) else {
+    let name = request.hir.skip_type_assertions(site.specifier_node);
+    let (function, place) = find_parameter_named(request.hir, request.bound, name)?;
+    Some((function, place as u32, requires))
+}
+
+fn find_loads_under_parameter(
+    request: &FinishedFile<'_, '_>,
+    site: &ImportSite,
+    exported_names: &OnceCell<ExportedNames>,
+    written_names: &OnceCell<FxHashMap<Atom, Vec<ExprId>>>,
+) -> SmallVec<[LoadUnderParameter; 2]> {
+    let (hir, bound) = (request.hir, request.bound);
+    let Some((function, place, requires)) = find_parameter_that_names_load(request, site) else {
         return SmallVec::new();
     };
     let find_written = |written: Atom| -> Vec<ExprId> {
-        let all = (0..hir.exprs.len() as u32).map(ExprId);
-        all.filter(|&it| matches!(hir[it].kind, ExprKind::Ident(name) if name == written))
-            .collect()
+        let all = written_names.get_or_init(|| {
+            let mut all: FxHashMap<Atom, Vec<ExprId>> = FxHashMap::default();
+            for (expression, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
+                if let ExprKind::Ident(name) = node.kind {
+                    all.entry(name).or_default().push(expression);
+                }
+            }
+            all
+        });
+        all.get(&written).cloned().unwrap_or_default()
     };
-    let mut properties = find_names_exported_for(hir, bound, function, &find_written);
-    if let Some(property) = find_property_written_for(hir, bound, function)
-        && !properties.contains(&property)
-    {
-        properties.push(property);
+    let exported = exported_names.get_or_init(|| ExportedNames::new(hir, bound));
+    let mut properties = find_names_exported_for(hir, bound, exported, function, &find_written);
+    let kind = hir.runtime_function_kind(function);
+    match (kind, bound.fns[function.idx()].owner) {
+        (FnKind::Method, FnOwner::Member(member)) => {
+            if let Some(name) = hir[member].key.name()
+                && !properties.contains(&name)
+            {
+                properties.push(name);
+            }
+        }
+        (FnKind::Expr | FnKind::Arrow | FnKind::Method, FnOwner::Expr(value)) => {
+            push_properties_that_hold(hir, bound, value, &mut properties);
+        }
+        _ => {}
     }
     let properties = properties.into_iter();
     properties
         .map(|property| LoadUnderParameter {
             property,
-            place: place as u32,
+            place,
             requires,
         })
         .collect()
 }
 
-fn find_property_called(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Option<Atom> {
+fn find_symbol_of_function(request: &FinishedFile<'_, '_>, function: FnId) -> Option<SymbolId> {
+    let (hir, bound) = (request.hir, request.bound);
+    if hir[function].kind == FnKind::Decl {
+        return bound.declared_symbol(Decl::Fn(function)).some();
+    }
+    let FnOwner::Expr(value) = bound.fns[function.idx()].owner else {
+        return None;
+    };
+    let Parent::VarInit(declaration) = bound.parent_of_expr(value) else {
+        return None;
+    };
+    let pattern = hir[declaration].pat;
+    match (hir[pattern].kind, bound.initialized_binding(pattern)) {
+        (PatKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
+        _ => None,
+    }
+}
+
+fn find_site_of_require(request: &FinishedFile<'_, '_>, value: ExprId) -> Option<u32> {
+    let value = request.hir.skip_type_assertions(value);
+    let site = request.analysis.import_site_of_call(value)?;
+    let requires = matches!(
+        request.analysis.import_sites[site].kind,
+        ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
+    );
+    requires.then_some(site as u32)
+}
+
+fn find_initial_value(request: &FinishedFile<'_, '_>, name: ExprId) -> Option<BindingInitializer> {
+    let (hir, bound) = (request.hir, request.bound);
+    match (hir[name].kind, bound.binding(name)) {
+        (ExprKind::Ident(_), Binding::Symbol(symbol)) if bound.is_stable_binding(symbol) => {
+            Some(bound.binding_initializer(hir, symbol))
+        }
+        _ => None,
+    }
+}
+
+fn find_site_behind(request: &FinishedFile<'_, '_>, value: ExprId) -> Option<u32> {
+    let (hir, bound, analysis) = (request.hir, request.bound, request.analysis);
+    let value = hir.skip_type_assertions(value);
+    if let (ExprKind::Ident(_), Binding::Symbol(symbol)) = (hir[value].kind, bound.binding(value)) {
+        let mut declarations = bound.symbol(symbol).decls.iter();
+        let import = declarations.find_map(|&declaration| match declaration {
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
+                Some(ImportSiteKind::Import(import))
+            }
+            Decl::ImportEquals(import) => Some(ImportSiteKind::ImportEquals(import)),
+            _ => None,
+        });
+        if let Some(import) = import {
+            return analysis.import_site_index(import).map(|site| site as u32);
+        }
+    }
+    match find_initial_value(request, value) {
+        Some(BindingInitializer::Expression(held)) => find_site_of_require(request, held),
+        _ => find_site_of_require(request, value),
+    }
+}
+
+fn find_properties_called(
+    request: &FinishedFile<'_, '_>,
+    callee: ExprId,
+) -> SmallVec<[(Atom, Option<u32>); 2]> {
+    let (hir, bound, analysis) = (request.hir, request.bound, request.analysis);
     let mut callee = hir.skip_type_assertions(callee);
     if let ExprKind::Binary {
         op: BinOp::Comma,
@@ -762,18 +874,100 @@ fn find_property_called(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Op
     {
         callee = hir.skip_type_assertions(right);
     }
-    match (hir[callee].kind, bound.binding(callee)) {
-        (ExprKind::Dot { name, .. }, _) => Some(name),
-        (ExprKind::Ident(_), Binding::Symbol(symbol)) => {
-            let mut declarations = bound.symbol(symbol).decls.iter();
-            declarations.find_map(|&declaration| match declaration {
-                Decl::ImportSpec(specifier) => Some(hir[specifier].imported),
-                Decl::ImportDefault(_) => Some(known::default),
-                _ => None,
-            })
-        }
-        _ => None,
+    if let Some(site) = find_site_of_require(request, callee) {
+        return smallvec![(known::exports, Some(site))];
     }
+    if let ExprKind::Dot { obj, name, .. } = hir[callee].kind {
+        let mut called: SmallVec<[(Atom, Option<u32>); 2]> =
+            smallvec![(name, find_site_behind(request, obj))];
+        if name == known::default
+            && let Some(BindingInitializer::Expression(held)) =
+                find_initial_value(request, hir.skip_type_assertions(obj))
+        {
+            let held = hir.skip_type_assertions(held);
+            let handed = match hir[held].kind {
+                ExprKind::Call(call) => hir.ids(hir[call].args).next(),
+                _ => None,
+            };
+            let site = find_site_of_require(request, held)
+                .or_else(|| find_site_of_require(request, handed?));
+            called.extend(site.map(|site| (known::exports, Some(site))));
+        }
+        return called;
+    }
+    let (ExprKind::Ident(_), Binding::Symbol(symbol)) = (hir[callee].kind, bound.binding(callee))
+    else {
+        return SmallVec::new();
+    };
+    for &declaration in bound.symbol(symbol).decls.iter() {
+        let (import, name) = match declaration {
+            Decl::ImportSpec(specifier) => (
+                ImportSiteKind::Import(hir[specifier].import),
+                Some(hir[specifier].imported),
+            ),
+            Decl::ImportDefault(import) => (ImportSiteKind::Import(import), Some(known::default)),
+            Decl::ImportEquals(import) => (ImportSiteKind::ImportEquals(import), None),
+            _ => continue,
+        };
+        let site = analysis.import_site_index(import).map(|site| site as u32);
+        let by_name = name.map(|name| (name, site));
+        let is_whole = name.is_none_or(|name| name == known::default);
+        let whole = site.filter(|_| is_whole);
+        let whole = whole.map(|site| (known::exports, Some(site)));
+        return by_name.into_iter().chain(whole).collect();
+    }
+    match find_initial_value(request, callee) {
+        Some(BindingInitializer::PatternProperty { source, path }) => {
+            let site = find_site_behind(request, source);
+            let called = path.last().zip(site);
+            let called = called.map(|(&name, site)| (name, (path.len() == 1).then_some(site)));
+            called.into_iter().collect()
+        }
+        Some(BindingInitializer::Expression(value)) => {
+            let value = hir.skip_type_assertions(value);
+            match (find_site_of_require(request, value), hir[value].kind) {
+                (Some(site), _) => smallvec![(known::exports, Some(site))],
+                (None, ExprKind::Dot { obj, name, .. }) => {
+                    let site = find_site_behind(request, obj);
+                    site.map(|site| (name, Some(site))).into_iter().collect()
+                }
+                (None, _) => SmallVec::new(),
+            }
+        }
+        _ => SmallVec::new(),
+    }
+}
+
+fn stands_at_top_in_front_of_imports(request: &FinishedFile<'_, '_>, call: ExprId) -> bool {
+    let (hir, bound, analysis) = (request.hir, request.bound, request.analysis);
+    let (statement, stands_alone) = match bound.parent_of_expr(call) {
+        Parent::Stmt(statement) => (statement, matches!(hir[statement].kind, StmtKind::Expr(_))),
+        Parent::VarInit(declaration) => (bound.var_stmt[declaration.idx()], true),
+        _ => return false,
+    };
+    stands_alone
+        && bound.parent_of_stmt(statement) == Parent::File
+        && !analysis.decisions.is_dead_expr(call)
+        && analysis.import_sites.iter().all(|site| match site.kind {
+            ImportSiteKind::ImportCall(import) => hir[call].pos < hir[import].pos,
+            _ => true,
+        })
+}
+
+fn is_made_with_own_require(request: &FinishedFile<'_, '_>, callee: ExprId) -> bool {
+    let (hir, bound) = (request.hir, request.bound);
+    let made = match find_initial_value(request, callee) {
+        Some(BindingInitializer::Expression(value)) => hir.skip_type_assertions(value),
+        _ => callee,
+    };
+    let ExprKind::Call(call) = hir[made].kind else {
+        return false;
+    };
+    hir.ids(hir[call].args).any(|it| {
+        let it = hir.skip_type_assertions(it);
+        matches!(hir[it].kind, ExprKind::Ident(_))
+            && bound.binding(it) == Binding::CommonJs(CommonJsVariable::Require)
+    })
 }
 
 fn add_names_in(
@@ -855,6 +1049,20 @@ impl ContentsScan<'_, '_> {
         if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
             return;
         }
+        if let ImportSiteKind::Require(value) = site.kind
+            && let Parent::Expr(above) = request.bound.parent_of_expr(value)
+            && let ExprKind::Assign {
+                op: None,
+                target,
+                value: stored,
+            } = request.hir[above].kind
+            && stored == value
+            && let ExprKind::Dot { obj, name, .. } = request.hir[target].kind
+            && name == known::exports
+            && request.bound.binding(obj) == Binding::CommonJs(CommonJsVariable::Module)
+        {
+            names.whole_exports_at = Some(index as u32);
+        }
         names.may_go_to_loader_of_host |= !matches!(
             request.resolutions[index],
             SiteResolution::Constant(
@@ -913,30 +1121,43 @@ impl ContentsScan<'_, '_> {
         names.loads_by_unknown_name |= may_name_library_module && !is_path_alone;
         names.loads_by_path_alone |= is_path_alone;
         names.loads_by_unknown_path |= argument_kind == LoadArgument::ModuleOrPath;
-        (names.under_parameters).extend(find_loads_under_parameter(request, site));
+        (names.under_parameters).extend(find_loads_under_parameter(
+            request,
+            site,
+            &self.exported_names,
+            &self.written_names,
+        ));
         let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
-        (names.written_arms_of_unknown_names).extend(arms.iter().map(|&arm| (arm, requires)));
+        let known = analysis.known_load_names_at(name);
+        let known = known.filter(|it| !arms.contains(it));
+        let arms = arms.iter().copied().chain(known);
+        (names.written_arms_of_unknown_names).extend(arms.map(|arm| (arm, requires)));
     }
 
     fn look_at_texts_passed(&mut self, call: CallId) {
         let request = self.request;
-        let (hir, bound) = (request.hir, request.bound);
-        let Some(property) = find_property_called(hir, bound, hir[call].callee) else {
-            return;
-        };
+        let hir = request.hir;
+        let mut called: Option<SmallVec<[(Atom, Option<u32>); 2]>> = None;
         let is_spread = |it: &ExprId| matches!(hir[*it].kind, ExprKind::Spread(_));
         let arguments = hir.ids(hir[call].args).take_while(|it| !is_spread(it));
         for (place, argument) in arguments.enumerate() {
             let Some(text) = constant_text(request, hir.skip_type_assertions(argument)) else {
                 continue;
             };
+            let called =
+                called.get_or_insert_with(|| find_properties_called(request, hir[call].callee));
             let passed = &mut self.found.names.texts_passed_to_properties;
-            passed.push(TextPassedToProperty {
-                property,
-                place: place as u32,
-                text,
-            });
+            passed.extend(
+                called
+                    .iter()
+                    .map(|&(property, loaded_at)| TextPassedToProperty {
+                        property,
+                        place: place as u32,
+                        text,
+                        loaded_at,
+                    }),
+            );
         }
     }
 
@@ -957,6 +1178,18 @@ impl ContentsScan<'_, '_> {
             let has_unknown_name = add_names_in(self, argument, true);
             self.found.names.loads_by_unknown_name |= has_unknown_name;
             return;
+        }
+        if is_made_with_own_require(request, callee)
+            && let Some(text) = constant_text(request, hir.skip_type_assertions(argument))
+        {
+            let decisions = &analysis.decisions;
+            let is_proven = stands_at_top_in_front_of_imports(request, expression)
+                && gives_first_argument_to_own_require(hir, bound, decisions, hir[call]);
+            let names = &mut self.found.names;
+            match is_proven {
+                true => names.arms_of_makers_called_first.push(text),
+                false => names.guessed_arms.push(text),
+            }
         }
         match resolve_loader_alias(hir, bound, &analysis.decisions, callee) {
             Some(LoaderAlias::Local) => {
@@ -1025,16 +1258,107 @@ impl ContentsScan<'_, '_> {
         self.found.names.written_as_values.extend(module);
     }
 
+    fn look_at_mentions_of_functions_that_load(&mut self) {
+        let request = self.request;
+        let (hir, bound) = (request.hir, request.bound);
+        let decisions = &request.analysis.decisions;
+        let names = &mut self.found.names;
+        let mut loads: FxHashMap<SymbolId, SmallVec<[(u32, bool); 1]>> = FxHashMap::default();
+        for &index in &names.unknown_names_at {
+            let site = &request.analysis.import_sites[index as usize];
+            if let Some((function, place, requires)) = find_parameter_that_names_load(request, site)
+                && let Some(symbol) = find_symbol_of_function(request, function)
+            {
+                let of_symbol = loads.entry(symbol).or_default();
+                if !of_symbol.contains(&(place, requires)) {
+                    of_symbol.push((place, requires));
+                }
+            }
+        }
+        if loads.is_empty() {
+            return;
+        }
+        let mut listed: FxHashSet<LoadUnderParameter> =
+            names.under_parameters.iter().copied().collect();
+        for mention in (0..hir.exprs.len() as u32).map(ExprId) {
+            if !matches!(hir[mention].kind, ExprKind::Ident(_))
+                || !bound.is_evaluated_ident(mention)
+                || decisions.is_dead_expr(mention)
+            {
+                continue;
+            }
+            let Binding::Symbol(symbol) = bound.binding(mention) else {
+                continue;
+            };
+            let Some(loads) = loads.get(&symbol) else {
+                continue;
+            };
+            if let Parent::Expr(above) = bound.parent_of_expr(mention)
+                && let ExprKind::Call(call) = hir[above].kind
+                && hir[call].callee == mention
+            {
+                for &(place, requires) in loads {
+                    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+                    let mut passed = hir.ids(hir[call].args).take(place as usize + 1);
+                    if passed.clone().any(is_spread) {
+                        continue;
+                    }
+                    let text = passed
+                        .nth(place as usize)
+                        .and_then(|it| constant_text(request, hir.skip_type_assertions(it)));
+                    (names.written_arms_of_unknown_names).extend(text.map(|it| (it, requires)));
+                }
+                continue;
+            }
+            let mut properties: SmallVec<[Atom; 2]> = SmallVec::new();
+            push_properties_that_hold(hir, bound, mention, &mut properties);
+            for &(place, requires) in loads {
+                for &property in &properties {
+                    let load = LoadUnderParameter {
+                        property,
+                        place,
+                        requires,
+                    };
+                    if listed.insert(load) {
+                        names.under_parameters.push(load);
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn finish_names(&mut self) {
+        self.look_at_mentions_of_functions_that_load();
         let (request, builtins, input) = (self.request, self.builtins, self.input);
         let atoms = request.atoms;
         let names = &mut self.found.names;
         names.loads_by_unknown_name |= builtins.loads_unknown_modules();
         names.loads_by_unknown_path |=
             builtins.hands_on_loader_of_paths() || !names.files_missing_at_build_at.is_empty();
-        for &(name, _) in request.analysis.names_out_of_data_files {
+        for &(name, ..) in request.analysis.names_from_data_files {
             let module = find_module(input, atoms, name);
             names.written_as_values.extend(module);
+        }
+        let (bound, decisions) = (request.bound, &request.analysis.decisions);
+        let mut stores = bound.runtime.unbound_name_stores().iter();
+        let stores_require = stores.any(|&(target, _)| {
+            bound.binding(target) == Binding::CommonJs(CommonJsVariable::Require)
+                && !decisions.is_dead_expr(target)
+        });
+        if stores_require {
+            for site in request.analysis.import_sites {
+                if !matches!(site.kind, ImportSiteKind::Require(call) if !decisions.is_dead_expr(call))
+                {
+                    continue;
+                }
+                let written = request.analysis.alternatives_of(&site.specifier).iter();
+                let written = written.filter_map(|it| match *it {
+                    ImportSpecifier::Constant(text) => Some(text),
+                    _ => None,
+                });
+                (names.guessed_arms)
+                    .extend(written.filter(|&it| !is_relative_path(atoms.bytes(it))));
+            }
         }
         sort_named_modules(&mut names.modules, atoms);
         sort_modules(&mut names.written_as_values);

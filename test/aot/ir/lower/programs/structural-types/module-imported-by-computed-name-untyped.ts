@@ -148,7 +148,7 @@ export const count = "texts";
 
 // GENERATED: sum plusOne load Holder all
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: v1 = PropGet v0 key="x"
 // CHECK-NEXT: v2 = PropGet v0 key="y"
@@ -157,7 +157,7 @@ export const count = "texts";
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="plusOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: v1 = Integer integer=1
 // CHECK-NEXT: v2 = Add v0, v1
@@ -165,7 +165,7 @@ export const count = "texts";
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="load"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = String string="./kinds/"
 // CHECK-NEXT: v2 = Add v1, v0
@@ -194,30 +194,29 @@ export const count = "texts";
 // CHECK-NEXT: v11 = ImportModule module=[[m_8]] referrer=[[m_0]]
 // CHECK-NEXT: Jump -> next b9(v11)
 // CHECK-NEXT: b8():
-// CHECK-NEXT: v12 = ImportDynamic v4 referrer=[[m_0]]
+// CHECK-NEXT: v12 = ImportDynamic v4 referrer=[[m_0]] [namesNoLibraryModule]
 // CHECK-NEXT: Jump -> next b9(v12)
 // CHECK-NEXT: b9(v13):
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]], v2: number):
 // CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_9]]
 // CHECK-NEXT: v4 = NewObject v3 layout=[[L_9]]
 // CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]]}
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_10]]
-// CHECK-NEXT: PropSet v5, v1 key="p"
-// CHECK-NEXT: PropSet v5, v2 key="n"
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(v5)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: Jump -> next b2(v11)
-// CHECK-NEXT: b2(v12):
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: PropDefine v5, v1 key="p"
+// CHECK-NEXT: PropDefine v5, v2 key="n"
+// CHECK-NEXT: v8 = Undefined
+// CHECK-NEXT: v9 = TypeTest v8 testedType=object
+// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2(v5)
+// CHECK-NEXT: b1(v10):
+// CHECK-NEXT: Jump -> next b2(v10)
+// CHECK-NEXT: b2(v11):
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="all"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_9]]} results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_9]]} results=[{type=number}] {
 // CHECK-NEXT: b0(v0: [[L_9]]):
 // CHECK-NEXT: v1 = PropGet v0 key="p"
 // CHECK-NEXT: v2 = PropGet v1 key="x"

@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub mod build_rows;
 pub mod obfuscation_map;
 
 mod allocations;
@@ -23,11 +25,11 @@ pub(super) mod testing;
 mod wording;
 
 #[cfg(not(test))]
-use bun_aot_interface::report::message;
+use bun_aot_interface::report::{build_rows, message};
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_trim::{Decision, UsedFeatures};
 
-pub use self::entry::{EntryNote, ReportEntry, to_messages};
+pub use self::entry::{ReportEntry, to_messages};
 pub(crate) use self::file_counts::count_files;
 pub use self::levels::{
     AccessColumn, CostCounts, LevelCounts, ProgramTotals, SiteTotals, compute_totals,
@@ -36,7 +38,7 @@ pub use self::message::{
     ReportMessage, add_messages_to_log, is_json_report, is_message_report, write_lines,
 };
 pub use self::source_texts::{ModuleLocator, ModuleOrigin, ModuleSource, SourceTexts};
-pub use self::summary::{write_summary, write_untyped_note};
+pub use self::summary::{write_developer_options, write_summary};
 use crate::engine::EngineResult;
 use crate::ir::generated::ReportSet;
 use crate::statistics::Statistics;
@@ -51,25 +53,13 @@ pub struct ReportInput<'a> {
     pub decision: Option<&'a Decision>,
 }
 
-pub const CAUSE_FAMILIES: ExplainSet =
-    ExplainSet::ONLY_UNKNOWN_CODE.union(ExplainSet::ONLY_UNPROVEN_TYPE);
-
 #[optimize(size)]
 pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry> {
-    let families = kinds & CAUSE_FAMILIES;
     let mut entries = Vec::new();
-
-    if !families.is_empty() && !kinds.intersects(ExplainSet::TEXT | ExplainSet::JSON) {
-        causes::collect_list(input, families, &mut entries);
-    }
-    if kinds.contains(ExplainSet::TEXT) {
-        causes::collect_text(input, families, &mut entries);
-        summary::collect_details(input, &mut entries);
-    }
-    if kinds.contains(ExplainSet::JSON) {
-        causes::collect_json(input, families, &mut entries);
-    }
-    let collectors: [(ExplainSet, fn(&ReportInput<'_>, &mut Vec<ReportEntry>)); 6] = [
+    let collectors: [(ExplainSet, fn(&ReportInput<'_>, &mut Vec<ReportEntry>)); 9] = [
+        (ExplainSet::TEXT, causes::collect_text),
+        (ExplainSet::TEXT, summary::collect_details),
+        (ExplainSet::JSON, causes::collect_json),
         (ExplainSet::CHECKS, guards::collect_text),
         (ExplainSet::CHECKS_JSON, guards::collect_json),
         (ExplainSet::RUNTIME_USE, runtime_use::collect),
@@ -87,7 +77,7 @@ pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<Report
 
 pub(crate) fn engine_reports_for(explain: ExplainSet) -> ReportSet {
     let mut reports = ReportSet::default();
-    if explain.intersects(ExplainSet::TEXT | ExplainSet::JSON | CAUSE_FAMILIES) {
+    if explain.intersects(ExplainSet::TEXT | ExplainSet::JSON) {
         reports |= ReportSet::FLOW | ReportSet::ACCESS_COUNTS;
     }
     if explain.intersects(ExplainSet::CHECKS | ExplainSet::CHECKS_JSON | ExplainSet::FORMS) {
@@ -110,9 +100,9 @@ mod tests {
     use super::testing::{LINE_1_COLUMN_5, PROGRAM, ReportFixture};
     use super::*;
     use crate::engine::testing::ResultRecords;
-    use crate::engine::{AccessRecord, SourceLocation, TypeTestRecord, Witness};
+    use crate::engine::{AccessRecord, SourceLocation, TypeTestRecord};
     use crate::ir::generated::{
-        AccessCost, AccessKind, IllTypedCause, KnowledgeLevel, TypeTestFailure, UnprovenCause,
+        AccessCost, AccessKind, KnowledgeLevel, TypeTestFailure, UnprovenCause,
     };
     use crate::ir::ids::ABSENT_WORD;
 
@@ -120,38 +110,28 @@ mod tests {
         module: PROGRAM,
         position: LINE_1_COLUMN_5,
     };
-    const WITNESS: Witness = Witness {
-        function: ABSENT_WORD,
-        value: ABSENT_WORD,
+    const OPERATOR_ON_UNKNOWN_VALUE: &[AccessRecord] = &[AccessRecord {
         location: PLACE,
-    };
-    const READ_OUT_OF_UNTYPED_COLLECTION: &[AccessRecord] = &[AccessRecord {
-        location: PLACE,
-        kind: AccessKind::Read,
+        kind: AccessKind::Arithmetic,
         level: KnowledgeLevel::Unknown,
-        cause: UnprovenCause::UnprovenContents,
+        cause: UnprovenCause::Untracked,
         layout: ABSENT_WORD,
         copies: 1,
-        witness: WITNESS,
         function: ABSENT_WORD,
-        ill_typed_cause: IllTypedCause::None,
         cost: AccessCost::ByName,
         loop_depth: 0,
     }];
     const GUARD: &[TypeTestRecord] = &[TypeTestRecord {
         location: PLACE,
         function: ABSENT_WORD,
-        failure: TypeTestFailure::Leaves,
+        failure: TypeTestFailure::ExitsToSlowVersion,
         copies: 1,
-        cause: UnprovenCause::UnprovenContents,
-        ill_typed_cause: IllTypedCause::None,
         layout: ABSENT_WORD,
-        witness: WITNESS,
     }];
 
     fn collected_kinds(kinds: ExplainSet) -> Vec<ExplainSet> {
         let fixture = ReportFixture::new(ResultRecords {
-            accesses: READ_OUT_OF_UNTYPED_COLLECTION,
+            accesses: OPERATOR_ON_UNKNOWN_VALUE,
             type_tests: GUARD,
             ..ResultRecords::default()
         });
@@ -176,33 +156,6 @@ mod tests {
                 ExplainSet::STATISTICS,
             ]
         );
-    }
-
-    #[test]
-    fn families_alone_list_their_causes() {
-        assert_eq!(
-            collected_kinds(ExplainSet::ONLY_UNPROVEN_TYPE),
-            [ExplainSet::ONLY_UNPROVEN_TYPE]
-        );
-        assert_eq!(
-            collected_kinds(CAUSE_FAMILIES),
-            [ExplainSet::ONLY_UNPROVEN_TYPE]
-        );
-        assert!(collected_kinds(ExplainSet::ONLY_UNKNOWN_CODE).is_empty());
-        assert_eq!(
-            collected_kinds(ExplainSet::ONLY_UNPROVEN_TYPE | ExplainSet::FORMS),
-            [ExplainSet::ONLY_UNPROVEN_TYPE, ExplainSet::FORMS]
-        );
-    }
-
-    #[test]
-    fn families_beside_text_or_json_only_filter_it() {
-        for report in [ExplainSet::TEXT, ExplainSet::JSON] {
-            assert_eq!(
-                collected_kinds(report | ExplainSet::ONLY_UNPROVEN_TYPE),
-                [report]
-            );
-        }
     }
 
     #[test]

@@ -1,15 +1,17 @@
-use super::answers::{CheckedType, GaveUp, MemberLookup, QueryLimit};
+use super::answers::{CheckedType, ClassRef, GaveUp, MemberLookup, QueryLimit};
 use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
-use super::queries::Queries;
+use super::queries::{GivenProduct, Queries};
 use super::type_identity::ObjectOrigin;
+use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
 use crate::check::root_declaration;
 use crate::check::shape::PropertyHolder;
 use crate::hir::{
-    self, BinOp, CallId, Chain, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind,
-    MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
+    self, BinOp, CallId, Chain, ClassId, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId,
+    FnKind, MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
+    VarKind,
 };
 use crate::program::{FileId, FileRole};
 use crate::session::vec_from_iter_in;
@@ -19,7 +21,7 @@ use crate::types::{
 use crate::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::SmallVec;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -27,6 +29,7 @@ pub(super) enum Subject {
     Binding(SymbolId),
     Pattern(PatId),
     This(FnId),
+    Field(u32),
     Result(FnId),
     Expression(ExprId),
     Number(SymbolId),
@@ -1039,6 +1042,14 @@ fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if Rc::ptr_eq(own, other) || (walk.is_out_of_budget() && !walk.looks_at_every_use_of(own)) {
         return;
     }
+    walk.levels_of_parts_entered += 1;
+    if !walk.merges_by_what_is_remembered(own, other) {
+        merge_part_by_part(own, walk, other);
+    }
+    walk.levels_of_parts_entered -= 1;
+}
+
+fn merge_part_by_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if !own.facts.contains(other.facts)
         || other.arms.list.iter().any(|&arm| !own.arms.contains(arm))
     {
@@ -1116,6 +1127,59 @@ struct Walk {
     set_aside: Vec<SubjectInProgress>,
     numbers_listed: Option<Subjects>,
     merges_member_by_member: bool,
+    passed_on: PassedOn,
+    levels_of_parts_entered: u32,
+    remembered: Rc<RefCell<PartsRemembered>>,
+}
+
+#[derive(Default)]
+pub(super) struct PartsRemembered {
+    counts: FxHashMap<*const Usage, (Rc<Usage>, u64)>,
+    compared: FxHashMap<(*const Usage, *const Usage, bool), (Rc<Usage>, Rc<Usage>, bool)>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum StepToPart {
+    Member(Atom),
+    Elements,
+}
+
+struct PassedOn {
+    followed: FxHashSet<(u32, ExprId, bool)>,
+    numbers_of_parts: FxHashMap<(u32, StepToPart), u32>,
+    part_entered: *const Usage,
+    number_of_part_entered: u32,
+}
+
+impl Default for PassedOn {
+    fn default() -> PassedOn {
+        PassedOn {
+            followed: FxHashSet::default(),
+            numbers_of_parts: FxHashMap::default(),
+            part_entered: std::ptr::null(),
+            number_of_part_entered: 0,
+        }
+    }
+}
+
+impl PassedOn {
+    fn number_of(&self, usage: &Usage) -> Option<u32> {
+        std::ptr::eq(usage, self.part_entered).then_some(self.number_of_part_entered)
+    }
+
+    fn is_followed_anew(&mut self, outer: ExprId, usage: &Usage) -> bool {
+        let holds_number = usage.facts.contains(Facts::NUMBER_AT_EVERY_VALUE);
+        match self.number_of(usage) {
+            Some(part) => self.followed.insert((part, outer, holds_number)),
+            None => true,
+        }
+    }
+
+    fn number_of_part(&mut self, whole: &Usage, step: StepToPart) -> Option<u32> {
+        let whole = self.number_of(whole)?;
+        let next = self.numbers_of_parts.len() as u32 + 1;
+        Some(*self.numbers_of_parts.entry((whole, step)).or_insert(next))
+    }
 }
 
 struct SubjectInProgress {
@@ -1151,6 +1215,9 @@ impl Walk {
             set_aside: Vec::new(),
             numbers_listed: None,
             merges_member_by_member: false,
+            passed_on: PassedOn::default(),
+            levels_of_parts_entered: 0,
+            remembered: Rc::default(),
         }
     }
 
@@ -1160,12 +1227,113 @@ impl Walk {
         has_budget
     }
 
-    fn enter_all_nodes_of(&mut self, usage: &Usage) -> bool {
-        let Some(count) = usage.count_nodes(self.remaining_nodes) else {
+    const LEVELS_MERGED_WITHOUT_MEMORY: u32 = if cfg!(test) { 0 } else { 8 };
+    const NODES_COUNTED_WITHOUT_MEMORY: u64 = if cfg!(test) { 2 } else { 32 };
+
+    fn enter_all_nodes_of(&mut self, usage: &Rc<Usage>) -> bool {
+        let count = self.count_nodes_of(usage);
+        if count > self.remaining_nodes {
             return false;
-        };
+        }
         self.remaining_nodes -= count;
         true
+    }
+
+    fn count_nodes_of(&mut self, part: &Rc<Usage>) -> u64 {
+        if let Some(count) = part.count_nodes(Walk::NODES_COUNTED_WITHOUT_MEMORY) {
+            return count;
+        }
+        if let Some(&(_, count)) = self.remembered.borrow().counts.get(&Rc::as_ptr(part)) {
+            return count;
+        }
+        let mut count: u64 = 1;
+        match &part.members {
+            Members::Few(members) => {
+                for member in members {
+                    count = count.saturating_add(self.count_nodes_of(&member.usage));
+                }
+            }
+            Members::Many(members) => count = count.saturating_add(members.by_name.count_nodes()),
+        }
+        if let Some(elements) = &part.elements {
+            count = count.saturating_add(self.count_nodes_of(elements));
+        }
+        let kept = (Rc::clone(part), count);
+        self.remembered
+            .borrow_mut()
+            .counts
+            .insert(Rc::as_ptr(part), kept);
+        count
+    }
+
+    fn merges_by_what_is_remembered(&mut self, own: &mut Rc<Usage>, other: &Rc<Usage>) -> bool {
+        if self.levels_of_parts_entered <= Walk::LEVELS_MERGED_WITHOUT_MEMORY
+            || self.is_out_of_budget()
+        {
+            return false;
+        }
+        if self.holds_all_of(own, other, false) {
+            return true;
+        }
+        if self.holds_all_of(other, own, true) {
+            let added = self.count_nodes_of(other) - self.count_nodes_of(own);
+            if added < self.remaining_nodes {
+                self.remaining_nodes -= added;
+                *own = Rc::clone(other);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn holds_all_of(&mut self, whole: &Rc<Usage>, part: &Rc<Usage>, in_its_order: bool) -> bool {
+        if Rc::ptr_eq(whole, part) {
+            return true;
+        }
+        let key = (Rc::as_ptr(whole), Rc::as_ptr(part), in_its_order);
+        if let Some(&(_, _, holds)) = self.remembered.borrow().compared.get(&key) {
+            return holds;
+        }
+        let holds = self.holds_each_of(whole, part, in_its_order);
+        let kept = (Rc::clone(whole), Rc::clone(part), holds);
+        self.remembered.borrow_mut().compared.insert(key, kept);
+        holds
+    }
+
+    fn holds_each_of(&mut self, whole: &Rc<Usage>, part: &Rc<Usage>, in_its_order: bool) -> bool {
+        if !whole.facts.contains(part.facts) {
+            return false;
+        }
+        let (Members::Few(all), Members::Few(some)) = (&whole.members, &part.members) else {
+            return false;
+        };
+        let holds_arms_and_names = match in_its_order {
+            true => {
+                whole.arms.list.starts_with(&part.arms.list)
+                    && all.len() >= some.len()
+                    && all
+                        .iter()
+                        .zip(some)
+                        .all(|(held, member)| held.name == member.name)
+            }
+            false => part.arms.list.iter().all(|&arm| whole.arms.contains(arm)),
+        };
+        if !holds_arms_and_names {
+            return false;
+        }
+        for member in some {
+            let Some(held) = all.iter().find(|held| held.name == member.name) else {
+                return false;
+            };
+            if !self.holds_all_of(&held.usage, &member.usage, in_its_order) {
+                return false;
+            }
+        }
+        match (&whole.elements, &part.elements) {
+            (_, None) => true,
+            (Some(held), Some(elements)) => self.holds_all_of(held, elements, in_its_order),
+            (None, Some(_)) => false,
+        }
     }
 
     fn is_out_of_budget(&self) -> bool {
@@ -1176,8 +1344,8 @@ impl Walk {
         std::ptr::eq(usage, self.root) && !self.shares_budget && !self.is_freeing_stack
     }
 
-    fn enter_node_of(&mut self, usage: &Usage) -> bool {
-        self.enter_node() || self.looks_at_every_use_of(usage)
+    fn looks_at_uses_of(&self, usage: &Usage) -> bool {
+        (!self.is_out_of_budget() && !self.is_freeing_stack) || self.looks_at_every_use_of(usage)
     }
 }
 
@@ -1280,6 +1448,13 @@ fn find_use_in_expression(
             target,
             value: stored,
         } if target == value => Use::Stored { op, value: stored },
+        ExprKind::Assign {
+            op: Some(op),
+            target,
+            ..
+        } if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) => {
+            find_use_as_binary_operand(op, parent, Side::Right, target)
+        }
         ExprKind::Assign {
             op: None, target, ..
         } if matches!(hir[target].kind, ExprKind::Array(_)) => Use::Iterated(None),
@@ -1536,27 +1711,45 @@ fn find_alternatives(hir: &hir::File<'_>, expression: ExprId) -> SmallVec<[ExprI
     alternatives
 }
 
+fn has_empty_default(hir: &hir::File<'_>, parameter: ParamId) -> bool {
+    let default = hir[parameter].default;
+    !default.is_none()
+        && matches!(hir[default].kind, ExprKind::Object(members) if members.is_empty())
+}
+
 fn is_evaluated_for_some_values_only(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     expression: ExprId,
+    answers: &mut FxHashMap<ExprId, bool>,
 ) -> bool {
+    let mut climbed: SmallVec<[ExprId; 8]> = SmallVec::new();
     let mut inner = expression;
-    while let Parent::Expr(parent) = bound.parent_of_expr(inner) {
+    let answer = loop {
+        if let Some(&known) = answers.get(&inner) {
+            break known;
+        }
+        climbed.push(inner);
+        let Parent::Expr(parent) = bound.parent_of_expr(inner) else {
+            break false;
+        };
         let Some(parent) = parent.some() else {
-            return false;
+            break false;
         };
         match hir[parent].kind {
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,
                 right,
                 ..
-            } if right == inner => return true,
-            ExprKind::Cond { test, .. } if test != inner => return true,
+            } if right == inner => break true,
+            ExprKind::Cond { test, .. } if test != inner => break true,
             _ => inner = parent,
         }
+    };
+    for expression in climbed {
+        answers.insert(expression, answer);
     }
-    false
+    answer
 }
 
 fn is_int32_value(value: f64) -> bool {
@@ -1635,15 +1828,9 @@ fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId, read: &TermsRead) -> 
 fn is_given_product(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
-    reference: ExprId,
+    symbol: SymbolId,
     read: &TermsRead,
 ) -> bool {
-    let ExprKind::Ident(_) = hir[reference].kind else {
-        return false;
-    };
-    let Binding::Symbol(symbol) = bound.binding(reference) else {
-        return false;
-    };
     let starts_as_product = bound.symbol(symbol).decls.iter().any(|&declaration| {
         let Decl::Var(name) = declaration else {
             return false;
@@ -1783,6 +1970,11 @@ struct CallWithReceiver {
 }
 
 type TypeParts = SmallVec<[TypeId; 4]>;
+
+pub(super) struct ArgumentsGiven {
+    pub(super) written: SmallVec<[ExprId; 4]>,
+    others_may_call: bool,
+}
 type ContentsOfLiteral = (FileId, SmallVec<[(Atom, PropFlags, TypeId); 4]>);
 type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
 
@@ -1792,6 +1984,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             FileRole::Inferred => true,
             FileRole::Checked | FileRole::TypesOnly => false,
         }
+    }
+
+    fn is_null_or_undefined_alone(&self, ty: TypeId) -> bool {
+        match self.c.data(ty) {
+            TypeData::Union(members) => members.iter().all(|&member| self.c.is_nullish(member)),
+            _ => self.c.is_nullish(ty),
+        }
+    }
+
+    fn says_nothing_of_what_is_stored_later(&self, checked: TypeId) -> bool {
+        self.c.is_any(checked)
+            || self.are_positions_only_expected(self.file)
+                && self.is_null_or_undefined_alone(checked)
+    }
+
+    fn says_nothing_of_what_is_handed(&mut self, checked: TypeId) -> bool {
+        self.says_nothing_of_what_is_stored_later(checked)
+            || self.are_positions_only_expected(self.file)
+                && self.c.is_empty_anonymous_object_type(checked)
     }
 
     pub(super) fn infer_parameter_type(
@@ -1808,6 +2019,38 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    pub(super) fn is_read_under_numbers_alone(&mut self, pattern: PatId) -> bool {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Some(symbol) = find_initialized_symbol(bound, pattern) else {
+            return false;
+        };
+        let mut keys: SmallVec<[ExprId; 4]> = SmallVec::new();
+        for &(_, reference) in references_to(self.references_to_bindings(), symbol) {
+            let mut value = reference;
+            let found = loop {
+                match find_use(hir, bound, value) {
+                    Use::PassedOn(whole) => value = whole,
+                    found => break found,
+                }
+            };
+            if let Use::Keyed { key, .. } = found {
+                keys.push(key);
+            }
+        }
+        if keys.is_empty() {
+            return false;
+        }
+        for key in keys {
+            let Some(key_type) = self.type_for_evidence(key) else {
+                return false;
+            };
+            if !self.is_number_type(key_type) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub(super) fn infer_binding_type(&mut self, pattern: PatId, checked: TypeId) -> TypeId {
         let (hir, bound) = (self.hir(), self.bound());
         let is_untyped_name = matches!(hir[pattern].kind, PatKind::Ident(_))
@@ -1820,7 +2063,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if checked == TypeId::NUMBER {
             return self.inferred_type_or(Subject::Number(symbol), checked);
         }
-        if !self.c.is_any(checked) {
+        let says_nothing = match bound.pat_parent[pattern.idx()] {
+            PatParent::Param(parameter) if has_empty_default(hir, parameter) => {
+                self.says_nothing_of_what_is_handed(checked)
+            }
+            PatParent::Param(_) => self.says_nothing_of_what_is_stored_later(checked),
+            PatParent::None | PatParent::Var(_) | PatParent::Prop(..) | PatParent::Elem(..) => {
+                self.says_nothing_of_what_is_stored_later(checked)
+            }
+        };
+        if !says_nothing {
             return checked;
         }
         match bound.pat_parent[pattern.idx()] {
@@ -1885,6 +2137,41 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(false)
     }
 
+    pub fn classes_handed_to_mixin(&mut self, heritage: ExprId, most: usize) -> Vec<ClassRef> {
+        let (hir, bound) = (self.hir(), self.bound());
+        if !matches!(hir[heritage].kind, ExprKind::Ident(_)) {
+            return Vec::new();
+        }
+        let Binding::Symbol(symbol) = bound.binding(heritage) else {
+            return Vec::new();
+        };
+        let &[Decl::Param(name)] = bound.symbol(symbol).decls else {
+            return Vec::new();
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
+            return Vec::new();
+        };
+        let mut classes: Vec<ClassRef> = Vec::new();
+        for argument in self.find_arguments_in_sight(parameter) {
+            let Ok(ty) = self.expression_type(argument) else {
+                continue;
+            };
+            let class = match self.type_shape(ty).map(|shape| shape.kind) {
+                Ok(ShapeKind::ClassConstructor(class)) => Some(class),
+                _ => self.nearest_class_joined_in(ty),
+            };
+            if let Some(class) = class
+                && !classes.contains(&class)
+            {
+                classes.push(class);
+            }
+            if classes.len() > most {
+                return Vec::new();
+            }
+        }
+        classes
+    }
+
     fn find_arguments_in_sight(&mut self, parameter: ParamId) -> SmallVec<[ExprId; 2]> {
         let (hir, bound) = (self.hir(), self.bound());
         let function = bound.param_fn[parameter.idx()];
@@ -1907,6 +2194,33 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             find_argument_of_call(hir, bound, first_spreads, callee, index)?.some()
         });
         arguments.collect()
+    }
+
+    pub(super) fn are_names_alone_read_off_field(&mut self, class: ClassRef, field: Atom) -> bool {
+        let (hir, bound) = (self.hir(), self.bound());
+        let reads = self.reads_of_field_off_this(class.class, field);
+        reads.into_iter().all(|access| {
+            let found = find_use(hir, bound, access);
+            matches!(
+                found,
+                Use::Member { .. } | Use::Stored { .. } | Use::Nothing
+            )
+        })
+    }
+
+    pub(super) fn infer_field_type(
+        &mut self,
+        class: ClassRef,
+        field: Atom,
+        position: u32,
+    ) -> TypeId {
+        if class.file != self.file || !self.are_positions_only_expected(class.file) {
+            return TypeId::ANY;
+        }
+        self.memo
+            .names_of_fields_asked_about
+            .insert(position, (class.class, field));
+        self.inferred_type(Subject::Field(position))
     }
 
     pub(super) fn infer_this_type(&mut self, of: FileId, function: FnId) -> TypeId {
@@ -1958,12 +2272,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let inferred = self.inferred_type(subject);
         match self.c.is_any(inferred) {
             true => checked,
+            false if self.is_null_or_undefined_alone(checked) => self.c.union(&[checked, inferred]),
             false => inferred,
         }
     }
 
     fn find_parameter_subject(
-        &self,
+        &mut self,
         of: FileId,
         parameter: ParamId,
         checked: TypeId,
@@ -1977,7 +2292,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         match hir[node.pat].kind {
-            PatKind::Ident(_) if self.c.is_any(checked) => {
+            PatKind::Ident(_)
+                if match has_empty_default(hir, parameter) {
+                    true => self.says_nothing_of_what_is_handed(checked),
+                    false => self.says_nothing_of_what_is_stored_later(checked),
+                } =>
+            {
                 find_initialized_symbol(bound, node.pat).map(Subject::Binding)
             }
             PatKind::Object(_) if self.is_implied_by_pattern(checked, node.pat) => {
@@ -2072,6 +2392,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Some(
                 Subject::Pattern(_)
                 | Subject::This(_)
+                | Subject::Field(_)
                 | Subject::Result(_)
                 | Subject::Expression(_)
                 | Subject::Number(_),
@@ -2209,6 +2530,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | None => None,
         };
         let was_computed = state.is_some_and(TypeState::was_computed);
+        if in_progress.subjects.depth > 1 && self.c.is_half_of_stack_in_use() {
+            in_progress.remaining_types = 0;
+        }
         if in_progress.remaining_types == 0 {
             if let Some(found) = assumed {
                 if !in_progress.is_computing_again {
@@ -2248,7 +2572,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Subject::Result(function) => queries.compute_result_type(function),
                 Subject::Number(symbol) => queries.compute_number_type(symbol),
                 Subject::Binding(symbol) => queries.compute_binding_type(symbol),
-                Subject::Pattern(_) | Subject::This(_) => queries.compute_type_from_uses(subject),
+                Subject::Pattern(_) | Subject::This(_) | Subject::Field(_) => {
+                    queries.compute_type_from_uses(subject)
+                }
             })
         });
         let inferred = inferred.unwrap_or(TypeId::ANY);
@@ -2284,7 +2610,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn take_cycle_of(&mut self, subject: Subject) -> Option<Box<[Subject]>> {
-        if matches!(subject, Subject::Pattern(_) | Subject::This(_)) {
+        if matches!(
+            subject,
+            Subject::Pattern(_) | Subject::This(_) | Subject::Field(_)
+        ) {
             return None;
         }
         let mut state = self.memo.inferred_types.get(&subject);
@@ -2395,12 +2724,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 }
             }
             Subject::Number(symbol) => {
-                let mut walk = Walk::new(self.inputs.max_inference_nodes);
+                let mut walk = self.new_walk();
                 walk.numbers_listed = Some(asked_for);
                 self.holds_integers(&mut walk, symbol);
                 return walk.numbers_listed.unwrap_or_default();
             }
-            Subject::Pattern(_) | Subject::This(_) => {}
+            Subject::Pattern(_) | Subject::This(_) | Subject::Field(_) => {}
         }
         asked_for
     }
@@ -2417,17 +2746,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !self.c.is_any(declared) {
             return;
         }
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         if let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol))
             && usage.members.is_empty()
             && !usage.is_incomplete()
         {
             let used_as = self.type_of_usage(&usage);
-            if !self.c.is_any(used_as) {
+            if !self.c.is_any(used_as) && used_as != TypeId::OBJECT {
                 return;
             }
         }
-        for argument in self.find_arguments_given(name).unwrap_or_default() {
+        let given = self.find_arguments_given(name);
+        for argument in given.map(|given| given.written).unwrap_or_default() {
             if let Some(argument) = argument.some()
                 && let Ok(checked) = self.expression_type(argument)
             {
@@ -2447,19 +2777,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !self.c.is_any(declared) {
             return declared;
         }
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
-            return self.compute_type_from_arguments(name);
+            return self.compute_type_from_arguments(name).0;
         };
         if usage.members.is_empty() && !usage.is_incomplete() {
             let used_as = self.type_of_usage(&usage);
-            return match self.c.is_any(used_as) {
-                true => self.compute_type_from_arguments(name),
+            if !self.c.is_any(used_as) && used_as != TypeId::OBJECT {
+                return used_as;
+            }
+            let (given, _) = self.compute_type_from_arguments(name);
+            let says_more = used_as != TypeId::OBJECT
+                || self.c.every_type(given, |c, part| {
+                    c.flags(part) & crate::types::tf::OBJECT != 0
+                });
+            return match !self.c.is_any(given) && says_more {
+                true => given,
                 false => used_as,
             };
         }
-        let given = self.compute_type_from_arguments(name);
-        if !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
+        let (given, others_may_call) = self.compute_type_from_arguments(name);
+        let is_named_whole = others_may_call
+            && (self.c.members(given))
+                .is_some_and(|members| members.shape().props.len() == usage.members.len());
+        if !self.c.is_any(given) && !is_named_whole && self.has_every_member(given, &usage.members)
+        {
             return given;
         }
         let used_as = self.type_of_usage(&usage);
@@ -2492,7 +2834,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn find_arguments_given(&mut self, name: PatId) -> Option<SmallVec<[ExprId; 4]>> {
+    fn find_arguments_given(&mut self, name: PatId) -> Option<ArgumentsGiven> {
         let (hir, bound) = (self.hir(), self.bound());
         let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
             return None;
@@ -2504,20 +2846,37 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let index = hir[function].params.position_of(parameter.idx())?;
         let callee = find_name_of_function(hir, bound, function)?;
         let references = references_to(self.references_to_bindings(), callee);
-        if self.is_exported(callee) {
-            return None;
-        }
+        let is_exported = self.is_exported(callee);
         let first_spreads = &mut self.memo.first_spread_arguments;
-        let arguments = references.iter().map(|&(_, reference)| {
+        let arguments = references.iter().filter_map(|&(_, reference)| {
             find_argument_of_call(hir, bound, first_spreads, reference, index)
         });
-        arguments.collect()
+        let written: SmallVec<[ExprId; 4]> = arguments.collect();
+        let others_may_call = is_exported || written.len() < references.len();
+        (!written.is_empty()).then_some(ArgumentsGiven {
+            written,
+            others_may_call,
+        })
     }
 
-    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
-        let Some(arguments) = self.find_arguments_given(name) else {
-            return TypeId::ANY;
+    pub fn is_given_by_written_calls_alone(&mut self, name: PatId) -> bool {
+        self.find_arguments_given(name)
+            .is_some_and(|given| !given.others_may_call)
+    }
+
+    fn compute_type_from_arguments(&mut self, name: PatId) -> (TypeId, bool) {
+        let Some(given) = self.find_arguments_given(name) else {
+            return (TypeId::ANY, true);
         };
+        let others_may_call = given.others_may_call;
+        let handed = self.compute_type_of_arguments(given.written);
+        match others_may_call && self.c.is_union(handed) {
+            true => (TypeId::ANY, true),
+            false => (handed, others_may_call),
+        }
+    }
+
+    fn compute_type_of_arguments(&mut self, arguments: SmallVec<[ExprId; 4]>) -> TypeId {
         let is_called_once = arguments.len() == 1;
         let mut parts = TypeParts::new();
         let mut literals_listed = FxHashMap::default();
@@ -2671,7 +3030,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         match self.c.p.aot_symbols().int32_alias() {
             Some(int32) if self.holds_integers(&mut walk, symbol) => self.c.declared_type(int32),
             Some(_) | None => TypeId::ANY,
@@ -2908,8 +3267,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(self.c.union(&elements))
     }
 
+    fn new_walk(&self) -> Walk {
+        Walk {
+            remembered: Rc::clone(&self.memo.parts_remembered),
+            ..Walk::new(self.inputs.max_inference_nodes)
+        }
+    }
+
     fn compute_type_from_uses(&mut self, subject: Subject) -> TypeId {
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         match self.usage_of(&mut walk, subject) {
             Some(usage) => self.type_of_usage(&usage),
             None => TypeId::ANY,
@@ -2923,6 +3289,43 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let references = self.compute_references_to_bindings();
         self.memo.reference_index.to_bindings = Some(references);
         references
+    }
+
+    #[inline(never)]
+    fn add_uses_of_field(&mut self, walk: &mut Walk, position: u32, usage: &mut Usage) {
+        let Some(&(class, field)) = self.memo.names_of_fields_asked_about.get(&position) else {
+            return;
+        };
+        for access in self.reads_of_field_off_this(class, field) {
+            self.add_evidence(walk, access, usage);
+        }
+    }
+
+    #[inline(never)]
+    fn reads_of_field_off_this(&mut self, class: ClassId, field: Atom) -> Vec<ExprId> {
+        if self.memo.reads_of_fields_off_this.is_none() {
+            let (file, hir, bound) = (self.file, self.hir(), self.bound());
+            let mut reads: FxHashMap<(ClassId, Atom), Vec<ExprId>> = FxHashMap::default();
+            for &(function, reference) in self.references_to_this() {
+                let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
+                    continue;
+                };
+                if hir[member].flags.contains(Flags::STATIC) {
+                    continue;
+                }
+                let Some(owner) = self.c.class_of_member_fn(file, function) else {
+                    continue;
+                };
+                if let Use::Member { access, name, .. } = find_use(hir, bound, reference) {
+                    reads.entry((owner, name)).or_default().push(access);
+                }
+            }
+            self.memo.reads_of_fields_off_this = Some(reads);
+        }
+        let reads = self.memo.reads_of_fields_off_this.as_ref();
+        reads
+            .and_then(|reads| reads.get(&(class, field)).cloned())
+            .unwrap_or_default()
     }
 
     fn references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
@@ -3062,7 +3465,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     ) -> Option<Rc<Usage>> {
         let (subject, is_outermost) = (entered.subject, entered.is_outermost);
         let can_be_merged = match subject {
-            Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) => true,
+            Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) | Subject::Field(_) => {
+                true
+            }
             Subject::Result(_) | Subject::Expression(_) | Subject::Number(_) => false,
         };
         let (usage, is_stable, is_entry_of_cycle) = loop {
@@ -3205,6 +3610,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn compute_usage(&mut self, walk: &mut Walk, subject: Subject) -> Usage {
         let mut usage = Usage::default();
         walk.root = &raw const usage;
+        let passed_on_around = std::mem::take(&mut walk.passed_on);
+        walk.passed_on.part_entered = &raw const usage;
         match subject {
             Subject::Binding(symbol) => {
                 let references = self.references_to_bindings();
@@ -3221,6 +3628,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     }
                 }
             }
+            Subject::Field(position) => self.add_uses_of_field(walk, position, &mut usage),
             Subject::Pattern(pattern) => self.add_uses_of_pattern(walk, pattern, &mut usage),
             Subject::Expression(expression) => self.add_evidence(walk, expression, &mut usage),
             Subject::Result(_) | Subject::Number(_) => {
@@ -3230,6 +3638,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 );
             }
         }
+        walk.passed_on = passed_on_around;
         if walk.is_out_of_budget() {
             usage.facts |= Facts::INCOMPLETE;
         }
@@ -3250,7 +3659,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let own_stores = Facts::STORED | Facts::OBJECT_LITERAL_STORED | Facts::UINT32_STORED;
         let is_stored = usage.facts & own_stores;
+        let own_arms = found
+            .facts
+            .contains(Facts::STORED)
+            .then(|| usage.arms.clone());
         usage.merge(walk, &found);
+        if let Some(own_arms) = own_arms {
+            usage.arms = own_arms;
+        }
         usage.facts = (usage.facts - own_stores) | is_stored;
     }
 
@@ -3265,19 +3681,28 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_evidence(&mut self, walk: &mut Walk, value: ExprId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
+        if self.c.is_stack_low() || !walk.looks_at_uses_of(usage) {
             return;
         }
         let Some(checked) = self.type_for_evidence(value) else {
             return;
         };
         if !self.c.is_any(checked) {
-            self.add_arm(usage, checked);
-            return;
+            let says_nothing = self.says_nothing_of_what_is_handed(checked);
+            if !says_nothing || self.is_null_or_undefined_alone(checked) {
+                self.add_arm(usage, checked);
+            }
+            if checked != TypeId::NEVER && !says_nothing {
+                return;
+            }
         }
         match find_use(self.hir(), self.bound(), value) {
             Use::Nothing => {}
-            Use::PassedOn(outer) => self.add_evidence(walk, outer, usage),
+            Use::PassedOn(outer) => {
+                if walk.passed_on.is_followed_anew(outer, usage) {
+                    self.add_evidence(walk, outer, usage);
+                }
+            }
             Use::Initializes(pattern) => self.add_uses_of_pattern(walk, pattern, usage),
             Use::Destructured(pattern) => self.add_members_of_assignment_pattern(pattern, usage),
             Use::Member {
@@ -3290,7 +3715,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     true => usage.facts |= Facts::FUNCTION,
                     false if walk.is_out_of_budget() => {}
                     false => {
-                        self.add_evidence(walk, access, usage.member_mut(name));
+                        self.add_evidence_of_part(walk, access, usage, StepToPart::Member(name));
                         self.add_uses_of_elements_in_callbacks(walk, access, name, usage);
                     }
                 }
@@ -3304,10 +3729,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 self.add_keyed_access(walk, access, key, usage);
             }
             Use::Key { object } => {
-                usage.facts |= match self.is_list(object) {
-                    true => Facts::NUMBER_AT_EVERY_VALUE | Facts::INT32,
-                    false => Facts::KEY,
-                };
+                usage.facts |=
+                    match self.is_list(object) || self.finds_what_is_read_by_number(value) {
+                        true => Facts::NUMBER_AT_EVERY_VALUE | Facts::INT32,
+                        false => Facts::KEY,
+                    };
             }
             Use::Called { is_optional } => {
                 usage.facts |= Facts::FUNCTION;
@@ -3325,17 +3751,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= Facts::OBJECT;
                 usage.facts |= required_if(is_required);
             }
+            Use::Number | Use::Int32 if self.is_combined_into_what_is_no_number(value) => {}
             Use::Number => usage.facts |= self.number_fact_of_operand(value),
             Use::Int32 => {
                 usage.facts |= self.number_fact_of_operand(value);
-                let read = TermsRead {
-                    most: self.limit(QueryLimit::TermsReadForProduct),
-                    ran_out: Cell::new(false),
-                };
-                if !is_given_product(self.hir(), self.bound(), value, &read) {
+                let given = self.find_product_given_to(value);
+                if !given.is_given {
                     usage.facts |= Facts::INT32;
                 }
-                if read.ran_out.get() {
+                if given.ran_out_of_terms {
                     self.note_walk_ended_by(QueryLimit::TermsReadForProduct);
                 }
             }
@@ -3430,8 +3854,53 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         taking_elements
     }
 
-    fn number_fact_of_operand(&self, operand: ExprId) -> Facts {
-        match is_evaluated_for_some_values_only(self.hir(), self.bound(), operand) {
+    fn is_combined_into_what_is_no_number(&mut self, value: ExprId) -> bool {
+        let Parent::Expr(parent) = self.bound().parent_of_expr(value) else {
+            return false;
+        };
+        let Some(ExprKind::Assign {
+            op: Some(_),
+            target,
+            value: stored,
+        }) = parent.some().map(|parent| self.hir()[parent].kind)
+        else {
+            return false;
+        };
+        stored == value
+            && self.expression_type(target).is_ok_and(|ty| {
+                !self.c.is_any(ty) && !self.c.some_type(ty, |c, part| c.is_number_like(part))
+            })
+    }
+
+    fn find_product_given_to(&mut self, reference: ExprId) -> GivenProduct {
+        let (hir, bound) = (self.hir(), self.bound());
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (hir[reference].kind, bound.binding(reference))
+        else {
+            return GivenProduct {
+                is_given: false,
+                ran_out_of_terms: false,
+            };
+        };
+        if let Some(&known) = self.memo.symbols_given_products.get(&symbol) {
+            return known;
+        }
+        let read = TermsRead {
+            most: self.limit(QueryLimit::TermsReadForProduct),
+            ran_out: Cell::new(false),
+        };
+        let given = GivenProduct {
+            is_given: is_given_product(hir, bound, symbol, &read),
+            ran_out_of_terms: read.ran_out.get(),
+        };
+        self.memo.symbols_given_products.insert(symbol, given);
+        given
+    }
+
+    fn number_fact_of_operand(&mut self, operand: ExprId) -> Facts {
+        let (hir, bound) = (self.hir(), self.bound());
+        let answers = &mut self.memo.evaluated_for_some_values_only;
+        match is_evaluated_for_some_values_only(hir, bound, operand, answers) {
             true => Facts::NUMBER,
             false => Facts::NUMBER_AT_EVERY_VALUE,
         }
@@ -3460,6 +3929,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn is_string_type(&self, ty: TypeId) -> bool {
         self.c.every_type(ty, |c, part| c.is_string_like(part))
+    }
+
+    fn finds_what_is_read_by_number(&mut self, key: ExprId) -> bool {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Parent::Expr(access) = bound.parent_of_expr(key) else {
+            return false;
+        };
+        let Some(access) = access.some() else {
+            return false;
+        };
+        let Use::Keyed { key: inner, .. } = find_use(hir, bound, access) else {
+            return false;
+        };
+        let inner = self.type_for_evidence(inner);
+        inner.is_some_and(|inner| self.is_number_type(inner))
     }
 
     fn is_list(&mut self, object: ExprId) -> bool {
@@ -3548,6 +4032,34 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    fn add_evidence_of_part(
+        &mut self,
+        walk: &mut Walk,
+        access: ExprId,
+        usage: &mut Usage,
+        step: StepToPart,
+    ) {
+        let number = walk.passed_on.number_of_part(usage, step);
+        let around = (
+            walk.passed_on.part_entered,
+            walk.passed_on.number_of_part_entered,
+        );
+        let part = match step {
+            StepToPart::Member(name) => usage.member_mut(name),
+            StepToPart::Elements => usage.elements_mut(),
+        };
+        walk.passed_on.part_entered = match number {
+            Some(_) => &raw const *part,
+            None => std::ptr::null(),
+        };
+        walk.passed_on.number_of_part_entered = number.unwrap_or(0);
+        self.add_evidence(walk, access, part);
+        (
+            walk.passed_on.part_entered,
+            walk.passed_on.number_of_part_entered,
+        ) = around;
+    }
+
     fn add_keyed_access(
         &mut self,
         walk: &mut Walk,
@@ -3561,10 +4073,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let is_index = self.is_number_type(key_type)
             || self.c.is_any(key_type) && self.is_used_as_number(walk, key);
         if is_index {
-            self.add_evidence(walk, access, usage.elements_mut());
+            self.add_evidence_of_part(walk, access, usage, StepToPart::Elements);
         } else if let Some(name) = self.c.property_name_of_type(key_type) {
             if !walk.is_out_of_budget() {
-                self.add_evidence(walk, access, usage.member_mut(name));
+                self.add_evidence_of_part(walk, access, usage, StepToPart::Member(name));
             }
         } else {
             usage.facts |= Facts::OBJECT;
@@ -3580,7 +4092,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_uses_of_pattern(&mut self, walk: &mut Walk, pattern: PatId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
+        if self.c.is_stack_low() || !walk.looks_at_uses_of(usage) {
             return;
         }
         let hir = self.hir();
@@ -3816,14 +4328,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             None => TypeId::ANY,
         };
         let array = self.c.array_of(element_type);
-        let can_be_array = !stores_object && self.has_every_member(array, &usage.members);
+        let can_be_array = !stores_object && self.has_every_member_beside_elements(array, usage);
         let can_be_string = !stores_object
             && !usage.has_stored_part()
             && (element_type == TypeId::ANY || element_type == TypeId::STRING)
-            && self.has_every_member(TypeId::STRING, &usage.members);
+            && self.has_every_member_beside_elements(TypeId::STRING, usage);
         let any_array = self.c.array_of(TypeId::ANY);
         if can_be_array && let Some(at) = parts.iter().position(|&part| part == any_array) {
             parts[at] = array;
+            if can_be_string && elements.is_some() && !parts.contains(&TypeId::STRING) {
+                parts.push(TypeId::STRING);
+            }
             return;
         }
         let mut fitting = TypeParts::new();
@@ -3859,9 +4374,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         match members {
             Members::Few(members) => {
                 let mut members = members.iter();
-                members.all(|member| self.has_member(receiver, holder, member))
+                members.all(|member| self.has_member(receiver, holder, member, false))
             }
             Members::Many(members) => self.has_all_of_many(receiver, holder, &members.by_name),
+        }
+    }
+
+    fn has_every_member_beside_elements(&mut self, receiver: TypeId, usage: &Usage) -> bool {
+        match &usage.members {
+            Members::Few(members) if usage.elements.is_some() => {
+                let holder = self.c.property_holder_for_every_name(receiver);
+                let mut members = members.iter();
+                members.all(|member| self.has_member(receiver, holder, member, true))
+            }
+            members => self.has_every_member(receiver, members),
         }
     }
 
@@ -3870,6 +4396,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         receiver: TypeId,
         holder: Option<PropertyHolder<'p>>,
         member: &Member,
+        methods_may_be_read: bool,
     ) -> bool {
         let found = match holder {
             Some(holder) => self.c.property_of_holder(holder, member.name, false),
@@ -3880,7 +4407,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .property_that_some_literals_have(receiver, member.name)
         });
         found.is_some_and(|(property, _)| {
-            property.flags.contains(PropFlags::METHOD) == member.is_called()
+            let is_method = property.flags.contains(PropFlags::METHOD);
+            is_method == member.is_called() || (is_method && methods_may_be_read)
         })
     }
 
@@ -3891,7 +4419,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         members: &Rc<MembersByName>,
     ) -> bool {
         let (without_bit, with_bit) = match &**members {
-            MembersByName::One { member, .. } => return self.has_member(receiver, holder, member),
+            MembersByName::One { member, .. } => {
+                return self.has_member(receiver, holder, member, false);
+            }
             MembersByName::Both {
                 without_bit,
                 with_bit,
@@ -4049,6 +4579,51 @@ mod tests {
         assert!(*holder.members.in_order()[0].usage == usage);
     }
 
+    #[test]
+    fn a_part_is_taken_as_it_stands_only_where_own_names_come_first_in_it() {
+        let (first, second, holder) = (Atom(1), Atom(2), Atom(3));
+        let mut other = Usage::default();
+        other.member_mut(holder).member_mut(first);
+        other.member_mut(holder).member_mut(second);
+        let part_of = |usage: &Usage| Rc::clone(&usage.members.in_order()[0].usage);
+
+        let mut begins_alike = Usage::default();
+        begins_alike.member_mut(holder).member_mut(first);
+        begins_alike.merge(&mut Walk::new(1000), &other);
+        assert!(Rc::ptr_eq(&part_of(&begins_alike), &part_of(&other)));
+
+        let mut begins_otherwise = Usage::default();
+        begins_otherwise.member_mut(holder).member_mut(second);
+        begins_otherwise.merge(&mut Walk::new(1000), &other);
+        assert_eq!(names(&part_of(&begins_otherwise)), [second, first]);
+    }
+
+    #[test]
+    fn a_part_is_not_taken_as_it_stands_where_the_budget_runs_dry_on_the_way() {
+        let (first, second, below, holder) = (Atom(1), Atom(2), Atom(3), Atom(4));
+        let mut own = Usage::default();
+        own.member_mut(holder).member_mut(first);
+        own.member_mut(holder).member_mut(second);
+        let mut other = own.clone();
+        other.member_mut(holder).member_mut(first).member_mut(below);
+        other.member_mut(holder).member_mut(second).facts |= Facts::NUMBER;
+
+        let mut walk = Walk::new(1);
+        own.merge(&mut walk, &other);
+        assert!(walk.is_out_of_budget());
+        let merged = Rc::clone(&own.members.in_order()[0].usage);
+        assert_eq!(names(&merged.members.get(first).unwrap().usage), [below]);
+        assert!(
+            !merged
+                .members
+                .get(second)
+                .unwrap()
+                .usage
+                .facts
+                .contains(Facts::NUMBER)
+        );
+    }
+
     #[derive(Clone, Default, PartialEq, Debug)]
     struct PlainUsage {
         facts: Facts,
@@ -4110,6 +4685,7 @@ mod tests {
         let all_facts = [Facts::NUMBER, Facts::STRING, Facts::REQUIRED, Facts::STORED];
         let mut trees: Vec<(Rc<Usage>, PlainUsage)> = Vec::new();
         let (mut ended_budgets, mut most_members) = (0, 0);
+        let remembered = Rc::<RefCell<PartsRemembered>>::default();
         const ROUNDS: u32 = if cfg!(miri) { 150 } else { 1500 };
         for round in 0..ROUNDS {
             let (mut usage, mut plain) = (Usage::default(), PlainUsage::default());
@@ -4134,7 +4710,12 @@ mod tests {
                 let other = &trees[next(trees.len() as u64) as usize];
                 let most = other.1.count_nodes() + 2;
                 let budget = if next(4) == 0 { next(most) } else { 1 << 40 };
-                let (mut walk, mut remaining_nodes) = (Walk::new(budget), budget);
+                let remembered = Rc::clone(&remembered);
+                let mut walk = Walk {
+                    remembered,
+                    ..Walk::new(budget)
+                };
+                let mut remaining_nodes = budget;
                 if next(5) == 0 {
                     let name = Atom(next(300) as u32);
                     usage.member_mut(name).merge(&mut walk, &other.0);

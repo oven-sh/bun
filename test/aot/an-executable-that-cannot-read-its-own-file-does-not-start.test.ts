@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { chmodSync, copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { refusesExecuteOnlyStart } from "./execute-only-start";
+import { afterAll } from "./harness/default-timeout";
 import { beforeAll, describe, test } from "./supported";
 
 const program = `import { writeFileSync } from "node:fs";
@@ -87,6 +88,7 @@ const readsEveryFile = process.getuid?.() === 0;
 const withoutRandomAddresses = ["setarch", process.arch === "arm64" ? "aarch64" : "x86_64", "-R"];
 
 describe.skipIf(!isLinux)("an executable", () => {
+  afterAll(() => directory?.[Symbol.dispose]());
   beforeAll(async () => {
     directory = tempDir("aot-execute-only-start", {
       "program.ts": program,

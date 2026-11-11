@@ -1,0 +1,14 @@
+# -- source: main.js
+# function Check(kind) { this.kind = kind; this.check = pick(kind); }
+# function Other(kind) { this.kind = kind; this.check = 0; }
+# function runAll(list, x) { for (const c of list) x = c.check(x); return x; }
+# var checks = [new Check(0), new Check(1), new Check(2)];
+# print(runAll(checks, 5) + new Other(1).kind);
+# -- end of source
+# What `check` holds comes from code that nobody sees, so the callee is not known. In the loop the receiver is tested, the function is read out of its slot and called by value; it was a call by name at a site. f3 = runAll
+# RUN(WALK): walk f3 mechanisms=all
+# WALK-LABEL: code f3:Body
+# WALK: GetSlot {{*}}key="check"
+# RUN(ANSWERS): run-in-shell globalThis.pick = kind => [x => x + 1, x => x * 2, x => x - 3][kind];
+# ANSWERS: 10
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,32 @@
+# -- source: a-row-that-the-turns-of-a-loop-read-off-a-list-is-read-once-in-front-of-the-loop.cjs
+# const hold = { v: null, other: null, each: null };
+# function total(t) { let m = hold.v; if (t < 0) m = null; let s = 0; for (let c = 0; c < m.length; c++) for (let i = 0; i < m[c].length; i++) s = s + m[c][i] * 0.5; return s; }
+# function totalOfSome(n) { let m = hold.v; if (n < 0) m = null; let s = 0; for (let c = 0; c < n; c++) for (let i = 0; i < m[c].length; i++) s = s + m[c][i] * 0.5; return s; }
+# function totalWhileRowsAreSwapped(t) { let m = hold.v; if (t < 0) m = null; const other = hold.other; let s = 0; for (let c = 0; c < m.length; c++) for (let i = 0; i < m[c].length; i++) { s = s + m[c][i] * 0.5; if (i === 1) m[c] = other; } return s; }
+# function totalWhileOtherCodeRuns(t) { let m = hold.v; if (t < 0) m = null; const each = hold.each; let s = 0; for (let c = 0; c < m.length; c++) for (let i = 0; i < m[c].length; i++) { s = s + m[c][i] * 0.5; each(m, c, i); } return s; }
+# function totalWhileRowsAreWritten(t) { let m = hold.v; if (t < 0) m = null; let s = 0; for (let c = 0; c < m.length; c++) for (let i = 0; i < m[c].length; i++) { s = s + m[c][i] * 0.5; m[c][i] = 1; } return s; }
+# function said(run, m, n = 1) { hold.v = m; try { return String(run(n)); } catch (error) { return error.constructor.name; } }
+# const numbers = JSON.parse("[[1.5, 2.5, 3.5], [4.5], [], [5.5, 6.5]]"), found = [];
+# const kinds = [r => r.slice(), r => Float64Array.from(r), r => Float32Array.from(r), r => Uint8Array.from(r), r => Int16Array.from(r), r => r.join(""), r => ({ length: r.length, 0: r[0], 1: r[1], 2: r[2] }), r => r.map(String)];
+# for (const kind of kinds) found.push(said(total, numbers.map(kind)));
+# found.push(said(total, [[1.5], Float64Array.of(2.5), Uint8Array.of(3), "4", [5]]));
+# found.push(said(total, [[1.5], null, [2.5]]), said(total, [[1.5], undefined]), said(total, [1.5, 2.5]), said(total, [7, 8]), said(total, "ab"), said(total, null), said(total, [[1.5]], -1));
+# found.push(said(total, [[1.5], , [2.5]]), said(totalOfSome, [[1.5], [2.5]], 3), said(totalOfSome, [[1.5], [2.5]], 1));
+# for (const kind of kinds.slice(0, 5)) {
+#     for (const other of [[100.5, 200.5, 300.5, 400.5], Float64Array.of(100.5, 200.5, 300.5, 400.5), "1234"]) { hold.other = other; found.push(said(totalWhileRowsAreSwapped, numbers.map(kind))); }
+#     for (const each of [(m, c, i) => { if (i === 0) m[c] = Uint8Array.of(9, 8, 7, 6); }, (m, c, i) => { if (i === 0 && c === 0) m.length = 1; }, (m, c, i) => { if (i === 0 && c === 0) delete m[0]; }]) { hold.each = each; found.push(said(totalWhileOtherCodeRuns, numbers.map(kind))); }
+#     const m = numbers.map(kind); found.push(said(totalWhileRowsAreWritten, m), said(total, m));
+# }
+# const same = [1.5, 2.5]; same[2] = same; found.push(said(total, [same, same]));
+# const inItself = [[1.5, 2.5]]; inItself.push(inItself); found.push(said(total, inItself));
+# sink(found.join(" "));
+# -- end of source
+# `m[c]` is written twice in the inner loop's text and neither `m` nor `c` changes there, yet each turn read the row anew and asked it what it is: 140 instructions an element.
+# The head's first operation is that read, so the row is read once in front of the loop, behind a test that the list holds it itself (a hole goes by the loop as written),
+# and the loop is built once for each kind of row. What is known of the row ends where a turn writes elements or runs other code.
+# f1 = total
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 12 12 12 10.5 10.5 NaN 12 12 8 TypeError TypeError 0 0 NaN TypeError TypeError TypeError TypeError 0.75 711.25 711.25 17.25 37.25 3.75 TypeError 12 3 711.25 711.25 17.25 37.25 3.75 TypeError 12 3 711.25 711.25 17.25 37.25 3.75 TypeError 12 3 710 710 16 36.5 3 TypeError 10.5 3 710 710 16 36.5 3 TypeError 10.5 3 NaN NaN

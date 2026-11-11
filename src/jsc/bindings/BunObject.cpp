@@ -23,6 +23,7 @@
 #include <JavaScriptCore/JSONObject.h>
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
@@ -332,7 +333,7 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2, true, false }, globalObject))
+        if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "sql"_s, 2, true, false }, globalObject))
             return standIn;
     }
 #endif
@@ -352,7 +353,7 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.SQL", "SQL"_s);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "SQL"_s, 0, true }, globalObject))
+        if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "SQL"_s, 0, true }, globalObject))
             return standIn;
     }
 #endif
@@ -385,7 +386,7 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 #if ENABLE(AOT)
     // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "BunShell"_s, 1 }, globalObject)) {
+        if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "BunShell"_s, 1 }, globalObject)) {
             JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
             RETURN_IF_EXCEPTION(scope, {});
             process.get(globalObject, Identifier::fromString(vm, "env"_s));
@@ -427,8 +428,31 @@ static JSValue checkedBunObjectValue(VM& vm, JSObject* bunObject, JSValue (*crea
 }
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunShell); }
-static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunSql); }
-static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunSQLConstructor); }
+// The executable holds bun:sql, and not the native code that it calls while it loads. An executable without bun:sql refuses the read, trimmed or not.
+static bool readsRemovedSql(JSObject* bunObject)
+{
+    return JSC::isFeatureRemoved(Bun::Feature::Sql) && ::Bun::DeclaredModuleLoad::canLoad(defaultGlobalObject(bunObject->globalObject()), ::Bun::InternalModuleRegistry::Field::BunSql);
+}
+
+static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    if (readsRemovedSql(bunObject)) [[unlikely]] {
+        // Both names read the same function.
+        for (auto name : { "sql"_s, "postgres"_s }) {
+            JSValue value = bunObject->getDirect(vm, Identifier::fromString(vm, name));
+            if (value && value.inherits<ProxyObject>())
+                return value;
+        }
+        return Bun::createRemovedFunction(bunObject->globalObject(), Bun::Feature::Sql, { "sql"_s, "Bun.sql"_s, 2, false });
+    }
+    return checkedBunObjectValue(vm, bunObject, createBunSql);
+}
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    if (readsRemovedSql(bunObject)) [[unlikely]]
+        return Bun::createRemovedFunction(bunObject->globalObject(), Bun::Feature::Sql, { "SQL"_s, "Bun.SQL"_s });
+    return checkedBunObjectValue(vm, bunObject, createBunSQLConstructor);
+}
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
@@ -1172,7 +1196,7 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
     (void)propertyName;
     if (Bun::hasCompiledModules()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-        Bun::willStorePathOfMainModule(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
+        Bun::willSetMainModulePath(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
         RETURN_IF_EXCEPTION(scope, false);
     }
     return BunObject_setter_main(globalObject, encodedValue);

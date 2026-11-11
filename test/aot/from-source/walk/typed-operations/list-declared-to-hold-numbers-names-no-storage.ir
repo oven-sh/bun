@@ -3,18 +3,14 @@
 # f1 = total: a list of numbers. f3 = inner: a list of lists and then a list of numbers. Of the outer list Link says that it stays as made (LinkTables::receiversThatStayAsMade): the read asks it nothing and goes by the kind that it finds
 # LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
 # RUN(NUMBERS): walk f1 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(NUMBERS): entries-of-bun
 # NUMBERS-LABEL: code f1:Body
 # NUMBERS: = GetArrayElement {{*}} level=Expected
 # RUN(NEVER): walk f1 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: arrayStorage=Double
 # RUN(LISTS): walk f3 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(LISTS): entries-of-bun
 # LISTS-LABEL: code f3:Body
 # LISTS: = GetArrayElement {{*}} level=Proven
 # RUN(INNER): walk f3 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(INNER): entries-of-bun
 # INNER-NOT: arrayStorage=Double
 # -- source: tally.ts
 # function total(list: number[]): number {

@@ -12,7 +12,6 @@
 # console.log(String(read(left)) + " " + String(read(filled)) + " " + String(read(narrow(7))) + " " + Object.keys(filled).join());
 # -- end of source
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject size=64 extension=520
 # CHECK-NEXT: slot 0 "a00" JSValue OutOfLine {{*}}record=0
 # CHECK: slot 62 "a62" JSValue OutOfLine offset=512

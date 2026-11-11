@@ -60,7 +60,7 @@ test.concurrent.each(sizes)("%d modules", async modules => {
   const lines = readdirSync(cwd)
     .filter(name => name.startsWith("counts-"))
     .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-    .filter(line => line.endsWith("\tsought:ModulesForCyclesThatWait"));
+    .filter(line => line.endsWith("\tsought:ModulesScannedForPendingCycles"));
   expect(lines.length).toBeGreaterThan(0);
   sought.set(
     modules,

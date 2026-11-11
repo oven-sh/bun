@@ -67,6 +67,15 @@ impl LeftOutDeclarations {
             .contains(&(file, Declaration::ObjectNeverHandedOn(variable)))
     }
 
+    pub fn declarators_left_out(&self) -> impl Iterator<Item = (FileId, VarDeclId)> {
+        self.0
+            .iter()
+            .filter_map(|&(file, declaration)| match declaration {
+                Declaration::Declarator(declarator) => Some((file, declarator)),
+                _ => None,
+            })
+    }
+
     pub fn is_declarator_left_out(&self, file: FileId, declarator: VarDeclId) -> bool {
         self.0
             .contains(&(file, Declaration::Declarator(declarator)))

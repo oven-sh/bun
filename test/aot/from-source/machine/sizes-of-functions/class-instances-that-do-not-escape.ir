@@ -1,0 +1,28 @@
+# f1 = sum
+# -- source: class-instances-that-do-not-escape.ts
+# class Vector {
+#   x: number;
+#   y: number;
+#   constructor(x: number, y: number) {
+#     this.x = x;
+#     this.y = y;
+#   }
+#   plus(other: Vector): Vector {
+#     return new Vector(this.x + other.x, this.y + other.y);
+#   }
+# }
+# function sum(a: number, b: number): number {
+#   const total = new Vector(a, b).plus(new Vector(b, a));
+#   return total.x * total.y;
+# }
+# declare const input: any;
+# (globalThis as any).sum = sum;
+# (globalThis as any).answer = sum(+input, +input);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 11, patches 4, moves 12, unlikely or rare 0. Two of the moves are the pushes that lay a and b into their slots. They stand for two saved registers,
+# whose pushes, pops and first moves are no steps: with the registers the function has 10 moves and 98 bytes, with the slots 12 moves and 84 bytes.
+# RUN(X64): steps most:23 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 23

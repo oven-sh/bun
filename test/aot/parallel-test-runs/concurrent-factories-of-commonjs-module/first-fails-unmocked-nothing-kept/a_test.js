@@ -1,0 +1,20 @@
+import { test, vi, afterAll } from "bun:test";
+const log = [];
+const said = load => Promise.resolve(load).then(it => String(it.a), error => error.message.slice(0, 30));
+afterAll(() => console.log("SAID", log.join()));
+test("t", async () => {
+  const gates = {}, calls = {}, loads = {};
+  gates.one = Promise.withResolvers(); calls.one = Promise.withResolvers();
+  vi.doMock("./x.cjs", () => { calls.one.resolve(); return gates.one.promise.then(() => { throw new Error("late one"); }); });
+  loads.one = said(import("./x.cjs"));
+  await calls.one.promise;
+  gates.two = Promise.withResolvers(); calls.two = Promise.withResolvers();
+  vi.doMock("./x.cjs", () => { calls.two.resolve(); return gates.two.promise.then(() => ({ a: "value two" })); });
+  loads.two = said(import("./x.cjs"));
+  await calls.two.promise;
+  vi.doUnmock("./x.cjs");
+  gates.one.resolve(); gates.two.resolve();
+  log.push("one " + await loads.one);
+  log.push("two " + await loads.two);
+  log.push("last " + await said(import("./x.cjs")));
+});

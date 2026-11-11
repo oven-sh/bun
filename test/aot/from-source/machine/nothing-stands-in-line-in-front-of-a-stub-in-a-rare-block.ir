@@ -1,0 +1,38 @@
+# `(shape.flags & 8) !== 0`, nothing proven of the object: the typed run works on what it has loaded. The closed arm is there for what the tests have turned away, and it is rare:
+# there the operator is the call of its stub and no more. The test for two int32 in line, with the operator behind it, stood in 5,500 rare blocks of the TypeScript compiler.
+# Control: `shape.weight < limit.weight`: two reads that each test their own guess give two values of which nothing is known, in a block that is not rare: there the test stands in line.
+# f1 = isMarked, f2 = isLighter
+# -- source: marks.ts
+# class Shape {
+#   flags: number;
+#   weight: number;
+#   constructor(flags: number, weight: number) { this.flags = flags; this.weight = weight; }
+# }
+# function isMarked(shape: Shape): boolean {
+#   return (shape.flags & 8) !== 0;
+# }
+# function isLighter(shape: Shape, limit: Shape): boolean {
+#   return shape.weight < limit.weight;
+# }
+# (globalThis as any).isMarked = isMarked;
+# (globalThis as any).isLighter = isLighter;
+# let said = "";
+# let last = new Shape(0, 0);
+# for (let turn = 0; turn < 20; turn++) {
+#   const shape = new Shape(turn, turn * 3);
+#   (globalThis as any).kept = shape;
+#   said += String(isMarked(shape)) + String(isLighter(last, shape));
+#   last = shape;
+# }
+# console.log(said);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frequency=Rare
+# CHECK: = BitAnd {{*}}form=Generic
+# RUN(BYTES): bytes f1:Body mechanisms=all
+# BYTES: BinaryOperation.BitAnd
+# RUN(NEVER): bytes f1:Body mechanisms=all
+# NEVER-NOT: BinaryOperation.BitAndAfterInt32Check
+# RUN(MAIN): bytes f2:Body mechanisms=all
+# MAIN: BinaryOperation.LessAfterInt32Check

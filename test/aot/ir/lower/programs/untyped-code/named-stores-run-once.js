@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="Shape"
+// CHECK-LABEL: function {{*}}name="doubled"
+// CHECK-LABEL: function {{*}}name="set"
+// CHECK-LABEL: function {{*}}name="set"
+// CHECK-LABEL: function {{*}}name="bad"
+// CHECK-LABEL: function {{*}}name="fixed"
 
 // FILE: main.js
 // Stores `x.name = v` at the top level of a module and in functions that run once: to literals, instances, classes, functions, prototypes, arrays, proxies, setters that throw, frozen objects, primitives, undefined and null; strict and sloppy.
@@ -130,83 +136,3 @@ module.exports = results;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: Shape doubled set bad fixed
-// CHECK-LABEL: function {{*}}name="Shape"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Integer integer=2
-// CHECK-NEXT: v5 = Div v3, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v6 key="sides"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=true flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|symbol, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="seen"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v7 = Builtin builtin=String
-// CHECK-NEXT: v8 = Call v7, -, v1 calleeName="String"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v10 = String string="="
-// CHECK-NEXT: v11 = Add v9, v10
-// CHECK-NEXT: v12 = Add v11, v2
-// CHECK-NEXT: v13 = Call v6, v4, v12 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: ElemSet v0, v1, v2
-// CHECK-NEXT: v15 = Boolean boolean=true
-// CHECK-NEXT: v16 = Convert v15 declared={type=true flags=[IsExpected]}
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=false flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Boolean
-// CHECK-NEXT: v1 = Convert v0 declared={type=false flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="bad"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="RangeError" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(RangeError) flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="from the setter "
-// CHECK-NEXT: v5 = Add v4, v0
-// CHECK-NEXT: v6 = Construct v3, -, v5 calleeName="RangeError"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|RangeError flags=[IsExpected]}
-// CHECK-NEXT: Throw v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="fixed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

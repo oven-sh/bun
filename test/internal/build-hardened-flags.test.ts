@@ -274,6 +274,20 @@ test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the 
   }
 });
 
+// -mtune keeps the fortified wrappers out of line: it is left out where the build is hardened. WebKit's .github/scripts/lanes.mjs does the same.
+test("a hardened build for arm64 names no processor to tune for", () => {
+  using dir = tempDir("build-hardened-flags-tune", {});
+  const tunes = (cfg: Config) =>
+    Object.values(everyFlagOf(cfg)).flatMap(list => list.filter(flag => /^-(mtune|Ztune-cpu)=/.test(flag)));
+  const hardened = linuxConfig({ hardened: true, arch: "aarch64" }, String(dir));
+  expect(tunes(hardened)).toEqual([]);
+  for (const list of [everyFlagOf(hardened).c, everyFlagOf(hardened).dependencyCxx]) {
+    expect(list).toContain("-D_FORTIFY_SOURCE=2");
+    expect(list).toContain("-march=armv8-a+crc");
+  }
+  expect(tunes(linuxConfig({ arch: "aarch64" }, String(dir)))).toContain("-mtune=ampere1");
+});
+
 test("--hardened=on is refused where nothing can be hardened", () => {
   using dir = tempDir("build-hardened-flags-refused", {});
   for (const partial of [

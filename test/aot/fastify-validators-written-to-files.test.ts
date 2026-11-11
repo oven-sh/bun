@@ -106,31 +106,17 @@ test("a validator that Fastify wrote to a file is compiled with the program", as
 
   const executable = join(folder, isWindows ? "server.exe" : "server");
   const built = await run(
-    [
-      bunExe(),
-      "build",
-      "--compile",
-      "--aot",
-      "--aot-report=report.json",
-      "--aot-report-detail=functions",
-      "server.ts",
-      "--outfile",
-      executable,
-    ],
+    [bunExe(), "build", "--compile", "--aot", "--metafile=meta.json", "server.ts", "--outfile", executable],
     folder,
   );
   expect(built.stderr).not.toContain("error");
   expect(built.exitCode).toBe(0);
 
-  const functions: { file: string; name: string; codeBytes: number }[] = JSON.parse(
-    readFileSync(join(folder, "report.json"), "utf8"),
-  ).functions;
-  expect(
-    functions.filter(
-      ({ file, name, codeBytes }) =>
-        file.endsWith("order-validator.js") && name.startsWith("validate") && codeBytes > 0,
-    ),
-  ).not.toBeEmpty();
+  // The bytes of an input are those of the machine code of its functions.
+  const [{ inputs }]: { inputs: Record<string, { bytesInOutput: number }> }[] = Object.values(
+    JSON.parse(readFileSync(join(folder, "meta.json"), "utf8")).outputs,
+  );
+  expect(inputs["order-validator.js"]?.bytesInOutput).toBeGreaterThan(0);
 
   expect(await run([executable], folder, bunEnv)).toEqual({ stdout: answers, stderr: "", exitCode: 0 });
   expect(await run([executable, "at-run-time"], folder, bunEnv)).toEqual({ stdout: answers, stderr: "", exitCode: 0 });

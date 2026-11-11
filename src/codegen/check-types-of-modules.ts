@@ -32,5 +32,11 @@ const host = ts.createCompilerHost(config.options);
 host.readFile = file =>
   ts.sys.readFile(file.endsWith(".ts") && ts.sys.fileExists(secondTextOf(file)) ? secondTextOf(file) : file);
 
-const rootNames = config.fileNames.filter(file => !path.normalize(file).startsWith(secondTexts));
+// A module of compiled programs alone has no first text: it is read under the name that one would have.
+const firstNameOf = (file: string) => path.join(base, path.relative(secondTexts, file));
+host.fileExists = file => ts.sys.fileExists(file) || (file.endsWith(".ts") && ts.sys.fileExists(secondTextOf(file)));
+
+const rootNames = [
+  ...new Set(config.fileNames.map(file => (path.normalize(file).startsWith(secondTexts) ? firstNameOf(file) : file))),
+].filter(file => file.endsWith(".ts") || ts.sys.fileExists(file));
 report(ts.getPreEmitDiagnostics(ts.createProgram({ rootNames, options: config.options, host })));

@@ -1,9 +1,10 @@
-// A Worker that starts from a text or from the path of a file which is known when the program is built runs code that was compiled ahead of time.
-// ./parallel/workers has the programs that go through the ways to write such a text or path. They run where the interpreter is forbidden.
+// A Worker that starts from the path of a file which is known when the program is built runs code that was compiled ahead of time.
+// The text of a data: URL or of a Blob is not compiled: the run time reads it.
+// ./parallel/workers has the programs that go through the ways to write such a path. They run where the interpreter is forbidden.
 // node:worker_threads brings the streams of Node.js along, so only the programs that are about it import it.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync, symlinkSync } from "node:fs";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
@@ -21,48 +22,14 @@ const listen = `
 
 async function build(folder: string, ...entries: string[]) {
   const executable = join(folder, "program");
-  const report = join(folder, "report.json");
-  const flags = [`--aot-report=${report}`, ...withoutDebugInformation()];
-  const command = [bunExe(), ...compileCommand, ...flags, ...entries, "--outfile", executable];
-  return { executable, report, ...(await spawned(command, folder, bunEnv)) };
+  const command = [bunExe(), ...compileCommand, ...withoutDebugInformation(), ...entries, "--outfile", executable];
+  return { executable, ...(await spawned(command, folder, bunEnv)) };
 }
 
-/** How many programs the build has compiled, also those that it then threw away. */
-const programsCompiled = (report: string): number => JSON.parse(readFileSync(report, "utf8")).statistics.EngineRuns;
-
 describe.concurrent("compile/aot/workers from texts that the build knows", () => {
-  const speaks = `import { parentPort } from "node:worker_threads";\nparentPort!.postMessage("spoken");\n`;
-  const startsBoth = `import { Worker } from "node:worker_threads";
-new Worker(new URL("./first.ts", import.meta.url)).on("exit", code => console.log("exit", code));
-new Worker(new URL("./second.ts", import.meta.url)).on("message", message => console.log("message", message));
-`;
-  test.each([
-    ["that starts no Worker", { "main.ts": `console.log(1 + 1);\n` }, ["main.ts"], 1],
-    [
-      "with a Worker file that does not import node:worker_threads",
-      { "first.ts": `console.log("quiet");\n` },
-      ["main.ts"],
-      1,
-    ],
-  ])(
-    "the build compiles nothing twice for a program %s",
-    (_, files, entries, programsOfExecutable) =>
-      slot(async () => {
-        using dir = tempDir("aot-workers-from-texts", { "main.ts": startsBoth, "second.ts": speaks, ...files });
-        const compiled = await build(String(dir), ...entries);
-        built(compiled);
-        expect(programsCompiled(compiled.report)).toBe(programsOfExecutable);
-      }),
-    timeout,
-  );
-
   test.each([
     ["a data: URL", `new Worker(made("data:text/javascript,") + made("postMessage(1)"))`],
     ["an object URL", `new Worker(URL.createObjectURL(new Blob([made("postMessage(2)")])))`],
-    [
-      "an object URL of a text that is compiled, with a type that reads it in another way,",
-      `new Worker(URL.createObjectURL(new Blob(["postMessage(1)"], { type: made("application/typescript") })))`,
-    ],
   ])(
     "%s that the program makes at run time is interpreted",
     (_, start) =>
@@ -70,7 +37,6 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
         using dir = tempDir("aot-workers-from-texts", {
           "main.js": `
             const made = text => Buffer.from(text).toString();
-            new Worker(URL.createObjectURL(new Blob(["postMessage(1)"]))).terminate();
             const worker = ${start};${listen}`,
         });
         const compiled = await build(String(dir), "main.js");
@@ -99,7 +65,7 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
   `;
 
   test(
-    "a path that is relative to the folder of the entry point, and not the file that a package names",
+    "a path that is relative to the folder of the entry point, and the file that a package names",
     () =>
       slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {
@@ -126,10 +92,9 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
         const compiled = await build(sources, "main.js");
         built(compiled);
         expect(plain.stdout).toContain("a package: the worker of a package\n./no-such-file.ts: error\n");
-        const expected = plain.stdout.replace("a package: the worker of a package", "a package: error");
         for (const folder of [sources, join(String(dir), "elsewhere")]) {
           const ran = await spawned([compiled.executable], folder, compiledOnly);
-          expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+          expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
         }
       }),
     timeout,
@@ -247,38 +212,30 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
   );
 
   test(
-    "a file that is named by a path and does not compile is left out, and the build says so",
+    "a file that is named by a path and imports what isn't there stops the build, as it does in an entry point",
     () =>
       slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {
-          "main.js": `
-            ${report}
-            await report("sound", new Worker(new URL("./sound.js", import.meta.url)));
-            await report("imports what is not there", new Worker(new URL("./imports.js", import.meta.url)));
-          `,
-          "sound.js": `postMessage("sound.js");`,
+          "main.js": `new Worker(new URL("./imports.js", import.meta.url));`,
           "imports.js": `import "./inner.js"; postMessage("imports.js");`,
           "inner.js": `import "./no-such-file.js";`,
         });
         const compiled = await build(String(dir), "main.js");
-        built(compiled);
-        expect(compiled.stderr).toContain("warn: TS100150");
-        expect(compiled.stderr).toContain("warn: TS100072");
-        const ran = await spawned([compiled.executable], String(dir), compiledOnly);
-        expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-          stdout: "sound: sound.js\nimports what is not there: error\n",
-          exitCode: 0,
+        expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+          stderr: expect.stringContaining("error: TS100150"),
+          exitCode: 1,
         });
       }),
     timeout,
   );
 
   test.each([
-    ["a syntax error", "postMessage((", "TS1109", "SyntaxError: Unexpected end of file"],
-    ["words that are no program", "this is no program", "TS1005", "undefined"],
+    ["a syntax error", "postMessage((", "TS100084", "SyntaxError: Unexpected end of file"],
+    ["words that are no program", "this is no program", "TS100084", "undefined"],
+    // It is a program. It is compiled, and its body throws what the loader says.
     ["an import that is not found", `import "./no-such-file.js"; postMessage(1)`, "TS100150", "Cannot find module"],
   ])(
-    "a text with %s is left out, and the build says so",
+    "a text with %s is left to the run time, and the build says so",
     (_, text, code, said) =>
       slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {
@@ -294,7 +251,6 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
         const compiled = await build(String(dir), "main.js");
         built(compiled);
         expect(compiled.stderr).toContain(`warn: ${code}`);
-        expect(compiled.stderr).toContain("warn: TS100072");
         const ran = await spawned([compiled.executable], String(dir), bunEnv);
         expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
           stdout: `message sound\nerror ${said}\n`,
@@ -319,16 +275,6 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
             await heard(new Worker(new URL("./self.ts", import.meta.url)));
             await heard(new Worker(new URL("./bare.ts", import.meta.url)));
             await heard(new Worker(new URL("./listener.ts", import.meta.url)));
-            await heard(new Worker("data:text/javascript,self.onmessage = event => self.postMessage(event.data %2B 4)"));
-            await heard(
-              new Worker(
-                URL.createObjectURL(
-                  new Blob(["self.onmessage = (event: MessageEvent) => self.postMessage(event.data + 5)"], {
-                    type: "application/typescript",
-                  }),
-                ),
-              ),
-            );
           `,
           "self.ts": `self.onmessage = (event: MessageEvent) => { self.postMessage(event.data + 1); };`,
           "bare.ts": `onmessage = (event: MessageEvent) => { postMessage(event.data + 2); };`,
@@ -343,22 +289,19 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
         expect(compiled.stderr).not.toContain("warn:");
         const ran = await spawned([compiled.executable], String(dir), compiledOnly);
         expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-          stdout: "message 21\nmessage 22\nfunction function null\nmessage 23\nmessage 24\nmessage 25\n",
+          stdout: "message 21\nmessage 22\nfunction function null\nmessage 23\n",
           exitCode: 0,
         });
       }),
     timeout,
   );
 
-  test.each([
-    ["a file that is named by a path", `new URL("./worker.ts", import.meta.url)`],
-    ["a text", JSON.stringify(`data:text/javascript,let count: number = "text"; postMessage(count)`)],
-  ])(
-    "a type error in %s stops the build, as it does in an entry point",
-    (_, code) =>
+  test(
+    "a type error in a file that is named by a path stops the build, as it does in an entry point",
+    () =>
       slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {
-          "main.ts": `const worker = new Worker(${code});${listen}`,
+          "main.ts": `const worker = new Worker(new URL("./worker.ts", import.meta.url));${listen}`,
           "worker.ts": `let count: number = "text"; postMessage(count);`,
         });
         const compiled = await build(String(dir), "main.ts");
@@ -366,7 +309,6 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
           stderr: expect.stringContaining("error: TS2322"),
           exitCode: 1,
         });
-        expect(compiled.stderr).not.toContain("TS100072");
       }),
     timeout,
   );

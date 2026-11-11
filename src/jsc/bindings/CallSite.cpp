@@ -62,7 +62,6 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
 #if ENABLE(AOT)
     if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction) {
-        JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
         isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
     }
 #endif

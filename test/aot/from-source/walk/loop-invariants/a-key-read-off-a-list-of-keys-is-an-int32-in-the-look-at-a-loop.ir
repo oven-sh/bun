@@ -1,0 +1,42 @@
+# -- source: main.ts
+# interface Line { readonly cells: readonly number[] }
+# const LINES: Line[] = [];
+# for (let y = 0; y < 3; y++) LINES.push({ cells: [0, 1, 2].map(k => y * 3 + k) });
+# class Grid {
+#   readonly cells: number[] = [1, 2, 0, 1, 1, 2, 0, 0, 1];
+#   stepped(player: number): number {
+#     const grid = this.cells;
+#     let total = 0;
+#     for (const { cells } of LINES) {
+#       for (const c of cells) if (grid[c] === player) total++;
+#     }
+#     return total;
+#   }
+#   counted(player: number): number {
+#     const grid = this.cells;
+#     let total = 0;
+#     for (let l = 0; l < LINES.length; l++) {
+#       const { cells } = LINES[l]!;
+#       for (let k = 0; k < cells.length; k++) {
+#         const c = cells[k]!;
+#         if (grid[c] === player) total++;
+#       }
+#     }
+#     return total;
+#   }
+# }
+# console.log(new Grid().stepped(1), new Grid().counted(2));
+# export {};
+# -- end of source
+# The list under the key is named in front of both loops. The look at the inner loop passed it over: it takes a list for read by index only where the key is an integer in the look, and there the key,
+# read off a list of keys, is a whole number or undefined. The element of a list that is found with storage of int32s is an int32 or a hole in the typed copy: it counts as an int32 in the look,
+# be it read by index or handed out by the step of a for-of: the list under it is tested in front, and the access asks the key for a number.
+# RUN(STEPPED): walk f2 mechanisms=all
+# STEPPED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
+# STEPPED: = TypeTest {{*}}testedType=number
+# STEPPED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# RUN(COUNTED): walk f3 mechanisms=all
+# COUNTED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
+# COUNTED: = IsElementPresent {{*}}arrayStorage=Int32
+# COUNTED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
+# COUNTED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]

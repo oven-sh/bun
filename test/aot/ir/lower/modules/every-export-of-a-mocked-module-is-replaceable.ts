@@ -5,8 +5,8 @@
 // CHECK: variable {{*}}name="add"{{*}}declared={type=anything} initialization=Function{{*}}flags=[IsReplaceable]
 // CHECK: variable {{*}}name="other"{{*}}flags=[IsReplaceable]
 // CHECK: variable {{*}}name="third"{{*}}flags=[IsReplaceable]
-// CHECK: module {{*}}displayPath="kept.ts" flags=[KeepsError]
-// CHECK: module {{*}}displayPath="math.ts" flags=[KeepsError, MayBeMocked]
+// CHECK: module {{*}}displayPath="kept.ts" flags=[CachesEvaluationError]
+// CHECK: module {{*}}displayPath="math.ts" flags=[CachesEvaluationError, MayBeMocked]
 // The importer compares what the variable holds: the 5 of the declaration does not cross to it.
 // CHECK: function {{*}}name="isFive"
 // CHECK: GetModuleVariable

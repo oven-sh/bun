@@ -499,22 +499,14 @@ pub mod internal {
         /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
         /// (`bun_install`) reach it via this link-time extern to avoid a crate
         /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
-        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16);
+        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: &[u8], port: u16);
     }
 
     #[inline]
     pub fn prefetch<L>(loop_: *mut L, hostname: &[u8], port: u16) {
-        // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
-        // the call. Prefetch is a perf hint — the body short-circuits if no
-        // resolver is available.
-        unsafe {
-            __bun_dns_prefetch(
-                loop_.cast::<c_void>(),
-                hostname.as_ptr(),
-                hostname.len(),
-                port,
-            )
-        }
+        // SAFETY: link-time extern of this signature. The macOS body dereferences
+        // `loop_`, for which the one caller passes its live uws loop.
+        unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname, port) }
     }
 
     /// Register `pc` to be notified when the addrinfo `request` resolves.

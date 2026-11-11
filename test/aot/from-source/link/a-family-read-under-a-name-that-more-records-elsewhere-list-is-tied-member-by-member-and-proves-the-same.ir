@@ -1,0 +1,220 @@
+# -- source: main.js
+# class Base { base() { return 0; } }
+# class One extends Base { one() { return 1; } }
+# class Two extends Base { two() { return 2; } }
+# class Sub extends Two { tally() { return "m"; } }
+# class Three extends Base { three() { return 3; } }
+# class Four extends Three { four() { return 4; } }
+# const all = [new One(), new Two(), new Sub(), new Three(), new Four()];
+# function pick(i) { return all[i % all.length]; }
+# function read(i) { return pick(i).tally; }
+# const others = [{ tally: 0, o0: 1 }, { tally: 1, o1: 1 }, { tally: 2, o2: 1 }, { tally: 3, o3: 1 }, { tally: 4, o4: 1 }, { tally: 5, o5: 1 }, { tally: 6, o6: 1 }, { tally: 7, o7: 1 }];
+# print(typeof read(2), typeof read(0), others.length);
+# -- end of source
+# Eight records elsewhere list the name: more than the family has members: each member is tied, as before. What is proven of the read is the same to the letter as in the twin.
+# RUN(COUNT): compile FamilyReadsLinkedToDeclarers mechanisms=all
+# COUNT: statistic FamilyReadsLinkedToDeclarers 0
+# RUN: link functions mechanisms=all
+# CHECK: function f2 {{*}}result=undefined|f10 
+# RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# ANSWERS: function undefined 8
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f3 place=6
+layout L1 kind=Instance name="One" module=m0 position=42 base=L0 constructor=f5 supertypes=[L0] flags=[HasHeritage] place=42
+layout L2 kind=Instance name="Two" module=m0 position=89 base=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage] place=89
+layout L3 kind=Instance name="Sub" module=m0 position=136 base=L2 constructor=f9 supertypes=[L2] flags=[HasHeritage] place=136
+layout L4 kind=Instance name="Three" module=m0 position=186 base=L0 constructor=f11 supertypes=[L0] flags=[HasHeritage] place=186
+layout L5 kind=Instance name="Four" module=m0 position=237 base=L4 constructor=f13 supertypes=[L4] flags=[HasHeritage] place=237
+layout L6 module=m0 position=503 fields=[{key="o2" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=503 ownFieldCount=2
+layout L7 module=m0 position=482 fields=[{key="o1" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=482 ownFieldCount=2
+layout L8 module=m0 position=524 fields=[{key="o3" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=524 ownFieldCount=2
+layout L9 module=m0 position=461 fields=[{key="o0" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=461 ownFieldCount=2
+layout L10 module=m0 position=566 fields=[{key="o5" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=566 ownFieldCount=2
+layout L11 module=m0 position=608 fields=[{key="o7" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=608 ownFieldCount=2
+layout L12 module=m0 position=545 fields=[{key="o4" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=545 ownFieldCount=2
+layout L13 module=m0 position=587 fields=[{key="o6" declared={type=anything} flags=[IsRequired]}, {key="tally" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=587 ownFieldCount=2
+data d0 root=Array{contents=anything elements=[Object{layout=L9 members=[{key="tally" value=Number{}}, {key="o0" value=Number{value=1}}]}, Object{layout=L7 members=[{key="tally" value=Number{value=1}}, {key="o1" value=Number{value=1}}]}, Object{layout=L6 members=[{key="tally" value=Number{value=2}}, {key="o2" value=Number{value=1}}]}, Object{layout=L8 members=[{key="tally" value=Number{value=3}}, {key="o3" value=Number{value=1}}]}, Object{layout=L12 members=[{key="tally" value=Number{value=4}}, {key="o4" value=Number{value=1}}]}, Object{layout=L10 members=[{key="tally" value=Number{value=5}}, {key="o5" value=Number{value=1}}]}, Object{layout=L13 members=[{key="tally" value=Number{value=6}}, {key="o6" value=Number{value=1}}]}, Object{layout=L11 members=[{key="tally" value=Number{value=7}}, {key="o7" value=Number{value=1}}]}]} module=m0
+variable g0 name="pick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="all" module=m0 declared={type=absent|Array flags=[IsExpected]} flags=[IsImmutable] place=21
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=49
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=57
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=65
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=73
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=81
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=89
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g2 @0
+    v5 = NewClosure function=f4 @13
+    DefineMethod v3, v5 layout=L0 key="base" @13
+    v7 = FinishClass v3 layout=L0 @0
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @0
+    v10 = ResolveHeritage v9 @54
+    v11 = NewClosure function=f5 @36
+    v12 = NewClass v11, v9, v10 layout=L1 @36
+    PutModuleVariable v12 variable=g3 @36
+    v14 = NewClosure function=f6 @61
+    DefineMethod v12, v14 layout=L1 key="one" @61
+    v16 = FinishClass v12 layout=L1 @36
+    v17 = Convert v16 declared={type=f5 flags=[IsFromCompiler]} @36
+    v18 = Convert v16 declared={type=f5 flags=[IsFromCompiler]} @36
+    v19 = ResolveHeritage v9 @101
+    v20 = NewClosure function=f7 @83
+    v21 = NewClass v20, v9, v19 layout=L2 @83
+    PutModuleVariable v21 variable=g4 @83
+    v23 = NewClosure function=f8 @108
+    DefineMethod v21, v23 layout=L2 key="two" @108
+    v25 = FinishClass v21 layout=L2 @83
+    v26 = Convert v25 declared={type=f7 flags=[IsFromCompiler]} @83
+    v27 = Convert v25 declared={type=f7 flags=[IsFromCompiler]} @83
+    v28 = ResolveHeritage v27 @148
+    v29 = NewClosure function=f9 @130
+    v30 = NewClass v29, v27, v28 layout=L3 @130
+    PutModuleVariable v30 variable=g5 @130
+    v32 = NewClosure function=f10 @154
+    DefineMethod v30, v32 layout=L3 key="tally" @154
+    v34 = FinishClass v30 layout=L3 @130
+    v35 = Convert v34 declared={type=f9 flags=[IsFromCompiler]} @130
+    v36 = Convert v34 declared={type=f9 flags=[IsFromCompiler]} @130
+    v37 = ResolveHeritage v9 @200
+    v38 = NewClosure function=f11 @180
+    v39 = NewClass v38, v9, v37 layout=L4 @180
+    PutModuleVariable v39 variable=g6 @180
+    v41 = NewClosure function=f12 @207
+    DefineMethod v39, v41 layout=L4 key="three" @207
+    v43 = FinishClass v39 layout=L4 @180
+    v44 = Convert v43 declared={type=f11 flags=[IsFromCompiler]} @180
+    v45 = Convert v43 declared={type=f11 flags=[IsFromCompiler]} @180
+    v46 = ResolveHeritage v45 @250
+    v47 = NewClosure function=f13 @231
+    v48 = NewClass v47, v45, v46 layout=L5 @231
+    PutModuleVariable v48 variable=g7 @231
+    v50 = NewClosure function=f14 @258
+    DefineMethod v48, v50 layout=L5 key="four" @258
+    v52 = FinishClass v48 layout=L5 @231
+    v53 = Convert v52 declared={type=f13 flags=[IsFromCompiler]} @231
+    v54 = Convert v52 declared={type=f13 flags=[IsFromCompiler]} @231
+    v55 = Construct v18 calleeName="One" @298
+    v56 = Construct v27 calleeName="Two" @309
+    v57 = Construct v36 calleeName="Sub" @320
+    v58 = Construct v45 calleeName="Three" @331
+    v59 = Construct v54 calleeName="Four" @344
+    v60 = NewArray v55, v56, v57, v58, v59 contents=anything @293
+    PutModuleVariable v60 variable=g1 @287
+    v62 = Data data=d0 @460
+    v63 = Builtin builtin=GlobalThis @630
+    v64 = PropGet v63 key="print" [isFreeName] @630
+    v65 = Integer integer=2 @648
+    v66 = Call v1, -, v65 calleeName="read" @643
+    v67 = TypeOf v66 @636
+    v68 = Integer @664
+    v69 = Call v1, -, v68 calleeName="read" @659
+    v70 = TypeOf v69 @652
+    v71 = PropGet v62 key="length" @668
+    v72 = Call v64, -, v67, v70, v71 calleeName="print" @630
+    v73 = Undefined @630
+    Return v73 @630
+}
+function f1 name="pick" module=m0 position=353 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @379
+    v2 = CheckInitialized v1 name="all" @379
+    v3 = GetModuleVariable variable=g1 @387
+    v4 = CheckInitialized v3 name="all" @387
+    v5 = PropGet v4 key="length" @387
+    v6 = Mod v0, v5 @387
+    v7 = ElemGet v2, v6 @379
+    Return v7 @379
+}
+function f2 name="read" module=m0 position=402 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @428
+    v2 = Call v1, -, v0 calleeName="pick" @428
+    v3 = PropGet v2 key="tally" @434
+    Return v3 @428
+}
+function f3 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f4 name="base" module=m0 position=13 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer @29
+    Return v0 @29
+}
+function f5 name="One" module=m0 position=42 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @42
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @42
+    v5 = Convert v4 declared={type=L1} @42
+    Return v5 @42
+}
+function f6 name="one" module=m0 position=61 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @76
+    Return v0 @76
+}
+function f7 name="Two" module=m0 position=89 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @89
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @89
+    v5 = Convert v4 declared={type=L2} @89
+    Return v5 @89
+}
+function f8 name="two" module=m0 position=108 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=2 @123
+    Return v0 @123
+}
+function f9 name="Sub" module=m0 position=136 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @136
+    v4 = SuperConstructList v3, v1, v2 layout=L3 @136
+    v5 = Convert v4 declared={type=L3} @136
+    Return v5 @136
+}
+function f10 name="tally" module=m0 position=154 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="m" @171
+    Return v0 @171
+}
+function f11 name="Three" module=m0 position=186 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @186
+    v4 = SuperConstructList v3, v1, v2 layout=L4 @186
+    v5 = Convert v4 declared={type=L4} @186
+    Return v5 @186
+}
+function f12 name="three" module=m0 position=207 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=3 @224
+    Return v0 @224
+}
+function f13 name="Four" module=m0 position=237 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @237
+    v4 = SuperConstructList v3, v1, v2 layout=L5 @237
+    v5 = Convert v4 declared={type=L5} @237
+    Return v5 @237
+}
+function f14 name="four" module=m0 position=258 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=4 @274
+    Return v0 @274
+}
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f17]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]

@@ -89,7 +89,9 @@ macro_rules! stacks {
                 StackLens { $($field: self.$field.len() as u32,)* }
             }
             fn truncate(&mut self, lens: &StackLens) {
-                $(self.$field.truncate(lens.$field as usize);)*
+                $(if self.$field.len() > lens.$field as usize {
+                    self.$field.truncate(lens.$field as usize);
+                })*
             }
             fn clear(&mut self) {
                 $(self.$field.clear();)*
@@ -140,17 +142,9 @@ macro_rules! file_lists {
         }
 
         fn truncate_file(file: &mut FileBuilder, lens: &FileLens) {
-            $(file.$field.truncate(lens.$field as usize);)*
-        }
-
-        /// Returns an empty file that reuses the list allocations of `old`, which loses them.
-        fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
-            let mut file = FileBuilder::default();
-            $(
-                old.$field.clear();
-                file.$field = std::mem::take(&mut old.$field);
-            )*
-            file
+            $(if file.$field.len() > lens.$field as usize {
+                file.$field.truncate(lens.$field as usize);
+            })*
         }
     };
 }
@@ -322,18 +316,9 @@ fn is_an_external_module_indicator(f: &FileBuilder, id: StmtId) -> bool {
     flags.contains(Flags::EXPORT)
 }
 
-/// A parser's inputs.
-struct Seed<'a> {
-    lx: Lexer<'a>,
-    file: FileBuilder,
-    stacks: Stacks,
-    declared: Declared,
-    options: Options,
-    jsdoc: jsdoc::State,
-}
-
-/// What a finished parser hands back, besides the file.
+/// What a finished parser hands back.
 struct Harvest<'a> {
+    file: Box<FileBuilder>,
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
@@ -343,12 +328,20 @@ struct Harvest<'a> {
     names_await_at_top_level: bool,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How often this thread has begun to parse a text.
+    pub(crate) static ENTRIES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) fn run<'a>(
     text: &'a [u8],
     options: Options,
     atoms: Option<&'a dyn Intern>,
     scratch: &'a mut Scratch,
 ) -> Result<Parsed, Rejected> {
+    #[cfg(test)]
+    ENTRIES.set(ENTRIES.get() + 1);
     if text.len() >= 1 << 30 {
         return Err(Rejected::new(Rejection::TooLarge));
     }
@@ -363,8 +356,8 @@ pub(crate) fn run<'a>(
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
-    let mut f = scratch.recycled.take().unwrap_or_default();
-    let mut file = recycled_file(&mut f);
+    let mut file = *scratch.recycled.take().unwrap_or_default();
+    file.clear();
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
@@ -396,15 +389,9 @@ pub(crate) fn run<'a>(
     lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
-    let seed = Seed {
-        lx,
-        file,
-        stacks,
-        declared,
-        options,
-        jsdoc,
-    };
+
     let Harvest {
+        file: mut f,
         lx,
         stacks,
         declared,
@@ -413,12 +400,19 @@ pub(crate) fn run<'a>(
         has_plain_top_level_await,
         names_await_at_top_level,
     } = match (is_general, options.attach_comments) {
-        (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
-        (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
-        (false, false) => Parser::<false, false>::new(seed).parse_into(&mut f),
+        (true, _) => {
+            Parser::<true, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
+        (false, true) => {
+            Parser::<false, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
+        (false, false) => {
+            Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
     };
     let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
+    let ignore_comments = lx.ignore_comments;
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.declared = declared;
@@ -438,7 +432,8 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
-    if !options.keeps_function_directives {
+    f.ignore_comments = ignore_comments;
+    if !options.ignores_pure_comments {
         pure_calls::mark_pure_calls(&mut f, text);
     }
     let names = &mut scratch.names;
@@ -474,15 +469,14 @@ pub(crate) fn run<'a>(
 
 impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     #[inline(always)]
-    fn new(seed: Seed<'a>) -> Self {
-        let Seed {
-            lx,
-            file,
-            stacks,
-            declared,
-            options,
-            jsdoc,
-        } = seed;
+    fn new(
+        lx: Lexer<'a>,
+        file: FileBuilder,
+        stacks: Stacks,
+        declared: Declared,
+        options: Options,
+        jsdoc: jsdoc::State,
+    ) -> Self {
         let is_script = options.is_javascript && !options.is_json;
         let is_ecmascript = options.dialect.ecmascript && is_script;
         let is_flow = options.dialect.flow && is_script;
@@ -556,8 +550,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Parses the source and stores the result in `file`.
-    fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
+    /// Parses the source.
+    fn parse_source(mut self) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
         self.report_scanner_flagged_errors();
@@ -571,8 +565,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
         }
         self.note_odd_exports();
-        *file = self.f;
         Harvest {
+            file: Box::new(self.f),
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,
@@ -602,7 +596,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `Options::reads_module_statements_alone`, at the start of a statement. True if the statement is to be parsed. Otherwise
-    /// the text ends here, or is rejected.
+    /// the text ends here. Where the rest cannot be left out, it is parsed from here on.
     #[inline(never)]
     fn is_at_module_statement(&mut self) -> bool {
         use skipped_blocks::{may_export_from_a_file, may_reach_beyond_the_module};
@@ -619,11 +613,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             }
             _ => src.get(self.pos() as usize..).unwrap_or_default(),
         };
-        match self.f.has_module_syntax && !may_reach_beyond_the_module(rest) {
-            true => self.lx.stop(),
-            false => self.reject(Rejection::Unsupported),
+        if self.f.has_module_syntax && !may_reach_beyond_the_module(rest) {
+            self.f.rare_syntax |= rare::LEFT_OUT;
+            self.lx.stop();
+            return false;
         }
-        false
+        self.options.reads_module_statements_alone = false;
+        true
     }
 
     /// `parseSourceFileWorker`
@@ -671,7 +667,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if is_in_prologue {
                 is_in_prologue = self.take_directive(statement);
             }
-            has_module_declaration |= self.is_module_declaration(statement);
+            has_module_declaration =
+                has_module_declaration || self.is_module_declaration(statement);
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
@@ -1037,6 +1034,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         rest.is_some_and(|rest| rest.starts_with(text))
     }
 
+    #[inline]
+    pub(crate) fn is_followed_by_bytes<const N: usize>(&self, text: &[u8; N]) -> bool {
+        let rest = self.lx.src.get(self.lx.end as usize..);
+        rest.and_then(|rest| rest.first_chunk::<N>()) == Some(text)
+    }
+
     /// Returns the next token's kind.
     #[inline]
     pub(crate) fn peek(&mut self) -> T {
@@ -1104,6 +1107,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `tryParse`: keeps what `parse` built if it returns `Some` and hit no syntax error. Otherwise rolls back.
+    /// Kept out of line because the checkpoint is about 500 bytes, and a caller that recurses would hold one at every level.
+    #[inline(never)]
     pub(crate) fn try_parse<R>(&mut self, parse: impl FnOnce(&mut Self) -> Option<R>) -> Option<R> {
         if self.has_failed() {
             return None;
@@ -1135,7 +1140,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         None
     }
 
-    /// `lookAhead` for a test that parses. Everything it built is discarded.
+    /// `lookAhead` for a test that parses. Everything it built is discarded. Kept out of line like `try_parse`.
+    #[inline(never)]
     pub(crate) fn look_ahead_parsing(&mut self, test: impl FnOnce(&mut Self) -> bool) -> bool {
         if self.has_failed() {
             return false;
@@ -1269,8 +1275,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// Returns `String(n)` as an atom.
     pub(crate) fn number_name(&mut self, n: f64) -> Atom {
-        let text = bun_sema::atom::number_to_string(n);
-        self.atom(&text)
+        let mut buffer = [0; 124];
+        let text = bun_core::fmt::FormatDouble::dtoa(&mut buffer, n);
+        self.atom(text)
     }
 
     // ───────────────────────────── lists ─────────────────────────────
@@ -1282,10 +1289,16 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let items = self.s.ids.get(base..).unwrap_or_default();
         let len = items.len() as u32;
         match *items {
-            [only] if self.f.ids.len() < self.f.ids.capacity() => self.f.ids.push(only),
-            _ => self.f.ids.extend_from_slice(items),
+            [] => {}
+            [only] if self.f.ids.len() < self.f.ids.capacity() => {
+                self.f.ids.push(only);
+                self.s.ids.pop();
+            }
+            _ => {
+                self.f.ids.extend_from_slice(items);
+                self.s.ids.truncate(base);
+            }
         }
-        self.s.ids.truncate(base);
         IdList::new(start, len)
     }
 
@@ -1351,10 +1364,16 @@ macro_rules! take_span {
         // Push only when there's capacity, because a push that can grow the list keeps `only` in a recursive function's
         // frame.
         match *items {
-            [only] if $p.f.$field.len() < $p.f.$field.capacity() => $p.f.$field.push(only),
-            _ => $p.f.$field.extend_from_slice(items),
+            [] => {}
+            [only] if $p.f.$field.len() < $p.f.$field.capacity() => {
+                $p.f.$field.push(only);
+                $p.s.$field.pop();
+            }
+            _ => {
+                $p.f.$field.extend_from_slice(items);
+                $p.s.$field.truncate(base);
+            }
         }
-        $p.s.$field.truncate(base);
         $crate::parser::comments::finish_list!($p, $field, start, len);
         bun_sema::hir::Span::new(start, len)
     }};

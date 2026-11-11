@@ -1,4 +1,5 @@
 use super::*;
+use crate::compile::testing::with_test_run_bind_input;
 use crate::modules::module_set::collect_modules;
 use bun_sema::program::FileRole;
 
@@ -38,7 +39,7 @@ fn every_compiled_file_has_a_record() {
     with_module_set(&files, |modules, program| {
         let mut loaded_files = program.input.files.compiled_files().to_vec();
         loaded_files.sort_unstable();
-        assert_eq!(loaded_files.len(), files.len() + 1);
+        assert_eq!(loaded_files.len(), files.len());
         assert_eq!(modules.compiled_files, loaded_files);
         assert_eq!(modules.record_files, loaded_files);
         for &file in &loaded_files {
@@ -180,5 +181,58 @@ fn other_modules_are_sorted_and_unique() {
         let is_less = |a: &ModuleRef, b: &ModuleRef| compare_modules(*a, *b, atoms).is_lt();
         assert_eq!(modules.other_modules.len(), 5);
         assert!(modules.other_modules.is_sorted_by(is_less));
+    });
+}
+
+#[test]
+fn statement_with_a_type_stands_for_its_own_file() {
+    let main = "import * as dep from './dep.ts';\n\
+                import text from './dep.ts' with { type: 'text' };\n\
+                console.log(dep, text);";
+    let files = [("main.test.ts", main), ("dep.ts", "export const x = 1;")];
+    with_test_run_bind_input(&files, |input| {
+        let main = file_named(input, "main.test.ts");
+        let mut scans = scan_files(input);
+        let found_sites = scans.of(main).sites.clone();
+        assert_ne!(found_sites[0], found_sites[1]);
+        leave_imports_of_test_files_to_loader(input, &mut scans, &|_| true);
+        let modules = collect_modules(input, &scans);
+        let left_sites = &scans.of(main).sites;
+        for (found, left) in found_sites.iter().zip(left_sites).take(2) {
+            let (ScannedSite::Module(found), ScannedSite::Module(left)) = (found, left) else {
+                panic!("the sites are {found:?} and {left:?}");
+            };
+            assert!(matches!(found, ModuleRef::File(_)), "{found:?}");
+            assert!(matches!(left, ModuleRef::External { .. }), "{left:?}");
+            assert_eq!(modules.module_behind(*left), *found);
+        }
+    });
+}
+
+#[test]
+fn form_stands_under_the_file_at_its_path() {
+    let main = "import a from './dep.ts';\n\
+                import b from './dep.ts' with { type: 'text' };\n\
+                import c from './note.ts' with { type: 'text' };\n\
+                console.log(a, b, c);";
+    let files = [
+        ("main.ts", main),
+        ("dep.ts", "export default 1;"),
+        ("note.ts", "export default 1;"),
+    ];
+    with_module_set(&files, |modules, program| {
+        let sources = program.input.sources;
+        let file_at = |path: &[u8]| {
+            let mut files = modules.compiled_files.iter();
+            let file = files.find(|&&file| sources.public_path(file) == path);
+            *file.expect("no compiled file has this path")
+        };
+        let dep = file_at(b"/$bunfs/root/dep.ts");
+        let text = file_at(b"/$bunfs/root/dep.ts?text");
+        let forms: Vec<ModuleRef> = modules.forms_of(ModuleRef::File(dep)).collect();
+        assert_eq!(forms, [ModuleRef::File(text)]);
+        for file in [text, file_at(b"/$bunfs/root/note.ts?text")] {
+            assert_eq!(modules.forms_of(ModuleRef::File(file)).count(), 0);
+        }
     });
 }

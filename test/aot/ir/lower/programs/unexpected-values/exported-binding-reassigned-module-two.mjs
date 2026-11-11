@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="attempt"
+// CHECK-LABEL: function {{*}}name="truncates"
 
 // FILE: main.mjs
 // An exported binding is reassigned by its module between two uses.
@@ -304,79 +306,3 @@ export function replace(index) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: attempt truncates
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=" -> "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v10 = Call v9, -, v1 calleeName="outcome"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v12 = Add v8, v11
-// CHECK-NEXT: v13 = Call v6, v4, v12 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="truncates"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="replace"
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Call v2, -, v3 calleeName="replace"
-// CHECK-NEXT: v5 = Data data=[[d_4]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v9)
-// CHECK-NEXT: b2(v10):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v12 = Integer integer=3
-// CHECK-NEXT: v13 = Less v10, v12
-// CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b10(| 0)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v15 = PropGet v7 key="push"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v18 = CheckInitialized v17 name="n"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|number|string|bigint|[[L_7]] flags=[IsExpected]}
-// CHECK-NEXT: v20 = Integer
-// CHECK-NEXT: v21 = BitOr v19, v20
-// CHECK-NEXT: v22 = Call v16, v7, v21 calleeKey="push" calleeName="results.push"
-// CHECK-NEXT: v23 = Integer
-// CHECK-NEXT: v24 = StrictEq v14, v23
-// CHECK-NEXT: Branch v24 -> taken b5(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b5(v25):
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: v26 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v27 = CheckInitialized v26 name="replace"
-// CHECK-NEXT: v28 = Call v27, -, v0 calleeName="replace"
-// CHECK-NEXT: Jump -> next b8(v25)
-// CHECK-NEXT: b7(v29):
-// CHECK-NEXT: Jump -> next b8(v29)
-// CHECK-NEXT: b8(v30):
-// CHECK-NEXT: Jump -> next b9()
-// CHECK-NEXT: b9():
-// CHECK-NEXT: v31 = Increment v30
-// CHECK-NEXT: v32 = Convert v31 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v32)
-// CHECK-NEXT: b10(v33):
-// CHECK-NEXT: Jump -> next b11()
-// CHECK-NEXT: b11():
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

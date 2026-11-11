@@ -1,0 +1,26 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(a, w, x) { let c = 0; for (let i = 0; i < a.length; i++) c = c + w[i & 7] * x[i & 7] + a[i & 7] * 0.5; return c; } };
+# var halves = function () { return [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]; }, holed = function (at) { var list = halves(); delete list[at]; return list; };
+# var view = Float64Array.from(halves());
+# print(T[key](view, halves(), halves()), T[key](view, holed(0), halves()), T[key](view, halves(), holed(7)), T[key](view.subarray(0, 7), halves(), halves()), T[key](new Float64Array(16).fill(2), halves(), halves()), T[key](view, halves().slice(0, 7), halves()), T[key](view, [1, 2, 3, 4, 5, 6, 7, 8], halves()), T[key](new Float64Array(0), halves(), halves()));
+# -- end of source
+# Two things stood in every turn that no turn can change or that nobody can tell apart.
+# Whether the view is longer than the mask: both sides are made in front of the loop. In front of the turns laid out it is asked once; who fails takes the loop as written.
+# And the hole of `w[i & 7]`: in a product undefined and NaN give the same, so the read may give NaN for its hole where a number or nothing stands beside it. The second key is written behind the first read, so the
+# first read did not see what the second gives, kept its hole apart, and the product asked it again. A key that is a number cut by a written mask is an index whoever reads it first.
+# One call of eight turns: 263 > 227 instructions; a turn 16 > 11.
+# Thirteen since the name of a position behind the test of a length is handed to its read alone: the key and its name were widened apart, now the key is widened once, and one more copy of the loop is laid out.
+# f1 = go
+# RUN: compile UnrolledLoopComparisonsHoisted mechanisms=all
+# CHECK: statistic UnrolledLoopComparisonsHoisted 13
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: number @Double = GetArrayElement {{*}}readsHoleAsNaN
+# WALK-NEXT: number @Double = GetArrayElement {{*}}readsHoleAsNaN
+# WALK-NEXT: = Mul
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 262 NaN NaN 185.5 500 NaN 242 0
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 262 NaN NaN 185.5 500 NaN 242 0
+# NONE-NEXT: exited with 0

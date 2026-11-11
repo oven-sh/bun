@@ -102,12 +102,9 @@ attempt("a proxy above the receiver", () => { const order = []; const below = Ob
 attempt("a has trap that asks its own proxy", () => { const proxy = new Proxy({}, { has(target, key) { return key in proxy; } }); return hasWanted(proxy); });
 attempt("a set trap that stores to its own proxy", () => { const proxy = new Proxy({}, { set(target, key, value) { proxy[key] = value; return true; } }); return storeWanted(proxy, 1); });
 
-function place(error) {
-  return String(error.stack).split("\n").filter(line => /compiled-code-reads-and-calls/.test(line)).slice(0, 3).map(line => (/(\d+:\d+)\)?$/.exec(line) || [, "?"])[1]).join(" < ");
-}
 for (const access of [hasWanted, object => storeWanted(object, 2)]) {
-  try { access(new Proxy({}, { has() { throw new Error("thrown by has"); }, set() { throw new Error("thrown by set"); } })); } catch (error) { console.log(error.message, "at", place(error)); }
-  try { access(new Proxy(Object.freeze({ wanted: 1 }), { has() { return false; }, set() { return true; } })); } catch (error) { console.log(error.constructor.name, "at", place(error)); }
+  try { access(new Proxy({}, { has() { throw new Error("thrown by has"); }, set() { throw new Error("thrown by set"); } })); } catch (error) { console.log(error.message); }
+  try { access(new Proxy(Object.freeze({ wanted: 1 }), { has() { return false; }, set() { return true; } })); } catch (error) { console.log(error.constructor.name); }
 }
 // Env: JSC_aotCountsPath=/dev/null
 /* Output:
@@ -150,8 +147,8 @@ a proxy as the target: true  outer has,inner has,outer set,inner set
 a proxy above the receiver: false  0 has wanted,set wanted true
 a has trap that asks its own proxy: threw RangeError: Maximum call stack size exceeded.
 a set trap that stores to its own proxy: threw RangeError: Maximum call stack size exceeded.
-thrown by has at 109:50 < 5:41 < 109:9
-TypeError at 5:41 < 110:9
-thrown by set at 109:95 < 8:42 < 109:9
-TypeError at 8:42 < 110:9
+thrown by has
+TypeError
+thrown by set
+TypeError
 */

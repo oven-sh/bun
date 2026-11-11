@@ -1,5 +1,7 @@
 //! The name that `bun build --compile --aot` gives an executable: 16 bytes made of the compiled program and of this build of Bun.
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 const NOTE_SIZE: usize = 32;
 const ID_OFFSET: usize = 16;
 
@@ -65,10 +67,24 @@ fn note() -> &'static [u8; NOTE_SIZE] {
     &[0; NOTE_SIZE]
 }
 
+/// `--aot-program-file`: the name of the program in the file.
+static NAME_OF_PROGRAM_FILE: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+
+pub fn set_name_of_program_file(id: &[u8; 16]) {
+    for (half, bytes) in NAME_OF_PROGRAM_FILE.iter().zip(id.as_chunks::<8>().0) {
+        half.store(u64::from_ne_bytes(*bytes), Ordering::Relaxed);
+    }
+}
+
 /// `None` in an executable that holds no compiled program.
 pub fn build_id() -> Option<[u8; 16]> {
     let mut id = [0u8; 16];
     id.copy_from_slice(&note()[ID_OFFSET..]);
+    if id == [0; 16] {
+        for (half, bytes) in NAME_OF_PROGRAM_FILE.iter().zip(id.as_chunks_mut::<8>().0) {
+            *bytes = half.load(Ordering::Relaxed).to_ne_bytes();
+        }
+    }
     (id != [0; 16]).then_some(id)
 }
 

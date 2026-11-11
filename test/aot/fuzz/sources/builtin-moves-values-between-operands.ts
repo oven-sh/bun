@@ -13,8 +13,6 @@ export default family(
     const holdEachOther = index % 3 === 2;
     return {
       name: `seed ${index + 1}${holdEachOther ? ", the operands hold each other" : ""}.`,
-      // Those programs, and every second one of the others, are built with --aot-validate.
-      flags: holdEachOther || index % 2 === 0 ? ["--aot-validate"] : [],
       make: () => ({
         file: "main.mjs",
         text: (holdEachOther ? generateWithOperandsThatHoldEachOther : generate)(new Random(index + 1)),

@@ -1,0 +1,14 @@
+# a list that was made here and that nothing else has is as it was made, and a read out of it runs no code as it is: no test is put in front of the loop, and the loop is built once
+# f1 = sumsItsOwnList
+# -- source: list-that-only-this-code-has-is-not-tested.ts
+# declare function sink(...values: unknown[]): void;
+# function sumsItsOwnList(a: number, b: number) { const list = [a, b, 3, 4, 5, 6, 7, 8, 9]; let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s; }
+# sink(sumsItsOwnList);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement {{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = IsPristine
+# NEVER-NOT: = HasArrayStorage
+# NEVER-NOT: frequency=Rare isLoopHead=true

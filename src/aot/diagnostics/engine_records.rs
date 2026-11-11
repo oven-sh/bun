@@ -1,87 +1,94 @@
-use core::fmt::Display;
-
+use bun_core::strings;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
-use bun_sema::util::SharedSort;
 
-use super::sink::to_log_message;
-use super::{
-    COMPILER_DIAGNOSTIC_CLASS, Diagnostics, Severity, SourcePosition, new_driver_diagnostic,
-};
+use super::int32_flows::write_int32_message;
+use super::sink::{append_location, to_driver_diagnostic, to_log_message};
+use super::{COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, Severity, new_driver_diagnostic};
+use crate::diagnostic_codes::Code;
 use crate::engine::{
     EngineResult, InternalErrorRecord, Position, UserDiagnosticRecord, position_of,
 };
-use crate::ir::generated::{DiagnosticSeverity, UserDiagnosticKind};
-use crate::ir::{FunctionId, LayoutId, ModuleId};
-use crate::link::{ModuleOrigin, ProgramNames};
-use crate::report::{ModuleLocator, SourceTexts};
-
-// The files of dependencies that declare an `int32` which the engine could not prove, by the paths that messages name them by.
-fn find_dependencies_with_unproven_int32(
-    result: &EngineResult,
-    names: &ProgramNames,
-) -> Vec<Vec<u8>> {
-    let records = result
-        .user_diagnostics()
-        .iter()
-        .filter(|record| is_about_dependency(record));
-    let declared_in = records.filter_map(|record| Some(position_of(record.origin)?.module));
-    let mut paths: Vec<Vec<u8>> = declared_in
-        .map(|module| names.module_path(module).to_vec())
-        .collect();
-    paths.shared_sort_unstable();
-    paths.dedup();
-    paths
-}
-
-fn is_about_dependency(record: &UserDiagnosticRecord) -> bool {
-    record.kind == UserDiagnosticKind::Int32OfDependencyNotProven
-}
+use crate::ir::ModuleId;
+use crate::ir::generated::{DiagnosticSeverity, UserDiagnosticKind, Witness};
+use crate::report::{ModuleLocator, ModuleOrigin, SourceTexts};
 
 fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
     matches!(
         record.kind,
-        UserDiagnosticKind::CodeOutsideImageIsRefused
-            | UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused
+        UserDiagnosticKind::NonConstantImportPath
+            | UserDiagnosticKind::NonConstantModuleName
+            | UserDiagnosticKind::RequirePassedToUnseenCode
     )
+}
+
+pub(super) fn package_name_in(path: &[u8]) -> Option<&[u8]> {
+    const FOLDER: &[u8] = b"node_modules/";
+    let name = &path[strings::last_index_of(path, FOLDER)? + FOLDER.len()..];
+    let parts = if name.starts_with(b"@") { 2 } else { 1 };
+    let mut slashes = (0..name.len()).filter(|&index| name[index] == b'/');
+    Some(&name[..slashes.nth(parts - 1)?])
+}
+
+pub(crate) fn package_with_slow_code<'t>(
+    record: &UserDiagnosticRecord,
+    texts: &'t SourceTexts,
+) -> Option<&'t [u8]> {
+    if record.kind != UserDiagnosticKind::RegExpPatternNotConstant {
+        return None;
+    }
+    let module = position_of(record.location)?.module;
+    match texts.origin(module) {
+        ModuleOrigin::Dependency => package_name_in(texts.path(module)),
+        ModuleOrigin::Program | ModuleOrigin::Runtime => None,
+    }
 }
 
 impl Diagnostics {
     pub(crate) fn add_engine_records(
         &mut self,
         result: &EngineResult,
-        names: &ProgramNames,
         texts: &SourceTexts,
         runs_tests: bool,
+        lists_slow_code_in_packages: bool,
     ) {
         let mut locator = ModuleLocator::new(texts);
-        for path in find_dependencies_with_unproven_int32(result, names) {
-            let kind = UserDiagnosticKind::Int32OfDependencyNotProven;
-            let severity = severity_of(kind.severity());
-            let text = [
-                &b"The compiler can't prove every 'int32' that \""[..],
-                &path,
-                b"\" declares, so it tests them when the program runs. The file still works, but runs slower.",
-            ]
-            .concat();
-            let reported = new_driver_diagnostic(kind.code(), severity.category(), text, &[]);
-            self.add_message(kind.code(), to_log_message(&reported, severity));
-        }
         for record in result
             .user_diagnostics()
             .iter()
-            .filter(|record| !is_about_dependency(record))
-            // A suite has many such loads, and most find a file that was compiled. The test whose load is refused fails with an error that says so.
             .filter(|record| !(runs_tests && is_about_load_by_unknown_name(record)))
+            .filter(|record| {
+                lists_slow_code_in_packages || package_with_slow_code(record, texts).is_none()
+            })
         {
-            self.add_user_diagnostic(record, result.text(record.message), names, &mut locator);
+            self.add_user_diagnostic(record, result.text(record.message), texts, &mut locator);
         }
         for record in result.internal_errors() {
-            self.add_internal_error_record(
-                record,
-                result.text(record.message),
-                names,
-                &mut locator,
-            );
+            self.add_internal_error_record(record, result.text(record.message), &mut locator);
+        }
+    }
+
+    pub(crate) fn add_at_witness(
+        &mut self,
+        code: Code,
+        arguments: &[&[u8]],
+        witness: &Witness,
+        texts: &SourceTexts,
+    ) {
+        let diagnostic = Diagnostic::new(code, None, arguments);
+        let reported = to_driver_diagnostic(None, &diagnostic);
+        let reported = match position_of(witness.location) {
+            Some(position) => ModuleLocator::new(texts).locate(position, reported),
+            None => reported,
+        };
+        self.add_message(
+            code.number(),
+            to_log_message(&reported, diagnostic.severity),
+        );
+    }
+
+    pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {
+        if witness.function_id().is_some() {
+            self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);
         }
     }
 
@@ -89,47 +96,43 @@ impl Diagnostics {
         &mut self,
         record: &InternalErrorRecord,
         text: &[u8],
-        names: &ProgramNames,
         locator: &mut ModuleLocator<'_>,
     ) {
-        let message = internal_error_text(record, text, names, locator);
+        let message = internal_error_text(record, text, locator);
         let stage = record.kind.stage();
-        let start_of_function_module = || {
-            let module = names.function_module(record.function_id()?)?;
-            Some(Position { module, offset: 0 })
-        };
-        let position = position_of(record.location).or_else(start_of_function_module);
-        // The path that the messages of users' errors have. `ProgramNames::module_path` may be relative.
-        match position.and_then(|position| locator.position_of(position)) {
-            Some(position) => self.report_internal_error_in_file(stage, message, position.path),
-            None => self.report_internal_error(stage, message),
-        }
+        self.report_internal_error(stage, message);
     }
 
     pub(super) fn add_user_diagnostic(
         &mut self,
         record: &UserDiagnosticRecord,
         text: &[u8],
-        names: &ProgramNames,
+        texts: &SourceTexts,
         locator: &mut ModuleLocator<'_>,
     ) {
         let kind = record.kind;
         let severity = severity_of(kind.severity());
-        let written = self.write_int32_message(record, names);
-        let (text, position) = match &written {
-            Some((written, shown)) => (written.as_slice(), *shown),
-            None => (
-                text_or_template(text, kind.message()),
-                position_of(record.location),
-            ),
+        let position = position_of(record.location);
+        let flow = position.and_then(|position| {
+            let path = texts.path(position.module).to_vec();
+            self.int32_flows.get(&(path, position.offset))
+        });
+        let written = write_int32_message(record, flow);
+        let text = match &written {
+            Some((written, _)) => written.as_slice(),
+            None => text_or_template(text, kind.message()),
         };
-        let origin = origin_of(position, names);
+        let position = match (position, &written) {
+            (Some(position), &Some((_, Some(offset)))) => Some(Position { offset, ..position }),
+            (position, _) => position,
+        };
+        let origin = origin_of(position, texts);
         match effect_of(origin, COMPILER_DIAGNOSTIC_CLASS, severity.category()) {
             Effect::Dropped => return,
             Effect::InternalError => {
                 let mut message = text.to_vec();
                 if let Some(position) = position {
-                    append_module_path(&mut message, names, position.module);
+                    append_module_path(&mut message, texts, position.module);
                 }
                 self.report_internal_error(kind.stage(), message);
                 return;
@@ -148,60 +151,20 @@ impl Diagnostics {
 pub(super) fn internal_error_text(
     record: &InternalErrorRecord,
     text: &[u8],
-    names: &ProgramNames,
     locator: &mut ModuleLocator<'_>,
 ) -> Vec<u8> {
     let mut message = record.kind.name().as_bytes().to_vec();
     message.extend_from_slice(b": ");
     message.extend_from_slice(text_or_template(text, record.kind.message()));
-    // The engine's text has every member of the record under the engine's ids. The record's function and layout are the ones the front end sent.
-    let (function, layout) = (record.function_id(), record.layout_id());
     let position = position_of(record.location).and_then(|position| locator.position_of(position));
-    append_subject(&mut message, names, function, layout, position.as_ref());
+    if let Some(position) = position {
+        append_location(&mut message, &position.path, position.line, position.column);
+    }
     message
 }
 
-fn append_subject(
-    text: &mut Vec<u8>,
-    names: &ProgramNames,
-    function: Option<FunctionId>,
-    layout: Option<LayoutId>,
-    position: Option<&SourcePosition>,
-) {
-    if let Some(function) = function {
-        text.extend_from_slice(b" in function ");
-        append_name_or_id(text, names.function_name(function), function);
-    }
-    match (
-        position,
-        function.and_then(|function| names.function_module(function)),
-    ) {
-        (Some(position), _) => {
-            text.extend_from_slice(b" at ");
-            text.extend_from_slice(&position.path);
-            text.extend_from_slice(format!(":{}:{}", position.line, position.column).as_bytes());
-        }
-        (None, Some(module)) => append_module_path(text, names, module),
-        (None, None) => {}
-    }
-    if let Some(layout) = layout {
-        text.extend_from_slice(b" of layout ");
-        append_name_or_id(text, names.layout_name(layout), layout);
-    }
-}
-
-fn append_name_or_id(text: &mut Vec<u8>, name: &[u8], id: impl Display) {
-    if name.is_empty() {
-        text.extend_from_slice(id.to_string().as_bytes());
-        return;
-    }
-    text.push(b'\'');
-    text.extend_from_slice(name);
-    text.push(b'\'');
-}
-
-fn append_module_path(text: &mut Vec<u8>, names: &ProgramNames, module: ModuleId) {
-    let path = names.module_path(module);
+fn append_module_path(text: &mut Vec<u8>, texts: &SourceTexts, module: ModuleId) {
+    let path = texts.path(module);
     if !path.is_empty() {
         text.extend_from_slice(b" at ");
         text.extend_from_slice(path);
@@ -216,8 +179,8 @@ fn text_or_template<'a>(text: &'a [u8], template: &'static str) -> &'a [u8] {
     }
 }
 
-fn origin_of(position: Option<Position>, names: &ProgramNames) -> FileOrigin {
-    match position.map(|position| names.module_origin(position.module)) {
+fn origin_of(position: Option<Position>, texts: &SourceTexts) -> FileOrigin {
+    match position.map(|position| texts.origin(position.module)) {
         Some(ModuleOrigin::Runtime) => FileOrigin::Runtime,
         Some(ModuleOrigin::Program | ModuleOrigin::Dependency) | None => FileOrigin::NoFile,
     }

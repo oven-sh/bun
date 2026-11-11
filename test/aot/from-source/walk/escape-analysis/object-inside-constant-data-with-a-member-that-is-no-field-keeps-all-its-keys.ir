@@ -1,0 +1,9 @@
+# `{ codes: { name: "http", 404: "missing" } }`: the object inside lists `name` at its allocation and gets 404 by a definition behind it. It is not as it was allocated: whoever asks for its keys looks at the object.
+# f1 = shape
+# -- source: object-inside-constant-data-with-a-member-that-is-no-field-keeps-all-its-keys.js
+# function shape() { const o = { codes: { name: "http", 404: "missing" }, inner: { a: 1, ["__proto__"]: 5, b: 2 }, zoom: { label: "z", "-1.5": "big", more: 1 } }; return Object.keys(o.codes).join() + "|" + Object.keys(o.inner).join() + "|" + Object.keys(o.zoom).join() + "|" + JSON.stringify({ ...o.codes }); }
+# let said; for (let i = 0; i < 3; i++) said = shape();
+# print(said);
+# -- end of source
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 404,name|a,__proto__,b|label,-1.5,more|{"404":"missing","name":"http"}

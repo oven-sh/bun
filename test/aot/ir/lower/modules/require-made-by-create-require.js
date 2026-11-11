@@ -1,3 +1,5 @@
+// DIAGNOSTIC: TS100096 require-made-by-create-require.js:39
+// DIAGNOSTIC: TS100096 require-made-by-create-require.js:40
 // RUN(HELD): lower
 // HELD-LABEL: function {{*}}name="held"
 // HELD-NOT: = Call

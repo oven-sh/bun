@@ -1,0 +1,23 @@
+# `for (k in impl) N[k] = impl[k]`: the key is a name that the loop over `impl` gave, and what is stored is read off `impl` under that key: each name of `impl` is appended to `N`, in the cell, and holds what `impl` holds under it, so `N.add(..)` calls `add`. `M` is filled under the keys of a loop over ANOTHER object: nobody knows its names. `held` is no record: there the store speaks as it did, and `part`, which is copied onto it, stays with compiled code.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L1.0 "add" appended proven=f2 writers-known
+# CHECK: field L1.1 "low" appended proven=f3 writers-known
+# CHECK-NOT: field L2.
+# CHECK: layout L0 {{*}}filled-under-computed-keys
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}filled-under-computed-keys
+# CHECK: layout L3 changes=[] stays-with-compiled-code
+# RUN(CELL): plan layouts mechanisms=all
+# CELL: "add" appended {{*}} Inline
+# CELL: "low" appended {{*}} Inline
+# -- source: main.js
+# function add(a, b) { return (a + b) | 0; }
+# function low(a) { return a & 15; }
+# const N = {}, impl = { add: add, low: low }, M = {}, names = { add: 1, zzz: 2 };
+# for (var k in impl) N[k] = impl[k];
+# for (var j in names) M[j] = impl[j];
+# function Holder() { this.at = 1; }
+# const held = new Holder(), part = { one: 1, two: 2 };
+# for (var e in part) held[e] = part[e];
+# export function f(t) { return N.add(t, 1) + N.low(t) + M.add(t, 2) + held.one + part.two; }
+# -- end of source

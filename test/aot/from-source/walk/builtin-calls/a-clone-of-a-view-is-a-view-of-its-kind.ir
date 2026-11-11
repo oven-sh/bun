@@ -1,0 +1,17 @@
+# -- source: a-clone-of-a-view-is-a-view-of-its-kind.ts
+# declare function sink(value: unknown): void;
+# const bytes = new Uint8Array(16); for (let i = 0; i < 16; i++) bytes[i] = i * 3;
+# function sumOfClone(): number { const copy = structuredClone(bytes); let sum = 0; for (let i = 0; i < copy.length; i++) sum += copy[i]!; return sum; }
+# function cloneOfRecord(): unknown { return structuredClone({ a: 1 }); }
+# sink(sumOfClone()); sink(cloneOfRecord());
+# -- end of source
+# `structuredClone(bytes)` gave anything, and the loop behind it went by closed reads: 461,258 instructions for 4,096 elements where plain takes 20,000 to 30,000. The clone of a view is a view of the
+# built-in class: a row for each. It is nobody else's, but it is not said to be as made: it follows a buffer as the view does.
+# The answers: parallel/a-clone-of-a-view-is-a-view-of-its-kind (the shell has no structuredClone).
+# f1 = sumOfClone, f2 = cloneOfRecord
+# RUN: walk f1:Body f2:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : Uint8Array @JSValue = CallBuiltin {{*}} overload=StructuredClone/
+# CHECK: GetTypedArrayLength
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: Array @JSValue = CallBuiltin {{*}} overload=StructuredClone/

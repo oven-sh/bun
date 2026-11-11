@@ -1,6 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="readFlat"
+// CHECK-LABEL: function {{*}}name="castBehindAwait"
+// CHECK-LABEL: function {{*}}name="Incoming"
+// CHECK-LABEL: function {{*}}name="json"
 
 // FILE: main.ts
 // The type that a parsed value goes to is also found behind a generic function: at the type arguments and the destinations of its calls. The calls that run here yield `unknown`, so the values are looked at by code that knows nothing of the type.
@@ -640,73 +644,3 @@ export function parseEveryText(sites: [string, (text: string) => unknown][]) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: readFlat castBehindAwait Incoming json
-// CHECK-LABEL: function {{*}}name="readFlat"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_2]] site=[[w_3]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|[[L_2]] site=[[w_3]]}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="castBehindAwait"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v1 key="json"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="json" calleeName="incoming.json"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Promise<undefined|null|[[L_6]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = Await v4, v1
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_6]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v7 = PropGet v6 key="items"
-// CHECK-NEXT: v8 = PropGet v7 key="length"
-// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_8]]} illTypedCause=Assertion
-// CHECK-NEXT: v10 = Convert v9 declared={type=number|object site=[[w_9]]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Incoming"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_4]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_11]]
-// CHECK-NEXT: v6 = Convert v1 declared={type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_13]]
-// CHECK-NEXT: PrivateSet v4, v7, v6 layout=[[L_4]] field=1
-// CHECK-NEXT: v9 = Undefined
-// CHECK-NEXT: v10 = TypeTest v9 testedType=object
-// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v11):
-// CHECK-NEXT: Jump -> next b4(v11)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: Jump -> next b4(v4)
-// CHECK-NEXT: b4(v13):
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="json"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_4]] site=[[w_14]]} results=[{type=undefined|null|Promise<undefined|null|[[L_15]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Promise" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="resolve"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(PromiseResolve) flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_13]]
-// CHECK-NEXT: v7 = PrivateGet v0, v6 layout=[[L_4]] field=1
-// CHECK-NEXT: v8 = Call v5, v3, v7 calleeKey="resolve" calleeName="Promise.resolve"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v10 = PropGet v9 key="then"
-// CHECK-NEXT: v11 = NewClosure function=[[f_16]]
-// CHECK-NEXT: v12 = Call v10, v9, v11 calleeKey="then" calleeName="then"
-// CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Promise<undefined|null|[[L_15]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

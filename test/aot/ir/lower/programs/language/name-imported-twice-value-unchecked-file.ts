@@ -1,13 +1,24 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// CHECK: CheckInitialized {{*}} name="named"
-// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"second"
-// CHECK: CheckInitialized {{*}} name="byDefault"
-// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"first"
-// CHECK: CheckInitialized {{*}} name="star"
-// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"second"
-// CHECK: CheckInitialized {{*}} name="once"
-// CHECK-NEXT: Convert {{*}} declared={type=undefined|null|"first"
+// `named` and `star` read one variable of the other file, `byDefault` and `once` another.
+// CHECK: [[namedRead]] = GetModuleVariable variable=[[second]]
+// CHECK-NEXT: CheckInitialized [[namedRead]] name="named"
+// CHECK-NEXT: String string="second"
+// CHECK-NEXT: [[defaultRead]] = GetModuleVariable variable=[[first]]
+// CHECK-NEXT: CheckInitialized [[defaultRead]] name="byDefault"
+// CHECK-NEXT: String string="first"
+// CHECK-NEXT: [[starRead]] = GetModuleVariable variable=[[second]]
+// CHECK-NEXT: CheckInitialized [[starRead]] name="star"
+// CHECK-NEXT: String string="second"
+// CHECK-NEXT: [[onceRead]] = GetModuleVariable variable=[[first]]
+// CHECK-NEXT: CheckInitialized [[onceRead]] name="once"
+// CHECK-NEXT: String string="first"
+
+// RUN(DISTINCT): lower
+// DISTINCT: GetModuleVariable variable=[[second]]
+// DISTINCT-NEXT: name="named"
+// DISTINCT-NOT: variable=[[second]]
+// DISTINCT: name="byDefault"
 
 // FILE: main.ts
 // @ts-nocheck

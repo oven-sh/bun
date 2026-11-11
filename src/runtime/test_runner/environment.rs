@@ -112,6 +112,14 @@ impl Environment {
         }
     }
 
+    pub(crate) fn has_window(&self) -> bool {
+        match &self.comment {
+            None => self.project != TestEnvironment::Node,
+            Some(Ok(kind)) => *kind != TestEnvironment::Node,
+            Some(Err(_)) => false,
+        }
+    }
+
     pub(crate) fn load_entry_point(
         &mut self,
         vm: &mut VirtualMachine,

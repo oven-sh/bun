@@ -76,31 +76,31 @@
 // RUN(MARKED): link
 // MARKED-NOT: key="left"
 // MARKED-NOT: key="below"
+// MARKED: layout {{*}}fields=[{key="first" {{*}}, {key="second" {{*}}] flags=[IsWrittenUnderDictionaryType]
+// MARKED-NOT: key="left"
+// MARKED-NOT: key="below"
 // MARKED: layout {{*}}fields=[{key="debug" {{*}}, {key="info" {{*}}] flags=[IsWrittenUnderDictionaryType]
 // MARKED-NOT: key="left"
 // MARKED-NOT: key="below"
 // MARKED: layout {{*}}fields=[{key="a" {{*}}] flags=[IsWrittenUnderDictionaryType]
-// MARKED-NOT: key="left"
-// MARKED-NOT: key="below"
-// MARKED: layout {{*}}fields=[{key="first" {{*}}, {key="second" {{*}}] flags=[IsWrittenUnderDictionaryType]
 // MARKED-NOT: layout {{*}}key="left"
 // MARKED-NOT: layout {{*}}key="below"
 
 // RUN(MEMBERS): link
-// MEMBERS: layout {{*}}name="Person"{{*}}supertypes=[
-// MEMBERS-NOT: ,
-// MEMBERS: [[named]]]
+// MEMBERS: layout {{*}}name="Person"
+// MEMBERS-NOT: supertypes=
+// MEMBERS: layout
 // MEMBERS: function {{*}}name="people" module=
-// MEMBERS: [[person]] = Convert {{*}}declared={type=undefined|null|[[named]] site=
-// MEMBERS: [[member]] = Convert [[person]] declared={type=undefined|null|L
-// MEMBERS: PropDefine {{*}}, [[member]] key="first"
+// MEMBERS-NEXT: ([[person]]: undefined|null|
+// MEMBERS-NOT: Convert
+// MEMBERS: PropDefine {{*}}, [[person]] key="first"
 
 // No type decides for `{}`: it is the empty literal that it is without a type, and the analysis of the whole program sees what becomes of it: the names that the program spells become its fields, and where a name
 // may be added under a key that nobody knows it makes an ordinary object.
 // A literal whose names are all written has their layout, like the literal without the type, and the layout is marked: the type allows any name, and the analysis of the whole program makes the literal an
 // ordinary object where a name may be added to its objects or taken from them. So its members are defined one by one behind the allocation, as those of an ordinary object are.
 // What follows is said of the others: a spread, a computed key or `__proto__:`, and the map of descriptors that Object.defineProperties or Object.create takes.
-// The keys of a type that has an index signature and no named member are data, so the type has no layout and a literal written under it is an ordinary object, whose members are defined by name. That holds for a literal of constants too, alone or inside another one, which is no record of data then. A literal whose own type is such a type is one as well. A member is converted to the type of the index signature, like the value of a store by key: that puts its family below the type that a read is tested against.
+// The keys of a type that has an index signature and no named member are data, so the type has no layout and a literal written under it is an ordinary object, whose members are defined by name. That holds for a literal of constants too, alone or inside another one, which is no record of data then. A literal whose own type is such a type is one as well. A member is defined as it is written: nothing converts it to the type of the index signature, and that type is no supertype of its layout.
 interface Item {
   name: string;
 }

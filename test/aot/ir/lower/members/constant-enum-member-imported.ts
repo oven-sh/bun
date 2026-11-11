@@ -26,8 +26,10 @@
 // CHECK: = Integer integer=5 @
 // CHECK-NOT: PropGet
 // CHECK-LABEL: function {{*}}name="sharedEnum"
-// CHECK: = GetModuleVariable
-// CHECK: = PropGet {{*}}key="One"
+// CHECK-NOT: GetModuleVariable
+// CHECK-NOT: PropGet
+// CHECK: = Integer integer=1 @
+// CHECK-NOT: PropGet
 // CHECK-LABEL: function {{*}}name="stringMember"
 // CHECK-NOT: PropGet
 // CHECK: = String string="left"
@@ -79,6 +81,7 @@ export function renamed() {
   return Sort.Number;
 }
 
+// `bun build` has the value in the place of this read too, so it is folded though `handedOn` hands the object on.
 export function sharedEnum() {
   return Shared.One;
 }

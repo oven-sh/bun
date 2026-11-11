@@ -1,0 +1,14 @@
+# the position is 0 to 3 already, so `pos < text.length` leaves its type as it is and gives it no name, and another test leads to the block of the read: the test of the body holds there all the same
+# f1 = code
+# -- source: test-further-up-that-narrowed-nothing-holds-at-the-read.ts
+# function code(text: string, from: number, flag: boolean): number { const pos = from & 3; if (pos < text.length) { if (flag) return text.charCodeAt(pos); return -1; } return -2; }
+# console.log(code("abc", 1, true), code("abc", 3, true), code("abc", 1, false));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Less v
+# CHECK: : int[0, 65535] {{*}}= GetStringCodeUnit
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-COUNT-1: = Less v
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: |whole

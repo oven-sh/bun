@@ -75,7 +75,7 @@ import limits from "./limits.toml";
 import words from "./words.txt";
 // @ts-ignore
 import logo from "./logo.bin" with { type: "file" };
-import { stamp } from "./stamp.ts" with { type: "macro" };
+import { stamp } from "./stamp.ts";
 declare const Bun: any;
 console.log(total(1), settings.name, limits.max, words.trim(), (await Bun.file(logo).text()).length, JSON.stringify(stamp("a")));
 `,

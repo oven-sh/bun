@@ -12,7 +12,6 @@ fn is_locked_constructor(path: BuiltinPath) -> bool {
         && table::members(constructor).iter().any(is_prototype)
 }
 
-// Defining a class throws unless it extends `null` or a constructor whose `prototype` is an object or `null`.
 impl Removable<'_, '_> {
     pub(crate) fn has_valid_heritage(&self, class: ClassId) -> bool {
         let node = &self.hir[class];
@@ -30,9 +29,6 @@ impl Removable<'_, '_> {
         }
         if let Some(Resolved::Builtin(path)) = self.builtins.of_pure_expr(heritage) {
             return is_locked_constructor(path);
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
         }
         match hir[heritage].kind {
             ExprKind::Null | ExprKind::Class(_) => true,
@@ -57,7 +53,6 @@ impl Removable<'_, '_> {
                     export.is_some_and(|export| self.imports_class(export))
                 })
             }
-            // `/* @__PURE__ */` promises that the call can go when nothing uses the class.
             ExprKind::Call(call) => hir[call].is_pure && !self.options.ignores_pure_annotations,
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
@@ -74,7 +69,6 @@ impl Removable<'_, '_> {
         }
     }
 
-    // A function's `prototype` can be assigned, a class's can't.
     fn is_bound_to_class(&self, symbol: SymbolId) -> bool {
         let hir = self.hir;
         let class = match self.bound.binding_initializer(hir, symbol) {
@@ -114,7 +108,7 @@ impl Removable<'_, '_> {
         let Some((modules, file)) = self.modules else {
             return false;
         };
-        !modules.may_run_before(ModuleRef::File(file), ModuleRef::File(export.file))
+        !self.may_run_before(modules, file, export.file)
             && Removable::new(self.files, export.file, self.options)
                 .is_some_and(|exporter| exporter.holds_class_once_file_has_run(export.id))
     }

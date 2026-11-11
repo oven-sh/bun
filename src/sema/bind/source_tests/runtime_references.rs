@@ -2,6 +2,7 @@ mod support;
 use support::*;
 
 use Binding::{Arguments, Free, Symbol};
+use bun_sema::import_sites::find_imports_of_unused_names;
 
 const EXPORTED_BLOCK_BINDINGS: &[&str] = &[
     "namespace N { v; export function v() {} } namespace N { v; }",
@@ -48,12 +49,59 @@ const DECORATED_MEMBER_KEY_IMPORTS: &[(&str, bool)] = &[
         true,
     ),
     (
+        r#"import { k } from "m"; class A { @d accessor [k]: number; }"#,
+        false,
+    ),
+    (
+        r#"import { k } from "m"; class A { @d declare accessor [k]: number; }"#,
+        true,
+    ),
+    (
+        r#"import { k } from "m"; abstract class A { @d abstract accessor [k]: number; }"#,
+        true,
+    ),
+    (
         r#"import { k } from "m"; class A { @d [k](): void; [k]() {} }"#,
         false,
     ),
     (
         r#"import { k } from "m"; declare class A { @d [k]: number; }"#,
         true,
+    ),
+];
+
+const MEMBER_DECORATOR_IMPORTS: &[(&str, bool)] = &[
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract m(): void; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract get x(): number; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract accessor x: number; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; class A { @d(() => d) m(): void; m() {} }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { abstract m(@d x: number): void; }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; class A { constructor(@d x: number); constructor(x: any) {} }"#,
+        true,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract x: number; }"#,
+        false,
+    ),
+    (
+        r#"import { d } from "m"; abstract class A { @d abstract m(): void; @d n() {} }"#,
+        false,
     ),
 ];
 
@@ -380,12 +428,58 @@ fn direct_eval_through_type_assertions() {
 }
 
 #[test]
-fn decorated_declaration_only_member_keys() {
-    for &(text, expected) in DECORATED_MEMBER_KEY_IMPORTS {
+fn keys_and_decorators_of_declaration_only_members() {
+    let cases = DECORATED_MEMBER_KEY_IMPORTS.iter();
+    for &(text, expected) in cases.chain(MEMBER_DECORATOR_IMPORTS) {
         analyzed("a.ts", text, |s| {
             let import = s.bound.declared_symbol(Decl::ImportSpec(ImportSpecId(0)));
             let is_unused = s.analysis.unused_import_symbols.contains(&import);
             assert_eq!(is_unused, expected, "{text}");
+        });
+    }
+}
+
+#[test]
+fn name_that_the_bundler_takes_out_is_free_outside_a_call() {
+    let text =
+        r#"import { feature } from "bun:bundle"; typeof feature; if (feature("A")) {} [feature];"#;
+    analyzed("a.ts", text, |s| {
+        assert_eq!(s.binding("feature", 0), Free);
+        assert!(matches!(s.binding("feature", 1), Symbol(_)));
+        assert_eq!(s.binding("feature", 2), Free);
+    });
+}
+
+#[test]
+fn imports_of_unused_names() {
+    let cases: &[(&str, &[u32])] = &[
+        (r#"import { f } from "m";"#, &[0]),
+        (
+            r#"import f from "m"; import d, { g as h } from "n";"#,
+            &[0, 1],
+        ),
+        (
+            r#"import { f } from "m"; function g(f) { return f; } g(1);"#,
+            &[0],
+        ),
+        (
+            r#"import "m"; import {} from "m"; import * as all from "m";"#,
+            &[],
+        ),
+        (r#"import { f } from "m"; f;"#, &[]),
+        (r#"import { f } from "m"; typeof f;"#, &[]),
+        (r#"import { f } from "m"; if (false) f;"#, &[]),
+        (r#"import { f } from "m"; export { f };"#, &[]),
+        (r#"import { f } from "m"; export const g = () => f;"#, &[]),
+        (r#"import { f, g } from "m"; g;"#, &[]),
+        (r#"import { f } from "m"; eval("f");"#, &[]),
+        (r#"import { f } from "m"; (0, eval)("1");"#, &[]),
+    ];
+    for &(text, expected) in cases {
+        analyzed("a.mjs", text, |s| {
+            let found = find_imports_of_unused_names(&s.hir, &s.bound, &s.analysis.decisions);
+            let found: Vec<u32> = found.iter().map(|import| import.0).collect();
+            assert_eq!(found, expected, "{text}");
         });
     }
 }

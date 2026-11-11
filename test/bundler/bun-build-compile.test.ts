@@ -28,7 +28,7 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
-import { isHardened, locksEnvironment } from "../aot/hardened";
+import { locksEnvironment } from "../aot/hardened";
 
 // harness.ts takes the variable out of bunEnv where the environment is locked. An executable that is not compiled ahead of time reads it there too.
 const envWithInternals = { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" };
@@ -2254,6 +2254,21 @@ describe("compiled binary validity", () => {
 });
 
 if (isLinux) {
+  /** The p_flags of each PT_LOAD program header of an ELF64 file, in table order. */
+  function elfLoadFlags(path: string): number[] {
+    const bytes = readFileSync(path);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const phoff = Number(view.getBigUint64(32, true));
+    const phentsize = view.getUint16(54, true);
+    const phnum = view.getUint16(56, true);
+    const flags: number[] = [];
+    for (let i = 0; i < phnum; i++) {
+      const off = phoff + i * phentsize;
+      if (view.getUint32(off, true) === 1 /* PT_LOAD */) flags.push(view.getUint32(off + 4, true));
+    }
+    return flags;
+  }
+
   describe("ELF section", () => {
     test("compiled binary runs with execute-only permissions", async () => {
       using dir = tempDir("build-compile-exec-only", {
@@ -2505,8 +2520,8 @@ if (isLinux) {
       // #29963: the writable PT_LOAD must have been grown to cover .bun,
       // rather than a new late PT_LOAD being appended.
       expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments (4 when built with --hardened=on); the fix must not add one.
-      expect(loadCount).toBe(isHardened ? 4 : 3);
+      // The fix must not add a PT_LOAD to the template's (3 on a stock bun, or 4 with full RELRO).
+      expect(loadCount).toBe(elfLoadFlags(bunExe()).length);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode
@@ -2620,24 +2635,11 @@ if (isLinux) {
           expect(r.exitCode).toBe(0);
         }
 
-        // Sanity: the patched bun really does have two writable PT_LOADs.
-        // Otherwise the test is vacuous (it would exercise the same path
-        // as the stock-bun tests above).
-        {
-          const bytes = new Uint8Array(await Bun.file(patchedBun).arrayBuffer());
-          const view = new DataView(bytes.buffer);
-          const phoff = Number(view.getBigUint64(32, true));
-          const phentsize = view.getUint16(54, true);
-          const phnum = view.getUint16(56, true);
-          let writableLoads = 0;
-          for (let i = 0; i < phnum; i++) {
-            const off = phoff + i * phentsize;
-            const pType = view.getUint32(off, true);
-            const pFlags = view.getUint32(off + 4, true);
-            if (pType === 1 /* PT_LOAD */ && (pFlags & 2) !== 0 /* PF_W */) writableLoads++;
-          }
-          expect(writableLoads).toBeGreaterThanOrEqual(2);
-        }
+        // Sanity: the patched bun really does have more writable PT_LOADs
+        // than the stock bun. Otherwise the test is vacuous (it would
+        // exercise the same path as the stock-bun tests above).
+        const writableLoads = (path: string) => elfLoadFlags(path).filter(flags => (flags & 2) /* PF_W */ !== 0).length;
+        expect(writableLoads(patchedBun)).toBeGreaterThan(writableLoads(bunExe()));
 
         // Drive bun build --compile off the patched template.
         const outfile = join(cwd, "app-out");

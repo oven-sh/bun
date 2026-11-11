@@ -1870,8 +1870,9 @@ export function linkDepends(cfg: Config): string[] {
  * (no -fexceptions, lolhtml built with panic=abort).
  *
  * No Linux entry removes a mapped section: GNU strip writes the program
- * headers anew without PT_GNU_RELRO when it removes one (`-R .eh_frame`
- * did, for a .eh_frame that -fno-unwind-tables has since cut to 18 KB).
+ * headers anew without PT_GNU_RELRO when it removes one. `-R .eh_frame`
+ * did, for 806 KB of unwind tables that -Cforce-unwind-tables=no (rust.ts)
+ * has since cut to 18 KB.
  */
 export const stripFlags: Flag[] = [
   {

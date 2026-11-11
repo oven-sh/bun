@@ -1479,6 +1479,20 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // The tag of a template is read by its name, whatever escapes it has in the source: `c\u{73}s` is `css`, on the
+  // first run as on the second. `--debug-check` knows that the text of such a template may change.
+  test("formats a template whose tag is an escaped name, and --debug-check accepts it", async () => {
+    const text = "const a = c\\u{73}s`color:red;   display:block`;\nconst b = gr\\u{61}phql(schema, `{ a { b } }`);\n";
+    const result = await formatChecked({ "a.js": text }, [], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(
+      "const a = css`\n  color: red;\n  display: block;\n`;\nconst b = graphql(\n  schema,\n  `\n    {\n      a {\n        b\n      }\n    }\n  `,\n);\n",
+    );
+    expect(result.exitCode).toBe(0);
+    const check = await format({ "a.js": result.files["a.js"] as string }, ["--check"]);
+    expect(check.stdout).toBe("");
+    expect(check.exitCode).toBe(0);
+  });
+
   // Whether a property breaks after the `:` depends on the width of its key. Prettier 3.9.9 measures the key as
   // printed: `\u{61}` is `a`, `[.5]` is `[0.5]`, `[ 5 ]` is `[5]`. oxfmt 0.72 measures the key as written, so it
   // prints `[0.5]:` with the value on the next line, then `[0.5]: "..."` on one line the next time it runs. `bun fmt`

@@ -112,8 +112,7 @@ void BroadcastChannel::close()
 void BroadcastChannel::stop()
 {
     close();
-    if (auto* context = scriptExecutionContext())
-        jsUnref(context->jsGlobalObject());
+    jsUnref();
 }
 
 void BroadcastChannel::contextDestroyed()
@@ -145,18 +144,16 @@ bool BroadcastChannel::virtualHasPendingActivity() const
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
-    if (!m_hasRef) {
-        m_hasRef = true;
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+    if (!m_vmKeptAlive) {
+        m_vmKeptAlive = WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+        Bun__eventLoop__refKeepAlive(m_vmKeptAlive, 1);
     }
 }
 
-void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
+void BroadcastChannel::jsUnref()
 {
-    if (m_hasRef) {
-        m_hasRef = false;
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
+    if (auto* bunVM = std::exchange(m_vmKeptAlive, nullptr))
+        Bun__eventLoop__refKeepAlive(bunVM, -1);
 }
 
 } // namespace WebCore

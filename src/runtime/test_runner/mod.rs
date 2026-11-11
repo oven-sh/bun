@@ -468,8 +468,8 @@ pub(crate) mod expect {
 cfg_jsc! {
     pub(crate) use done_callback::DoneCallback;
     pub(crate) use expect::{
-        Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
-        ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
+        AsymmetricMatcher, Expect, ExpectAny, ExpectAnything, ExpectArrayContaining,
+        ExpectCloseTo, ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
         ExpectTypeOf,
     };

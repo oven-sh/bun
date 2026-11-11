@@ -866,12 +866,31 @@ test("the count is odd", () => {
 Like in Jest and Vitest, you can also use any object with an `asymmetricMatch(value)` method as a matcher:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-const anyFunction = { asymmetricMatch: (value: unknown) => typeof value === "function" };
+import { expect, test, type AsymmetricMatcher } from "bun:test";
+
+const anyFunction: AsymmetricMatcher = { asymmetricMatch: (value: unknown) => typeof value === "function" };
 
 test("the callback is a function", () => {
   expect({ callback: () => {} }).toEqual({ callback: anyFunction });
 });
 ```
+
+The matchers that `expect` makes have the same method, so a matcher of your own can ask them:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+import { expect, test, type AsymmetricMatcher } from "bun:test";
+
+const numberOrDigits: AsymmetricMatcher = {
+  asymmetricMatch: (value: unknown) =>
+    expect.any(Number).asymmetricMatch(value) || expect.stringMatching(/^\d+$/).asymmetricMatch(value),
+};
+
+test("the id is a number or a string of digits", () => {
+  expect({ id: "42" }).toEqual({ id: numberOrDigits });
+});
+```
+
+`matcher.asymmetricMatch(value)` compares as `toEqual()` does and returns `true` or `false` at once. A matcher from `expect.resolvesTo` or `expect.rejectsTo` throws if `value` is a promise that is still pending.
 
 ## Best Practices
 

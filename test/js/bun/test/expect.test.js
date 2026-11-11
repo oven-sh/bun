@@ -5416,6 +5416,473 @@ describe("expect()", () => {
         expect(isEven).toBe(isEven);
       });
     });
+
+    describe("asymmetricMatch() of the matchers that expect makes", () => {
+      class Thing {}
+      const isEven = {
+        asymmetricMatch: (/** @type {unknown} */ value) => typeof value === "number" && value % 2 === 0,
+      };
+      const thrower = {
+        asymmetricMatch() {
+          throw new RangeError("thrown by the matcher");
+        },
+      };
+      const handled = (/** @type {Promise<unknown>} */ promise) => {
+        promise.catch(() => {});
+        return promise;
+      };
+
+      // [name, matcher, values it matches, values it doesn't match]
+      const cases = () => [
+        ["any(Number)", expect.any(Number), [1, NaN, new Number(1)], ["1", 1n, null, undefined, {}]],
+        ["any(String)", expect.any(String), ["a", new String("a")], [1, null, undefined, ["a"]]],
+        ["any(Object)", expect.any(Object), [{}, [], null, new Thing()], [undefined, 1, "a", () => {}]],
+        ["any(Function)", expect.any(Function), [() => {}, Thing], [{}, null, undefined]],
+        ["any(Thing)", expect.any(Thing), [new Thing()], [{}, Thing, null, undefined]],
+        ["anything()", expect.anything(), [0, "", false, {}, []], [null, undefined]],
+        [
+          "arrayContaining([1, 2])",
+          expect.arrayContaining([1, 2]),
+          [
+            [2, 1],
+            [3, 2, 1],
+          ],
+          [[1], "12", { 0: 1, 1: 2 }, null],
+        ],
+        ["closeTo(1.5, 1)", expect.closeTo(1.5, 1), [1.5, 1.54, 1.46], [1.56, "1.5", null, undefined]],
+        [
+          "objectContaining({ a: 1 })",
+          expect.objectContaining({ a: 1 }),
+          [{ a: 1 }, { a: 1, b: 2 }],
+          [{ a: 2 }, { b: 1 }, 1, "a"],
+        ],
+        ["stringContaining('b')", expect.stringContaining("b"), ["b", "abc"], ["ac", 1, null, ["b"]]],
+        ["stringMatching(/^a/)", expect.stringMatching(/^a/), ["a", "abc"], ["ba", 1, null]],
+        ["stringMatching('^a')", expect.stringMatching("^a"), ["a", "abc"], ["ba", 1, null]],
+        ["not.arrayContaining([1])", expect.not.arrayContaining([1]), [[2], "1", null], [[1], [2, 1]]],
+        ["not.closeTo(1.5, 1)", expect.not.closeTo(1.5, 1), [1.56, 2], [1.5, 1.54, "2", null]],
+        [
+          "not.objectContaining({ a: 1 })",
+          expect.not.objectContaining({ a: 1 }),
+          [{ a: 2 }, { b: 1 }],
+          [{ a: 1 }, { a: 1, b: 2 }],
+        ],
+        ["not.stringContaining('b')", expect.not.stringContaining("b"), ["ac", 1, null], ["b", "abc"]],
+        ["not.stringMatching(/^a/)", expect.not.stringMatching(/^a/), ["ba", 1, null], ["a", "abc"]],
+      ];
+
+      // Before any test runs. Without the method the file still loads, and the tests fail.
+      const whileCollecting = [expect.any(Number).asymmetricMatch?.(1), expect.any(Number).asymmetricMatch?.("1")];
+
+      test("it returns what toEqual() decides", () => {
+        for (const [name, matcher, matches, rest] of cases()) {
+          expect([name, typeof matcher.asymmetricMatch]).toEqual([name, "function"]);
+          for (const value of matches) {
+            expect([name, value, matcher.asymmetricMatch(value)]).toEqual([name, value, true]);
+            expect(value).toEqual(matcher);
+          }
+          for (const value of rest) {
+            expect([name, value, matcher.asymmetricMatch(value)]).toEqual([name, value, false]);
+            expect(value).not.toEqual(matcher);
+          }
+        }
+        expect(whileCollecting).toEqual([true, false]);
+      });
+
+      test("it is a method of the class of each matcher, which no loop over the matcher lists", () => {
+        for (const [name, matcher] of cases()) {
+          const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(matcher), "asymmetricMatch");
+          expect([name, descriptor]).toEqual([
+            name,
+            { value: matcher.asymmetricMatch, writable: true, enumerable: false, configurable: true },
+          ]);
+          expect([name, matcher.asymmetricMatch.name]).toEqual([name, "asymmetricMatch"]);
+          // Vitest's takes the equality testers as a second argument.
+          if (!isVitest) expect([name, matcher.asymmetricMatch.length]).toEqual([name, 1]);
+          const listed = Object.keys(matcher);
+          for (const key in matcher) listed.push(key);
+          expect([name, listed.includes("asymmetricMatch")]).toEqual([name, false]);
+        }
+      });
+
+      test("a matcher of your own can hand the value to a matcher of expect", () => {
+        const delegating = {
+          asymmetricMatch(/** @type {unknown} */ value) {
+            return expect.any(Number).asymmetricMatch(value);
+          },
+        };
+        expect([1]).toEqual([delegating]);
+        expect(["1"]).not.toEqual([delegating]);
+        expect(() => expect(["1"]).toEqual([delegating])).toThrow();
+
+        const allOf = (/** @type {any[]} */ ...matchers) => ({
+          asymmetricMatch: (/** @type {unknown} */ value) => matchers.every(matcher => matcher.asymmetricMatch(value)),
+        });
+        const anyOf = (/** @type {any[]} */ ...matchers) => ({
+          asymmetricMatch: (/** @type {unknown} */ value) => matchers.some(matcher => matcher.asymmetricMatch(value)),
+        });
+        const shortWord = allOf(
+          expect.any(String),
+          expect.stringMatching(/^\w{1,5}$/),
+          expect.not.stringContaining("x"),
+        );
+        const id = anyOf(expect.any(Number), expect.stringMatching(/^\d+$/));
+        expect({ word: "abc", id: 1 }).toEqual({ word: shortWord, id });
+        expect({ word: "abc", id: "12" }).toEqual({ word: shortWord, id });
+        expect({ word: "abcdef", id: 1 }).not.toEqual({ word: shortWord, id });
+        expect({ word: "axc", id: 1 }).not.toEqual({ word: shortWord, id });
+        expect({ word: "abc", id: "x" }).not.toEqual({ word: shortWord, id });
+
+        const called = jest.fn();
+        called("abc", 1);
+        expect(called).toHaveBeenCalledWith(shortWord, id);
+        expect(called).not.toHaveBeenCalledWith(id, shortWord);
+      });
+
+      test("code that looks for the method finds it", () => {
+        // How @jest/expect-utils and the mock libraries tell a matcher from a value.
+        const isMatcher = (/** @type {any} */ value) =>
+          !!value && typeof value === "object" && typeof value.asymmetricMatch === "function";
+        const calledWith = (/** @type {unknown[]} */ expected, /** @type {unknown[]} */ actual) =>
+          expected.every((matcher, i) =>
+            isMatcher(matcher) ? ANY(matcher).asymmetricMatch(actual[i]) : actual[i] === matcher,
+          );
+
+        const expected = [expect.any(Number), expect.stringContaining("b"), expect.anything(), "same"];
+        expect(expected.map(isMatcher)).toEqual([true, true, true, false]);
+        expect(calledWith(expected, [1, "abc", {}, "same"])).toBe(true);
+        expect(calledWith(expected, ["1", "abc", {}, "same"])).toBe(false);
+        expect(calledWith(expected, [1, "ac", {}, "same"])).toBe(false);
+        expect(calledWith(expected, [1, "abc", null, "same"])).toBe(false);
+      });
+
+      test("it asks the matchers inside its sample", () => {
+        expect(expect.objectContaining({ n: isEven }).asymmetricMatch({ n: 2, other: 1 })).toBe(true);
+        expect(expect.objectContaining({ n: isEven }).asymmetricMatch({ n: 3, other: 1 })).toBe(false);
+        expect(expect.objectContaining({ n: expect.any(Number) }).asymmetricMatch({ n: 3 })).toBe(true);
+        expect(expect.arrayContaining([isEven]).asymmetricMatch([1, 2])).toBe(true);
+        expect(expect.arrayContaining([isEven]).asymmetricMatch([1, 3])).toBe(false);
+        expect(expect.arrayContaining([expect.stringContaining("b")]).asymmetricMatch(["a", "abc"])).toBe(true);
+      });
+
+      test("a call is no assertion", () => {
+        expect.assertions(1);
+        expect.any(Number).asymmetricMatch(1);
+        expect.objectContaining({ a: 1 }).asymmetricMatch({ a: 2 });
+        expect(expect.anything().asymmetricMatch(null)).toBe(false);
+      });
+
+      test("an error thrown while it matches is thrown to the caller", () => {
+        class Throws {
+          static [Symbol.hasInstance]() {
+            throw new RangeError("thrown by hasInstance");
+          }
+        }
+        expect(() => expect.any(Throws).asymmetricMatch(1)).toThrow(new RangeError("thrown by hasInstance"));
+        expect(() => expect.objectContaining({ a: thrower }).asymmetricMatch({ a: 1 })).toThrow(
+          new RangeError("thrown by the matcher"),
+        );
+        expect(() => expect.arrayContaining([thrower]).asymmetricMatch([1])).toThrow(
+          new RangeError("thrown by the matcher"),
+        );
+      });
+
+      test("with another `this` it never answers that the value matches", () => {
+        for (const [name, matcher, matches] of cases()) {
+          // Jest's expect.anything() answers true whatever `this` is.
+          if (name === "anything()") continue;
+          const { asymmetricMatch } = matcher;
+          for (const other of [undefined, {}, expect.anything(), Object.create(Object.getPrototypeOf(matcher))]) {
+            let answer;
+            try {
+              answer = asymmetricMatch.call(other, matches[0]);
+            } catch {
+              answer = "threw";
+            }
+            expect([name, answer === true]).toEqual([name, false]);
+          }
+        }
+      });
+
+      if (isBun) {
+        // [name, the matcher that `from` makes, a value it matches, a value it doesn't match]
+        const builtIn = [
+          ["any", (/** @type {any} */ from) => from.any(Number), 1, "1"],
+          ["anything", (/** @type {any} */ from) => from.anything(), 1, null],
+          ["arrayContaining", (/** @type {any} */ from) => from.arrayContaining([1]), [2, 1], [2]],
+          ["closeTo", (/** @type {any} */ from) => from.closeTo(1.5, 1), 1.52, 2],
+          ["objectContaining", (/** @type {any} */ from) => from.objectContaining({ a: 1 }), { a: 1, b: 2 }, { a: 2 }],
+          ["stringContaining", (/** @type {any} */ from) => from.stringContaining("b"), "abc", "ac"],
+          ["stringMatching", (/** @type {any} */ from) => from.stringMatching(/^a/), "abc", "cba"],
+        ];
+        const chains = () => ({
+          "expect": expect,
+          "expect.not": expect.not,
+          "expect.resolvesTo": expect.resolvesTo,
+          "expect.rejectsTo": expect.rejectsTo,
+          "expect.not.resolvesTo": expect.not.resolvesTo,
+          "expect.not.rejectsTo": expect.not.rejectsTo,
+        });
+        const values = (/** @type {unknown} */ yes, /** @type {unknown} */ no) => ({
+          "a match": () => yes,
+          "no match": () => no,
+          "resolved with a match": () => Promise.resolve(yes),
+          "resolved with no match": () => Promise.resolve(no),
+          "rejected with a match": () => handled(Promise.reject(yes)),
+          "rejected with no match": () => handled(Promise.reject(no)),
+        });
+        const toEqualPasses = async (/** @type {unknown} */ value, /** @type {unknown} */ matcher) => {
+          try {
+            await expect(value).toEqual(matcher);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        // What asymmetricMatch() and toEqual() answer for every matcher, chain and value.
+        const answers = async (/** @type {any[][]} */ makers) => {
+          const fromMethod = [];
+          const fromToEqual = [];
+          for (const [name, make, yes, no] of makers) {
+            for (const [chain, from] of Object.entries(chains())) {
+              for (const [kind, value] of Object.entries(values(yes, no))) {
+                const row = `${chain}: ${name}: ${kind}`;
+                fromMethod.push([row, make(from).asymmetricMatch(value())]);
+                fromToEqual.push([row, await toEqualPasses(value(), make(from))]);
+              }
+            }
+          }
+          return { fromMethod, fromToEqual };
+        };
+        // The rows of one matcher, in the order of `chains` and `values`.
+        const answersOf = (/** @type {any[]} */ [, make, yes, no]) =>
+          Object.fromEntries(
+            Object.entries(chains()).map(([chain, from]) => [
+              chain,
+              Object.values(values(yes, no)).map(value => make(from).asymmetricMatch(value())),
+            ]),
+          );
+        const cannotWait =
+          "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)";
+        // What asymmetricMatch() does with a promise that is still pending, and what it has to do.
+        const withPendingPromise = (/** @type {any[][]} */ makers) => {
+          const outcomes = [];
+          const expected = [];
+          for (const [name, make] of makers) {
+            for (const [chain, from] of Object.entries(chains())) {
+              let outcome;
+              try {
+                outcome = typeof make(from).asymmetricMatch(new Promise(() => {}));
+              } catch (error) {
+                outcome = ANY(error).message;
+              }
+              outcomes.push([`${chain}: ${name}`, outcome]);
+              expected.push([`${chain}: ${name}`, chain.endsWith("To") ? cannotWait : "boolean"]);
+            }
+          }
+          return { outcomes, expected };
+        };
+        // How jest-matcher-utils copies an expected value before it prints a diff: the copy keeps the prototype and is no matcher.
+        const copyOf = (/** @type {object} */ matcher) =>
+          Object.create(Object.getPrototypeOf(matcher), Object.getOwnPropertyDescriptors(matcher));
+
+        test("from expect.not, expect.resolvesTo and expect.rejectsTo it returns what toEqual() decides", async () => {
+          const { fromMethod, fromToEqual } = await answers(builtIn);
+          expect(fromMethod).toEqual(fromToEqual);
+          expect(fromMethod).toHaveLength(7 * 6 * 6);
+          // What the rows of one matcher are, so that the two cannot agree on a wrong answer.
+          expect(answersOf(builtIn[0])).toEqual({
+            "expect": [true, false, false, false, false, false],
+            "expect.not": [false, true, true, true, true, true],
+            "expect.resolvesTo": [false, false, true, false, false, false],
+            "expect.rejectsTo": [false, false, false, false, true, false],
+            "expect.not.resolvesTo": [true, true, false, true, true, true],
+            "expect.not.rejectsTo": [true, true, true, true, false, true],
+          });
+        });
+
+        test("it throws for a promise that is still pending, which toEqual() would wait for", async () => {
+          const { outcomes, expected } = withPendingPromise(builtIn);
+          expect(outcomes).toEqual(expected);
+
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = expect.resolvesTo.any(Number);
+          expect(() => matcher.asymmetricMatch(promise)).toThrow(cannotWait);
+          resolve(1);
+          await promise;
+          expect(matcher.asymmetricMatch(promise)).toBe(true);
+        });
+
+        test("a matcher of your own that hands a pending promise on fails toEqual(), which does not wait for it", () => {
+          const delegating = {
+            asymmetricMatch: (/** @type {unknown} */ value) => expect.resolvesTo.any(Number).asymmetricMatch(value),
+          };
+          expect(expect([Promise.resolve(1)]).toEqual([delegating])).toBeUndefined();
+          expect(() => expect([new Promise(() => {})]).toEqual([delegating])).toThrow(cannotWait);
+        });
+
+        // In a child process: a tester lasts until the end of its test file, and a rejection that nothing handles fails a script.
+        test("it compares with the registered equality testers, and it handles a rejection that it reads", async () => {
+          const { bunEnv, bunExe } = require("harness");
+          const src = `
+            const { expect } = require("bun:test");
+            class Volume {
+              constructor(amount, unit) {
+                this.amount = amount;
+                this.unit = unit;
+              }
+              toMillilitres() {
+                return this.unit === "L" ? this.amount * 1000 : this.amount;
+              }
+            }
+            const litre = () => new Volume(1, "L");
+            const thousandMillilitres = () => new Volume(1000, "mL");
+            const twoLitres = () => new Volume(2, "L");
+            const answers = () => [
+              expect.arrayContaining([thousandMillilitres()]).asymmetricMatch([litre()]),
+              expect.objectContaining({ v: thousandMillilitres() }).asymmetricMatch({ v: litre(), other: 1 }),
+              expect.arrayContaining([twoLitres()]).asymmetricMatch([litre()]),
+              expect.objectContaining({ v: twoLitres() }).asymmetricMatch({ v: litre(), other: 1 }),
+            ];
+            console.log("no tester:", ...answers());
+            expect.addEqualityTesters([
+              (a, b) => (a instanceof Volume && b instanceof Volume ? a.toMillilitres() === b.toMillilitres() : undefined),
+            ]);
+            console.log("a tester:", ...answers());
+            expect.extend({
+              toBeOdd(received) {
+                return { pass: received % 2 === 1, message: () => "" };
+              },
+            });
+            console.log(
+              "rejected:",
+              expect.rejectsTo.any(Number).asymmetricMatch(Promise.reject(1)),
+              expect.not.resolvesTo.anything().asymmetricMatch(Promise.reject(1)),
+              expect.rejectsTo.toBeOdd().asymmetricMatch(Promise.reject(1)),
+            );
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", src],
+            env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+            stdout: "no tester: false false false false\na tester: true true false false\nrejected: true true true\n",
+            exitCode: 0,
+            signalCode: null,
+          });
+        });
+
+        test("on a value that is no matcher of its class it answers undefined, which toEqual() takes for no match", () => {
+          const matcher = expect.any(Number);
+          const { asymmetricMatch } = matcher;
+          const copy = copyOf(matcher);
+          expect([
+            asymmetricMatch(1),
+            asymmetricMatch.call({}, 1),
+            asymmetricMatch.call(expect.anything(), 1),
+            copy.asymmetricMatch(1),
+          ]).toEqual([undefined, undefined, undefined, undefined]);
+          expect(1).toEqual(matcher);
+          expect(1).not.toEqual(copy);
+          expect(1).not.toEqual(Object.getPrototypeOf(matcher));
+        });
+
+        test("the method is not printed with a matcher", () => {
+          const printed = cases().flatMap(([, matcher]) => [Bun.inspect(matcher), Bun.inspect({ nested: [matcher] })]);
+          expect(printed.filter(text => text.includes("asymmetricMatch"))).toEqual([]);
+        });
+
+        describe("of a matcher of expect.extend() or expect.toSatisfy()", () => {
+          expect.extend({
+            toBeTheWordYes(/** @type {unknown} */ received) {
+              return { pass: received === "yes", message: () => "" };
+            },
+          });
+          const made = [
+            [
+              "toSatisfy",
+              (/** @type {any} */ from) => from.toSatisfy((/** @type {unknown} */ value) => value === 1),
+              1,
+              2,
+            ],
+            ["a matcher of expect.extend()", (/** @type {any} */ from) => from.toBeTheWordYes(), "yes", "no"],
+          ];
+
+          test("it returns what toEqual() decides, also from expect.resolvesTo and expect.rejectsTo", async () => {
+            const { fromMethod, fromToEqual } = await answers(made);
+            expect(fromMethod).toEqual(fromToEqual);
+            expect(fromMethod).toHaveLength(2 * 6 * 6);
+            expect(answersOf(made[1])).toEqual({
+              "expect": [true, false, false, false, false, false],
+              "expect.not": [false, true, true, true, true, true],
+              "expect.resolvesTo": [false, false, true, false, false, false],
+              "expect.rejectsTo": [false, false, false, false, true, false],
+              "expect.not.resolvesTo": [true, true, false, true, true, true],
+              "expect.not.rejectsTo": [true, true, true, true, false, true],
+            });
+          });
+
+          test("it throws for a promise that is still pending", () => {
+            const { outcomes, expected } = withPendingPromise(made);
+            expect(outcomes).toEqual(expected);
+          });
+
+          test("it is the method of the built-in matchers", () => {
+            for (const [name, make] of made) {
+              const matcher = make(expect);
+              const { value, ...attributes } = ANY(
+                Object.getOwnPropertyDescriptor(Object.getPrototypeOf(matcher), "asymmetricMatch"),
+              );
+              expect([name, attributes]).toEqual([name, { writable: true, enumerable: false, configurable: true }]);
+              expect([name, value.name, value.length]).toEqual([name, "asymmetricMatch", 1]);
+              const listed = Object.keys(matcher);
+              for (const key in matcher) listed.push(key);
+              expect([name, listed]).toEqual([name, []]);
+              expect([name, value.call({}, 1), copyOf(matcher).asymmetricMatch(1)]).toEqual([
+                name,
+                undefined,
+                undefined,
+              ]);
+              expect([name, Bun.inspect(matcher).includes("asymmetricMatch")]).toEqual([name, false]);
+            }
+          });
+
+          test("every function of expect.not makes a matcher that has the method", () => {
+            // What a function of expect itself needs. One of expect.extend() takes anything.
+            const sampleArguments = ANY({
+              any: [Number],
+              arrayContaining: [[1]],
+              closeTo: [1],
+              objectContaining: [{ a: 1 }],
+              stringContaining: ["a"],
+              stringMatching: ["a"],
+              toSatisfy: [() => true],
+            });
+            const statics = Object.getPrototypeOf(expect.not);
+            const factories = Object.getOwnPropertyNames(statics).filter(
+              name => typeof Object.getOwnPropertyDescriptor(statics, name)?.value === "function",
+            );
+            expect(factories).toEqual(
+              expect.arrayContaining([...Object.keys(sampleArguments), "anything", "toBeTheWordYes"]),
+            );
+            const without = [];
+            for (const name of factories) {
+              for (const [chain, from] of Object.entries(chains())) {
+                const matcher = ANY(from)[name](...(sampleArguments[name] ?? []));
+                const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(matcher), "asymmetricMatch");
+                if (typeof descriptor?.value !== "function" || descriptor.enumerable || !descriptor.configurable) {
+                  without.push(`${chain}.${name}`);
+                }
+              }
+            }
+            expect(without).toEqual([]);
+          });
+        });
+      }
+    });
   });
 
   describe("async asymmetric matching", () => {

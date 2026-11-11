@@ -1743,176 +1743,44 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect([adding.exitCode, updating.exitCode, changed.exitCode]).toEqual([0, 0, 1]);
       });
 
-      // An older Bun counted the snapshots of a name in its own spelling: "p" > "x y" and "p" > "x" > "y" are both `p x y`.
-      test("is looked for under the count that an older Bun gave it", async () => {
+      // --update-snapshots removes entries, and what is left can be in the runner's order. Then one key is put out of its place.
+      test("is still known for what it is after --update-snapshots removes an entry in a run that does not see it", async () => {
+        const entry = (key: string, value: string) => "\nexports[`" + key + "`] = `" + value + "`;\n";
+        const [a, b] = [entry("a 1", "[Function: named]"), entry("b 1", "1")];
         using dir = tempDir("snapshot-appended-to", {
           "a.test.js": `
-            describe("p", () => {
-              test("x y", () => { expect("first").toMatchSnapshot(); });
-              describe("x", () => { test("y", () => { expect("second").toMatchSnapshot(); }); });
-            });
-            test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
+            test("a", () => { expect(function named() {}).toMatchSnapshot(); });
+            test("b", () => { expect(1).toMatchSnapshot(); });
           `,
-          "__snapshots__/a.test.js.snap": headers[format] + old + '\nexports[`p x y 1`] = `"first"`;\n',
+          "__snapshots__/a.test.js.snap": headers[format] + entry("c 1", "1") + a + b,
         });
-        // The second test has no entry yet. It gets one, and not the first test's.
-        const adding = await runTests(String(dir), { CI: "false" });
-        expect(adding.stderr).toContain("2 passed, 1 added");
+        const updating = await runTests(String(dir), { CI: "false" }, "--update-snapshots", "-t", "b");
+        expect(snap(dir)).toBe(headers[format] + b + a);
         const all = await runTests(String(dir), { CI: "true" });
-        expect({ pass: all.pass, stderr: all.pass === 3 ? "" : all.stderr }).toEqual({ pass: 3, stderr: "" });
-        expect([adding.exitCode, all.exitCode]).toEqual([0, 0]);
+        expect({ pass: all.pass, stderr: all.pass === 2 ? "" : all.stderr }).toEqual({ pass: 2, stderr: "" });
+        expect(snap(dir)).toBe(headers[format] + b + a);
+        expect([updating.exitCode, all.exitCode]).toEqual([0, 0]);
       });
 
-      test("is not the entry of a test that asks for the same key under the file's own name", async () => {
-        const testsOf = (value: number) => `
-          test("x y", () => { expect(1).toMatchSnapshot(); });
-          describe("x", () => { test("y", () => { expect(${value}).toMatchSnapshot(); }); });
-          test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
-          test("c new", () => { expect(2).toMatchSnapshot(); });
-        `;
-        using dir = tempDir("snapshot-appended-to", {
-          "a.test.js": testsOf(1),
-          "__snapshots__/a.test.js.snap": headers[format] + old + "\nexports[`x y 1`] = `1`;\n",
-        });
-        // "x" > "y" gets an entry of its own in the run that adds, so another value fails afterwards.
-        const adding = await runTests(String(dir), { CI: "false" });
-        expect(adding.stderr).toContain("2 passed, 2 added");
-        writeFileSync(join(String(dir), "a.test.js"), testsOf(9));
-        const changed = await runTests(String(dir), { CI: "false" });
-        expect(changed.stderr).toContain("Expected: 1\nReceived: 9");
-        expect([adding.exitCode, changed.exitCode]).toEqual([0, 1]);
-      });
-
-      test("of two hooks is found for each hook under its own count", async () => {
-        // An older Bun named the snapshot of a hook after the hook: beforeAll has 1, and beforeEach has 2 and 3.
-        const hooks = ["all", "each 1", "each 2"].map(
-          (value, i) => "\nexports[`hooks (unnamed) " + (i + 1) + '`] = `"' + value + '"`;\n',
-        );
+      // In Vitest's format the entry of "q" > "t" gets the key `q > t 1`, which is the last in the runner's order.
+      test("is still known for what it is after --update-snapshots gives another entry the runner's key", async () => {
+        const entry = (key: string, value: string) => "\nexports[`" + key + "`] = `" + value + "`;\n";
+        const m = entry("m 1", "[Function: named]");
         using dir = tempDir("snapshot-appended-to", {
           "a.test.js": `
-            describe("hooks", () => {
-              let calls = 0;
-              beforeAll(() => { expect("all").toMatchSnapshot(); });
-              beforeEach(() => { expect("each " + ++calls).toMatchSnapshot(); });
-              test("t", () => {});
-              test("u", () => {});
-            });
-            test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
+            test("alpha", () => { expect(1).toMatchSnapshot(); });
+            describe("q", () => { test("t", () => { expect(1).toMatchSnapshot(); }); });
+            test("m", () => { expect(function named() {}).toMatchSnapshot(); });
+            test("n", () => { expect(1).toMatchSnapshot(); });
           `,
-          "__snapshots__/a.test.js.snap": headers[format] + old + hooks.join(""),
+          "__snapshots__/a.test.js.snap":
+            headers[format] + entry("alpha 1", "1") + entry("q t 1", "1") + m + entry("n 1", "1"),
         });
-        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
-        expect({ pass, stderr: pass === 3 ? "" : stderr }).toEqual({ pass: 3, stderr: "" });
-        expect(exitCode).toBe(0);
-      });
-
-      // With no describe around it, a test has one name in every spelling. The snapshot of beforeEach is the first of
-      // the test in the keys of Jest and Vitest. An older Bun counted the body alone.
-      test("is not the entry that an earlier snapshot of the test found under the file's own key", async () => {
-        const testsOf = (body: string) => `
-          beforeEach(() => { expect("s").toMatchSnapshot(); });
-          test("c new", () => { ${body} });
-        `;
-        const seed = headers[format] + old + "\nexports[`gone 1`] = `0`;\n";
-        const added = seed + '\nexports[`c new 1`] = `"s"`;\n' + "\nexports[`c new 2`] = `5`;\n";
-        using dir = tempDir("snapshot-out-of-order", {
-          "a.test.js": testsOf("expect(5).toMatchSnapshot();"),
-          "__snapshots__/a.test.js.snap": seed,
-        });
-        const first = await runTests(String(dir), { CI: "false" });
-        expect(first.stderr).toContain("+2 added");
-        expect(snap(dir)).toBe(added);
-        writeFileSync(
-          join(String(dir), "a.test.js"),
-          testsOf("expect(5).toMatchSnapshot(); expect(6).toMatchSnapshot();"),
-        );
-        const second = await runTests(String(dir), { CI: "false" });
-        expect(second.stderr).toContain("2 passed, 1 added");
-        expect(snap(dir)).toBe(added + "\nexports[`c new 3`] = `6`;\n");
+        const updating = await runTests(String(dir), { CI: "false" }, "--update-snapshots", "-t", "t");
+        expect(snap(dir)).toContain(m);
         const all = await runTests(String(dir), { CI: "true" });
-        expect({ pass: all.pass, stderr: all.pass === 1 ? "" : all.stderr }).toEqual({ pass: 1, stderr: "" });
-        expect([first.exitCode, second.exitCode, all.exitCode]).toEqual([0, 0, 0]);
-      });
-
-      // An inline snapshot counts as one of the test, and asks the file for nothing.
-      test("is found behind an inline snapshot of beforeEach", async () => {
-        const appended = headers[format] + old + "\nexports[`t 1`] = `5`;\n";
-        using dir = tempDir("snapshot-appended-to", {
-          "a.test.js": `
-            beforeEach(() => { expect(1).toMatchInlineSnapshot(\`1\`); });
-            test("t", () => { expect(5).toMatchSnapshot(); });
-          `,
-          "__snapshots__/a.test.js.snap": appended,
-        });
-        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
-        expect({ pass, stderr: pass === 1 ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
-        expect(snap(dir)).toBe(appended);
-        expect(exitCode).toBe(0);
-      });
-
-      test("is found again by each attempt of a test that is retried", async () => {
-        // The name has a line break, so the key of the file is not Bun's key in either format.
-        const appended =
-          headers[format] + old + "\nexports[`outer in\nner 1`] = `1`;\n" + "\nexports[`outer in\nner 2`] = `2`;\n";
-        using dir = tempDir("snapshot-appended-to", {
-          "a.test.js": `
-            let attempts = 0;
-            describe("outer", () => {
-              test("in\\nner", () => {
-                expect(1).toMatchSnapshot();
-                expect(2).toMatchSnapshot();
-                if (++attempts < 3) throw new Error("not yet");
-              }, { retry: 3 });
-            });
-            test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
-          `,
-          "__snapshots__/a.test.js.snap": appended,
-        });
-        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
-        expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
-        expect(snap(dir)).toBe(appended);
-        expect(exitCode).toBe(0);
-      });
-
-      test.skipIf(format === "jest")(
-        "is found for a second snapshot of a test whose first is the runner's",
-        async () => {
-          // Vitest wrote the first entry. An older Bun looked for its own key, and added the other two.
-          const appended =
-            headers.vitest +
-            "\nexports[`outer > inner 1`] = `1`;\n" +
-            old +
-            "\nexports[`outer inner 1`] = `1`;\n" +
-            "\nexports[`outer inner 2`] = `2`;\n";
-          using dir = tempDir("snapshot-appended-to", {
-            "a.test.js": `
-            describe("outer", () => { test("inner", () => { expect(1).toMatchSnapshot(); expect(2).toMatchSnapshot(); }); });
-            test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
-          `,
-            "__snapshots__/a.test.js.snap": appended,
-          });
-          const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
-          expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
-          expect(snap(dir)).toBe(appended);
-          expect(exitCode).toBe(0);
-        },
-      );
-
-      // In Vitest's format `x > y z 1` is the key of "x" > "y z" too, which asks for it first.
-      test("is found under a key that another test has in the file's own spelling", async () => {
-        const appended = headers[format] + old + "\nexports[`x y z 1`] = `1`;\n" + "\nexports[`x > y z 1`] = `1`;\n";
-        using dir = tempDir("snapshot-appended-to", {
-          "a.test.js": `
-            describe("x", () => { test("y z", () => { expect(1).toMatchSnapshot(); }); });
-            describe("x > y", () => { test("z", () => { expect(1).toMatchSnapshot(); }); });
-            test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });
-          `,
-          "__snapshots__/a.test.js.snap": appended,
-        });
-        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
-        expect({ pass, stderr: pass === 3 ? "" : stderr }).toEqual({ pass: 3, stderr: "" });
-        expect(snap(dir)).toBe(appended);
-        expect(exitCode).toBe(0);
+        expect({ pass: all.pass, stderr: all.pass === 4 ? "" : all.stderr }).toEqual({ pass: 4, stderr: "" });
+        expect([updating.exitCode, all.exitCode]).toEqual([0, 0]);
       });
 
       test("a file that holds none of it gets the runner's order in a run that adds entries and sees the others", async () => {
@@ -1937,6 +1805,23 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(stderr).toContain("1 passed, 3 added, 1 failed");
         expect(snap(dir)).toBe(headers[format] + aNew1 + bNew1 + bNew2 + entries[format]);
         expect(exitCode).toBe(1);
+      });
+
+      test("a file that holds none of it gets the runner's order when a snapshot differs in one attempt and matches in the next", async () => {
+        using dir = tempDir("snapshot-out-of-order", {
+          "a.test.js": `
+            ${body}
+            let attempts = 0;
+            test("z old", () => { expect({ a: ++attempts === 1 ? 2 : 1 }).toMatchSnapshot(); }, { retry: 1 });
+            ${newTests}
+          `,
+          "__snapshots__/a.test.js.snap": headers[format] + old + entries[format],
+        });
+        const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+        expect({ pass, fail }).toEqual({ pass: 4, fail: 0 });
+        expect(stderr).toContain("3 added, 1 failed");
+        expect(snap(dir)).toBe(headers[format] + aNew1 + bNew1 + bNew2 + entries[format] + old);
+        expect(exitCode).toBe(0);
       });
 
       test("--update-snapshots makes a file of the runner's of it", async () => {

@@ -79,8 +79,10 @@ struct Entry {
     stays: bool,
     /// This run wrote it, so it is not an older Bun's.
     written: bool,
-    /// A snapshot of this run found it under the file's own key.
-    found_under_own_key: bool,
+    /// A snapshot of this run found it under Bun's key.
+    found_under_key_of_bun: bool,
+    /// Its last snapshot of this run differed from it in the file's format.
+    differs: bool,
 }
 
 pub(crate) enum Outcome {
@@ -226,8 +228,6 @@ pub(crate) struct File {
     /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
     /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
     may_hold_entries_of_bun: bool,
-    /// A run without `--update-snapshots` left an entry under Bun's key, or one that differs in the file's format.
-    left_an_entry_alone: bool,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -287,17 +287,12 @@ impl Snapshots {
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = Self::name_of(expect, format, hint)?;
-        // An older Bun counted the snapshots of its own name for the test. Where its entries may be, count as it did.
-        if format != Format::Bun && !self.update_snapshots && self.may_hold_entries_of_bun() {
-            let name_of_bun = Self::counted_by_bun(Self::name_of(expect, Format::Bun, hint)?);
-            self.count(expect, &name_of_bun)?;
-        }
-        let count = self.count(expect, &snapshot_name)?;
-        Ok((snapshot_name, count))
-    }
-
-    fn count(&mut self, expect: &Expect, name: &[u8]) -> Result<usize, Error> {
-        let gop = self.counts.get_or_put(name).map_err(Error::from)?;
+        // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
+        // owned `snapshot_name` (same bytes as the interned key) instead.
+        let gop = self
+            .counts
+            .get_or_put(&snapshot_name)
+            .map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
         } else {
@@ -309,15 +304,9 @@ impl Snapshots {
             && let Some(sequence) = parent.phase.sequence(buntest.get())
             && (sequence.remaining_retry_count > 0 || sequence.remaining_repeat_count > 0)
         {
-            sequence.counted_snapshots.push(name.into());
+            sequence.counted_snapshots.push(snapshot_name.as_slice().into());
         }
-        Ok(count)
-    }
-
-    /// The key of `counts` for a name in an older Bun's spelling. Names are UTF-8, so none starts with this byte.
-    fn counted_by_bun(mut name: Vec<u8>) -> Vec<u8> {
-        name.insert(0, 0xFF);
-        name
+        Ok((snapshot_name, count))
     }
 
     #[optimize(size)]
@@ -395,14 +384,7 @@ impl Snapshots {
             self.file_buf = Vec::new();
         }
         let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File {
-            id: file_id,
-            format,
-            file: None,
-            dirty: false,
-            may_hold_entries_of_bun,
-            left_an_entry_alone: false,
-        });
+        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
         Ok(format)
     }
 
@@ -427,7 +409,6 @@ impl Snapshots {
         }
 
         let (mut key, counter) = self.add_count(expect, format, hint)?;
-        let name_len = key.len();
         let mut counter_string_buf = [0u8; 32];
         let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
@@ -436,25 +417,17 @@ impl Snapshots {
         // `--update-snapshots` doesn't read a file in Bun's format, so an entry that's already there is from this run.
         let mut written_by_earlier_attempt: Option<Box<[u8]>> = None;
         let mut key_in_file = None;
-        let is_under_own_key = self.values.contains(&key);
-        if is_under_own_key {
+        if self.values.contains(&key) {
             key_in_file = Some(key.clone());
-        } else if format != Format::Bun
-            && !self.update_snapshots
-            && let Some(file) = self._current_file.as_mut().filter(|file| file.may_hold_entries_of_bun)
-        {
+        } else if format != Format::Bun && !self.update_snapshots && self.may_hold_entries_of_bun() {
             // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
-            let count_of_bun = self.counts.get(Self::counted_by_bun(key_of_bun.clone()).as_slice()).copied().unwrap_or(0);
-            let is_one_name = key_of_bun == key[..name_len];
-            let mut count_buf = [0u8; 32];
             key_of_bun.push(b' ');
-            key_of_bun.extend_from_slice(bun_core::fmt::int_as_bytes(&mut count_buf, count_of_bun));
-            // An entry that this run wrote, or that a snapshot of the same name found under the file's key, is not this snapshot's.
-            let is_of_bun = |entry: &Entry| !entry.written && !(is_one_name && entry.found_under_own_key);
-            if self.values.get(&key_of_bun).is_some_and(is_of_bun) {
+            key_of_bun.extend_from_slice(counter);
+            // An entry that this run wrote is not an older Bun's.
+            if let Some(entry) = self.values.get_mut(&key_of_bun).filter(|entry| !entry.written) {
+                entry.found_under_key_of_bun = true;
                 key_in_file = Some(key_of_bun);
-                file.left_an_entry_alone = true;
             }
         }
 
@@ -462,15 +435,12 @@ impl Snapshots {
             && let Some(entry) = self.values.get_mut(&key_in_file)
         {
             entry.checked = true;
-            entry.found_under_own_key |= is_under_own_key;
-            if format.matches(&entry.value, received) {
+            entry.differs = !format.matches(&entry.value, received);
+            if !entry.differs {
                 self.passed += 1;
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
-                if let Some(file) = self._current_file.as_mut() {
-                    file.left_an_entry_alone = true;
-                }
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
             }
             if format == Format::Bun {
@@ -761,12 +731,16 @@ impl Snapshots {
         let keys = self.values.keys();
         // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
-        // Unchecked entries and entries left alone may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
-        let stays_as_it_is = file.may_hold_entries_of_bun
-            && (file.left_an_entry_alone || self.values.values().iter().any(|entry| !entry.checked));
+        // An entry with no test, under Bun's key, or that differs may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
+        let may_be_of_bun = |entry: &Entry| !entry.checked || entry.found_under_key_of_bun || entry.differs;
+        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(may_be_of_bun);
         for (i, key) in keys.iter().enumerate() {
             let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
             order.insert(at, i);
+        }
+        // `remove_obsolete` can leave the kept keys in order. One key out of its place keeps them unsorted.
+        if stays_as_it_is && order.len() > 1 && self.keys_are_sorted() {
+            order.rotate_right(1);
         }
 
         let mut contents = file.format.header().to_vec();

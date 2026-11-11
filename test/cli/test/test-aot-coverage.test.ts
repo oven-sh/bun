@@ -377,6 +377,54 @@ for (const name of ["first", "second", "third", "fourth"]) {
 `,
 };
 
+// Where fields are assigned, a private field stays a field unless the class assigns a plain field, and a class
+// that assigns nothing gets no constructor of `bun run`: nothing is counted for one.
+const privateFieldsWhereFieldsAreAssigned = {
+  "package.json": `{ "name": "private-fields", "type": "module" }`,
+  "tsconfig.json": `{ "compilerOptions": { "useDefineForClassFields": false } }`,
+  "hidden.ts": `export class Hidden {
+  #first = 1;
+  first() {
+    return this.#first;
+  }
+}
+
+export class NeverHidden {
+  #first = 1;
+  first() {
+    return this.#first;
+  }
+}
+
+export class HiddenBesideAssigned {
+  #first = 1;
+  second = 2;
+  sum() {
+    return this.#first + this.second;
+  }
+}
+
+export class HiddenBesideBare {
+  #first = 1;
+  second?: number;
+  first() {
+    return this.#first;
+  }
+}
+`,
+  "hidden.test.ts": `import { expect, test } from "bun:test";
+import { Hidden, HiddenBesideAssigned, HiddenBesideBare } from "./hidden";
+
+for (const name of ["first", "second", "third", "fourth"]) {
+  test(name, () => {
+    expect(new Hidden().first()).toBe(1);
+    expect(new HiddenBesideAssigned().sum()).toBe(3);
+    expect(new HiddenBesideBare().first()).toBe(1);
+  });
+}
+`,
+};
+
 const neverRead = {
   "package.json": `{ "name": "never-read", "type": "module" }`,
   "things.ts": `const flag = Date.now() > 0;
@@ -467,6 +515,13 @@ test("standard decorators and accessor fields", async () => {
   const project = standardDecorators;
   const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
   expect(plain.table).toContain("marked.ts");
+  expect(compiled).toEqual(plain);
+});
+
+test("private fields where fields are assigned", async () => {
+  const project = privateFieldsWhereFieldsAreAssigned;
+  const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+  expect(plain.table).toContain("hidden.ts");
   expect(compiled).toEqual(plain);
 });
 

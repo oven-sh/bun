@@ -195,6 +195,15 @@ fn has_key_folded_by_bun_run(
     }
 }
 
+fn is_plain_field_with_value(hir: &hir::File<'_>, member: MemberId) -> bool {
+    let node = hir[member];
+    node.kind == MemberKind::Property
+        && !node.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
+        && !is_declaration_only(hir, member)
+        && !matches!(hir.runtime_member_key(member), PropKey::Private(_))
+        && node.init.is_some()
+}
+
 fn find_injection_point(hir: &hir::File<'_>, class: ClassId, constructor: FnId) -> InjectionPoint {
     if !is_derived_class(hir, class) {
         return InjectionPoint::Start;
@@ -243,7 +252,9 @@ fn plan_instance_field(
 ) {
     let is_private = matches!(hir.runtime_member_key(member), PropKey::Private(_));
     let is_public_accessor = is_auto_accessor(hir, member) && !is_private;
-    if plan.field_semantics == FieldSemantics::Define || is_public_accessor {
+    // A private field is assigned only to keep its place among the plain fields that are.
+    let stays_field = is_private && !plan.assigns_plain_field;
+    if plan.field_semantics == FieldSemantics::Define || is_public_accessor || stays_field {
         push_defined_field(hir, lists, &mut plan.instance_elements, member);
         return;
     }
@@ -307,8 +318,8 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
         }
         _ => false,
     });
-    let is_at_injection_point = plan.field_semantics == FieldSemantics::Assign
-        || (transform == ClassTransform::Standard && !has_defined_field);
+    let is_at_injection_point =
+        plan.assigns_plain_field || (transform == ClassTransform::Standard && !has_defined_field);
     if !is_at_injection_point {
         if let Some(&last @ ClassElement::RunInitializers { .. }) = plan.instance_elements.last() {
             plan.instance_elements.pop();
@@ -348,21 +359,25 @@ pub(super) fn plan_class(
     let is_asked_to_assign = hir.has_typescript_semantics()
         && compiled.settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard;
-    let keeps_fields = runtime_members(hir, class).any(|member| {
-        has_computed_field_key(hir, member)
-            && !hir[member].flags.contains(Flags::STATIC)
-            && !has_key_folded_by_bun_run(hir, compiled, member)
-            && !fields_under_signed_members.contains(&member)
-    });
+    let keeps_fields = is_asked_to_assign
+        && runtime_members(hir, class).any(|member| {
+            has_computed_field_key(hir, member)
+                && !hir[member].flags.contains(Flags::STATIC)
+                && !has_key_folded_by_bun_run(hir, compiled, member)
+                && !fields_under_signed_members.contains(&member)
+        });
     let field_semantics = if is_asked_to_assign && !keeps_fields {
         FieldSemantics::Assign
     } else {
         FieldSemantics::Define
     };
+    let assigns_plain_field = field_semantics == FieldSemantics::Assign
+        && runtime_members(hir, class).any(|member| is_plain_field_with_value(hir, member));
     let constructor = hir::find_runtime_constructor(hir, class);
     let mut plan = ClassPlan {
         transform,
         field_semantics,
+        assigns_plain_field,
         constructor: constructor.map(|member| hir[member].func),
         injection_point: InjectionPoint::Start,
         initializer_call: InitializerCall::AtThisBinding,
@@ -579,14 +594,10 @@ pub(in crate::lower) fn find_what_is_printed_for_each_object(
     let is_assigned =
         |element: &ClassElement| matches!(element, ClassElement::AssignedField { .. });
     let moves_fields = plan.injected_elements.iter().any(is_assigned);
-    let is_instance_field = |member: MemberId| {
-        let node = hir[member];
-        node.kind == MemberKind::Property && !node.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
-    };
     let printed = match plan.transform {
         ClassTransform::Standard => find_what_standard_decorators_print(hir, class),
         _ if plan.field_semantics == FieldSemantics::Assign => PrintedForEachObject {
-            makes_constructor: runtime_members(hir, class).any(is_instance_field),
+            makes_constructor: plan.assigns_plain_field,
             ..PrintedForEachObject::default()
         },
         ClassTransform::Legacy => PrintedForEachObject {

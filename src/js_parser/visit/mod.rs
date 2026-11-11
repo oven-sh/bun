@@ -1262,27 +1262,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.value.is_none()
                         && p.key.is_some()
                 };
-                // A `[K]` / `[K] = init` field can't be lowered without hoisting the key.
-                let lower_fields = !use_define
-                    && !class.properties.slice().iter().any(|p| {
-                        is_instance_field(p)
-                            && p.flags.contains(flags::Property::IsComputed)
+                let is_private_field = |p: &G::Property| {
+                    matches!(p.key.map(|k| k.data), Some(ExprData::EPrivateIdentifier(_)))
+                };
+                let (mut plain_fields, mut private_fields) = (0usize, 0usize);
+                let (mut has_computed_key, mut assigns_plain_field) = (false, false);
+                if !use_define {
+                    for p in class.properties.slice() {
+                        if !is_instance_field(p) {
+                            continue;
+                        }
+                        if is_private_field(p) {
+                            private_fields += 1;
+                            continue;
+                        }
+                        plain_fields += 1;
+                        assigns_plain_field |= p.initializer.is_some();
+                        has_computed_key |= p.flags.contains(flags::Property::IsComputed)
                             && !matches!(
                                 p.key.map(|k| k.data),
                                 Some(ExprData::EString(_) | ExprData::ENumber(_))
-                            )
-                    });
-                class.assigns_fields_in_constructor = lower_fields;
-
-                let fields_to_lower = if lower_fields {
-                    class
-                        .properties
-                        .slice()
-                        .iter()
-                        .filter(|p| is_instance_field(p))
-                        .count()
-                } else {
-                    0
+                            );
+                    }
+                }
+                // A `[K]` / `[K] = init` field can't be lowered without hoisting the key.
+                let lower_fields = !use_define && !has_computed_key;
+                // Like tsc 5 and esbuild: `#x = init` moves only to keep its place among plain ones.
+                let lower_private_fields = lower_fields && assigns_plain_field;
+                let fields_to_lower = match (lower_fields, lower_private_fields) {
+                    (false, _) => 0,
+                    (true, false) => plain_fields,
+                    (true, true) => plain_fields + private_fields,
                 };
 
                 if param_props > 0 || fields_to_lower > 0 {
@@ -1337,12 +1347,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     for slot in class.properties.slice_mut().iter_mut() {
                         let prop = core::mem::take(slot);
-                        if !lower_fields || !is_instance_field(&prop) {
+                        let is_private = is_private_field(&prop);
+                        if !lower_fields
+                            || !is_instance_field(&prop)
+                            || (is_private && !lower_private_fields)
+                        {
                             class_body.push(prop);
                             continue;
                         }
                         let key = prop.key.expect("infallible: lowerable field has key");
-                        let is_private = matches!(key.data, ExprData::EPrivateIdentifier(_));
                         if let Some(init) = prop.initializer {
                             let this_target = self.new_expr(E::This {}, key.loc);
                             let target = match &key.data {
@@ -1403,7 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         stmts.extend_from_slice(&injected);
                         stmts.extend_from_slice(&old_body[super_end..]);
                         cf.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
-                    } else {
+                    } else if !injected.is_empty() {
                         let loc = class.body_loc;
                         let mut ctor_stmts = BumpVec::<Stmt>::with_capacity_in(
                             injected.len() + usize::from(class.extends.is_some()),

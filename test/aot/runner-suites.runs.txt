@@ -17,6 +17,22 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks, plain
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() []
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > but not yet one that required a mocked Node.js builtin, or got the mock from createRequire()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > in a package, for a mocked package
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > under the key with a query, as the only requirer of an ES module
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks the package that it required, with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with jest.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with mock.module()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with vi.doMock() in a test
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a module that it required has read the list of what it required
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when it required a module that made the mock
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked a CommonJS module ends
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked a JSON file ends
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked an ES module ends
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

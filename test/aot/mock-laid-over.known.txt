@@ -1,4 +1,60 @@
 # What a reader sees otherwise than under `bun test` where a mock is laid over a module that has run. See harness/mock-laid-over.ts.
+bun_jsc.jest.mock.factory.hoisted.isolate | after required | added: SILENT | mock added | at 3 4
+bun_jsc.jest.mock.factory.hoisted.isolate | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.jest.mock.factory.hoisted.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.jest.mock.factory.hoisted.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_jsc.jest.mock.factory.hoisted.one-realm | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.jest.mock.factory.hoisted.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.vi.doMock.factory.test.isolate | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.doMock.factory.test.isolate | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.doMock.factory.test.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.vi.doMock.factory.test.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.doMock.factory.test.one-realm | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.doMock.factory.test.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.vi.doMock.spread.test.isolate | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.doMock.spread.test.isolate | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.doMock.spread.test.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.doMock.spread.test.one-realm | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.mock.factory.hoisted.isolate | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.mock.factory.hoisted.isolate | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.mock.factory.hoisted.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.vi.mock.factory.hoisted.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.mock.factory.hoisted.one-realm | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.mock.factory.hoisted.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.vi.mock.with-default.hoisted.isolate | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.mock.with-default.hoisted.isolate | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.mock.with-default.hoisted.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_jsc.vi.mock.with-default.hoisted.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_jsc.vi.mock.with-default.hoisted.one-realm | after required | fn: SILENT | mock heapSize | at 3 4
+bun_jsc.vi.mock.with-default.hoisted.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.jest.mock.factory.hoisted.isolate | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.jest.mock.factory.hoisted.isolate | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.jest.mock.factory.hoisted.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.jest.mock.factory.hoisted.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.jest.mock.factory.hoisted.one-realm | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.jest.mock.factory.hoisted.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.vi.doMock.factory.test.isolate | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.doMock.factory.test.isolate | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.doMock.factory.test.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.vi.doMock.factory.test.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.doMock.factory.test.one-realm | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.doMock.factory.test.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.vi.doMock.spread.test.isolate | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.doMock.spread.test.isolate | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.doMock.spread.test.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.doMock.spread.test.one-realm | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.mock.factory.hoisted.isolate | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.mock.factory.hoisted.isolate | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.mock.factory.hoisted.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.vi.mock.factory.hoisted.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.mock.factory.hoisted.one-realm | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.mock.factory.hoisted.one-realm | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.vi.mock.with-default.hoisted.isolate | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.mock.with-default.hoisted.isolate | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.mock.with-default.hoisted.isolate | after required | kept: SILENT | undefined | at 3 4
+bun_sqlite.vi.mock.with-default.hoisted.one-realm | after required | added: SILENT | mock added | at 3 4
+bun_sqlite.vi.mock.with-default.hoisted.one-realm | after required | class: SILENT | mock Database | at 3 4
+bun_sqlite.vi.mock.with-default.hoisted.one-realm | after required | kept: SILENT | undefined | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | counter: SILENT | 1 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
 packed beside preloads that mock | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4

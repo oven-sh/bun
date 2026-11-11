@@ -4398,14 +4398,12 @@ describe("bundler", () => {
     {
       name: "external imports",
       options: externalSheets,
-      wrong: [2, 5, 10, 11, 35, 37, 44, 45, 50, 53, 55, 56, 57],
+      wrong: [2, 11, 35, 37, 45, 50, 53, 55, 56, 57],
     },
     {
       name: "external imports, cycles, empty files and import conditions",
       options: { ...externalSheets, cycles: true, emptyFiles: true, importConditions: true },
-      wrong: [
-        1, 2, 5, 6, 10, 11, 14, 18, 21, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 43, 44, 45, 50, 53, 54, 55, 56,
-      ],
+      wrong: [1, 2, 5, 6, 10, 11, 18, 21, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 43, 45, 50, 53, 54, 55, 56],
     },
   ];
   // A debug build takes about 0.3 seconds for each graph.

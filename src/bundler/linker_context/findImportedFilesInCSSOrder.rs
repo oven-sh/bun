@@ -1349,7 +1349,8 @@ impl<'o> LayerStandIns<'o> {
                         .iter()
                         .any(|(at, path)| *at < d.entry && d.path.starts_with(path))
             };
-            if let Some(blocked) = self.pending[..end].iter().position(is_blocked) {
+            let is_cut = |d: &LayerDeclaration| !d.is_fixed && is_blocked(d);
+            if let Some(blocked) = self.pending[..end].iter().position(is_cut) {
                 end = blocked;
             }
         }

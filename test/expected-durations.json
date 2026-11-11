@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/bun-ignore-comment-on-a-constant-locale.test.ts": {
+    "default": 2000,
+    "asan": 8000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000

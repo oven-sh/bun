@@ -52,20 +52,24 @@ fn message_at_witness(
     code: Code,
     arguments: &[&[u8]],
     witness: &Witness,
-    texts: &SourceTexts,
+    locator: &mut ModuleLocator<'_>,
 ) -> Msg {
     let diagnostic = Diagnostic::new(code, None, arguments);
     let reported = to_driver_diagnostic(None, &diagnostic);
     let reported = match position_of(witness.location) {
-        Some(position) => ModuleLocator::new(texts).locate(position, reported),
+        Some(position) => locator.locate(position, reported),
         None => reported,
     };
     to_log_message(&reported, diagnostic.severity)
 }
 
-fn locale_warning(engine: &EngineResult, record: &LocaleUseRecord, texts: &SourceTexts) -> Msg {
+fn locale_warning(
+    engine: &EngineResult,
+    record: &LocaleUseRecord,
+    locator: &mut ModuleLocator<'_>,
+) -> Msg {
     let tag = engine.text(record.tag);
-    message_at_witness(Code::LocaleDataLeftOut, &[tag], &record.witness, texts)
+    message_at_witness(Code::LocaleDataLeftOut, &[tag], &record.witness, locator)
 }
 
 /// Runs behind the build: a plan is made of what the engine found.
@@ -79,6 +83,7 @@ pub fn log_locales_left_out(
     log: &mut Log,
 ) {
     let number = Code::LocaleDataLeftOut.number();
+    let mut locator = ModuleLocator::new(texts);
     let mut diagnostics = Diagnostics::new();
     for (index, record) in (0..).zip(engine.locales_used()) {
         let tag = engine.text(record.tag);
@@ -86,7 +91,7 @@ pub fn log_locales_left_out(
         if record.kind != LocaleUseKind::Constant || !is_left_out() {
             continue;
         }
-        let warning = locale_warning(engine, record, texts);
+        let warning = locale_warning(engine, record, &mut locator);
         if silenced.binary_search(&index).is_err() {
             diagnostics.add_message(number, warning);
         } else if lists_silenced {
@@ -127,7 +132,8 @@ impl Diagnostics {
         witness: &Witness,
         texts: &SourceTexts,
     ) {
-        let message = message_at_witness(code, arguments, witness, texts);
+        let mut locator = ModuleLocator::new(texts);
+        let message = message_at_witness(code, arguments, witness, &mut locator);
         self.add_message(code.number(), message);
     }
 
@@ -143,12 +149,13 @@ impl Diagnostics {
             return Vec::new();
         }
         let number = Code::LocaleDataLeftOut.number();
+        let mut locator = ModuleLocator::new(texts);
         let mut silenced = Vec::new();
         for (index, record) in (0..).zip(engine.locales_used()) {
             if record.kind != LocaleUseKind::Constant {
                 continue;
             }
-            let warning = Entry::new(number, locale_warning(engine, record, texts));
+            let warning = Entry::new(number, locale_warning(engine, record, &mut locator));
             if silence(&mut self.ignore_comments, &warning) {
                 silenced.push(index);
             }

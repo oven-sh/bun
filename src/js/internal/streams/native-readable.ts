@@ -15,6 +15,7 @@ const EventEmitter = require("node:events");
 const { errorOrDestroy } = require("internal/streams/destroy");
 const { reportUncaughtException } = require("internal/shared");
 
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectHasOwn = Object.hasOwn;
 
 const kRefCount = Symbol("refCount");
@@ -95,7 +96,7 @@ function constructNativeReadable(
     // With captureRejections the constructor has put its own emit on the stream.
     stream[kEmit] = ObjectHasOwn(stream, "emit") ? stream.emit : undefined;
     stream[kEmitsNothing] = false;
-    stream.emit = emitOfHandle;
+    ObjectDefineProperty(stream, "emit", { __proto__: null, value: emitOfHandle, writable: true, configurable: true });
   }
 
   const highWaterMark = options.highWaterMark;

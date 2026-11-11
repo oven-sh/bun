@@ -1044,7 +1044,7 @@ describe("@types/bun integration test", () => {
           const directory = join(TEMP_DIR, "typescript-5.9");
           await mkdir(directory, { recursive: true });
           await makeTree(directory, { "package.json": JSON.stringify({ name: "typescript-5.9", private: true }) });
-          await $`cd ${directory} && bun add typescript@5.9.3`.quiet();
+          await $`cd ${directory} && ${bunExe()} add typescript@5.9.3`.env(bunEnv).quiet();
           return join(directory, "node_modules", "typescript");
         })());
 

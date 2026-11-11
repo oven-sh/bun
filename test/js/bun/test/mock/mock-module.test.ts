@@ -4955,9 +4955,18 @@ describe.concurrent("a module that got a mock from import() is evaluated again w
       },
       ["dep", "caller", "req", "m", "uses-m", "e", "k", "w", "w"],
     ],
+    [
+      "imports a module that called import() for it and that the factory requires",
+      {
+        "req.ts": `${ran("req")} import "./caller"; export const m = require("./e.ts").m;`,
+        "caller.ts": `${ran("caller")} ${callsImport} export {};`,
+      },
+      ["dep", "caller", "req", "m", "uses-m", "e", "k", "w", "w"],
+      `require("./caller"), `,
+    ],
   ])(
     "a module that still runs when a factory stops inside require(), and that %s, is not run a second time",
-    async (_, callers, order) => {
+    async (_, callers, order, factoryLoads = "") => {
       await expectFixturesToPass(
         {
           "k.ts": `${ran("k")} export const k = "real k";`,
@@ -4974,7 +4983,7 @@ describe.concurrent("a module that got a mock from import() is evaluated again w
               const gate = Promise.withResolvers<void>();
               vi.doMock("./k", () => ({ k: "fake k" }));
               vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
-              vi.doMock("./m", () => ({ m: "fake m", seen: require("./uses-m").seen() }));
+              vi.doMock("./m", () => (${factoryLoads}{ m: "fake m", seen: require("./uses-m").seen() }));
               await import("./k");
               const first = import("./w");
               await gate.promise;
@@ -5228,6 +5237,37 @@ describe.concurrent("a test file stays loaded when a module that it imports call
         `,
       },
       3,
+    );
+  });
+
+  // The walk finds such a file by the record of the mock that it is linked to, not as an importer of a module that goes.
+  test("a file that has ended, when a later file takes the preload's mock that it imports out of require.cache", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": files["dep.ts"],
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./dep", () => ({ who: () => "of the preload" }));
+        `,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { who } from "./dep";
+          globalThis.firstFileLoads = (globalThis.firstFileLoads ?? 0) + 1;
+          export const value = "of the first file";
+          test("a", () => expect(who()).toBe("of the preload"));
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          test("b", () => void delete require.cache[require.resolve("./dep")]);
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          import { value } from "./a.test";
+          test("c", () => expect([value, globalThis.firstFileLoads]).toEqual(["of the first file", 1]));
+        `,
+      },
+      3,
+      ["--preload", "./preload.ts"],
     );
   });
 

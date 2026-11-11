@@ -3389,6 +3389,17 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         if (auto* record = entry->record())
             registeredKeys.add(record, String(mapKey.first));
     }
+    // Nothing evaluates a test file a second time. The one that runs stays. One that has ended stays until JSMock__replaceModuleOfTestFile() puts its exports in its place.
+    auto keepsTestFile = [&](const String& key) {
+        if (!plugins.testFiles.contains(key))
+            return false;
+        if (plugins.testFileOfModule.get(key) == plugins.testFile)
+            return true;
+        if (!replaceableModuleOfTestFile(globalObject, key))
+            return false;
+        plugins.testFilesToReplace.add(key);
+        return true;
+    };
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         String key(mapKey.first);
         auto* record = entry->record();
@@ -3419,7 +3430,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 #endif
             if (auto registered = registeredKeys.find(imported); registered != registeredKeys.end())
                 addImporter(importersOf, key, registered->value);
-            else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key)) {
+            else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key) && !keepsTestFile(key)) {
                 keys.append(key); // Linked to a mock's record that is no longer registered, e.g. after `delete require.cache[mocked]`.
                 named.append(key);
             }
@@ -3518,15 +3529,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
         if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
             return false;
-        // Nothing evaluates a test file a second time. The one that runs stays. One that has ended stays until JSMock__replaceModuleOfTestFile() puts its exports in its place.
-        if (plugins.testFiles.contains(importer)) {
-            if (testFile == plugins.testFile)
-                return false;
-            if (replaceableModuleOfTestFile(globalObject, importer)) {
-                plugins.testFilesToReplace.add(importer);
-                return false;
-            }
-        }
+        if (keepsTestFile(importer))
+            return false;
         bool stayed = staysInRegistry.remove(importer);
         stayed |= staysInRequireCache.remove(importer);
         isQueued = evicted.add(importer).isNewEntry || stayed;
@@ -3573,16 +3577,19 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (take(key, importer, isQueued))
                 hold(importer);
         };
-        // The stop of a factory can come inside a load that a module body began. What goes with a waiting module beyond the factory's chain must have run to its end: taken while it runs, its body would run a second time inside the first. A CommonJS module does not say whether it runs.
+        // The stop of a factory can come inside a load that a module body began, so it takes no ES module whose body still runs: that body would run a second time inside the first. What goes with a waiting module beyond the factory's chain (`beyondChain`) must be known to have ended, and a CommonJS module does not say whether it runs.
         UncheckedKeyHashSet<String> beyondChain;
-        auto mayGo = [&](const String& importer, JSC::AbstractModuleRecord* record) {
-            if (!evict.onlyCallersIn || holdsListed || evict.onlyCallersIn->contains(importer))
+        auto mayGo = [&](const String& importer, JSC::AbstractModuleRecord* record, bool isBeyondChain) {
+            if (!evict.onlyCallersIn)
                 return true;
             auto* cyclic = record ? dynamicDowncast<JSC::CyclicModuleRecord>(record) : nullptr;
-            if (!cyclic || cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating)
+            if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating)
                 return false;
-            beyondChain.add(importer);
-            return true;
+            if (!isBeyondChain || evict.onlyCallersIn->contains(importer))
+                return true;
+            if (cyclic)
+                beyondChain.add(importer);
+            return !!cyclic;
         };
         UncheckedKeyHashMap<String, Vector<String>> requireKeysOfFile;
         for (size_t walked = 0; walked < held.size() || holdListed(walked); ++walked) {
@@ -3591,9 +3598,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 bool isQueued;
                 bool isBeyondChain = beyondChain.contains(key);
                 for (auto& importer : importers->value) {
-                    if (isBeyondChain) {
+                    if (evict.onlyCallersIn) {
                         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, importer));
-                        if (!mayGo(importer, entry ? entry->record() : nullptr))
+                        if (!mayGo(importer, entry ? entry->record() : nullptr, isBeyondChain))
                             continue;
                     }
                     if (take(key, importer, isQueued) && (callersGo.add(importer).isNewEntry || isQueued))
@@ -3606,7 +3613,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                     auto importer = caller.value.get() == caller.key ? registeredKeys.find(caller.key) : registeredKeys.end();
                     if (importer == registeredKeys.end())
                         return true;
-                    if (mayGo(importer->value, caller.key))
+                    if (mayGo(importer->value, caller.key, !holdsListed))
                         takeCaller(key, importer->value);
                     return false;
                 });
@@ -3621,7 +3628,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 for (auto& file : files->value) {
                     if (auto importers = requireKeysOfFile.find(file); importers != requireKeysOfFile.end()) {
                         for (auto& importer : importers->value) {
-                            if (mayGo(importer, nullptr))
+                            if (mayGo(importer, nullptr, !holdsListed))
                                 takeCaller(key, importer);
                         }
                     }

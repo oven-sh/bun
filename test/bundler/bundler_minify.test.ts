@@ -1895,6 +1895,23 @@ describe("bundler", () => {
     },
     run: { stdout: "[2,2]" },
   });
+  // The removal keeps the `const` when the scope has a direct eval, which can
+  // read it by name. A direct eval in a later case marks the scope only when
+  // that case is visited.
+  itBundled("minify/InlinedConstRemovalSeesDirectEvalInAllSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        function f(v) { switch (v) { case 1: const n = "C"; case 2: return eval("n"); } }
+        console.log(f(1));
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('const n = "C"');
+    },
+    run: { stdout: "C" },
+  });
   // A single-use `let` is substituted into whichever child of the next
   // expression reads it. `a` is used where the substitution must happen;
   // `keep` where a side effect in between must block it.

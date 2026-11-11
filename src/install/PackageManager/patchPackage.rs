@@ -7,7 +7,7 @@ use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{AbsPath, Platform, SEP};
+use bun_paths::{Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bin;
@@ -524,13 +524,7 @@ pub fn do_patch_commit(
     let old_folder =
         resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
-    make_bins_executable(
-        &manager.lockfile,
-        &pkg,
-        cache_dir,
-        &cache_dir_subpath,
-        &new_folder,
-    );
+    make_bins_executable(&manager.lockfile, &pkg, &cache_path, &cache_dir_subpath);
 
     let Some(patchfile_contents) = diff_against_cache(manager, &old_folder, &new_folder) else {
         Global::crash();
@@ -1021,9 +1015,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     make_bins_executable(
         &manager.lockfile,
         &pkg,
-        cache_result.cache_dir,
+        &cache_path,
         cache_result.cache_dir_subpath.as_bytes(),
-        &folder,
     );
 
     // The package may be installed using the hard link method,
@@ -1145,44 +1138,24 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
 fn make_bins_executable(
     lockfile: &Lockfile,
     pkg: &Package,
-    cache_dir: Fd,
+    cache_path: &[u8],
     cache_dir_subpath: &[u8],
-    folder: &[u8],
 ) {
-    if cfg!(windows) || pkg.bin.tag == bin::Tag::None {
-        return;
-    }
-    // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
-    // they go in a temporary folder.
-    let links = TempTree(temp_sibling(folder));
-    let (Ok(cache_path), Ok(mut links_path)) = (
-        <AbsPath>::init_fd_path(cache_dir),
-        <AbsPath>::from(links.0.as_slice()),
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Some(cache_entry) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+        cache_path,
+        &mut buf[..],
+        &[cache_dir_subpath],
     ) else {
         return;
     };
-    let cache_entry = strings::StringOrTinyString::init(cache_dir_subpath);
-    let mut abs_target_buf = bun_paths::path_buffer_pool::get();
-    let mut abs_dest_buf = bun_paths::path_buffer_pool::get();
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
-    bin::Linker {
-        bin: pkg.bin,
-        target_node_modules_path: &raw const cache_path,
-        target_package_name: cache_entry,
-        seen: None,
-        node_modules_path: &mut links_path,
-        package_name: cache_entry,
-        global_bin_path: ZStr::EMPTY,
-        string_buf: lockfile.buffers.string_bytes.as_slice(),
-        extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
-        abs_target_buf: abs_target_buf.as_mut_slice(),
-        abs_dest_buf: abs_dest_buf.as_mut_slice(),
-        rel_buf: rel_buf.as_mut_slice(),
-        is_behind_link: Some(false),
-        err: None,
-        skipped_due_to_missing_bin: false,
-    }
-    .link(false);
+    bin::make_bins_executable(
+        pkg.bin,
+        cache_entry.as_bytes(),
+        None,
+        lockfile.buffers.string_bytes.as_slice(),
+        lockfile.buffers.extern_strings.as_slice(),
+    );
 }
 
 /// The patched package's cache entry can be missing, because an install that finds the patched

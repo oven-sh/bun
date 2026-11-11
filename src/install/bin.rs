@@ -857,6 +857,9 @@ pub struct Linker<'a> {
 
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
+
+    /// Only sets the mode of the bin targets: no links, no shebang normalization.
+    pub chmod_only: bool,
 }
 
 #[cfg(not(windows))]
@@ -974,6 +977,12 @@ impl<'a> Linker<'a> {
             }
         }
 
+        if self.chmod_only {
+            #[cfg(not(windows))]
+            Self::set_exec_mode(abs_target, &target_stat);
+            return;
+        }
+
         if let Some(seen) = self.seen.as_deref() {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
@@ -1031,11 +1040,16 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
+        Self::set_exec_mode(abs_target, target_stat);
+        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
+    }
+
+    #[cfg(not(windows))]
+    fn set_exec_mode(abs_target: &ZStr, target_stat: &sys::Stat) {
         let mode = exec_mode();
         if (target_stat.st_mode as Mode) & 0o777 != mode {
             let _ = sys::lchmod(abs_target, mode);
         }
-        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
     }
 
     #[cfg(not(windows))]
@@ -1961,7 +1975,60 @@ pub(crate) fn link_free_bins(
             is_behind_link: Some(false),
             err: None,
             skipped_due_to_missing_bin: false,
+            chmod_only: false,
         }
         .link(global_bin_path.is_some());
     }
+}
+
+/// Sets the mode of the `bin` targets of a package in `source_dir`, the tree that a
+/// symlink-backend install points into, without creating links. `redirected_from` is the package
+/// whose `bin` field names the targets, when the native binlink optimization redirects its bins
+/// into this one.
+pub(crate) fn make_bins_executable(
+    bin: Bin,
+    source_dir: &[u8],
+    redirected_from: Option<&[u8]>,
+    string_buf: &[u8],
+    extern_string_buf: &[ExternalString],
+) {
+    if cfg!(windows) || bin.tag == Tag::None {
+        return;
+    }
+    let source_parent = resolve_path::dirname::<PlatformAuto>(source_dir);
+    let source_name = path::basename(source_dir);
+    if source_parent.is_empty() || source_name.is_empty() {
+        return;
+    }
+    // Two copies of the same path, because the linker reads `target_node_modules_path` while it
+    // holds `node_modules_path` by `&mut`.
+    let (Ok(target_node_modules_path), Ok(mut node_modules_path)) =
+        (AbsPath::from(source_parent), AbsPath::from(source_parent))
+    else {
+        return;
+    };
+    let source_name = strings::StringOrTinyString::init(source_name);
+    let mut abs_target_buf = path::path_buffer_pool::get();
+    let mut abs_dest_buf = path::path_buffer_pool::get();
+    let mut rel_buf = path::path_buffer_pool::get();
+    Linker {
+        bin,
+        target_node_modules_path: &raw const target_node_modules_path,
+        target_package_name: source_name,
+        seen: None,
+        node_modules_path: &mut node_modules_path,
+        // A name that differs from `target_package_name` turns on the redirect's candidate lookup.
+        package_name: redirected_from.map_or(source_name, strings::StringOrTinyString::init),
+        global_bin_path: ZStr::EMPTY,
+        string_buf,
+        extern_string_buf,
+        abs_target_buf: abs_target_buf.as_mut_slice(),
+        abs_dest_buf: abs_dest_buf.as_mut_slice(),
+        rel_buf: rel_buf.as_mut_slice(),
+        is_behind_link: Some(false),
+        err: None,
+        skipped_due_to_missing_bin: false,
+        chmod_only: true,
+    }
+    .link(false);
 }

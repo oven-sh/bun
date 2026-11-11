@@ -2226,6 +2226,8 @@ impl<'a> Printer<'a, '_> {
         };
         let tab_width = (self.options.indent_width.value() as usize).max(1);
         let mut index = 0u64;
+        // Where the previous item's content starts: a marker there would continue that item.
+        let mut previous_content = usize::MAX;
         self.print_children_with(id, |printer, item| {
             let mut prefix: Vec<u8> = match list.ordered {
                 true => {
@@ -2272,7 +2274,8 @@ impl<'a> Printer<'a, '_> {
                             true => 0,
                             // Four, with those before a nested list, make the marker indented code.
                             false => 3usize.saturating_sub(alignment_before),
-                        };
+                        }
+                        .min(previous_content.saturating_sub(1));
                         // Only the last item keeps the following code out of the list.
                         if node.next == NONE && prefix.len() + room < min_indent {
                             // Its number as written was wide enough.
@@ -2287,6 +2290,7 @@ impl<'a> Printer<'a, '_> {
                 };
                 prefix.splice(0..0, std::iter::repeat_n(b' ', leading));
             }
+            previous_content = prefix.len();
 
             let (first, second) = (
                 printer.node(node.first_child),

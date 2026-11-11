@@ -61,7 +61,9 @@ test.each(["unlink", "delete"] as const)("Bun.file(fd).%s() rejects", async meth
   await using dir = tempDir("bun-unlink-fd", { a: "Hello, world!" });
   const fd = openSync(path.join(dir, "a"), "r");
   try {
-    await expect(Bun.file(fd)[method]()).rejects.toMatchObject({
+    const promise = Bun.file(fd)[method]();
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+    await expect(promise).rejects.toMatchObject({
       code: "ERR_INVALID_ARG_TYPE",
       message: "Is not possible to unlink a file descriptor",
     });

@@ -358,6 +358,10 @@ impl LengthValue {
         self.map_value(|v| v * other)
     }
 
+    fn div_f32(self, other: f32) -> LengthValue {
+        self.map_value(|v| v / other)
+    }
+
     fn partial_cmp(self, other: LengthValue) -> Option<Ordering> {
         if core::mem::discriminant(&self) == core::mem::discriminant(&other) {
             let a = self.value();
@@ -455,6 +459,13 @@ impl Length {
         match self {
             Self::Value(v) => Self::Value(v.mul_f32(other)),
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
+        }
+    }
+
+    pub(crate) fn div_f32(self, other: f32) -> Length {
+        match self {
+            Self::Value(v) => Self::Value(v.div_f32(other)),
+            Self::Calc(c) => Self::Calc(Box::new(c.div_f32(other))),
         }
     }
 
@@ -664,6 +675,10 @@ impl protocol::MulF32 for LengthValue {
     fn mul_f32(self, rhs: f32) -> Self {
         LengthValue::mul_f32(self, rhs)
     }
+    #[inline]
+    fn div_f32(self, rhs: f32) -> Self {
+        LengthValue::div_f32(self, rhs)
+    }
 }
 impl protocol::TryAdd for LengthValue {
     #[inline]
@@ -752,6 +767,10 @@ impl protocol::MulF32 for Angle {
     #[inline]
     fn mul_f32(self, rhs: f32) -> Self {
         Angle::mul_f32(self, rhs)
+    }
+    #[inline]
+    fn div_f32(self, rhs: f32) -> Self {
+        Angle::div_f32(self, rhs)
     }
 }
 impl protocol::TryAdd for Angle {

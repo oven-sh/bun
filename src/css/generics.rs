@@ -1447,9 +1447,11 @@ pub trait Zero: Sized {
     fn zero() -> Self;
     fn is_zero(&self) -> bool;
 }
-/// `d.mul_f32(rhs)` — scalar multiplication.
+/// `d.mul_f32(rhs)` / `d.div_f32(rhs)` — scalar multiplication and division.
 pub trait MulF32: Sized {
     fn mul_f32(self, rhs: f32) -> Self;
+    /// Not `mul_f32(1.0 / rhs)`: the reciprocal is rounded, so `77px / 7` would be 11.000001px.
+    fn div_f32(self, rhs: f32) -> Self;
 }
 /// `d.try_add(&rhs)` — same-unit addition, `None` if incompatible.
 pub trait TryAdd: Sized {
@@ -1460,5 +1462,9 @@ impl MulF32 for CSSNumber {
     #[inline]
     fn mul_f32(self, rhs: f32) -> Self {
         self * rhs
+    }
+    #[inline]
+    fn div_f32(self, rhs: f32) -> Self {
+        self / rhs
     }
 }

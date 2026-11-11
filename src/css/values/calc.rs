@@ -602,7 +602,7 @@ impl<V: CalcValue> Calc<V> {
                 let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(val) = rhs {
                     if val != 0.0 {
-                        node = node.mul_f32(1.0 / val);
+                        node = node.div_f32(val);
                         continue;
                     }
                 }
@@ -972,21 +972,36 @@ impl<V: CalcValue> Calc<V> {
     }
 
     pub(crate) fn mul_f32(self, other: f32) -> Self {
+        self.scale(Scale::Mul, other)
+    }
+
+    pub(crate) fn div_f32(self, other: f32) -> Self {
+        self.scale(Scale::Div, other)
+    }
+
+    fn scale(self, op: Scale, other: f32) -> Self {
         if other == 1.0 {
             return self;
         }
+        let scaled = |n: f32| match op {
+            Scale::Mul => n * other,
+            Scale::Div => n / other,
+        };
 
         match self {
             // PERF: why not reuse the allocation here?
-            Calc::Value(v) => Calc::Value(Box::new(Self::mul_value_f32(*v, other))),
-            Calc::Number(n) => Calc::Number(n * other),
+            Calc::Value(v) => Calc::Value(Box::new(match op {
+                Scale::Mul => v.mul_f32(other),
+                Scale::Div => v.div_f32(other),
+            })),
+            Calc::Number(n) => Calc::Number(scaled(n)),
             // PERF: why not reuse the allocation here?
             Calc::Sum { left, right } => Calc::Sum {
-                left: Box::new(left.mul_f32(other)),
-                right: Box::new(right.mul_f32(other)),
+                left: Box::new(left.scale(op, other)),
+                right: Box::new(right.scale(op, other)),
             },
             Calc::Product { number, expression } => {
-                let num = number * other;
+                let num = scaled(number);
                 if num == 1.0 {
                     return *expression;
                 }
@@ -998,10 +1013,10 @@ impl<V: CalcValue> Calc<V> {
             Calc::Function(f) => match *f {
                 // PERF: why not reuse the allocation here?
                 MathFunction::Calc(c) => {
-                    Calc::Function(Box::new(MathFunction::Calc(c.mul_f32(other))))
+                    Calc::Function(Box::new(MathFunction::Calc(c.scale(op, other))))
                 }
                 other_fn => Calc::Product {
-                    number: other,
+                    number: scaled(1.0),
                     expression: Box::new(Calc::Function(Box::new(other_fn))),
                 },
             },
@@ -1074,6 +1089,12 @@ pub enum TrigFnKind {
     Asin,
     Acos,
     Atan,
+}
+
+#[derive(Copy, Clone)]
+enum Scale {
+    Mul,
+    Div,
 }
 
 /// A CSS math function.
@@ -1496,7 +1517,10 @@ macro_rules! calc_protocol_forwarders {
     ($T:ty { $($arms:tt)* }) => { calc_protocol_forwarders!(@ $T; $($arms)*); };
     (@ $T:ty;) => {};
     (@ $T:ty; mul_f32: forward, $($r:tt)*) => {
-        impl protocol::MulF32 for $T { #[inline] fn mul_f32(self, rhs: f32) -> Self { <$T>::mul_f32(self, rhs) } }
+        impl protocol::MulF32 for $T {
+            #[inline] fn mul_f32(self, rhs: f32) -> Self { <$T>::mul_f32(self, rhs) }
+            #[inline] fn div_f32(self, rhs: f32) -> Self { <$T>::div_f32(self, rhs) }
+        }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; partial_cmp: forward, $($r:tt)*) => {

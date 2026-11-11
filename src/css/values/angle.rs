@@ -188,6 +188,10 @@ impl Angle {
         }
     }
 
+    pub(crate) fn div_f32(self, other: f32) -> Angle {
+        self.map(|v| v / other)
+    }
+
     pub(crate) fn partial_cmp(self, other: Angle) -> Option<Ordering> {
         crate::generic::partial_cmp_f32(self.to_degrees(), other.to_degrees())
     }

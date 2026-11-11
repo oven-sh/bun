@@ -119,6 +119,10 @@ impl Time {
         }
     }
 
+    pub(crate) fn div_f32(self, other: f32) -> Time {
+        self.map(|v| v / other)
+    }
+
     pub(crate) fn add_internal(self, other: Time) -> Time {
         self.add(other)
     }

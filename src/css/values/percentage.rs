@@ -92,6 +92,10 @@ impl Percentage {
         Percentage { v: self.v * other }
     }
 
+    pub(crate) fn div_f32(self, other: f32) -> Percentage {
+        Percentage { v: self.v / other }
+    }
+
     pub(crate) fn is_zero(self) -> bool {
         self.v == 0.0
     }
@@ -269,6 +273,18 @@ impl<D> DimensionPercentage<D> {
             Self::Dimension(d) => Self::Dimension(Self::mul_value_f32(d, other)),
             Self::Percentage(p) => Self::Percentage(p.mul_f32(other)),
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
+        }
+    }
+
+    pub(crate) fn div_f32(self, other: f32) -> Self
+    where
+        Self: crate::values::calc::CalcValue,
+        D: protocol::MulF32,
+    {
+        match self {
+            Self::Dimension(d) => Self::Dimension(d.div_f32(other)),
+            Self::Percentage(p) => Self::Percentage(p.div_f32(other)),
+            Self::Calc(c) => Self::Calc(Box::new(c.div_f32(other))),
         }
     }
 

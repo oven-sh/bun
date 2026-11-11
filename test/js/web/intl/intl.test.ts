@@ -340,6 +340,18 @@ describe("Intl.Locale.prototype.getCollations and getNumberingSystems", () => {
       "xx-u-nu-true": { collations: ["emoji", "eor"], numberingSystems: [""] },
       "ar-EG-u-nu-true": { collations: info("ar-EG").collations, numberingSystems: [""] },
     });
+    // The two other getters that take their answer from a key of the tag.
+    expect({
+      "en-u-ca-true": new Intl.Locale("en-u-ca-true").getCalendars(),
+      "en-u-ca-buddhist": new Intl.Locale("en-u-ca-buddhist").getCalendars(),
+      "en-u-hc-true": new Intl.Locale("en-u-hc-true").getHourCycles(),
+      "en-u-hc-h23": new Intl.Locale("en-u-hc-h23").getHourCycles(),
+    }).toEqual({
+      "en-u-ca-true": [""],
+      "en-u-ca-buddhist": ["buddhist"],
+      "en-u-hc-true": [""],
+      "en-u-hc-h23": ["h23"],
+    });
   });
 
   // ICU keeps a language or a region that has a replacement as it was written

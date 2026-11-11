@@ -247,7 +247,8 @@ export function one(): number {
     ),
   );
 
-  test.each(["browser", "bun", "node"])(
+  // Not --target=bun: its bundle begins with `// @bun`, and `bun run --aot` takes a file that begins so for JavaScript.
+  test.each(["browser", "node"])(
     "a library that reads import.meta, under the tsconfig.json that bun init writes, for --target=%s",
     async target => {
       using dir = tempDir("build-dts-import-meta", {

@@ -128,7 +128,7 @@ test.concurrent("a package that bun compile --library builds from a library that
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [said, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const [, said, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   expect({ said, buildExitCode }).toEqual({ said: "", buildExitCode: 0 });
   const dist = join(String(library), "dist");
   const built = readdirSync(dist).sort();

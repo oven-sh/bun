@@ -9,6 +9,7 @@ use bun_sema::config::{
     self, Project, default_options_of_aot_package, find_package_with_compiler_options,
     load_for_aot_package, load_options_for_build,
 };
+use bun_sema::hir::find_transpiled_mark;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::session::Session;
@@ -337,6 +338,10 @@ pub(crate) fn typed_files_for_build(
     let judge = |typed: &mut Texts, declarations: &Texts| {
         let report = check(typed, declarations, &newest_lib);
         let with_bun_types = first_error(&report).and_then(|_| {
+            // `bun run --aot` takes a file that begins with this mark for JavaScript, so none is newly written.
+            if (typed.iter()).any(|file| find_transpiled_mark(&file.1).is_some()) {
+                return None;
+            }
             let carried = match report.has_bun_types_installed {
                 true => None,
                 false => Some(bun_removable_features::removable_body!(

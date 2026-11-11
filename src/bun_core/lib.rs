@@ -42,6 +42,7 @@ pub mod heap;
 pub mod current_work;
 pub mod debug;
 pub mod env;
+pub mod file_steps;
 #[cfg(windows)]
 pub mod windows_sys;
 pub mod wtf;

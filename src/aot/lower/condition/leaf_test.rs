@@ -63,7 +63,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 LeafTest::Truthiness
             }
             OperatorClass::Ordering | OperatorClass::Equality { .. }
-                if main_module_operand(file.hir, file.bound, expression).is_some() =>
+                if main_module_operand(file.hir, file.bound, expression).is_some()
+                    || file.find_path_comparison(expression).is_some() =>
             {
                 LeafTest::Truthiness
             }

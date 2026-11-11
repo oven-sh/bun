@@ -894,6 +894,11 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
+    pub fn may_fail_in_require(&self, file: FileId) -> bool {
+        self.plan
+            .has(&self.plan.order.may_fail_in_require, ModuleRef::File(file))
+    }
+
     pub fn is_importable_during_evaluation(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self

@@ -27,7 +27,7 @@
 // JSON: = RequireModule module=[[json]] {{*}}specifier="./data.json" [onlyIfImported]
 
 // RUN(ITSELF): link
-// ITSELF: module [[file]] path="{{*}}data.json" displayPath={{*}}requireResult=DefaultExport {{*}}exports=[{name="a" variable=[[whole]] isOmitted=true}, {name="default"
+// ITSELF: module [[file]] path="{{*}}data.json" displayPath={{*}}requireResult=NamespaceIfImported {{*}}exports=[{name="a" variable=[[a]]}, {name="default" variable=[[whole]]}, {name="list" variable=[[list]]}]
 // ITSELF-COUNT-2: specifier="./data.json" [onlyIfImported]
 // ITSELF: = RequireModule module=[[file]] {{*}}specifier="./data.json"
 

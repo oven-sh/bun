@@ -164,20 +164,41 @@ impl Removable<'_, '_> {
         })
     }
 
-    fn simplify_unused(&self, expression: ExprId, simplified: &mut Simplified) -> bool {
+    fn simplify_unused(&self, mut expression: ExprId, simplified: &mut Simplified) -> bool {
+        let mut is_nothing_left_on_right = true;
+        loop {
+            if let Some(is_removable) = self.decided_expression(expression) {
+                return is_removable && is_nothing_left_on_right;
+            }
+            let ExprKind::Binary { op, left, right } = self.hir[expression].kind else {
+                return self.simplify_unused_operand(expression, simplified)
+                    && is_nothing_left_on_right;
+            };
+            let is_simplified = match op {
+                BinOp::Comma | BinOp::EqEqEq | BinOp::NotEqEq => true,
+                BinOp::EqEq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                    self.is_primitive_whatever_it_does(left)
+                        && self.is_primitive_whatever_it_does(right)
+                }
+                BinOp::And | BinOp::Or | BinOp::Nullish => self.simplify_unused(right, simplified),
+                _ => false,
+            };
+            if !is_simplified {
+                return false;
+            }
+            if op != BinOp::Comma {
+                simplified.in_part.push(expression);
+            }
+            if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
+                is_nothing_left_on_right &= self.simplify_unused(right, simplified);
+            }
+            expression = left;
+        }
+    }
+
+    fn simplify_unused_operand(&self, expression: ExprId, simplified: &mut Simplified) -> bool {
         let hir = self.hir;
         let decisions = &self.analysis.decisions;
-        if expression.is_none() || decisions.is_dead_expr(expression) {
-            return true;
-        }
-        match decisions.decision(expression) {
-            Decision::Constant(_) | Decision::Data(_) => return true,
-            Decision::GlobalPath(_) | Decision::DeferredData => return false,
-            Decision::Unknown => {}
-        }
-        if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
-            return true;
-        }
         match hir[expression].kind {
             ExprKind::Missing
             | ExprKind::This
@@ -236,30 +257,6 @@ impl Removable<'_, '_> {
                 self.simplify_all_unused(hir.ids(call.args), simplified)
             }
             ExprKind::Jsx(element) => self.simplify_unused_element(expression, element, simplified),
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::Comma => self.simplify_all_unused([left, right].into_iter(), simplified),
-                BinOp::EqEqEq | BinOp::NotEqEq => {
-                    simplified.in_part.push(expression);
-                    self.simplify_all_unused([left, right].into_iter(), simplified)
-                }
-                BinOp::EqEq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                    if !self.is_primitive_whatever_it_does(left)
-                        || !self.is_primitive_whatever_it_does(right)
-                    {
-                        return false;
-                    }
-                    simplified.in_part.push(expression);
-                    self.simplify_all_unused([left, right].into_iter(), simplified)
-                }
-                BinOp::And | BinOp::Or | BinOp::Nullish => {
-                    if !self.simplify_unused(right, simplified) {
-                        return false;
-                    }
-                    simplified.in_part.push(expression);
-                    self.simplify_unused(left, simplified)
-                }
-                _ => false,
-            },
             ExprKind::Array(items) => {
                 let is_spread = |item: ExprId| matches!(hir[item].kind, ExprKind::Spread(_));
                 if hir.ids(items).any(is_spread) {
@@ -326,22 +323,33 @@ impl Removable<'_, '_> {
         self.simplify_all_unused(parts, simplified)
     }
 
-    fn is_primitive_whatever_it_does(&self, expression: ExprId) -> bool {
+    fn is_primitive_whatever_it_does(&self, mut expression: ExprId) -> bool {
         let hir = self.hir;
-        let expression = hir.skip_type_assertions(expression);
-        if self.literal(expression).is_some() {
-            return true;
+        loop {
+            expression = hir.skip_type_assertions(expression);
+            if self.literal(expression).is_some() {
+                return true;
+            }
+            let ExprKind::Binary { op, left, right } = hir[expression].kind else {
+                return self.is_primitive_operand(expression);
+            };
+            expression = match op {
+                BinOp::And | BinOp::Or | BinOp::Nullish => {
+                    if !self.is_primitive_whatever_it_does(right) {
+                        return false;
+                    }
+                    left
+                }
+                BinOp::Comma => right,
+                _ => return true,
+            };
         }
+    }
+
+    fn is_primitive_operand(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
         match hir[expression].kind {
             ExprKind::Unary { .. } => true,
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::And | BinOp::Or | BinOp::Nullish => {
-                    self.is_primitive_whatever_it_does(left)
-                        && self.is_primitive_whatever_it_does(right)
-                }
-                BinOp::Comma => self.is_primitive_whatever_it_does(right),
-                _ => true,
-            },
             ExprKind::Assign { op, target, value } => match op {
                 None => false,
                 Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {

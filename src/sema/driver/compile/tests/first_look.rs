@@ -41,6 +41,7 @@ fn ask_for_calls(threads: usize) -> Vec<(String, String)> {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b8493c6128b42e69f0d0bb518d7ea6596391dd01c36d23cca359cb339821a37f.
+// Written against that file with the SHA-256 9faa63793e4302a8922fe12016b93bf25babeb1552a2c919ca44401bb3531d6f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -1221,11 +1221,8 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     // specific writer, then it would cause it to never start
     // flowing again.
     // So, if this is awaiting a drain, then we just call it now.
-    // needDrain is not asked of a live source: a write that fails in its own call returns false and leaves it clear.
-    // With two or more pipes awaitDrainWriters is a Set, truthy when empty, so this also resumes a source that the
-    // program paused. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/readable.js#L1049-L1060
-    // Node's resume() does nothing on a destroyed stream and ours does (see resume()): a source that carries the
-    // destroyed flag is released only for a destination that is in backpressure, or that has no state to ask.
+    // If we don't know, then assume that we are waiting for one.
+    // nodejs/node#64310 removed the needDrain test. A destroyed source keeps it: Bun's resume() still runs on one.
     if (
       ondrain &&
       state.awaitDrainWriters &&
@@ -1386,10 +1383,6 @@ Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStre
     this.pause();
 
     for (let i = 0; i < dests.length; i++) dests[i].emit("unpipe", this, { hasUnpiped: false });
-    // The release in cleanup() resumes the source while the destinations behind that one still listen for data. Node
-    // leaves it flowing with no consumer and drops what follows. Its documentation has paused mode here:
-    // https://github.com/nodejs/node/blob/v26.12.1/doc/api/stream.md?plain=1#L1124-L1130
-    if ((state[kState] & (Flag.Flowing | Flag.DataListening)) === Flag.Flowing) this.pause();
     return this;
   }
 

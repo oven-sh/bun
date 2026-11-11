@@ -2429,28 +2429,50 @@ describe("pipe() goes on for the other consumers once a destination that failed 
         events: ["data a", "good got a", "data b"],
       });
     });
+
+    // The teardown of the first destination resumes the source for the second one, and then that one goes too: "b"
+    // has nobody to read it. With the first one in backpressure Node v26.3.0 does the same.
+    it.each([
+      ["waited once", drainedOnce],
+      ["is in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
+    ])("unpipe() of every destination leaves the source flowing when the first one %s", async (name, first) => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      readable.pipe(first());
+      readable.pipe(sink(events));
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      const flowing = readable.readableFlowing;
+      readable.push("b");
+      await atRest();
+      expect({ flowing, events, buffered: readable.readableLength }).toEqual({
+        flowing: true,
+        events: ["good got a"],
+        buffered: 0,
+      });
+    });
   });
 
-  // Not as in Node: there the release leaves the source flowing with nobody to read it, and "b" is dropped. Node's
-  // documentation says that the removal of all pipe destinations switches the source back to paused mode.
   it.each([
-    ["waited once", drainedOnce],
-    ["is in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
-  ])("unpipe() of every destination leaves the source paused when the first one %s", async (name, first) => {
+    ["one destination", false],
+    ["two destinations, the first one waited once", true],
+  ])("a resume() in an 'unpipe' listener holds after unpipe() of every destination: %s", async (name, two) => {
     const events = [];
     const readable = new Readable({ read() {} });
-    readable.pipe(first());
-    readable.pipe(sink(events));
+    const first = two ? drainedOnce() : sink(events);
+    readable.pipe(first);
+    if (two) readable.pipe(sink(events));
+    first.on("unpipe", source => source.resume());
     readable.push("a");
     await atRest();
     readable.unpipe();
-    const flowing = readable.readableFlowing;
     readable.push("b");
     await atRest();
-    expect({ flowing, events, buffered: readable.readableLength }).toEqual({
-      flowing: false,
+    expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
+      flowing: true,
       events: ["good got a"],
-      buffered: 1,
+      buffered: 0,
     });
   });
 

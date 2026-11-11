@@ -905,11 +905,8 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     // specific writer, then it would cause it to never start
     // flowing again.
     // So, if this is awaiting a drain, then we just call it now.
-    // needDrain is not asked of a live source: a write that fails in its own call returns false and leaves it clear.
-    // With two or more pipes awaitDrainWriters is a Set, truthy when empty, so this also resumes a source that the
-    // program paused. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/readable.js#L1049-L1060
-    // Node's resume() does nothing on a destroyed stream and ours does (see resume()): a source that carries the
-    // destroyed flag is released only for a destination that is in backpressure, or that has no state to ask.
+    // If we don't know, then assume that we are waiting for one.
+    // nodejs/node#64310 removed the needDrain test. A destroyed source keeps it: Bun's resume() still runs on one.
     if (
       ondrain &&
       state.awaitDrainWriters &&
@@ -1047,10 +1044,6 @@ Readable.prototype.unpipe = function (dest) {
     this.pause();
 
     for (let i = 0; i < dests.length; i++) dests[i].emit("unpipe", this, { hasUnpiped: false });
-    // The release in cleanup() resumes the source while the destinations behind that one still listen for data. Node
-    // leaves it flowing with no consumer and drops what follows. Its documentation has paused mode here:
-    // https://github.com/nodejs/node/blob/v26.12.1/doc/api/stream.md?plain=1#L1124-L1130
-    if ((state[kState] & (kFlowing | kDataListening)) === kFlowing) this.pause();
     return this;
   }
 

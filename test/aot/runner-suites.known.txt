@@ -104,6 +104,23 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > w
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+# The next two: the engine keeps what a mock of a compiled module wrote over. A spy that was on an export goes back at the end of the mock though it was restored since. And the module object of a CommonJS file keeps the mock in `module.exports` after jest.resetModules().
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spied and mocked module that jest.resetModules() takes out of the registry
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spied and mocked module that vi.resetModules() takes out of the registry
+# The next one: a compiled run has no mock that waits for the body of its module. A spy that is laid behind that body stays on the export, above the mock.
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy laid between the body of a module and the mock that was waiting for that body
+# The next two: the engine keeps what a mock of a compiled module wrote over. A spy that was on an export goes back at the end of the mock though it was restored since.
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy laid through another module's namespace, on a builtin, on a CommonJS module or on what require() returns
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy of a preload
+# The next one: a compiled run mocks a CommonJS file beside its entry of require.cache. A spy on `exports` of that entry stays above the mock, and jest.requireActual() gives the file's own function while the spy is installed.
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy on module.exports
+# The next six: the engine keeps what a mock of a compiled module wrote over. A spy that was on an export goes back at the end of the mock though it was restored since.
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > each run of one file starts with the module's own function: ["--isolate","--rerun-each=2"]
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > each run of one file starts with the module's own function: ["--rerun-each=3"]
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > every order of spyOn(), a restore, mock.module() and jest.unmock()
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > hooks that spy, mock and restore for each test
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > in the test file, the end of the mock puts back what still stands
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > the next test file gets the module's own exports
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads

@@ -865,6 +865,15 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
+    std::optional<InstalledSpy> asInstalledSpy()
+    {
+        JSObject* target = m_spyTarget.get();
+        JSValue replaced = m_spyOriginal.get();
+        if (!target || !replaced || (m_spyAttributes & SpyAttributeAccessor))
+            return std::nullopt;
+        return InstalledSpy { this, target, m_spyIdentifier, replaced };
+    }
+
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -1151,6 +1160,8 @@ static SpyWeakHandleOwner& weakValueHandleOwner()
 
 void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes)
 {
+    // installedSpy() names one place: a spy is never laid a second time.
+    ASSERT(!isSpy);
     enter(List::Spies);
     this->isSpy = true;
     m_spyTarget = JSC::Weak<JSObject>(target, &weakValueHandleOwner(), nullptr);
@@ -1257,6 +1268,12 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     RETURN_IF_EXCEPTION(scope, );
     if (firstException)
         throwException(globalObject, scope, firstException);
+}
+
+std::optional<InstalledSpy> installedSpy(JSValue value)
+{
+    auto* mock = value ? dynamicDowncast<JSMockFunction>(value) : nullptr;
+    return mock ? mock->asInstalledSpy() : std::nullopt;
 }
 
 extern "C" void JSMock__restoreAllMocks(Zig::GlobalObject* globalObject)

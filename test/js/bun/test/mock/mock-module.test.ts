@@ -4265,6 +4265,646 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
   });
 });
 
+// A spy on an export and a mock of its module each keep what they replaced, and each puts that back at its end.
+// When the spy ends first, the end of the mock must put back what the spy replaced, and not the spy.
+describe.concurrent("a spy on an export of a module that a mock patches in place", () => {
+  const dep = `
+    export function greet(s) { return "real:" + s; }
+    export const value = "real";
+    export class Greeter {}
+    export default function () { return "real default"; }
+  `;
+  // Each of them patches a module that the test file has loaded.
+  const makers = ["mock.module", "jest.mock", "vi.mock", "jest.doMock"];
+
+  // The first test file makes each group of calls in a test, on a module of its own: `ns` is its namespace, `path` its path
+  // and `own` its exports before any call. The second test file has no mock and no spy, and reads every export.
+  const filesFor = (calls: Record<string, string>) => {
+    const names = Object.keys(calls);
+    const imports = names.map((_, i) => `import * as ns${i} from "./dep${i}.ts";`).join("\n");
+    return {
+      ...Object.fromEntries(names.map((_, i) => [`dep${i}.ts`, dep])),
+      "1.test.ts": `
+        import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+        ${imports}
+        globalThis.own = [${names.map((_, i) => `{ ...ns${i} }`).join(", ")}];
+        ${names
+          .map(
+            (name, i) => `
+              test(${JSON.stringify(name)}, async () => {
+                const ns = ns${i}, path = "./dep${i}.ts", own = globalThis.own[${i}];
+                ${calls[name]}
+              });
+            `,
+          )
+          .join("\n")}
+      `,
+      "2.test.ts": `
+        import { expect, test } from "bun:test";
+        ${imports}
+        test.each([${names.map((name, i) => `[${JSON.stringify(name)}, ns${i}, ${i}]`).join(", ")}])("after: %s", (_, ns, i) => {
+          expect({ ...ns }).toEqual(globalThis.own[i]);
+        });
+      `,
+    };
+  };
+  const expectCallsToPass = (calls: Record<string, string>) =>
+    expectFixturesToPass(filesFor(calls), 2 * Object.keys(calls).length);
+
+  test("the next test file gets the module's own exports", async () => {
+    await expectCallsToPass({
+      ...Object.fromEntries(
+        makers.map(maker => [
+          `spyOn(), ${maker}()`,
+          `
+            spyOn(ns, "greet").mockReturnValue("spied");
+            ${maker}(path, () => ({ greet: () => "mocked" }));
+            expect(ns.greet("q")).toBe("mocked");
+          `,
+        ]),
+      ),
+      "vi.spyOn(), mock.module()": `
+        vi.spyOn(ns, "greet").mockReturnValue("spied");
+        mock.module(path, () => ({ greet: () => "mocked" }));
+        expect(ns.greet("q")).toBe("mocked");
+      `,
+      "jest.spyOn(), mock.module()": `
+        jest.spyOn(ns, "greet").mockReturnValue("spied");
+        mock.module(path, () => ({ greet: () => "mocked" }));
+        expect(ns.greet("q")).toBe("mocked");
+      `,
+      "spyOn(), mock.module(), mock.restore(), mock.module() of a copy": `
+        const copy = { ...ns };
+        spyOn(ns, "greet").mockReturnValue("spied");
+        mock.module(path, () => ({ greet: () => "mocked" }));
+        mock.restore();
+        mock.module(path, () => copy);
+        expect(ns.greet).toBe(own.greet);
+      `,
+      "mock.module() with a pending factory, spyOn()": `
+        const { promise, resolve } = Promise.withResolvers();
+        const patched = mock.module(path, async () => {
+          await promise;
+          return { greet: () => "mocked" };
+        });
+        spyOn(ns, "greet").mockReturnValue("spied");
+        expect(ns.greet("q")).toBe("spied");
+        resolve();
+        await patched;
+        expect(ns.greet("q")).toBe("mocked");
+      `,
+      "a spy on an export that is no function, on a class and on the default export": `
+        spyOn(ns, "value");
+        spyOn(ns, "Greeter");
+        spyOn(ns, "default");
+        mock.module(path, () => ({ value: "mocked", Greeter: class {}, default: () => "mocked" }));
+        expect([ns.value, ns.default()]).toEqual(["mocked", "mocked"]);
+      `,
+    });
+  });
+
+  test("in the test file, the end of the mock puts back what still stands", async () => {
+    const ends = [...makers.map(maker => [maker, "jest.unmock"]), ["mock.module", "vi.unmock"]];
+    await expectCallsToPass({
+      ...Object.fromEntries(
+        ends.map(([maker, ender]) => [
+          `${maker}(), ${ender}(): the spy while it is installed`,
+          `
+            const spy = spyOn(ns, "greet").mockReturnValue("spied");
+            ${maker}(path, () => ({ greet: () => "mocked" }));
+            ${ender}(path);
+            expect(ns.greet).toBe(spy);
+            expect(ns.greet("q")).toBe("spied");
+            spy.mockRestore();
+            expect(ns.greet).toBe(own.greet);
+          `,
+        ]),
+      ),
+      ...Object.fromEntries(
+        ends.map(([maker, ender]) => [
+          `${maker}(), mockRestore(), ${ender}(): what the spy replaced`,
+          `
+            const spy = spyOn(ns, "greet").mockReturnValue("spied");
+            ${maker}(path, () => ({ greet: () => "mocked" }));
+            spy.mockRestore();
+            ${ender}(path);
+            expect(ns.greet).toBe(own.greet);
+            expect(spyOn(ns, "greet")).not.toBe(spy);
+          `,
+        ]),
+      ),
+      "importActual() and requireActual() give the spy until its restore": `
+        const spy = spyOn(ns, "greet").mockReturnValue("spied");
+        mock.module(path, () => ({ greet: () => "mocked" }));
+        expect((await vi.importActual(path)).greet).toBe(spy);
+        expect(jest.requireActual(path).greet).toBe(spy);
+        spy.mockRestore();
+        expect((await vi.importActual(path)).greet).toBe(own.greet);
+        expect(jest.requireActual(path).greet).toBe(own.greet);
+      `,
+    });
+  });
+
+  // Each order runs on a module of its own, then the test file ends.
+  // Left alone: a mock that jest.unmock() ends while a spy that was laid over the mock is installed. The restore of that spy puts the value of the mock back.
+  test("every order of spyOn(), a restore, mock.module() and jest.unmock()", async () => {
+    const steps = {
+      "spyOn": `
+        const mocked = fakes.has(ns.greet);
+        const spy = spyOn(ns, "greet").mockReturnValue("spied");
+        if (mocked) overMock.add(spy);
+        spies.push(spy);
+      `,
+      "mockRestore": `spies.pop()?.mockRestore();`,
+      "mock.restore": `mock.restore(); spies.length = 0;`,
+      "mock.module": `
+        const fake = () => "mocked";
+        fakes.add(fake);
+        mock.module(path, () => ({ greet: fake }));
+      `,
+      "mock.module of a copy": `mock.module(path, () => copy);`,
+      "jest.unmock": `
+        if (spies.some(spy => overMock.has(spy))) state.isLeftAlone = true;
+        jest.unmock(path);
+      `,
+    };
+    const orders: string[][] = [];
+    const depth = isDebug || isASAN ? 2 : 4;
+    (function add(order: string[]) {
+      if (order.length) orders.push(order);
+      if (order.length < depth) for (const step of Object.keys(steps)) add([...order, step]);
+    })([]);
+    const prelude = `
+      ${orders.map((_, i) => `import * as ns${i} from "./dep${i}.ts";`).join("\n")}
+      const namespaces = [${orders.map((_, i) => `ns${i}`).join(", ")}];
+      const orders = ${JSON.stringify(orders.map(order => order.join(", ")))};
+    `;
+    await expectFixturesToPass(
+      {
+        ...Object.fromEntries(orders.map((_, i) => [`dep${i}.ts`, dep])),
+        "1.test.ts": `
+          import { jest, mock, spyOn, test } from "bun:test";
+          ${prelude}
+          globalThis.own = namespaces.map(ns => ns.greet);
+          const steps = {
+            ${Object.entries(steps)
+              .map(
+                ([name, code]) =>
+                  `${JSON.stringify(name)}(state) { const { ns, path, copy, spies, fakes, overMock } = state; ${code} },`,
+              )
+              .join("\n")}
+          };
+          test("in the file", () => {
+            globalThis.leftAlone = orders.map((order, i) => {
+              const ns = namespaces[i];
+              const state = { ns, path: "./dep" + i + ".ts", copy: { ...ns }, spies: [], fakes: new Set(), overMock: new Set(), isLeftAlone: false };
+              for (const step of order.split(", ")) steps[step](state);
+              return state.isLeftAlone;
+            });
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          ${prelude}
+          test("in the next file", () => {
+            const { leftAlone, own } = globalThis;
+            expect(orders.filter((_, i) => !leftAlone[i] && namespaces[i].greet !== own[i])).toEqual([]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a spy under two mocks of one variable", async () => {
+    await expectFixturesToPass(
+      {
+        "oldest-first.ts": dep,
+        "oldest-first-barrel.ts": `export * from "./oldest-first.ts";`,
+        "newest-first.ts": dep,
+        "newest-first-barrel.ts": `export * from "./newest-first.ts";`,
+        "1.test.ts": `
+          import { expect, jest, mock, spyOn, test } from "bun:test";
+          import "./newest-first-barrel.ts";
+          import * as newestFirst from "./newest-first.ts";
+          import "./oldest-first-barrel.ts";
+          import * as oldestFirst from "./oldest-first.ts";
+          globalThis.own = [oldestFirst.greet, newestFirst.greet];
+          test("the mocks end oldest first", () => {
+            spyOn(oldestFirst, "greet").mockReturnValue("spied");
+            mock.module("./oldest-first.ts", () => ({ greet: () => "mock of the module" }));
+            mock.module("./oldest-first-barrel.ts", () => ({ greet: () => "mock of the barrel" }));
+            expect(oldestFirst.greet("q")).toBe("mock of the barrel");
+            jest.unmock("./oldest-first.ts");
+            jest.unmock("./oldest-first-barrel.ts");
+          });
+          test("the mocks end newest first, and the spy is back", () => {
+            const spy = spyOn(newestFirst, "greet").mockReturnValue("spied");
+            mock.module("./newest-first.ts", () => ({ greet: () => "mock of the module" }));
+            mock.module("./newest-first-barrel.ts", () => ({ greet: () => "mock of the barrel" }));
+            jest.unmock("./newest-first-barrel.ts");
+            expect(newestFirst.greet("q")).toBe("mock of the module");
+            jest.unmock("./newest-first.ts");
+            expect(newestFirst.greet).toBe(spy);
+            spy.mockRestore();
+            expect(newestFirst.greet).toBe(globalThis.own[1]);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as newestFirst from "./newest-first.ts";
+          import * as oldestFirst from "./oldest-first.ts";
+          test("the next file", () => {
+            expect([oldestFirst.greet, newestFirst.greet]).toEqual(globalThis.own);
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("a spy laid through another module's namespace, on a builtin, on a CommonJS module or on what require() returns", async () => {
+    await expectFixturesToPass(
+      {
+        "behind.ts": dep,
+        "barrel.ts": `export * from "./behind.ts";`,
+        "renames.ts": `export { greet as hello } from "./behind-renames.ts";`,
+        "behind-renames.ts": dep,
+        "required.ts": dep,
+        "cjs.cjs": `exports.greet = function greet(s) { return "real:" + s; };`,
+        "1.test.ts": `
+          import { expect, jest, mock, spyOn, test } from "bun:test";
+          import * as fs from "node:fs";
+          import * as barrel from "./barrel.ts";
+          import * as cjs from "./cjs.cjs";
+          import * as renames from "./renames.ts";
+          const required = require("./required.ts");
+          globalThis.own = { barrel: barrel.greet, renames: renames.hello, cjs: cjs.greet, required: required.greet, existsSync: fs.existsSync };
+          test("spied, then mocked", () => {
+            spyOn(barrel, "greet").mockReturnValue("spied");
+            mock.module("./behind.ts", () => ({ greet: () => "mocked" }));
+            spyOn(renames, "hello").mockReturnValue("spied");
+            mock.module("./behind-renames.ts", () => ({ greet: () => "mocked" }));
+            spyOn(cjs, "greet").mockReturnValue("spied");
+            mock.module("./cjs.cjs", () => ({ greet: () => "mocked" }));
+            const spy = jest.spyOn(required, "greet").mockReturnValue("spied");
+            jest.mock("./required.ts", () => ({ greet: () => "mocked" }));
+            spyOn(fs, "existsSync").mockReturnValue("spied");
+            mock.module("node:fs", () => ({ existsSync: () => "mocked" }));
+            expect([barrel.greet("q"), renames.hello("q"), cjs.greet("q"), required.greet("q"), fs.existsSync("/")]).toEqual(Array(5).fill("mocked"));
+            spy.mockRestore();
+            jest.unmock("./required.ts");
+            expect(required.greet).toBe(globalThis.own.required);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { existsSync } from "node:fs";
+          import { greet as behindBarrel } from "./behind.ts";
+          import { greet as behindRenames } from "./behind-renames.ts";
+          import { greet as cjs } from "./cjs.cjs";
+          test("the next file", () => {
+            const required = require("./required.ts").greet;
+            expect({ barrel: behindBarrel, renames: behindRenames, cjs, required, existsSync }).toEqual(globalThis.own);
+            expect(existsSync("/")).toBe(true);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a spy that a module has for its own export is put back as it is", async () => {
+    await expectFixturesToPass(
+      {
+        "spied.ts": dep,
+        "has-spy.ts": `import { greet } from "./spied.ts"; export const greetToo = greet;`,
+        "spied.cjs": `exports.greet = function greet(s) { return "real:" + s; };`,
+        "has-spy.cjs": `module.exports = require("./spied.cjs").greet;`,
+        "1.test.ts": `
+          import { expect, jest, mock, spyOn, test } from "bun:test";
+          import * as spied from "./spied.ts";
+          test("an export", async () => {
+            const spy = spyOn(spied, "greet");
+            const hasSpy = await import("./has-spy.ts");
+            expect(hasSpy.greetToo).toBe(spy);
+            mock.module("./has-spy.ts", () => ({ greetToo: () => "mocked" }));
+            spy.mockRestore();
+            jest.unmock("./has-spy.ts");
+            expect(hasSpy.greetToo).toBe(spy);
+          });
+          test("module.exports", () => {
+            const spy = spyOn(require("./spied.cjs"), "greet");
+            expect(require("./has-spy.cjs")).toBe(spy);
+            mock.module("./has-spy.cjs", () => () => "mocked");
+            spy.mockRestore();
+            jest.unmock("./has-spy.cjs");
+            expect(require("./has-spy.cjs")).toBe(spy);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a spy on module.exports", async () => {
+    await expectFixturesToPass(
+      {
+        ...Object.fromEntries(
+          ["next-file", "actual", "original", "automocked", "reloaded"].map(name => [
+            `${name}.cjs`,
+            `module.exports = function greet(s) { return "real:" + s; };`,
+          ]),
+        ),
+        "1.test.ts": `
+          import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+          const moduleOf = path => require.cache[require.resolve(path)];
+          globalThis.own = [require("./next-file.cjs"), require("./reloaded.cjs")];
+          test("the next test file gets the module's own function", () => {
+            spyOn(moduleOf("./next-file.cjs"), "exports").mockReturnValue("spied");
+            expect(require("./next-file.cjs")("q")).toBe("spied");
+            mock.module("./next-file.cjs", () => ({ greet: () => "mocked" }));
+            expect(require("./next-file.cjs").greet("q")).toBe("mocked");
+          });
+          test("requireActual() and importActual() give the spy until its restore", async () => {
+            const own = require("./actual.cjs");
+            const spy = spyOn(moduleOf("./actual.cjs"), "exports").mockReturnValue("spied");
+            mock.module("./actual.cjs", () => ({ greet: () => "mocked" }));
+            expect(jest.requireActual("./actual.cjs")).toBe(spy);
+            expect((await vi.importActual("./actual.cjs")).default).toBe(spy);
+            spy.mockRestore();
+            expect(jest.requireActual("./actual.cjs")).toBe(own);
+            expect((await vi.importActual("./actual.cjs")).default).toBe(own);
+          });
+          test("so does the original that a factory asks for", async () => {
+            const own = require("./original.cjs");
+            const spy = spyOn(moduleOf("./original.cjs"), "exports").mockReturnValue("spied");
+            const originals = [];
+            const factory = async importOriginal => {
+              originals.push((await importOriginal()).default);
+              return { greet: () => "mocked" };
+            };
+            await mock.module("./original.cjs", factory);
+            spy.mockRestore();
+            await mock.module("./original.cjs", factory);
+            expect(originals).toEqual([spy, own]);
+          });
+          test("a mock without a factory is made of what stands", () => {
+            const own = require("./automocked.cjs");
+            own.ofTheModule = () => {};
+            const spy = spyOn(moduleOf("./automocked.cjs"), "exports");
+            mock.module("./automocked.cjs", () => ({ greet: () => "mocked" }));
+            spy.mockRestore();
+            jest.mock("./automocked.cjs");
+            const automocked = require("./automocked.cjs");
+            expect(jest.isMockFunction(automocked)).toBe(true);
+            expect(automocked).not.toBe(spy);
+            expect(Object.keys(automocked)).toEqual(["ofTheModule"]);
+          });
+          test("the end of the mock puts the spy on no other module object than its own", () => {
+            const own = require("./reloaded.cjs");
+            spyOn(moduleOf("./reloaded.cjs"), "exports");
+            mock.module("./reloaded.cjs", () => ({ greet: () => "mocked" }));
+            delete require.cache[require.resolve("./reloaded.cjs")];
+            expect(require("./reloaded.cjs").greet("q")).toBe("mocked");
+            jest.unmock("./reloaded.cjs");
+            expect(require("./reloaded.cjs")).toBe(own);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          test("the next file", () => {
+            expect([require("./next-file.cjs"), require("./reloaded.cjs")]).toEqual(globalThis.own);
+          });
+        `,
+      },
+      6,
+    );
+  });
+
+  // The mock came before the body of the module had run, so it saved the export later, once the body had run. By then the spy was on it.
+  test("a spy laid between the body of a module and the mock that was waiting for that body", async () => {
+    await expectFixturesToPass(
+      {
+        "slow.ts": `await Promise.resolve(); export {};`,
+        "dep.ts": `import "./slow.ts"; export const greet = s => "real:" + s;`,
+        "mocks.ts": `
+          import { mock } from "bun:test";
+          mock.module("./dep.ts", () => ({ greet: () => "mocked" }));
+        `,
+        "spies.ts": `
+          import { spyOn } from "bun:test";
+          import * as ns from "./dep.ts";
+          globalThis.own = ns.greet;
+          spyOn(ns, "greet").mockReturnValue("spied");
+        `,
+        "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks.ts";
+          import "./spies.ts";
+          import { greet } from "./dep.ts";
+          test("mocked", () => {
+            expect(greet("q")).toBe("mocked");
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { greet } from "./dep.ts";
+          test("the next file", () => {
+            expect(greet).toBe(globalThis.own);
+            expect(greet("q")).toBe("real:q");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a spy of a preload", async () => {
+    await expectFixturesToPass(
+      {
+        "kept.ts": dep,
+        "restored.ts": dep,
+        "under-two.ts": dep,
+        "under-two-barrel.ts": `export * from "./under-two.ts";`,
+        "preload.ts": `
+          import { spyOn } from "bun:test";
+          import * as kept from "./kept.ts";
+          import * as restored from "./restored.ts";
+          import * as underTwo from "./under-two.ts";
+          import "./under-two-barrel.ts";
+          globalThis.own = { kept: kept.greet, restored: restored.greet, underTwo: underTwo.greet };
+          globalThis.spies = {
+            kept: spyOn(kept, "greet").mockReturnValue("spied by the preload"),
+            restored: spyOn(restored, "greet").mockReturnValue("spied by the preload"),
+            underTwo: spyOn(underTwo, "greet").mockReturnValue("spied by the preload"),
+          };
+        `,
+        "1.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as kept from "./kept.ts";
+          import * as restored from "./restored.ts";
+          import * as underTwo from "./under-two.ts";
+          test("a file mocks the modules", () => {
+            mock.module("./kept.ts", () => ({ greet: () => "mocked" }));
+            mock.module("./under-two.ts", () => ({ greet: () => "mocked" }));
+            mock.module("./under-two-barrel.ts", () => ({ greet: () => "mocked" }));
+            mock.module("./restored.ts", () => ({ greet: () => "mocked" }));
+            expect([kept.greet("q"), underTwo.greet("q"), restored.greet("q")]).toEqual(["mocked", "mocked", "mocked"]);
+            globalThis.spies.restored.mockRestore();
+          });
+        `,
+        "2.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as kept from "./kept.ts";
+          import * as restored from "./restored.ts";
+          import * as underTwo from "./under-two.ts";
+          const { own, spies } = globalThis;
+          test("the next file", () => {
+            expect([kept.greet, underTwo.greet, restored.greet]).toEqual([spies.kept, spies.underTwo, own.restored]);
+            expect(kept.greet("q")).toBe("spied by the preload");
+            mock.restore();
+            expect([kept.greet, underTwo.greet, restored.greet]).toEqual([own.kept, own.underTwo, own.restored]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  test.each([[["--rerun-each=3"]], [["--isolate", "--rerun-each=2"]]])(
+    "each run of one file starts with the module's own function: %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          "dep.ts": dep,
+          "1.test.ts": `
+            import { afterAll, expect, mock, spyOn, test } from "bun:test";
+            import * as ns from "./dep.ts";
+            import { greet } from "./dep.ts";
+            const copy = { ...ns };
+            afterAll(() => {
+              mock.restore();
+              mock.module("./dep.ts", () => copy);
+            });
+            test("own", () => {
+              expect(greet("q")).toBe("real:q");
+            });
+            test("spied and mocked", () => {
+              spyOn(ns, "greet").mockReturnValue("spied");
+              mock.module("./dep.ts", () => ({ greet: () => "mocked" }));
+              expect(ns.greet("q")).toBe("mocked");
+            });
+          `,
+        },
+        2 * Number(args.at(-1)!.split("=")[1]),
+        args,
+      );
+    },
+  );
+
+  test.each(["jest", "vi"])(
+    "a spied and mocked module that %s.resetModules() takes out of the registry",
+    async flavor => {
+      await expectFixturesToPass(
+        {
+          "esm.ts": dep,
+          "cjs.cjs": `module.exports = function greet(s) { return "real:" + s; };`,
+          "preload.ts": `
+          import * as esm from "./esm.ts";
+          globalThis.own = [esm.greet, require("./cjs.cjs")];
+          globalThis.moduleObject = require.cache[require.resolve("./cjs.cjs")];
+        `,
+          "1.test.ts": `
+          import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+          import * as esm from "./esm.ts";
+          const { moduleObject, own } = globalThis;
+          test("spied, mocked, reset", () => {
+            spyOn(esm, "greet").mockReturnValue("spied");
+            mock.module("./esm.ts", () => ({ greet: () => "mocked" }));
+            spyOn(moduleObject, "exports").mockReturnValue("spied");
+            mock.module("./cjs.cjs", () => ({ greet: () => "mocked" }));
+            mock.restore();
+            ${flavor}.resetModules();
+            // The module object leaves require.cache with what it had before the mock.
+            expect(moduleObject.exports).toBe(own[1]);
+          });
+        `,
+          "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as esm from "./esm.ts";
+          test("the next file", () => {
+            expect([esm.greet, require("./cjs.cjs")]).toEqual(globalThis.own);
+          });
+        `,
+        },
+        2,
+        ["--preload", "./preload.ts"],
+      );
+    },
+  );
+
+  test("hooks that spy, mock and restore for each test", async () => {
+    await expectFixturesToPass(
+      {
+        "helper.ts": `${dep} export function other() { return "real-other"; }`,
+        "helper-after-spy.ts": `${dep} export function other() { return "real-other"; }`,
+        "1.test.ts": `
+          import { afterEach, expect, mock, spyOn, test } from "bun:test";
+          import * as helper from "./helper.ts";
+          import * as helperAfterSpy from "./helper-after-spy.ts";
+          globalThis.own = [helper.greet, helper.other, helperAfterSpy.greet, helperAfterSpy.other];
+
+          // https://github.com/oven-sh/bun/issues/7823#issuecomment-1907750506
+          const mockModule = async (modulePath, renderMocks) => {
+            const original = { ...(await import(modulePath)) };
+            const result = { ...original, ...renderMocks() };
+            mock.module(modulePath, () => result);
+            return { clear: () => mock.module(modulePath, () => original) };
+          };
+          let mocks = [];
+          afterEach(() => {
+            mocks.forEach(mocked => mocked.clear());
+            mocks = [];
+            mock.restore();
+          });
+          test("mocks one export", async () => {
+            mocks.push(await mockModule("./helper.ts", () => ({ other: () => "mocked" })));
+            expect([helper.greet("q"), helper.other()]).toEqual(["real:q", "mocked"]);
+          });
+          test("spies on an export, then mocks the other", async () => {
+            const spy = spyOn(helper, "greet").mockReturnValue("spied");
+            mocks.push(await mockModule("./helper.ts", () => ({ other: () => "mocked" })));
+            expect([helper.greet("q"), helper.other()]).toEqual(["spied", "mocked"]);
+            expect(spy).toHaveBeenCalledTimes(1);
+          });
+          test("has the module's own functions", () => {
+            expect([helper.greet, helper.other]).toEqual(globalThis.own.slice(0, 2));
+          });
+          test("spies on an export of a module that it has yet to mock, so its copies have the spy", async () => {
+            spyOn(helperAfterSpy, "greet").mockReturnValue("spied");
+            mocks.push(await mockModule("./helper-after-spy.ts", () => ({ other: () => "mocked" })));
+            expect([helperAfterSpy.greet("q"), helperAfterSpy.other()]).toEqual(["spied", "mocked"]);
+          });
+          test("has the functions of that module too", () => {
+            expect([helperAfterSpy.greet, helperAfterSpy.other]).toEqual(globalThis.own.slice(2));
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as helper from "./helper.ts";
+          import * as helperAfterSpy from "./helper-after-spy.ts";
+          test("the next file", () => {
+            expect([helper.greet, helper.other, helperAfterSpy.greet, helperAfterSpy.other]).toEqual(globalThis.own);
+          });
+        `,
+      },
+      6,
+    );
+  });
+});
+
 describe.concurrent("a mocked module that exports then", () => {
   const files = {
     "real.ts": `

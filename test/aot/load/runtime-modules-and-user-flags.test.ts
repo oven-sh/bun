@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { moreBuildFlags, slot, spawned } from "../harness/commands";
@@ -7,14 +7,6 @@ import { describe, test } from "../supported";
 
 const exe = (name: string) => name + (isWindows ? ".exe" : "");
 const COMPILED = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-// With a sanitizer or in a debug build Bun is half a gigabyte or more, and an executable is a copy of it. No test here asks anything of the file that a build writes.
-// So there, on Linux, a build with --aot writes the program without the copy (../harness/program-alone.ts), as the builds of the stored programs do (../run-parallel.ts).
-// AOT_REAL_EXECUTABLES=1 asks for the executables, whatever AOT_PROGRAMS_ALONE says.
-const BUILD = process.env.AOT_REAL_EXECUTABLES
-  ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: undefined }
-  : isLinux && (isASAN || isDebug)
-    ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: "1" }
-    : bunEnv;
 // log() of node:util begins its line with the day, the month and the time.
 const withoutTimestamps = (text: string) =>
   text.replace(/^\d{1,2} [A-Z][a-z]{2} \d{2}:\d{2}:\d{2} - /gm, "<timestamp> - ");
@@ -29,7 +21,10 @@ function expectBuilt(built: Ended, command: string[]) {
   const hasMoreFlags = moreBuildFlags.length > 0 && command.includes("--aot");
   const reported = hasMoreFlags ? /^(error|warn)\b/ : /^(error|warn|note)\b/;
   const diagnostics = (built.stdout + built.stderr).split(/\r?\n/).filter(line => reported.test(line));
-  expect({ diagnostics, stderr: built.stderr, exitCode: built.exitCode, signal: built.signal }).toEqual({
+  // Without the path of Bun and the path of the executable.
+  const build = command.slice(1, -2).join(" ");
+  expect({ build, diagnostics, stderr: built.stderr, exitCode: built.exitCode, signal: built.signal }).toEqual({
+    build,
     diagnostics: [],
     stderr: hasMoreFlags ? expect.any(String) : "",
     exitCode: 0,
@@ -87,11 +82,6 @@ console.log(format("%s %s", feature("ON") ? "on" : "off", feature("OFF") ? "on" 
     "",
     { stdout: "undefined\n" },
   ],
-];
-
-const modes: [name: string, flags: string[], env: typeof bunEnv][] = [
-  ["bundled", [], bunEnv],
-  ["compiled", ["--aot"], COMPILED],
 ];
 
 // Neither tree has a tsconfig.json or `@types/bun`.
@@ -156,7 +146,7 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
         const folder = String(dir);
         const program = join(folder, exe("program"));
         const command = [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", program];
-        expectBuilt(await spawned(command, folder, BUILD), command);
+        expectBuilt(await spawned(command, folder, bunEnv), command);
         expect(await spawned([program], folder, COMPILED)).toEqual({
           stdout: "function,object,object,object,object\n",
           stderr: "",
@@ -167,27 +157,28 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
     600_000,
   );
 
-  describe.each(cases)("%s", (_name, flags, source, argument, expected) => {
-    test.each(modes)(
-      "%s",
-      (mode, modeFlags, env) =>
-        slot(async () => {
-          using dir = tempDir("aot-load-user-flags", { "main.mjs": source });
-          const folder = String(dir);
-          const program = join(folder, exe(mode));
-          const command = [bunExe(), "build", "--compile", ...modeFlags, ...flags, "main.mjs", "--outfile", program];
-          expectBuilt(await spawned(command, folder, BUILD), command);
-          const ran = await spawned([program, argument], folder, env);
-          expect({ ...ran, stdout: withoutTimestamps(ran.stdout) }).toEqual({
-            stderr: "",
-            ...expected,
-            exitCode: 0,
-            signal: null,
-          });
-        }),
-      600_000,
-    );
-  });
+  test.each(cases)(
+    "%s",
+    (_name, flags, source, argument, expected) =>
+      slot(async () => {
+        using dir = tempDir("aot-load-user-flags", { "main.mjs": source });
+        const folder = String(dir);
+        for (const mode of [[], ["--aot"]]) {
+          const program = join(folder, exe(mode.length ? "compiled" : "bundled"));
+          const command = [bunExe(), "build", "--compile", ...mode, ...flags, "main.mjs", "--outfile", program];
+          expectBuilt(await spawned(command, folder, bunEnv), command);
+          const ran = await spawned([program, argument], folder, mode.length ? COMPILED : bunEnv);
+          expect({
+            mode,
+            stdout: withoutTimestamps(ran.stdout),
+            stderr: ran.stderr,
+            exitCode: ran.exitCode,
+            signal: ran.signal,
+          }).toEqual({ mode, stderr: "", ...expected, exitCode: 0, signal: null });
+        }
+      }),
+    600_000,
+  );
 
   test.each(programsWithoutBunTypes)(
     "without Bun's type declarations: %s",
@@ -198,7 +189,7 @@ describe.concurrent("compile/aot/load/runtime-modules-and-user-flags", () => {
         const program = join(folder, exe("compiled"));
         // Without --check no build looks for a name that nobody declares: build-gate.test.ts.
         const command = [bunExe(), "build", "--compile", "--aot", "--check", "main.ts", "--outfile", program];
-        const built = await spawned(command, folder, { ...BUILD, NO_COLOR: "1" });
+        const built = await spawned(command, folder, { ...bunEnv, NO_COLOR: "1" });
         if ("refused" in ends) {
           expect({
             stdout: built.stdout,

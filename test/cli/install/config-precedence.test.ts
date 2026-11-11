@@ -139,6 +139,25 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The path was taken for a package to add, `bun add cfg.toml`.
+  test.each([[["--config=cfg.toml"]], [["--config", "cfg.toml"]], [["-c", "cfg.toml"]], [["-ccfg.toml"]]])(
+    "bun install %j reads that file, not bunfig.toml",
+    async flag => {
+      using dead = deadRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/bunfig.toml": bunfig({ registry: dead.url }),
+        "project/cfg.toml": bunfig({ registry: registry.registryUrl() }),
+        "project/package.json": packageJson({ "no-deps": "1.0.0" }),
+      });
+      const { stderr, exitCode } = await install(String(dir), flag);
+      expect(stderr).not.toContain("error:");
+      expect(dead.hits).toBe(0);
+      expect(installed(String(dir), "no-deps")).toBe(true);
+      expect(projectPackageJson(String(dir)).dependencies).toEqual({ "no-deps": "1.0.0" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("project bunfig registry beats ~/.npmrc registry", async () => {
     using dead = deadRegistry();
     using dir = tempDir("config-precedence", {

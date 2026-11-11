@@ -148,7 +148,7 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
             "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
         ),
         parse_param!(
-            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+            "-c, --config <PATH>               Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
         ),
         parse_param!(
             "--use-system-ca                   Use the system's trusted certificate authorities"
@@ -1136,6 +1136,17 @@ pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_ar
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+/// Only as `node`: its `-c` is `--check`, which `bun` ignores as `node`. `bun`'s `-c` is `--config`.
+pub(crate) const AS_NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p"), (b"-c", b"--check")];
+
+/// The whole-token aliases of `cmd`, where the path stands in for `node`.
+pub(crate) fn short_aliases_of(cmd: CommandTag) -> &'static [(&'static [u8], &'static [u8])] {
+    match cmd {
+        CommandTag::AutoCommand => NODE_SHORT_ALIASES,
+        CommandTag::RunAsNodeCommand => AS_NODE_SHORT_ALIASES,
+        _ => &[],
+    }
+}
 
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
 fn disallow_code_generation_from_strings(value: &[u8]) {
@@ -1189,11 +1200,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
             },
-            // Only the paths standing in for `node` get node's aliases.
-            short_aliases: match cmd {
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
-                _ => &[],
-            },
+            short_aliases: short_aliases_of(cmd),
             unknown_long_flags: Some(&mut unknown_long_flags),
             ..Default::default()
         },

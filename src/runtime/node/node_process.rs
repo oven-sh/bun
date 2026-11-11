@@ -387,9 +387,15 @@ mod _impl {
                     }
                     // Node's whole-token aliases are not params, so they never
                     // land above; an alias takes a value iff its target does.
-                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+                    use crate::cli::command::Tag;
+                    let as_node =
+                        crate::cli::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed);
+                    let cmd = if as_node { Tag::RunAsNodeCommand } else { Tag::AutoCommand };
+                    for (from, to) in crate::cli::arguments::short_aliases_of(cmd) {
                         if set.contains(to) {
                             bun_core::handle_oom(set.insert(from));
+                        } else {
+                            set.swap_remove(from);
                         }
                     }
                     set

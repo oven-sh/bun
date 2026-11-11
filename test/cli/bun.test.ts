@@ -555,17 +555,62 @@ describe("bun", () => {
       "index.js": `console.log("index");`,
     };
 
-    test.concurrent.each(["--config=", "-c="])("%sother.toml is read", async flag => {
+    // `bun --config ./other.toml index.js` ran `./other.toml`, printed nothing and exited 0.
+    const spellings = [
+      ["--config=other.toml"],
+      ["--config", "other.toml"],
+      ["--config", "./other.toml"],
+      ["-c=other.toml"],
+      ["-c", "other.toml"],
+      ["-cother.toml"],
+      ["-bc", "other.toml"],
+    ];
+    test.concurrent.each([
+      ...spellings.map(flag => [flag, []]),
+      ...spellings.map(flag => [["run", ...flag], []]),
+      ...spellings.map(flag => [[], flag]),
+    ])("bun %j index.js is read with BUN_OPTIONS=%j", async (args, options) => {
       using dir = tempDir("config-flag", files);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), flag + "other.toml", "index.js"],
-        env: bunEnv,
+        cmd: [bunExe(), ...args, "index.js", "arg"],
+        env: { ...bunEnv, BUN_OPTIONS: options.join(" ") },
         cwd: String(dir),
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr }).toEqual({ stdout: "preload\nindex\n", stderr: "" });
       expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("--config <path> is in execArgv, not in argv", async () => {
+      using dir = tempDir("config-flag", {
+        ...files,
+        "index.js": `console.log(JSON.stringify([process.execArgv, process.argv.slice(2)]));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--config", "other.toml", "index.js", "arg"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `preload\n[["--config","other.toml"],["arg"]]\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // Alone, `--config` used to be a no-op. Before a file, it took the file for what to run.
+    test.concurrent.each([
+      [["--config"], "requires a value"],
+      [["-c"], "requires a value"],
+      [["--config", "index.js"], "failed to load bunfig"],
+      [["-c", "index.js"], "failed to load bunfig"],
+    ])("bun %j: the value is a path, and it is required", async (args, error) => {
+      using dir = tempDir("config-flag", files);
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).not.toContain("index");
+      expect(stderr).toContain(error);
+      expect(exitCode).toBe(1);
     });
   });
 

@@ -107,6 +107,14 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
+  // To `node`, `-c` is `--check`. To `bun`, it is `--config`, which would take the script for its value.
+  test("node -c <script>: -c is --check, not --config", () => {
+    using temp = tempDir("fake-node", {
+      "index.js": "console.log(JSON.stringify([process.execArgv, process.argv.slice(2)]))",
+    });
+    expect(fakeNodeRun(temp, ["-c", "index.js", "a"]).stdout).toBe(JSON.stringify([["-c"], ["a"]]));
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

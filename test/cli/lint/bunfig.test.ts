@@ -417,7 +417,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test("--config= before `lint` picks a file other than bunfig.toml", async () => {
+  test("--config before `lint` picks a file other than bunfig.toml", async () => {
     const files = {
       ...eslint,
       "bunfig.toml": `[lint]\nformat = "unix"\n`,
@@ -427,18 +427,51 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       bun(files, ["lint", "a.js"]),
       bun(files, ["--config=other.toml", "lint", "a.js"]),
       bun(files, ["-c=other.toml", "lint", "a.js"]),
+      bun(files, ["--config", "other.toml", "lint", "a.js"]),
+      bun(files, ["-c", "other.toml", "lint", "a.js"]),
       // Flags after `lint` belong to the linter.
       bun(files, ["--config=other.toml", "lint", "-c", "eslint.config.js", "a.js"]),
+      bun(files, ["--config", "other.toml", "lint", "-c", "eslint.config.js", "a.js"]),
       bun(files, ["--config=none.toml", "lint", "a.js"]),
+      bun(files, ["--config", "none.toml", "lint", "a.js"]),
     ]);
     expect(results.map(it => [it.stdout.startsWith("[{"), it.exitCode])).toEqual([
       [false, 1],
       [true, 1],
       [true, 1],
       [true, 1],
+      [true, 1],
+      [true, 1],
+      [true, 1],
+      [false, 2],
       [false, 2],
     ]);
-    expect(results[4].stderr).toContain(`while reading config "`);
+    expect(results[7].stderr).toContain(`while reading config "`);
+    expect(results[8].stderr).toContain(`while reading config "`);
+  });
+
+  // https://github.com/oven-sh/bun/issues/48611: the path was taken for the file to run, and nothing else ran.
+  test("bun --config <path> lint --stdin lints with the rules of that file", async () => {
+    using dir = tempDir("bun-lint-bunfig", { "other.toml": `[lint.rules]\n"no-eval" = "error"\n` });
+    const args = ["lint", "--no-script", "--no-ignore", "--no-inline-config", "--stdin", "--stdin-filename", "probe.ts"];
+    const results = await Promise.all(
+      [
+        ["--config", "other.toml"],
+        ["--config=other.toml"],
+      ].map(async flag => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...flag, ...args],
+          env,
+          cwd: String(dir),
+          stdin: new Blob(['eval("1")\n']),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { problems: stdout.includes("no-eval"), stderr, exitCode };
+      }),
+    );
+    expect(results).toEqual(results.map(() => ({ problems: true, stderr: "", exitCode: 1 })));
   });
 
   test("errors in [lint] point at the line in bunfig.toml, like errors in other sections", async () => {

@@ -351,12 +351,13 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       test.each([
         ["--env-file", ".env"],
         ["--preload", "./pre.js"],
-        // `bun check` doesn't accept `-r` or `-r=./pre.js`.
-        ...(command === "check" ? [] : [["-r", "./pre.js"]]),
+        // `bun check` doesn't accept `-r` or `-r=./pre.js`, nor `-c`.
+        ...(command === "check" ? [] : [["-r", "./pre.js"], ["-c", "other.toml"]]),
         ["--shell", "bun"],
         ["--elide-lines", "5"],
+        ["--config", "other.toml"],
       ])("bun %s %s <command> behaves like bun <command>", async (...front) => {
-        const files = { ...own, ".env": "A=1\n", "pre.js": "" };
+        const files = { ...own, ".env": "A=1\n", "pre.js": "", "other.toml": "" };
         const [plain, without, after, before, inOptions] = await Promise.all([
           whatRan(files, [command, ...rest]),
           whatRan(files, [...front, command, ...rest]),

@@ -44,6 +44,8 @@ const project = {
       return result;
     }
     export const handOnInOneArm = (path: any) => (path ? mock.module(path, undefined as any) : mock.module("./dep", undefined as any));
+    const tag = (strings: TemplateStringsArray) => mock.module(strings[0], undefined as any);
+    export const tagInOneArm = (on: any) => (on ? tag\`./dep\` : mock.module("./dep", undefined as any));
     export const addTester = (tester: (a: unknown, b: unknown) => boolean | undefined) => expect.addEqualityTesters([tester]);
     export const addSerializer = (serializer: { test(value: unknown): boolean; serialize(): string }) => expect.addSnapshotSerializer(serializer);
     export const withoutName = () => vi.unmock();
@@ -76,7 +78,7 @@ const project = {
       helper.addSerializer({ test: value => value === "a value", serialize: () => "printed by the serializer of the helper" });
     });
     test("frames", () => {
-      for (const name of ["withoutName", "holdInName", "holdBehindAnotherName", "handOnInOneArm"] as const) {
+      for (const name of ["withoutName", "holdInName", "holdBehindAnotherName", "handOnInOneArm", "tagInOneArm"] as const) {
         try {
           helper[name](true);
         } catch (error) {
@@ -149,6 +151,7 @@ test("as one program", async () => {
   expect(plain.printed).toContain("holdInName: module < <anonymous>");
   expect(plain.printed).toContain("holdBehindAnotherName: module < <anonymous>");
   expect(plain.printed).toContain("handOnInOneArm: module < <anonymous>");
+  expect(plain.printed).toContain("tagInOneArm: module < <anonymous>");
   expect(plain.printed).toContain("tester of the helper: true");
   expect(plain.written).toContain("toMatchInlineSnapshot(`1`)");
   expect(plain.written).toContain("toMatchInlineSnapshot(`printed by the serializer of the helper`)");

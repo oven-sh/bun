@@ -139,7 +139,8 @@ fn frame_is_kept_for_a_name_in_brackets_under_an_assertion() {
 #[test]
 fn frame_is_kept_for_a_newer_name_only_where_no_other_call_ends_the_function() {
     let head = "import { expect, mock, vi } from 'bun:test'; \
-        declare function lend(path: string): unknown;";
+        declare function lend(path: string): unknown; \
+        declare function tag(strings: TemplateStringsArray): unknown;";
     let keeps = |returned: &str, member: &str| keeps_frame_of_choice(head, returned, member);
     let written = "mock.module('./dep.cjs', () => ({}))";
     assert!(keeps(&format!("on ? {written} : undefined"), "module"));
@@ -150,6 +151,14 @@ fn frame_is_kept_for_a_newer_name_only_where_no_other_call_ends_the_function() {
     // A wrapper in the other arm has to stay a tail call.
     assert!(!keeps(
         &format!("on ? lend('./dep.cjs') : {written}"),
+        "module"
+    ));
+    assert!(!keeps(
+        &format!("on ? tag`./dep.cjs` : {written}"),
+        "module"
+    ));
+    assert!(!keeps(
+        &format!("on ? require('./dep.cjs') : {written}"),
         "module"
     ));
     assert!(!keeps(

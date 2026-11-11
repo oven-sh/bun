@@ -473,6 +473,8 @@ fn find_calls_that_end(hir: &File<'_>, bound: &Bound<'_>, value: ExprId, found: 
             right,
             ..
         }) => find_calls_that_end(hir, bound, right, found),
+        // A tagged template is a tail call too, and the transpiler prints a JSX element as a call.
+        Some(ExprKind::TaggedTemplate(_) | ExprKind::Jsx(_)) => found.others = true,
         _ => {}
     }
 }

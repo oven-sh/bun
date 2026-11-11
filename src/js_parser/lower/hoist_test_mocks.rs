@@ -546,6 +546,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     self.find_calls_that_end(&binary.right, found);
                 }
             }
+            // A tagged template is a tail call too, and `require("path")` is printed as a call.
+            ExprData::ETemplate(template) => found.others |= template.tag.is_some(),
+            ExprData::ERequireString(_) | ExprData::ERequireResolveString(_) => found.others = true,
             _ => {}
         }
     }

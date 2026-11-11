@@ -87,6 +87,10 @@ describe("mock.module() as the call that ends a function", () => {
           export const lentInOneArm = path => (path ? lend(path, "lentInOneArm") : mock.module("./dep", factory("never")));
           export const writtenBesideAnotherCall = yes =>
             yes ? mock.module("./dep", factory("writtenBesideAnotherCall")) : nothing();
+          const tag = strings => mock.module(strings[0], factory("taggedInOneArm"));
+          export const taggedInOneArm = on => (on ? tag\`./dep\` : mock.module("./dep", factory("never")));
+          export const requiredInOneArm = on =>
+            on ? require("./dep") : mock.module("./dep", factory("requiredInOneArm"));
         `,
         "tests/shapes.test.ts": `
           import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -120,7 +124,8 @@ describe("mock.module() as the call that ends a function", () => {
           test.each([
             ["handedOn", "./dep"], ["heldByNameOfModule"], ["ofAnotherHolder", lender], ["heldByName"],
             ["heldByNameBehindAnother", true], ["chosen"], ["joined"], ["filled"], ["handedOnInOneArm", "./dep"],
-            ["lentInOneArm", "./dep"], ["writtenBesideAnotherCall", true],
+            ["lentInOneArm", "./dep"], ["writtenBesideAnotherCall", true], ["taggedInOneArm", true],
+            ["requiredInOneArm", false],
           ])("%s stays a tail call, so its path is a path of the caller", (shape, ...args) => {
             const ofHelperBefore = ofHelper.where;
             mocks[shape](...args);
@@ -128,7 +133,7 @@ describe("mock.module() as the call that ends a function", () => {
           });
         `,
       },
-      31,
+      33,
     );
   });
 

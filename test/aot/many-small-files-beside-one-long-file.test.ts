@@ -55,8 +55,8 @@ test("many small files beside one long file", async () => {
 }, 240_000);
 
 // Todo: the front end keeps every tree of a program with one root until the last task ends.
-test.todo(
-  "many small files beside one long file: their trees go while the long file is worked on",
+test.failing(
+  "many small files beside one long file: their trees go while the long file is worked on: none goes, the goal is at least one",
   async () => {
     expect(await (treesGone ??= build())).toBeGreaterThan(0);
   },

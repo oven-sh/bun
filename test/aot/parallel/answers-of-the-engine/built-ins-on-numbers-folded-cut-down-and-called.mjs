@@ -1,5 +1,5 @@
 // functions of Math and Number on known numbers, on proven ranges and on anything, and Number, String, Boolean and Object called: -0, which 1 / x tells from 0, NaN, the infinities, the ends of int32 and of the safe integers, arguments that are left out, texts, objects that convert, a BigInt, a symbol, the function under another name and a local named Math
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function tell(x) { if (typeof x === "number" && x === 0) return 1 / x; return x; }
 function known() { return [Math.max(1, 2), Math.min(1, 2), Math.abs(-3), Math.imul(65537, 65537), Math.round(2.5), Math.round(-2.5), Math.clz32(1), Math.clz32(-1), Math.sign(-7), Math.trunc(-7.5), Math.fround(0.1), Math.sqrt(16), Math.hypot(), Math.hypot(-3)]; }

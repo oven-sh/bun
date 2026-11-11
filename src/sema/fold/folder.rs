@@ -27,6 +27,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Effects {
     Unknown,
+    LeftOutUnderMinifySyntax,
     LeftOutByBunRun,
     TypeTest,
     DeadZoneCheck,
@@ -94,6 +95,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) this_of_file: OnceCell<PositionSet>,
     pub(super) run_order: OnceCell<RunOrder>,
     pub(super) constant_prefixes: RefCell<ConstLocalPrefixes>,
+    pub(super) unused_values_asked_of_build: RefCell<FxHashMap<(ExprId, bool), bool>>,
     pub(super) written_in_place: FxHashMap<ExprId, ExprId>,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
     pub(super) exported_variables: OnceCell<Vec<SymbolId>>,
@@ -155,6 +157,7 @@ pub(super) fn run<'s>(
         this_of_file: OnceCell::new(),
         run_order: OnceCell::new(),
         constant_prefixes: RefCell::default(),
+        unused_values_asked_of_build: RefCell::default(),
         written_in_place: FxHashMap::default(),
         process_imports: OnceCell::new(),
         exported_variables: OnceCell::new(),
@@ -309,7 +312,10 @@ impl<'s> Folder<'_, 's> {
                 Value::Known(value),
                 Effects::TypeTest | Effects::DeadZoneCheck | Effects::MemberRead,
             ) => FoldedValue::ConstantOutsideDeadZone(self.evaluator.to_constant(value)),
-            (Value::Known(_), Effects::Unknown | Effects::LeftOutByBunRun)
+            (
+                Value::Known(_),
+                Effects::Unknown | Effects::LeftOutUnderMinifySyntax | Effects::LeftOutByBunRun,
+            )
             | (Value::Unknown, _) => FoldedValue::Unknown,
         }
     }
@@ -347,10 +353,14 @@ impl<'s> Folder<'_, 's> {
         constants
     }
 
-    fn collect_strings_and_numbers_of_bun_run_alone(&self, dead: &MarkedNodes) -> PositionSet {
+    fn collect_strings_and_numbers_behind_what_is_left_out(
+        &self,
+        dead: &MarkedNodes,
+        least: Effects,
+    ) -> PositionSet {
         let mut found = PositionSet::new(self.hir.exprs.len());
         for (index, &effects) in self.effects.iter().enumerate() {
-            if effects != Effects::LeftOutByBunRun || dead.exprs.contains(index) {
+            if effects < least || effects > Effects::LeftOutByBunRun || dead.exprs.contains(index) {
                 continue;
             }
             if self.is_enum_member_written_in_place(ExprId(index as u32)) {
@@ -436,7 +446,19 @@ impl<'s> Folder<'_, 's> {
                 arena,
             ),
             strings_and_numbers_of_bun_run_alone: NodeBits::freeze(
-                &self.collect_strings_and_numbers_of_bun_run_alone(&dead),
+                &self.collect_strings_and_numbers_behind_what_is_left_out(
+                    &dead,
+                    Effects::LeftOutByBunRun,
+                ),
+                arena,
+            ),
+            strings_and_numbers_under_minify_syntax: NodeBits::freeze(
+                &self.holds_under_minify_syntax(|folder| {
+                    folder.collect_strings_and_numbers_behind_what_is_left_out(
+                        &dead,
+                        Effects::LeftOutUnderMinifySyntax,
+                    )
+                }),
                 arena,
             ),
             specifiers: slice_in(&self.specifiers, arena),

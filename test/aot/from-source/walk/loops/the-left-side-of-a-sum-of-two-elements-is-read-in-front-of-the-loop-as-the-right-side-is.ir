@@ -1,0 +1,25 @@
+# -- source: the-left-side-of-a-sum-of-two-elements-is-read-in-front-of-the-loop-as-the-right-side-is.cjs
+# "use strict";
+# function blend(a, b) { return (a[0] + b[0]) * (a[1] + b[1]) + a[2] * b[2]; }
+# const first = [1.5, 2.5, 3.5], second = [0.5, 0.25, 4], holed = [1.5, 2.5, 3.5], named = [0.5, 0.25, 4];
+# delete holed[0]; named[0] = "x";
+# function run(t) { first[0] = t & 7; let s = t & 1; for (let i = 0; i < 10; i++) s += blend(first, second); return s; }
+# function runHoled(t) { let s = t & 1; for (let i = 0; i < 3; i++) s += blend(holed, second); return s; }
+# function runNamed(t) { let s = "" + (t & 1); for (let i = 0; i < 2; i++) s += holed[0] + named[0]; return s; }
+# print(run(3), runHoled(3), runNamed(3));
+# -- end of source
+# f2 = run, with blend() copied in. Both lists are tested in front of the loop for lists of numbers. In `a[0] * b[0]` the left element may read a hole as NaN, because a product makes NaN of
+# undefined. In `a[0] + b[0]` it may do so only where the right side is no text: it is an element off a list of numbers tested in front too, and nothing but constants and casts stands between
+# the two reads. All six reads are then raw doubles known to be present; none gives `undefined|number`. runHoled: a hole on the left gives NaN. runNamed: beside a text it gives "undefinedx".
+# RUN: walk f2 mechanisms=all
+# CHECK: number @Double = GetArrayElement {{*}} arrayStorage=Double {{*}} isPresent
+# CHECK: number @Double = GetArrayElement {{*}} arrayStorage=Double {{*}} isPresent
+# CHECK: number @Double = GetArrayElement {{*}} arrayStorage=Double {{*}} isPresent
+# CHECK: number @Double = GetArrayElement {{*}} arrayStorage=Double {{*}} isPresent
+# CHECK: number @Double = GetArrayElement {{*}} arrayStorage=Double {{*}} isPresent
+# CHECK: number @Double = GetArrayElement {{*}} arrayStorage=Double {{*}} isPresent
+# RUN(NONE): walk f2 mechanisms=all
+# NONE-NOT: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 237.25 NaN 1undefinedxundefinedx
+# ANSWER-NEXT: exited with 0

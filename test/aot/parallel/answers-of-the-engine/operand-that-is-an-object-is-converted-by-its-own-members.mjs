@@ -1,5 +1,5 @@
 // If an object among the operands counted for nothing, or for a number, what its valueOf, its toString or its Symbol.toPrimitive answers would be lost: a text, a bigint, a fraction, an integer past int32.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function toldSum(n) { report(typeof n); report("" + n); report("" + n * n); report("" + -n); report(n === n); report(n > 5); let m = n; m++; report("" + m); }
 function toldDifference(n) { report(typeof n); report("" + n); report("" + n * n); report("" + -n); report(n === n); report(n > 5); let m = n; m++; report("" + m); }

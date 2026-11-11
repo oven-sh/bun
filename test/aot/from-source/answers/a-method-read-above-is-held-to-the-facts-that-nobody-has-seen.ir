@@ -1,0 +1,26 @@
+# -- source: a-method-read-above-is-held-to-the-facts-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { weight: number; constructor(weight: number) { this.weight = weight; } heavy() { return "of the class"; } }
+# function look(weight: number, changes: boolean) { const parcel = new Parcel(weight); if (changes) Object.setPrototypeOf(parcel, { heavy() { return "from above"; } }); return parcel.heavy(); }
+# const looks = id(look);
+# print(looks(1, false));
+# print(looks(5, true));
+# -- end of source
+# LIBRARY: own
+# A method that the class declares is found without a lookup if the cell still has the prototype of its layout.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact has been established, and it leaves the state untouched.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks), what the access relies on is checked where nothing has established it, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: of the class
+# RIGHT-NEXT: from above
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: of the class
+# HARDENED-NEXT: from above
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
+# LIE: of the class
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (look)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

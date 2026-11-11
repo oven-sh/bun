@@ -1,4 +1,5 @@
 // The getter defines the name on its receiver for one value.
+// Under: --aot-testing=CheckWalkAtRunTime: the object was asked behind the getter what the name finds
 class Room {
   kelvin: number;
   constructor(k: number) { this.kelvin = k; }

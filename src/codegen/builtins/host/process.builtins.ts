@@ -15,7 +15,7 @@ import {
   tickShownToHooksCell,
   versionsCell,
 } from "./native-cells.ts";
-import { handedOver } from "./native-code.ts";
+import { retainedByNativeCode } from "./native-code.ts";
 
 const self = b.operand("this");
 
@@ -100,7 +100,7 @@ const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ elem
 const nativeEmitter = b.union(b.builtin("process"), b.instance("EventEmitter"));
 
 const findsOrMakesEmitter = [
-  ...handedOver,
+  ...retainedByNativeCode,
   b.runs(b.named("_events")),
   b.definesName(["_events"], b.instance("EventEmitter").fresh),
 ];
@@ -114,8 +114,8 @@ const onOtherReceiver = (firstParameter: string, returns: b.SignatureOptions["re
   throws: true,
   uses: {
     this: findsOrMakesEmitter,
-    [firstParameter]: [...handedOver, b.runsTransitively("ToPrimitive")],
-    operands: handedOver,
+    [firstParameter]: [...retainedByNativeCode, b.runsTransitively("ToPrimitive")],
+    operands: retainedByNativeCode,
   },
   implementation: b.generic,
 });
@@ -195,7 +195,11 @@ const emitsEvent = {
   returns: b.bool,
   capability: "js",
   throws: true,
-  uses: { this: findsOrMakesEmitter, event: [b.retained, b.runsTransitively("ToPrimitive")], values: handedOver },
+  uses: {
+    this: findsOrMakesEmitter,
+    event: [b.retained, b.runsTransitively("ToPrimitive")],
+    values: retainedByNativeCode,
+  },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
@@ -629,7 +633,7 @@ export default b.declarations(
           returns: b.object,
           capability: "js",
           throws: true,
-          uses: { this: [b.handedOutFrom(bindingConstantsCell)], name: [b.runs("ToPrimitive")] },
+          uses: { this: [b.exposedFrom(bindingConstantsCell)], name: [b.runs("ToPrimitive")] },
           implementation: b.hostCall,
         },
       ],
@@ -703,6 +707,7 @@ export default b.declarations(
     instanceStructureCppExpression: "globalObject->domStructure(WebCore::DOMStructureSlot::JSEventEmitter)",
     hasConstructor: false,
     instancesAreEntries: true,
+    lockedMembers: ["prototype"],
     proto: {
       on: addsListener,
       once: addsListener,
@@ -729,6 +734,9 @@ export default b.declarations(
     "process.nextTick",
     queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.instance("Object") })),
   ),
+  // BunProcess.cpp lays one native function on each of the two. Neither looks at `this` or at an operand.
+  b.static("process.hrtime.bigint", { ...systemCall, returns: b.bigint }),
+  b.static("process.memoryUsage.rss", { ...systemCall, returns: b.f64 }),
   b.inherits("process", "%EventEmitter%.prototype"),
   // Object.prototype, until node:events is evaluated: jsFunctionMakeProcessInheritFrom lays its EventEmitter.prototype there.
   // Every other name of that one lies on the native prototype too: test/aot/what-node-events-lays-above-process.test.ts.

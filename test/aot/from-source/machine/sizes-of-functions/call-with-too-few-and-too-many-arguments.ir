@@ -1,0 +1,17 @@
+# f1 = describe
+# -- source: call-with-too-few-and-too-many-arguments.ts
+# function describe(value: number, unit?: number): number {
+#   return unit === undefined ? value : value * unit;
+# }
+# function describeBoth(value: number): number {
+#   return describe(value) + (describe as any)(value, value + 1, value * 7);
+# }
+# declare const input: any;
+# (globalThis as any).answer = describeBoth(+input);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 13, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:13 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 13

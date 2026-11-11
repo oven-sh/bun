@@ -1,0 +1,127 @@
+# The protocol of iteration is written out once, in the library. A loop calls the functions that open and close an iterator: a direct call each, a test for undefined behind the open (there was no method to call) and a read of `next`.
+# No `return` is read here. Where a list, a text or a Set is proven or expected of what the loop iterates over, the arm of the protocol is there for the odd one, and its step is a call too,
+# with a test for the mark of a closed iterator behind it: no `done`, no `value`. Where nothing is expected the arm may be the one that runs, and a call for each step costs that loop: the step is written out.
+# No operation of the body names the functions. The summary lays down a call of each built-in that passes nothing, so Link enters their code for anybody, and what they do to the values of the program stands in the summary as ever.
+# A program that does not hold the functions, a build without direct calls, an asynchronous iteration and a `yield*` write the protocol out.
+# function each(things) { for (const thing of things) { if (keep(thing)) break; } }
+# function eachOfList(things: number[]) { for (const thing of things) { if (keep(thing)) break; } }
+# RUN: walk f1 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[iterator]]: {{*}} = CallDirect {{*}}function=f2
+# CHECK: = TypeTest [[iterator]] testedType=undefined
+# CHECK: = PropGet [[iterator]] key="next"
+# CHECK: key="done"
+# RUN(CLOSES): walk f1 mechanisms=none+DirectCalls
+# CLOSES: = CallDirect {{*}}function=f4
+# RUN(CLEANUP): walk f1 mechanisms=none+DirectCalls
+# CLEANUP: = CallDirect {{*}}function=f5
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls
+# NEVER-NOT: key="return"
+# NEVER-NOT: function=f3
+# RUN(LIST): walk f6 mechanisms=all
+# LIST: [[handedOut]]: {{*}} = CallDirect {{*}}function=f3
+# LIST: = IsCollectionIteratorClosedMark [[handedOut]]
+# RUN(ODD): walk f6 mechanisms=all
+# ODD-NOT: key="done"
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD-NOT: CallDirect
+# RUN(WRITTEN): walk f1 mechanisms=none
+# WRITTEN: key="return"
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f3
+# LINK: referrers anybody
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=IteratorConsumersCloseIterator function=f4
+runtimefunction id=IteratorConsumersCloseIteratorAfterThrow function=f5
+runtimefunction id=IteratorConsumersOpenIterator function=f2
+runtimefunction id=IteratorConsumersStepIterator function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f6
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b5():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    v12 = Undefined
+    Return v12
+  b5() role=IterationCleanup subject=v1:
+    v13 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v13
+}
+function f2 name="openIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersOpenIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="stepIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f4 name="closeIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0
+    v3 = Undefined
+    Return v3
+}
+function f5 name="closeIteratorAfterThrow" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0
+    v3 = Undefined
+    Return v3
+}
+function f6 name="eachOfList" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b5():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    v12 = Undefined
+    Return v12
+  b5() role=IterationCleanup subject=v1:
+    v13 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v13
+}

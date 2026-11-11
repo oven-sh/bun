@@ -5,12 +5,12 @@ mod tests;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{CaseId, ExprId, Span, StmtId};
+use bun_sema::hir::{CaseId, ExprId, ExprKind, Span, StmtId};
 
 use super::condition::TestedField;
 use super::control::BreakTargetKind;
 use super::{FileLowering, FunctionLowering, scope};
-use crate::ir::{BlockId, ValueId};
+use crate::ir::{BlockId, TypeTable, ValueId};
 
 struct ClauseGroup {
     first: u32,
@@ -152,6 +152,33 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
+fn fits_every_asserted_type(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    expression: ExprId,
+    constant: Constant,
+) -> bool {
+    let mut current = expression;
+    while let Some(operand) = file.hir.type_assertion_operand(current) {
+        if let ExprKind::As { ty, .. } = file.hir[current].kind {
+            let asserted = file.assertion_position(ty).ty;
+            let fits = match constant {
+                Constant::Number(number) => {
+                    asserted == TypeTable::NUMBER
+                        || (asserted == TypeTable::INT32
+                            && f64::from(number as i32).to_bits() == number.to_bits())
+                }
+                Constant::String(_) => asserted == TypeTable::STRING,
+                _ => false,
+            };
+            if !fits {
+                return false;
+            }
+        }
+        current = operand;
+    }
+    true
+}
+
 fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) -> FoldedValue {
     let inner = file.skip_type_syntax(expression);
     let folded = match file.decisions().constant(file.hir, inner) {
@@ -164,7 +191,8 @@ fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
     };
     match folded {
         FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant)
-            if !file.passes_every_assertion(expression, constant) =>
+            if !file.passes_every_assertion(expression, constant)
+                && !fits_every_asserted_type(file, expression, constant) =>
         {
             FoldedValue::Unknown
         }

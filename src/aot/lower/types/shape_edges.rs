@@ -64,6 +64,7 @@ pub(super) fn collect_edges(
         | ShapeKind::Function(_)
         | ShapeKind::ClassConstructor(_)
         | ShapeKind::Class(_)
+        | ShapeKind::ConstructorFunctionInstance(_)
         | ShapeKind::Object => {}
     }
     edges

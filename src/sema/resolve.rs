@@ -799,6 +799,8 @@ pub struct Options {
     pub type_root_of_last_resort: Option<Vec<u8>>,
     /// The project has Bun's types installed and its `types` don't name them, so `tsc` doesn't read them. A build does.
     pub names_bun_types_by_itself: bool,
+    /// The file that "aot" names counts only where the package has no TypeScript or declaration file without it.
+    pub takes_aot_sources_last: bool,
     /// The declarations of one symbol in several files are considered in the order in which the directories list the files, whichever file refers to which.
     pub orders_files_as_listed: bool,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
@@ -857,9 +859,10 @@ pub struct Options {
     /// Class fields are emitted as in the source: the target supports them and no option overrides
     /// that.
     pub emit_standard_class_fields: bool,
-    /// A build leaves class fields where they are written whatever the target, so the two options above are on for it.
-    /// True where `tsc` would have them off: what it only reports of a field that is defined is not reported.
-    pub defines_class_fields_for_build_alone: bool,
+    /// The two options above as `tsc` has them. A build leaves class fields where they are written whatever the target, so it
+    /// turns both on. What `tsc` only reports of a field that is defined goes by these.
+    pub reports_define_for_class_fields: bool,
+    pub reports_standard_class_fields: bool,
     /// `GetIsolatedModules`: `isolatedModules`, or `verbatimModuleSyntax`.
     pub isolated_modules: bool,
     /// `isolatedModules` itself.
@@ -1239,6 +1242,8 @@ impl Options {
         let use_define = specified(b"useDefineForClassFields");
         options.use_define_for_class_fields = use_define.unwrap_or(has_class_fields);
         options.emit_standard_class_fields = use_define != Some(false) && has_class_fields;
+        options.reports_define_for_class_fields = options.use_define_for_class_fields;
+        options.reports_standard_class_fields = options.emit_standard_class_fields;
         options.isolated_modules_reported = flag(b"isolatedModules");
         options.verbatim_module_syntax = flag(b"verbatimModuleSyntax");
         options.isolated_modules =
@@ -2012,6 +2017,15 @@ impl Look<'_> {
 }
 
 /// The result of searching one location.
+/// What a walk over the targets of an export does with those below "aot".
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AotTargets {
+    Included,
+    /// Only they are found, and "types" is skipped.
+    Only,
+    Skipped,
+}
+
 enum Found {
     File(Vec<u8>),
     /// `unresolved()`: explicitly resolved to nothing, which ends the search.
@@ -4338,7 +4352,7 @@ impl<'h> Resolver<'h> {
         is_imports: IsImports,
         look: Look,
     ) -> Found {
-        let walk = |skips_types: bool| {
+        let walk = |aot_targets: AotTargets| {
             self.walk_export_target(
                 package_dir,
                 module_name,
@@ -4348,21 +4362,29 @@ impl<'h> Resolver<'h> {
                 key,
                 is_imports,
                 look,
-                skips_types,
+                aot_targets,
             )
         };
         let custom_conditions = &self.options.custom_conditions;
-        if custom_conditions.iter().any(|it| it == AOT_CONDITION)
-            && names_condition(target, AOT_CONDITION)
-            && let Found::File(path) = walk(true)
-        {
-            return Found::File(path);
+        let has_aot_target = custom_conditions.iter().any(|it| it == AOT_CONDITION)
+            && names_condition(target, AOT_CONDITION);
+        if !has_aot_target {
+            return walk(AotTargets::Included);
         }
-        walk(false)
+        if self.options.takes_aot_sources_last {
+            return match walk(AotTargets::Skipped) {
+                Found::No => walk(AotTargets::Only),
+                found => found,
+            };
+        }
+        match walk(AotTargets::Only) {
+            Found::File(path) => Found::File(path),
+            Found::Blocked | Found::No => walk(AotTargets::Included),
+        }
     }
 
     /// `loadModuleFromTargetExportOrImport`. `subpath`: the text matched by the `*` of `key` if
-    /// `is_pattern`, or else the text after `key`. With `skips_types` it finds only what stands below "aot".
+    /// `is_pattern`, or else the text after `key`.
     fn walk_export_target<'j>(
         &self,
         package_dir: &[u8],
@@ -4373,7 +4395,7 @@ impl<'h> Resolver<'h> {
         key: &[u8],
         is_imports: IsImports,
         look: Look,
-        skips_types: bool,
+        aot_targets: AotTargets,
     ) -> Found {
         /// An object or an array whose targets are being searched.
         enum Entered<'a> {
@@ -4386,8 +4408,11 @@ impl<'h> Resolver<'h> {
             match entered {
                 Entered::Conditions(condition, rest) => {
                     for (next, target) in rest.by_ref() {
-                        let is_skipped =
-                            skips_types && (next == b"types" || next.starts_with(b"types@"));
+                        let is_skipped = match aot_targets {
+                            AotTargets::Included => false,
+                            AotTargets::Only => next == b"types" || next.starts_with(b"types@"),
+                            AotTargets::Skipped => next == AOT_CONDITION,
+                        };
                         if !is_skipped && self.condition_matches(next, look) {
                             look.trace(6403, &[Arg::Bytes(field), Arg::Bytes(next)]);
                             *condition = next.as_slice();
@@ -4443,7 +4468,8 @@ impl<'h> Resolver<'h> {
                     matches!(it, Entered::Conditions(condition, _) if *condition == AOT_CONDITION)
                 })
             };
-            if skips_types && matches!(found, Found::File(_)) && !is_below_aot() {
+            if aot_targets == AotTargets::Only && matches!(found, Found::File(_)) && !is_below_aot()
+            {
                 return Found::No;
             }
             // Back out to the innermost entry that has another target to try. A result ends the search.

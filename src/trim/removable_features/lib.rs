@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(Feature::Interpreter.entered_from(), EnteredFrom::Program);
         assert_eq!(Feature::Sql.entered_from(), EnteredFrom::Program);
         assert_eq!(
-            Feature::OperationsOnMapsAndSets.entered_from(),
+            Feature::MapAndSetOperations.entered_from(),
             EnteredFrom::CompiledCode
         );
     }

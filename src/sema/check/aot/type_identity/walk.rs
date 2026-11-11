@@ -344,6 +344,12 @@ impl Walk {
                 description.word(u64::from(queries.accepted_primitives(ty)?.bits()));
                 Ok(description.finish())
             }
+            ShapeKind::ConstructorFunctionInstance(function) => {
+                let mut description = Description::new(Tag::ConstructorFunctionInstance);
+                description.file(queries, function.file);
+                description.word(u64::from(function.function.0));
+                Ok(description.finish())
+            }
             ShapeKind::Object => self.describe_object(queries, ty),
             ShapeKind::Union(members) => self.describe_union(queries, members),
             ShapeKind::Int32 { base } => {

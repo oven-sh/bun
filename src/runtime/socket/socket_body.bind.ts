@@ -125,6 +125,7 @@ export const upgradeTLSDeferred = b.fn({
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
+export const setNodeStreamReads = b.fn({ args: { socket: SocketHandle, enabled: b.bool } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
 /** Node's `handle.hasPendingRead()`: data, a FIN or an error that the loop has not polled for yet. */

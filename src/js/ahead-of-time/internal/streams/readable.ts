@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 26a4a653d8f942a822a4a5b79b8005d8725ed9562c1b0e5b742392e74be9e862.
+// Written against that file with the SHA-256 f101fd8821017434381bf03d073d84891a81bd37386d282ff04a6368a834bc39.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -46,6 +46,7 @@ const { errorOrDestroy } = destroyImpl;
 const nop = () => {};
 const { emit } = shared.originals.eventEmitter!;
 const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
+const kAsyncIteratorListener: typeof shared.kAsyncIteratorListener = shared.kAsyncIteratorListener;
 const kShapeMode: typeof shared.kShapeMode = IS_COMPILED_AHEAD_OF_TIME ? shared.kShapeMode : (undefined as never);
 const kCapture: typeof shared.kCapture = IS_COMPILED_AHEAD_OF_TIME ? shared.kCapture : (undefined as never);
 const EventEmitterPrototype: $Node.EventEmitterPrototype = IS_COMPILED_AHEAD_OF_TIME
@@ -1781,6 +1782,8 @@ async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.Read
       callback = resolve;
     }
   }
+  // Not in Node: tells Bun's native sources that this listener takes all of every chunk (takesWholeChunks()).
+  (next as any)[kAsyncIteratorListener] = true;
 
   stream.on("readable", next);
 

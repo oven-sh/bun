@@ -1,8 +1,9 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 88b83ecf1528b414bc3d4913c1b6ad9740f8b3a7d6186a66ae20a045577811cc.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
+const { takesWholeChunks } = require("internal/shared");
 const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 
 const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
@@ -57,6 +58,8 @@ const kRequest = Symbol("request");
 const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
+// On the socket of a native server: syncReadSize().
+const kLargeReads = Symbol("kLargeReads");
 // Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
 const kRememberPeer = Symbol("kRememberPeer");
 // Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
@@ -241,6 +244,16 @@ function emitEOFIncomingMessage(self: $Node.IncomingMessage) {
   queueTick1(emitEOFIncomingMessageOuter, self);
 }
 
+// `stream` takes what the connection of `socket` reads: a request body, or the socket itself as a tunnel. While it
+// may leave part of a chunk unread, a read is what libuv gives Node, at most 64 KiB (us_socket_set_node_stream_reads
+// in libusockets.h). HttpContext.h opens every connection that way and goes back to it behind the last chunk of a body.
+function syncReadSize(socket: $Node.HttpSocket, stream: $Node.Readable) {
+  const largeReads = takesWholeChunks(stream);
+  if (socket[kLargeReads] === largeReads) return;
+  socket[kLargeReads] = largeReads;
+  socket[kHandle]?.setNodeStreamReads?.(!largeReads);
+}
+
 function onDataIncomingMessage(
   this: $Node.IncomingMessage,
   chunk: Buffer | undefined,
@@ -299,6 +312,7 @@ function onDataIncomingMessage(
         socket.resume();
       }
     }
+    if (socket?.[kLargeReads]) socket[kLargeReads] = false;
   }
 }
 
@@ -520,6 +534,7 @@ declare global {
       [kHandle]?: NodeHTTPServerSocket | null;
       [kOnReadParsed]?: (socket: HttpSocket) => void;
       [kHandoffResponse]?: NodeHTTPResponse;
+      [kLargeReads]?: boolean;
       [kRequest]?: IncomingMessage;
       [kCloseCallback]?: (this: HttpServerSocket) => void;
       $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
@@ -807,6 +822,7 @@ export {
   kHighWaterMark,
   kIncomingMessage,
   kInternalSocketData,
+  kLargeReads,
   kLenientValidation,
   kMadeOverHandle,
   kNeedDrain,
@@ -838,6 +854,7 @@ export {
   setServerAppFlags,
   setServerCustomOptions,
   setServerMaxHeadersCount,
+  syncReadSize,
   takeRequestTrailers,
   tlsSymbol,
   utcDate,

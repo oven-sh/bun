@@ -65,6 +65,8 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
+  kLargeReads,
+  syncReadSize,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -1665,6 +1667,7 @@ function getNodeHTTPServerSocket() {
     timeout = 0;
     parser = null;
     [kStreamingEnabled] = false;
+    [kLargeReads] = false;
     [kBoundOnAbort] = null;
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
@@ -2062,7 +2065,10 @@ function getNodeHTTPServerSocket() {
     #resumeSocket(readStart: boolean) {
       const handle = this[kHandle];
       // A tunnel reads again: response.resume() below does nothing for it.
-      if (readStart && this[kStreamingEnabled]) handle?.readStart();
+      if (readStart && this[kStreamingEnabled]) {
+        syncReadSize(this, this);
+        handle?.readStart();
+      }
       const response = handle?.response;
       const upgradeIncoming = this[kUpgradeIncoming];
       if (upgradeIncoming) {

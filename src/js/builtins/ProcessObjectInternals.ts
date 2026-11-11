@@ -122,6 +122,7 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+  const { takesWholeChunks } = require("internal/shared");
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -244,6 +245,8 @@ export function getStdinStream(
     let value;
     try {
       $assert(readerForThisRead);
+      // FileReader.rs `PullMode`: a stream that may leave part of a chunk unread gets what libuv gives Node's, at most 64 KiB a read.
+      source?.setFlowing?.(true, takesWholeChunks(stream) ? 0 : 2);
       ({ value } = await readerForThisRead.read());
     } catch (err) {
       if (readerForThisRead !== reader) {

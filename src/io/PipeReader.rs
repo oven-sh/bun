@@ -146,6 +146,9 @@ impl Drop for ParentKeepAlive {
     }
 }
 
+/// What one read of a libuv stream holds: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1049
+const NODE_STREAM_READ_SIZE: usize = 64 * 1024;
+
 /// Bytes the reader may still take out of its source (a blob slice window; `None` reads to EOF): reads are cut to it and using it up is reported as EOF.
 #[derive(Clone, Copy)]
 struct ReadLimit(Option<usize>);
@@ -214,6 +217,8 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// A wakeup takes one read of at most `NODE_STREAM_READ_SIZE` bytes and delivers it alone, as a libuv stream does. See `set_node_stream_reads`.
+        const NODE_STREAM_READS        = 1 << 12;
     }
 }
 
@@ -371,6 +376,11 @@ impl PosixBufferedReader {
         }
         self.flags.remove(PosixFlags::IS_PAUSED);
         // The next read() call will re-register the poll if needed
+    }
+
+    /// For a reader that feeds a Node stream whose consumer may leave part of a chunk unread: the `Readable` announces that rest again only while it is no more than its mark, which a chunk larger than libuv's goes over.
+    pub fn set_node_stream_reads(&mut self, enabled: bool) {
+        self.flags.set(PosixFlags::NODE_STREAM_READS, enabled);
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -711,7 +721,12 @@ impl PosixBufferedReader {
         if self.limit.reached() {
             return ReadOnce::Stop(Stop::Eof);
         }
-        let buf = MaxBuf::clamp_read_buf(self.maxbuf, self.limit.clamp(buf));
+        let len = if self.flags.contains(PosixFlags::NODE_STREAM_READS) {
+            buf.len().min(NODE_STREAM_READ_SIZE)
+        } else {
+            buf.len()
+        };
+        let buf = MaxBuf::clamp_read_buf(self.maxbuf, self.limit.clamp(&mut buf[..len]));
         match self.sys_read(file_type, fd, buf) {
             sys::Result::Ok(0) => ReadOnce::Stop(Stop::Eof),
             sys::Result::Ok(n) => {
@@ -745,7 +760,10 @@ impl PosixBufferedReader {
             match self.read_once(file_type, fd, &mut scratch[filled..]) {
                 ReadOnce::Read(n, stop) => {
                     filled += n;
-                    if stop.is_some() || file_type == FileType::Pipe {
+                    if stop.is_some()
+                        || file_type == FileType::Pipe
+                        || self.flags.contains(PosixFlags::NODE_STREAM_READS)
+                    {
                         return (filled, stop);
                     }
                 }
@@ -771,6 +789,7 @@ impl PosixBufferedReader {
                     if stop.is_some()
                         || file_type == FileType::Pipe
                         || (streaming && self._buffer.len() >= 128 * 1024)
+                        || self.flags.contains(PosixFlags::NODE_STREAM_READS)
                     {
                         return stop;
                     }
@@ -886,7 +905,11 @@ impl PosixBufferedReader {
                 }
                 return;
             }
-            if streaming && !keep_going && !received_hup {
+            // A hangup drains to EOF here, except for a reader that reads once per wakeup: its consumer asks for the rest.
+            // SAFETY: caller contract (re-entry never frees `*this`).
+            let drain_hangup =
+                received_hup && !unsafe { (*this).flags.contains(PosixFlags::NODE_STREAM_READS) };
+            if streaming && !keep_going && !drain_hangup {
                 return;
             }
             if file_type != FileType::Pipe {
@@ -1041,6 +1064,8 @@ bitflags::bitflags! {
         /// When true, wait for the file operation callback before calling done().
         /// Used to ensure proper cleanup ordering when closing during cancellation.
         const DEFER_DONE_CALLBACK      = 1 << 9;
+        /// See `PosixFlags::NODE_STREAM_READS`.
+        const NODE_STREAM_READS        = 1 << 10;
     }
 }
 
@@ -1138,6 +1163,11 @@ impl WindowsBufferedReader {
 
     pub fn disable_keeping_process_alive<C>(&mut self, _: C) {
         self.update_ref(false);
+    }
+
+    /// See `PosixBufferedReader::set_node_stream_reads`.
+    pub fn set_node_stream_reads(&mut self, enabled: bool) {
+        self.flags.set(WindowsFlags::NODE_STREAM_READS, enabled);
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -1259,7 +1289,12 @@ impl WindowsBufferedReader {
         let limit = self.limit;
         // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `on_read`), and libuv treats an empty buffer as an error.
         debug_assert!(!limit.reached());
-        let size = limit.clamp_len(suggested_size);
+        let node_stream_reads = self.flags.contains(WindowsFlags::NODE_STREAM_READS);
+        let size = limit.clamp_len(if node_stream_reads {
+            suggested_size.min(NODE_STREAM_READ_SIZE)
+        } else {
+            suggested_size
+        });
         // Tty reads must not target `_buffer`: libuv can retain the pointer
         // past reader teardown (see `uv::Tty::read_scratch` for the contract).
         if matches!(self.source, Some(Source::Tty(_))) {
@@ -1273,7 +1308,12 @@ impl WindowsBufferedReader {
         self._buffer.reserve(size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
         let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
-        MaxBuf::clamp_read_buf(maxbuf, limit.clamp(buf))
+        let len = if node_stream_reads {
+            buf.len().min(size)
+        } else {
+            buf.len()
+        };
+        MaxBuf::clamp_read_buf(maxbuf, limit.clamp(&mut buf[..len]))
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {

@@ -480,6 +480,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
     s->send_rejected = 0;
+    s->node_stream_reads = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -887,6 +888,10 @@ void us_socket_unref(struct us_socket_t *s) {
     uv_unref((uv_handle_t *) s->p.uv_p);
 #endif
     // do nothing if not using libuv
+}
+
+void us_socket_set_node_stream_reads(struct us_socket_t *s, int enabled) {
+    s->node_stream_reads = enabled != 0;
 }
 
 void us_socket_pause(struct us_socket_t *s) {

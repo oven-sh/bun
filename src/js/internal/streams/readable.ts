@@ -25,7 +25,7 @@ const { validateAbortSignal, validateObject } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
-const { kAutoDestroyed } = require("internal/shared");
+const { kAutoDestroyed, kAsyncIteratorListener } = require("internal/shared");
 const isStandardOutputStream: (value: unknown) => boolean | undefined = $newCppFunction(
   "BunProcess.cpp",
   "jsFunctionIsStandardOutputStream",
@@ -1360,6 +1360,8 @@ async function* createAsyncIterator(stream, options) {
       callback = resolve;
     }
   }
+  // Not in Node: tells Bun's native sources that this listener takes all of every chunk (takesWholeChunks()).
+  (next as any)[kAsyncIteratorListener] = true;
 
   stream.on("readable", next);
 

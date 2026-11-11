@@ -604,6 +604,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// `us_socket_set_node_stream_reads` in libusockets.h. Only a socket with a descriptor reads the kernel.
+    pub fn set_node_stream_reads(&self, enabled: bool) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).set_node_stream_reads(enabled);
+        }
+    }
+
     /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
     pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         match self.socket {

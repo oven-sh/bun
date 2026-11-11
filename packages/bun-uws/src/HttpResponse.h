@@ -544,6 +544,9 @@ private:
             sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
         WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
+        /* A node:http connection reads as a Node stream does (HttpContext::onOpen). No stream buffers a WebSocket. */
+        us_socket_set_node_stream_reads(usSocket, 0);
+
         /* For whatever reason we were corked, update cork to the new socket */
         if (corkedSlot != LoopData::INVALID_CORK_SLOT) {
             loopData->transferCorkSlot(corkedSlot, webSocket, SSL);

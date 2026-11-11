@@ -12,6 +12,7 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { takesWholeChunks } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -50,7 +51,18 @@ interface NativePtr {
   pull: (view: any, closer: any) => any;
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
-  setFlowing?: (flowing: boolean) => void;
+  setFlowing?: (flowing: boolean, pullMode?: number) => void;
+}
+
+// FileReader.rs `PullMode`. A stream that may leave part of a chunk unread is fed as libuv feeds Node's: one read of
+// at most 64 KiB for each _read(), from the event loop. Node's stream has read ahead by then, so with no 'readable'
+// listener to tell, a read() of a stream that holds nothing gets its answer at once. A 'readable' listener is told
+// of each chunk, so none comes before _read() returns, not even to the async iterator, which takes them whole.
+function pullMode(stream) {
+  const state = stream._readableState;
+  if (state.flowing === true) return 0;
+  if (!state.readableListening) return state.length === 0 ? 2 : 3;
+  return takesWholeChunks(stream) ? 1 : 3;
 }
 
 let debugId = 0;
@@ -132,7 +144,7 @@ function read(this: NativeReadable, maxToRead: number) {
   // Readable called `_read`, so it wants data: make sure the native reader is
   // not paused from a previous `push()===false` (readStart, like net.Socket).
   // Runs even when a pull promise is outstanding so that promise can resolve.
-  if (ptr) ptr.setFlowing?.(true);
+  if (ptr) ptr.setFlowing?.(true, pullMode(this));
   if (this[kPendingRead]) {
     return;
   }

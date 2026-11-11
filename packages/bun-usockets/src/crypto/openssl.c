@@ -2689,7 +2689,9 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *da
    * pulls the server's handshake event through after each round-trip. */
 
   int read = 0;
-restart:
+restart:;
+  /* What one on_data may carry. Fixed until that dispatch: the JS it runs can change it. */
+  const int output_length = s->node_stream_reads ? LIBUS_NODE_STREAM_READ_LENGTH : LIBUS_RECV_BUFFER_LENGTH;
   while (1) {
     /* While the handshake is pending, SSL_read seals this side's outbound
      * flight (TLS 1.3 client Certificate/Finished, server Hello flight).
@@ -2711,7 +2713,7 @@ restart:
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
                              loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
-                             LIBUS_RECV_BUFFER_LENGTH - read);
+                             output_length - read);
     s->ssl_in_use = ssl_was_in_use;
     if (hs_batching) {
       loop_ssl_data->ssl_write_batching = 0;
@@ -2856,7 +2858,7 @@ restart:
 
     read += just_read;
 
-    if (read == LIBUS_RECV_BUFFER_LENGTH) {
+    if (read == output_length) {
       char *saved_input = loop_ssl_data->ssl_read_input;
       unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
       unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;

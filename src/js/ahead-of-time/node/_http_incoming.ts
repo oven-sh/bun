@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_incoming.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 28181b2c5a22f824a8caebb17a1f5a3d65525df1d060b79b1a452932b3f20a1f.
+// Written against that file with the SHA-256 7685e927400f4fb92da736f2c29e775c19923746ce00dbe824aaed7975741b43.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_incoming"
@@ -39,6 +39,7 @@ const {
   emitEOFIncomingMessageOuter,
   clearServerParserIncoming,
   onDataIncomingMessage,
+  syncReadSize,
   takeRequestTrailers,
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
@@ -51,6 +52,7 @@ const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kMadeOverHandle: typeof http.kMadeOverHandle = http.kMadeOverHandle;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
+const kLargeReads: typeof http.kLargeReads = http.kLargeReads;
 const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 const noBodySymbol: typeof http.noBodySymbol = http.noBodySymbol;
 const kReqShouldKeepAlive: typeof http.kReqShouldKeepAlive = http.kReqShouldKeepAlive;
@@ -596,12 +598,15 @@ function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.Http
     ("unlikely");
     // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
-  } else if (!socket._paused) {
-    if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, true);
-    else {
-      ("unlikely");
-      if (IS_COMPILED_AHEAD_OF_TIME) $callNoInline(resumeIfReadable, undefined, socket);
-      else resumeIfReadable(socket);
+  } else {
+    if (!req[eofInProgress]) syncReadSize(socket, req);
+    if (!socket._paused) {
+      if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, true);
+      else {
+        ("unlikely");
+        if (IS_COMPILED_AHEAD_OF_TIME) $callNoInline(resumeIfReadable, undefined, socket);
+        else resumeIfReadable(socket);
+      }
     }
   }
 }
@@ -1553,6 +1558,7 @@ function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, 
       socket.resume();
     }
   }
+  if (socket?.[kLargeReads]) socket[kLargeReads] = false;
 }
 
 // As readable's addChunk() adds a chunk at the end, less its look for more, which the caller takes.

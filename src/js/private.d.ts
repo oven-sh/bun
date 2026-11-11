@@ -1067,7 +1067,8 @@ declare namespace $Bindgen {
   // src/runtime/webcore/ReadableStream.bind.ts, ReadableStream.rs
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
-    setFlowing(flowing: boolean): void;
+    /** `pullMode`: FileReader.rs `PullMode`. */
+    setFlowing(flowing: boolean, pullMode?: number): void;
     /** `undefined`, or the system error. */
     setRawMode(enabled: boolean): Error | undefined;
   }
@@ -2475,6 +2476,8 @@ declare namespace $Node {
     upgradeToTunnel(hasBody: boolean, response: NodeHTTPResponse): void;
     readStop(): void;
     readStart(): void;
+    /** `us_socket_set_node_stream_reads` in libusockets.h. */
+    setNodeStreamReads(enabled: boolean): void;
     setResponseTrailers(trailers: string): void;
     isRequestTimedOut(headersTimeout: number, requestTimeout: number): boolean;
     startPipelinedResponse(response: HttpResponseHandle, isAncient: boolean, connectionClose: boolean): boolean;

@@ -1,12 +1,13 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
+import { allCases, deliveredAll, deliveredAllOfBody, deliveredToTheEnd, readInPart } from "./readable-partial-read";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -2040,4 +2041,34 @@ it("Readable.fromWeb's native source accepts pull(view) without the flags array"
   } finally {
     delete Object.prototype.setFlowing;
   }
+});
+
+// A reader takes a header with read(8) and leaves the rest to a 'readable' listener that it adds afterwards. Node
+// announces what is left again with the next chunk, as long as no more than highWaterMark bytes are left. What
+// libuv reads for Node is at most 64 KiB a time and arrives from the event loop, so no stream that it feeds stalls
+// there. The default highWaterMark on Windows is 16 KiB, under which Node stalls too.
+describe.skipIf(isWindows).concurrent("a stream that was read in part announces the rest", () => {
+  it("Readable.fromWeb() of a process's stdout", async () => {
+    const cases = ["fromweb-spawn:swap"];
+    expect(await readInPart(cases)).toEqual(allCases(cases, deliveredAll));
+  });
+
+  it.each([
+    ["net.Socket over TCP", ["tcp:swap", "tcp:awaitSwap", "tcp:iterateThenListen"]],
+    ["net.Socket over a unix socket, tls.TLSSocket", ["unix:swap", "tls:swap"]],
+  ])("%s", async (_, cases) => {
+    expect(await readInPart(cases)).toEqual(allCases(cases, deliveredAll));
+  });
+
+  it.each([
+    ["the request of an http.Server", ["http-request:swap"]],
+    ["the response of an http.ClientRequest", ["http-response:swap"]],
+  ])("%s", async (_, cases) => {
+    expect(await readInPart(cases)).toEqual(allCases(cases, deliveredAllOfBody));
+  });
+
+  it("process.stdin from a file", async () => {
+    const size = 200_000;
+    expect(await readInPart(["stdin:swap"], size)).toEqual(allCases(["stdin:swap"], deliveredToTheEnd(size)));
+  });
 });

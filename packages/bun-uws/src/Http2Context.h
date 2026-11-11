@@ -739,6 +739,8 @@ struct Http2Context {
         conn->prefaceOffset = (uint8_t) prefaceConsumed;
         *(Http2Connection **) us_socket_ext(s) = conn;
         s->flags.allow_half_open = 0;
+        /* Set by HttpContext::onOpen for a node:http connection. No Node stream buffers what this one reads. */
+        s->node_stream_reads = 0;
         conn->idleTimeoutS = idleTimeoutS;
         conn->touch();
         conn->writeSettings();

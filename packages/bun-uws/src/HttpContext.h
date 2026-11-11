@@ -212,6 +212,10 @@ private:
             /* The pause for backed-up pipelined responses lifts when their bytes drain, and after
              * a hangup they never do. Node.js destroys the socket on the failed write. */
             s->hangup_closes_unsent = 1;
+
+            /* A request body is a Node stream: until its reader shows that it takes whole chunks (syncReadSize in
+             * src/js/internal/http.ts), it is read as libuv would. Its first bytes can arrive with its head. */
+            s->node_stream_reads = 1;
         }
 
         /* A peer FIN must not tear the connection down at the loop level:
@@ -715,6 +719,10 @@ private:
                  * requests on the same socket won't trigger any previously registered behavior */
                 if (fin) {
                     httpResponseData->inStream = nullptr;
+                    if constexpr (IsNodeHttp) {
+                        /* The reader of this body may have lifted it: the next body starts as in onOpen. */
+                        ((us_socket_t *) user)->node_stream_reads = 1;
+                    }
                 }
             }
             if constexpr (IsNodeHttp) {

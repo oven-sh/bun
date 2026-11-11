@@ -19,6 +19,7 @@ const {
   emitEOFIncomingMessage,
   onDataIncomingMessage,
   kAbortController,
+  syncReadSize,
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
@@ -340,6 +341,7 @@ IncomingMessage.prototype._read = function _read(_n) {
       // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
       onIncomingMessageResumeNodeHTTPResponse.$call(this);
     } else {
+      if (!this[eofInProgress]) syncReadSize(socket, this);
       readStart(socket);
     }
   }

@@ -4415,6 +4415,15 @@ pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
     }
 }
 
+/// node:net, for a socket whose stream is buffering. See `us_socket_set_node_stream_reads` in libusockets.h.
+pub(crate) fn set_node_stream_reads(socket: SocketHandle<'_>, enabled: bool) {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().set_node_stream_reads(enabled),
+        SocketHandle::Tls(this) => this.socket.get().set_node_stream_reads(enabled),
+        SocketHandle::Ignored(_) => {}
+    }
+}
+
 pub(crate) fn upgrade_duplex_to_tls<'a>(
     cx: &mut JsScope<'a>,
     duplex: JsLocal<'a>,

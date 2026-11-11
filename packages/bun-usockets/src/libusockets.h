@@ -395,6 +395,12 @@ void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
 void us_socket_release_held_flight(us_socket_r s) nonnull_fn_decl;
 /* Call it from on_open. A shutdown before the first handshake step sends its FIN after that step. */
 void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
+/* What one read of a libuv stream holds: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1049 */
+#define LIBUS_NODE_STREAM_READ_LENGTH 65536
+/* For the owner of a Node stream whose consumer may leave part of a chunk unread: on_data gets at most
+ * LIBUS_NODE_STREAM_READ_LENGTH bytes at a time, each from a read (or TLS decrypt) of its own. A `Readable`
+ * announces that rest again only while it is no more than its mark, which a larger chunk goes over. */
+void us_socket_set_node_stream_reads(us_socket_r s, int enabled) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX

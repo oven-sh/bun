@@ -55,6 +55,7 @@ pub struct FileReader {
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
+    pub(crate) pull_mode: Cell<PullMode>,
     /// Native sink attached by a hookup site (e.g. fetch request body). When
     /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
     /// path; `pull_into_sink` is the drain-ack resume.
@@ -81,6 +82,7 @@ impl Default for FileReader {
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
+            pull_mode: Cell::new(PullMode::Any),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
         }
@@ -88,6 +90,31 @@ impl Default for FileReader {
 }
 
 pub(crate) type IOReader = BufferedReader;
+
+/// How a pull is answered: the second argument of `setFlowing`, set by native-readable.ts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PullMode {
+    /// With what the reader has, at once.
+    Any,
+    /// With what one wakeup finds, from the event loop: a Node stream whose 'readable' listener takes all of it.
+    Later,
+    /// With one read of at most 64 KiB, what a libuv stream gives Node, at once.
+    OneRead,
+    /// The same, from the event loop: a Node stream that may leave part of a chunk unread. A chunk pushed inside the `read(n)` that asked for it lands on the bytes that read left behind, and the stream announces them again only while they are no more than its mark (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L842-L858).
+    OneReadLater,
+}
+
+impl PullMode {
+    /// Each pull is answered by one read.
+    fn one_read(self) -> bool {
+        matches!(self, PullMode::OneRead | PullMode::OneReadLater)
+    }
+
+    /// A pull is not answered before it returns, and nothing is read ahead of one.
+    fn later(self) -> bool {
+        matches!(self, PullMode::Later | PullMode::OneReadLater)
+    }
+}
 
 pub(crate) enum Lazy {
     None,
@@ -478,9 +505,11 @@ impl FileReader {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
                     self.reader().unpause();
-                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                    unsafe { IOReader::read(self.reader.get()) };
+                    if self.pull_mode.get() == PullMode::Any {
+                        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                        // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                        unsafe { IOReader::read(self.reader.get()) };
+                    }
                 }
             }
         }
@@ -634,8 +663,14 @@ impl FileReader {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
                 true
-            } else {
+            } else if self.pull_mode.get() == PullMode::Any {
                 self.resolve_pending_read(chunk, has_more)
+            } else {
+                // One read for each pull: the next one arms the reader again.
+                #[cfg(windows)]
+                self.reader().pause();
+                self.resolve_pending_read(chunk, has_more);
+                false
             }
         } else {
             if self.buffered.get().is_empty() && chunk.is_owned() {
@@ -891,7 +926,8 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_flowing(&self, flag: bool) {
+    /// `None` keeps the pull mode.
+    pub(crate) fn set_flowing(&self, flag: bool, pull_mode: Option<PullMode>) {
         bun_core::scoped_log!(
             FileReader,
             "setFlowing({}) was={}",
@@ -899,22 +935,33 @@ impl FileReader {
             self.flowing.get()
         );
 
+        if let Some(pull_mode) = pull_mode {
+            self.pull_mode.set(pull_mode);
+            self.reader().set_node_stream_reads(pull_mode.one_read());
+        }
+
         if self.flowing.get() == flag {
             return;
         }
 
         self.flowing.set(flag);
 
-        if flag {
-            self.reader().unpause();
-            if !self.reader().is_done() && !self.reader().has_pending_read() {
-                // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
-            }
-        } else {
+        if !flag {
             self.reader().pause();
+            return;
+        }
+        self.reader().unpause();
+        if self.reader().is_done() || self.reader().has_pending_read() {
+            return;
+        }
+        if self.pull_mode.get() == PullMode::Any {
+            // Kick off a new read if needed
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
+        } else if self.pending.get().state == streams::PendingState::Pending {
+            // The pull that follows reads. One that already waits needs the poll back.
+            self.reader().watch();
         }
     }
 }
@@ -977,7 +1024,17 @@ impl readable_stream::SourceContext for FileReader {
             return self.end_of_reader();
         }
 
-        if !self.reader().has_pending_read() && self.flowing.get() {
+        // A file has no event loop to answer from.
+        #[cfg(unix)]
+        let answer_later = self.pull_mode.get().later()
+            && self
+                .reader()
+                .flags
+                .contains(bun_io::pipe_reader::PosixFlags::POLLABLE);
+        #[cfg(windows)]
+        let answer_later = false;
+
+        if !answer_later && !self.reader().has_pending_read() && self.flowing.get() {
             // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
             self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
@@ -1015,6 +1072,11 @@ impl readable_stream::SourceContext for FileReader {
         #[cfg(windows)]
         if self.flowing.get() {
             self.reader().unpause();
+        }
+        #[cfg(unix)]
+        if answer_later && self.flowing.get() {
+            self.reader().unpause();
+            self.reader().watch();
         }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
@@ -1068,10 +1130,17 @@ impl Source {
         }
     }
 
-    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
+    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>, pull_mode: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
-        self.context.set_flowing(flag == JSValue::TRUE);
+        let pull_mode = pull_mode.to_js();
+        let pull_mode = pull_mode.is_int32().then(|| match pull_mode.as_int32() {
+            1 => PullMode::Later,
+            2 => PullMode::OneRead,
+            3 => PullMode::OneReadLater,
+            _ => PullMode::Any,
+        });
+        self.context.set_flowing(flag == JSValue::TRUE, pull_mode);
     }
 }
 

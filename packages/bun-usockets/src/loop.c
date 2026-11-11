@@ -596,6 +596,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
                         s->send_rejected = 0;
+                        s->node_stream_reads = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -802,7 +803,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                     }else{
                     #endif
-                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING,
+                                          s->node_stream_reads ? LIBUS_NODE_STREAM_READ_LENGTH : LIBUS_RECV_BUFFER_LENGTH, recv_flags);
                     #if !defined(_WIN32)
                     }
                     #endif
@@ -848,6 +850,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             if (repeat_recv_count <= 10) {
                                 continue;
                             }
+                        }
+                        /* A libuv stream reads on while a read fills its buffer, 32 times at most:
+                         * https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1036-L1047 */
+                        if (
+                            s && s->node_stream_reads && length == LIBUS_NODE_STREAM_READ_LENGTH &&
+                            !us_socket_is_closed(s) && !s->flags.is_paused && ++repeat_recv_count < 32
+                        ) {
+                            continue;
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #else

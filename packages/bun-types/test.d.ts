@@ -1522,6 +1522,8 @@ declare module "bun:test" {
     /**
      * Create an asymmetric matcher for a promise resolved value.
      *
+     * `toEqual()` waits for a promise that is still pending. `asymmetricMatch()` of the matcher throws for one.
+     *
      * @example
      * expect(Promise.resolve("value")).toEqual(expect.resolvesTo.stringContaining("value")); // will pass
      * expect(Promise.reject("value")).toEqual(expect.resolvesTo.stringContaining("value")); // will fail
@@ -1531,6 +1533,8 @@ declare module "bun:test" {
 
     /**
      * Create an asymmetric matcher for a promise rejected value.
+     *
+     * `toEqual()` waits for a promise that is still pending. `asymmetricMatch()` of the matcher throws for one.
      *
      * @example
      * expect(Promise.reject("error")).toEqual(expect.rejectsTo.stringContaining("error")); // will pass
@@ -3002,6 +3006,17 @@ declare module "bun:test" {
 
   /**
    * An asymmetric matcher returned by a static `expect` method such as `expect.anything()` or `expect.stringContaining("...")`.
+   *
+   * It has one method, `asymmetricMatch(value)`, which compares as `toEqual()` does and returns whether the
+   * matcher matches `value`. A matcher of your own, which is any object with that method, can call it.
+   * A matcher from `expect.resolvesTo` or `expect.rejectsTo` throws if `value` is a promise that is still pending.
+   *
+   * @example
+   * const numberOrDigits: AsymmetricMatcher = {
+   *   asymmetricMatch: (value: unknown) =>
+   *     expect.any(Number).asymmetricMatch(value) || expect.stringMatching(/^\d+$/).asymmetricMatch(value),
+   * };
+   * expect({ id: "42" }).toEqual({ id: numberOrDigits });
    */
   // Defined as an alias of `any` so that it does not trigger any type mismatch
   export type AsymmetricMatcher = any;

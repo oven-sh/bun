@@ -2321,6 +2321,35 @@ impl Expect {
 // macro-expanded module is not addressable by absolute path
 // (`macro_expanded_macro_exports_accessed_by_absolute_paths`).
 
+/// `matcher.asymmetricMatch(received)` of a matcher class.
+pub(crate) trait AsymmetricMatcher: Sized {
+    fn asymmetric_match(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        received: JsLocal<'_>,
+    ) -> JsResult<bool> {
+        to_equal_verdict(cx.global(), this_value.to_js(), received.to_js())
+    }
+}
+
+/// What `expect(received).toEqual(matcher)` decides: deep equality asks a matcher that is the expected value before anything else.
+/// The answer goes to user code at once, so a matcher of `expect.resolvesTo` or `expect.rejectsTo` throws for a pending promise.
+#[inline(never)]
+fn to_equal_verdict(global: &JSGlobalObject, matcher: JSValue, received: JSValue) -> JsResult<bool> {
+    let pass = Pass::barrier();
+    let _entered = pass.enter();
+    received.jest_deep_equals(matcher, global)
+}
+
+impl AsymmetricMatcher for ExpectAnything {}
+impl AsymmetricMatcher for ExpectAny {}
+impl AsymmetricMatcher for ExpectArrayContaining {}
+impl AsymmetricMatcher for ExpectCloseTo {}
+impl AsymmetricMatcher for ExpectObjectContaining {}
+impl AsymmetricMatcher for ExpectStringContaining {}
+impl AsymmetricMatcher for ExpectStringMatching {}
+
 pub(crate) struct ExpectAnything {
     pub(crate) flags: Flags,
 }

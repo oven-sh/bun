@@ -14,36 +14,56 @@ const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any
 const chainable = { ...matcher, returns: b.any.returning("this", "undefined", "Promise") } as const;
 const chainableWithExpected = { ...chainable, args: { expected: b.any } } as const;
 
-export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
+/**
+ * `matcher.asymmetricMatch(received)`, the member of the trait `AsymmetricMatcher`. As in Jest and Vitest it is a method of the class,
+ * which no loop over a matcher lists. A copy of a matcher that keeps its prototype, as a diff printer makes one, is no matcher: there it answers undefined.
+ * Spread it last: a `proto` written before it is then an error (TS2783).
+ */
+const asymmetricMatcher = {
+  rustTraits: ["crate::test_runner::AsymmetricMatcher"],
+  configurable: true,
+  enumerable: false,
+  proto: {
+    asymmetricMatch: { args: { received: b.any }, returns: b.bool, passThis: true, invalidThis: "undefined", ...js },
+  },
+} as const;
+
+export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything", ...asymmetricMatcher });
 
 export const ExpectAny = b.class({
   rustPath: "crate::test_runner::ExpectAny",
   internalFields: ["constructorValue"],
+  ...asymmetricMatcher,
 });
 
 export const ExpectArrayContaining = b.class({
   rustPath: "crate::test_runner::ExpectArrayContaining",
   internalFields: ["arrayValue"],
+  ...asymmetricMatcher,
 });
 
 export const ExpectCloseTo = b.class({
   rustPath: "crate::test_runner::ExpectCloseTo",
   internalFields: ["numberValue", "digitsValue"],
+  ...asymmetricMatcher,
 });
 
 export const ExpectObjectContaining = b.class({
   rustPath: "crate::test_runner::ExpectObjectContaining",
   internalFields: ["objectValue"],
+  ...asymmetricMatcher,
 });
 
 export const ExpectStringContaining = b.class({
   rustPath: "crate::test_runner::ExpectStringContaining",
   internalFields: ["stringValue"],
+  ...asymmetricMatcher,
 });
 
 export const ExpectStringMatching = b.class({
   rustPath: "crate::test_runner::ExpectStringMatching",
   internalFields: ["testValue", "pattern"],
+  ...asymmetricMatcher,
 });
 
 /** `expect.any(Number)`, and the same after `expect.not`. */

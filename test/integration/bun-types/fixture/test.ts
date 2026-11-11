@@ -3,6 +3,7 @@ import {
   afterEach,
   aroundAll,
   aroundEach,
+  type AsymmetricMatcher,
   beforeAll,
   beforeEach,
   describe,
@@ -684,6 +685,13 @@ expect.toSatisfy();
 expect.toSatisfy("not a function");
 // @ts-expect-error
 expect.not.toSatisfy(() => true, 1);
+
+const numberOrDigits: AsymmetricMatcher = {
+  asymmetricMatch: (value: unknown) =>
+    expect.any(Number).asymmetricMatch(value) || expect.stringMatching(/^\d+$/).asymmetricMatch(value),
+};
+expect({ id: "42" }).toEqual({ id: numberOrDigits });
+expect.not.arrayContaining([1]).asymmetricMatch([2]);
 
 declare module "bun:test" {
   interface Matchers<T> {

@@ -26,6 +26,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "import-meta-glob",
     "unmemoized-callbacks",
     "star-export-beside-component",
+    "imports-of-dropped-code",
   ])(
     "%s",
     name =>

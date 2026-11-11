@@ -56,17 +56,18 @@ fn directory_pattern_matches_paths() {
         b"b",
     ];
     let folders: [&[u8]; 5] = [b"src", b"a", b"node_modules", b".hidden", b"b"];
+    let (deepest, name_step) = if cfg!(miri) { (1, 4) } else { (4, 1) };
     for spec in specs {
         for usage in [Usage::Files, Usage::Directories, Usage::Exclude] {
             let prefix_only = usage == Usage::Directories;
             let Some(pattern) = GlobPattern::compile(spec, b"/base", usage, true) else {
                 continue;
             };
-            for below in each_path(&folders, 4) {
+            for below in each_path(&folders, deepest) {
                 for root in [&[&b""[..], b"base"][..], &[b""], &[b"", b"other"]] {
                     let directory: Vec<&[u8]> = root.iter().copied().chain(below.clone()).collect();
                     let entered = pattern.in_directory(&directory);
-                    for name in names {
+                    for name in names.into_iter().step_by(name_step) {
                         let path = PathParts {
                             directory: &directory,
                             name,
@@ -129,8 +130,9 @@ fn matches_in_turn(pattern: &GlobPattern, segments: &[Segment], name: &str) -> b
 
 #[test]
 fn segments_match_in_turn() {
-    let specs = each_text(&["*", "?", "a", "b", "\u{e9}", "K"], 4);
-    let names = each_text(&["a", "b", "\u{e9}", "k"], 3);
+    let (longest_spec, longest_name) = if cfg!(miri) { (2, 1) } else { (4, 3) };
+    let specs = each_text(&["*", "?", "a", "b", "\u{e9}", "K"], longest_spec);
+    let names = each_text(&["a", "b", "\u{e9}", "k"], longest_name);
     for case_sensitive in [true, false] {
         let pattern = GlobPattern {
             components: Vec::new(),

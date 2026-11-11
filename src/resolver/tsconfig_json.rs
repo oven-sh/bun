@@ -271,9 +271,7 @@ impl TSConfigJSON {
         self.experimental_decorators.unwrap_or(false)
     }
 
-    /// Takes from `base`, the config this one extends, every option that this config does not set,
-    /// as TypeScript does. The pattern names every field of `base`, so a new field cannot compile
-    /// until it says how it crosses `extends`.
+    /// Takes every option this config does not set from `base`, the config it extends.
     pub(crate) fn inherit(&mut self, mut base: Box<Self>) {
         let Self {
             abs_path: _,
@@ -293,9 +291,7 @@ impl TSConfigJSON {
         if self.base_url.is_empty() {
             self.base_url = core::mem::take(base_url);
         }
-        // `base_url_for_paths` is set whenever the `paths` key is present in the JSON, even as `{}`.
-        // TypeScript replaces `paths` as a whole, so a config that writes `{}` clears the inherited
-        // ones.
+        // `base_url_for_paths` is set when the `paths` key is present, even as `{}`, which clears them.
         if self.base_url_for_paths.is_empty() {
             self.paths = core::mem::take(paths);
             self.base_url_for_paths = core::mem::take(base_url_for_paths);

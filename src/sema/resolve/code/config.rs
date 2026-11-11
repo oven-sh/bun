@@ -251,8 +251,6 @@ impl ParsedConfig {
         }
     }
 
-    /// The pattern names every field of `parent`, so a new field cannot compile until it says how
-    /// it crosses `extends`.
     fn inherit(&mut self, parent: ParsedConfig) {
         let ParsedConfig {
             extends,

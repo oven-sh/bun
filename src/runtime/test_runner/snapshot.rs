@@ -228,6 +228,8 @@ pub(crate) struct File {
     /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
     /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
     may_hold_entries_of_bun: bool,
+    /// `--update-snapshots` kept an unchecked entry under the key that an older Bun gave its test, so the entry may be that Bun's.
+    kept_a_key_of_bun: bool,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -384,7 +386,8 @@ impl Snapshots {
             self.file_buf = Vec::new();
         }
         let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
+        self._current_file =
+            Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun, kept_a_key_of_bun: false });
         Ok(format)
     }
 
@@ -575,21 +578,24 @@ impl Snapshots {
             .filter(|sequence| matches!(sequence.result, TestResult::Pass | TestResult::Todo))
             .filter_map(|sequence| sequence.test_entry.map(|entry| entry.as_ptr().cast_const()))
             .collect();
-        Self::keep_entries_of_tests(&mut self.values, file.format, &buntest.collection.root_scope, &done);
+        file.kept_a_key_of_bun = Self::keep_entries_of_tests(&mut self.values, file, &buntest.collection.root_scope, &done);
         file.dirty = true;
         self.values.retain(|_, entry| entry.checked || entry.stays);
     }
 
     /// Sets `stays` on the entries of every test under `root` that isn't in `except`.
+    /// Returns whether an unchecked one of them has the key that an older Bun gave such a test.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
-        format: Format,
+        file: &File,
         root: &DescribeScope,
         except: &[*const ExecutionEntry],
-    ) {
+    ) -> bool {
+        let format = file.format;
         let mut except = except.to_vec();
         index_sort::sort_slice_unstable_by(&mut except, |a, b| a.cmp(b));
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut names_of_bun: StringArrayHashMap<()> = StringArrayHashMap::new();
         let mut scopes = vec![root];
         while let Some(scope) = scopes.pop() {
             for entry in &scope.entries {
@@ -599,13 +605,16 @@ impl Snapshots {
                         if except.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
                             let name = full_test_name(test, format.name_separator(), format == Format::Jest);
                             names.insert(&Self::escape_line_breaks(format, name), ());
+                            if file.may_hold_entries_of_bun {
+                                names_of_bun.insert(&full_test_name(test, Format::Bun.name_separator(), false), ());
+                            }
                         }
                     }
                 }
             }
         }
 
-        let separator = format.hint_separator();
+        let mut kept_a_key_of_bun = false;
         for i in 0..values.len() {
             // Keys look like `<test name>[<separator><hint>] <count>`.
             let key = &values.keys()[i];
@@ -614,14 +623,24 @@ impl Snapshots {
                 continue;
             }
             let name = &key[..end];
-            let mut is_of_a_test = names.contains_key(name);
-            let mut from = 0;
-            while let Some(at) = strings::index_of(&name[from..], separator).filter(|_| !is_of_a_test) {
-                is_of_a_test = names.contains_key(&name[..from + at]);
-                from += at + 1;
+            let is_of_a_test = Self::is_name_or_hint_of(&names, format, name);
+            if is_of_a_test && !kept_a_key_of_bun && !names_of_bun.is_empty() && !values.values()[i].checked {
+                kept_a_key_of_bun = Self::is_name_or_hint_of(&names_of_bun, Format::Bun, name);
             }
             values.values_mut()[i].stays = is_of_a_test;
         }
+        kept_a_key_of_bun
+    }
+
+    /// Whether `name` is one of `names`, or one of them with a hint behind it, in the spelling of `format`.
+    fn is_name_or_hint_of(names: &StringArrayHashMap<()>, format: Format, name: &[u8]) -> bool {
+        let mut is_of_a_test = names.contains_key(name);
+        let mut from = 0;
+        while let Some(at) = strings::index_of(&name[from..], format.hint_separator()).filter(|_| !is_of_a_test) {
+            is_of_a_test = names.contains_key(&name[..from + at]);
+            from += at + 1;
+        }
+        is_of_a_test
     }
 
     #[cold]
@@ -739,7 +758,7 @@ impl Snapshots {
             order.insert(at, i);
         }
         // `remove_obsolete` can leave the kept keys in order. One key out of its place keeps them unsorted.
-        if stays_as_it_is && order.len() > 1 && self.keys_are_sorted() {
+        if stays_as_it_is && file.kept_a_key_of_bun && order.len() > 1 && self.keys_are_sorted() {
             order.rotate_right(1);
         }
 

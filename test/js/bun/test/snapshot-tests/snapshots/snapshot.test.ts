@@ -1783,6 +1783,71 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect([updating.exitCode, all.exitCode]).toEqual([0, 0]);
       });
 
+      // Vitest's key of "math" > "subtracts" is `math > subtracts 1`, and of the hint of "rounds" `rounds > half 1`. An
+      // older Bun asked for `math subtracts 1` and `rounds: half 1`, and wrote those entries beside them. No test has
+      // their names, so they go. `fails 1` is an older Bun's key too, but the run has checked that entry. The entries
+      // left are Vitest's own, and no key is put out of its place.
+      test.skipIf(format === "jest")(
+        "a file that --update-snapshots leaves with the runner's entries alone keeps the runner's order",
+        async () => {
+          const ofVitest =
+            "\nexports[`fails 1`] = `1`;\n" +
+            '\nexports[`math > adds 1`] = `\n{\n  "sum": 3,\n}\n`;\n' +
+            '\nexports[`math > subtracts 1`] = `\n{\n  "diff": 1,\n}\n`;\n' +
+            "\nexports[`rounds > half 1`] = `2`;\n" +
+            '\nexports[`text > joins 1`] = `"a-b"`;\n';
+          const ofBun =
+            '\nexports[`math adds 1`] = `\n{\n  "sum": 3,\n}\n`;\n' +
+            '\nexports[`math subtracts 1`] = `\n{\n  "diff": 1,\n}\n`;\n' +
+            "\nexports[`rounds: half 1`] = `2`;\n" +
+            '\nexports[`text joins 1`] = `"a-b"`;\n';
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": `
+              test("fails", () => { expect(1).toMatchSnapshot(); throw new Error("x"); });
+              describe("math", () => {
+                test("adds", () => { expect({ sum: 3 }).toMatchSnapshot(); });
+                test.skip("subtracts", () => { expect({ diff: 1 }).toMatchSnapshot(); });
+              });
+              test.skip("rounds", () => { expect(2).toMatchSnapshot("half"); });
+              describe("text", () => { test("joins", () => { expect("a-b").toMatchSnapshot(); }); });
+            `,
+            "__snapshots__/a.test.js.snap": headers[format] + ofVitest + ofBun,
+          });
+          for (const run of ["first", "second"]) {
+            const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+            expect({ run, snap: snap(dir), exitCode }).toEqual({ run, snap: headers[format] + ofVitest, exitCode: 1 });
+          }
+        },
+      );
+
+      // The first of the two runs leaves the older entry as it is. The second one checks it, and then every entry is
+      // the runner's.
+      test("a file of which --update-snapshots sees a test in the second of two runs only gets the runner's order", async () => {
+        const entry = (key: string, value: string) => "\nexports[`" + key + "`] = `" + value + "`;\n";
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js": `
+            test("a", () => {
+              if ((globalThis.runs = (globalThis.runs ?? 0) + 1) === 1) throw new Error("x");
+              expect(function named() {}).toMatchSnapshot();
+            });
+            test("b", () => { expect(1).toMatchSnapshot(); });
+          `,
+          "__snapshots__/a.test.js.snap":
+            headers[format] + entry("c 1", "1") + entry("a 1", "[Function: named]") + entry("b 1", "1"),
+        });
+        const { pass, fail, exitCode } = await runTests(
+          String(dir),
+          { CI: "false" },
+          "--update-snapshots",
+          "--rerun-each",
+          "2",
+        );
+        expect({ snap: snap(dir), result: [pass, fail, exitCode] }).toEqual({
+          snap: headers[format] + entry("a 1", "[Function]") + entry("b 1", "1"),
+          result: [3, 1, 1],
+        });
+      });
+
       test("a file that holds none of it gets the runner's order in a run that adds entries and sees the others", async () => {
         using dir = tempDir("snapshot-out-of-order", {
           "a.test.js": tests + newTests,

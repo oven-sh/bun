@@ -110,7 +110,8 @@ impl PullMode {
         matches!(self, PullMode::OneRead | PullMode::OneReadLater)
     }
 
-    /// A pull is not answered before it returns, and nothing is read ahead of one.
+    /// A pull is not answered before it returns. On Windows none is: its reads complete through libuv.
+    #[cfg(unix)]
     fn later(self) -> bool {
         matches!(self, PullMode::Later | PullMode::OneReadLater)
     }
@@ -1024,7 +1025,7 @@ impl readable_stream::SourceContext for FileReader {
             return self.end_of_reader();
         }
 
-        // A file has no event loop to answer from.
+        // It skips the read that could answer here. A file has no event loop to answer from.
         #[cfg(unix)]
         let answer_later = self.pull_mode.get().later()
             && self

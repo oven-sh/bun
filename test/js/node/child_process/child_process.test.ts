@@ -1619,8 +1619,9 @@ it.skipIf(isWindows)("child.stdout keeps emitting 'readable' when read(n) drains
 // next pull. Node's child stdio keeps reading (libuv calls back again), the
 // throw is an uncaughtException, and every byte still arrives before 'end'.
 // The first pull is synchronous when the child wrote before the parent
-// listened, and a promise when it did not: both paths must recover.
-it.concurrent.each(["before", "after"])(
+// listened, and a promise when it did not: both paths must recover. On
+// Windows a child's stdout writes block, so it cannot write before it reports.
+it.concurrent.each(isWindows ? ["before"] : ["before", "after"])(
   "child.stdout delivers every byte and 'end' after a 'data' listener throws (listener attached %s the child wrote)",
   async when => {
     const script = `

@@ -125,6 +125,9 @@ class Store {
     return new Store(connection);
   }
 }
+class Cache extends Store {
+  clear(): void {}
+}
 class Query {
   private clauses: string[] = [];
   where(clause: string): this {
@@ -158,6 +161,10 @@ class Level {
     return this.kind;
   }
 }
+abstract class Task {
+  abstract run(): string;
+  cancel(): void {}
+}
 function useStore(store: Store): Store {
   return store;
 }
@@ -181,8 +188,23 @@ interface Http {
   create(): Http;
   interceptors: { request: { use(onRequest: (config: object) => object): number } };
 }
+interface Circle {
+  kind: "circle";
+  area(): number;
+  radius(): number;
+}
+interface Square {
+  kind: "square";
+  area(): number;
+  side(): number;
+}
+interface Batch extends Array<Store> {
+  total: number;
+  retry(): void;
+}
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type Grid = number | Grid[];
+type Tree = (Store | Tree)[];
 const client = { get: (id: number) => String(id), nested: { close: () => true }, retries: 3, started: new Date(0) };
 const api = { pick, parse, isText, nested: { pick }, Store };
 declare const store: Store;
@@ -195,10 +217,18 @@ declare const frozenStores: readonly Store[];
 declare const pair: [Store, number];
 declare const holder: {
   stores: Store[];
+  sparse: (Store | null)[];
+  entry: [Store, number];
+  batch: Batch;
   maybe?: Store;
-  either: Store | Query;
+  either: Store | Query | null;
+  shape: Circle | Square;
+  shapes: (Circle | Square)[];
+  caches: (Store | Cache)[];
+  handler: ((id: number) => string) | ((key: string) => number);
   config: Json;
   grid: Grid;
+  tree: Tree;
   load(): string;
 };
 
@@ -284,6 +314,13 @@ MockedStore.mockImplementation(() => ({ get: jest.fn(), connection: { query: jes
 new MockedStore("not a connection");
 // @ts-expect-error A class isn't callable without `new`.
 MockedStore(connection);
+const MockedTask = jest.mocked(Task);
+const sameTask: typeof Task = MockedTask;
+MockedTask.mockClear();
+MockedTask.prototype.cancel.mockClear();
+MockedTask.mock.instances[0]!.run.mockReturnValue("x");
+// @ts-expect-error An abstract class has no `new`.
+new MockedTask();
 
 // The elements of a mocked array are mocked too.
 jest.mocked(stores).forEach(each => each.get.mockReturnValue("x"));
@@ -294,17 +331,57 @@ jest.mocked(pair)[0].get.mockReturnValue("x");
 expectType(jest.mocked(pair)[1]).is<number>();
 const sameStores: Store[] = jest.mocked(stores);
 const mockedStores: Mocked<Store>[] = jest.mocked(stores);
+// @ts-expect-error A read-only array stays read-only.
+jest.mocked(frozenStores).push(jest.mocked(store));
+jest.mocked(holder.sparse)[0]?.get.mockReturnValue("x");
+jest.mocked(holder.sparse).forEach(each => each?.get.mockReturnValue("x"));
+jest.mocked(holder.batch).retry.mockClear();
+jest.mocked(holder.batch).forEach(each => each.get.mockReturnValue("x"));
+const sameBatch: Batch = jest.mocked(holder.batch);
+
+// So are the elements of an array inside a mocked object.
 jest.mocked(holder).stores[0]!.get.mockReturnValue("x");
+jest.mocked(holder).sparse[0]?.get.mockReturnValue("x");
+jest.mocked(holder).entry[0].get.mockReturnValue("x");
+expectType(jest.mocked(holder).entry[1]).is<number>();
+jest.mocked(holder).batch[0]!.get.mockReturnValue("x");
+jest.mocked(holder).batch.retry.mockClear();
+expectType(jest.mocked(holder).batch.total).is<number>();
+for (const each of jest.mocked(holder).stores) each.get.mockReturnValue("x");
 // @ts-expect-error A callback of an array inside a mocked object receives the elements as `T` types them.
 jest.mocked(holder).stores.forEach(each => each.get.mockReturnValue("x"));
 
-// A member that is a union of object types keeps its type. A recursive type ends.
+// Where a member or an element is a union of object types, only a method that every type of the union has is a mock.
 const sameHolder: typeof holder = jest.mocked(holder);
 jest.mocked(holder).load.mockReturnValue("x");
 jest.mocked(holder).maybe?.get.mockReturnValue("x");
-expectType(jest.mocked(holder).either).is<Store | Query>();
+jest.mocked(holder).shape.area.mockReturnValue(1);
+jest.mocked(holder).shapes[0]!.area.mockReturnValue(1);
+jest.mocked(holder.shapes)[0]!.area.mockReturnValue(1);
+jest.mocked(holder).handler.mockClear();
+const mockedShape = jest.mocked(holder).shape;
+// @ts-expect-error A method that only one type of the union has isn't a mock.
+if (mockedShape.kind === "circle") mockedShape.radius.mockReturnValue(1);
+if ("side" in mockedShape) expectType(mockedShape.kind).is<"square">();
+// @ts-expect-error A callback of an array of a union receives the elements as `T` types them.
+jest.mocked(holder.shapes).forEach(each => each.area.mockReturnValue(1));
+jest.mocked(holder.caches)[0]!.get.mockReturnValue("x");
+// @ts-expect-error `Store | Cache` is a union too, although a `Cache` is a `Store`.
+jest.mocked(holder.caches).forEach(each => each.get.mockReturnValue("x"));
+const mockedEither = jest.mocked(holder).either;
+if (mockedEither instanceof Store) useStore(mockedEither);
+// @ts-expect-error It can still be `null`.
+mockedEither.constructor;
+// The member itself, given to `jest.mocked()`, has the mocks of each type.
+const shape = jest.mocked(holder.shape);
+if (shape.kind === "circle") shape.radius.mockReturnValue(1);
 const either = jest.mocked(holder.either);
 if (either instanceof Store) either.get.mockReturnValue("x");
+
+// A type that refers to itself ends.
+const sameConfig: Json = jest.mocked(holder.config);
+const sameGrid: Grid = jest.mocked(holder.grid);
+const sameTree: Tree = jest.mocked(holder.tree);
 
 // Annotations, casts and writes.
 const annotated: Mocked<Store> = jest.mocked(store);

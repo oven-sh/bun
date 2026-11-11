@@ -799,11 +799,11 @@ describe("@types/bun integration test", () => {
   describe("Mocked", () => {
     // The compiler writes the return type of each function into the declaration file. It can only name what
     // "bun:test" exports, and it reports TS7056 for a recursive type that it has to write out in full.
-    test("a generic function that returns jest.mocked() emits a declaration", async () => {
+    test("a generic function that returns jest.mocked() emits a declaration that types its result", async () => {
       const checkDir = join(TEMP_DIR, "mocked-declaration-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mocked-helpers.ts"];
-      Object.assign(tsconfig.compilerOptions, {
+      const emitTsconfig = structuredClone(sourceTsconfig);
+      emitTsconfig.include = ["mocked-helpers.ts"];
+      Object.assign(emitTsconfig.compilerOptions, {
         typeRoots: [join(BASE_FIXTURE_DIR, "node_modules", "@types")],
         noEmit: false,
         declaration: true,
@@ -811,9 +811,14 @@ describe("@types/bun integration test", () => {
         rootDir: ".",
         outDir: "out",
       });
+      // The second program reads only the declaration file that the first one wrote.
+      const useTsconfig = structuredClone(sourceTsconfig);
+      useTsconfig.include = ["use/use-helpers.ts"];
+      useTsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
       await mkdir(checkDir, { recursive: true });
       await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "tsconfig.json": JSON.stringify(emitTsconfig, null, 2),
+        "tsconfig.use.json": JSON.stringify(useTsconfig, null, 2),
         "mocked-helpers.ts": `import { jest, vi } from "bun:test";
            export function mockedList<T>(items: T[]) {
              return jest.mocked(items);
@@ -824,22 +829,51 @@ describe("@types/bun integration test", () => {
            export function mockedClass<T extends new (...args: any[]) => object>(Class: T) {
              return vi.mocked(Class);
            }`,
+        "use/use-helpers.ts": `import { mockedClass, mockedList, mockedService } from "../out/mocked-helpers";
+           class Store {
+             private rows = new Map<number, string>();
+             get(id: number): string | undefined {
+               return this.rows.get(id);
+             }
+           }
+           declare const stores: Store[];
+           declare const service: { repository: Store; log(message: string): void };
+           const sameStores: Store[] = mockedList(stores);
+           mockedList(stores)[0]!.get.mockReturnValue("x");
+           mockedList(stores).forEach(each => each.get.mockReturnValue("x"));
+           const sameService: typeof service = mockedService(service);
+           mockedService(service).repository.get.mockReturnValue("x");
+           mockedService(service).log.mockClear();
+           const sameClass: typeof Store = mockedClass(Store);
+           mockedClass(Store).mockClear();
+           new (mockedClass(Store))().get.mockReturnValue("x");
+           // The three results aren't \`any\`.
+           // @ts-expect-error
+           mockedList(stores).missing;
+           // @ts-expect-error
+           mockedService(service).missing;
+           // @ts-expect-error
+           mockedClass(Store).missing;`,
       });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      for (const project of ["tsconfig.json", "tsconfig.use.json"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", project],
+          env: bunEnv,
+          cwd: checkDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
-      expect(await Bun.file(join(checkDir, "out", "mocked-helpers.d.ts")).text()).toContain("Mocked<T>");
+        expect({ project, stderr: stderr.trim(), stdout: stdout.trim(), exitCode }).toEqual({
+          project,
+          stderr: "",
+          stdout: "",
+          exitCode: 0,
+        });
+      }
     });
   });
 

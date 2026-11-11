@@ -20,11 +20,12 @@ declare module "bun:test" {
    * `T` with every nested function and class typed as a {@link Mock}. It's still a `T`, because `jest.mocked(value)`
    * returns `value` itself.
    *
-   * Below the top level, a member or an array element whose type is a union of object types keeps that type.
+   * Where a member or an array element is a union of object types, only a method that every type of the union has is
+   * a {@link Mock}.
    */
   export type Mocked<T> = T extends readonly unknown[]
     ? // The mocked elements come first, so that a callback of `forEach()` or `map()` receives them.
-      { [K in keyof T]: [T[K]] extends [object] ? Mocked<T[K]> : T[K] } & T
+      __internal.MockedArray<T> & T & __internal.MocksOf<T>
     : T extends object
       ? // `T` comes first, so that a call uses the signatures of `T`: its overloads, type parameters and `this`.
         T & __internal.MocksOf<T>
@@ -36,7 +37,7 @@ declare module "bun:test" {
     type MocksOf<T> = T extends { _isMockFunction: true }
       ? // A mock stays as it is, so that mocking a mocked value again adds nothing.
         T
-      : T extends new (...args: any) => any
+      : T extends abstract new (...args: any) => any
         ? // TypeScript treats a constructor type whose only parameter is `...args: any[]` as a mixin: `new` keeps the
           // signatures of `T`, and this instance type is added to what each of them returns. `mock.instances` holds
           // what `new` returned.
@@ -51,15 +52,34 @@ declare module "bun:test" {
         : T extends (...args: any[]) => any
           ? Mock<T> & { [K in keyof T]: MocksOfMember<T[K]> }
           : T extends readonly unknown[]
-            ? { [K in keyof T]: MocksOfElement<T[K]> }
+            ? // The elements, and the members that `Array` doesn't have. The `as` makes this an object type. If it
+              // were an array type, TypeScript would work out the element type at once, which doesn't end for a type
+              // like `type Tree = (Leaf | Tree)[]`. `Iterable` is for `for...of`.
+              {
+                [K in keyof T as K extends Exclude<keyof unknown[], number> ? never : K]: MocksOfMember<T[K]>;
+              } & Iterable<MocksOfMember<T[number]>>
             : T extends object
               ? { [K in keyof T]: MocksOfMember<T[K]> }
               : T;
-    // A union of object types is left as it is. Intersected with the member of `T`, a union of N mocked types would
-    // make N * N types.
-    type MocksOfMember<V> = IsUnion<Extract<V, object>> extends true ? V : MocksOf<V>;
-    // So is an element that isn't one object type, which also ends a type like `type Json = string | Json[]`.
-    type MocksOfElement<E> = [E] extends [object] ? (IsUnion<E> extends true ? E : MocksOf<E>) : E;
+    // What a member or an element adds to its own type.
+    type MocksOfMember<V> =
+      IsUnion<Extract<V, object>> extends false ? MocksOf<V> : MocksOfUnion<Extract<V, object>> | Exclude<V, object>;
+    // One type for a union of object types: a `Mock` for each method that all of them have. A union of N mocked
+    // types, intersected with the member of `T`, would make N * N types. `Keys` is a parameter, because TypeScript
+    // maps each type of a union by itself if a mapped type names `keyof U`.
+    type MocksOfUnion<U, Keys extends keyof U = keyof U> = [U] extends [(...args: any[]) => any]
+      ? Mock<Extract<U, (...args: any[]) => any>>
+      : {
+          [K in Keys as U[K] extends (...args: any[]) => any ? K : never]: Mock<Extract<U[K], (...args: any[]) => any>>;
+        };
+    // An array type that is written with `[]`: TypeScript works out its element type only when that is used.
+    type MockedArray<T extends readonly unknown[]> = T extends unknown[]
+      ? MockedElement<T[number]>[]
+      : readonly MockedElement<T[number]>[];
+    // An element that is a union of object types stays as it is: with the elements of `T`, a union of mocked types
+    // would make N * N types too. `MocksOf<T>` has its mocks.
+    type MockedElement<E> = IsUnion<Extract<E, object>> extends false ? Mocked<E> : E;
+    // `boolean` for a union that has a type to which all its other types are assignable, such as `Base | Derived`.
     type IsUnion<T, Whole = T> = T extends unknown ? ([Whole] extends [T] ? false : true) : never;
   }
 

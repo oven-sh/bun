@@ -12,6 +12,10 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { reportUncaughtException } = require("internal/shared");
+const EventEmitter = require("node:events");
+
+const kStopped = Symbol("stopped");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -55,7 +59,11 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options: $Node.ReadableOptions,
+  uncaughtOnListenerThrow: boolean = false,
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
@@ -64,6 +72,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
+  if (uncaughtOnListenerThrow) stream.emit = emitAndCatch;
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -180,6 +189,21 @@ function read(this: NativeReadable, maxToRead: number) {
     );
   } else {
     handleResult(this, result, chunk, this[kCloseState][0]);
+  }
+}
+
+// PROTOTYPE: Node calls the 'data' listeners of child stdout and stderr from the native read callback, so a throw is
+// an uncaughtException and the stream reads on.
+function emitAndCatch(this: NativeReadable, event: string | symbol, chunk?: unknown) {
+  if (this[kStopped]) return false;
+  if (event !== "data") return EventEmitter.prototype.emit.$apply(this, arguments);
+  try {
+    return EventEmitter.prototype.emit.$call(this, "data", chunk);
+  } catch (e) {
+    const handled = process.listenerCount("uncaughtException") > 0; // PROTOTYPE: the native report has to return this
+    if (!handled) this[kStopped] = true;
+    reportUncaughtException(e);
+    return true;
   }
 }
 

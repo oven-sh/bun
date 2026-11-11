@@ -6,9 +6,10 @@ import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-// One realm. b.test.js loads a module, c.test.js mocks it behind that load, d.test.js reads it again. `bun test` lays the mock over the loaded module: it keeps its names,
-// and its body does not run again. Where each test file is a part of its own over the layer below, the mock is taken as ahead of the load: c sees the names of the mock
-// alone, and the body runs a second time for d. As one program, and over two layers that hold all test files in one part, the run is as plain Bun's.
+// One realm. b.test.js loads a module, c.test.js mocks it behind that load, d.test.js reads it again. `bun test` takes the hoisted mock as ahead of the load, as it is
+// where c.test.js runs alone: c sees the names of the mock alone, the module of b waits aside, and its body does not run again for d. A compiled module stays loaded
+// for the next test file, so `bun test --aot` lays the mock over it, and it keeps its names. Where each test file is a part of its own over the layer below, the body
+// runs a second time for d.
 const real = (file: string) => `
 import { test } from "bun:test";
 import * as all from "./dep.js";
@@ -43,7 +44,7 @@ test("up to the file that mocks, a part a file is as plain Bun", async () => {
     seen: [
       "SEEN dep.js runs",
       "SEEN b default,flag,plain real real real",
-      "SEEN c default,flag,plain mock behind the real one mock behind the real one",
+      "SEEN c flag mock behind the real one mock behind the real one",
       "SEEN d default,flag,plain real real real",
     ],
     exitCode: 0,
@@ -52,7 +53,8 @@ test("up to the file that mocks, a part a file is as plain Bun", async () => {
   expect(parts.exitCode).toBe(0);
 });
 
-test("the mock behind the load, and the file behind it, are as plain Bun", async () => {
+test("the mock behind the load is laid over the module, and the file behind it is as plain Bun", async () => {
   const [plain, parts] = await both();
-  expect(parts).toEqual(plain);
+  const laidOver = (line: string) => line.replace("SEEN c flag ", "SEEN c default,flag,plain ");
+  expect(parts).toEqual({ ...plain, seen: plain.seen.map(laidOver) });
 });

@@ -47,7 +47,6 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > require() of a module that imports the mock
 test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals after mock.module mocks a loaded module and one of its imports
 test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals after vi.doMock mocks a loaded module and one of its imports
-test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals after vi.mock mocks a loaded module and one of its imports
 test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > what vi.importActual() loaded before the module was mocked ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > what vi.importActual() loaded before the module was mocked ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first made is the last to patch

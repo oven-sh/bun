@@ -517,6 +517,8 @@ A test file can mock a module that the preload script already mocked. With `vi.m
 
 Top-level `vi.mock()`, `vi.unmock()`, `vi.hoisted()`, `jest.mock()` and `jest.unmock()` calls are hoisted above the file's imports, as in Vitest and Jest. This way, a module is mocked before the file or anything it imports loads it.
 
+Without `--isolate`, a module that an earlier test file loaded is still loaded when the next file starts. A hoisted `vi.mock()` or `jest.mock()` call treats it as not loaded, so the file gets the same mock as when it runs alone. The loaded module comes back when the mock ends, and isn't evaluated again.
+
 A hoisted factory can't use the file's top-level variables, because they aren't initialized yet. Declare what the factory needs with `vi.hoisted()`. A `const` or `let` that only holds strings, numbers or other primitive literals is hoisted along with the calls, as in Jest.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
@@ -816,7 +818,7 @@ Module mocks interact with both ESM and CommonJS module caches.
 
 ### Lazy Evaluation
 
-Bun calls the factory at the next `import` or `require()` that gets the mock. If the mock updates a loaded module in place, Bun calls it when you mock the module instead. `mock.module()`, `jest.mock()` and `jest.doMock()` do that with a loaded module, and so do some `vi.mock()` and `vi.doMock()` calls (see [Differences from Vitest](#differences-from-vitest)).
+Bun calls the factory at the next `import` or `require()` that gets the mock. If the mock updates a loaded module in place, Bun calls it when you mock the module instead. `mock.module()` and `jest.doMock()` do that with a loaded module. So does `jest.mock()`, except a hoisted call for a module that only an earlier test file loaded (see "Hoisting & Preloading" above). Some `vi.mock()` and `vi.doMock()` calls do it too (see [Differences from Vitest](#differences-from-vitest)).
 
 ### Path Resolution
 

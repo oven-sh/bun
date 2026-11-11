@@ -12,9 +12,16 @@ const laterConst = "factory can read a later const though an earlier file or a p
 
 // A case that comes to agree turns this test red: take it out of its list.
 const differs = {
-  "a compiled module stays loaded for the next test file": ["jest", "vi"].flatMap(api =>
-    isolations.map(flags => `errors > a ${api}.mock() ${laterConst}: ${flags}`),
-  ),
+  "a compiled module stays loaded for the next test file": ["jest", "vi"].flatMap(api => [
+    ...isolations.map(flags => `errors > a ${api}.mock() ${laterConst}: ${flags}`),
+    ...[
+      `is the module, as when the file runs alone: ["1.test.ts","2.test.ts"]`,
+      `is the module, as when the file runs alone: ["--rerun-each=2","1.test.ts","2.test.ts"]`,
+      "calls the factory when the module is imported",
+      "runs no module once more, and the next file gets the module back: one call",
+      "runs no module once more, and the next file gets the module back: two calls",
+    ].map(name => `a module that only an earlier test file loaded > ${api}.mock() > ${name}`),
+  ]),
   "the transpiler's cache holds no compiled code": isolations.map(
     flags => `modes > a file restored from the transpiler cache: ${flags}`,
   ),
@@ -37,6 +44,7 @@ const sections = {
   "a top-level variable in a factory of vi.mock": 18,
   "errors": 3,
   "source locations": 4,
+  "a module that only an earlier test file loaded": 6,
 };
 
 test.each(Object.entries(sections))(
@@ -67,6 +75,6 @@ test.each(Object.entries(sections))(
     expect(named("fail")).toEqual(differing.sort());
     expect(named("pass")).toHaveLength(passing);
     // A section that is not listed here would run in no case.
-    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(122 + 12 - passing - differing.length);
+    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(128 + 22 - passing - differing.length);
   },
 );

@@ -1167,3 +1167,135 @@ describe.concurrent("source locations", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Without --isolate the module is still loaded when the next file starts. A hoisted call runs before the imports of its file, so
+// nothing of that file holds the module, and the mock takes its place as it does when the file runs alone.
+describe.concurrent("a module that only an earlier test file loaded", () => {
+  const earlier = `
+    import { test, expect } from "bun:test";
+    import { captured } from "./side";
+    test("an earlier file loads the module", () => expect(captured).toBe("real"));
+  `;
+
+  describe.each(["vi", "jest"])("%s.mock()", api => {
+    const files = {
+      "1.test.ts": earlier,
+      "2.test.ts": `
+        import { test, vi, jest } from "bun:test";
+        import * as mod from "./mod";
+        import { captured } from "./side";
+        const state = vi.hoisted(() => ({ value: "first" }));
+        ${api}.mock("./mod", () => ({
+          get value() {
+            return state.value;
+          },
+          added: "added",
+        }));
+        test("reads the mock", () => {
+          const read = [mod.value, captured];
+          state.value = "second";
+          mod.added = "written";
+          console.log(JSON.stringify([...read, mod.value, Object.keys(mod).sort(), mod.added]));
+        });
+      `,
+    };
+    // A getter is read at each use, a name that only the factory has is there, and a write goes to the factory's object.
+    const asAlone = ["first", "first", "second", ["added", "value"], "written"];
+
+    test.each([[["2.test.ts"]], [["1.test.ts", "2.test.ts"]], [["--rerun-each=2", "1.test.ts", "2.test.ts"]]])(
+      "is the module, as when the file runs alone: %j",
+      async args => {
+        expect(await events(files, args)).toEqual(args[0].startsWith("--") ? [asAlone, asAlone] : [asAlone]);
+      },
+    );
+
+    test("calls the factory when the module is imported", async () => {
+      const lines = await events(
+        {
+          "1.test.ts": earlier,
+          "2.test.ts": `
+            import { test, vi, jest } from "bun:test";
+            import { value } from "./mod";
+            vi.hoisted(() => void (globalThis.events = []));
+            ${api}.mock("./mod", () => (events.push("factory"), { value: "mocked" }));
+            vi.hoisted(() => void events.push("after the call"));
+            events.push(value);
+            ${print}
+          `,
+        },
+        ["1.test.ts", "2.test.ts"],
+      );
+      expect(lines).toEqual([["after the call", "factory", "mocked"]]);
+    });
+
+    test.each([
+      ["one call", "", ["mocked", "real"]],
+      // The second call ends the first mock, and sets the module aside again.
+      ["two calls", `${api}.mock("./mod", () => ({ value: "mocked again" }));`, ["mocked again", "real"]],
+    ])("runs no module once more, and the next file gets the module back: %s", async (_, again, seen) => {
+      const lines = await events(
+        {
+          "1.test.ts": earlier,
+          "2.test.ts": `
+            import { test, expect, vi, jest } from "bun:test";
+            import { captured } from "./side";
+            ${api}.mock("./mod", () => ({ value: "mocked" }));
+            ${again}
+            test("the original is the one that the earlier file loaded", async () => {
+              expect([captured, (await vi.importActual("./mod")).value]).toEqual(${JSON.stringify(seen)});
+            });
+          `,
+          "3.test.ts": `
+            import { test } from "bun:test";
+            import { captured } from "./side";
+            events.push(captured);
+            ${print}
+          `,
+        },
+        ["1.test.ts", "2.test.ts", "3.test.ts"],
+      );
+      expect(lines).toEqual([["load mod", "load side", "load side", "load side", "real"]]);
+    });
+  });
+
+  // The file holds the module in each of these, so only an update in place reaches what the file has.
+  test.each([
+    [
+      "vi.mock() in a test",
+      `import { value } from "./mod"; const read = () => value;`,
+      `vi.mock("./mod", () => ({ value: "mocked" }));`,
+    ],
+    [
+      "mock.module() at the top of the file",
+      `import { value } from "./mod"; mock.module("./mod", () => ({ value: "mocked" })); const read = () => value;`,
+      ``,
+    ],
+    [
+      "vi.mock() at the top of a module that the file imports",
+      `import { value } from "./mod"; import "./mocks"; const read = () => value;`,
+      ``,
+    ],
+    [
+      "vi.mock() below a vi.hoisted() that has imported the module",
+      `const held = await vi.hoisted(() => import("./mod")); vi.mock("./mod", () => ({ value: "mocked" })); const read = () => held.value;`,
+      ``,
+    ],
+  ])("still updates the loaded module in place: %s", async (_, top, inTest) => {
+    const lines = await events(
+      {
+        "1.test.ts": earlier,
+        "mocks.ts": `import { vi } from "bun:test"; vi.mock("./mod", () => ({ value: "mocked" }));`,
+        "2.test.ts": `
+          import { test, vi, mock } from "bun:test";
+          ${top}
+          test("reads the mock through what the file holds", async () => {
+            ${inTest}
+            console.log(JSON.stringify([read(), (await import("./mod")).value]));
+          });
+        `,
+      },
+      ["1.test.ts", "2.test.ts"],
+    );
+    expect(lines).toEqual([["mocked", "mocked"]]);
+  });
+});

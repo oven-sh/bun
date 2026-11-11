@@ -84,6 +84,16 @@ test/cli/test/test-changed.test.ts: bun test --changed --watch > trigger file pa
 test/cli/test/test-environment.test.ts: test environment > without --isolate > switching environments works even if a file leaves builtins patched
 test/cli/test/test-shard.test.ts: --timings > --parallel with --timings cuts chunks by duration and dispatches each chunk slowest-first
 test/cli/test/test-shard.test.ts: --timings > --shard with --timings cuts path-sorted files into runs of equal total time
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > jest.mock() > calls the factory when the module is imported
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > jest.mock() > is the module, as when the file runs alone: ["--rerun-each=2","1.test.ts","2.test.ts"]
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > jest.mock() > is the module, as when the file runs alone: ["1.test.ts","2.test.ts"]
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > jest.mock() > runs no module once more, and the next file gets the module back: one call
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > jest.mock() > runs no module once more, and the next file gets the module back: two calls
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > vi.mock() > calls the factory when the module is imported
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > vi.mock() > is the module, as when the file runs alone: ["--rerun-each=2","1.test.ts","2.test.ts"]
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > vi.mock() > is the module, as when the file runs alone: ["1.test.ts","2.test.ts"]
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > vi.mock() > runs no module once more, and the next file gets the module back: one call
+test/js/bun/test/mock/mock-hoist.test.ts: a module that only an earlier test file loaded > vi.mock() > runs no module once more, and the next file gets the module back: two calls
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate"]
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: []

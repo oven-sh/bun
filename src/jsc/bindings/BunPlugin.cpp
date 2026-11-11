@@ -3136,6 +3136,8 @@ struct ModulesToEvict {
     Vector<String> packagesToBringBack;
     // Packages that vi.mock() is about to mock.
     Vector<String> packagesSetAside;
+    // What jest.mock() set aside and no longer mocks. Its importers in node_modules got the mock too, and go with it.
+    Vector<String> modulesToBringBack;
     bool onlyImportersFromEarlierTestFiles { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
@@ -3285,7 +3287,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     auto& plugins = globalObject->onLoadPlugins;
     Vector<String>& keys = evict.modules;
     keys.removeAllMatching([&](const String& key) { return plugins.modulesToEvictOnceLoaded.contains(key); });
-    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled && !evict.endsMockOverCompiledFileThatHadRun)
+    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && evict.modulesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled && !evict.endsMockOverCompiledFileThatHadRun)
         return;
 
     auto& vm = JSC::getVM(globalObject);
@@ -3531,11 +3533,13 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 mock->originalCommonJSExports.clear();
         }
     }
-    for (auto& package : evict.packagesToBringBack) {
-        if (stay.contains(package))
-            continue;
-        moveLoadedModule(globalObject, originalModuleKey(package), package);
-        RETURN_IF_EXCEPTION(scope, );
+    for (auto* modules : { &evict.packagesToBringBack, &evict.modulesToBringBack }) {
+        for (auto& module : *modules) {
+            if (stay.contains(module))
+                continue;
+            moveLoadedModule(globalObject, originalModuleKey(module), module);
+            RETURN_IF_EXCEPTION(scope, );
+        }
     }
     plugins.modulesToEvictOnceLoaded = WTF::move(stay);
 
@@ -3772,8 +3776,10 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     }
 #endif
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
-    if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
+    if (mock->isOfVitest() && (mock->hasSetLoadedModuleAside || isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
+    else if (mock->hasSetLoadedModuleAside)
+        evict.modulesToBringBack.append(specifier);
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
     if (auto* patched = mock->patchedNamespace.get(); patched && saved) {
@@ -4124,6 +4130,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
 #endif
     }
     return JSValue::encode(jsUndefined());
+}
+
+// Whether the code that calls is the body of the test file that runs, before the file has imported a module. `bun test` hoists vi.mock() and
+// jest.mock() above the imports of a file and makes `await import()` of those imports, so the body waits at the first of them.
+__attribute__((minsize)) static bool isCalledAheadOfImportsOfTestFile(Zig::GlobalObject* globalObject, const String& caller)
+{
+    BunString callerKey = Bun::toString(caller);
+    if (!Bun__VM__isMainModule(globalObject->bunVM(), &callerKey))
+        return false;
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), caller));
+    auto* testFile = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+    if (!testFile || testFile->status() != JSC::CyclicModuleRecord::Status::Evaluating)
+        return false;
+    for (auto& imported : testFile->loadedModules().values()) {
+        if (!isBuiltinModuleKey(imported.m_module->moduleKey().string()))
+            return false;
+    }
+    return true;
 }
 
 // Whether a module that Vitest doesn't externalize is linked to `record` and has yet to run. `running` is the one that asks.
@@ -5428,8 +5452,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool isKeyOfPreviousMockEmpty = previous && !previous->isUnderActualKey && fileUnderPreviousMock && JSC::AOT::wasActiveMockEntryRemoved(globalObject, *fileUnderPreviousMock);
 #endif
     bool wasLoadedByImportActual = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier);
-    bool staysTheOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile);
-    bool leavesLoadedModuleAlone = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!loadedByTestFile || staysTheOriginal || isDoMock);
+    // Nor does a hoisted vi.mock() or jest.mock() patch what only an earlier test file left loaded. The call runs ahead of the imports of its
+    // test file, so nothing of that file holds the module yet: the file gets the mock that it gets when it runs alone, and the module waits
+    // aside until the mock ends. An earlier such call of the file has set it aside already.
+    bool isLoadedOrSetAside = previous ? previous->hasSetLoadedModuleAside && !previous->isFromPreload : loaded.esmNamespace || loaded.commonJSModule;
+    bool isLeftByEarlierTestFile = mock->isHoisted() && Bun::isBunTest && !mock->isFromPreload && !vm.hasCompiledCode() && !isBuiltinModuleKey(specifier) && isLoadedOrSetAside
+        && loadedByTestFile && loadedByTestFile != globalObject->onLoadPlugins.testFile && isCalledAheadOfImportsOfTestFile(globalObject, callerPath(vm, callframe));
+    bool staysTheOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile) || isLeftByEarlierTestFile;
+    bool leavesLoadedModuleAlone = Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (isLeftByEarlierTestFile || (mock->isOfVitest() && (!loadedByTestFile || staysTheOriginal || isDoMock)));
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
     if (leavesLoadedModuleAlone && loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         leavesLoadedModuleAlone = false;
@@ -5487,7 +5517,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             evict.onlyImportersFromEarlierTestFiles = true;
             evict.patchedESModules.append(specifier);
             evict.patchedCommonJSModules.append(specifier);
-            evict.packagesSetAside.append(specifier);
+            // jest.mock() mocks a module for its importers in node_modules too.
+            if (mock->isOfVitest())
+                evict.packagesSetAside.append(specifier);
             evictModulesAndTheirImporters(globalObject, WTF::move(evict));
             RETURN_IF_EXCEPTION(scope, {});
         }

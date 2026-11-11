@@ -1,0 +1,1 @@
+"SAID b second:second | second:second:added" | "SAID b second:second | real:real:undefined": `bun test` sets aside what only an earlier test file loaded when a hoisted jest.mock() mocks it, and loads its importers again, as when the file runs alone; a compiled module stays loaded for the next test file, and the package that imports it keeps what it got

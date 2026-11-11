@@ -90,8 +90,8 @@ const USE = String.raw`\*{0,2}\s*\1`;
 const CMP1 = String.raw`(?:${USE}\s*==\s*${BYTE}|${BYTE}\s*==\s*${USE}|matches!\(\s*${USE}\s*,\s*${BYTE}(?:\s*\|\s*${BYTE})*\s*\))`;
 const BODY_EQ = String.raw`\s*(?:${CMP1})(?:\s*\|\|\s*${CMP1})*\s*\)`;
 const BODY_NE = String.raw`\s*${USE}\s*!=\s*${BYTE}\s*\)`;
-// The count that `splitn` / `rsplitn` take before the closure.
-const COUNT = String.raw`(?:[^,()|]+,\s*)?`;
+// The count that `splitn` / `rsplitn` take before the closure: `2`, `n + 1`, `parts.len()`.
+const COUNT = String.raw`(?:(?:[^,()|]|\([^()]*\))+,\s*)?`;
 
 // Every slice method named `split*` or `rsplit*`. No capturing group may stand
 // before PARAM: USE reads the closure's name as `\1`.
@@ -228,6 +228,7 @@ test("every slice split method handed a byte-literal closure is reported, with i
     [String.raw`name.rsplit(|&it| it == b'/' || it == b'\\')`]: ["last_index_of_char last_index_of_any rsplit"],
     "s.splitn(2, |&c| c == b'@')": ["split_once_char index_of_any"],
     "s.rsplitn(3, |&byte| byte == b':')": ["rsplit_once_char last_index_of_any"],
+    "s.splitn(parts.len(), |&b| b == b'/')": ["split_once_char index_of_any"],
     [String.raw`s.split_inclusive(|b| matches!(*b, b'\n'))`]: ["index_of_char_usize index_of_any replace_owned"],
     // A method with no row in SPLIT_HINTS.
     "s.rsplit_mut(|b| *b == b'/')": ["index_of_char_usize last_index_of_char index_of_any last_index_of_any"],

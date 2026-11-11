@@ -38,8 +38,7 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) is_mdx: bool,
     /// How many columns the current node is indented by.
     pub(crate) indentation: usize,
-    /// The spaces that `print_list_item` puts before a nested list, for `print_list`. They count toward the
-    /// indentation that makes a marker indented code.
+    /// The spaces that `print_list_item` puts before a nested list, for `print_list`.
     pub(crate) alignment_before_list: usize,
     /// The current node is in a reference whose label is its text, which has to stay unchanged.
     pub(crate) is_in_label: bool,
@@ -2241,9 +2240,8 @@ impl<'a> Printer<'a, '_> {
             };
             index += 1;
             let node = printer.node(item)?;
-            // The content of an item that starts with indented code begins one space after the marker, and every
-            // further space is part of the code (CommonMark 5.2, rule 2). Prettier pads the prefix of such an item
-            // like the others: `100.  ` at a tab width of 2, so its code gains a space.
+            // Such an item's content starts one space after the marker, and the rest is code (CommonMark 5.2, rule 2).
+            // Prettier pads its marker like the others' (`100.  `), which adds a space to the code.
             let starts_with_indented_code =
                 is_indented_code(printer.original, printer.tree, node.first_child);
             if (list.is_aligned || (printer.is_mdx && list.checked != 0))
@@ -2258,12 +2256,6 @@ impl<'a> Printer<'a, '_> {
                 );
             }
             if prefix.len() < min_indent && !printer.is_mdx {
-                // Prettier meets it with trailing spaces first (`1.        x`), which are code for such an item. It
-                // gets leading spaces only, so its marker can stand right of the others: at most three together with
-                // the spaces before a nested list, since four make the marker indented code. Only the last item's
-                // content column decides whether the code after the list joins it. If three cannot reach it, because
-                // renumbering made the marker narrower, the last item keeps its number as written: that marker was
-                // wide enough.
                 let leading = match starts_with_indented_code {
                     false => {
                         prefix.truncate(prefix.trim_ascii_end().len());
@@ -2271,7 +2263,11 @@ impl<'a> Printer<'a, '_> {
                         prefix.resize(prefix.len() + trailing, b' ');
                         (min_indent - prefix.len()).min(3)
                     }
+                    // Prettier's trailing spaces (`1.        x`) would be code here, so the marker gets leading
+                    // spaces only: at most three with those before a nested list, since four make it indented code.
                     true => {
+                        // Only the last item decides whether the code after the list joins it. If three cannot reach
+                        // it because the marker got narrower, the number as written is wide enough.
                         if node.next == NONE && prefix.len() + 3 < min_indent {
                             let digits = ordered_item_digits(printer.original, printer.tree, item);
                             prefix

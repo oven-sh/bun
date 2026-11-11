@@ -3643,3 +3643,48 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
+
+// https://github.com/oven-sh/bun/issues/47834
+it("write after peer FIN emits 'error' and closes with hadError true", async () => {
+  const server = createServer(peer => {
+    peer.on("error", () => {});
+    setTimeout(() => peer.destroy(), 50);
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const socket = connect(port, "127.0.0.1");
+    await once(socket, "connect");
+
+    let errorEvent: any = null;
+    let closeHadError: boolean | null = null;
+
+    socket.on("error", err => {
+      errorEvent = err;
+    });
+    socket.on("close", hadError => {
+      closeHadError = hadError;
+    });
+
+    await once(socket, "end");
+
+    let callbackError: any = null;
+    const wrote = socket.write(new Uint8Array(64), err => {
+      callbackError = err;
+    });
+
+    expect(wrote).toBe(false);
+    expect(callbackError?.code).toBe("EPIPE");
+
+    await expect(once(socket, "drain")).rejects.toThrow();
+
+    expect(errorEvent).not.toBeNull();
+    expect(errorEvent.code).toBe("EPIPE");
+    expect(closeHadError).toBe(true);
+
+    socket.destroy();
+  } finally {
+    server.close();
+  }
+});

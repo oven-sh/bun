@@ -1489,12 +1489,54 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
     expect(exitCode).toBe(0);
   });
 
+  // Under `describe("")` each format has its own key: Jest keeps the empty name, Vitest joins with " > ", Bun with a space.
+  const nested = (afterTheSnapshots = "", options = "") => `
+    describe("outer", () => {
+      describe("", () => {
+        test("inner", () => {
+          let message;
+          try { JSON.parse("{"); } catch (error) { message = error.message; }
+          expect(message).toMatchSnapshot();
+          expect(() => JSON.parse("{")).toThrowErrorMatchingSnapshot();
+          expect({ f: function named() {}, message }).toMatchSnapshot("hint");
+          ${afterTheSnapshots}
+        }${options});
+      });
+    });
+  `;
+  // A snapshot can hold the text of an engine. Vitest and Jest wrote V8's, and Bun gives JavaScriptCore's.
+  const ofV8 = "Expected property name or '}' in JSON at position 1 (line 1 column 2)";
+  let ofJSC = "";
+  try {
+    JSON.parse("{");
+  } catch (error) {
+    ofJSC = (error as Error).message;
+  }
+  const entry = (key: string, value: string) => `\nexports[\`${key}\`] = \`${value}\`;\n`;
+  const object = (f: string, message: string) => `\n{\n  "f": ${f},\n  "message": "${message}",\n}\n`;
+  // The entries of `nested`: what the runner wrote, in its order, and what an older Bun appended beside them.
+  const ofRunner = (format: "jest" | "vitest", message: string) =>
+    format === "vitest"
+      ? entry("outer > inner > hint 1", object("[Function]", message)) +
+        entry("outer > inner 1", `"${message}"`) +
+        entry("outer > inner 2", `[SyntaxError: ${message}]`)
+      : entry("outer  inner 1", `"${message}"`) +
+        entry("outer  inner 2", `"${message}"`) +
+        entry("outer  inner: hint 1", object("[Function]", message));
+  const ofBun = (message: string) =>
+    entry("outer inner 1", `"${message}"`) +
+    entry("outer inner 2", `"${message}"`) +
+    entry("outer inner: hint 1", object("[Function: named]", message));
+
   describe.each(["jest", "vitest"] as const)(
     "what Bun used to append to a file of %s, with its keys and its way of printing",
     format => {
       const old = '\nexports[`z old 1`] = `\n{\n  "a": 1,\n}\n`;\n';
       const appendedTo = headers[format] + old + entries.bun;
       const tests = body + `test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });`;
+      // The runner never read Bun's keys and an older Bun never read the runner's, so a snapshot can have an entry of each.
+      const beside = headers[format] + ofRunner(format, ofV8) + old + ofBun(ofJSC);
+      const zOld = `test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });`;
 
       test.each(["true", "false"])("still passes, and stays as it is (CI: %s)", async CI => {
         using dir = tempDir("snapshot-appended-to", {
@@ -1843,6 +1885,98 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(snap(dir)).toBe(sorted);
         expect(exitCode).toBe(1);
       });
+
+      test.each(["true", "false"])(
+        "still passes beside the runner's entry for the same snapshot, which does not match under Bun (CI: %s)",
+        async CI => {
+          using dir = tempDir("snapshot-beside", { "a.test.js": nested() + zOld, "__snapshots__/a.test.js.snap": beside });
+          const { pass, stderr, exitCode } = await runTests(String(dir), { CI });
+          expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+          expect(stderr).toContain(" 4 snapshots, ");
+          expect(snap(dir)).toBe(beside);
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test.each([
+        ["a second attempt", "let attempts = 0;", "if (++attempts === 1) throw new Error('once more');", ", { retry: 1 }"],
+        ["a repeat", "", "", ", { repeats: 1 }"],
+      ])(
+        "still passes beside the runner's entry in %s, and in a second run of the file",
+        async (_, before, afterTheSnapshots, options) => {
+          using dir = tempDir("snapshot-beside", {
+            "a.test.js": before + nested(afterTheSnapshots, options) + zOld,
+            "__snapshots__/a.test.js.snap": beside,
+          });
+          const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" }, "--rerun-each=2");
+          expect({ pass, fail, stderr: fail ? stderr : "" }).toEqual({ pass: 4, fail: 0, stderr: "" });
+          expect(snap(dir)).toBe(beside);
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test("still passes beside the runner's entry of a test that has a line break in its name", async () => {
+        // Jest spells the line break of a name as `\n`. Vitest and an older Bun kept the character.
+        const keyOfRunner = format === "vitest" ? "outer > in\nner 1" : "outer in\\\\nner 1";
+        const file = headers[format] + entry(keyOfRunner, '"other"') + old + entry("outer in\nner 1", '"same"');
+        using dir = tempDir("snapshot-beside", {
+          "a.test.js": `describe("outer", () => { test("in\\nner", () => { expect("same").toMatchSnapshot(); }); });` + zOld,
+          "__snapshots__/a.test.js.snap": file,
+        });
+        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+        expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+        expect(snap(dir)).toBe(file);
+        expect(exitCode).toBe(0);
+      });
+
+      test("passes by the runner's entry where that one matches, whatever Bun's entry holds", async () => {
+        const besideOther = headers[format] + ofRunner(format, ofJSC) + old + ofBun("another value");
+        using dir = tempDir("snapshot-beside", { "a.test.js": nested() + zOld, "__snapshots__/a.test.js.snap": besideOther });
+        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+        expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+        expect(snap(dir)).toBe(besideOther);
+        expect(exitCode).toBe(0);
+      });
+
+      test("still fails beside the runner's entry when the value is another, and shows the runner's entry", async () => {
+        using dir = tempDir("snapshot-beside", {
+          "a.test.js": (nested() + zOld).replace("expect(message).toMatchSnapshot()", 'expect(message + "!").toMatchSnapshot()'),
+          "__snapshots__/a.test.js.snap": beside,
+        });
+        const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+        expect({ pass, fail }).toEqual({ pass: 1, fail: 1 });
+        expect(stderr).toContain(`Expected: "${ofV8}"\nReceived: "${ofJSC}!"`);
+        expect(snap(dir)).toBe(beside);
+        expect(exitCode).toBe(1);
+      });
+
+      test("--update-snapshots keeps the runner's entry of the two, with what the test gives now", async () => {
+        using dir = tempDir("snapshot-beside", { "a.test.js": nested() + zOld, "__snapshots__/a.test.js.snap": beside });
+        const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+        expect(snap(dir)).toBe(headers[format] + ofRunner(format, ofJSC) + old);
+        expect(exitCode).toBe(0);
+      });
+
+      // No older Bun wrote this file. The key of the test at the top level is also Bun's key of the nested one.
+      test.each([[["top", "nested"]], [["nested", "top"]]])(
+        "the entry of a test at the top level, which Bun called as it did the nested one, passes that one in every order and run %j",
+        async order => {
+          const tests = {
+            top: `test("outer inner", () => { expect("same").toMatchSnapshot(); });`,
+            nested: `describe("outer", () => { describe("", () => { test("inner", () => { expect("same").toMatchSnapshot(); }); }); });`,
+          };
+          const keyOfNested = format === "vitest" ? "outer > inner 1" : "outer  inner 1";
+          const outOfOrder = headers[format] + entry("outer inner 1", '"same"') + entry(keyOfNested, '"other"');
+          using dir = tempDir("snapshot-same-key", {
+            "a.test.js": order.map(name => tests[name as keyof typeof tests]).join("\n"),
+            "__snapshots__/a.test.js.snap": outOfOrder,
+          });
+          const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" }, "--rerun-each=2");
+          expect({ pass, fail, stderr: fail ? stderr : "" }).toEqual({ pass: 4, fail: 0, stderr: "" });
+          expect(snap(dir)).toBe(outOfOrder);
+          expect(exitCode).toBe(0);
+        },
+      );
     },
   );
 

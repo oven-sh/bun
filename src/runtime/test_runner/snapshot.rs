@@ -89,7 +89,23 @@ pub(crate) enum Outcome {
     Passed,
     Written,
     /// Not counted yet: the caller bumps `passed` or `failed`.
-    Mismatch { saved: Box<[u8]> },
+    Mismatch { saved: Box<[u8]>, of_older_bun: Option<OfOlderBun> },
+}
+
+/// The text that an older Bun may have written for a snapshot. The snapshot passes if an older Bun printed it.
+pub(crate) enum OfOlderBun {
+    /// `saved`: its key is also Bun's key for the snapshot.
+    Saved,
+    /// The entry under Bun's key, beside `saved` under the file's key.
+    Beside(Box<[u8]>),
+}
+
+/// Where an older Bun may have left its entry for a snapshot.
+enum KeyOfOlderBun {
+    None,
+    /// The key that the file's format has for the snapshot.
+    TheSame,
+    Other(Vec<u8>),
 }
 
 pub(crate) enum FileOutcome {
@@ -392,8 +408,32 @@ impl Snapshots {
         self.values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
     }
 
-    pub(crate) fn may_hold_entries_of_bun(&self) -> bool {
+    fn may_hold_entries_of_bun(&self) -> bool {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
+    }
+
+    /// Bun's key for the snapshot that `format` calls `key`, if an older Bun may have left an entry in the file.
+    #[cold]
+    #[inline(never)]
+    fn key_of_older_bun(&mut self, expect: &Expect, format: Format, hint: &[u8], key: &[u8]) -> Result<KeyOfOlderBun, Error> {
+        // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
+        if format == Format::Bun || self.update_snapshots || !self.may_hold_entries_of_bun() {
+            return Ok(KeyOfOlderBun::None);
+        }
+        let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
+        // The count of a key comes after its last space.
+        key_of_bun.extend_from_slice(&key[strings::last_index_of_char(key, b' ').unwrap_or(0)..]);
+        if key_of_bun == key {
+            return Ok(KeyOfOlderBun::TheSame);
+        }
+        // An entry that this run wrote is not an older Bun's.
+        Ok(match self.values.get_mut(&key_of_bun).filter(|entry| !entry.written) {
+            Some(entry) => {
+                entry.found_under_key_of_bun = true;
+                KeyOfOlderBun::Other(key_of_bun)
+            }
+            None => KeyOfOlderBun::None,
+        })
     }
 
     pub(crate) fn match_or_write(
@@ -419,16 +459,8 @@ impl Snapshots {
         let mut key_in_file = None;
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
-        } else if format != Format::Bun && !self.update_snapshots && self.may_hold_entries_of_bun() {
-            // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
-            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
-            key_of_bun.push(b' ');
-            key_of_bun.extend_from_slice(counter);
-            // An entry that this run wrote is not an older Bun's.
-            if let Some(entry) = self.values.get_mut(&key_of_bun).filter(|entry| !entry.written) {
-                entry.found_under_key_of_bun = true;
-                key_in_file = Some(key_of_bun);
-            }
+        } else if let KeyOfOlderBun::Other(key_of_bun) = self.key_of_older_bun(expect, format, hint, &key)? {
+            key_in_file = Some(key_of_bun);
         }
 
         if let Some(key_in_file) = key_in_file
@@ -441,7 +473,24 @@ impl Snapshots {
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
-                return Ok(Outcome::Mismatch { saved: entry.value.clone() });
+                let saved = entry.value.clone();
+                // An older Bun read its own key only: what it left there passed, whatever the file's key holds.
+                let of_older_bun = if format == Format::Bun || key_in_file != key {
+                    Some(OfOlderBun::Saved)
+                } else {
+                    match self.key_of_older_bun(expect, format, hint, &key)? {
+                        KeyOfOlderBun::None => None,
+                        KeyOfOlderBun::TheSame => Some(OfOlderBun::Saved),
+                        KeyOfOlderBun::Other(key_of_bun) => match self.values.get(&key_of_bun) {
+                            Some(beside) if format.matches(&beside.value, received) => {
+                                self.passed += 1;
+                                return Ok(Outcome::Passed);
+                            }
+                            beside => beside.map(|beside| OfOlderBun::Beside(beside.value.clone())),
+                        },
+                    }
+                };
+                return Ok(Outcome::Mismatch { saved, of_older_bun });
             }
             if format == Format::Bun {
                 written_by_earlier_attempt = Some(entry.value.clone());

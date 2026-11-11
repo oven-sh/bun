@@ -7418,6 +7418,26 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         ...more,
       };
     }
+    // index.ts has yet to begin when mocks.ts runs, in an import cycle with render.ts, which reads the module through it. early.ts runs mail.ts first.
+    function barrel(name: string, variable: string, index: string, more: Record<string, string> = {}) {
+      return {
+        [`${name}/mail.ts`]: mail,
+        [`${name}/mocks.ts`]: `
+          import { vi } from "bun:test";
+          const ${variable} = () => "mock";
+          vi.mock("./mail", () => ({ send: ${variable} }));
+        `,
+        [`${name}/index.ts`]: index,
+        [`${name}/render.ts`]: `import { send } from "./index"; export const notify = () => send();`,
+        [`${name}/barrel.test.ts`]: `
+          import { expect, test } from "bun:test";
+          ${`${name}/early.ts` in more ? `import "./early";` : ""}
+          import { notify } from "./index";
+          test(${JSON.stringify(name)}, () => expect(notify()).toBe("mock"));
+        `,
+        ...more,
+      };
+    }
     async function run(files: Record<string, string>, args: string[] = []) {
       using dir = tempDir("mock-module-reads-below", files);
       await using proc = Bun.spawn({
@@ -7484,37 +7504,34 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
           import { send } from "mail-b";
           test("the test file reads the package", () => expect(send()).toBe("mock"));
         `,
-        // index.ts has yet to begin, in an import cycle with render.ts, which reads the module through it. No module has come to mail.ts.
-        "barrel/mail.ts": mail,
-        "barrel/mocks.ts": `
-          import { vi } from "bun:test";
-          const ofBarrel = () => "mock";
-          vi.mock("./mail", () => ({ send: ofBarrel }));
-        `,
-        "barrel/setup.ts": `import "./mocks";`,
-        "barrel/index.ts": `export * from "./setup"; export * from "./render"; export { send } from "./mail";`,
-        "barrel/render.ts": `import { send } from "./index"; export const notify = () => send();`,
-        "barrel/barrel.test.ts": `
-          import { expect, test } from "bun:test";
-          import { notify } from "./index";
-          test("a module of an import cycle that has yet to begin", () => expect(notify()).toBe("mock"));
-        `,
-        // early.ts has run mail.ts here, and index.ts imports it behind mocks.ts.
-        "barrel-loaded/mail.ts": mail,
-        "barrel-loaded/early.ts": `import "./mail";`,
-        "barrel-loaded/mocks.ts": `
-          import { vi } from "bun:test";
-          const ofLoadedBarrel = () => "mock";
-          vi.mock("./mail", () => ({ send: ofLoadedBarrel }));
-        `,
-        "barrel-loaded/index.ts": `export * from "./mocks"; export * from "./render"; export { send } from "./mail";`,
-        "barrel-loaded/render.ts": `import { send } from "./index"; export const notify = () => send();`,
-        "barrel-loaded/barrel.test.ts": `
-          import { expect, test } from "bun:test";
-          import "./early";
-          import { notify } from "./index";
-          test("a module of an import cycle that imports the module behind the mock", () => expect(notify()).toBe("mock"));
-        `,
+        // No module has come to mail.ts, which index.ts imports behind setup.ts.
+        ...barrel(
+          "barrel",
+          "ofBarrel",
+          `export * from "./setup"; export * from "./render"; export { send } from "./mail";`,
+          {
+            "barrel/setup.ts": `import "./mocks";`,
+          },
+        ),
+        // mail.ts has run, and index.ts imports it behind mocks.ts.
+        ...barrel(
+          "barrel-loaded",
+          "ofLoadedBarrel",
+          `export * from "./mocks"; export * from "./render"; export { send } from "./mail";`,
+          {
+            "barrel-loaded/early.ts": `import "./mail";`,
+          },
+        ),
+        // mail.ts has run, and index.ts imports it behind setup.ts, which it waits for.
+        ...barrel(
+          "barrel-behind",
+          "ofBarrelBehindSetup",
+          `export * from "./setup"; export * from "./render"; export { send } from "./mail";`,
+          {
+            "barrel-behind/early.ts": `import "./mail";`,
+            "barrel-behind/setup.ts": `import "./mocks";`,
+          },
+        ),
         // The file that makes the call is linked to the module itself: an import that a file hands on stays a statement.
         "hands-on/mod.ts": `export const value = "real";`,
         "hands-on/own.test.ts": `
@@ -7569,6 +7586,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         "ofPackageOfTestFile",
         "ofBarrel",
         "ofLoadedBarrel",
+        "ofBarrelBehindSetup",
         "handedOn",
         "awaited",
         "called",
@@ -7576,7 +7594,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         "ofCommonJS",
       ];
       for (const variable of variables) expect(stderr).toContain(thrown(variable));
-      expect(stderr).toContain(" 0 pass\n 10 fail\n 10 errors\n");
+      expect(stderr).toContain(" 0 pass\n 11 fail\n 11 errors\n");
       expect(exitCode).toBe(1);
     });
 
@@ -7665,8 +7683,22 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
               expect((await import("./mail")).send()).toBe("mock");
             });
           `,
+          // index.ts imports render.ts first, which waits for index.ts itself.
+          "before-behind-importer/mail.ts": mail,
+          "before-behind-importer/mocks.ts": mocks,
+          "before-behind-importer/setup.ts": `import "./mocks";`,
+          "before-behind-importer/index.ts": `import "./render"; export { send } from "./mail"; export * from "./setup";`,
+          "before-behind-importer/render.ts": `import { send } from "./index"; export const notify = () => send();`,
+          "before-behind-importer/cycle.test.ts": `
+            import { expect, test } from "bun:test";
+            import { notify } from "./render";
+            test("the module comes first, behind an import of the module that waits", async () => {
+              expect(notify()).toBe("real");
+              expect((await import("./mail")).send()).toBe("mock");
+            });
+          `,
         },
-        2,
+        3,
       );
     });
 

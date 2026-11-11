@@ -4162,8 +4162,8 @@ static bool hasYetToBegin(JSC::CyclicModuleRecord* record)
     return sourceText && sourceText->internalField(JSC::AbstractModuleRecord::Field::State).get() == jsNumber(static_cast<int32_t>(JSC::AbstractModuleRecord::State::Init));
 }
 
-// Whether `importer`, which has yet to begin, waits for an import that stands before its import of `record`: then that one is yet to come. It never waits for an import behind `running`.
-__attribute__((minsize)) static bool waitsForImportBefore(JSC::CyclicModuleRecord* importer, JSC::AbstractModuleRecord* record, const String& running)
+// Whether `importer`, which has yet to begin, waits for an import that stands before its import of `record`: then that one is yet to come.
+__attribute__((minsize)) static bool waitsForImportBefore(JSC::CyclicModuleRecord* importer, JSC::AbstractModuleRecord* record)
 {
     for (auto& request : importer->requestedModules()) {
         auto loaded = importer->loadedModules().find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
@@ -4172,16 +4172,10 @@ __attribute__((minsize)) static bool waitsForImportBefore(JSC::CyclicModuleRecor
         auto* imported = loaded->value.m_module.get();
         if (imported == record)
             return false;
-        if (imported->moduleKey().string() == running)
-            return true;
+        // It waits for the first one that is being evaluated. One that imports `importer` back is passed over: it may have run inside their import cycle, or wait for `importer`.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(imported);
-        if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluating)
-            continue;
-        // One that imports `importer` back has run inside their import cycle, unless it has yet to begin: then it may be the one that waits for `importer`.
-        if (!anyUnevaluatedImport(cyclic, [&](JSC::CyclicModuleRecord* back) { return back == importer; }))
+        if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating && !anyUnevaluatedImport(cyclic, [&](JSC::CyclicModuleRecord* back) { return back == importer; }))
             return true;
-        if (hasYetToBegin(cyclic))
-            return false;
     }
     return false;
 }
@@ -4206,7 +4200,7 @@ __attribute__((minsize)) static bool isLinkedToModuleYetToImport(Zig::GlobalObje
         if (importer->status() == Status::Linked ? isReachedByEvaluationUnderWay(globalObject, importer) : key == running)
             return true;
         // A body that has begun came to all its imports before the call.
-        if (importer->status() == Status::Evaluating && hasYetToBegin(importer) && (hadYetToRun || waitsForImportBefore(importer, record, running)))
+        if (importer->status() == Status::Evaluating && hasYetToBegin(importer) && (hadYetToRun || waitsForImportBefore(importer, record)))
             return true;
     }
     return false;

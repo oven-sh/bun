@@ -10,6 +10,7 @@ declare function $tryPutByValDirect(out: unknown[], k: number, value: unknown): 
 declare function $tryFillNewArray(out: unknown[], value: unknown): boolean;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $isJSArray(value: unknown): boolean;
+declare function $arrayPush(array: unknown[], value: unknown): void;
 declare function $arrayStorageKind(a: unknown[]): number;
 declare const $arrayStorageInt32: number;
 declare const $arrayStorageDouble: number;
@@ -77,6 +78,12 @@ export function arrayFromList(list: unknown, mapper: unknown): unknown[] {
       break;
     }
     return index === count ? made : $truncateNewArray<unknown>(made, index);
+  }
+  // Nobody but this loop holds the list. So a push defines what the language defines there, and the length is the index.
+  if (typeof list === "string" && typeof mapper === "function") {
+    const made: unknown[] = [];
+    for (const character of list) $arrayPush(made, mapper(character, made.length));
+    return made;
   }
   return Array.from(list as Iterable<unknown>, mapper as (value: unknown, index: number) => unknown);
 }

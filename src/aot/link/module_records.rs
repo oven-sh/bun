@@ -368,7 +368,7 @@ pub(super) fn build_module_records(
         &writers_of_exports,
         strings,
     );
-    end_loads_at_modules_that_throw(&mut modules);
+    end_loads_at_modules_that_throw(&mut modules, input);
     let mut builder = RecordBuilder {
         input,
         strings: &mut *strings,
@@ -392,8 +392,37 @@ pub(super) fn build_module_records(
     }
 }
 
-fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
-    let written = core::mem::take(&mut module.requests);
+fn find_commonjs_records(input: &RecordInput<'_, '_>, count: usize) -> Vec<bool> {
+    let mut is_commonjs = vec![false; count];
+    for (index, module) in input.modules.modules.iter().enumerate() {
+        let Some(id) = input.numbering.modules[index] else {
+            continue;
+        };
+        is_commonjs[id.index()] = match *module {
+            ProgramModule::Facade(_) => true,
+            ProgramModule::File(file) => {
+                let graph = input.projects.get(file.project).graph;
+                graph.interop(ModuleRef::File(file.file)).kind == ModuleKind::CommonJs
+            }
+            _ => false,
+        };
+    }
+    is_commonjs
+}
+
+fn follow_only(module: &mut generated::Module, way: Option<ModuleId>, runs_before: &[bool]) {
+    let mut written = core::mem::take(&mut module.requests);
+    let is_way = |request: &generated::ModuleRequest| {
+        request.kind == ModuleRequestKind::Import && Some(request.target) == way
+    };
+    if let Some(place) = written.iter().position(is_way) {
+        let runs = |it: &generated::ModuleRequest| {
+            it.kind == ModuleRequestKind::Import && !it.is_hoisted && runs_before[it.target.index()]
+        };
+        let (first, others): (Vec<_>, Vec<_>) = written.drain(..place).partition(runs);
+        module.requests = first;
+        written.splice(0..0, others);
+    }
     let followed = way.map(|target| generated::ModuleRequest {
         target,
         phase: ImportPhase::Evaluation,
@@ -425,7 +454,7 @@ fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
     module.required_names.clear();
 }
 
-fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
+fn end_loads_at_modules_that_throw(modules: &mut [generated::Module], input: &RecordInput<'_, '_>) {
     let throws = |module: &generated::Module| module.flags.contains(ModuleFlags::THROWS_AT_LOAD);
     let mut on_the_way: Vec<usize> = (0..modules.len())
         .filter(|&index| throws(&modules[index]))
@@ -441,10 +470,19 @@ fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
             }
         }
     }
+    let runs_tests = input
+        .projects
+        .get(ProjectId::Application)
+        .graph
+        .runs_tests();
+    let runs_before = match runs_tests {
+        true => vec![false; modules.len()],
+        false => find_commonjs_records(input, modules.len()),
+    };
     let mut is_found = vec![false; modules.len()];
     for &module in &on_the_way {
         is_found[module] = true;
-        follow_only(&mut modules[module], None);
+        follow_only(&mut modules[module], None, &runs_before);
     }
     let mut next = 0;
     while let Some(&target) = on_the_way.get(next) {
@@ -454,7 +492,11 @@ fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
         }
         for &importer in &importers[target] {
             if !core::mem::replace(&mut is_found[importer], true) {
-                follow_only(&mut modules[importer], Some(ModuleId::new(target)));
+                follow_only(
+                    &mut modules[importer],
+                    Some(ModuleId::new(target)),
+                    &runs_before,
+                );
                 on_the_way.push(importer);
             }
         }
@@ -1115,9 +1157,10 @@ impl RecordBuilder<'_, '_, '_> {
     ) -> generated::Module {
         let input = self.input;
         let LinkProject { graph, sources, .. } = *input.projects.get(file.project);
-        let paths = sources.module_paths(file.file);
-        let path = self.strings.intern(paths.public_path);
-        let display_path = self.strings.intern(paths.display_path);
+        let path = self.strings.intern(sources.public_path(file.file));
+        let display_path = self
+            .strings
+            .intern(&sources.path_in_stack_traces(file.file));
         let interop = graph.interop(ModuleRef::File(file.file));
         let mut record = create_record(interop, path, display_path);
         assert!(
@@ -1219,7 +1262,7 @@ impl RecordBuilder<'_, '_, '_> {
         let path = self.strings.intern(format!("#{}", id.index()).as_bytes());
         let display_path = self
             .strings
-            .intern(sources.module_paths(file.file).display_path);
+            .intern(&sources.path_in_stack_traces(file.file));
         let interop = graph.interop(own);
         let mut record = create_record(interop, path, display_path);
         record.flags = self.planned_flags(project, own);
@@ -1528,6 +1571,7 @@ impl RecordBuilder<'_, '_, '_> {
         for (exporter, export_name) in handed_on.chain(imported) {
             if let ModuleRef::File(exporter) = exporter
                 && (graph.is_importable_during_evaluation(ModuleRef::File(exporter))
+                    || graph.may_fail_in_require(exporter)
                     || graph.may_be_mocked(ModuleRef::File(exporter)))
                 && !asked_for_default.iter().any(|asked| asked.0 == exporter)
             {

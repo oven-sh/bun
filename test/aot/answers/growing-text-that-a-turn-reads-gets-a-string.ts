@@ -1,5 +1,5 @@
 // answers: without-library
-// # a turn hands the growing text to a function of the program, stores it, compares it, reads under it, switches on it. Each string that was handed out stays what it was while the builder goes on
+// # a turn hands the growing text to a function of the program, stores it, compares it, reads under it, switches on it. Each string that was handed out stays what it was while the builder goes on. A text that every iteration hands on or stores is in no builder
 // # f1 = keep, f2 = handed, f3 = states, f4 = compared, f5 = keyed, f6 = twice, f7 = sometimes, f8 = switched
 // # RUN(FORM): walk f2 f3 f7 mechanisms=all
 // # FORM-LABEL: code f2:Body
@@ -21,8 +21,8 @@
 declare function report(value: unknown): void;
 let held = "";
 function keep(text: string) { held = held + "[" + text + "]"; }
-function handed(n: number) { let s = ""; for (let i = 0; i < n; i++) { s += "k" + i; keep(s); } return s; }
-function states(n: number) { const kept: string[] = []; let s = ""; for (let i = 0; i < n; i++) { s += "k" + i; kept[i] = s; } let all = ""; for (let i = 0; i < n; i++) all = all + kept[i] + "|"; return all + s; }
+function handed(n: number) { let s = ""; for (let i = 0; i < n; i++) { s += "k" + i; if (i % 4 !== 3) keep(s); } return s; }
+function states(n: number) { const kept: string[] = []; let s = ""; for (let i = 0; i < n; i++) { s += "k" + i; if (i % 4 === 3) kept[i] = ""; else kept[i] = s; } let all = ""; for (let i = 0; i < n; i++) all = all + kept[i] + "|"; return all + s; }
 function compared(n: number) { let s = ""; let hits = 0; for (let i = 0; i < n; i++) { s += "ab"; if (s === "ababab") hits += i + 1; } return hits; }
 function keyed(n: number) { const table: Record<string, number> = { a: 1, aa: 20, aaa: 300 }; let s = ""; let sum = 0; for (let i = 0; i < n; i++) { s += "a"; sum += table[s] ?? 4000; } return sum; }
 function twice(n: number) { let s = ""; let out = ""; for (let i = 0; i < n; i++) { s += "k" + i; const one = s; const two = s; out = out + (one === two) + one.length + two.charAt(1); } return out; }

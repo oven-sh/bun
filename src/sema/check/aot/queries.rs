@@ -1,3 +1,4 @@
+use super::alias_mentions::AliasMentions;
 use super::answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
@@ -42,6 +43,7 @@ pub struct QueryInputs<'c> {
     pub checked_elsewhere: &'c [FileId],
     pub builtin_types: &'c BuiltinTypeSymbols,
     pub named_values: &'c dyn NamedValues,
+    pub alias_mentions: Option<&'c AliasMentions>,
     pub max_inference_nodes: u64,
     pub limits: QueryLimits,
 }

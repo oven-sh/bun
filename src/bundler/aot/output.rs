@@ -128,6 +128,7 @@ pub(crate) fn finish_build(
         further_package_names: Vec::new(),
         refused_data: Vec::new(),
         files_for_file_system: Default::default(),
+        is_source_replaced: false,
         loaders_given_to_build: Vec::new(),
         package_names: Vec::new(),
         path_aliases: Vec::new(),

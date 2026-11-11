@@ -39,6 +39,62 @@ describe.concurrent("a test file that never finishes loading", () => {
     ]);
     expect(await notesOf(files, "--aot")).toEqual(plain);
   });
+
+  test("names a module whose mock never settles, where another module imports it", async () => {
+    const files = {
+      "a.test.ts": `import { mock, test, vi } from "bun:test";
+vi.doMock("./kept.ts", async () => (vi.doUnmock("./kept.ts"), await new Promise(() => {})));
+mock.module("./asked.ts", () => new Promise(() => {}));
+void import("./asked.ts");
+await import("./user.ts");
+test("never runs", () => {});
+`,
+      "asked.ts": `export const asked = 1;`,
+      "kept.ts": `export const kept = 2;`,
+      "user.ts": `export * from "./kept.ts";`,
+    };
+    const plain = await notesOf(files);
+    expect(plain.notes.slice(2)).toEqual([
+      'note: unsettled top-level await in "/a.test.ts"',
+      'note: an onLoad() plugin or a mock.module() factory never settled for "/kept.ts"',
+    ]);
+    expect(await notesOf(files, "--aot")).toEqual(plain);
+  });
+
+  test("names a module that import() asked for before another module did", async () => {
+    const files = {
+      "a.test.ts": `import { mock, test } from "bun:test";
+mock.module("./kept.ts", async () => await new Promise(() => {}));
+void import("./kept.ts");
+await import("./user.ts");
+test("never runs", () => {});
+`,
+      "kept.ts": `export const kept = 2;`,
+      "user.ts": `export * from "./kept.ts";`,
+    };
+    const plain = await notesOf(files);
+    expect(plain.notes.slice(2)).toEqual([
+      'note: unsettled top-level await in "/a.test.ts"',
+      'note: an onLoad() plugin or a mock.module() factory never settled for "/kept.ts"',
+    ]);
+    expect(await notesOf(files, "--aot")).toEqual(plain);
+  });
+
+  test("names no module whose mock waits for a module that had run before", async () => {
+    const files = {
+      "a.test.ts": `import { mock, test } from "bun:test";
+import { kept } from "./kept.ts";
+console.log(kept);
+void mock.module("./kept.ts", () => new Promise(() => {}));
+await new Promise(() => {});
+test("never runs", () => {});
+`,
+      "kept.ts": `export const kept = 2;`,
+    };
+    const plain = await notesOf(files);
+    expect(plain.notes.slice(2)).toEqual(['note: unsettled top-level await in "/a.test.ts"']);
+    expect(await notesOf(files, "--aot")).toEqual(plain);
+  });
 });
 
 test("a factory that never settles holds the import() that came to it, and no test", async () => {

@@ -5577,8 +5577,9 @@ declare module "bun" {
 
     /**
      * Stops reading from the underlying socket, so the peer sees TCP
-     * backpressure instead of the client buffering in memory. Messages
-     * already received may still be dispatched. A pause before the
+     * backpressure instead of the client buffering in memory. Frames
+     * already decoded before `pause()` returns may still be dispatched.
+     * Nothing else is dispatched until `resume()`. A pause before the
      * connection opens takes effect once it does.
      * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
      */

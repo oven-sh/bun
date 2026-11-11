@@ -662,11 +662,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         // A paused socket reads nothing, but a transport can still hand over bytes it read
         // before `pause()`: the TLS tunnel decrypts what arrived while an `open` listener spun
         // the event loop once that listener returns. `resume()` queues `deliver_initial_data`.
-        if this.cpp_websocket().is_some_and(|ws| ws.is_paused()) {
+        let paused = || this.cpp_websocket().is_some_and(|ws| ws.is_paused());
+        if paused() {
             this.hold(data);
             return;
         }
-        this.parse_initial_data();
+        // A listener of the held frames can pause too. Frames from the same read still dispatch.
+        if this.parse_initial_data() && paused() {
+            this.hold(data);
+            return;
+        }
         this.handle_data_loop(data);
     }
 
@@ -692,10 +697,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn parse_initial_data(&self) {
-        if let Some(initial_data) = self.initial_data.take() {
-            self.handle_data_loop(&initial_data.0);
-        }
+    /// True if there were bytes to parse.
+    fn parse_initial_data(&self) -> bool {
+        let Some(initial_data) = self.initial_data.take() else {
+            return false;
+        };
+        self.handle_data_loop(&initial_data.0);
+        true
     }
 
     fn handle_data_loop(&self, data: &[u8]) {

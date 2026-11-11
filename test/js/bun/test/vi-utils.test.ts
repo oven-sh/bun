@@ -778,7 +778,8 @@ describe.concurrent("vi.setConfig", () => {
           import { beforeEach, describe, test, vi } from "bun:test";
           vi.setConfig({ hookTimeout: 10 });
           test("a", () => {
-            // Runs on every turn of the event loop until no test file is active.
+            // Runs on every turn of the event loop until no test file is active. The worker exits after its
+            // last file, so the poll ends with the run at the latest.
             const poll = () => {
               try {
                 describe.skip("probe", () => {});
@@ -794,15 +795,20 @@ describe.concurrent("vi.setConfig", () => {
             setImmediate(poll);
           });
         `,
-        "b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => console.log("b runs"));`,
       },
       oneWorker,
     );
     expect({
-      registered: (stdout + stderr).split("\n").filter(line => line === "registered between two files").length,
+      // In this order: the hook is registered before the test of b.test.ts runs.
+      seen: (stdout + stderr).split("\n").filter(line => /^(registered between two files|b runs)$/.test(line)),
       results: results(stderr),
       exitCode,
-    }).toEqual({ registered: 1, results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    }).toEqual({
+      seen: ["registered between two files", "b runs"],
+      results: ["(pass) a", "(pass) b"],
+      exitCode: 0,
+    });
   });
 
   describe("a preload's config lasts as long as the preload's hooks", () => {

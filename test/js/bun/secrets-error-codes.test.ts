@@ -172,12 +172,16 @@ describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {
 
     // Each call is checked against the options form, so a call that takes its strings in another order fails.
     await Bun.secrets.set(service, name, value);
-    expect(await Bun.secrets.get({ service, name })).toBe(value);
-    expect(await Bun.secrets.get(service, name)).toBe(value);
+    try {
+      expect(await Bun.secrets.get({ service, name })).toBe(value);
+      expect(await Bun.secrets.get(service, name)).toBe(value);
 
-    expect(await Bun.secrets.delete(service, name)).toBe(true);
-    expect(await Bun.secrets.get({ service, name })).toBeNull();
-    expect(await Bun.secrets.delete(service, name)).toBe(false);
+      expect(await Bun.secrets.delete(service, name)).toBe(true);
+      expect(await Bun.secrets.get({ service, name })).toBeNull();
+      expect(await Bun.secrets.delete(service, name)).toBe(false);
+    } finally {
+      await Bun.secrets.delete({ service, name });
+    }
   });
 
   test("error messages have no null bytes", async () => {

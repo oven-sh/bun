@@ -1926,3 +1926,29 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+// The client gets the browser polyfills. `node:stream` and `node:assert` are CommonJS there, and each asks for its
+// sibling `process` polyfill with a `require()` of its own.
+devTest("a client module uses the node:stream, node:assert and node:zlib polyfills", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { Readable } from "node:stream";
+      import assert from "node:assert";
+      import { gzip, gunzipSync } from "node:zlib";
+      (async () => {
+        const chunks = [];
+        await new Promise(resolve => Readable.from(["a", "b"]).on("data", c => chunks.push(c)).on("end", resolve));
+        let code;
+        try { assert.strictEqual(1, 2); } catch (e) { code = e.code; }
+        const text = await new Promise(resolve => gzip("hi", (error, data) => resolve(error ?? gunzipSync(data).toString())));
+        console.log(["got:" + chunks, code, text].join(" "));
+      })();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("got:a,b ERR_ASSERTION hi");
+  },
+});

@@ -247,9 +247,7 @@ export const applyCustomMatcher = b.fn({
 export const ExpectCustomAsymmetricMatcher = b.class({
   rustPath: "crate::test_runner::ExpectCustomAsymmetricMatcher",
   internalFields: ["matcherFn", "capturedArgs"],
-  proto: {
-    asymmetricMatch: { args: { received: b.any }, returns: b.bool, passThis: true, ...js },
-  },
+  ...asymmetricMatcher,
 });
 
 /** The `this` of a matcher of `expect.extend()`. */

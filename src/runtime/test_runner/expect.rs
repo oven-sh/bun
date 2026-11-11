@@ -2635,17 +2635,6 @@ impl ExpectCustomAsymmetricMatcher {
         this.execute_impl(this_value, global_this, received).unwrap_or(false)
     }
 
-    pub(crate) fn asymmetric_match(
-        &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-        received: JsLocal<'_>,
-    ) -> JsResult<bool> {
-        let pass = Pass::barrier();
-        let _entered = pass.enter();
-        self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
-    }
-
     fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {
         if dont_throw {
             global_this.clear_exception();
@@ -2721,6 +2710,23 @@ impl ExpectCustomAsymmetricMatcher {
         Ok(false)
     }
 
+}
+
+impl AsymmetricMatcher for ExpectCustomAsymmetricMatcher {
+    /// Without a promise flag deep equality only hands `received` on to `execute_impl`.
+    fn asymmetric_match(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        received: JsLocal<'_>,
+    ) -> JsResult<bool> {
+        if self.flags.promise() != Promise::None {
+            return to_equal_verdict(cx.global(), this_value.to_js(), received.to_js());
+        }
+        let pass = Pass::barrier();
+        let _entered = pass.enter();
+        self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
+    }
 }
 
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts

@@ -345,7 +345,7 @@ pub struct Dimension {
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.
 // `Copy`: every payload is a borrowed slice or scalar, and with `Copy` the
-// derived `clone()` is a plain 24-byte copy instead of a per-variant match.
+// derived `clone()` is a plain 32-byte copy instead of a per-variant match.
 #[derive(Clone, Copy, Debug)]
 pub enum Token {
     Ident(&'static [u8]),
@@ -362,7 +362,8 @@ pub enum Token {
     Number(Num),
     Percentage {
         has_sign: bool,
-        unit_value: f32,
+        /// The number written: 30 for `30%`. An f64, so that a reader of the fraction rounds once.
+        value: f64,
         int_value: Option<i32>,
     },
     Dimension(Dimension),
@@ -388,6 +389,8 @@ pub enum Token {
     /// Not an actual token in the spec, but we keep it anyway
     Comment(&'static [u8]),
 }
+
+const _: () = assert!(core::mem::size_of::<Token>() == 32);
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

@@ -3430,19 +3430,25 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn expect_percentage(&mut self) -> CssResult<Percentage> {
-        self.expect_percentage_unit_value()
-            .map(Percentage::from_unit_value)
+        let value = self.expect_percentage_value()?;
+        Ok(Percentage::new(value as f32))
     }
 
-    /// A percentage as a fraction of one: 0.5 for `50%`.
+    /// A percentage as a fraction of one: 0.5 for `50%`. It divides the f64, so it rounds once.
     pub(crate) fn expect_percentage_unit_value(&mut self) -> CssResult<f32> {
+        let value = self.expect_percentage_value()?;
+        Ok((value / 100.0) as f32)
+    }
+
+    /// The number written in a percentage token: 50 for `50%`.
+    fn expect_percentage_value(&mut self) -> CssResult<f64> {
         let start_location = self.current_source_location();
         let non_negative = self.flags.non_negative();
         let tok = self.next()?;
-        if let Token::Percentage { unit_value, .. } = tok
-            && !(non_negative && *unit_value < 0.0)
+        if let Token::Percentage { value, .. } = tok
+            && !(non_negative && *value < 0.0)
         {
-            return Ok(*unit_value);
+            return Ok(*value);
         }
         let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
@@ -4590,7 +4596,7 @@ impl<'a> Tokenizer<'a> {
         if !self.is_eof() && self.next_byte_unchecked() == b'%' {
             self.advance(1);
             return Token::Percentage {
-                unit_value: (value / 100.0) as f32,
+                value,
                 int_value,
                 has_sign,
             };
@@ -5396,18 +5402,11 @@ impl Token {
             }
             Token::Number(n) => serializer::write_numeric(n.value, n.int_value, n.has_sign, writer),
             Token::Percentage {
-                unit_value,
+                value,
                 int_value,
                 has_sign,
             } => {
-                let mut percent = *unit_value * 100.0;
-                let mut int_value = *int_value;
-                // `unit_value` is rounded: where all digits print, the product's fraction is noise.
-                if percent.abs() >= 1e5 {
-                    percent = percent.round();
-                    int_value = Some(percent as i32);
-                }
-                serializer::write_numeric(percent, int_value, *has_sign, writer)?;
+                serializer::write_numeric(*value as f32, *int_value, *has_sign, writer)?;
                 writer.write_all(b"%")
             }
             Token::Dimension(d) => {

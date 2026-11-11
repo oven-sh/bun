@@ -9,18 +9,28 @@ use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Percentage {
-    v: CSSNumber,
+    /// The number written: 30 for `30%`. Not a fraction of one: `0.3f32 / 0.01f32` is 30.000002.
+    percent: CSSNumber,
 }
 
+const _: () = assert!(core::mem::size_of::<Percentage>() == 4);
+
 impl Percentage {
+    /// `30%` is `Percentage::new(30.0)`.
+    pub(crate) const fn new(percent: CSSNumber) -> Percentage {
+        Percentage { percent }
+    }
+
     /// The percentage that a fraction of one stands for: 0.5 is `50%`.
     pub(crate) const fn from_unit_value(unit_value: CSSNumber) -> Percentage {
-        Percentage { v: unit_value }
+        Percentage {
+            percent: unit_value * 100.0,
+        }
     }
 
     /// The value as a fraction of one: `50%` is 0.5.
     pub(crate) const fn unit_value(self) -> CSSNumber {
-        self.v
+        self.percent / 100.0
     }
 
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
@@ -50,20 +60,19 @@ impl Percentage {
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let x = self.v * 100.0;
-        let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
-            Some(self.v as i32)
+        let int_value: Option<i32> = if self.percent.fract() == 0.0 {
+            Some(self.percent as i32)
         } else {
             None
         };
 
         let percent = Token::Percentage {
-            has_sign: self.v < 0.0,
-            unit_value: self.v,
+            has_sign: self.percent < 0.0,
+            value: self.percent as f64,
             int_value,
         };
 
-        if self.v != 0.0 && self.v.abs() < 0.01 {
+        if self.percent != 0.0 && self.percent.abs() < 1.0 {
             let mut backing = [0u8; 32];
             let mut fbs = css::serializer::FixedBufWriter::new_mut(&mut backing);
             if percent.to_css_generic(&mut fbs).is_err() {
@@ -77,7 +86,7 @@ impl Percentage {
 
     #[inline]
     pub(crate) fn eql(self, other: Percentage) -> bool {
-        self.v == other.v
+        self.percent == other.percent
     }
 
     pub(crate) fn add_internal(self, other: Percentage) -> Percentage {
@@ -85,23 +94,23 @@ impl Percentage {
     }
 
     fn add(self, rhs: Percentage) -> Percentage {
-        Percentage { v: self.v + rhs.v }
+        Percentage::new(self.percent + rhs.percent)
     }
 
     pub(crate) fn mul_f32(self, other: f32) -> Percentage {
-        Percentage { v: self.v * other }
+        Percentage::new(self.percent * other)
     }
 
     pub(crate) fn div_f32(self, other: f32) -> Percentage {
-        Percentage { v: self.v / other }
+        Percentage::new(self.percent / other)
     }
 
     pub(crate) fn is_zero(self) -> bool {
-        self.v == 0.0
+        self.percent == 0.0
     }
 
     pub(crate) fn sign(self) -> f32 {
-        css::signfns::sign_f32(self.v)
+        css::signfns::sign_f32(self.percent)
     }
 
     fn try_sign(self) -> Option<f32> {
@@ -109,7 +118,7 @@ impl Percentage {
     }
 
     pub(crate) fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
-        crate::generic::partial_cmp_f32(self.v, other.v)
+        crate::generic::partial_cmp_f32(self.percent, other.percent)
     }
 
     pub(crate) fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
@@ -125,7 +134,7 @@ impl Percentage {
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> R,
     ) -> R {
-        op_fn(ctx, self.v, other.v)
+        op_fn(ctx, self.percent, other.percent)
     }
 
     pub(crate) fn try_op<C>(
@@ -134,9 +143,7 @@ impl Percentage {
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Option<Percentage> {
-        Some(Percentage {
-            v: op_fn(ctx, self.v, other.v),
-        })
+        Some(Percentage::new(op_fn(ctx, self.percent, other.percent)))
     }
 }
 
@@ -311,7 +318,7 @@ impl<D> DimensionPercentage<D> {
                 }
             }
             (Self::Percentage(a), Self::Percentage(b)) => {
-                return Some(Self::Percentage(Percentage { v: a.v + b.v }));
+                return Some(Self::Percentage(Percentage::new(a.percent + b.percent)));
             }
             (Self::Calc(this_calc), _) => match this_calc.as_ref() {
                 Calc::Value(v) => return v.add_recursive(other),
@@ -511,7 +518,7 @@ impl NumberOrPercentage {
 
 impl PartialEq for Percentage {
     fn eq(&self, other: &Self) -> bool {
-        self.v == other.v
+        self.percent == other.percent
     }
 }
 

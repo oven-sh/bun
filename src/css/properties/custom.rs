@@ -134,12 +134,12 @@ impl CssEql for Token {
             (
                 Percentage {
                     has_sign: a0,
-                    unit_value: a1,
+                    value: a1,
                     int_value: a2,
                 },
                 Percentage {
                     has_sign: b0,
-                    unit_value: b1,
+                    value: b1,
                     int_value: b2,
                 },
             ) => a0 == b0 && a1 == b1 && a2 == b2,
@@ -177,11 +177,11 @@ impl CssHash for Token {
             Dimension(d) => d.hash(hasher),
             Percentage {
                 has_sign,
-                unit_value,
+                value,
                 int_value,
             } => {
                 hasher.update(&[*has_sign as u8]);
-                hasher.update(&unit_value.to_ne_bytes());
+                hasher.update(&value.to_ne_bytes());
                 if let Some(iv) = int_value {
                     hasher.update(&iv.to_ne_bytes());
                 }

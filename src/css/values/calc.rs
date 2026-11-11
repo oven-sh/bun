@@ -393,7 +393,7 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // Not `a % b`: the f32 operands are rounded, so `rem(25%, 5%)` would be 5%.
+                        // Not `a % b`: the f32 operands are rounded, so `rem(1px, .1px)` would be .1px.
                         a - b * (a / b).trunc()
                     },
                     |_, a, b| MathFunction::Rem {

@@ -5014,6 +5014,34 @@ describe("createWriteStream", () => {
     // The retry must never pass NaN as the position.
     expect(positions.some(p => typeof p === "number" && Number.isNaN(p))).toBe(false);
   });
+
+  it.each(["path", "fd"] as const)(
+    "destroy() in the first write's callback does not fail the writes queued with it (%s)",
+    async kind => {
+      using dir = tempDir("ws-destroy-in-write-cb", {});
+      const file = join(String(dir), "out.txt");
+      const stream = kind === "path" ? createWriteStream(file) : createWriteStream("", { fd: openSync(file, "w") });
+      const events: string[] = [];
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      stream.on("error", (e: any) => events.push("error:" + e.code));
+      stream.on("close", () => {
+        events.push("close");
+        resolve();
+      });
+
+      // The stream is still opening, so one writev carries all three chunks.
+      stream.write("a", () => {
+        events.push("cb1");
+        stream.destroy();
+      });
+      stream.write("b", (e: any) => events.push("cb2:" + (e ? e.code : null)));
+      stream.write("c", (e: any) => events.push("cb3:" + (e ? e.code : null)));
+      await closed;
+
+      expect(events).toEqual(["cb1", "cb2:null", "cb3:null", "close"]);
+      expect(readFileSync(file, "utf8")).toBe("abc");
+    },
+  );
 });
 
 describe("fs/promises", () => {

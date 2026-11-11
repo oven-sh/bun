@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 3b12bbd4494920af4f334ae09fb681db3fffb508ce4f332f924982563d54e298.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -584,7 +584,6 @@ function WriteStream(
     if (!write) this._write = null!;
     if (!writev) this._writev = null!;
   } else {
-    this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
@@ -711,7 +710,7 @@ function writevAll(
   cb: ErrorCallback,
   retries = 0,
 ) {
-  this[kFs].writev!(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+  this[kFs].writev!(this.fd, chunks, pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -726,7 +725,8 @@ function writevAll(
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten!;
-    pos! += bytesWritten!;
+    // An undefined `pos` means "current file offset"; adding would make it NaN.
+    if (pos !== undefined) pos += bytesWritten!;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {

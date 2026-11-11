@@ -1689,6 +1689,50 @@ describe("the functions useFakeTimers() replaces", () => {
     expect(results).toEqual(["immediate", "timeout"]);
   });
 
+  test("util.promisify() of a fake function resolves to undefined without a value", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate"] });
+    const results = Promise.all([
+      promisify(setTimeout)(10),
+      promisify(setTimeout)(10, undefined),
+      promisify(setImmediate)(),
+    ]);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await results).toStrictEqual([undefined, undefined, undefined]);
+  });
+
+  const argumentShapes: unknown[][] = [[], [undefined], [null], [undefined, undefined]];
+
+  test("pass every argument on to the callback, a lone undefined included", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "setImmediate"] });
+    const received: Record<string, unknown[][]> = { setTimeout: [], setInterval: [], setImmediate: [] };
+    for (const args of argumentShapes) {
+      setTimeout((...got) => received.setTimeout.push(got), 1, ...args);
+      const interval = setInterval((...got) => (clearInterval(interval), received.setInterval.push(got)), 1, ...args);
+      setImmediate((...got) => received.setImmediate.push(got), ...args);
+    }
+    vi.runAllTimers();
+    expect(received).toStrictEqual({
+      setTimeout: argumentShapes,
+      setInterval: argumentShapes,
+      setImmediate: argumentShapes,
+    });
+  });
+
+  test("kept after useRealTimers(), pass every argument on to the callback, a lone undefined included", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate"] });
+    const fake = { setTimeout, setImmediate };
+    vi.useRealTimers();
+    const argumentsOf = (schedule: (callback: (...args: unknown[]) => void) => void) =>
+      new Promise<unknown[]>(resolve => schedule((...args) => resolve(args)));
+    const received = await Promise.all(
+      argumentShapes.flatMap(args => [
+        argumentsOf(callback => void fake.setTimeout(callback, 1, ...args)),
+        argumentsOf(callback => void fake.setImmediate(callback, ...args)),
+      ]),
+    );
+    expect(received).toStrictEqual(argumentShapes.flatMap(args => [args, args]));
+  });
+
   test.each([
     ["useRealTimers()", () => vi.useRealTimers()],
     ["the next useFakeTimers()", () => vi.useFakeTimers({ toFake: [...everyFunction] })],
@@ -2691,6 +2735,21 @@ describe("a faked process.nextTick and queueMicrotask", () => {
     Bun.gc(true);
     vi.runAllTicks();
     expect(received).toEqual([{ first: [1, 2] }, { second: [3, 4] }]);
+  });
+
+  test("nextTick passes every argument on to the callback, a lone undefined included, and queueMicrotask none", () => {
+    vi.useFakeTimers({ toFake: [...toFake] });
+    const received: unknown[][] = [];
+    const receive = (...args: unknown[]) => void received.push(args);
+    process.nextTick(receive);
+    process.nextTick(receive, undefined);
+    process.nextTick(receive, null);
+    process.nextTick(receive, undefined, undefined);
+    // @ts-expect-error queueMicrotask passes no arguments on
+    queueMicrotask(receive, undefined);
+    Bun.gc(true);
+    vi.runAllTicks();
+    expect(received).toStrictEqual([[], [undefined], [null], [undefined, undefined], []]);
   });
 
   test("run before the next timer and after the last", () => {

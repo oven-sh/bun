@@ -5881,7 +5881,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
             fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buf) => {
               calls.push([err?.code, bytesWritten, buf === buffer]);
               if (err?.code === "EAGAIN") {
-                for (let left = filled; left > 0;)
+                for (let left = filled; left > 0; )
                   left -= fs.readSync(reader, scratch, 0, Math.min(left, scratch.length));
               }
               cb(err, bytesWritten, buf);
@@ -6883,7 +6883,10 @@ it.skipIf(isWindows)("fs.rm on a trailing-slash path", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ unlinkSync: "ENOENT unlink", ...rmTrailingSlashExpected });
+  // The unlinkSync probe is for the shim test below. A gVisor host answers it
+  // with ENOTDIR, Linux with ENOENT.
+  const { unlinkSync, ...out } = JSON.parse(stdout);
+  expect(out).toEqual(rmTrailingSlashExpected);
   expect(exitCode).toBe(0);
 });
 

@@ -394,10 +394,10 @@ fn search(
                 }
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);
-                // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8 and oxlint
-                // resolve the link and follow it. As in the `ignore` crate, which oxlint walks with, a loop is a link
-                // to one of the directories on the path from the search's starting directory.
-                if entry.is_link && own.flavor != Flavor::Eslint {
+                // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8, oxlint and
+                // `listFilesWithNodeFs` resolve the link and follow it. As in the `ignore` crate, which oxlint walks
+                // with, a loop is a link to one of the directories on the path from the search's starting directory.
+                if entry.is_link && (own.flavor != Flavor::Eslint || walk.for_reading) {
                     match fs::link_target_kind(&path) {
                         Ok(Some(fs::Kind::Directory)) => {
                             let Some(end) = fs::real_path(&path) else {

@@ -1122,6 +1122,22 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     });
   });
 
+  test("import/no-unused-modules with an eslint.config.js follows a link to a folder", async () => {
+    using dir = tempDir("bun-lint", {
+      ...noUnusedModulesStandIn,
+      "package.json": `{ "type": "module" }`,
+      "eslint.config.js": `import plugin from "eslint-plugin-import";\nexport default [{ plugins: { import: plugin }, rules: { ${asJson({ src: ["src"] })} } }];\n`,
+      "src/lib.js": "export const fromLinked = 1;\nexport const dead = 2;\n",
+      // Listed as `src/link/util.js`, so the import is relative to that.
+      "linked/util.js": `import { fromLinked } from "../lib.js";\nconsole.log(fromLinked);\n`,
+    });
+    symlinkSync(join(String(dir), "linked"), join(String(dir), "src/link"), "junction");
+    expect(await lintAt(String(dir), ".", ["src/lib.js"])).toMatchObject({
+      found: ["src/lib.js:2 import/no-unused-modules"],
+      exitCode: 1,
+    });
+  });
+
   test("import/no-unused-modules with an .eslintrc still needs one above every folder in `src`", async () => {
     const files = (eslintrc: Record<string, string>) => ({
       ...eslintrc,

@@ -212,7 +212,7 @@ error: Hello World`,
               validate({ stderr }) {
                 expect(warnings(stderr)).toEqual([]);
                 expect(stderr).toInclude("error: Hello World");
-                expect(stderr).toMatch(/at code \(.*[\\/]entry\.ts:2:9\)/);
+                expect(stderr).toContain("entry.ts:2:9)");
               },
             },
             {

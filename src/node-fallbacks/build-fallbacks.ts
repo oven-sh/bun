@@ -67,14 +67,16 @@ const resolveForPolyfill = (polyfill: string): Bun.BunPlugin => ({
 
 const requireShim = /var __require=\(\(x\)=>typeof require<"u"\?require:.*?is not supported'\)\}\);/;
 
+const hostProcess = 'globalThis.process?.versions?.node&&typeof globalThis.process.nextTick=="function"';
+
 // Free `process` / `Buffer` in the npm packages: rename, then bind with the line for the output format.
 const injectedGlobals = [
   {
     defines: ["process", "global.process"],
     id: "__bun_process",
     // A Node.js-like host keeps its own process. A page, also one with a partial `process` shim, gets the polyfill.
-    esm: 'import __bun_process_polyfill from "process";var __bun_process=globalThis.process?.versions?.node?globalThis.process:__bun_process_polyfill;',
-    cjs: 'var __bun_process=globalThis.process?.versions?.node?globalThis.process:(m=>m.default||m)(require("process"));',
+    esm: `import __bun_process_polyfill from "process";var __bun_process=${hostProcess}?globalThis.process:__bun_process_polyfill;`,
+    cjs: `var __bun_process=${hostProcess}?globalThis.process:(m=>m.default||m)(require("process"));`,
   },
   {
     defines: ["Buffer"],

@@ -195,10 +195,16 @@ describe("bundler", () => {
     "/classic-script.js": /* js */ `
       import vm from "node:vm";
       import { readFileSync } from "node:fs";
-      const web = ["console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask", "AbortController", "AbortSignal", "atob", "btoa"];
+      const web = [
+        "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask", "AbortController",
+        "AbortSignal", "atob", "btoa", "crypto", "TextEncoder", "TextDecoder", "URL", "URLSearchParams", "File", "Blob",
+      ];
       const page = vm.createContext(Object.fromEntries(web.map(name => [name, globalThis[name]])));
+      // Every global object has these by itself.
+      const names = [...web, "escape", "unescape", "hasOwnProperty"];
+      const before = names.map(name => vm.runInContext(name, page));
       vm.runInContext(readFileSync(new URL("./out.js", import.meta.url), "utf8"), page, { filename: "out.js" });
-      const replaced = web.filter(name => page[name] !== globalThis[name]);
+      const replaced = names.filter((name, i) => vm.runInContext(name, page) !== before[i]);
       if (replaced.length) console.log("the bundle replaced the page's " + replaced.join(", "));
     `,
   };
@@ -671,9 +677,10 @@ describe("bundler", () => {
         };` +
         `\nconsole.log(JSON.stringify({ ${polyfilled.map((name, i) => `${JSON.stringify(name)}: check(${JSON.stringify(name)}, m${i}, n${i})`).join(", ")} }));`,
     },
-    runtimeFiles: withoutNodeGlobals,
+    runtimeFiles: { ...withoutNodeGlobals, ...asClassicScript },
     target: "browser",
-    run: [{ stdout: defaultImports }, { file: "/without-node-globals.js", stdout: defaultImports }],
+    // The third run has every polyfill in one classic script: none may replace a global of the page.
+    run: ["/out.js", "/without-node-globals.js", "/classic-script.js"].map(file => ({ file, stdout: defaultImports })),
   });
   itBundled("browser/NodePolyfillExternal", {
     todo: true,
@@ -1079,9 +1086,16 @@ describe("bundler", () => {
         }));
       `,
     },
-    runtimeFiles: withoutNodeGlobals,
+    runtimeFiles: {
+      ...withoutNodeGlobals,
+      // A host's process can lack what the packages call. A sandboxed Electron preload has `versions.node`.
+      "/trimmed-process.js": /* js */ `
+        globalThis.process = { versions: { node: "22.0.0" }, env: {} };
+        await import("./out.js");
+      `,
+    },
     target: "browser",
-    run: [{ stdout: "got:a,b" }, { file: "/without-node-globals.js", stdout: "got:a,b" }],
+    run: ["/out.js", "/without-node-globals.js", "/trimmed-process.js"].map(file => ({ file, stdout: "got:a,b" })),
     onAfterBundle(api) {
       api.expectFile("out.js").not.toInclude("import ");
     },

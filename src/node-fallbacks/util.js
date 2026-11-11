@@ -318,7 +318,7 @@ function formatError(value) {
 function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
   var output = [];
   for (var i = 0, l = value.length; i < l; ++i) {
-    if (hasOwnProperty(value, String(i))) {
+    if (hasOwn(value, String(i))) {
       output.push(formatProperty(ctx, value, recurseTimes, visibleKeys, String(i), true));
     } else {
       output.push("");
@@ -346,7 +346,7 @@ function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
       str = ctx.stylize("[Setter]", "special");
     }
   }
-  if (!hasOwnProperty(visibleKeys, key)) {
+  if (!hasOwn(visibleKeys, key)) {
     name = "[" + key + "]";
   }
   if (!str) {
@@ -552,7 +552,7 @@ export function _extend(origin, add) {
   return origin;
 }
 
-function hasOwnProperty(obj, prop) {
+function hasOwn(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 

@@ -21,9 +21,9 @@ use crate::bind::{
     UNREACHABLE,
 };
 use crate::fold::{
-    Constant, FoldedValue, MembersBehindNames, Passes, PathBelowFolder, apply_binary,
-    apply_template, find_export_of_module_with, trim_lead_surrogate_at_end, trim_to_last_segment,
-    trim_trail_surrogate_at_start,
+    Constant, FoldedValue, MembersBehindNames, Passes, PathBelowFolder, PathEnd, apply_binary,
+    apply_template, find_export_of_module_with, outermost_cast, trim_lead_surrogate_at_end,
+    trim_to_last_segment, trim_trail_surrogate_at_start,
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ClassId, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList,
@@ -527,7 +527,7 @@ impl MembersByName {
                     };
                     if let Some(name) = name
                         && bound
-                            .get_assignment_target(hir, outermost_cast_of(hir, bound, e))
+                            .get_assignment_target(hir, outermost_cast(hir, bound, e))
                             .is_some()
                     {
                         let is_of_this = matches!(hir.member_key(e), Some((object, _))
@@ -596,15 +596,6 @@ fn find_class_named_by(hir: &File<'_>, bound: &Bound<'_>, name: ExprId) -> Optio
 fn returns_value(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
     let mut returns = bound.ids(bound.fns[function.idx()].returns);
     returns.any(|it| matches!(hir[it].kind, StmtKind::Return(value) if value.some().is_some()))
-}
-
-fn outermost_cast_of(hir: &File<'_>, bound: &Bound<'_>, mut e: ExprId) -> ExprId {
-    while let Parent::Expr(parent) = bound.parent_of_expr(e)
-        && hir.type_assertion_operand(parent).is_some()
-    {
-        e = parent;
-    }
-    e
 }
 
 /// In the order of the names, and of the expressions with one name.
@@ -792,6 +783,16 @@ struct MembersOfObject {
 #[derive(Default)]
 pub(super) struct FindingsOfFile(RefCell<FxHashMap<FollowerMode, Findings>>);
 
+struct PlaceInProgress {
+    place: Place,
+    /// How many questions were open where the place was entered.
+    open_questions: usize,
+    /// What a mention of a property or a variable in progress holds.
+    values: Values,
+    /// What was followed and leans on a place in progress, of which this is the innermost.
+    followed: Vec<(u32, FollowedKey)>,
+}
+
 struct Follower<'i, 'a, 's> {
     inputs: &'i ScanInputs<'a, 's>,
     written_names: &'i WrittenNames,
@@ -819,19 +820,13 @@ struct Follower<'i, 'a, 's> {
     revisits_left: u32,
     has_run_out: Cell<bool>,
     was_ever_exhausted: Cell<bool>,
-    places_in_progress: Vec<Place>,
-    /// How many questions were open where each place was entered.
-    questions_at_places: Vec<usize>,
-    /// What a mention of a property or a variable in progress holds.
-    values_in_places: Vec<Values>,
+    places_in_progress: Vec<PlaceInProgress>,
     stores_left: Cell<u32>,
     /// The expressions that are left for what other code passes or makes.
     passed_left: u32,
     is_following_passed: bool,
     failed_while_passed: FxHashSet<(u32, FollowedKey)>,
     found_while_passed: FxHashMap<ExprId, Option<Values>>,
-    /// What was followed and leans on a place in progress, by the innermost such place.
-    followed_in_places: Vec<Vec<(u32, FollowedKey)>>,
     followed_while_in_progress: FxHashMap<(u32, FollowedKey), (Followed, u128)>,
     functions_in_progress: Vec<FnId>,
     /// Each was reached from the previous one by evaluating only expressions of that call.
@@ -907,14 +902,11 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             has_run_out: Cell::new(false),
             was_ever_exhausted: Cell::new(false),
             places_in_progress: Vec::new(),
-            questions_at_places: Vec::new(),
-            values_in_places: Vec::new(),
             stores_left: Cell::new(MOST_STORES_FOLLOWED),
             passed_left: EXPRESSIONS_FOLLOWED_IN_ANY_FILE,
             is_following_passed: false,
             failed_while_passed: FxHashSet::default(),
             found_while_passed: FxHashMap::default(),
-            followed_in_places: Vec::new(),
             followed_while_in_progress: FxHashMap::default(),
             functions_in_progress: Vec::new(),
             calls_in_progress: Vec::new(),
@@ -1657,10 +1649,13 @@ impl Follower<'_, '_, '_> {
     }
 
     fn enter_place(&mut self, place: Place, values: Values) {
-        self.places_in_progress.push(place);
-        self.values_in_places.push(values);
-        self.questions_at_places.push(self.count_open_questions());
-        self.followed_in_places.push(Vec::new());
+        let open_questions = self.count_open_questions();
+        self.places_in_progress.push(PlaceInProgress {
+            place,
+            open_questions,
+            values,
+            followed: Vec::new(),
+        });
     }
 
     fn count_open_questions(&self) -> usize {
@@ -1668,10 +1663,10 @@ impl Follower<'_, '_, '_> {
     }
 
     fn leave_place(&mut self) {
-        self.places_in_progress.pop();
-        self.questions_at_places.pop();
-        self.values_in_places.pop();
-        for key in self.followed_in_places.pop().into_iter().flatten() {
+        let Some(left) = self.places_in_progress.pop() else {
+            return;
+        };
+        for key in left.followed {
             self.followed_while_in_progress.remove(&key);
         }
     }
@@ -1682,9 +1677,9 @@ impl Follower<'_, '_, '_> {
             return;
         };
         if innermost < MetInProgress::DEEPEST
-            && let Some(keys) = self.followed_in_places.get_mut(innermost)
+            && let Some(place) = self.places_in_progress.get_mut(innermost)
         {
-            keys.push(key);
+            place.followed.push(key);
             self.followed_while_in_progress.insert(key, (followed, met));
         }
     }
@@ -2373,7 +2368,7 @@ impl Follower<'_, '_, '_> {
     }
 
     fn outermost_cast(&self, e: ExprId) -> ExprId {
-        outermost_cast_of(self.inputs.hir, self.inputs.bound, e)
+        outermost_cast(self.inputs.hir, self.inputs.bound, e)
     }
 
     fn values_of_name(&mut self, name: ExprId) -> Option<Values> {
@@ -2395,9 +2390,9 @@ impl Follower<'_, '_, '_> {
             return Some(vec![Held::Text(text)]);
         }
         let mut in_progress = self.places_in_progress.iter();
-        if let Some(place) = in_progress.position(|&it| it == Place::Variable(symbol)) {
+        if let Some(place) = in_progress.position(|it| it.place == Place::Variable(symbol)) {
             self.met_in_progress.meet_place(place);
-            return Some(match &self.values_in_places[place][..] {
+            return Some(match &self.places_in_progress[place].values[..] {
                 [] => vec![Held::Itself(Place::Variable(symbol))],
                 held => held.to_vec(),
             });
@@ -5146,7 +5141,8 @@ impl Follower<'_, '_, '_> {
             false => None,
         };
         let place = Place::Field(name, family, around);
-        if let Some(found) = self.places_in_progress.iter().position(|&it| it == place) {
+        let mut in_progress = self.places_in_progress.iter();
+        if let Some(found) = in_progress.position(|it| it.place == place) {
             self.met_in_progress.meet_place(found);
             return Some(vec![Held::Itself(place)]);
         }
@@ -5697,10 +5693,11 @@ impl Follower<'_, '_, '_> {
         let place = Place::Property(literal, key);
         // Who asks what takes an object follows it by each of its names, also by one that is in progress around the question.
         let open = self.count_open_questions();
-        let mut in_progress = (self.places_in_progress.iter()).zip(&self.questions_at_places);
-        if let Some(found) = in_progress.position(|(&it, &asked)| it == place && asked == open) {
+        let mut in_progress = self.places_in_progress.iter();
+        let is_asked_for = |it: &PlaceInProgress| it.place == place && it.open_questions == open;
+        if let Some(found) = in_progress.position(is_asked_for) {
             self.met_in_progress.meet_place(found);
-            return Some(self.values_in_places[found].clone());
+            return Some(self.places_in_progress[found].values.clone());
         }
         let key = (self.call_context(), FollowedKey::Property(literal, key));
         self.follow_once(key, literal)
@@ -6530,7 +6527,11 @@ impl Follower<'_, '_, '_> {
                 let mut path = PathBelowFolder::default();
                 path.push(start.strip_prefix(b"/").unwrap_or(start), true)?;
                 path.push(name, true)?;
-                let start = [b".", &path.write(true, false)[..]].concat();
+                let written = path.write(PathEnd {
+                    is_join: true,
+                    is_followed: false,
+                });
+                let start = [b".", &written[..]].concat();
                 let below = Text {
                     starts_at_own_directory: true,
                     ..Text::whole(&start)
@@ -7154,7 +7155,10 @@ impl Follower<'_, '_, '_> {
                 return None;
             }
             let mut joined = own_directory.clone();
-            joined.start.extend(path.write(is_join, !rest.is_empty()));
+            joined.start.extend(path.write(PathEnd {
+                is_join,
+                is_followed: !rest.is_empty(),
+            }));
             for (index, text) in rest.iter().enumerate() {
                 if text.starts_at_own_directory || index > 0 && may_step_back(text) {
                     return None;

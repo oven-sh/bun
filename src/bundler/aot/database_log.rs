@@ -11,14 +11,15 @@ struct Checksum {
 impl Checksum {
     fn add(&mut self, bytes: &[u8]) {
         let (words, _) = bytes.as_chunks::<4>();
+        let (pairs, _) = words.as_chunks::<2>();
         let read = |word: [u8; 4]| match self.is_big_endian {
             true => u32::from_be_bytes(word),
             false => u32::from_le_bytes(word),
         };
         let (mut first, mut second) = self.sums;
-        for pair in words.chunks_exact(2) {
-            first = first.wrapping_add(read(pair[0])).wrapping_add(second);
-            second = second.wrapping_add(read(pair[1])).wrapping_add(first);
+        for &[even, odd] in pairs {
+            first = first.wrapping_add(read(even)).wrapping_add(second);
+            second = second.wrapping_add(read(odd)).wrapping_add(first);
         }
         self.sums = (first, second);
     }

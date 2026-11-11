@@ -27,7 +27,7 @@ use crate::{Options, Parsed, Rejected, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern, known};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
-pub(crate) use declared::Declared;
+pub(crate) use declared::{Declared, DeclaredNames};
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
 
@@ -361,32 +361,29 @@ pub(crate) fn run<'a>(
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
-    declared.begin(
-        text.len(),
-        options.dialect.oxc_names,
-        options.dialect.oxc && options.is_javascript,
-        options.is_javascript,
-    );
+    let names = DeclaredNames {
+        are_collected: options.dialect.oxc_names,
+        need_table: options.dialect.oxc && options.is_javascript,
+        are_of_javascript: options.is_javascript,
+    };
+    declared.begin(text.len(), names);
     let stops = scratch.stops.find_again(text);
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     if let Some(part) = options.part {
         lx.start_at(part.from);
         lx.set_src(text.get(..part.until as usize).unwrap_or(text));
     }
-    lx.is_jsx = options.is_jsx;
+    set_language(&mut lx, &options);
     lx.recovers = options.recovers;
     lx.comments = std::mem::take(&mut file.comments);
     lx.attach_comments = options.attach_comments;
-    let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
-    lx.is_ecmascript = is_ecmascript;
+    let is_ecmascript = lx.is_ecmascript;
     lx.is_typescript_5 = options.dialect.typescript_5;
     lx.is_babel = options.dialect.babel;
     lx.is_oxc = options.dialect.oxc;
-    lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_compiled_javascript = options.compiles && is_ecmascript;
-    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
     lx.accepts_legacy_octal = options.accepts_legacy_octal;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
@@ -468,6 +465,13 @@ pub(crate) fn run<'a>(
     })
 }
 
+fn set_language(lx: &mut Lexer<'_>, options: &Options) {
+    lx.is_jsx = options.is_jsx;
+    lx.is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
+    lx.is_script = (lx.is_ecmascript || options.dialect.oxc) && options.dialect.script;
+    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
+}
+
 /// An expression of a script, at the end of the text of a file that is parsed already.
 #[derive(Copy, Clone)]
 pub struct AppendedExpression {
@@ -515,14 +519,16 @@ pub(crate) fn run_appended(
         let mut stacks = std::mem::take(&mut scratch.stacks);
         stacks.clear();
         let mut declared = std::mem::take(&mut scratch.declared);
-        declared.begin(text.len(), false, false, true);
+        let names = DeclaredNames {
+            are_collected: false,
+            need_table: false,
+            are_of_javascript: true,
+        };
+        declared.begin(text.len(), names);
         let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
         lx.start_at(expression.start);
         lx.set_src(text.get(..expression.end as usize).unwrap_or(text));
-        lx.is_jsx = options.is_jsx;
-        lx.is_ecmascript = true;
-        lx.is_script = true;
-        lx.decodes_ill_formed_text = true;
+        set_language(&mut lx, &options);
         let jsdoc = jsdoc::State::new(&options, true, 0);
         let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
         if expression.is_strict {

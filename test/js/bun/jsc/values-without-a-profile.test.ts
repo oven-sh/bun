@@ -48,7 +48,6 @@ describe.each(["DFG", "FTL"])("%s", tier => {
           BUN_JSC_thresholdForJITAfterWarmUp: "20",
           BUN_JSC_thresholdForJITSoon: "20",
           BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
-          BUN_JSC_thresholdForOptimizeAfterLongWarmUp: "100",
           BUN_JSC_thresholdForOptimizeSoon: "100",
           BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "400",
           BUN_JSC_thresholdForFTLOptimizeSoon: "400",

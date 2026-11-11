@@ -23,7 +23,7 @@ use crate::load::plugin_modules::{first_error_of, warn_instead_of_errors};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::{
-    FurtherLibraryCode, RuntimeRoots, builtins_used_at_start, collect_runtime_roots,
+    FurtherLibraryCode, RuntimeRoots, StartOfRun, builtins_used_at_start, collect_runtime_roots,
     may_interpret_files,
 };
 use crate::load::sources::{
@@ -868,7 +868,11 @@ impl<'a> Build<'a> {
                 contents.run.rejects_uncompiled_code.get(file.idx()) != Some(&true)
                     && may_run_code_outside_image(files, file)
             });
-        let used_at_start = builtins_used_at_start(options.aot, false, true);
+        let start = StartOfRun {
+            keeps_code_without_names: false,
+            stays_in_compiled_files: true,
+        };
+        let used_at_start = builtins_used_at_start(options.aot, start);
         let further = FurtherLibraryCode {
             used_at_start: &used_at_start,
             may_interpret_files: may_interpret_files(options.aot),

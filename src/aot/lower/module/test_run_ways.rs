@@ -254,12 +254,11 @@ struct WayToDeclaration<'a> {
     modules: &'a ModuleGraph,
     kept: Option<&'a mut KeptBetweenWays>,
     station_of_writer: Option<(FileId, Atom)>,
-    names_of_path: Vec<Atom>,
     way_to_writer: Option<Vec<(FileId, Atom)>>,
     asking_file: Option<FileId>,
     declared_in: Option<FileId>,
     steps: Vec<Step>,
-    path: Vec<FileId>,
+    path: Vec<(FileId, Atom)>,
     names_on_path: FxHashSet<(FileId, Atom)>,
     answers: FxHashMap<Request, Answer>,
     rings_met: usize,
@@ -281,7 +280,6 @@ impl<'a> WayToDeclaration<'a> {
             modules,
             kept,
             station_of_writer: None,
-            names_of_path: Vec::new(),
             way_to_writer: None,
             asking_file,
             declared_in,
@@ -297,16 +295,19 @@ impl<'a> WayToDeclaration<'a> {
         }
     }
 
+    /// The innermost file on the path that is not left out.
+    fn last_file_on_path(&self) -> Option<FileId> {
+        let mut files = self.path.iter().rev().map(|&(file, _)| file);
+        files.find(|&file| !self.modules.is_left_out(ModuleRef::File(file)))
+    }
+
     fn ask(&mut self, file: FileId, name: Atom, asked_by: AskedBy) -> bool {
         if self.way_to_writer.is_some() {
             return true;
         }
         if self.names_on_path.contains(&(file, name)) {
             self.rings_met += 1;
-            let requests = self.path.iter().zip(&self.names_of_path);
-            let place = requests
-                .into_iter()
-                .position(|on_path| on_path == (&file, &name));
+            let place = (self.path.iter()).position(|&on_path| on_path == (file, name));
             self.outermost_ring = self.outermost_ring.min(place.unwrap_or(usize::MAX));
             return false;
         }
@@ -321,12 +322,9 @@ impl<'a> WayToDeclaration<'a> {
             let told = kept
                 .filter(|&&(station, _)| station == sought)
                 .map(|&(_, writer)| writer);
-            let stays = |&&on_path: &&FileId| !self.modules.is_left_out(ModuleRef::File(on_path));
-            let asking = (is_station && (file, name) == sought)
-                .then(|| self.path.iter().rev().find(stays).copied());
+            let asking = (is_station && (file, name) == sought).then(|| self.last_file_on_path());
             if let Some(asked_from) = told.map(Some).or(asking) {
-                let names = self.names_of_path.iter().copied();
-                self.way_to_writer = Some(self.path.iter().copied().zip(names).collect());
+                self.way_to_writer = Some(self.path.clone());
                 self.steps.push(Step::Station {
                     file: sought.0,
                     name: sought.1,
@@ -338,8 +336,7 @@ impl<'a> WayToDeclaration<'a> {
                 return true;
             }
         }
-        let stays = |&&on_path: &&FileId| !self.modules.is_left_out(ModuleRef::File(on_path));
-        let asked_from = self.path.iter().rev().find(stays).copied();
+        let asked_from = self.last_file_on_path();
         let is_left_out = self.modules.is_left_out(ModuleRef::File(file));
         let request = Request {
             file,
@@ -391,8 +388,7 @@ impl<'a> WayToDeclaration<'a> {
             });
             return ends_way;
         }
-        self.path.push(file);
-        self.names_of_path.push(name);
+        self.path.push((file, name));
         self.names_on_path.insert((file, name));
         let station = self.steps.len();
         let count_of_stations = self.count_of_stations;
@@ -444,7 +440,6 @@ impl<'a> WayToDeclaration<'a> {
         }
         self.outermost_ring = self.outermost_ring.min(outermost_ring);
         self.path.pop();
-        self.names_of_path.pop();
         self.names_on_path.remove(&(file, name));
         if is_answer_reused {
             let answer = Answer {
@@ -546,7 +541,8 @@ impl<'a> WayToDeclaration<'a> {
 
     /// The read without mocks reads what the import is bound to. A way that has left the files behind that binding, past a mock that lacks the name, ends at another declaration: the run is asked for it.
     fn end_at_declaration(&mut self, file: FileId, name: Atom) -> bool {
-        let is_of_binding = (self.declared_in).is_none_or(|end| self.path.contains(&end));
+        let is_of_binding = (self.declared_in)
+            .is_none_or(|end| self.path.iter().any(|&(on_path, _)| on_path == end));
         self.steps.push(match is_of_binding {
             true => Step::Declaration,
             false => Step::OtherDeclaration { file, name },
@@ -597,8 +593,7 @@ impl<'a> WayToDeclaration<'a> {
             return false;
         }
         let modules = self.modules;
-        let stays = |&&on_path: &&FileId| !modules.is_left_out(ModuleRef::File(on_path));
-        let holder = self.path.iter().rev().find(stays).copied();
+        let holder = self.last_file_on_path();
         let holder = holder.or(self.asking_file).unwrap_or(file);
         if let Some(kept) = self.kept.as_deref_mut() {
             let stars = kept.find_stars_as_written(modules, file, name);

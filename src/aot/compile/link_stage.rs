@@ -13,7 +13,7 @@ use crate::link::{
     self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
     run_steps_beside,
 };
-use crate::load::runtime_roots::builtins_used_at_start;
+use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
 use crate::modules::Shape;
@@ -188,13 +188,12 @@ impl Build<'_> {
                                 );
                             }
                         }
-                        let keeps_code_without_names = loaded.keeps_library_code_without_names;
-                        let used_at_start = builtins_used_at_start(
-                            self.options.aot,
-                            keeps_code_without_names,
-                            self.stays_in_compiled_files,
-                        )
-                        .into_iter();
+                        let start = StartOfRun {
+                            keeps_code_without_names: loaded.keeps_library_code_without_names,
+                            stays_in_compiled_files: self.stays_in_compiled_files,
+                        };
+                        let used_at_start =
+                            builtins_used_at_start(self.options.aot, start).into_iter();
                         let comes_out = loaded
                             .contents
                             .method_that_hands_out_global_object_may_come_out;

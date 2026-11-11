@@ -2437,6 +2437,12 @@ mod _async_tasks {
 
     bun_threading::owned_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
 
+    fn are_paths_of_copy(path_buf: &[OSPathChar], src_len: usize, dest_len: usize) -> bool {
+        path_buf.len() == src_len + 1 + dest_len + 1
+            && path_buf[src_len] == 0
+            && path_buf[src_len + 1 + dest_len] == 0
+    }
+
     impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         /// `path_buf` layout: `[src @ ..src_len][0][dest @ ..dest_len][0]`.
         pub(crate) fn create(
@@ -2445,9 +2451,7 @@ mod _async_tasks {
             src_len: usize,
             dest_len: usize,
         ) {
-            debug_assert_eq!(path_buf.len(), src_len + 1 + dest_len + 1);
-            debug_assert_eq!(path_buf[src_len], 0);
-            debug_assert_eq!(path_buf[src_len + 1 + dest_len], 0);
+            debug_assert!(are_paths_of_copy(&path_buf, src_len, dest_len));
             WorkPool::schedule_new(CpSingleTask {
                 // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
                 // preserves the mutable provenance for `on_subtask_done`.
@@ -2828,10 +2832,9 @@ mod _async_tasks {
                     let err = sys::Error {
                         errno: SystemErrno::ENOENT as _,
                         syscall: sys::Tag::copyfile,
-                        path: nodefs.os_path_into_sync_error_buf(src).into(),
                         ..Default::default()
                     };
-                    let copied = NodeFS::copy_embedded_source(err, args);
+                    let copied = nodefs.copy_embedded_source_at(src, &err, args);
                     if copied.is_ok() {
                         this.on_copy(src, dest);
                     }
@@ -2870,9 +2873,7 @@ mod _async_tasks {
                 let stat_ = match Syscall::lstat(src) {
                     Ok(result) => result,
                     Err(err) => {
-                        nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                        let err = err.with_path(&nodefs.sync_error_buf[..src.len()]);
-                        let copied = NodeFS::copy_embedded_source(err, args);
+                        let copied = nodefs.copy_embedded_source_at(src, &err, args);
                         if copied.is_ok() {
                             this.on_copy(src, dest);
                         }
@@ -6670,6 +6671,21 @@ impl NodeFS {
         }
     }
 
+    fn mkdir_found_existing(&mut self, path: &OSPathSliceZ, err: &sys::Error) -> Maybe<ret::Mkdir> {
+        // if is a directory, OK. otherwise failure
+        if matches!(directory_exists_at_os_path(FD::INVALID, path), Ok(true)) {
+            return Ok(StringOrUndefined::None);
+        }
+        Err(sys::Error {
+            errno: err.errno,
+            syscall: sys::Tag::mkdir,
+            path: self
+                .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
+                .into(),
+            ..Default::default()
+        })
+    }
+
     pub(crate) fn mkdir_recursive_os_path_impl<Ctx: MkdirCtx, const RETURN_PATH: bool>(
         &mut self,
         ctx: &mut Ctx,
@@ -6686,31 +6702,7 @@ impl NodeFS {
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
-                    return match directory_exists_at_os_path(FD::INVALID, path) {
-                        Err(_) => Err(sys::Error {
-                            errno: err.errno,
-                            syscall: sys::Tag::mkdir,
-                            path: self
-                                .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
-                                .into(),
-                            ..Default::default()
-                        }),
-                        // if is a directory, OK. otherwise failure
-                        Ok(result) => {
-                            if result {
-                                Ok(StringOrUndefined::None)
-                            } else {
-                                Err(sys::Error {
-                                    errno: err.errno,
-                                    syscall: sys::Tag::mkdir,
-                                    path: self
-                                        .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
-                                        .into(),
-                                    ..Default::default()
-                                })
-                            }
-                        }
-                    };
+                    return self.mkdir_found_existing(path, &err);
                 }
                 // continue
                 E::ENOENT => {
@@ -7421,6 +7413,25 @@ impl NodeFS {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
 
+    /// `basename` is the path below the root of the directory that failed, unless that is the root itself.
+    fn readdir_error(
+        buf: &mut PathBuffer,
+        root: &[u8],
+        basename: &ZStr,
+        is_root: bool,
+        err: &sys::Error,
+    ) -> sys::Error {
+        let basename = basename.as_bytes();
+        if is_root || root.len() + 1 + basename.len() + 1 >= paths::MAX_PATH_BYTES {
+            return err.with_path(root);
+        }
+        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+            &mut buf[..],
+            &[root, basename],
+        );
+        err.with_path(joined.as_bytes())
+    }
+
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         async_task: &mut AsyncReaddirRecursiveTask,
@@ -7460,22 +7471,15 @@ impl NodeFS {
             },
         );
         let fd = match open_res {
+            Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => return Ok(()),
             Err(err) => {
-                if !is_root {
-                    if Self::readdir_skips_subdir(err.get_errno()) {
-                        return Ok(());
-                    }
-                    if root_basename.len() + 1 + basename.as_bytes().len() + 1
-                        < paths::MAX_PATH_BYTES
-                    {
-                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                            &mut buf[..],
-                            &[root_basename, basename.as_bytes()],
-                        );
-                        return Err(err.with_path(joined.as_bytes()));
-                    }
-                }
-                return Err(err.with_path(root_basename));
+                return Err(Self::readdir_error(
+                    buf,
+                    root_basename,
+                    basename,
+                    is_root,
+                    &err,
+                ));
             }
             Ok(fd_) => fd_,
         };
@@ -7500,17 +7504,13 @@ impl NodeFS {
                 Ok(None) => break,
                 Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                 Err(err) => {
-                    if !is_root
-                        && root_basename.len() + 1 + basename.as_bytes().len() + 1
-                            < paths::MAX_PATH_BYTES
-                    {
-                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                            &mut buf[..],
-                            &[root_basename, basename.as_bytes()],
-                        );
-                        return Err(err.with_path(joined.as_bytes()));
-                    }
-                    return Err(err.with_path(root_basename));
+                    return Err(Self::readdir_error(
+                        buf,
+                        root_basename,
+                        basename,
+                        is_root,
+                        &err,
+                    ));
                 }
             };
             let utf8_name = current.name.slice();
@@ -9310,6 +9310,16 @@ impl NodeFS {
             Err(err) if err.get_errno() == E::EEXIST && !args.flags.error_on_exist => Ok(()),
             copied => copied,
         }
+    }
+
+    fn copy_embedded_source_at(
+        &mut self,
+        src: &OSPathSliceZ,
+        err: &sys::Error,
+        args: &args::Cp,
+    ) -> Maybe<ret::Cp> {
+        let err = err.with_path(self.os_path_into_sync_error_buf(src));
+        Self::copy_embedded_source(err, args)
     }
 
     pub(crate) fn os_path_into_sync_error_buf(&mut self, slice: &[OSPathChar]) -> &[u8] {

@@ -376,7 +376,8 @@ impl ModuleGraph {
         path
     }
 
-    pub fn files_of_path(&self, path: ReexportPath) -> Vec<FileId> {
+    #[cfg(test)]
+    pub(super) fn files_of_path(&self, path: ReexportPath) -> Vec<FileId> {
         let paths = self.reexport_paths.lock();
         let mut files = Vec::new();
         let mut at = Some(path);

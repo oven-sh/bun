@@ -846,8 +846,8 @@ fn record_removed_path(key: &[u8]) {
     HAS_REMOVED_PATHS.store(true, core::sync::atomic::Ordering::Release);
 }
 
-fn is_at_or_below(key: &[u8], folder: &[u8]) -> bool {
-    let below = key.strip_prefix(folder);
+fn is_at_or_below(path: &[u8], ancestor: &[u8]) -> bool {
+    let below = path.strip_prefix(ancestor);
     below.is_some_and(|it| it.is_empty() || it[0] == b'/')
 }
 

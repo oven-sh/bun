@@ -598,6 +598,62 @@ exports.start = async () => {
     expect(compiled).toEqual(plain);
   });
 
+  test("a file that a package has written is read by every form of its path", async () => {
+    using dir = tempDir("aot-written-file-by-every-path-form", {
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { below } from "./below.cjs";
+const file = path.join(import.meta.dirname, "a.txt");
+const bytes = text => new TextEncoder().encode(text);
+const forms = {
+  string: file,
+  Buffer: Buffer.from(file),
+  Uint8Array: bytes(file),
+  URL: pathToFileURL(file),
+  "not normalized": import.meta.dirname + "/./a.txt",
+  "Buffer, not normalized": Buffer.from(import.meta.dirname + "/./a.txt"),
+};
+export const start = async () => {
+  const said = [fs.readFileSync(file, "utf8"), fs.readFileSync(Buffer.from(file), "utf8")];
+  fs.writeFileSync(below("a.txt"), "written");
+  for (const [name, form] of Object.entries(forms)) {
+    const texts = [fs.readFileSync(form, "utf8"), await fs.promises.readFile(form, "utf8"), fs.statSync(form).size];
+    said.push(name + ": " + texts.join());
+  }
+  said.push(await Bun.file(Buffer.from(file)).text());
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "store-"));
+  if (process.platform !== "win32") {
+    fs.symlinkSync(Buffer.from(file), path.join(temporary, "link"));
+    said.push(fs.readFileSync(path.join(temporary, "link"), "utf8"));
+  }
+  fs.copyFileSync(Buffer.from(file), path.join(temporary, "copy.txt"));
+  said.push(fs.readFileSync(path.join(temporary, "copy.txt"), "utf8"));
+  const before = process.cwd();
+  process.chdir(import.meta.dirname);
+  said.push(fs.readFileSync("a.txt", "utf8"), fs.readFileSync(Buffer.from("a.txt"), "utf8"));
+  process.chdir(before);
+  fs.rmSync(temporary, { recursive: true });
+  return said.join("\\n");
+};
+`,
+      "app/node_modules/store/a.txt": "first",
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+    });
+    const { plain, compiled } = await plainAfterBuild(String(dir));
+    const forms = ["string", "Buffer", "Uint8Array", "URL", "not normalized", "Buffer, not normalized"];
+    const texts = Array(isWindows ? 4 : 5).fill("written");
+    expect(plain).toEqual({
+      stdout: ["first", "first", ...forms.map(it => `${it}: written,written,7`), ...texts, ""].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
   test("what a package reads by a known path, and the program's own package.json", async () => {
     using dir = tempDir("aot-package-files-embedded-unasked", {
       ...packages("app/server"),

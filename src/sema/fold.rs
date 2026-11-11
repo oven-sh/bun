@@ -34,9 +34,9 @@ pub use known_sets::KnownSets;
 pub(crate) use known_sets::outermost_cast;
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
-    MembersBehindNames, Passes, PathBelowFolder, find_export_of_module, find_export_of_module_with,
-    find_members_below_module, trim_lead_surrogate_at_end, trim_to_last_segment,
-    trim_trail_surrogate_at_start,
+    MembersBehindNames, Passes, PathBelowFolder, PathEnd, find_export_of_module,
+    find_export_of_module_with, find_members_below_module, trim_lead_surrogate_at_end,
+    trim_to_last_segment, trim_trail_surrogate_at_start,
 };
 pub use string_affixes::{ends_in_name_with_extension, find_export_of_path_module};
 

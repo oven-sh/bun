@@ -74,6 +74,16 @@ impl InstanceLayout {
     }
 }
 
+fn chain_to(met: &[(Request, usize)], mut place: usize) -> Vec<Request> {
+    let mut chain = vec![met[place].0];
+    while place != 0 {
+        place = met[place].1;
+        chain.push(met[place].0);
+    }
+    chain.reverse();
+    chain
+}
+
 impl ModuleGraph {
     pub fn has_instances(&self, file: FileId) -> bool {
         self.is_reloadable(file)
@@ -219,20 +229,14 @@ impl ModuleGraph {
         let mut met = vec![((file, name), 0)];
         let mut waiting = vec![0];
         let mut visited = FxHashSet::default();
-        while let Some(mut place) = waiting.pop() {
+        while let Some(place) = waiting.pop() {
             let request = met[place].0;
             if !visited.insert(request) {
                 continue;
             }
             let reexports = self.reexports_of_name(request.0, request.1);
             if is_end(request, &reexports) {
-                let mut chain = vec![request];
-                while place != 0 {
-                    place = met[place].1;
-                    chain.push(met[place].0);
-                }
-                chain.reverse();
-                return Some(chain);
+                return Some(chain_to(&met, place));
             }
             for &next in reexports.iter().rev() {
                 met.push((next, place));
@@ -272,7 +276,8 @@ impl ModuleGraph {
         self.find_reexport_passed((file, name), &self.ends_of_binding(binding), is_found)
     }
 
-    pub fn find_path_to_declaration(
+    #[cfg(test)]
+    pub(super) fn find_path_to_declaration(
         &self,
         file: FileId,
         name: Atom,

@@ -16,6 +16,14 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-mock-that-import-names-again-is-called-ahead-of-a-commonjs-file-or-named.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-require-of-a-patched-file-while-a-later-mock-waits-is-told.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/suites-as-people-write-them.test.ts": {
     "default": 60000,
     "asan": 240000

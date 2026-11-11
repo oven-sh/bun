@@ -245,8 +245,8 @@ pub(crate) struct BundlerServices {
     names_of_packages: Guarded<NamesOfPackages>,
 }
 
-pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
-    let rest = path.strip_prefix(folder);
+pub(super) fn is_at_or_below(path: &[u8], ancestor: &[u8]) -> bool {
+    let rest = path.strip_prefix(ancestor);
     rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
 }
 

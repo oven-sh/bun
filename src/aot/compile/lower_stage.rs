@@ -12,7 +12,7 @@ use crate::ir::generated::FunctionRole;
 use crate::ir::{InParallel, extend_from_boxes, run_serially};
 use crate::link::{KeyContext, LinkUnit};
 use crate::load::data_modules::parse_json;
-use crate::load::runtime_roots::builtins_used_at_start;
+use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::runtime_types;
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
@@ -431,12 +431,11 @@ impl Build<'_> {
             sources: &loaded.project(ProjectId::Runtime).sources,
             graph: &bound.projects.runtime.graph,
         };
-        let keeps_code_without_names = loaded.keeps_library_code_without_names;
-        let used_at_start = builtins_used_at_start(
-            self.options.aot,
-            keeps_code_without_names,
-            self.stays_in_compiled_files,
-        );
+        let start = StartOfRun {
+            keeps_code_without_names: loaded.keeps_library_code_without_names,
+            stays_in_compiled_files: self.stays_in_compiled_files,
+        };
+        let used_at_start = builtins_used_at_start(self.options.aot, start);
         let rewrites_no_text = self.options.load.react_compiler == ReactCompilerMode::Disabled;
         let uses_of_kept_code = match loaded.holds_it_for_uses_of_files_alone && rewrites_no_text {
             true => find_uses_of_kept_code(&KeptCodeInput {

@@ -947,9 +947,9 @@ fn collect_paths_created(files: &Files<'_>) -> Vec<Vec<u8>> {
     created
 }
 
-fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
-    (path.strip_prefix(folder))
-        .is_some_and(|below| below.is_empty() || below[0] == b'/' || folder.ends_with(b"/"))
+fn is_at_or_below(descendant: &[u8], ancestor: &[u8]) -> bool {
+    (descendant.strip_prefix(ancestor))
+        .is_some_and(|below| below.is_empty() || below[0] == b'/' || ancestor.ends_with(b"/"))
 }
 
 /// The folders of the installed packages that list a folder whose path is not known: `fs.readdirSync(folder)`.

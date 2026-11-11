@@ -1847,6 +1847,8 @@
     "aot/test-run-function-source-enum-read.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts",
     "aot/a-file-that-a-hook-of-a-preload-loads-is-named-where-it-runs-again.test.ts",
-    "aot/suites-as-people-write-them.test.ts"
+    "aot/suites-as-people-write-them.test.ts",
+    "aot/a-mock-that-import-names-again-is-called-ahead-of-a-commonjs-file-or-named.test.ts",
+    "aot/a-require-of-a-patched-file-while-a-later-mock-waits-is-told.test.ts"
   ]
 }

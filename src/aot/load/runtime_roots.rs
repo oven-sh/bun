@@ -44,21 +44,23 @@ pub(crate) fn may_interpret_files(options: &AotOptions) -> bool {
     options.runs_tests && !options.checks_only
 }
 
-pub(crate) fn builtins_used_at_start(
-    options: &AotOptions,
-    keeps_code_without_names: bool,
-    stays_in_compiled_files: bool,
-) -> Vec<BuiltinId> {
+#[derive(Copy, Clone)]
+pub(crate) struct StartOfRun {
+    pub keeps_code_without_names: bool,
+    pub stays_in_compiled_files: bool,
+}
+
+pub(crate) fn builtins_used_at_start(options: &AotOptions, start: StartOfRun) -> Vec<BuiltinId> {
     let read_for = |feature: &Feature| match feature {
         Feature::Sql => Some(BuiltinId::Bun_sql),
         _ => None,
     };
     let features = options.features_of_embedded_options.iter();
     let warnings = (options.warns_of_rejections).then_some(BuiltinId::WarningsOfRejections);
-    let interprets_files = may_interpret_files(options) && !stays_in_compiled_files;
+    let interprets_files = may_interpret_files(options) && !start.stays_in_compiled_files;
     let interpreted = interprets_files.then_some(BuiltinId::InterpretedFiles);
-    let interpreted_async =
-        (interprets_files && keeps_code_without_names).then_some(BuiltinId::InterpretedAsyncFiles);
+    let interpreted_async = (interprets_files && start.keeps_code_without_names)
+        .then_some(BuiltinId::InterpretedAsyncFiles);
     let further = warnings.into_iter().chain(interpreted);
     let further = further.chain(interpreted_async);
     features.filter_map(read_for).chain(further).collect()

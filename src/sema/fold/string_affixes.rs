@@ -324,7 +324,10 @@ impl<'s> Folder<'_, 's> {
         if computed.is_some() && (path.leaves_folder() || arguments.next().is_some()) {
             return None;
         }
-        let written = path.write(is_join, computed.is_some());
+        let written = path.write(PathEnd {
+            is_join,
+            is_followed: computed.is_some(),
+        });
         let written = Constant::String(self.atoms.intern(&written));
         let mut parts = vec![Part::Expr(first), Part::Known(Primitive::Constant(written))];
         parts.extend(computed.map(Part::Expr));
@@ -605,6 +608,12 @@ pub fn ends_in_name_with_extension(text: &[u8]) -> bool {
     matches!(strings::last_index_of_char(name, b'.'), Some(dot) if dot != 0 && dot + 1 != name.len())
 }
 
+#[derive(Copy, Clone)]
+pub(crate) struct PathEnd {
+    pub(crate) is_join: bool,
+    pub(crate) is_followed: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct PathBelowFolder {
     segments: Vec<Vec<u8>>,
@@ -635,13 +644,13 @@ impl PathBelowFolder {
         self.segments.first().is_some_and(|first| first == b"..")
     }
 
-    pub(crate) fn write(&self, is_join: bool, is_followed: bool) -> Vec<u8> {
+    pub(crate) fn write(&self, end: PathEnd) -> Vec<u8> {
         let mut written = Vec::new();
         for segment in &self.segments {
             written.push(b'/');
             written.extend_from_slice(segment);
         }
-        if is_followed || is_join && self.ends_with_slash {
+        if end.is_followed || end.is_join && self.ends_with_slash {
             written.push(b'/');
         }
         written

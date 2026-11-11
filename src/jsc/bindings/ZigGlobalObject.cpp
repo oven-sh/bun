@@ -1240,13 +1240,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     return JSValue::encode(array);
 }
 
-bool Bun::requireESModuleInFlight(Zig::GlobalObject* globalObject, Bun::JSCommonJSModule* standIn)
+bool Bun::requireESModuleInFlight(Zig::GlobalObject* globalObject, Bun::JSCommonJSModule* standIn, const JSC::Identifier& key)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* id = standIn->m_id.get();
-    auto key = id->toIdentifier(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, standIn->moduleGraph());
     RETURN_IF_EXCEPTION(scope, false);
     auto* entry = loader->registryEntry(key);
@@ -1255,7 +1252,7 @@ bool Bun::requireESModuleInFlight(Zig::GlobalObject* globalObject, Bun::JSCommon
     // CommonJS.ts: `$requireESM` answers from the registry, and that becomes `standIn.exports`.
     JSC::JSFunction* fill = globalObject->requireESMFromHijackedExtension();
     JSC::MarkedArgumentBuffer args;
-    args.append(id);
+    args.append(JSC::jsString(vm, key.string()));
     JSC::profiledCall(globalObject, JSC::ProfilingReason::API, fill, JSC::getCallData(fill), standIn, args);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
@@ -1304,10 +1301,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto* standIn = dynamicDowncast<Bun::JSCommonJSModule>(inRequireMap);
     if (standIn && (standIn->hasEvaluated || !standIn->sourceCode.isNull()))
         standIn = nullptr;
-    bool wasInFlight = standIn && std::exchange(standIn->esmLoadInFlight, true);
+    const JSC::Identifier* outerLoad = standIn ? std::exchange(standIn->esmLoadInFlight, &key) : nullptr;
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     if (standIn)
-        standIn->esmLoadInFlight = wasInFlight;
+        standIn->esmLoadInFlight = outerLoad;
     RETURN_IF_EXCEPTION(scope, {});
 
     switch (promise->status()) {

@@ -229,15 +229,19 @@ describe.concurrent("require(esm) inside a require cycle that a require() began"
   });
 
   // Each file that is required becomes a chunk, and a chunk requires another with import.meta.require().
+  // At the top level of a chunk a `const` is a `var`, and a class stays a class.
   test("chunks of `bun build --splitting --target=bun`", async () => {
     using dir = tempDir("require-esm-cycle-split-chunks", {
       "a.mjs": `
         export const early = 1
         export const got = require("./b.mjs").saw
+        export const later = 2
+        export class Later {}
       `,
       "b.mjs": `
         const a = require("./a.mjs")
-        export const saw = [Object.prototype.toString.call(a), a.early, a.__esModule].join()
+        const read = name => { try { return String(a[name]) } catch (e) { return e.constructor.name } }
+        export const saw = [Object.prototype.toString.call(a), a.early, a.__esModule, read("later"), read("Later")].join()
       `,
       "main.mjs": `
         const a = require("./a.mjs")
@@ -265,7 +269,7 @@ describe.concurrent("require(esm) inside a require cycle that a require() began"
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("[object Module],1,true early,got");
+    expect(stdout.trim()).toBe("[object Module],1,true,undefined,ReferenceError Later,early,got,later");
     expect(exitCode).toBe(0);
   });
 
@@ -336,6 +340,32 @@ describe.concurrent("require(esm) inside a require cycle that a require() began"
     expect(exitCode).toBe(0);
   });
 
+  // `module.id` is writable. The inner require() answers for the key that the outer require() loads.
+  test("a module that stores to `id` of its require.cache entry: the inner require() answers for that module", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "other.mjs": `export const other = true`,
+        "a.mjs": `
+          export const early = 1
+          require.cache[require.resolve("./a.mjs")].id = require.resolve("./other.mjs")
+          export const got = require("./b.cjs").saw
+        `,
+        "b.cjs": `
+          const a = require("./a.mjs")
+          exports.saw = { early: a.early, other: "other" in a }
+        `,
+        "main.cjs": `
+          require("./other.mjs")
+          console.log(JSON.stringify(require("./a.mjs").got))
+        `,
+      },
+      "main.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ early: 1, other: false });
+    expect(exitCode).toBe(0);
+  });
+
   test("a module with top-level await: the inner require() throws what the outer one throws", async () => {
     const { stdout, stderr, exitCode } = await run(
       {
@@ -389,8 +419,9 @@ describe.concurrent("require(esm) inside a require cycle that a require() began"
   });
 
   // Before the graph of a.mjs is linked there is no namespace to hand out. A
-  // CommonJS file that a.mjs imports runs then: no load of a.mjs starts inside
-  // its require(), so the modules run in the order they ran in before.
+  // CommonJS file that a.mjs imports runs then. What its require() of a.mjs
+  // answers is not held here. No load of a.mjs starts inside that require(),
+  // so the modules run in the order they ran in before.
   test("a CommonJS file that a.mjs imports requires a.mjs: the modules run in the same order", async () => {
     const { stdout, stderr, exitCode } = await run(
       {
@@ -400,7 +431,8 @@ describe.concurrent("require(esm) inside a require cycle that a require() began"
           export const early = 1
         `,
         "c.cjs": `
-          console.log("c.cjs runs, a.mjs is an", typeof require("./a.mjs"))
+          try { require("./a.mjs") } catch {}
+          console.log("c.cjs runs")
           exports.done = true
         `,
         "main.cjs": `console.log("main.cjs sees", Object.keys(require("./a.mjs")).join())`,
@@ -408,9 +440,7 @@ describe.concurrent("require(esm) inside a require cycle that a require() began"
       "main.cjs",
     );
     expect(stderr).toBe("");
-    expect(stdout).toBe(
-      ["c.cjs runs, a.mjs is an object", "a.mjs runs, c.cjs is done: true", "main.cjs sees early"].join("\n"),
-    );
+    expect(stdout).toBe(["c.cjs runs", "a.mjs runs, c.cjs is done: true", "main.cjs sees early"].join("\n"));
     expect(exitCode).toBe(0);
   });
 });

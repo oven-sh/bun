@@ -176,8 +176,9 @@ public:
     }
 
     bool hasEvaluated = false;
-    // Set by functionEsmLoadSync on the require map entry of the ES module it is loading, for the length of that load.
-    bool esmLoadInFlight = false;
+    // On the require map entry of an ES module, while functionEsmLoadSync loads that module: the key of the load, which
+    // that call owns. `module.id` is not that key: a program can store to it. Null at every other time.
+    const JSC::Identifier* esmLoadInFlight = nullptr;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)
@@ -191,10 +192,10 @@ public:
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
-// JSCommonJSModule::load() of `standIn`, the require map entry of an ES module that a require() up the stack is still loading.
+// JSCommonJSModule::load() of `standIn`, the require map entry of the ES module `key` that a require() up the stack is still loading.
 // Node throws ERR_REQUIRE_CYCLE_MODULE. Here `standIn.exports` becomes what require() answers when an import began the load:
 // the live namespace. Before the module's graph is linked there is none, and `standIn.exports` stays as it is.
-bool requireESModuleInFlight(Zig::GlobalObject*, JSCommonJSModule* standIn);
+bool requireESModuleInFlight(Zig::GlobalObject*, JSCommonJSModule* standIn, const JSC::Identifier& key);
 
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).

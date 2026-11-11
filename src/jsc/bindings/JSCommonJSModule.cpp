@@ -383,8 +383,8 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
     if (this->hasEvaluated)
         return true;
     if (this->sourceCode.isNull()) {
-        if (this->esmLoadInFlight) [[unlikely]]
-            RELEASE_AND_RETURN(scope, requireESModuleInFlight(globalObject, this));
+        if (auto* key = this->esmLoadInFlight) [[unlikely]]
+            RELEASE_AND_RETURN(scope, requireESModuleInFlight(globalObject, this, *key));
         return true;
     }
 

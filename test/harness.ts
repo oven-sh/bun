@@ -655,10 +655,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    | string
-    | Buffer
-    | DirectoryTree
-    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -1773,6 +1770,11 @@ export function writeShebangScript(path: string, program: string, data: string) 
  * changes before restarting...` or `Failed running ...`.
  */
 export const WATCH_STATUS_LINE = /^(Change detected in|Restarting|Completed running|Failed running) /;
+
+/** The `Change detected in` line of `bun <file> --watch` for `path`, quoted as `util.inspect` quotes it. */
+export function watchChangeLine(path: string) {
+  return `Change detected in '${path.replaceAll("\\", "\\\\")}'`;
+}
 
 /** The lines of a stdout stream of `bun <file> --watch`, without its status lines. */
 export async function* scriptLines(stream: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {

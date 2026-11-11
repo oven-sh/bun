@@ -12,6 +12,7 @@ import {
   scriptLines,
   tempDir,
   tmpdirSync,
+  watchChangeLine,
 } from "harness";
 import {
   copyFileSync,
@@ -125,7 +126,7 @@ describe("--watch status lines", () => {
     const stderr = watchee.stderr!.text();
     const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
     // The watcher names the file by the path it watches, which is the real path.
-    const changed = `Change detected in '${realpathSync(join(cwd, "dep.mjs"))}'`;
+    const changed = watchChangeLine(realpathSync(join(cwd, "dep.mjs")));
 
     expect(await next(1)).toEqual([failed("'entry.mjs'")]);
 
@@ -266,7 +267,7 @@ setInterval(() => {}, 1000);`,
       );
       expect(await next(4)).toEqual([
         "bye",
-        `Change detected in '${realpathSync(join(cwd, "server.mjs"))}'`,
+        watchChangeLine(realpathSync(join(cwd, "server.mjs"))),
         "Restarting 'server.mjs'",
         "up",
       ]);
@@ -351,13 +352,13 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
   // A full stdout pipe must not hold the restart: node's watcher does not wait on its stdout either.
   it.skipIf(isWindows)("restarts when nothing reads stdout", async () => {
     using dir = tempDir("watch-status-full-pipe", {
-      "app.mjs": `console.error("started");
-process.stdout.write("x".repeat(200_000) + "\\n");
-// Ends on its own: the test does not kill what the shell started.
-setTimeout(() => process.exit(0), 15_000);`,
+      "app.mjs": `console.error("started", process.pid);
+process.stdout.write("x".repeat(200_000) + "\\n");`,
     });
     // `sleep` never reads, so the pipe fills and fd 1 of the watched process blocks. A pipe of
-    // `Bun.spawn` would not: its parent reads it into memory without a bound.
+    // `Bun.spawn` would not: its parent reads it into memory without a bound. The watched
+    // process keeps its pid across the restart; the test kills it by that pid, and `sleep` ends
+    // on its own.
     watchee = spawn({
       cwd: String(dir),
       cmd: ["sh", "-c", `"$0" --watch --no-clear-screen app.mjs | sleep 15`, bunExe()],
@@ -372,16 +373,20 @@ setTimeout(() => process.exit(0), 15_000);`,
       for (;;) {
         const { value, done } = await stderr.next();
         if (done) throw new Error("stderr ended");
-        if (value === "started") return;
+        if (value.startsWith("started ")) return Number(value.slice("started ".length));
       }
     };
-    await started();
-    await Bun.write(
-      join(String(dir), "app.mjs"),
-      (await Bun.file(join(String(dir), "app.mjs")).text()) + "\n// touched",
-    );
-    await started();
-    await stop();
+    const pid = await started();
+    try {
+      await Bun.write(
+        join(String(dir), "app.mjs"),
+        (await Bun.file(join(String(dir), "app.mjs")).text()) + "\n// touched",
+      );
+      expect(await started()).toBe(pid);
+    } finally {
+      process.kill(pid, "SIGKILL");
+      await stop();
+    }
   });
 });
 
@@ -821,7 +826,7 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(beforeReload).toContain("iter first");
   // The blue `Change detected` and green `Restarting` lines follow the clear, so they stay on the screen.
   expect(afterReload).toStartWith(
-    `\x1b[34mChange detected in '${realpathSync(join(String(dir), "busy.js"))}'\x1b[39m\n` +
+    `\x1b[34m${watchChangeLine(realpathSync(join(String(dir), "busy.js")))}\x1b[39m\n` +
       "\x1b[32mRestarting 'busy.js'\x1b[39m\n",
   );
   expect(afterReload).toContain("iter second");

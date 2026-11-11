@@ -23659,7 +23659,8 @@ describe.concurrent("--check", () => {
       () => bun.output.stderr.includes("TS2322"),
       () => Bun.write(join(String(dir), "types.ts"), `export type N = string;\n`),
     );
-    expect(bun.output.stdout.match(/ran/g)).toHaveLength(1);
+    // Anchored: the status lines of `--watch` name a path that can contain "ran".
+    expect(bun.output.stdout.match(/^ran /gm)).toHaveLength(1);
   });
 
   // Nothing is emitted for a file that's only passed as an argument, so the project's emit options don't apply to it.
@@ -25069,7 +25070,7 @@ describe.concurrent("--check", () => {
       Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "typescript-go", "bundle.zst"))),
     );
     const entries: [path: string, start: number, length: number][] = [];
-    for (let at = 0; at < bundle.length;) {
+    for (let at = 0; at < bundle.length; ) {
       const end = bundle.indexOf(10, at);
       const [, path, length] = /^=== (.*) (\d+)$/.exec(bundle.toString("latin1", at, end))!;
       entries.push([path, end + 1, +length]);

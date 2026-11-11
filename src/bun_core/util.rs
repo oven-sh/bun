@@ -4274,11 +4274,14 @@ fn push_hex_escape(out: &mut Vec<u8>, code: u8) {
     out.push(HEX[(code & 0xf) as usize]);
 }
 
-/// A stdout that nothing reads must not hold the restart: each write waits for room first, and
-/// after 200 ms in all the rest of the line is dropped. fd 1 can be blocking or not.
+/// A stdout that nothing reads must not hold the restart: each write waits for room first and
+/// writes no more than the room `POLLOUT` promises, and after 200 ms in all the rest of the line
+/// is dropped. fd 1 can be blocking or not.
 #[cfg(unix)]
 fn write_watch_status_line(mut bytes: &[u8]) {
     const BUDGET_MS: u128 = 200;
+    // The least `POLLOUT` means on a pipe: `PIPE_BUF` of macOS. Linux promises a page.
+    const CHUNK: usize = 512;
     let start = std::time::Instant::now();
     while !bytes.is_empty() {
         let left = BUDGET_MS.saturating_sub(start.elapsed().as_millis());
@@ -4298,8 +4301,9 @@ fn write_watch_status_line(mut bytes: &[u8]) {
         if ready <= 0 || polls[0].revents & libc::POLLOUT == 0 {
             return;
         }
-        // SAFETY: `bytes` is a live slice, and `write` reads at most `bytes.len()` of it.
-        let written = unsafe { libc::write(1, bytes.as_ptr().cast(), bytes.len()) };
+        let len = bytes.len().min(CHUNK);
+        // SAFETY: `bytes` is a live slice, and `write` reads at most `len` of it.
+        let written = unsafe { libc::write(1, bytes.as_ptr().cast(), len) };
         if written > 0 {
             bytes = &bytes[written as usize..];
             continue;

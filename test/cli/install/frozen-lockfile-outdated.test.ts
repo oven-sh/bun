@@ -385,12 +385,14 @@ describe.concurrent("--frozen-lockfile fails when", () => {
       expect(dry.stdout).toContain(`no-deps@${shape.nested}`);
       expect(dry.stdout).toContain(`no-deps@${shape.rootVersion}`);
       expect(await lockText(packageDir)).toBe(stale);
+      expect(existsSync(join(packageDir, "node_modules"))).toBe(false);
       expect(dry.exitCode).toBe(0);
 
-      // the advice in the error has to work, and the root's own no-deps stays
+      // the advice in the error has to work, and the root's own no-deps stays, so the summary reports no move of it
       const plain = await bun(packageDir, "install");
       expect(plain.stderr).toContain("Saved lockfile");
       expect(plain.stderr).not.toContain("no longer applies");
+      expect(plain.stdout).not.toMatch(/no-deps \d.*(->|→)/);
       expect(await lockText(packageDir)).toBe(lock);
       expect(await loadedVersion(packageDir, `node_modules/${shape.dependent}`, "no-deps")).toBe(shape.nested);
       expect(await loadedVersion(packageDir, ".", "no-deps")).toBe(shape.rootVersion);
@@ -407,6 +409,46 @@ describe.concurrent("--frozen-lockfile fails when", () => {
       expect(await lockText(packageDir)).toBe(lock);
       expect(after.exitCode).toBe(0);
     });
+  });
+
+  // The same merge on an optional dependency, with the entry of the dependent's own name: test-postinstall-skip@2.0.0 has
+  // the optional dependency test-postinstall-skip-native@2.0.0, and the merge kept the 1.0.0 entry of that name.
+  test("bun.lock binds a package's optional dependency to a version that its range rules out", async () => {
+    const older = await installed({
+      name: "root",
+      version: "1.0.0",
+      dependencies: { "test-postinstall-skip": "1.0.0" },
+    });
+    const { packageDir, lock } = await installed({
+      name: "root",
+      version: "1.0.0",
+      dependencies: { "test-postinstall-skip": "2.0.0" },
+    });
+    const entry = (version: string) =>
+      new RegExp(
+        `\\n *"test-postinstall-skip-native": \\["test-postinstall-skip-native@${version.replaceAll(".", "\\.")}", [^\\n]*\\n`,
+      );
+    expect(lock).toMatch(entry("2.0.0"));
+    const stale = lock.replace(entry("2.0.0"), older.lock.match(entry("1.0.0"))![0]);
+    expect(stale).not.toBe(lock);
+    await write(join(packageDir, "bun.lock"), stale);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+    expect(frozen.stderr).toContain(frozenError);
+    expect(frozen.stderr).toContain(
+      "note: bun.lock resolves test-postinstall-skip-native 2.0.0 of test-postinstall-skip@2.0.0 to test-postinstall-skip-native@1.0.0",
+    );
+    expect(await lockText(packageDir)).toBe(stale);
+    expect(frozen.exitCode).toBe(1);
+
+    const plain = await bun(packageDir, "install");
+    expect(plain.stderr).toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(await loadedVersion(packageDir, "node_modules/test-postinstall-skip", "test-postinstall-skip-native")).toBe(
+      "2.0.0",
+    );
+    expect(plain.exitCode).toBe(0);
   });
 
   test("and prints what changed, also as bun install --production", async () => {
@@ -628,6 +670,8 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
       { name: "member", version: "1.0.0", ...memberJson },
     );
     expect(lock).toContain(`"${pinned}`);
+    // the one entry of that name: every row of it binds to the pinned version
+    expect(lock.match(new RegExp(`\\["${pinned.slice(0, pinned.indexOf("@"))}@`, "g"))).toHaveLength(1);
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
     const frozen = await bun(packageDir, "install", "--frozen-lockfile");

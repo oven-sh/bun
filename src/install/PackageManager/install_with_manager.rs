@@ -710,8 +710,12 @@ pub fn install_with_manager(
         }
         if is_frozen {
             // A frozen install takes the versions that the lockfile has for the rows that a rule
-            // names. One that the lockfile binds outside the range it declares fails below.
-            frozen_refused_row = first_row_frozen_refuses(&manager.lockfile, &outside);
+            // names, and every row of a migrated lockfile: a hook or a rule of the other package
+            // manager can bind a row outside its range. A bun.lock row outside the range it
+            // declares fails below.
+            if load_result.migrated_from().is_none() {
+                frozen_refused_row = first_row_frozen_refuses(&manager.lockfile, &outside);
+            }
         } else if !outside.is_empty() {
             moved_outside_ranges = reresolve_rows_outside_ranges(
                 manager,
@@ -721,6 +725,13 @@ pub fn install_with_manager(
                 log_level,
             )?;
             had_any_diffs |= !moved_outside_ranges.is_empty();
+        }
+
+        // After the rows outside their range moved: a patch for the version such a row brings
+        // back is not orphaned. Before the scanner, which can end the install.
+        if !manager.options.dry_run {
+            Output::flush();
+            crate::update_transitive::warn_orphaned_patches(manager);
         }
 
         if manager.options.security_scanner.is_some() {
@@ -737,13 +748,6 @@ pub fn install_with_manager(
                 loaded_bun_lockfile,
             );
         }
-    }
-
-    // After the rows outside their range moved: a patch for the version such a row brings back is
-    // not orphaned.
-    if !manager.options.dry_run {
-        Output::flush();
-        crate::update_transitive::warn_orphaned_patches(manager);
     }
 
     // append scripts to lockfile before generating new metahash
@@ -2464,11 +2468,11 @@ fn rows_outside_ranges(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
         .filter(|&(row, (dependency, &package_id))| {
             !dependency.behavior.is_bundled()
                 && !dependency.behavior.is_optional_peer()
-                // A peer takes the version that is installed when none fits its range, and an
-                // optional row that never resolved loads bound to a copy of its name. Only a rule
-                // moves them (`retain_rows_to_resolve_again`).
-                && (!(dependency.behavior.is_peer() || dependency.behavior.is_optional())
-                    || lockfile.overrides.has_rule_for_name(dependency.name_hash))
+                // A peer takes the version that is installed when none fits its range. Only a
+                // rule that applies to it moves it.
+                && (!dependency.behavior.is_peer()
+                    || crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
+                        .is_some())
                 && (package_id as usize) < resolutions.len()
                 && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
                     .is_some_and(|version| {
@@ -2536,9 +2540,9 @@ fn retain_rows_to_resolve_again(
     }
     outside.retain(|&(row, package_id)| {
         let dependency = &dependencies[row as usize];
-        // A peer uses the version that's installed, and loading bun.lock binds an optional
-        // dependency that never resolved by its name. Both only move if their package would
-        // otherwise be dropped.
+        // A peer that a rule moves uses the version that's installed, and a lockfile from Bun 1.4
+        // binds an optional dependency that never resolved by its name. Both only move if their
+        // package would otherwise be dropped.
         if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
             return !held.is_set(package_id as usize);
         }
@@ -2617,20 +2621,30 @@ fn reresolve_rows_outside_ranges(
     rebind_to_cleaned_lockfile(manager, before_first_clean);
     manager.lockfile.mark_loaded_packages()?;
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
+    // A rule moves every row of its name: the rows that shared the old package follow, and the
+    // summary reports the name as updated. A row that only its own range moved takes nothing with
+    // it, and the old package stays for the rows that accept it.
+    let mut by_rule: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     for (row, package_id) in outside {
-        if manager.lockfile.buffers.dependencies[row as usize]
-            .behavior
-            .is_peer()
-        {
+        let lockfile: &Lockfile = &manager.lockfile;
+        let dependency = &lockfile.buffers.dependencies[row as usize];
+        let rule = crate::dedupe::applied_override(lockfile, row, dependency).is_some();
+        if dependency.behavior.is_peer() {
             peer_rows.push(row);
             continue;
         }
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
         moved.push((row, package_id));
+        if rule {
+            by_rule.push((row, package_id));
+        }
         enqueue_row(manager, row);
     }
-    enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
+    // Only a rule moves a peer.
+    let rule_rows = by_rule.len();
+    enqueue_peer_rows(manager, &peer_rows, &mut by_rule)?;
+    moved.extend_from_slice(&by_rule[rule_rows..]);
     manager.drain_dependency_list();
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default(), None)?;
@@ -2638,17 +2652,6 @@ fn reresolve_rows_outside_ranges(
     if manager.log_mut().has_errors() {
         manager.crash();
     }
-    // A rule moves every row of its name, so the rows that shared the old package follow. A row
-    // that only its own range moved takes nothing with it: the others accept what they have.
-    let by_rule: Vec<(DependencyID, PackageID)> = {
-        let lockfile: &Lockfile = &manager.lockfile;
-        (moved.iter().copied())
-            .filter(|&(row, _)| {
-                let dependency = &lockfile.buffers.dependencies[row as usize];
-                crate::dedupe::applied_override(lockfile, row, dependency).is_some()
-            })
-            .collect()
-    };
     redirect_moved_edges(&mut manager.lockfile, &by_rule, false);
 
     let before_clean = clean_lockfile(manager, log_level)?;

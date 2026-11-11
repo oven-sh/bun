@@ -1019,6 +1019,9 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     "src/b/types.ts": `import { fromTs } from "../a/lib.js";\nconsole.log(fromTs);\n`,
     "gen/dead.js": "export const gen = 1;\n",
     "gen/importer.js": `import { onlyFromGen } from "../src/a/lib.js";\nconsole.log(onlyFromGen);\n`,
+    // The search doesn't load this config, which would end the run with exit code 2.
+    "tools/.oxlintrc.json": `{ "rules": { "no-such-plugin/no-such-rule": "error" } }`,
+    "tools/t.js": "export const t = 1;\n",
   };
   type UnusedModules = { src?: string[]; ignoreExports?: string[] };
   const asJson = (options: UnusedModules) =>
@@ -1104,11 +1107,12 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       ...noUnusedModulesStandIn,
       "package.json": `{ "type": "module" }`,
       "packages/app/eslint.config.js": `import plugin from "eslint-plugin-import";\nexport default [{ plugins: { import: plugin }, rules: { ${asJson({ src: [".", "../shared"] })} } }];\n`,
-      "packages/app/src/lib.js": "export const fromShared = 1;\nexport const dead = 2;\n",
+      "packages/app/src/lib.js": "export const fromShared = 1;\nexport const fromNested = 2;\nexport const dead = 3;\n",
       "packages/shared/util.js": `import { fromShared } from "../app/src/lib.js";\nconsole.log(fromShared);\n`,
+      "packages/shared/nested/util.js": `import { fromNested } from "../../app/src/lib.js";\nconsole.log(fromNested);\n`,
     };
     expect(await lintIn("packages/app", files, ["src"])).toMatchObject({
-      found: ["packages/app/src/lib.js:2 import/no-unused-modules"],
+      found: ["packages/app/src/lib.js:3 import/no-unused-modules"],
       exitCode: 1,
     });
   });

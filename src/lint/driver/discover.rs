@@ -323,7 +323,8 @@ fn search(
                     (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
                 }
             }
-            let own = match directory.relative.is_empty() {
+            // A search for reading keeps the configuration it started with, as `listFilesWithNodeFs` does.
+            let own = match directory.relative.is_empty() || walk.for_reading {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {
                     let files = entries
@@ -434,9 +435,11 @@ fn search(
                         continue;
                     }
                     let cwd = &loader.environment().cwd[..];
+                    // The configuration ignores nothing outside its directory.
+                    let is_external = walk.for_reading && own.config.is_outside(&path);
                     let is_hidden = is_hidden
-                        || within.is_directory_ignored(&path, dotfiles)
-                        || lacks_file && !paths::is_at_or_inside(cwd, &path);
+                        || !is_external && within.is_directory_ignored(&path, dotfiles)
+                        || lacks_file && !walk.for_reading && !paths::is_at_or_inside(cwd, &path);
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
                         // ESLint 8 keeps following the loop until the system returns ELOOP.
                         if is_loop {
@@ -636,7 +639,8 @@ struct Walk {
     /// ESLint's `errorOnUnmatchedPattern`: `Err` if an argument selects no file.
     error_on_unmatched_pattern: bool,
     /// The files are read, not linted: `node_modules` and dot entries are skipped, a file without a matching `files`
-    /// or outside an `eslint.config.*`'s reach is listed instead of failing, and the arguments aren't the run's.
+    /// or outside the configuration's directory is listed instead of failing, only the configuration the search
+    /// starts with applies, and the arguments aren't the run's.
     for_reading: bool,
 }
 

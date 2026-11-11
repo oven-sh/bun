@@ -25,6 +25,7 @@ pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
 pub use self::code_load::CompileInputs;
 pub use self::retire::{ModuleCell, ReadingNoTrees, ReadingTask};
+pub(crate) use self::retire::{forget_blocks_of, free_behind_tasks};
 
 use self::code_load::{
     BuildFile, CodeFiles, CodeLoadContext, CompileLoad, RootTables, TypesQuestion,
@@ -57,6 +58,7 @@ use crate::util::SharedSort;
 use crate::util::{FxBuild, FxHashMap, FxHashSet, List, OrderedSet, ShardedMap, is_listed};
 use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
+use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
 use bun_paths::fs::Path;
 use bun_paths::path_buffer_pool;
@@ -973,6 +975,8 @@ pub struct ModuleSymbolLinks<'s> {
     pub export_collisions: &'s [ExportCollision],
     /// The modules that `visit` came to, in its order, if there are several and `Resolve::finished_visit` may take `resolved_exports` for what `visit` returns for the module.
     visited: &'s [Sym],
+    /// A clone that nothing was merged into has the same links. See `Files::module_behind_clone`.
+    is_shared_by_clones: bool,
 }
 
 impl<'s> ModuleSymbolLinks<'s> {
@@ -984,6 +988,7 @@ impl<'s> ModuleSymbolLinks<'s> {
             type_only_export_star_map: map_in(arena),
             export_collisions: &[],
             visited: &[],
+            is_shared_by_clones: false,
         }
     }
 
@@ -1017,6 +1022,8 @@ struct ExportsVisit<'s> {
     export_collisions: Vec<ExportCollision>,
     /// Two `export *` of one module have led to one name, so symbols were resolved.
     found_duplicate_name: bool,
+    /// An `export *` has led back to the module that the visit began at.
+    has_returned: bool,
 }
 
 /// Not a symbol flag.
@@ -2647,6 +2654,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             type_only_export_star_map: map_in(arena),
             export_collisions: Vec::new(),
             found_duplicate_name: false,
+            has_returned: false,
         };
         let has_export_equals = self.export(module, known::export_equals).is_some();
         // A module defined by an `export =` consists of one export that needs to be resolved.
@@ -2697,6 +2705,10 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 true => slice_in(&visit.visited_symbols, arena),
                 false => &[],
             },
+            is_shared_by_clones: self.is_merged
+                && !has_export_equals
+                && !visit.has_returned
+                && visit.export_collisions.is_empty(),
         };
         if self.is_merged {
             self.with_merged_exports(links)
@@ -2734,6 +2746,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             visit.non_type_only_modules.push(symbol);
         }
         if is_listed(&visit.visited_symbols, &mut visit.listed_symbols, symbol) {
+            visit.has_returned |= visit.visited_symbols[0] == symbol;
             return None;
         }
         visit.visited_symbols.push(symbol);
@@ -7726,6 +7739,7 @@ impl<'s> Files<'s> {
         bind_time: BindTime,
     ) -> (hir::File<'s>, Bound<'s>) {
         let _work = bun_core::current_work::working_on(bun_core::current_work::Step::Load, path);
+        let _step = file_steps::count(FileStep::ParseTypes);
         let mut whole = None;
         if bind_time == BindTime::WhenReached
             && !is_lib
@@ -8032,6 +8046,7 @@ impl<'s> Files<'s> {
         build: Option<&CodeLoadContext<'_, 's, 'r>>,
         resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
     ) -> Loaded<'s, 'r> {
+        let _step = file_steps::count(FileStep::LoadTypes);
         if let Some(source) = mapping.and_then(|mapping| mapping.take(host, path)) {
             // `ParseResult`. The file's own name decided `ExternalModuleIndicatorOptions`, and no package makes a file with
             // such a name a module. The virtual extension can.
@@ -11620,8 +11635,11 @@ impl<'s> Files<'s> {
     /// `moduleSymbolLinks.Get(module)`, filled in by `getExportsOfModule`.
     pub fn module_links(&self, module: Sym) -> &ModuleSymbolLinks<'s> {
         debug_assert!(self.is_linked);
-        let links = self.memo.module_links.get_ref(&module);
-        // `link` stores them for every symbol that has a flag of `SymFlags::MODULE`.
+        let links = self.memo.module_links.get_ref(&module).or_else(|| {
+            let cloned = self.module_behind_clone(module)?;
+            self.memo.module_links.get_ref(&cloned)
+        });
+        // `link` stores them for every symbol that has a flag of `SymFlags::MODULE`, or for the module that it clones.
         debug_assert!(links.is_some() || !self.flags(module).intersects(SymFlags::MODULE));
         links.unwrap_or(&self.no_module_links)
     }
@@ -11762,6 +11780,18 @@ impl<'s> Files<'s> {
             id: created.alias,
         };
         Some((alias, created.is_combined))
+    }
+
+    /// The module that `clone` was created from, unless something was merged into the clone. `getExportsOfModule` does
+    /// the same for both. Every `import * as ns` has a clone: a table for each would take imports x exports.
+    fn module_behind_clone(&self, clone: Sym) -> Option<Sym> {
+        if !self.flags(clone).contains(SymFlags::TRANSIENT)
+            || self.merged_exports.contains_key(&clone)
+            || self.merged_parts.contains_key(&clone)
+        {
+            return None;
+        }
+        self.target_of_module_clone(clone)
     }
 
     /// The symbol whose table is used as `Exports` of `sym`. `maps.Clone(symbol.Exports)`: a clone
@@ -11911,6 +11941,14 @@ impl<'a, 's> AliasResolver<'a, 's> {
         self.scope
             .is_none_or(|(plan, own)| plan.may_read(own, self.share, file))
     }
+
+    /// The module whose links are the links of `module`: see `ModuleSymbolLinks::is_shared_by_clones`.
+    fn links_holder(&self, module: Sym) -> Sym {
+        match self.module_behind_clone(module) {
+            Some(cloned) if self.with_module_links(cloned, |it| it.is_shared_by_clones) => cloned,
+            _ => module,
+        }
+    }
 }
 
 impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
@@ -12050,6 +12088,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         module: Sym,
         read: impl FnOnce(&ModuleSymbolLinks<'s>) -> R,
     ) -> R {
+        let module = self.links_holder(module);
         let is_at_merge = |(plan, _): (&LinkPlan, u32)| plan.modules_at_merge.contains(&module);
         if (self.may_read(module.file) || self.scope.is_some_and(is_at_merge))
             && let Some(published) = self.memo.module_links.get_ref(&module)

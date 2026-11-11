@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsThroughTable >= 2
+// STATISTIC: MethodCallsThroughTable = 0
 interface Figure { area(): number }
 class Plate implements Figure { constructor(readonly side: number) {} area() { return this.side * this.side; } }
 class Board implements Figure { constructor(readonly wide: number, readonly high: number) {} area() { return this.wide * this.high; } }

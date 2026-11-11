@@ -36,6 +36,7 @@ use crate::load::contents::load_names::{
 use crate::load::loader_aliases::{LoaderAlias, resolve_loader_alias};
 use crate::load::sources::parsed_source;
 use crate::lower::call::{self, Arguments, Callee};
+use crate::lower::context::CreatedRequire;
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
@@ -487,10 +488,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         chain_exit: Option<BlockId>,
     ) -> Option<ValueId> {
-        let of_site_around = self.made_require_of_site.take();
+        let of_enclosing_site = self.created_require_of_site.take();
         let lowered = self.try_lower_module_call_of_site(call, chain_exit);
-        self.made_require_of_site = of_site_around;
+        self.created_require_of_site = of_enclosing_site;
         lowered
+    }
+
+    fn did_lower_callee_of_site(&mut self, callee: ValueId) {
+        if let Some(CreatedRequire::Callee) = self.created_require_of_site {
+            self.created_require_of_site = Some(CreatedRequire::Value(callee));
+        }
     }
 
     fn try_lower_module_call_of_site(
@@ -694,8 +701,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(plan) => plan.records,
             None => modules.keeps_module_object(ModuleRef::File(self.file.file)),
         };
-        if is_from_created_require && is_seen && matches!(hir[made].kind, ExprKind::Ident(_)) {
-            self.made_require_of_site = Some(made);
+        if is_from_created_require && is_seen {
+            let is_direct =
+                require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct));
+            self.created_require_of_site = match hir[self.file.skip_type_syntax(made)].kind {
+                ExprKind::Ident(_) => Some(CreatedRequire::Variable(made)),
+                ExprKind::Call(_) if is_direct => Some(CreatedRequire::Callee),
+                _ => None,
+            };
         }
         if matches!(operation, ModuleOperation::RequireResolve) && given.len() > 1 {
             return None;
@@ -746,7 +759,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         ));
                     }
                     if !may_still_be_undefined(hir, bound, callee) {
-                        self.lower_expression(callee);
+                        let require = self.lower_expression(callee);
+                        self.did_lower_callee_of_site(require);
                         return Some(self.lower_untested_call(call, arguments, operation, &site));
                     }
                     CalleeTest::IsFilled
@@ -2971,6 +2985,7 @@ fn lower_tested_call(
         unreachable!("a module call with a spread argument is an ordinary call");
     };
     lowering.set_position(lowering.file.load_position(call));
+    lowering.did_lower_callee_of_site(callee.function);
     let mut other_callee = callee;
     let condition = match test {
         CalleeTest::Expected(expected) => {

@@ -104,8 +104,8 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="once"
-// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_22]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: function, v2: undefined|null|[[f_22]]):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=[[f_4]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[f_22]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_2]], v1: [[f_4]], v2: undefined|null|[[f_22]]):
 // CHECK-NEXT: v3 = Call v2 calleeName="f"
 // CHECK-NEXT: v4 = TypeTest v3 testedType=object
 // CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b4(| 0)
@@ -124,8 +124,8 @@ for (const [name, v] of [["the top-level class", T] as [string, any], ...values]
 // CHECK-NEXT: Unreachable
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="negated"
-// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=[[f_4]] flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: [[f_4]], v1: anything, v2: anything):
 // CHECK-NEXT: v3 = RequireObject v2 runtimeError=StaticPrivateInNotObject
 // CHECK-NEXT: v4 = StrictEq v3, v0
 // CHECK-NEXT: v5 = ToBoolean v4

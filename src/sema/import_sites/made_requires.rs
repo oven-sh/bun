@@ -1985,6 +1985,27 @@ pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
         .is_some_and(|e| find_arguments_of_create_require(text, e, StepsLeft::ALL).is_some())
 }
 
+pub fn answers_with_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    e: ExprId,
+) -> bool {
+    let mut e = follow_settled_bindings(hir, bound, e);
+    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
+        let Some(result) = return_value_of_settled_function(hir, bound, e) else {
+            return false;
+        };
+        if is_made_require(hir, bound, result)
+            || find_own_require(hir, bound, Some(decisions), result) == Some(OwnRequire::OfFile)
+        {
+            return true;
+        }
+        e = follow_settled_bindings(hir, bound, result);
+    }
+    false
+}
+
 pub fn is_create_require_behind_get_builtin_module(
     hir: &File<'_>,
     bound: &Bound<'_>,

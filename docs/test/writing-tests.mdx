@@ -544,9 +544,10 @@ test("flaky network request", { retry: { count: 3, delay: 500, condition: /ECONN
 | `delay`     | The milliseconds Bun waits before each retry. Fake timers don't shorten the wait. The default is `0`. |
 | `condition` | A `RegExp`. Bun retries the test only if it matches the `message` of the test's last error.           |
 
-- The last error is the last entry of [`task.result.errors`](#test-context), which has the errors of every attempt. An error that an `afterEach` hook throws comes after the error of the test.
-- As in Vitest, a thrown `AggregateError` adds each member of its `errors`, and a thrown array adds each of its elements. So the `condition` is tested against the last error of a failed `Promise.any()`, and of a connection that every address of a host refused.
+- The last error is the last entry of [`task.result.errors`](#test-context), which has the errors of every attempt. An error that an `afterEach` hook throws comes after the error of the test. Until the test has an error, `task.result.errors` is `undefined`.
+- As in Vitest, a thrown `AggregateError` adds each member of its `errors`, and a thrown array adds each of its elements. A thrown empty array adds nothing. So the `condition` is tested against the last error of a failed `Promise.any()`, and of a connection that every address of a host refused.
 - A failure that Bun finds itself adds the error that Vitest throws for it. A test that times out adds `Test timed out in 5000ms.` and a hook adds `Hook timed out in 10000ms.`, each followed by a hint on a second line. An `expect.assertions(2)` that isn't met adds `expected number of assertions to be 2, but got 1`.
+- A [`test.fails()`](#test-failing) attempt that fails passes the test, so Bun doesn't retry it. An attempt that doesn't fail adds `Expect test to fail`, and Bun retries it if the `condition` matches that message. Vitest decides this way since 5.0.3.
 - Bun's matchers word their messages differently from Vitest's. For a failed assertion, write the `condition` against the message that Bun prints. Bun tests the `condition` against the message without the colors that a terminal gets.
 - Vitest adds a copy of each error to `task.result.errors`. Bun adds the error itself, so the `condition` is tested against the `message` that the error has when the attempt ends, and Bun doesn't call the `toJSON()` of an error.
 - A hook can change `task.result.errors`, in place or with a new array, and the `condition` is tested against what the hook leaves.

@@ -4196,8 +4196,8 @@ describe.concurrent("retry delay and condition", () => {
         ${helpers}
         afterEach(({ task }) => {
           if (task.result.state !== "fail" || task.result.retryCount > 0) return;
-          // A thrown empty array leaves \`errors\` undefined.
-          console.log(JSON.stringify((task.result.errors ?? []).map(error => error?.message)));
+          // As in Vitest, a thrown empty array leaves \`errors\` undefined, and an AggregateError without members leaves an empty array.
+          console.log(JSON.stringify(task.result.errors?.map(error => error?.message)));
         });
         const members = () => [new Error("first"), new Error("last")];
         for (const [name, condition, thrown] of [
@@ -4262,14 +4262,14 @@ describe.concurrent("retry delay and condition", () => {
         `["first","last"]`,
         "throws an AggregateError with frozen errors: 2",
         "throws an empty array: 1",
-        "[]",
+        "undefined",
         "throws a symbol: 1",
         `["Symbol(boom)"]`,
         "throws a symbol: 2",
         "throws an empty array, and the retry has a delay alone: 1",
-        "[]",
+        "undefined",
         "throws an empty array, and the retry is a number: 1",
-        "[]",
+        "undefined",
         "throws an empty array, and the retry is a number: 2",
         "Promise.any(): 1",
         `["first","last"]`,
@@ -4372,9 +4372,14 @@ describe.concurrent("retry delay and condition", () => {
         }));
         test("a wrong number of assertions that does not match", { retry: { count: 1, condition: /never-matches/ } }, once(() => { expect.assertions(2); }));
         test("no assertion", { retry: { count: 1, condition: /^expected any number of assertion, but got none$/ } }, once(() => { expect.hasAssertions(); }));
+        // Since Vitest 5.0.3 a test.fails attempt has its result before the retry decision. So one that throws passes and is not retried.
         test.fails("a test.fails that passes", { retry: { count: 1, condition: /^Expect test to fail$/ } }, ({ task }) => {
           if (count(task) === 2) boom();
         });
+        test.fails("a test.fails that passes, and the condition does not match", { retry: { count: 1, condition: /boom/ } }, ({ task }) => {
+          if (count(task) === 2) boom();
+        });
+        test.fails("a test.fails that throws", { retry: { count: 1, condition: /boom/ } }, always(boom));
         // test.failing is not Vitest's. Bun knows that such a test fails after it decides on a retry, so a number does not retry it and the object does not.
         test.failing("a test.failing that passes", { retry: 1 }, ({ task }) => { count(task); });
         test.failing("a test.failing that passes, with the object", { retry: { count: 1, delay: 1 } }, ({ task }) => { count(task); });
@@ -4417,6 +4422,9 @@ describe.concurrent("retry delay and condition", () => {
         "no assertion: 2",
         "a test.fails that passes: 1",
         "a test.fails that passes: 2",
+        "a test.fails that passes, and the condition does not match: 1",
+        "a test.fails that throws: 1",
+        `["boom"]`,
         "a test.failing that passes: 1",
         "a test.failing that passes, with the object: 1",
         `["Hook timed out in 20ms${ifLongRunning("hook")}`,
@@ -4430,6 +4438,8 @@ describe.concurrent("retry delay and condition", () => {
         "(fail) a wrong number of assertions that does not match",
         "(pass) no assertion (attempt 2)",
         "(pass) a test.fails that passes (attempt 2)",
+        "(fail) a test.fails that passes, and the condition does not match",
+        "(pass) a test.fails that throws",
         "(fail) a test.failing that passes",
         "(fail) a test.failing that passes, with the object",
         "(fail) a hook > times out (attempt 2)",

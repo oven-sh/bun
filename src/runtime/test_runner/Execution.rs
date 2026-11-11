@@ -346,7 +346,7 @@ impl ExecutionSequence {
         unsafe { &*context }.take_deferred(self.attempt_failed())
     }
 
-    /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included.
+    /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included. Since Vitest 5.0.3 each attempt flips before the retry decision.
     fn flip_fails(&mut self, global: &JSGlobalObject) {
         if self.entry_mode() != ScopeMode::Fails || self.result == Result::Skip {
             return;

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -425,6 +425,86 @@ describe("ipc mode advanced", () => {
     },
   );
 });
+
+// The handler of the first message disconnects and then waits in a nested event loop until the
+// Subprocess is done, so that only the stack keeps it. Decoding the second message collects it. The
+// three messages arrive in one read: the receiver starts to read when they are all written.
+it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
+  "a Subprocess that is collected between two messages of one read: %s",
+  async serialization => {
+    using dir = tempDir("ipc-collected-between-messages", {
+      "entry.js": "",
+      "receiver.js": `
+        import { existsSync } from "node:fs";
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        (function start() {
+          let first = true;
+          Bun.spawn({
+            cmd: [process.execPath, "sender.js"],
+            env: { ...process.env, BUN_JSC_gcMaxHeapSize: undefined },
+            serialization: process.argv[2],
+            stdio: ["ignore", "inherit", "inherit"],
+            onDisconnect,
+            ipc(message, subprocess) {
+              if (!first) return;
+              first = false;
+              const { exited } = subprocess;
+              subprocess.disconnect();
+              Bun.build({
+                entrypoints: ["./entry.js"],
+                plugins: [
+                  {
+                    name: "ticks the event loop",
+                    async setup() {
+                      await Promise.all([disconnected, exited]);
+                      console.log("disconnected");
+                    },
+                  },
+                ],
+              });
+            },
+          });
+        })();
+        const cell = new Int32Array(new SharedArrayBuffer(4));
+        for (let i = 0; !existsSync("written"); i++) {
+          if (i === 20_000) throw new Error("the sender did not write");
+          Atomics.wait(cell, 0, 0, 1);
+        }
+        await disconnected;
+      `,
+      "sender.js": `
+        const fs = require("node:fs");
+        const messages = ["first", Array.from({ length: 5000 }, (_, i) => ({ i })), { cmd: "NODE_HANDLE" }];
+        const encode = {
+          json: message => Buffer.from(JSON.stringify(message) + "\\n"),
+          advanced(message) {
+            const body = Buffer.from(require("bun:jsc").serialize(message));
+            const header = Buffer.from([2, 0, 0, 0, 0]);
+            header.writeUInt32LE(body.length, 1);
+            return Buffer.concat([header, body]);
+          },
+        }["${serialization}"];
+        fs.writeSync(3, Buffer.concat(messages.map(encode)));
+        fs.writeFileSync("written", "");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "receiver.js", serialization],
+      env: {
+        ...bunEnv,
+        // A full, synchronous collection for each 192 KB, also in the decoder.
+        BUN_JSC_gcMaxHeapSize: "196608",
+        BUN_JSC_useGenerationalGC: "0",
+        BUN_JSC_useConcurrentGC: "0",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "disconnected\n", stderr: "", exitCode: 0 });
+  },
+);
 
 // get_ipc_instance error path: on Windows, windows_configure_client can open
 // the pipe, mark the socket open, then fail read_start, at which point

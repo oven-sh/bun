@@ -1072,6 +1072,13 @@ impl SendQueue {
         self.root_ptr()
     }
 
+    /// A message handler can tick the event loop, and the owner can be collected there.
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<SendQueue> {
+        // SAFETY: `root_ptr` is the allocation's live root.
+        unsafe { RefPtr::init_ref(self.root_ptr()) }
+    }
+
     #[inline]
     fn socket_is_open(&self) -> bool {
         matches!(*self.socket.get(), SocketUnion::Open(_))
@@ -2272,6 +2279,19 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
+/// Returns false once the owner has detached: the messages that are left have no receiver.
+fn deliver(
+    send_queue: &SendQueue,
+    message: DecodedIPCMessage,
+    global_this: &JSGlobalObject,
+) -> bool {
+    if send_queue.owner_ref().is_none() {
+        return false;
+    }
+    crate::dispatch::fold(handle_ipc_message(send_queue, message, global_this));
+    true
+}
+
 fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
@@ -2372,11 +2392,9 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_json(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
+                        if !deliver(send_queue, result.message, &global_this) {
+                            return;
+                        }
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2396,11 +2414,9 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                         Ok(result) => {
                             let consumed = result.bytes_consumed as usize;
-                            crate::dispatch::fold(handle_ipc_message(
-                                send_queue,
-                                result.message,
-                                &global_this,
-                            ));
+                            if !deliver(send_queue, result.message, &global_this) {
+                                return;
+                            }
                             if consumed < data.len() {
                                 data = &data[consumed..];
                             } else {
@@ -2433,11 +2449,9 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
                     DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
+                        if !deliver(send_queue, result.message, &global_this) {
+                            return;
+                        }
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2466,6 +2480,7 @@ pub(crate) mod IPCHandlers {
         }
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+            let _guard = send_queue.ref_guard();
             let global_this = send_queue.get_global_this();
             // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
             // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
@@ -2547,6 +2562,7 @@ pub(crate) mod IPCHandlers {
         /// current `len`).
         pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
+            let _guard = send_queue.ref_guard();
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
 
@@ -2568,11 +2584,9 @@ pub(crate) mod IPCHandlers {
                     loop {
                         match decode_next_json(&send_queue.incoming, &global_this) {
                             DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
+                                if !deliver(send_queue, result.message, &global_this) {
+                                    return;
+                                }
                             }
                             step => return finish_decode(send_queue, &step),
                         }
@@ -2594,11 +2608,9 @@ pub(crate) mod IPCHandlers {
                             &mut slice_start,
                         ) {
                             DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
+                                if !deliver(send_queue, result.message, &global_this) {
+                                    return;
+                                }
                             }
                             step => return finish_decode(send_queue, &step),
                         }

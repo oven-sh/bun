@@ -4937,6 +4937,58 @@ describe.concurrent("a module that got a mock from import() is evaluated again w
     );
   });
 
+  // The factory of m.ts stops inside the require() in req.ts, while the bodies of dep.ts and req.ts still run. w.ts waits, and a module of that running graph has called import() for it.
+  // Taken at that stop, dep.ts and req.ts would run a second time inside their first run.
+  const ran = (name: string) => `(globalThis.ran ??= []).push("${name}");`;
+  const callsImport = `const p = import("./w"); p.catch(() => {});`;
+  test.each([
+    [
+      "calls import() for the waiting module",
+      { "req.ts": `${ran("req")} ${callsImport} export const m = require("./e.ts").m;` },
+      ["dep", "req", "m", "uses-m", "e", "k", "w", "w"],
+    ],
+    [
+      "imports a module that called import() for it",
+      {
+        "req.ts": `${ran("req")} import "./caller"; export const m = require("./e.ts").m;`,
+        "caller.ts": `${ran("caller")} ${callsImport} export {};`,
+      },
+      ["dep", "caller", "req", "m", "uses-m", "e", "k", "w", "w"],
+    ],
+  ])(
+    "a module that still runs when a factory stops inside require(), and that %s, is not run a second time",
+    async (_, callers, order) => {
+      await expectFixturesToPass(
+        {
+          "k.ts": `${ran("k")} export const k = "real k";`,
+          "m.ts": `${ran("m")} export const m = "real m";`,
+          "gate.ts": `export const g = "real g";`,
+          "w.ts": `${ran("w")} import { k } from "./k"; import "./dep"; import "./gate"; export const seen = () => k;`,
+          "dep.ts": `${ran("dep")} globalThis.depGot = require("./req.ts").m; export {};`,
+          ...callers,
+          "e.ts": `${ran("e")} export { m } from "./m";`,
+          "uses-m.ts": `${ran("uses-m")} import { m } from "./m"; export const seen = () => m;`,
+          "1.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            test("each body runs once while the first load is under way", async () => {
+              const gate = Promise.withResolvers<void>();
+              vi.doMock("./k", () => ({ k: "fake k" }));
+              vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
+              vi.doMock("./m", () => ({ m: "fake m", seen: require("./uses-m").seen() }));
+              await import("./k");
+              const first = import("./w");
+              await gate.promise;
+              vi.doUnmock("./k");
+              expect([(await first).seen(), (await import("./w")).seen(), globalThis.depGot]).toEqual(["fake k", "real k", "fake m"]);
+              expect(globalThis.ran).toEqual(${JSON.stringify(order)});
+            });
+          `,
+        },
+        1,
+      );
+    },
+  );
+
   test("another key of its file stays loaded", async () => {
     const twin = (n: number, mocked: boolean) => `
       import { expect, mock, test } from "bun:test";

@@ -3573,12 +3573,29 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (take(key, importer, isQueued))
                 hold(importer);
         };
+        // The stop of a factory can come inside a load that a module body began. What goes with a waiting module beyond the factory's chain must have run to its end: taken while it runs, its body would run a second time inside the first. A CommonJS module does not say whether it runs.
+        UncheckedKeyHashSet<String> beyondChain;
+        auto mayGo = [&](const String& importer, JSC::AbstractModuleRecord* record) {
+            if (!evict.onlyCallersIn || holdsListed || evict.onlyCallersIn->contains(importer))
+                return true;
+            auto* cyclic = record ? dynamicDowncast<JSC::CyclicModuleRecord>(record) : nullptr;
+            if (!cyclic || cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating)
+                return false;
+            beyondChain.add(importer);
+            return true;
+        };
         UncheckedKeyHashMap<String, Vector<String>> requireKeysOfFile;
         for (size_t walked = 0; walked < held.size() || holdListed(walked); ++walked) {
             String key = held[walked];
             if (auto importers = importersOf.find(key); importers != importersOf.end()) {
                 bool isQueued;
+                bool isBeyondChain = beyondChain.contains(key);
                 for (auto& importer : importers->value) {
+                    if (isBeyondChain) {
+                        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, importer));
+                        if (!mayGo(importer, entry ? entry->record() : nullptr))
+                            continue;
+                    }
                     if (take(key, importer, isQueued) && (callersGo.add(importer).isNewEntry || isQueued))
                         held.append(importer);
                 }
@@ -3589,7 +3606,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                     auto importer = caller.value.get() == caller.key ? registeredKeys.find(caller.key) : registeredKeys.end();
                     if (importer == registeredKeys.end())
                         return true;
-                    takeCaller(key, importer->value);
+                    if (mayGo(importer->value, caller.key))
+                        takeCaller(key, importer->value);
                     return false;
                 });
                 if (callers->value.isEmpty())
@@ -3602,8 +3620,10 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 }
                 for (auto& file : files->value) {
                     if (auto importers = requireKeysOfFile.find(file); importers != requireKeysOfFile.end()) {
-                        for (auto& importer : importers->value)
-                            takeCaller(key, importer);
+                        for (auto& importer : importers->value) {
+                            if (mayGo(importer, nullptr))
+                                takeCaller(key, importer);
+                        }
                     }
                 }
             }
@@ -3732,10 +3752,16 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vecto
 
 static void evictModulesGivenTheOriginal(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock&& stopped)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    // The modules that wait for a load and have loaded go first, with all that called import() for them. Inside a synchronous load this does nothing: the walk below then takes them, with the callers that cannot still be running.
+    if (!globalObject->onLoadPlugins.modulesToEvictWithCallers.isEmpty()) {
+        Bun::evictModulesThatHaveLoaded(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     ModulesToEvict evict { WTF::move(stopped.givenTheOriginal) };
     // A module that the factory loaded may have called import() for one of them. One that was loaded before, and called import() for the factory, keeps nothing of them.
     evict.onlyCallersIn = &stopped.importChain;
-    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvictModulesThatHaveLoaded, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))

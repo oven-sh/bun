@@ -193,13 +193,27 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         node
     }
 
-    /// The block scalar that keeps its line breaks and is the last thing printed inside `node`, if that's what is. It
-    /// isn't when an end comment of a node on the way follows it. Prettier's `getLastDescendantNode` and
-    /// `isLastDescendantNode` follow the children only, so Prettier ends such a scalar the way it ends one at the end
-    /// of the file, with a line break of its own, and prints the hard line before the comment on top of it: for
-    /// `a:\n  b: |+\n    x\n  # c\n` it prints `x\n\n  # c`, with no final line break, and the empty line is part of
-    /// the value from then on. A key is never the last thing printed in its pair either (`? |+\n  a\n: m\n`), unless
-    /// the value is empty (`? |+\n  a\n`): then the key is, and Prettier prints nothing for the value.
+    /// True if `print_block` prints no line for a block scalar that keeps its line breaks, so that it has none to
+    /// end with a line break of its own: `a: |+\n`, and in oxfmt `a: |+\n  ` at the end of the file too.
+    fn has_no_line(&self, scalar: &Node<'a>) -> bool {
+        let source = self.source(scalar);
+        strings::index_of_char_usize(source, b'\n').is_none_or(|newline| {
+            let content = &source[newline + 1..];
+            content.is_empty()
+                || (self.is_oxfmt
+                    && !strings::contains_char(content, b'\n')
+                    && content.iter().all(|byte| *byte == b' '))
+        })
+    }
+
+    /// The block scalar that keeps its line breaks and is the last thing printed inside `node`, with a line to end
+    /// with a line break of its own, if that's what is. It isn't when an end comment of a node on the way follows it.
+    /// Prettier's `getLastDescendantNode` and `isLastDescendantNode` follow the children only, so Prettier ends such a
+    /// scalar the way it ends one at the end of the file, with a line break of its own, and prints the hard line
+    /// before the comment on top of it: for `a:\n  b: |+\n    x\n  # c\n` it prints `x\n\n  # c`, with no final
+    /// line break, and the empty line is part of the value from then on. A key is never the last thing printed in its
+    /// pair either (`? |+\n  a\n: m\n`), unless the value is empty (`? |+\n  a\n`): then the key is, and Prettier
+    /// prints nothing for the value.
     fn kept_line_break_at_end(&self, mut node: &'t Node<'a>) -> Option<Id> {
         let mut id = None;
         while let Some(mut last) = node.children.last() {
@@ -218,6 +232,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         id.filter(|_| {
             matches!(node.kind, Kind::BlockLiteral | Kind::BlockFolded)
                 && node.chomping == Chomping::Keep
+                && !self.has_no_line(node)
         })
     }
 
@@ -410,16 +425,36 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
         }
         if is_ignored {
-            // `replaceEndOfLine`
-            for (index, line) in
-                strings::split(strings::trim_js_whitespace_end(self.source(node)), b"\n")
-                    .enumerate()
-            {
+            // `replaceEndOfLine`. The text as written ends with the line breaks that a block scalar at its end keeps,
+            // which are its value. Prettier trims them: `# prettier-ignore\na: |+\n  x\n\n` becomes `a: |+\n  x`.
+            // Here the scalar ends the way `print_block` ends it: with a line break between its lines, and one of
+            // its own if it ends the stream.
+            let kept = match self.kept_line_break_at_end(node) {
+                None if matches!(node.kind, Kind::BlockLiteral | Kind::BlockFolded)
+                    && node.chomping == Chomping::Keep
+                    && !self.has_no_line(node) =>
+                {
+                    Some(id)
+                }
+                kept => kept,
+            };
+            let source = self.source(node);
+            let text = match kept {
+                Some(_) => source.strip_suffix(b"\n").unwrap_or(source),
+                None => strings::trim_js_whitespace_end(source),
+            };
+            for (index, line) in strings::split(text, b"\n").enumerate() {
                 if index > 0 {
                     self.out.line(Line::Literal);
                     self.out.break_parent();
                 }
                 self.out.text(line);
+            }
+            if kept.is_some() && kept == self.ends_stream {
+                self.out.start_indent(IndentCommand::DedentToRoot);
+                self.out.line(Line::Literal);
+                self.out.break_parent();
+                self.out.end_indent();
             }
         } else {
             self.out.start_group(Group::default());
@@ -486,17 +521,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let tree = self.tree;
         match node.kind {
             Kind::Root => {
-                let ends_stream = self.kept_line_break_at_end(node);
-                // True if that scalar has no line to end with a line break of its own: `a: |+\n`.
-                let ends_stream_without_a_line = ends_stream.is_some_and(|last| {
-                    let source = self.source(self.node(last));
-                    strings::index_of_char_usize(source, b'\n').is_none_or(|newline| {
-                        source[newline + 1..].iter().all(|byte| *byte == b' ')
-                    })
+                // The scalar in a key prints no line break of its own: the root prints one after the empty value, as
+                // Prettier does (`? |+\n  a\n`).
+                let ends_stream = self.kept_line_break_at_end(node).filter(|&scalar| {
+                    let parent = self.node(scalar).parent.map(|it| self.node(it).kind);
+                    parent != Some(Kind::MappingKey)
                 });
-                // In oxfmt a file always ends with a line break, and here the scalar kept none.
-                let should_print_hardline =
-                    ends_stream.is_none() || (self.is_oxfmt && ends_stream_without_a_line);
                 let mut keeps_line_breaks = false;
                 for (index, child) in tree.items(node.children).enumerate() {
                     let document = self.node(child);
@@ -520,20 +550,22 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         document.next.map(|next| self.node(next)),
                     ) {
                         keeps_line_breaks = false;
-                        // The scalar that ends the stream prints its own line break before the marker, if it has a
-                        // line and no comment comes after it. Prettier prints none whenever the stream ends with such
-                        // a scalar, in any document: `a: 1\n...\n---\nb: |+\n  x\n` becomes `a: 1...`, `a: |+\n...\n`
-                        // becomes `a: |+...`, and `a: |+\n  x\n# c\n...\n` becomes `# c...`.
+                        // The scalar that ends the stream prints its own line break before the marker, if no comment
+                        // comes after it, and the file ends with the marker, as Prettier's fixture `block-scalar-keep`
+                        // has it. Otherwise the marker ends the stream. Prettier prints no line break before it
+                        // whenever the stream ends with such a scalar, in any document: `a: 1\n...\n---\nb: |+\n  x\n`
+                        // becomes `a: 1...`, `a: |+\n...\n` becomes `a: |+...`, and `a: |+\n  x\n# c\n...\n` becomes
+                        // `# c...`.
                         let ends_with_the_kept_line_break = self.ends_stream.is_some()
-                            && !ends_stream_without_a_line
                             && document
                                 .children
                                 .last()
                                 .is_none_or(|body| self.node(body).end_comments.is_empty());
-                        if !ends_with_the_kept_line_break
-                            && !(self.is_oxfmt && self.is_empty(document))
-                        {
-                            self.out.hard_line();
+                        if !ends_with_the_kept_line_break {
+                            self.ends_stream = None;
+                            if !(self.is_oxfmt && self.is_empty(document)) {
+                                self.out.hard_line();
+                            }
                         }
                         self.out.token("...");
                         if let Some(comment) = document.trailing_comment {
@@ -542,7 +574,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         }
                     }
                 }
-                if should_print_hardline {
+                // The scalar that ends the stream has printed its own line break. Prettier prints none after one that
+                // has no line either: `keep: |+\n` stays `keep: |+`. In oxfmt a file always ends with a line break.
+                let last = self.last_descendant(node);
+                let ends_with_a_kept_scalar_without_a_line = !self.is_oxfmt
+                    && matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
+                    && last.chomping == Chomping::Keep
+                    && self.has_no_line(last);
+                if self.ends_stream.is_none() && !ends_with_a_kept_scalar_without_a_line {
                     self.out.hard_line();
                 }
             }

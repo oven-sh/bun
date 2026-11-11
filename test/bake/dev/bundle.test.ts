@@ -1044,6 +1044,24 @@ devTest("importing bun on the client", {
     });
   },
 });
+// The node:timers polyfill imports node:timers/promises.
+devTest("importing node:timers on the client", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { setTimeout, promises } from "node:timers";
+      import { setTimeout as sleep } from "node:timers/promises";
+      setTimeout(async () => console.log((await sleep(1, "sleep")) + " " + (await promises.setTimeout(1, "promises"))), 1);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("sleep promises");
+  },
+});
 devTest("import.meta.main", {
   files: {
     "index.html": emptyHtmlFile({

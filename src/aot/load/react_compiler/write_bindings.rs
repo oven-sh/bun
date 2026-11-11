@@ -23,10 +23,7 @@ impl TreeWriter<'_, '_> {
         original: Span<ParamId>,
     ) -> Written<Span<ParamId>> {
         let has_rest = function_flags.contains(flags::Function::HasRestArg);
-        let last_required = original.iter().rposition(|id| {
-            let omittable = Flags::OPTIONAL.union(Flags::REST);
-            self.file[id].default.is_none() && !self.file[id].flags.intersects(omittable)
-        });
+        let last_required = self.file.last_required_parameter(original);
         let mut written = Vec::with_capacity(parameters.len());
         for (index, parameter) in parameters.iter().enumerate() {
             let is_before_required = last_required.is_some_and(|last| index < last);

@@ -54,12 +54,8 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 // app.ts, index.aot.ts and version.aot.ts are compiled with their types, and the build has nothing to say about them.
 const USED = { said: [], typedFiles: 3, exitCode: 0, signal: null, stdout: "7 1.2.3\n" };
 
-async function install(root: string) {
-  const built = await spawned(
-    [bunExe(), "compile", "--library", "src/index.ts", "src/version.ts"],
-    join(root, "library"),
-    env,
-  );
+async function install(root: string, args = ["src/index.ts", "src/version.ts"]) {
+  const built = await spawned([bunExe(), "compile", "--library", ...args], join(root, "library"), env);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   cpSync(join(root, "library/dist"), join(root, "app/node_modules/shapes"), { recursive: true });
 }
@@ -127,6 +123,39 @@ export function area(shape: Shape): Sizes.Size {
     });
     await install(String(dir));
     expect(await compile(String(dir))).toEqual(USED);
+  });
+
+  // The React Compiler prints `(first = 1)` as `(t0) { let first = t0 === undefined ? 1 : t0`.
+  test("a call may leave out a parameter whose default value the React Compiler moved into the function", async () => {
+    const options = JSON.parse(tsconfig).compilerOptions;
+    using dir = tempDir("aot-library-typed-file-moved-default", {
+      "library/tsconfig.json": tsconfig,
+      "library/package.json": JSON.stringify({ name: "shapes", version: "1.2.3" }),
+      "library/src/state.ts": `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`,
+      "library/src/index.tsx": `import { useState } from "./state";
+export function useBoth(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+export function useRange(start: number = 0, end: number): number {
+  const [value] = useState(start);
+  return value + end;
+}
+`,
+      // A type error of a typed file stops the build of a program that has the types of Bun.
+      "app/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, types: ["bun"] } }),
+      "app/node_modules/@types/bun/package.json": `{ "name": "@types/bun", "version": "1.3.0", "types": "index.d.ts" }\n`,
+      "app/node_modules/@types/bun/index.d.ts": `declare module "bun" {\n  export const version: string;\n}\n`,
+      "app/package.json": library["app/package.json"],
+      "app/app.ts": `import { useBoth, useRange } from "shapes";
+console.log(useBoth(), useBoth(5), useBoth(5, 6), useBoth(undefined, 6));
+console.log(useRange(undefined, 5), useRange(1, 2));
+`,
+    });
+    await install(String(dir), ["src/index.tsx", "--react-compiler"]);
+    const stdout = "3 7 11 7\n5 3\n";
+    expect(await compile(String(dir))).toEqual({ ...USED, typedFiles: 2, stdout });
+    expect(await spawned([bunExe(), "app.ts"], join(String(dir), "app"), env)).toMatchObject({ stdout, exitCode: 0 });
   });
 
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {

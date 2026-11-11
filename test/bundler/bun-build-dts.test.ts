@@ -140,4 +140,82 @@ export function join(first: string, second: string): string {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
   });
+
+  // A `//` comment ends at its line break, so the type stays on the line after it.
+  test("a comment before the type of an optional parameter property is kept", async () => {
+    using dir = tempDir("build-dts-comment", {
+      ...project,
+      "src/index.ts": `export class Box {
+  constructor(
+    public size?: // in pixels
+    number,
+  ) {}
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
+      "  public size?: // in pixels\n    number | undefined;\n",
+    );
+  });
+
+  // The React Compiler prints `(first = 1)` as `(t0) { let first = t0 === undefined ? 1 : t0`.
+  const hooks = {
+    ...project,
+    "src/state.ts": `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`,
+    "src/index.tsx": `import { useState } from "./state";
+export function useBoth(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+export function useRange(start: number = 0, end: number): number {
+  const [value] = useState(start);
+  return value + end;
+}
+export function useFormat(format: (value: number) => string = String, value: number): string {
+  const [text] = useState(format(value));
+  return text;
+}
+export function useTotal(items: string[]) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length + n, 0);
+}
+export function useAdder(base: number) {
+  const [n] = useState(base);
+  return (a: number, b: number = 2) => a + b + n;
+}
+`,
+  };
+  const withCompiler = ["build", "./src/index.tsx", "--outdir", "out", "--dts", "--react-compiler", "--target=bun"];
+
+  test("--react-compiler: a parameter whose default value is in the function body can be left out", async () => {
+    using dir = tempDir("build-dts-moved-default", {
+      ...hooks,
+      "src/index.tsx": hooks["src/index.tsx"] + "console.log(useBoth());\n",
+    });
+    const built = await bun(String(dir), ...withCompiler);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
+      "function useBoth(t0?: number, t1?: number): number {",
+    );
+  });
+
+  test("--react-compiler: a function with such a parameter has the type that index.d.ts says", async () => {
+    using dir = tempDir("build-dts-moved-default-same", {
+      ...hooks,
+      "same.ts": `import * as declared from "./out/index";
+import * as typed from "./out/index.aot";
+type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export const useBoth: Same<typeof typed.useBoth, typeof declared.useBoth> = true;
+export const useRange: Same<typeof typed.useRange, typeof declared.useRange> = true;
+export const useFormat: Same<typeof typed.useFormat, typeof declared.useFormat> = true;
+export const useTotal: Same<typeof typed.useTotal, typeof declared.useTotal> = true;
+export const useAdder: Same<typeof typed.useAdder, typeof declared.useAdder> = true;
+`,
+    });
+    const built = await bun(String(dir), ...withCompiler);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await bun(String(dir), "check", "--no-pretty", "same.ts")).toMatchObject({ stdout: "", exitCode: 0 });
+  });
 });

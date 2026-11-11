@@ -3,7 +3,7 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
+    Child, NodeRef, Relation, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
     TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
@@ -37,9 +37,21 @@ enum Place {
     TypeArguments,
 }
 
+/// The output can have a default value in the function body: `(a = 1)` as `(t0) { let a = t0 === undefined ? 1 : t0`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Parameter {
+    /// No parameter, or a pattern or a rest parameter without a default value: nothing that can take a `?`.
+    Other,
+    /// `a = 1`
+    WithDefault,
+    /// `a`, `a?: T`
+    Name,
+}
+
 #[derive(Copy, Clone, Debug)]
 struct Slot {
     place: Place,
+    parameter: Parameter,
     key: u32,
     start: u32,
     end: u32,
@@ -49,11 +61,21 @@ impl Slot {
     fn new(place: Place, key: u32, (start, end): (u32, u32)) -> Slot {
         Slot {
             place,
+            parameter: Parameter::Other,
             key,
             start,
             end,
         }
     }
+}
+
+/// A parameter that has a default value in the source.
+#[derive(Copy, Clone)]
+struct DefaultedParameter {
+    function: FnId,
+    annotation: TypeNodeId,
+    /// A `?` on it is an error: a parameter behind it has to be passed.
+    is_before_required: bool,
 }
 
 fn level_of_operator(op: BinOp) -> Level {
@@ -146,6 +168,25 @@ fn is_typescript(path: &[u8]) -> bool {
         .any(|extension| path.ends_with(extension))
 }
 
+fn summarize<'s>(
+    session: &'s Session,
+    atoms: &Interner<'s>,
+    path: &[u8],
+    text: &[u8],
+    kind: ScriptKind,
+) -> File<'s> {
+    bun_sema_parser::summarize_as(
+        Dialect::default(),
+        session.arena(),
+        path,
+        Some(kind),
+        text,
+        atoms,
+        false,
+        true,
+    )
+}
+
 fn parse<'s>(
     session: &'s Session,
     atoms: &Interner<'s>,
@@ -157,16 +198,7 @@ fn parse<'s>(
     } else {
         ScriptKind::Ts
     };
-    let file = bun_sema_parser::summarize_as(
-        Dialect::default(),
-        session.arena(),
-        path,
-        Some(kind),
-        text,
-        atoms,
-        false,
-        true,
-    );
+    let file = summarize(session, atoms, path, text, kind);
     match file.has_errors || file.has_parse_diagnostics || file.ran_out_of_stack {
         true => Err(TypedFilesError::NotTypeScript {
             path: path.to_vec(),
@@ -177,6 +209,54 @@ fn parse<'s>(
         }),
         false => Ok(file),
     }
+}
+
+/// Whether the parameter at `at` is a pattern or a name before `=`: it can have a default value and no slot.
+fn may_have_default_without_slot(text: &[u8], at: u32) -> bool {
+    let at = at as usize;
+    if matches!(text.get(at), Some(b'{' | b'[')) {
+        return true;
+    }
+    let after = skip_trivia(text, token_end(text, at, false));
+    text.get(after) == Some(&b'=') && token_end(text, after, false) == after + 1
+}
+
+/// Each parameter, by where it starts, that takes a `?` where the output has its default value in the function body.
+fn defaulted_parameters(
+    syntax: &Syntax<'_, '_>,
+    types: Option<&ModuleTypes>,
+) -> FxHashMap<u32, DefaultedParameter> {
+    let file = syntax.file;
+    let mut found = FxHashMap::default();
+    let functions = file.fns.iter().zip(0u32..);
+    for (function, id) in functions.filter(|(function, _)| Syntax::has_javascript(function)) {
+        let last_required = file.last_required_parameter(function.params);
+        let parameters = function.params.iter().map(|parameter| &file[parameter]);
+        for (place, parameter) in parameters.enumerate() {
+            if parameter.default.is_some() {
+                found.insert(
+                    file[parameter.pat].pos,
+                    DefaultedParameter {
+                        function: FnId(id),
+                        annotation: parameter.ty,
+                        is_before_required: last_required.is_some_and(|last| place < last),
+                    },
+                );
+            }
+        }
+    }
+    let Some(types) = types else {
+        return found;
+    };
+    // `typeof a` is the type of the parameter `a` as the source has it: with its default value, and no `undefined`.
+    let queried: FxHashSet<FnId> = (types.locals.iter())
+        .filter_map(|&(_, binding)| Some(found.get(&binding)?.function))
+        .collect();
+    found.retain(|binding, parameter| {
+        !queried.contains(&parameter.function)
+            && !types.parameters_given_by_context.contains(binding)
+    });
+    found
 }
 
 impl<'a, 's> Syntax<'a, 's> {
@@ -303,6 +383,25 @@ impl<'a, 's> Syntax<'a, 's> {
             None => start,
         };
         Some(Slot::new(Place::Binding, key, (start, end)))
+    }
+
+    fn parameter_shape(&self, parameter: &Param) -> Parameter {
+        let is_name = matches!(self.file[parameter.pat].kind, PatKind::Ident(_));
+        if parameter.default.is_some() {
+            Parameter::WithDefault
+        } else if is_name && !parameter.flags.contains(Flags::REST) {
+            Parameter::Name
+        } else {
+            Parameter::Other
+        }
+    }
+
+    /// `T | undefined` reads as another type for these: `() => void | undefined`.
+    fn is_parenthesized_in_a_union(&self, annotation: TypeNodeId) -> bool {
+        matches!(
+            self.file[annotation].kind,
+            TypeNodeKind::Fn(_) | TypeNodeKind::Cond { .. }
+        )
     }
 
     fn function_slots(&self, id: FnId, slots: &mut Vec<Slot>) {
@@ -574,11 +673,15 @@ impl<'a, 's> Syntax<'a, 's> {
             .collect();
         for (index, parameter) in file.params.iter().enumerate() {
             if !this_parameters.contains(&(index as u32)) {
-                slots.extend(self.binding_slot(
+                let binding = self.binding_slot(
                     parameter.pat,
                     parameter.ty,
                     parameter.flags.contains(Flags::OPTIONAL),
-                ));
+                );
+                slots.extend(binding.map(|slot| Slot {
+                    parameter: self.parameter_shape(parameter),
+                    ..slot
+                }));
             }
         }
         for index in 0..file.fns.len() {
@@ -1439,6 +1542,21 @@ impl Written<'_, '_> {
 
     fn trimmed_text(&self, start: u32, end: u32) -> Vec<u8> {
         self.text(start, end).trim_ascii().to_vec()
+    }
+
+    /// The text of a slot whose type starts at `annotation`, as one that takes `undefined` too: `: T | undefined`.
+    fn text_with_undefined(&self, slot: &Slot, annotation: u32, is_parenthesized: bool) -> Vec<u8> {
+        let (open, close): (&[u8], &[u8]) = if is_parenthesized {
+            (b"(", b") | undefined")
+        } else {
+            (b"", b" | undefined")
+        };
+        // Not trimmed where the two meet: a `//` comment before the type ends at its line break.
+        let (before, ty) = (
+            self.text(slot.start, annotation),
+            self.text(annotation, slot.end),
+        );
+        [before.trim_ascii_start(), open, ty.trim_ascii_end(), close].concat()
     }
 
     fn types_of_namespace(&self, id: StmtId, dropped_modifiers: Flags) -> Option<Vec<u8>> {
@@ -2930,13 +3048,12 @@ fn add_types(
                 .some()
                 .filter(|_| parameter.flags.contains(Flags::OPTIONAL))
             {
-                let is_parenthesized_in_a_union = matches!(
-                    file[annotation].kind,
-                    TypeNodeKind::Fn(_) | TypeNodeKind::Cond { .. }
-                );
                 optional_parameter_properties.insert(
                     (index as u32, binding.key),
-                    (syntax.type_span(annotation).0, is_parenthesized_in_a_union),
+                    (
+                        syntax.type_span(annotation).0,
+                        syntax.is_parenthesized_in_a_union(annotation),
+                    ),
                 );
             }
             for modifier in file.modifier_list(file.param_modifiers(ParamId(id))) {
@@ -2950,12 +3067,11 @@ fn add_types(
                 };
                 source_slots.insert(
                     (place, index as u32, binding.key),
-                    Slot {
+                    Slot::new(
                         place,
-                        key: binding.key,
-                        start: modifier.pos,
-                        end: syntax.token_end(modifier.pos),
-                    },
+                        binding.key,
+                        (modifier.pos, syntax.token_end(modifier.pos)),
+                    ),
                 );
             }
         }
@@ -2987,6 +3103,7 @@ fn add_types(
         javascript,
         output: &output,
         mappings: &mappings,
+        sources,
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
@@ -2995,7 +3112,7 @@ fn add_types(
         hoisted: Vec::new(),
         optional_parameter_properties,
     };
-    transfer.copy_slots(&source_slots);
+    transfer.copy_slots(&source_slots, &session, &atoms);
     transfer.annotate_generated_code();
     transfer.copy_casts();
     transfer.type_enum_and_namespace_objects();
@@ -3009,6 +3126,7 @@ struct Transfer<'t, 'a, 's> {
     javascript: &'a [u8],
     output: &'t Syntax<'a, 's>,
     mappings: &'t Mappings,
+    sources: &'t [Source<'a>],
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
@@ -3030,10 +3148,19 @@ impl<'a> Transfer<'_, 'a, '_> {
         anchored
     }
 
-    fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
+    fn copy_slots<'p>(
+        &mut self,
+        source_slots: &FxHashMap<(Place, u32, u32), Slot>,
+        session: &'p Session,
+        atoms: &Interner<'p>,
+    ) {
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
+        let sources = self.sources;
+        // [`defaulted_parameters`] of each source that one was looked for in.
+        let mut defaults_of: FxHashMap<u32, FxHashMap<u32, DefaultedParameter>> =
+            FxHashMap::default();
         let parameter_count_of: FxHashMap<u32, usize> = output_file
             .fns
             .iter()
@@ -3061,17 +3188,53 @@ impl<'a> Transfer<'_, 'a, '_> {
                 );
                 continue;
             }
-            let Some(module) = written[source as usize]
-                .as_ref()
-                .filter(|module| !module.is_unchecked())
-            else {
-                continue;
-            };
-            let Some(found) = source_slots.get(&(slot.place, source, key)) else {
+            let module = written[source as usize].as_ref();
+            let checked = module.filter(|module| !module.is_unchecked());
+            let is_name = slot.parameter == Parameter::Name;
+            // The slot of a parameter says whether it has a default value, in a module that is not checked too.
+            let found = (if is_name { module } else { checked })
+                .and_then(|_| source_slots.get(&(slot.place, source, key)));
+            if is_name
+                && match found {
+                    Some(found) => found.parameter == Parameter::WithDefault,
+                    None => may_have_default_without_slot(sources[source as usize].text, key),
+                }
+            {
+                let parameters = defaults_of.entry(source).or_insert_with(|| match module {
+                    Some(module) => defaulted_parameters(&module.syntax, module.types),
+                    // JavaScript is parsed only where the output may have moved a default value of it.
+                    None => {
+                        let Source { path, text } = sources[source as usize];
+                        let file = summarize(session, atoms, path, text, ScriptKind::Jsx);
+                        match file.has_errors || file.ran_out_of_stack {
+                            true => FxHashMap::default(),
+                            false => defaulted_parameters(&Syntax { file: &file, text }, None),
+                        }
+                    }
+                });
+                if let Some(&default) = parameters.get(&key) {
+                    // A pattern has no slot, and what is not checked has no types.
+                    let annotated = checked.zip(found).zip(default.annotation.some());
+                    let text = match (annotated, default.is_before_required) {
+                        (Some(((module, found), annotation)), true) => module.text_with_undefined(
+                            found,
+                            module.syntax.type_span(annotation).0,
+                            module.syntax.is_parenthesized_in_a_union(annotation),
+                        ),
+                        (Some(((module, found), _)), false) => {
+                            [b"?", &module.trimmed_text(found.start, found.end)[..]].concat()
+                        }
+                        (None, true) => Vec::new(),
+                        (None, false) => b"?".to_vec(),
+                    };
+                    insertions.add(slot.start, Order::Slot, text);
+                    continue;
+                }
+            }
+            let (Some(module), Some(found)) = (checked, found) else {
+                let types = checked.and_then(|module| module.types);
                 if slot.place == Place::ReturnType
-                    && module
-                        .types
-                        .is_some_and(|types| types.functions_returning_undefined.contains(&key))
+                    && types.is_some_and(|types| types.functions_returning_undefined.contains(&key))
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
@@ -3094,21 +3257,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     let (annotation, is_parenthesized) =
                         self.optional_parameter_properties[&(source, key)];
-                    let (open, close): (&[u8], &[u8]) = if is_parenthesized {
-                        (b" (", b") | undefined")
-                    } else {
-                        (b" ", b" | undefined")
-                    };
-                    (
-                        Order::Slot,
-                        [
-                            &module.trimmed_text(found.start, annotation)[..],
-                            open,
-                            &module.trimmed_text(annotation, found.end),
-                            close,
-                        ]
-                        .concat(),
-                    )
+                    let text = module.text_with_undefined(found, annotation, is_parenthesized);
+                    (Order::Slot, text)
                 }
                 Place::Implements => (Order::Slot, [&b" "[..], &text[..]].concat()),
                 Place::ClassKeyword | Place::MemberName => {
@@ -4123,6 +4273,8 @@ pub struct ModuleTypes {
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
+    /// Where a parameter with a default value starts, if the contextual signature of its function has a type without `undefined` there.
+    pub parameters_given_by_context: Vec<u32>,
     pub emitted_declarations: Box<[u8]>,
 }
 
@@ -4234,7 +4386,12 @@ fn target_of_declaration(
     })
 }
 
-pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
+/// `notes_parameters`: the build can move a default value into the function body, as the React Compiler does.
+pub fn module_types(
+    checker: &mut Checker<'_, '_>,
+    file: FileId,
+    notes_parameters: bool,
+) -> Option<ModuleTypes> {
     if !is_project_source(checker, file) {
         return None;
     }
@@ -4429,6 +4586,21 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 functions_returning_undefined.push(Syntax::function_key(function));
             }
         }
+        let mut parameters_given_by_context = Vec::new();
+        let noted = if notes_parameters { &hir.fns[..] } else { &[] };
+        for (function, id) in noted.iter().zip(0u32..) {
+            let node = hir.node(FnId(id));
+            let parameters = function.params.iter().map(|parameter| &hir[parameter]);
+            for (index, parameter) in parameters.enumerate() {
+                if parameter.default.is_some()
+                    && let Some(ty) =
+                        services.contextual_parameter_type(NodeRef { file, node }, index)
+                    && !services.is_related(Relation::Assignable, TypeId::UNDEFINED, ty)
+                {
+                    parameters_given_by_context.push(hir[parameter.pat].pos);
+                }
+            }
+        }
         let syntax = Syntax {
             file: hir,
             text: &hir.text[..],
@@ -4456,6 +4628,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             globals,
             augmented_modules,
             locals,
+            parameters_given_by_context,
             emitted_declarations: Box::default(),
         }
     }))

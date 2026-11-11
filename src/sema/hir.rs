@@ -3375,6 +3375,13 @@ impl<S: Storage> FileIn<S> {
             _ => (ParamId::NONE, params),
         }
     }
+    /// The last of `params` with no default value, `?` or `...`. A `?` on a parameter before it is an error (TS1016).
+    pub fn last_required_parameter(&self, params: Span<ParamId>) -> Option<usize> {
+        params.iter().rposition(|id| {
+            let omittable = Flags::OPTIONAL.union(Flags::REST);
+            self[id].default.is_none() && !self[id].flags.intersects(omittable)
+        })
+    }
     /// `NodeFlagsInWithStatement` for the node at `pos`.
     #[inline]
     pub fn is_in_with(&self, pos: u32) -> bool {

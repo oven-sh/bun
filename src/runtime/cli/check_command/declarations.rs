@@ -45,6 +45,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         tsconfig,
         conditions,
         loaders,
+        react_compiler,
         entry_points,
         sources,
     } = checked;
@@ -82,7 +83,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     // A task of the checker can run again: the last time counts.
     let module_types = NotedModuleTypes::default();
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
-        module_types.note(checker, file);
+        module_types.note(checker, file, react_compiler);
         let text = checker.emit_declaration_file(file);
         let source = checker.p.files.module(file).file_name();
         let mut emitted = emitted.lock();

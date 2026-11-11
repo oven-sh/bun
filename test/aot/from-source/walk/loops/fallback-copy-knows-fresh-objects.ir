@@ -1,0 +1,25 @@
+# -- source: fallback-copy-knows-fresh-objects.js
+# const rates = JSON.parse("[2,4,6,8,10,12]");
+# let total;
+# function tally(input) {
+#   let extra = 0;
+#   const spare = [];
+#   const rows = Array.from(input);
+#   total = 0;
+#   for (let i = rows.length - 1; i >= 0; i--) {
+#     total += rows[i];
+#     for (let j = 0; j < rows.length; j++) total += rows[j];
+#     extra += rates[i];
+#   }
+#   return spare.length + extra;
+# }
+# print(tally(JSON.parse("[1,2,3,4,5]")));
+# print(total);
+# -- end of source
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 30
+# SHELL-NEXT: 90
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

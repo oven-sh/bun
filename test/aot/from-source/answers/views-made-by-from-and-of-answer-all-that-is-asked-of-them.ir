@@ -1,7 +1,6 @@
 # Uint8Array.from(..) and Float64Array.of(..) construct their receiver, and the look at a body says so and no more. What lies below the classes and above them is still found by every road on which a
 # program asks for it: by name, under a key made at run time, up the chain from the class and from an object of it, through a class of the program below one of them, and through @@species.
 # RUN: run-in-shell mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: 2,4,6 true 3
 # CHECK-NEXT: 1.5,2.5 8
 # CHECK-NEXT: function function 1

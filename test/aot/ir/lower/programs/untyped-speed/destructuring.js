@@ -59,9 +59,9 @@ console.log(run(700000));
 
 // GENERATED: pick omitId
 // CHECK-LABEL: function {{*}}name="pick"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: Array):
-// CHECK-NEXT: v2 = Data data=[[d_1]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]], v1: Array):
+// CHECK-NEXT: v2 = Data data=[[d_2]]
 // CHECK-NEXT: v3 = IteratorOpen v1
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -84,8 +84,8 @@ console.log(run(700000));
 // CHECK-NEXT: Rethrow v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="omitId"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_2]]):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_3]]):
 // CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
 // CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
 // CHECK-NEXT: b1(v2):

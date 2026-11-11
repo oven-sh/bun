@@ -137,13 +137,10 @@ describe.concurrent("a class of the host of which the program makes no instance"
   const unknown = `declare const CustomEvent: any;\nconst value: any = new CustomEvent("x", { detail: JSON.parse(process.argv[2] ?? "{}") }).detail;\n`;
   const retainsTest = async (text: string) => retainsFeature((await of(text)).lines, "Test");
 
-  test.failing(
-    "value.items and the like, the names of getters of what expectTypeOf() answers, are no use of bun:test (not yet: bun:test is kept)",
-    async () => {
-      const names = ["items", "not", "returns", "parameters", "instance", "resolves"];
-      expect(await retainsTest(unknown + names.map(name => `console.log(value.${name});`).join("\n"))).toBe(false);
-    },
-  );
+  test("value.items and the like, the names of getters of what expectTypeOf() answers, are no use of bun:test", async () => {
+    const names = ["items", "not", "returns", "parameters", "instance", "resolves"];
+    expect(await retainsTest(unknown + names.map(name => `console.log(value.${name});`).join("\n"))).toBe(false);
+  });
 
   // Text that the build cannot read may import any built-in module by its name. That is a name known only at run time: for --trim it does not count, and the import is refused by name.
   test("text evaluated at run time keeps nothing of bun:test, which it may import by its name", async () => {

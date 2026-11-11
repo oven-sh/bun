@@ -3,45 +3,36 @@
 // # the functions are called by value out of what unseen code holds, so each call comes through the guard into the unit that RUN(FORM) shows. Where the row in front of the loop fails, the closed copy answers
 // # f2 = countsTexts, f3 = sums, f4 = countsWhatIsAbsent, f5 = weighs, f6 = looksBelowZero, f7 = sumsAgainAndAgain, f8 = literal, f1 = tell, f9 = all
 // # RUN(FORM): walk f2 mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM-LABEL: code f2:Body
 // # FORM: = IsPristine {{*}}builtinClass=Array
 // # FORM: = HasArrayStorage {{*}}arrayStorage=Contiguous
 // # FORM: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven
 // # RUN(NUMBERS): walk f3 mechanisms=all
-// # REQUIRES(NUMBERS): entries-of-bun
 // # NUMBERS-LABEL: code f3:Body
 // # NUMBERS: = HasArrayStorage {{*}}arrayStorage=Double
 // # NUMBERS: = GetArrayElement {{*}}arrayStorage=Double level=Proven
 // # RUN(ANYTHING): walk f5 mechanisms=all
-// # REQUIRES(ANYTHING): entries-of-bun
 // # ANYTHING-LABEL: code f5:Body
 // # ANYTHING: = IsPristine {{*}}builtinClass=Array
 // # ANYTHING: = GetArrayElement {{*}}level=Proven
 // # RUN(BELOW): walk f6 mechanisms=all
-// # REQUIRES(BELOW): entries-of-bun
 // # BELOW-LABEL: code f6:Body
 // # BELOW: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
 // # BELOW: = GetArrayElement {{*}}level=Proven
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 335 of 335 of 335
 // # CHECK-NEXT: exited with 0
 // # RUN(ALSO1): run-in-shell mechanisms=-LoopInvariants $SHELL
-// # REQUIRES(ALSO1): entries-of-bun
 // # ALSO1: 335 of 335 of 335
 // # ALSO1-NEXT: exited with 0
 // # RUN(ALSO2): run-in-shell mechanisms=-Guesses $SHELL
-// # REQUIRES(ALSO2): entries-of-bun
 // # ALSO2: 335 of 335 of 335
 // # ALSO2-NEXT: exited with 0
 // # RUN(ALSO3): run-in-shell mechanisms=-ParameterGuards $SHELL
-// # REQUIRES(ALSO3): entries-of-bun
 // # ALSO3: 335 of 335 of 335
 // # ALSO3-NEXT: exited with 0
 // # RUN(ALSO4): run-in-shell mechanisms=-UnboxedNumbers $SHELL
-// # REQUIRES(ALSO4): entries-of-bun
 // # ALSO4: 335 of 335 of 335
 // # ALSO4-NEXT: exited with 0
 declare function report(value: unknown): void;

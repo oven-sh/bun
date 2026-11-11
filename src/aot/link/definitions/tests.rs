@@ -260,7 +260,7 @@ fn in_which_order_a_unit_defines_the_types_of_a_layout_changes_nothing() {
                 let position = |site: DefinitionSite| {
                     prepared.units[site.unit as usize].layout_definitions[site.index as usize]
                         .1
-                        .position
+                        .position()
                 };
                 sites.map(position).collect::<Vec<u32>>()
             })
@@ -353,7 +353,7 @@ fn only_link_defines_synthetic_exports() {
 }
 
 #[test]
-fn copy_is_defined_where_the_file_has_a_face() {
+fn copy_is_defined_by_facade() {
     let files = [
         (
             "main.js",
@@ -369,31 +369,31 @@ fn copy_is_defined_where_the_file_has_a_face() {
         assert_ne!(copy, context.variable_key(VariableKey::SyntheticExport(id)));
         assert!(synthetic_export_keys(projects).contains(&copy));
 
-        let declare = |face: Option<ModuleRef>| {
+        let declare = |facade: Option<ModuleRef>| {
             let mut fragment = FragmentBuilder::alone(main);
             fragment.declare_variable(VariableKey::Copy(id));
-            if let Some(face) = face {
-                fragment.declare_module(face);
+            if let Some(facade) = facade {
+                fragment.declare_module(facade);
             }
             prepare_fragments(projects, [finish(fragment)])
         };
-        let has_face = projects
+        let has_facade = projects
             .application
             .graph
-            .face(ModuleRef::File(legacy))
+            .facade(ModuleRef::File(legacy))
             .is_some();
-        if !has_face {
+        if !has_facade {
             assert_eq!(variable_definition(&declare(None), copy), None);
         }
 
-        let prepared = declare(Some(ModuleRef::Face(legacy)));
-        let face = ProgramModule::Face(application_file(legacy));
+        let prepared = declare(Some(ModuleRef::Facade(legacy)));
+        let facade = ProgramModule::Facade(application_file(legacy));
         let definition = VariableDefinition::SyntheticExport {
-            module: prepared.modules.index_of(face),
+            module: prepared.modules.index_of(facade),
             name: projects.application.loaded.files().atoms.intern(b"a"),
             is_known_member: false,
             is_replaceable: false,
-            writer: ExportWriter::Face,
+            writer: ExportWriter::Facade,
         };
         assert_eq!(variable_definition(&prepared, copy), Some(definition));
     });
@@ -608,7 +608,7 @@ fn synthetic_export_variable_is_untyped_and_uninitialized() {
     let writers = [
         (ExportWriter::Loader, true, DeclaredType::untyped()),
         (ExportWriter::Loader, false, may_be_read_empty()),
-        (ExportWriter::Face, true, may_be_read_empty()),
+        (ExportWriter::Facade, true, may_be_read_empty()),
         (ExportWriter::Capture, true, may_be_read_empty()),
     ];
     for (writer, is_known_member, declared) in writers {

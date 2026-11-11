@@ -1,0 +1,28 @@
+# -- source: main.ts
+# declare function publish(...functions: unknown[]): void;
+# function bornHere(source: string[]) {
+#     const list: number[] = new Array(source.length);
+#     for (let i = 0; i < source.length; i++)
+#         list[i] = i;
+#     let sum = 0;
+#     for (let i = 0; i < list.length; i++)
+#         sum += list[i];
+#     return sum;
+# }
+# function handedIn(list: number[]) {
+#     let sum = 0;
+#     for (let i = 0; i < list.length; i++)
+#         sum += list[i];
+#     return sum;
+# }
+# publish(bornHere, handedIn);
+# -- end of source
+# The storage of a list only widens. `list` of bornHere is born to hold doubles, so the loop that sums it asks for doubles alone and its reads tell no two kinds apart. Nobody knows how the list of handedIn was born.
+# RUN: walk mechanisms=all
+# CHECK: code f1:Body
+# CHECK: = NewArrayLike {{*}}arrayStorage=Double
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double traits=
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN] traits=
+# CHECK: code f2:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]

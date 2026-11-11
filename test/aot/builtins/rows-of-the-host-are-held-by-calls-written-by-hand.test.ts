@@ -172,13 +172,16 @@ function seeChannel(): Promise<Channel> {
   })());
 }
 
-function withDescriptors<Answer>(use: (open: number, closed: number) => Answer): Answer {
+// The second is open for appending alone, so a read from it fails. The number of a closed one goes to whoever opens a file next, and a read from it then succeeds.
+function withDescriptors<Answer>(use: (open: number, unreadable: number) => Answer): Answer {
   using folder = tempDir("aot-rows-by-hand", { file: "text" });
   const open = openSync(join(String(folder), "file"), "r");
-  const closed = openSync(join(String(folder), "file"), "r");
-  closeSync(closed);
-  const answer = use(open, closed);
-  Promise.resolve(answer).finally(() => closeSync(open));
+  const unreadable = openSync(join(String(folder), "file"), "a");
+  const answer = use(open, unreadable);
+  Promise.resolve(answer).finally(() => {
+    closeSync(open);
+    closeSync(unreadable);
+  });
   return answer;
 }
 
@@ -740,7 +743,7 @@ const cases: Case[] = [
       mode: "Call",
       place: "the reason of the promise",
       typesIn: settledWith("PromiseReason"),
-      see: () => withDescriptors((open, closed) => reasonOf(readsIntoBuffer(method)(closed))),
+      see: () => withDescriptors((open, unreadable) => reasonOf(readsIntoBuffer(method)(unreadable))),
     },
     {
       row: `%NodeJSFS%.prototype.${method}Cb`,

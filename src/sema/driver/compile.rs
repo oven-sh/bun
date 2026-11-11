@@ -14,6 +14,7 @@ mod threads;
 pub use check::{
     PassCount, Passes, check_and_lower, check_and_lower_noting_commits, check_whole_files,
 };
+pub(crate) use load::take_bun_types_below;
 pub use load::{FileFinder, FileFinderTables, load_program, resolve_names_known_in_part};
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
@@ -24,6 +25,7 @@ pub use threads::{
 };
 
 use self::effects::ProgramOrigins;
+pub use self::effects::says_that_name_is_not_found;
 #[cfg(test)]
 use crate::RoundReport;
 use crate::{CompilerOption, Diagnostic, Incomplete, Libs, Progress};
@@ -70,6 +72,7 @@ pub struct LoadedProgram<'s> {
     is_checker_freed: AtomicBool,
     cycles_entered: Guarded<Vec<(u32, u32, usize, CyclesEntered)>>,
     origins: Vec<FileOrigin>,
+    origins_behind_reach: OnceLock<Vec<FileOrigin>>,
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
     bun_types: BunTypes,
@@ -107,7 +110,22 @@ impl<'s> LoadedProgram<'s> {
     }
 
     pub fn origin(&self, file: FileId) -> FileOrigin {
-        self.origins[file.idx()]
+        self.origins()[file.idx()]
+    }
+
+    fn origins(&self) -> &[FileOrigin] {
+        self.origins_behind_reach.get().unwrap_or(&self.origins)
+    }
+
+    pub fn hold_as_evaluated_text(&self, files: &[FileId]) {
+        if files.is_empty() {
+            return;
+        }
+        let mut origins = self.origins.clone();
+        for file in files {
+            origins[file.idx()] = FileOrigin::EvaluatedText;
+        }
+        let _ = self.origins_behind_reach.set(origins);
     }
 
     pub fn leave_files_to_loader(&self, mut files: Vec<FileId>) {
@@ -192,7 +210,7 @@ impl<'s> LoadedProgram<'s> {
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {
         ProgramOrigins {
             files: Some(self.files),
-            origins: &self.origins,
+            origins: self.origins(),
             project_origin: self.project_origin,
             bun_types: &self.bun_types,
             has_configuration_file: self.has_configuration_file,

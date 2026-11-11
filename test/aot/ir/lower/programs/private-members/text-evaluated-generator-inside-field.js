@@ -74,7 +74,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 
 // GENERATED: show total Unused each #raise read
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1() handler=b2():
@@ -107,7 +107,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Return v22
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v1 = NewClosure v0 function=[[f_2]]
@@ -116,7 +116,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Unused"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
@@ -125,7 +125,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: anything, v6: undefined|null|string|Array<undefined|null|string>, v7: Array):
 // CHECK-NEXT: v8 = CreateUnmappedArguments v4, v7, v5, v6
 // CHECK-NEXT: v9 = NewObject -, v5, v6 layout=[[L_6]] fields=[0, 1]
@@ -179,34 +179,34 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Rethrow v34
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_8]], v1: function, v2: classtoken):
-// CHECK-NEXT: v3 = NewObject layout=[[L_9]]
-// CHECK-NEXT: v4 = NewClosure v0, v3, v1, v2 function=[[f_10]]
-// CHECK-NEXT: PutEnvironmentField v3, v4 layout=[[L_9]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=[[f_9]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_8]], v1: [[f_9]], v2: classtoken):
+// CHECK-NEXT: v3 = NewObject layout=[[L_10]]
+// CHECK-NEXT: v4 = NewClosure v0, v3, v1, v2 function=[[f_11]]
+// CHECK-NEXT: PutEnvironmentField v3, v4 layout=[[L_10]]
 // CHECK-NEXT: v6 = NewArray contents=anything
-// CHECK-NEXT: v7 = GetEnvironmentField v3 layout=[[L_9]]
+// CHECK-NEXT: v7 = GetEnvironmentField v3 layout=[[L_10]]
 // CHECK-NEXT: v8 = Call v7 calleeName="each"
 // CHECK-NEXT: AppendSpread v6, v8
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#raise"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=[[L_11]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: classtoken, v1: [[L_11]]):
-// CHECK-NEXT: v2 = PrivateGet v1, v0 layout=[[L_11]] field=1
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=[[L_12]] flags=[IsExpected]} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: classtoken, v1: [[L_12]]):
+// CHECK-NEXT: v2 = PrivateGet v1, v0 layout=[[L_12]] field=1
 // CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: PrivateSet v1, v0, v3 layout=[[L_11]] field=1
+// CHECK-NEXT: PrivateSet v1, v0, v3 layout=[[L_12]] field=1
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] captures=[{type=env [[L_12]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=function flags=[IsExpected]} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_12]], v1: function, v2: classtoken, v3: anything, v4: function, v5: anything, v6: undefined|null|string):
-// CHECK-NEXT: v7 = NewObject -, v5, v6 layout=[[L_13]] fields=[0, 1]
-// CHECK-NEXT: v8 = NewClosure v0, v7, v1, v2, v3 function=[[f_14]]
-// CHECK-NEXT: PutEnvironmentField v7, v8 layout=[[L_13]] field=2
-// CHECK-NEXT: v10 = Data data=[[d_15]]
-// CHECK-NEXT: PutEnvironmentField v7, v10 layout=[[L_13]] field=3
-// CHECK-NEXT: v12 = GetEnvironmentField v7 layout=[[L_13]] field=2
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasLiveAwait] captures=[{type=env [[L_13]] flags=[IsFromCompiler]}, {type=[[f_14]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=function flags=[IsExpected]} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_13]], v1: [[f_14]], v2: classtoken, v3: anything, v4: function, v5: anything, v6: undefined|null|string):
+// CHECK-NEXT: v7 = NewObject -, v5, v6 layout=[[L_15]] fields=[0, 1]
+// CHECK-NEXT: v8 = NewClosure v0, v7, v1, v2, v3 function=[[f_16]]
+// CHECK-NEXT: PutEnvironmentField v7, v8 layout=[[L_15]] field=2
+// CHECK-NEXT: v10 = Data data=[[d_17]]
+// CHECK-NEXT: PutEnvironmentField v7, v10 layout=[[L_15]] field=3
+// CHECK-NEXT: v12 = GetEnvironmentField v7 layout=[[L_15]] field=2
 // CHECK-NEXT: v13 = Call v12 calleeName="each"
 // CHECK-NEXT: v14 = IteratorOpen v13 iteratorKind=Async
 // CHECK-NEXT: Jump -> next b1()
@@ -230,20 +230,20 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Rethrow v21
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env [[L_16]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_16]], v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: undefined|null|string, v6: anything, v7: Array):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env [[L_18]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_18]], v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: undefined|null|string, v6: anything, v7: Array):
 // CHECK-NEXT: v8 = CreateUnmappedArguments v4, v7, v5, v6
-// CHECK-NEXT: v9 = NewObject -, v5, v6 layout=[[L_17]] fields=[0, 1]
+// CHECK-NEXT: v9 = NewObject -, v5, v6 layout=[[L_19]] fields=[0, 1]
 // CHECK-NEXT: InitialYield v9, v1, v8
 // CHECK-NEXT: v11 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v12 = PropGet v11 key="eval" [isFreeName]
 // CHECK-NEXT: v13 = Convert v12 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v14 = GetEnvironmentField v9 layout=[[L_17]]
+// CHECK-NEXT: v14 = GetEnvironmentField v9 layout=[[L_19]]
 // CHECK-NEXT: v15 = Builtin builtin=Eval [isNotReadFromHolder]
 // CHECK-NEXT: v16 = StrictEq v13, v15
 // CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2(| 0)
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_18]]
+// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_20]]
 // CHECK-NEXT: v18 = DirectEval v14, v1, v3, v9, v0, v8, v17 evalScope=e2
 // CHECK-NEXT: Jump -> next b3(v18)
 // CHECK-NEXT: b2(v19):
@@ -263,8 +263,8 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Return v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=env [[L_9]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_8]], v1: env [[L_9]], v2: function, v3: classtoken, v4: anything, v5: function, v6: anything, v7: int[0, 4294967295], v8: Array):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_8]] flags=[IsFromCompiler]}, {type=env [[L_10]] flags=[IsFromCompiler]}, {type=[[f_9]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_8]], v1: env [[L_10]], v2: [[f_9]], v3: classtoken, v4: anything, v5: function, v6: anything, v7: int[0, 4294967295], v8: Array):
 // CHECK-NEXT: v9 = CreateUnmappedArguments v7, v8
 // CHECK-NEXT: InitialYield v4, v9
 // CHECK-NEXT: v11 = Builtin builtin=GlobalThis
@@ -294,14 +294,14 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Return v24
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="each"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_12]] flags=[IsFromCompiler]}, {type=env [[L_13]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_12]], v1: env [[L_13]], v2: function, v3: classtoken, v4: anything, v5: anything, v6: function, v7: anything, v8: int[0, 4294967295], v9: Array):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsAsync, IsGenerator, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=env [[L_13]] flags=[IsFromCompiler]}, {type=env [[L_15]] flags=[IsFromCompiler]}, {type=[[f_14]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_13]], v1: env [[L_15]], v2: [[f_14]], v3: classtoken, v4: anything, v5: anything, v6: function, v7: anything, v8: int[0, 4294967295], v9: Array):
 // CHECK-NEXT: v10 = CreateUnmappedArguments v8, v9
 // CHECK-NEXT: InitialYield v5, v10
 // CHECK-NEXT: v12 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v13 = PropGet v12 key="eval" [isFreeName]
 // CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: v15 = GetEnvironmentField v1 layout=[[L_13]] field=1
+// CHECK-NEXT: v15 = GetEnvironmentField v1 layout=[[L_15]] field=1
 // CHECK-NEXT: v16 = Builtin builtin=Eval [isNotReadFromHolder]
 // CHECK-NEXT: v17 = StrictEq v14, v16
 // CHECK-NEXT: Branch v17 -> taken b1(), notTaken b2(| 0)

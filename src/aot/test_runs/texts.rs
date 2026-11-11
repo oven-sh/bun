@@ -53,6 +53,10 @@ pub(super) fn without_extension(path: &[u8]) -> &[u8] {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
     ];
+    let has_dot = |from_end: usize| path.len() >= from_end && path[path.len() - from_end] == b'.';
+    if !has_dot(3) && !has_dot(4) {
+        return path;
+    }
     let stem = EXTENSIONS.iter().find_map(|end| path.strip_suffix(*end));
     stem.unwrap_or(path)
 }
@@ -517,13 +521,13 @@ fn takes_messages(tree: Tree<'_, '_>, callee: ExprId) -> bool {
 
 struct Look<'t> {
     session: &'t Session,
-    atoms: Interner<'t>,
-    names: BuiltinNames,
+    atoms: &'t Interner<'t>,
+    names: &'t BuiltinNames,
 }
 
 impl<'t> Look<'t> {
     fn look_at_text(&self, text: &[u8]) -> Option<ReadAsCode> {
-        let (arena, atoms) = (self.session.arena(), &self.atoms);
+        let (arena, atoms) = (self.session.arena(), self.atoms);
         let parse_options = CompileParseOptions {
             path: PATH_OF_TEXT,
             script_kind: None,
@@ -568,6 +572,7 @@ impl<'t> Look<'t> {
                 experimental_decorators: false,
                 emits_decorator_metadata: false,
                 use_define_for_class_fields: None,
+                bun_run_assigns_class_fields: false,
             },
             import_meta_main: None,
         };
@@ -599,7 +604,7 @@ impl<'t> Look<'t> {
             atoms,
             module_format: analysis.module_format,
             targets: &ImportTargets::new(&targets),
-            names: &self.names,
+            names: self.names,
             platform: host_platform(),
             dialect: SourceDialect::Program,
             replaced: &[],
@@ -939,22 +944,18 @@ impl<'a, 's> TextReader<'a, 's> {
         CodeInTexts { written, handed_on }
     }
 
-    pub(super) fn finish(self) -> (FoundInTexts, FoundInTexts) {
+    pub(super) fn finish(self, names: &BuiltinNames) -> (FoundInTexts, FoundInTexts) {
         if self.candidates.is_empty() {
             return Default::default();
         }
-        let atoms_of_file = self.tree.atoms;
+        let atoms = self.tree.atoms;
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
         let look = Look {
             session: &session,
-            names: BuiltinNames::new(&atoms),
+            names,
             atoms,
         };
         let CodeInTexts { written, handed_on } = self.read_with(&look);
-        (
-            written.intern(atoms_of_file),
-            handed_on.intern(atoms_of_file),
-        )
+        (written.intern(atoms), handed_on.intern(atoms))
     }
 }

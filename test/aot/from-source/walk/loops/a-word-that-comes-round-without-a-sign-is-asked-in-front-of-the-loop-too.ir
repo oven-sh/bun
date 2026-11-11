@@ -1,0 +1,35 @@
+# `for (..) h = Math.imul(h ^ bytes[i], 16777619) >>> 0` with `h: number` from in front of the loop. A word that comes round out of `| 0` is asked in front of the typed copy for an integer from -2 ** 31 to 2 ** 32 - 1.
+# One that comes round out of `>>> 0` was asked nothing, because what comes round is no int32: it went round as a double that may be nothing: ToNumber, ToInt32 by the long road, a conversion back and a marker in every turn.
+# What comes round may be any integer of 32 bits, signed or not; the question in front is the same.
+# In `grows` the word comes round out of a product without a cut, so nothing is asked.
+# -- source: a-word-that-comes-round-without-a-sign-is-asked-in-front-of-the-loop-too.ts
+# declare function say(x: number): void;
+# function fnv(h: number, bytes: Uint8Array): number { for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i]!, 16777619) >>> 0; return h; }
+# function grows(h: number, bytes: Uint8Array): number { for (let i = 0; i < bytes.length; i++) h = (h ^ bytes[i]!) * 16777619; return h; }
+# const bytes = new Uint8Array([1, 2, 3, 4]), seeds = [2166136261, 0, -1, 0.5, -0, NaN, 4294967296, -2147483649, 1e300];
+# for (let k = 0; k < 9; k++) { say(fnv(seeds[k]!, bytes)); say(grows(seeds[k]!, bytes)); }
+# -- end of source
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest v0 testedType=int[-2147483648, 4294967295]
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: = TypeTest v0 testedType=int[-2147483648, 4294967295]
+# RUN(SHELL): run-in-shell globalThis.say = (x) => print(String(x));
+# SHELL: 1463068797
+# SHELL-NEXT: 24435273000855676
+# SHELL-NEXT: 1683451788
+# SHELL-NEXT: -4536995609612404
+# SHELL-NEXT: 1474400463
+# SHELL-NEXT: 16094665549909820
+# SHELL-NEXT: 1683451788
+# SHELL-NEXT: -4536995609612404
+# SHELL-NEXT: 1683451788
+# SHELL-NEXT: -4536995609612404
+# SHELL-NEXT: 1683451788
+# SHELL-NEXT: -4536995609612404
+# SHELL-NEXT: 1683451788
+# SHELL-NEXT: -4536995609612404
+# SHELL-NEXT: 3621884111
+# SHELL-NEXT: 2026041848883876
+# SHELL-NEXT: 1683451788
+# SHELL-NEXT: -4536995609612404

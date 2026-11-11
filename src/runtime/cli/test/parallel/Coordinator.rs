@@ -147,6 +147,11 @@ impl ChildrenOfWorkers {
             let Some(at) = self.groups.iter().position(is_its_group) else {
                 continue;
             };
+            // "session terminal foreground-group flags". Until a child starts its program, what it has is its parent's memory.
+            const FORKED_AND_NOT_YET_STARTED: i64 = 0x40;
+            if number(fields.nth(3)).is_none_or(|flags| flags & FORKED_AND_NOT_YET_STARTED != 0) {
+                continue;
+            }
             let Some(statm) = read(name, b"statm") else {
                 continue;
             };
@@ -839,7 +844,8 @@ impl<'a> Coordinator<'a> {
 
     fn dispatch_to(&mut self, w: &mut Worker, idx: u32) {
         let file = self.files[idx as usize].as_bytes();
-        w.dispatch(&mut self.frame, idx, file);
+        let is_growth_written = self.children_of_workers.is_some();
+        w.dispatch(&mut self.frame, idx, file, is_growth_written);
     }
 
     pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus, peak_rss_mb: u32) {

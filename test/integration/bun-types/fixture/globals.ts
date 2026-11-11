@@ -360,6 +360,8 @@ expectType<BunConsumerConvenienceMethods>();
   const a = new Blob();
   expectType(a.slice()).is<Blob>();
   expectType(a.slice(1, 2, "text/plain")).is<Blob>();
+  // A File has `slice()` from Blob, with and without lib.dom (#44717).
+  expectType(new File(["abcdef"], "a.txt").slice(0, 4)).is<Blob>();
 }
 
 // https://github.com/oven-sh/bun/issues/27194

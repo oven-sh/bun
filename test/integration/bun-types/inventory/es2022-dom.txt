@@ -203,7 +203,6 @@ namespace Build (bun-types/bun.d.ts)
   type Build.TrimFeature (bun-types/bun.d.ts) = "aot" | "archive" | "brotli" | "bun-jsc" | "bundler" | "check" | "cli" | "color" | "cookie" | "create" | "cron" | "crypto-hasher" | "csrf" | "dialogs" | "dns" | "fetch" | "ffi" | "fmt" | "fs-router" | "glob" | "hash" | "html-rewriter" | "http2" | "http3" | "image" | "inspector" | "install" | "interpreter" | "intl" | "intl-segmenter" | "ipc" | "jit" | "json5" | "jsonc" | "jsonl" | "lint" | "markdown" | "native-addons" | "native-code" | "node-crypto" | "node-vm" | "password" | "plugin" | "process-kill" | "process-report" | "profiler" | "redis" | "repl" | "run" | "s3" | "secrets" | "semver" | "serve" | "shell" | "sockets" | "source-maps" | "spawn" | "sql" | "sqlite" | "temporal" | "terminal" | "test" | "toml" | "udp" | "upgrade" | "url-pattern" | "web-crypto" | "webassembly" | "websocket" | "webview" | "worker" | "xml" | "yaml"
 interface BuildArtifact (bun-types/bun.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
-  arrayBuffer(): Promise<ArrayBuffer>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   formData(): Promise<FormData>
@@ -219,7 +218,6 @@ interface BuildArtifact (bun-types/bun.d.ts)
   sourcemap: Bun.BuildArtifact | null
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  text(): Promise<string>
   text(): Promise<string>
   type [readonly]: string
 interface BuildConfig (bun-types/bun.d.ts)
@@ -277,7 +275,6 @@ interface BuildOutput (bun-types/bun.d.ts)
   success: boolean
 interface BunFile (bun-types/bun.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
-  arrayBuffer(): Promise<ArrayBuffer>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   delete(): Promise<void>
@@ -294,7 +291,6 @@ interface BunFile (bun-types/bun.d.ts)
   stat(): Promise<import("node:fs").Stats>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  text(): Promise<string>
   text(): Promise<string>
   type [readonly]: string
   unlink(): Promise<void>
@@ -650,7 +646,6 @@ interface FetchSessionInit (bun-types/bun.d.ts)
   unix [?]: string | undefined
 interface FileBlob (bun-types/bun.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
-  arrayBuffer(): Promise<ArrayBuffer>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   delete(): Promise<void>
@@ -667,7 +662,6 @@ interface FileBlob (bun-types/bun.d.ts)
   stat(): Promise<import("node:fs").Stats>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  text(): Promise<string>
   text(): Promise<string>
   type [readonly]: string
   unlink(): Promise<void>
@@ -1332,7 +1326,6 @@ class S3Client (bun-types/s3.d.ts)
     write(path: string, data: ArrayBuffer | Blob | Bun.Archive | Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | Bun.S3File | File | Request | Response | SharedArrayBuffer | string, options?: Bun.S3Options | undefined): Promise<number>
 interface S3File (bun-types/s3.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
-  arrayBuffer(): Promise<ArrayBuffer>
   bucket [? readonly]: string
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
@@ -1350,7 +1343,6 @@ interface S3File (bun-types/s3.d.ts)
   slice(contentType?: string | undefined): Bun.S3File
   stat(): Promise<Bun.S3Stats>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  text(): Promise<string>
   text(): Promise<string>
   type [readonly]: string
   unlink: () => Promise<void>
@@ -2661,7 +2653,7 @@ interface ZlibCompressionOptions (bun-types/bun.d.ts)
   memLevel [?]: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
   strategy [?]: number
   windowBits [?]: -10 | -11 | -12 | -13 | -14 | -15 | -9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 9
-namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/globals.d.ts)
+namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/globals.d.ts, bun-types/web-globals.d.ts)
   interface __internal.BunEvent (bun-types/globals.d.ts)
     bubbles [readonly]: boolean
     cancelBubble: boolean
@@ -2703,23 +2695,6 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
     formData(): Promise<import("undici-types/formdata").FormData>
     json(): Promise<unknown>
     text(): Promise<string>
-  interface __internal.FallbackFormData (bun-types/globals.d.ts)
-    append(name: string, value: Blob | string): void
-    append(name: string, value: string): void
-    append(name: string, blobValue: Blob, filename?: string | undefined): void
-    delete(name: string): void
-    forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void
-    get(name: string): Bun.FormDataEntryValue | null
-    getAll(name: string): Array<Bun.FormDataEntryValue>
-    has(name: string): boolean
-    set(name: string, value: Blob | string): void
-    set(name: string, value: string): void
-    set(name: string, blobValue: Blob, filename?: string | undefined): void
-  interface __internal.FallbackFormDataIterable (bun-types/globals.d.ts)
-    [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>
-    entries(): IterableIterator<[string, Bun.FormDataEntryValue]>
-    keys(): IterableIterator<string>
-    values(): IterableIterator<Bun.FormDataEntryValue>
   interface __internal.FallbackHeaders (bun-types/fetch.d.ts)
     append(name: string, value: string): void
     delete(name: string): void
@@ -2805,12 +2780,40 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
   type __internal.LibEmptyOrReadableStreamBYOBReader (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStreamBYOBReader]
   type __internal.LibEmptyOrReadableStreamBYOBRequest (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStreamBYOBRequest]
   type __internal.LibIterableOrFallback<Fallback> (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? LibDomIterableIsLoaded extends true ? {} : Fallback : Fallback]
+  type __internal.LibIterableOrFallbackFormData (bun-types/web-globals.d.ts) = {}
   type __internal.LibOrFallback<Fallback> (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : Fallback]
+  type __internal.LibOrFallbackAbortController (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackAbortSignal (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackAddEventListenerOptions (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackBlob (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackBlobPropertyBag (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackByteLengthQueuingStrategy (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackCloseEvent (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackCountQueuingStrategy (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackCrypto (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackCustomEvent<T = any> (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackDOMException (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackErrorEvent (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackEventSourceInit (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackFormData (bun-types/web-globals.d.ts) = {}
   type __internal.LibOrFallbackHeaders (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : FallbackHeaders]
+  type __internal.LibOrFallbackMessageChannel (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackQueuingStrategy<T = any> (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackQueuingStrategyInit (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackReadableStreamDefaultController (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackReadableStreamDefaultReader (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackReadableStreamGenericReader (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackReadableWritablePair<R = any, W = any> (bun-types/web-globals.d.ts) = {}
   type __internal.LibOrFallbackRequest (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : FallbackRequest]
   type __internal.LibOrFallbackRequestInit (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : Omit<import("undici-types").RequestInit, "body" | "headers"> & { body?: Bun.BodyInit | null | undefined; headers?: Bun.HeadersInit | undefined; }]
   type __internal.LibOrFallbackResponse (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : FallbackResponse]
   type __internal.LibOrFallbackResponseInit (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit]
+  type __internal.LibOrFallbackStreamPipeOptions (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackTransformStream<I = any, O = any> (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackTransformStreamDefaultController (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackTransformer<I = any, O = any> (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackWritableStreamDefaultController (bun-types/web-globals.d.ts) = {}
+  type __internal.LibOrFallbackWritableStreamDefaultWriter (bun-types/web-globals.d.ts) = {}
   type __internal.LibPerformanceOrNodePerfHooksPerformance (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").Performance]
   type __internal.LibWorkerOrBunWorker (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : Bun.Worker]
   type __internal.Merge<A, B> (bun-types/bun.d.ts) = Omit<A, Extract<keyof A, keyof B>> & Omit<B, Extract<keyof A, keyof B>> & { [Key in Extract<keyof A, keyof B>]: A[Key] | B[Key]; } & Omit<B, Extract<keyof B, keyof A>> & Omit<A, Extract<keyof B, keyof A>> & { [Key in Extract<keyof B, keyof A>]: B[Key] | A[Key]; }
@@ -4483,7 +4486,6 @@ var URLSearchParams (@types/node/url.d.ts, bun-types/overrides.d.ts)
 # globals
 interface AbortController (@types/node/web-globals/abortcontroller.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   abort(reason?: any): void
-  abort(reason?: any): void
   signal [readonly]: AbortSignal
 var AbortController (@types/node/web-globals/abortcontroller.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new (): AbortController
@@ -4497,7 +4499,6 @@ interface AbortSignal (@types/node/web-globals/abortcontroller.d.ts, bun-types/g
   reason [readonly]: any
   removeEventListener<K extends "abort">(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: EventListenerOptions | boolean | undefined): void
   removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions | boolean | undefined): void
-  throwIfAborted(): void
   throwIfAborted(): void
 var AbortSignal (@types/node/web-globals/abortcontroller.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new (): AbortSignal
@@ -4543,7 +4544,6 @@ interface ArrayConstructor (bun-types/globals.d.ts, lib.es2015.core.d.ts, lib.es
   prototype [readonly]: Array<any>
 interface Blob (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
-  arrayBuffer(): Promise<ArrayBuffer>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   formData(): Promise<FormData>
@@ -4554,7 +4554,6 @@ interface Blob (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts, lib.d
   slice(start?: number | undefined, end?: number | undefined, contentType?: string | undefined): Blob
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  text(): Promise<string>
   text(): Promise<string>
   type [readonly]: string
 var Blob (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
@@ -4784,7 +4783,7 @@ interface CustomEvent<T = any> (@types/node/web-globals/events.d.ts, bun-types/d
 var CustomEvent (@types/node/web-globals/events.d.ts, bun-types/deprecated.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new <T>(type: string, eventInitDict?: CustomEventInit<T> | undefined): CustomEvent<T>
   prototype: CustomEvent<any>
-interface DOMException (@types/node/web-globals/domexception.d.ts, bun-types/deprecated.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
+interface DOMException (@types/node/web-globals/domexception.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   ABORT_ERR [readonly]: 20
   DATA_CLONE_ERR [readonly]: 25
   DOMSTRING_SIZE_ERR [readonly]: 2
@@ -4815,7 +4814,7 @@ interface DOMException (@types/node/web-globals/domexception.d.ts, bun-types/dep
   message [readonly]: string
   name [readonly]: string
   stack [?]: string
-var DOMException (@types/node/web-globals/domexception.d.ts, bun-types/deprecated.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
+var DOMException (@types/node/web-globals/domexception.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new (message?: string | undefined, name?: string | undefined): DOMException
   ABORT_ERR [readonly]: 20
   DATA_CLONE_ERR [readonly]: 25
@@ -5013,7 +5012,6 @@ interface FetchEvent (bun-types/globals.d.ts)
   waitUntil(promise: Promise<any>): void
 interface File (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
-  arrayBuffer(): Promise<ArrayBuffer>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   formData(): Promise<FormData>
@@ -5026,7 +5024,6 @@ interface File (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts, lib.d
   slice(start?: number | undefined, end?: number | undefined, contentType?: string | undefined): Blob
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  text(): Promise<string>
   text(): Promise<string>
   type [readonly]: string
   webkitRelativePath [readonly]: string
@@ -5585,7 +5582,6 @@ var ReadableStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts
   prototype: ReadableStream<any>
 interface ReadableStreamBYOBReader (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   cancel(reason?: any): Promise<void>
-  cancel(reason?: any): Promise<void>
   closed [readonly]: Promise<void>
   read<T extends ArrayBufferView<ArrayBuffer>>(view: T, options?: ReadableStreamBYOBReaderReadOptions | undefined): Promise<ReadableStreamReadResult<T>>
   releaseLock(): void
@@ -5601,11 +5597,9 @@ var ReadableStreamBYOBRequest (@types/node/web-globals/streams.d.ts, bun-types/g
   prototype: ReadableStreamBYOBRequest
 interface ReadableStreamDefaultController<R = any> (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   close(): void
-  close(): void
   desiredSize [readonly]: null | number
   enqueue(chunk?: R | undefined): void
   enqueue(chunk: R): void
-  error(e?: any): void
   error(e?: any): void
 var ReadableStreamDefaultController (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new (): ReadableStreamDefaultController<any>
@@ -5618,12 +5612,10 @@ interface ReadableStreamDefaultReadValueResult<T> (bun-types/globals.d.ts)
   value: T
 interface ReadableStreamDefaultReader<R = any> (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   cancel(reason?: any): Promise<void>
-  cancel(reason?: any): Promise<void>
   closed [readonly]: Promise<void>
   read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>
   read(): Promise<ReadableStreamReadResult<R>>
   readMany(): Bun.ReadableStreamDefaultReadManyResult<R> | Promise<Bun.ReadableStreamDefaultReadManyResult<R>>
-  releaseLock(): void
   releaseLock(): void
 var ReadableStreamDefaultReader (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>
@@ -5635,7 +5627,6 @@ interface ReadableStreamDirectController (bun-types/globals.d.ts)
   start(): void
   write(data: Bun.BufferSource | string): Promise<number> | number
 interface ReadableStreamGenericReader (bun-types/globals.d.ts, lib.dom.d.ts)
-  cancel(reason?: any): Promise<void>
   cancel(reason?: any): Promise<void>
   closed [readonly]: Promise<void>
 interface ReadableWritablePair<R = any, W = any> (bun-types/globals.d.ts, lib.dom.d.ts)
@@ -5852,8 +5843,6 @@ interface TransformStreamDefaultController<O = any> (@types/node/web-globals/str
   enqueue(chunk?: O | undefined): void
   enqueue(chunk?: O | undefined): void
   error(reason?: any): void
-  error(reason?: any): void
-  terminate(): void
   terminate(): void
 var TransformStreamDefaultController (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new (): TransformStreamDefaultController<any>
@@ -6141,20 +6130,16 @@ var WritableStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts
   prototype: WritableStream<any>
 interface WritableStreamDefaultController (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   error(e?: any): void
-  error(e?: any): void
   signal [readonly]: AbortSignal
 var WritableStreamDefaultController (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   construct new (): WritableStreamDefaultController
   prototype: WritableStreamDefaultController
 interface WritableStreamDefaultWriter<W = any> (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
   abort(reason?: any): Promise<void>
-  abort(reason?: any): Promise<void>
-  close(): Promise<void>
   close(): Promise<void>
   closed [readonly]: Promise<void>
   desiredSize [readonly]: null | number
   ready [readonly]: Promise<void>
-  releaseLock(): void
   releaseLock(): void
   write(chunk?: W | undefined): Promise<void>
   write(chunk?: W | undefined): Promise<void>
@@ -6243,6 +6228,17 @@ const import("bun-types/vendor/expect-type/index").expectTypeOf (bun-types/vendo
   call <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
   call <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
 const secret (bun-types/vendor/expect-type/utils.d.ts): typeof secret
+interface AbortController (bun-types/web-globals.d.ts)
+  abort(reason?: any): void
+  signal [readonly]: AbortSignal
+interface AbortSignal (bun-types/web-globals.d.ts)
+  aborted [readonly]: boolean
+  addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean | undefined): void
+  dispatchEvent(event: Event): boolean
+  onabort: ((this: AbortSignal, ev: Event) => any) | null
+  reason [readonly]: any
+  removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean | undefined): void
+  throwIfAborted(): void
 interface AsymmetricMatchersBuiltinNegated (bun-types/test.d.ts)
   arrayContaining<E = any>(arr: ReadonlyArray<E>): any
   closeTo(num: number, numDigits?: number | undefined): any
@@ -6252,10 +6248,153 @@ interface AsymmetricMatchersBuiltinNegated (bun-types/test.d.ts)
   stringContaining(str: String | string): any
   stringMatching(str: RegExp | String | string): any
   toSatisfy(predicate: (value: any) => unknown, message?: string | undefined): any
+interface Blob (bun-types/web-globals.d.ts)
+  arrayBuffer(): Promise<ArrayBuffer>
+  size [readonly]: number
+  text(): Promise<string>
+  type [readonly]: string
+interface BlobPropertyBag (bun-types/web-globals.d.ts)
+  type [?]: string
 interface BunConsumerConvenienceMethods (bun-types/overrides.d.ts)
   bytes(): Promise<Uint8Array<ArrayBuffer>>
   json(): Promise<any>
   text(): Promise<string>
+interface ByteLengthQueuingStrategy (bun-types/web-globals.d.ts)
+  highWaterMark [readonly]: number
+  size [readonly]: QueuingStrategySize<ArrayBufferView<ArrayBufferLike>>
+interface CloseEvent (bun-types/web-globals.d.ts)
+  AT_TARGET [readonly]: 2
+  BUBBLING_PHASE [readonly]: 3
+  CAPTURING_PHASE [readonly]: 1
+  NONE [readonly]: 0
+  bubbles [readonly]: boolean
+  cancelBubble: boolean
+  cancelable [readonly]: boolean
+  code [readonly]: number
+  composed [readonly]: boolean
+  composedPath(): Array<EventTarget>
+  currentTarget [readonly]: EventTarget | null
+  defaultPrevented [readonly]: boolean
+  eventPhase [readonly]: number
+  initEvent(type: string, bubbles?: boolean | undefined, cancelable?: boolean | undefined): void
+  isTrusted [readonly]: boolean
+  preventDefault(): void
+  reason [readonly]: string
+  returnValue: boolean
+  srcElement [readonly]: EventTarget | null
+  stopImmediatePropagation(): void
+  stopPropagation(): void
+  target [readonly]: EventTarget | null
+  timeStamp [readonly]: number
+  type [readonly]: string
+  wasClean [readonly]: boolean
+interface CountQueuingStrategy (bun-types/web-globals.d.ts)
+  highWaterMark [readonly]: number
+  size [readonly]: QueuingStrategySize<any>
+interface Crypto (bun-types/web-globals.d.ts)
+  subtle [readonly]: SubtleCrypto
+interface CustomEvent<T = any> (bun-types/web-globals.d.ts)
+  AT_TARGET [readonly]: 2
+  BUBBLING_PHASE [readonly]: 3
+  CAPTURING_PHASE [readonly]: 1
+  NONE [readonly]: 0
+  bubbles [readonly]: boolean
+  cancelBubble: boolean
+  cancelable [readonly]: boolean
+  composed [readonly]: boolean
+  composedPath(): Array<EventTarget>
+  currentTarget [readonly]: EventTarget | null
+  defaultPrevented [readonly]: boolean
+  detail [readonly]: T
+  eventPhase [readonly]: number
+  initEvent(type: string, bubbles?: boolean | undefined, cancelable?: boolean | undefined): void
+  isTrusted [readonly]: boolean
+  preventDefault(): void
+  returnValue: boolean
+  srcElement [readonly]: EventTarget | null
+  stopImmediatePropagation(): void
+  stopPropagation(): void
+  target [readonly]: EventTarget | null
+  timeStamp [readonly]: number
+  type [readonly]: string
+interface DOMException (bun-types/web-globals.d.ts)
+  ABORT_ERR [readonly]: 20
+  DATA_CLONE_ERR [readonly]: 25
+  DOMSTRING_SIZE_ERR [readonly]: 2
+  HIERARCHY_REQUEST_ERR [readonly]: 3
+  INDEX_SIZE_ERR [readonly]: 1
+  INUSE_ATTRIBUTE_ERR [readonly]: 10
+  INVALID_ACCESS_ERR [readonly]: 15
+  INVALID_CHARACTER_ERR [readonly]: 5
+  INVALID_MODIFICATION_ERR [readonly]: 13
+  INVALID_NODE_TYPE_ERR [readonly]: 24
+  INVALID_STATE_ERR [readonly]: 11
+  NAMESPACE_ERR [readonly]: 14
+  NETWORK_ERR [readonly]: 19
+  NOT_FOUND_ERR [readonly]: 8
+  NOT_SUPPORTED_ERR [readonly]: 9
+  NO_DATA_ALLOWED_ERR [readonly]: 6
+  NO_MODIFICATION_ALLOWED_ERR [readonly]: 7
+  QUOTA_EXCEEDED_ERR [readonly]: 22
+  SECURITY_ERR [readonly]: 18
+  SYNTAX_ERR [readonly]: 12
+  TIMEOUT_ERR [readonly]: 23
+  TYPE_MISMATCH_ERR [readonly]: 17
+  URL_MISMATCH_ERR [readonly]: 21
+  VALIDATION_ERR [readonly]: 16
+  WRONG_DOCUMENT_ERR [readonly]: 4
+  cause [?]: unknown
+  code [readonly]: number
+  message [readonly]: string
+  name [readonly]: string
+  stack [?]: string
+interface ErrorEvent (bun-types/web-globals.d.ts)
+  AT_TARGET [readonly]: 2
+  BUBBLING_PHASE [readonly]: 3
+  CAPTURING_PHASE [readonly]: 1
+  NONE [readonly]: 0
+  bubbles [readonly]: boolean
+  cancelBubble: boolean
+  cancelable [readonly]: boolean
+  colno [readonly]: number
+  composed [readonly]: boolean
+  composedPath(): Array<EventTarget>
+  currentTarget [readonly]: EventTarget | null
+  defaultPrevented [readonly]: boolean
+  error [readonly]: any
+  eventPhase [readonly]: number
+  filename [readonly]: string
+  initEvent(type: string, bubbles?: boolean | undefined, cancelable?: boolean | undefined): void
+  isTrusted [readonly]: boolean
+  lineno [readonly]: number
+  message [readonly]: string
+  preventDefault(): void
+  returnValue: boolean
+  srcElement [readonly]: EventTarget | null
+  stopImmediatePropagation(): void
+  stopPropagation(): void
+  target [readonly]: EventTarget | null
+  timeStamp [readonly]: number
+  type [readonly]: string
+interface EventSourceInit (bun-types/web-globals.d.ts)
+  withCredentials [?]: boolean
+interface FormData (bun-types/web-globals.d.ts)
+  append(name: string, value: Blob | string): void
+  append(name: string, value: string): void
+  append(name: string, blobValue: Blob, filename?: string | undefined): void
+  delete(name: string): void
+  forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void
+  get(name: string): Bun.FormDataEntryValue | null
+  getAll(name: string): Array<Bun.FormDataEntryValue>
+  has(name: string): boolean
+  set(name: string, value: Blob | string): void
+  set(name: string, value: string): void
+  set(name: string, blobValue: Blob, filename?: string | undefined): void
+interface FormDataIterable (bun-types/web-globals.d.ts)
+  [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>
+  entries(): IterableIterator<[string, Bun.FormDataEntryValue]>
+  keys(): IterableIterator<string>
+  values(): IterableIterator<Bun.FormDataEntryValue>
 interface FunctionLike (bun-types/test.d.ts)
   name [readonly]: string
 interface JestMock.ClassLike (bun-types/test.d.ts)
@@ -6345,6 +6484,55 @@ interface MatcherUtils (bun-types/test.d.ts)
   customTesters: Array<import("bun:test").Tester>
   equals: import("bun:test").EqualsFunction
   utils: Readonly<{ stringify(value: unknown): string; printReceived(value: unknown): string; printExpected(value: unknown): string; diff(expected: unknown, received: unknown, options?: object | undefined): null | string; printWithType<T>(name: string, value: T, print: (value: T) => string): string; EXPECTED_COLOR(...text: Array<unknown>): string; RECEIVED_COLOR(...text: Array<unknown>): string; matcherHint(matcherName: string, received?: unknown, expected?: unknown, options?: undefined | { isNot?: boolean; promise?: string; isDirectExpectCall?: boolean; comment?: string; expectedColor?: MatcherHintColor; receivedColor?: MatcherHintColor; secondArgument?: string; secondArgumentColor?: MatcherHintColor; }): string; }>
+interface MessageChannel (bun-types/web-globals.d.ts)
+  port1 [readonly]: MessagePort
+  port2 [readonly]: MessagePort
+interface QueuingStrategy<T = any> (bun-types/web-globals.d.ts)
+  highWaterMark [?]: number
+  size [?]: QueuingStrategySize<T>
+interface QueuingStrategyInit (bun-types/web-globals.d.ts)
+  highWaterMark: number
+interface ReadableStreamDefaultController (bun-types/web-globals.d.ts)
+  close(): void
+  desiredSize [readonly]: null | number
+  error(e?: any): void
+interface ReadableStreamDefaultReader (bun-types/web-globals.d.ts)
+  cancel(reason?: any): Promise<void>
+  closed [readonly]: Promise<void>
+  releaseLock(): void
+interface ReadableStreamGenericReader (bun-types/web-globals.d.ts)
+  cancel(reason?: any): Promise<void>
+  closed [readonly]: Promise<void>
+interface ReadableWritablePair<R = any, W = any> (bun-types/web-globals.d.ts)
+  readable: ReadableStream<R>
+  writable: WritableStream<W>
+interface StreamPipeOptions (bun-types/web-globals.d.ts)
+  preventAbort [?]: boolean
+  preventCancel [?]: boolean
+  preventClose [?]: boolean
+  signal [?]: AbortSignal
+interface TransformStream<I = any, O = any> (bun-types/web-globals.d.ts)
+  readable [readonly]: ReadableStream<O>
+  writable [readonly]: WritableStream<I>
+interface TransformStreamDefaultController (bun-types/web-globals.d.ts)
+  desiredSize [readonly]: null | number
+  error(reason?: any): void
+  terminate(): void
+interface Transformer<I = any, O = any> (bun-types/web-globals.d.ts)
+  flush [?]: Bun.TransformerFlushCallback<O>
+  readableType [?]: undefined
+  start [?]: Bun.TransformerStartCallback<O>
+  transform [?]: Bun.TransformerTransformCallback<I, O>
+  writableType [?]: undefined
+interface WritableStreamDefaultController (bun-types/web-globals.d.ts)
+  error(e?: any): void
+interface WritableStreamDefaultWriter (bun-types/web-globals.d.ts)
+  abort(reason?: any): Promise<void>
+  close(): Promise<void>
+  closed [readonly]: Promise<void>
+  desiredSize [readonly]: null | number
+  ready [readonly]: Promise<void>
+  releaseLock(): void
 interface import("bun-types/vendor/expect-type/index").BaseExpectTypeOf<Actual, Options extends { positive: boolean; }> (bun-types/vendor/expect-type/index.d.ts)
   asserts: Actual extends (v: any, ...args: Array<any>) => asserts v is infer T ? unknown extends T ? never : ExpectTypeOf<T, Options> : never
   constructorParameters: import("bun-types/vendor/expect-type/index").ExpectTypeOf<import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>, Options>
@@ -6473,6 +6661,33 @@ type JestMock.SpiedFunction<T extends JestMock.FunctionLike = JestMock.UnknownFu
 type JestMock.SpiedGetter<T> (bun-types/test.d.ts) = JestMock.MockInstance<() => T>
 type JestMock.SpiedSetter<T> (bun-types/test.d.ts) = JestMock.MockInstance<(arg: T) => void>
 type JestMock.UnknownFunction (bun-types/test.d.ts) = (...args: Array<unknown>) => unknown
+type LocalAbortController (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").AbortController
+type LocalAbortSignal (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").AbortSignal
+type LocalBlob (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").Blob
+type LocalBlobPropertyBag (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").BlobPropertyBag
+type LocalByteLengthQueuingStrategy (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").ByteLengthQueuingStrategy
+type LocalCloseEvent (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").CloseEvent
+type LocalCountQueuingStrategy (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").CountQueuingStrategy
+type LocalCrypto (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").Crypto
+type LocalCustomEvent<T = any> (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").CustomEvent<T>
+type LocalDOMException (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").DOMException
+type LocalErrorEvent (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").ErrorEvent
+type LocalEventSourceInit (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").EventSourceInit
+type LocalFormData (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").FormData
+type LocalFormDataIterable (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").FormDataIterable
+type LocalMessageChannel (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").MessageChannel
+type LocalQueuingStrategy<T = any> (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").QueuingStrategy<T>
+type LocalQueuingStrategyInit (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").QueuingStrategyInit
+type LocalReadableStreamDefaultController (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").ReadableStreamDefaultController
+type LocalReadableStreamDefaultReader (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").ReadableStreamDefaultReader
+type LocalReadableStreamGenericReader (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").ReadableStreamGenericReader
+type LocalReadableWritablePair<R = any, W = any> (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").ReadableWritablePair<R, W>
+type LocalStreamPipeOptions (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").StreamPipeOptions
+type LocalTransformStream<I = any, O = any> (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").TransformStream<I, O>
+type LocalTransformStreamDefaultController (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").TransformStreamDefaultController
+type LocalTransformer<I = any, O = any> (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").Transformer<I, O>
+type LocalWritableStreamDefaultController (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").WritableStreamDefaultController
+type LocalWritableStreamDefaultWriter (bun-types/web-globals.d.ts) = local("bun-types/web-globals.d.ts").WritableStreamDefaultWriter
 type MatcherContext (bun-types/test.d.ts) = MatcherUtils & MatcherState
 type MatcherHintColor (bun-types/test.d.ts) = (arg: string) => string
 type Mismatch (bun-types/vendor/expect-type/utils.d.ts) = { [mismatch]: "mismatch"; }

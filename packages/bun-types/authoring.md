@@ -56,6 +56,7 @@ Types are organized across multiple `.d.ts` files in the `packages/bun-types` di
 - `index.d.ts` - The main entry point that references all other type files
 - `bun.d.ts` - Core Bun APIs and types
 - `globals.d.ts` - Global type declarations
+- `web-globals.d.ts` - The members of the web globals that Bun implements, for a project that does not load `lib.dom.d.ts` (see [Declarations that lib.dom also has](#declarations-that-libdom-also-has))
 - `test.d.ts` - Testing-related types
 - `sqlite.d.ts` - SQLite-related types
 - `ts7.1/` - Declarations that need TypeScript 7.1 syntax, such as `declare module "*" with { type: "text" }`. Older compilers reject that syntax even with `skipLibCheck`, so `typesVersions` in `package.json` sends TypeScript 7.1 and newer to `ts7.1/index.d.ts`, which references `../index.d.ts` plus the extra files. Every other version keeps loading `index.d.ts`. Prettier and the repository's own `tsconfig.json` skip this folder for the same reason.
@@ -114,24 +115,47 @@ A project can load `lib.dom.d.ts` together with bun-types. The React templates o
 
 So a declaration of bun-types for a global of lib.dom must add nothing when lib.dom is loaded. This is how to gate one:
 
-- An interface gets its members from a base that is `{}` when lib.dom is loaded.
+- An interface gets its members from a base that is `{}` when lib.dom is loaded. The members are in [`./web-globals.d.ts`](./web-globals.d.ts), in an interface of the same name. That file is a module, like the files in `web-globals/` of `@types/node`, so an interface in it is local and is not the global. At its end the file gives `Bun.__internal` the base:
 
   ```typescript
-  declare module "bun" {
-    namespace __internal {
-      interface BunEvent {
-        // the members
-      }
-      type LibEmptyOrBunEvent = LibDomIsLoaded extends true ? {} : BunEvent;
-    }
+  interface AbortController {
+    readonly signal: globalThis.AbortSignal;
+    abort(reason?: any): void;
   }
 
-  interface Event extends Bun.__internal.LibEmptyOrBunEvent {}
+  type LocalAbortController = AbortController;
+
+  declare module "bun" {
+    namespace __internal {
+      type LibOrFallbackAbortController = LibOrFallback<LocalAbortController>;
+    }
+  }
   ```
 
-- A `var` is typed with `Bun.__internal.UseLibDomIfAvailable<"Name", TypeWithoutLibDom>`.
+  `globals.d.ts` declares the global with that base: `interface AbortController extends Bun.__internal.LibOrFallbackAbortController {}`. `@types/node` declares the global in the module itself, in a `declare global` block. bun-types does not, because the API reference on bun.com takes the globals from `globals.d.ts` alone (see the note at the top of [`./fetch.d.ts`](./fetch.d.ts)).
 
-A member that only Bun has does not go behind the gate, because a project that loads lib.dom then does not get it. Put it in a base that is always on, as `BunHeadersOverride` in [`./fetch.d.ts`](./fetch.d.ts) does for `Headers.toJSON()`.
+- A `var` is typed with `Bun.__internal.UseLibDomIfAvailable<"Name", TypeWithoutLibDom>`. The `var`s of 17 gated interfaces still write their type out. The list in the test below has them, with the reason.
+
+Rules for an interface in `web-globals.d.ts`:
+
+- Move the properties as well as the methods. A property that lib.dom declares with another type is an error (TS2717), now or when lib.dom changes.
+- In that file, a name that the file declares is the interface of the file. Write `globalThis.AbortSignal` in the type of a member and in a base, so that the type is the global, with everything that `@types/node` and a project add to it. A case in `bun-types.test.ts` fails for a bare name.
+- The bases go on the interface in `web-globals.d.ts`, as in `@types/node`: `interface ErrorEvent extends Event`. A member then overrides a member of the same name in the base, as it did in `globals.d.ts`. On the line of the global, beside the gate, the base would be a second base, and two bases that differ in a member are an error (TS2320).
+- `File` is not in `web-globals.d.ts`. Bun's compiler reads `File extends Blob` on the line of the global: `extends_builtin_type` in `src/sema/check/aot/builtin_types/resolve.rs` does not look through a gate. So `Blob` stays on that line, and the two members of `File` stay with it. The program `test/aot/parallel/what-tsc-accepts-a-build-accepts/an-interface-below-file-without-the-dom` fails when the base moves.
+- `keys()`, `values()`, `entries()` and `[Symbol.iterator]()` go in an interface of their own (`FormDataIterable`), behind `Bun.__internal.LibIterableOrFallback`. Before TypeScript 6.0 lib.dom has them in `lib.dom.iterable.d.ts`, and a project can load `"DOM"` without `"DOM.Iterable"`.
+- A member that only Bun has does not go behind the gate, because a project that loads lib.dom then does not get it. It stays a member of the global interface in `globals.d.ts`, as `Blob.json()` does. For an interface that has its members from another package, put it in a base that is always on, as `BunHeadersOverride` in [`./fetch.d.ts`](./fetch.d.ts) does for `Headers.toJSON()`.
+- When `"bun"` already exports an interface with the same members, that export is the fallback, and `web-globals.d.ts` declares no second copy: `type LibOrFallbackAddEventListenerOptions = LibOrFallback<Bun.AddEventListenerOptions>`.
+
+What a gate changes for a project that does not load lib.dom: a member that the project, or another package, declares again in `declare global` takes the place of the gated member. A method was one more overload before. A property was an error before (TS2717, TS2687), and now its type and `readonly` come from the new declaration. When the new declaration is not compatible with the gated member, TypeScript 7 and `bun check` report it at the new declaration (TS2430). With lib.dom loaded nothing changes.
+
+A member that lib.dom has too stays inline in `globals.d.ts` only when the gate would change what a project gets, or when the gate is an error. `Console` and `Navigator` are the second case: `@types/node` gives them a base of its own, and two bases must not differ in a member. The list in the test below has each such member, with the reason.
+
+Not every web type of bun-types is a global:
+
+- A name that lib.dom declares as a `type` alias, such as `BodyInit` or `HeadersInit`, cannot be a global interface of bun-types (TS2300). It stays an export of `"bun"`: `Bun.BodyInit`.
+- A helper interface that is not a global today, such as `EventInit` or `UnderlyingSource`, stays an export of `"bun"`.
+
+`BunEvent` and `BunEventTarget` in `globals.d.ts` and the `Fallback*` interfaces of [`./fetch.d.ts`](./fetch.d.ts) are gated in the older form, with the members in `Bun.__internal`. They work the same way.
 
 The case "checks with lib.dom.d.ts" of `test/integration/bun-types/bun-types.test.ts` finds every declaration of bun-types that is not gated. It also finds every gated member, and every static of a gated `var`, that bun-types writes and lib.dom does not have. It compares the result with the list `expectedLibOverlapWithLibDom` in that file, and it fails when the two differ. The comment on `libOverlap` in that file says how to read an entry. The list also has the members that bun-types adds to the interfaces of lib.es, such as `ArrayBuffer` and `Error`.
 
@@ -160,7 +184,7 @@ How to read a line:
 - `<const T>`, `<in T>` and `<out T>` are the modifiers of a type parameter.
 - `const x`, `let x` and `var x` are the declaration as written. Only a global `var` is also a property of `globalThis`.
 - `class X extends Y` names the base class. The list of `X` includes the members that it inherits from `Y`.
-- Inside a type, `Bun.X` is an export of the module `"bun"` and `import("bun:test").X` is an export of another module. A name with no prefix is a global, or one of the declarations in the last section.
+- Inside a type, `Bun.X` is an export of the module `"bun"` and `import("bun:test").X` is an export of another module. `local("bun-types/web-globals.d.ts").X` is a declaration that only its module file can name. It is not the global `X`. Any other name with no prefix is a global, or one of the declarations in the last section.
 - `a -> Bun.b` means that `a` is another name for `Bun.b`, which has its own entry.
 - `a [type only] -> b` is `export type { b as a }` of a class, an enum or a namespace. `a` names the type and not the value.
 - `type X = unknown [written: A extends B ? C : D]` is a conditional type that TypeScript has already resolved for the preset. The text in brackets is the source. A change to the branch that no preset takes shows there.

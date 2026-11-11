@@ -1399,6 +1399,86 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // packages/bun-types/web-globals.d.ts has the members of the other web globals that bun-types
+  // declares itself. A global gets them through a base that is `{}` when lib.dom is loaded.
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("the web globals of web-globals.d.ts", () => {
+    // In that file `AbortSignal` is the interface of the file, which has only the members that
+    // bun-types declares. A member or a base that means the global says `globalThis.AbortSignal`.
+    // TypeScript accepts the bare name too, so this reads the file. It also fails when an
+    // interface that the file names bare today, such as `Event`, moves into the file.
+    test("name no interface of the file without `globalThis.`", () => {
+      const path = join(BUN_TYPES_PACKAGE_ROOT, "web-globals.d.ts");
+      const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.ESNext, true);
+      const interfaces = file.statements.filter(ts.isInterfaceDeclaration);
+      const declared = new Set(interfaces.map(declaration => declaration.name.text));
+      const bare: string[] = [];
+      const visit = (node: ts.Node) => {
+        const name = ts.isTypeReferenceNode(node)
+          ? node.typeName
+          : ts.isExpressionWithTypeArguments(node)
+            ? node.expression
+            : ts.isTypeQueryNode(node)
+              ? node.exprName
+              : undefined;
+        if (name && ts.isIdentifier(name) && declared.has(name.text)) {
+          const { line, character } = file.getLineAndCharacterOfPosition(name.getStart(file));
+          bare.push(`web-globals.d.ts:${line + 1}:${character + 1} ${name.text}`);
+        }
+        ts.forEachChild(node, visit);
+      };
+      for (const declaration of interfaces) visit(declaration);
+
+      expect(declared.size).toBeGreaterThan(0);
+      expect(bare).toEqual([]);
+    });
+
+    // The interfaces of web-globals.d.ts have their bases themselves, as `File` has in
+    // globals.d.ts. So a member overrides a member of the same name that a project adds to the
+    // base. The declaration files are checked too: beside the gate on the line of the global,
+    // the base would be a second base that differs in the member (TS2320).
+    test.concurrent("keep a member whose name a project adds to a base", async () => {
+      await checkSource(
+        "web-globals-base-check",
+        ["ESNext"],
+        `declare global {
+           interface Blob {
+             name?: string;
+           }
+           interface Event {
+             message?: unknown;
+             code?: unknown;
+           }
+         }
+         export const name: string = new File([], "a").name;
+         export const message: string = new ErrorEvent("error").message;
+         export const code: number = new CloseEvent("close").code;`,
+        { libCheck: true },
+      );
+    });
+
+    // What the gate costs for a property. Without lib.dom, a property that a project or another
+    // package declares again takes the place of the gated one: its type and \`readonly\` come
+    // from the new declaration. Beside an inline member it was an error (TS2717, TS2687), and
+    // with lib.dom loaded it still is. The case of \`FormData\` above has a method.
+    test.concurrent("a property that a project declares again replaces the gated one without lib.dom", async () => {
+      await checkSource(
+        "web-globals-redeclared-property-check",
+        ["ESNext"],
+        `declare global {
+           interface AbortSignal {
+             readonly aborted: true;
+           }
+           interface CloseEvent {
+             code: 1000 | 1001;
+           }
+         }
+         export const aborted: true = new AbortController().signal.aborted;
+         new CloseEvent("close").code = 1001;`,
+      );
+    });
+  });
+
   // Also runs on debug builds: spawned tsc over a single file, like the
   // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
   // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in
@@ -2239,35 +2319,56 @@ const expectedEmptyInterfacesThatReactDeclareWhenNoDOM = new Set([
  *   - An entry is gone: delete it here.
  */
 const expectedLibOverlapWithLibDom = [
-  // Interfaces of lib.dom whose members bun-types writes inline. Nothing gates them. Without
-  // lib.dom they are the interface. With lib.dom each one merges into the interface of lib.dom,
-  // and a call tries the signature of bun-types before the signature of lib.dom.
-  "AbortController.abort",
-  "AbortController.signal",
-  "AbortSignal.aborted",
-  "AbortSignal.onabort",
-  "AbortSignal.reason",
-  "AbortSignal.throwIfAborted",
-  "AddEventListenerOptions.once",
-  "AddEventListenerOptions.passive",
-  "AddEventListenerOptions.signal",
-  "Blob.arrayBuffer",
-  "Blob.bytes",
-  "Blob.formData (not in the lib)",
-  "Blob.image (not in the lib)",
-  "Blob.json (not in the lib)",
-  "Blob.size",
+  // Members that lib.dom has too and that bun-types still writes inline in globals.d.ts. With
+  // lib.dom loaded, each is one more signature beside the one of lib.dom, and a call tries it
+  // first. The other members of the web globals are in packages/bun-types/web-globals.d.ts, behind
+  // `Bun.__internal.LibOrFallback`. Each section says why its members are not there.
+  //
+  // lib.dom has the same signature. While there are two signatures, a project with `strict` off
+  // gets `any` for the parameters of a function that it writes for the member. Behind the gate
+  // the parameters get the types of lib.dom, so that project gets errors that it did not have.
   "Blob.slice",
+  "CustomEvent.initCustomEvent",
+  "EventListener.(call)",
+  "EventListenerObject.handleEvent",
+
+  // The signature of bun-types is not the one of lib.dom, in some releases of TypeScript or in
+  // all of them. A call gets the one of bun-types. Behind the gate it gets the one of lib.dom:
+  //   - `Blob.bytes()` is not in lib.dom before TypeScript 5.7. Before 5.9, it and `stream()`
+  //     give a `Uint8Array` over any buffer there.
+  //   - `enqueue()` of a `ReadableStreamDefaultController` needs its argument in lib.dom since
+  //     6.0. The other `enqueue()` and `write()` need theirs since 7.1.
+  //   - The `chunk` of a `QueuingStrategySize` is optional in bun-types and not in lib.dom.
+  //   - A finished `read()` has an `undefined` `value` in bun-types, and `T | undefined` in
+  //     lib.dom (`value?: T` before 5.9).
+  //   - `getRandomValues()` takes `null` in bun-types, and in lib.dom only before 5.9.
+  "Blob.bytes",
   "Blob.stream",
-  "Blob.text",
-  "Blob.type",
-  "BlobPropertyBag.type",
-  "ByteLengthQueuingStrategy.highWaterMark",
-  "ByteLengthQueuingStrategy.size",
-  "CloseEvent.code",
-  "CloseEvent.reason",
-  "CloseEvent.wasClean",
-  "Console.[Symbol.asyncIterator] (not in the lib)",
+  "Crypto.getRandomValues",
+  "QueuingStrategySize.(call)",
+  "ReadableStreamDefaultController.enqueue",
+  "ReadableStreamDefaultReader.read",
+  "TransformStreamDefaultController.enqueue",
+  "WritableStreamDefaultWriter.write",
+
+  // `next` declares `randomUUID(): string` for the global `Crypto` (next/dist/types.d.ts). Beside
+  // the member of bun-types that is one more overload. Against a member in a gated base it is
+  // an error without lib.dom (TS2430).
+  "Crypto.randomUUID",
+
+  // Bun's compiler reads `File extends Blob` on the line of the global: `extends_builtin_type`
+  // in src/sema/check/aot/builtin_types/resolve.rs does not look through a gate. With `Blob` on
+  // that line, a gate for these two members would be a second base. That is an error when a
+  // project adds a member of the same name to `Blob` (TS2320).
+  "File.lastModified",
+  "File.name",
+
+  // Without lib.dom these globals have a base from @types/node: `console.Console`, the
+  // `Navigator` of @types/node, and the `TextEncoder` of "node:util". An interface cannot have
+  // two bases that differ in a member (TS2320), so a member that moves to a base of bun-types
+  // has to be identical to the one of @types/node, in every release of it. `assert`, `dir`,
+  // `platform` and `encodeInto` are not identical today. A member of the interface itself only
+  // has to be compatible with the base.
   "Console.assert",
   "Console.clear",
   "Console.count",
@@ -2288,53 +2389,22 @@ const expectedLibOverlapWithLibDom = [
   "Console.timeStamp",
   "Console.trace",
   "Console.warn",
+  "Navigator.hardwareConcurrency",
+  "Navigator.platform",
+  "Navigator.userAgent",
+  "TextEncoder.encodeInto",
+
+  // Only Bun has these members. They are members of the global interface for every `lib`
+  // setting, and lib.dom has no signature that they stand beside.
+  "Blob.formData (not in the lib)",
+  "Blob.image (not in the lib)",
+  "Blob.json (not in the lib)",
+  "Console.[Symbol.asyncIterator] (not in the lib)",
   "Console.write (not in the lib)",
-  "CountQueuingStrategy.highWaterMark",
-  "CountQueuingStrategy.size",
-  "Crypto.getRandomValues",
-  "Crypto.randomUUID",
-  "Crypto.subtle",
   "Crypto.timingSafeEqual (not in the lib)",
-  "CustomEvent.detail",
-  "CustomEvent.initCustomEvent",
-  "DOMException.ABORT_ERR",
-  "DOMException.DATA_CLONE_ERR",
-  "DOMException.DOMSTRING_SIZE_ERR",
-  "DOMException.HIERARCHY_REQUEST_ERR",
-  "DOMException.INDEX_SIZE_ERR",
-  "DOMException.INUSE_ATTRIBUTE_ERR",
-  "DOMException.INVALID_ACCESS_ERR",
-  "DOMException.INVALID_CHARACTER_ERR",
-  "DOMException.INVALID_MODIFICATION_ERR",
-  "DOMException.INVALID_NODE_TYPE_ERR",
-  "DOMException.INVALID_STATE_ERR",
-  "DOMException.NAMESPACE_ERR",
-  "DOMException.NETWORK_ERR",
-  "DOMException.NOT_FOUND_ERR",
-  "DOMException.NOT_SUPPORTED_ERR",
-  "DOMException.NO_DATA_ALLOWED_ERR",
-  "DOMException.NO_MODIFICATION_ALLOWED_ERR",
-  "DOMException.QUOTA_EXCEEDED_ERR",
-  "DOMException.SECURITY_ERR",
-  "DOMException.SYNTAX_ERR",
-  "DOMException.TIMEOUT_ERR",
-  "DOMException.TYPE_MISMATCH_ERR",
-  "DOMException.URL_MISMATCH_ERR",
-  "DOMException.VALIDATION_ERR",
-  "DOMException.WRONG_DOCUMENT_ERR",
-  "DOMException.code",
-  "DOMException.message",
-  "DOMException.name",
-  "ErrorEvent.colno",
-  "ErrorEvent.error",
-  "ErrorEvent.filename",
-  "ErrorEvent.lineno",
-  "ErrorEvent.message",
-  "EventListener.(call)",
-  "EventListenerObject.handleEvent",
-  "EventSourceInit.withCredentials",
-  "File.lastModified",
-  "File.name",
+  "ReadableStreamDefaultReader.readMany (not in the lib)",
+
+  // `import.meta` is what Bun gives it for every `lib` setting. lib.dom has only `url` of these.
   "ImportMeta.dir (not in the lib)",
   "ImportMeta.dirname (not in the lib)",
   "ImportMeta.env (not in the lib)",
@@ -2346,50 +2416,6 @@ const expectedLibOverlapWithLibDom = [
   "ImportMeta.require (not in the lib)",
   "ImportMeta.resolveSync (not in the lib)",
   "ImportMeta.url",
-  "MessageChannel.port1",
-  "MessageChannel.port2",
-  "Navigator.hardwareConcurrency",
-  "Navigator.platform",
-  "Navigator.userAgent",
-  "QueuingStrategy.highWaterMark",
-  "QueuingStrategy.size",
-  "QueuingStrategyInit.highWaterMark",
-  "QueuingStrategySize.(call)",
-  "ReadableStreamDefaultController.close",
-  "ReadableStreamDefaultController.desiredSize",
-  "ReadableStreamDefaultController.enqueue",
-  "ReadableStreamDefaultController.error",
-  "ReadableStreamDefaultReader.read",
-  "ReadableStreamDefaultReader.readMany (not in the lib)",
-  "ReadableStreamDefaultReader.releaseLock",
-  "ReadableStreamGenericReader.cancel",
-  "ReadableStreamGenericReader.closed",
-  "ReadableWritablePair.readable",
-  "ReadableWritablePair.writable",
-  "StreamPipeOptions.preventAbort",
-  "StreamPipeOptions.preventCancel",
-  "StreamPipeOptions.preventClose",
-  "StreamPipeOptions.signal",
-  "TextEncoder.encodeInto",
-  "TransformStream.readable",
-  "TransformStream.writable",
-  "TransformStreamDefaultController.desiredSize",
-  "TransformStreamDefaultController.enqueue",
-  "TransformStreamDefaultController.error",
-  "TransformStreamDefaultController.terminate",
-  "Transformer.flush",
-  "Transformer.readableType",
-  "Transformer.start",
-  "Transformer.transform",
-  "Transformer.writableType",
-  "WritableStreamDefaultController.error",
-  "WritableStreamDefaultWriter.abort",
-  "WritableStreamDefaultWriter.close",
-  "WritableStreamDefaultWriter.closed",
-  "WritableStreamDefaultWriter.desiredSize",
-  "WritableStreamDefaultWriter.ready",
-  "WritableStreamDefaultWriter.releaseLock",
-  "WritableStreamDefaultWriter.write",
 
   // Interfaces of lib.es. There is no gate for the ES lib level, so every `lib` setting gets them.
   "ArrayBuffer.byteLength",
@@ -2415,9 +2441,8 @@ const expectedLibOverlapWithLibDom = [
   "Uint8ArrayConstructor.fromHex",
 
   // Bases that are not empty when lib.dom is loaded, and the members of bun-types that arrive
-  // through them.
-  "AddEventListenerOptions extends Bun.EventListenerOptions",
-  "AddEventListenerOptions.capture (from Bun.EventListenerOptions)",
+  // through them. A member that only Bun has is in such a base, so that a project with lib.dom
+  // gets it too.
   "CryptoKey extends Bun.__internal.NodeCryptoWebcryptoCryptoKey",
   "CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair",
   "Headers extends Bun.__internal.BunHeadersOverride",
@@ -2529,8 +2554,9 @@ const expectedLibOverlapWithLibDom = [
   "var WebAssembly.RuntimeError",
   "var WebAssembly.Table",
 
-  // Vars that write the type out. With lib.dom loaded it has to be the type that lib.dom gives
-  // the var, and `Bun.__internal.UseLibDomIfAvailable` takes it from there.
+  // Vars that write their type out. The interface of each is gated, and the `var` is not yet.
+  // Behind `Bun.__internal.UseLibDomIfAvailable` a `var` is `any` when a package that declares the
+  // DOM, such as @types/web, loads after bun-types (TS2502). Written out, it keeps its type there.
   "var ByteLengthQueuingStrategy",
   "var CloseEvent",
   "var CountQueuingStrategy",

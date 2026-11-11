@@ -2440,7 +2440,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamControllerError, (JSGlobalObject * globalObj
     JSValue streamValue = callFrame->argument(0);
     JSValue error = callFrame->argument(1);
     if (auto* readable = dynamicDowncast<WebCore::JSReadableStream>(streamValue)) {
-        Bun::WebStreams::webStreamControllerError(globalObject, readable, error);
+        Bun::WebStreams::webStreamControllerErrorAndStopSource(globalObject, readable, error);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }

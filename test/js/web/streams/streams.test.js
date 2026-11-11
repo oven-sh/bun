@@ -6,6 +6,7 @@ import {
   readableStreamToBytes,
   readableStreamToText,
 } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import {
   bunEnv,
@@ -330,6 +331,108 @@ describe("ReadableStream.prototype.tee", () => {
 
 // Repeating tee() on a branch or textStream() on a text stream builds a chain of streams that call each other natively.
 describe("addAbortSignal() on a ReadableStream that Bun drives", () => {
+  it.skipIf(isWindows)("closes the file of a native source", async () => {
+    using dir = tempDir("abort-native-source", {});
+    const path = join(String(dir), "fifo");
+    mkfifo(path, 0o666);
+    // Keeps the FIFO open for writing, so that no read of it ends.
+    const writer = openSync(path, "r+");
+    try {
+      const reads = [];
+      const sources = () => heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
+      Bun.gc(true);
+      const before = sources();
+      for (let i = 0; i < 30; i++) {
+        const controller = new AbortController();
+        const stream = file(path).stream();
+        addAbortSignal(controller.signal, stream);
+        const read = stream.getReader().read();
+        controller.abort();
+        reads.push(
+          await read.then(
+            () => "fulfilled",
+            e => e.name,
+          ),
+        );
+      }
+      expect(reads).toEqual(Array(30).fill("AbortError"));
+      for (let i = 0; i < 20 && sources() - before > 5; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(sources() - before).toBeLessThanOrEqual(5);
+    } finally {
+      closeSync(writer);
+    }
+  });
+
+  it.each(["unread", "read"])("ends the request of a fetch() body that is %s", async state => {
+    const aborted = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => aborted.resolve("aborted"));
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("x");
+              await controller.flush();
+              await aborted.promise;
+            },
+          }),
+        );
+      },
+    });
+    const { body } = await fetch(server.url);
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, body);
+    let read;
+    if (state === "read") {
+      const reader = body.getReader();
+      expect((await reader.read()).value).toEqual(new Uint8Array([120]));
+      read = expect(reader.read()).rejects.toMatchObject({ name: "AbortError" });
+    }
+    controller.abort();
+    expect(await aborted.promise).toBe("aborted");
+    await (read ?? expect(body.getReader().read()).rejects.toMatchObject({ name: "AbortError" }));
+  });
+
+  it("leaves a native source alone that Readable.fromWeb() took over", async () => {
+    using dir = tempDir("abort-transferred-source", { "file.txt": Buffer.alloc(2_000_000, "x").toString() });
+    const controller = new AbortController();
+    const readable = Readable.fromWeb(addAbortSignal(controller.signal, file(join(String(dir), "file.txt")).stream()));
+    let length = 0;
+    for await (const chunk of readable) {
+      if (!length) controller.abort();
+      length += chunk.length;
+    }
+    expect(length).toBe(2_000_000);
+  });
+
+  it("cancels the stream under a textStream()", async () => {
+    const cancelled = [];
+    const source = new ReadableStream({
+      pull() {
+        return new Promise(() => {});
+      },
+      cancel(reason) {
+        cancelled.push(reason);
+      },
+    });
+    const stream = new Response(source).textStream();
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, stream);
+    const read = stream.getReader().read();
+    controller.abort();
+    const error = await read.then(
+      () => undefined,
+      e => e,
+    );
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(cancelled).toEqual([error]);
+  });
+
   it("errors the writable side of a TransformStream", async () => {
     const cancelled = [];
     const source = new ReadableStream({

@@ -3847,6 +3847,42 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
 #endif
 }
 
+extern "C" JSC::EncodedJSValue JSMock__callbackOnStack();
+
+// A test or a hook that ends in a call leaves the stack by that tail call. The test runner still knows which callback it is calling.
+static NEVER_INLINE JSC::SourceOrigin sourceOriginOfCallbackOnStack()
+{
+    JSValue callback = JSValue::decode(JSMock__callbackOnStack());
+    // The runner holds a row of .each() as a bound function, and a callback that was registered under AsyncLocalStorage as an AsyncContextFrame.
+    while (callback) {
+        if (auto* frame = dynamicDowncast<AsyncContextFrame>(callback))
+            callback = frame->callback.get();
+        else if (auto* bound = dynamicDowncast<JSC::JSBoundFunction>(callback))
+            callback = bound->targetFunction();
+        else
+            break;
+    }
+#if ENABLE(AOT)
+    // A compiled function has no executable: the build knows the file that it is written in.
+    if (JSObject* compiled = callback ? callback.getObject() : nullptr; compiled && compiled->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(compiled)) {
+        String file = JSC::AOT::declaringFilePath(compiled);
+        return file.isEmpty() ? JSC::SourceOrigin() : JSC::SourceOrigin(URL::fileURLWithFileSystemPath(file));
+    }
+#endif
+    // What callerSourceOrigin() reads from the frame of a function.
+    auto* function = callback ? dynamicDowncast<JSC::JSFunction>(callback) : nullptr;
+    return function && !function->isHostFunction() ? function->jsExecutable()->sourceOrigin() : JSC::SourceOrigin();
+}
+
+// The file of the caller. Where no caller is left on the stack, the file of the callback that the test runner is calling stands for it.
+static ALWAYS_INLINE JSC::SourceOrigin sourceOriginOfCaller(JSC::VM& vm, JSC::CallFrame* callframe)
+{
+    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    if (sourceOrigin.isNull()) [[unlikely]]
+        sourceOrigin = sourceOriginOfCallbackOnStack();
+    return sourceOrigin;
+}
+
 static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
 {
 #if ENABLE(AOT)
@@ -3855,7 +3891,7 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
             return file;
     }
 #endif
-    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    JSC::SourceOrigin sourceOrigin = sourceOriginOfCaller(vm, callframe);
     const URL& url = sourceOrigin.url();
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
@@ -3887,14 +3923,15 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    JSC::SourceOrigin sourceOrigin = sourceOriginOfCaller(vm, callframe);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
         if (const String& file = globalObject->onLoadPlugins.replayedMockCaller(callframe); !file.isNull())
             sourceOrigin = JSC::SourceOrigin(URL::fileURLWithFileSystemPath(file));
     }
 #endif
-    if (sourceOrigin.isNull())
+    // A "file:" URL that holds a whole path is resolved beside no file.
+    if (sourceOrigin.isNull() && !specifier.startsWith("file:/"_s))
         return false;
     const URL& url = sourceOrigin.url();
 

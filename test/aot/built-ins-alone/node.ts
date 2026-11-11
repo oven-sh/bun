@@ -447,7 +447,7 @@ const others: [string, string[], string[]][] = [
   ],
   [
     "a-write-stream-writes-and-finishes",
-    ["%NodeJSFS%.prototype.open", "%NodeJSFS%.prototype.write"],
+    ["%NodeJSFS%.prototype.open", "%NodeJSFS%.prototype.writev"],
     [
       ...scaffold,
       "const stream = fs.createWriteStream(file);",

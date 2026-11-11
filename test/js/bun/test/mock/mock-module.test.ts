@@ -7388,7 +7388,8 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
   });
 
   // Such a factory throws where it is called from the hoisted call, and the mock then waits for the next import of the module
-  // (mock-hoist.test.ts, "can read a later const"). A module that is linked to the module and has yet to run imports it no more:
+  // (mock-hoist.test.ts, "can read a later const"). Vitest and Jest run the imports of a module one after the other, so there a module
+  // that comes to its import of the module after the call gets the mock. Here that module is linked to the module already:
   // the mock would never reach it, so there the error is thrown.
   describe("a hoisted factory that reads a variable which its file declares below the call", () => {
     const note =
@@ -7469,6 +7470,34 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
           import { send } from "./mail";
           test("the test file reads the module", () => expect(send()).toBe("mock"));
         `,
+        // So it is where the module is a CommonJS package.
+        "test-file-package/node_modules/mail-b/package.json": JSON.stringify({ name: "mail-b", main: "index.js" }),
+        "test-file-package/node_modules/mail-b/index.js": `exports.send = () => "real";`,
+        "test-file-package/mocks.ts": `
+          import { vi } from "bun:test";
+          const ofPackageOfTestFile = () => "mock";
+          vi.mock("mail-b", () => ({ send: ofPackageOfTestFile }));
+        `,
+        "test-file-package/own.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { send } from "mail-b";
+          test("the test file reads the package", () => expect(send()).toBe("mock"));
+        `,
+        // index.ts has yet to begin, in an import cycle with render.ts, which reads the module through it.
+        "barrel/mail.ts": mail,
+        "barrel/mocks.ts": `
+          import { vi } from "bun:test";
+          const ofBarrel = () => "mock";
+          vi.mock("./mail", () => ({ send: ofBarrel }));
+        `,
+        "barrel/index.ts": `export * from "./mocks"; export * from "./render"; export { send } from "./mail";`,
+        "barrel/render.ts": `import { send } from "./index"; export const notify = () => send();`,
+        "barrel/barrel.test.ts": `
+          import { expect, test } from "bun:test";
+          import { notify } from "./index";
+          test("a module of an import cycle that has yet to begin", () => expect(notify()).toBe("mock"));
+        `,
         // The file that makes the call is linked to the module itself: an import that a file hands on stays a statement.
         "hands-on/mod.ts": `export const value = "real";`,
         "hands-on/own.test.ts": `
@@ -7517,9 +7546,19 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
           `,
         }),
       });
-      const variables = ["ofOwnModule", "ofTestFile", "handedOn", "awaited", "called", "ofLibrary", "ofCommonJS"];
+      const variables = [
+        "ofOwnModule",
+        "ofTestFile",
+        "ofPackageOfTestFile",
+        "ofBarrel",
+        "handedOn",
+        "awaited",
+        "called",
+        "ofLibrary",
+        "ofCommonJS",
+      ];
       for (const variable of variables) expect(stderr).toContain(thrown(variable));
-      expect(stderr).toContain(" 0 pass\n 7 fail\n 7 errors\n");
+      expect(stderr).toContain(" 0 pass\n 9 fail\n 9 errors\n");
       expect(exitCode).toBe(1);
     });
 
@@ -7572,6 +7611,44 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
           `,
         },
         1,
+      );
+    });
+
+    // As in Vitest and Jest, a module keeps the real module where its import of it stands before its import of the file with the mock.
+    test("still waits where the module that has yet to run imports the module first", async () => {
+      const mocks = `
+        import { vi } from "bun:test";
+        const impl = () => "mock";
+        vi.mock("./mail", () => ({ send: impl }));
+      `;
+      await expectFixturesToPass(
+        {
+          "before/mail.ts": mail,
+          "before/mocks.ts": mocks,
+          "before/before.test.ts": `
+            import { expect, test } from "bun:test";
+            import { send } from "./mail";
+            import "./mocks";
+            test("the module comes first", async () => {
+              expect(send()).toBe("real");
+              expect((await import("./mail")).send()).toBe("mock");
+            });
+          `,
+          // index.ts is in an import cycle with render.ts.
+          "before-in-cycle/mail.ts": mail,
+          "before-in-cycle/mocks.ts": mocks,
+          "before-in-cycle/index.ts": `export { send } from "./mail"; export * from "./mocks"; export * from "./render";`,
+          "before-in-cycle/render.ts": `import { send } from "./index"; export const notify = () => send();`,
+          "before-in-cycle/cycle.test.ts": `
+            import { expect, test } from "bun:test";
+            import { notify } from "./index";
+            test("the module comes first, in an import cycle", async () => {
+              expect(notify()).toBe("real");
+              expect((await import("./mail")).send()).toBe("mock");
+            });
+          `,
+        },
+        2,
       );
     });
 

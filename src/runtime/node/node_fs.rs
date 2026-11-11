@@ -10164,14 +10164,17 @@ struct DeleteTreeStackItem {
 /// follows the link, `openat("link", ...)` does not.
 #[cfg(not(windows))]
 fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind) {
-    let mut end = sub_path.len();
-    while end > 1 && sub_path[end - 1] == b'/' {
-        end -= 1;
-    }
-    if end == sub_path.len() {
+    let stripped = strings::trim_right(sub_path, b"/");
+    if stripped.len() == sub_path.len() {
         return (sub_path, kind_hint);
     }
-    (&sub_path[..end], sys::FileKind::Directory)
+    // A path of only separators is the root. Keep one.
+    let stripped = if stripped.is_empty() {
+        &sub_path[..1]
+    } else {
+        stripped
+    };
+    (stripped, sys::FileKind::Directory)
 }
 
 #[cfg(windows)]

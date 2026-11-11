@@ -135,6 +135,16 @@ void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* strea
     RELEASE_AND_RETURN(scope, transformStreamErrorWritableAndUnblockWrite(globalObject, stream, error));
 }
 
+void transformStreamReadableError(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // As in the source cancel algorithm: a codec chunk or flush still being drained into the readable can no longer finish.
+    nativeCodecAbandon(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, transformStreamError(globalObject, stream, error));
+}
+
 void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
 {
     auto& vm = getVM(globalObject);

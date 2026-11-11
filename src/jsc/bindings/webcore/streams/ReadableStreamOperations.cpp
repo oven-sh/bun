@@ -23,6 +23,7 @@
 #include "JSStreamPipeToOperation.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "JSTransformStream.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "ObjectBindings.h"
@@ -321,9 +322,14 @@ void webStreamControllerError(JSGlobalObject* globalObject, JSReadableStream* st
     if (stream->m_state != ReadableStreamState::Readable)
         return;
     switch (stream->m_controllerKind) {
-    case ControllerKind::Default:
-        readableStreamDefaultControllerError(globalObject, defaultControllerOf(stream), error);
+    case ControllerKind::Default: {
+        auto* controller = defaultControllerOf(stream);
+        // The writable side and the transformer have no other way to learn of it.
+        if (controller->m_algorithms.kind == SourceKind::Transform)
+            return transformStreamReadableError(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), error);
+        readableStreamDefaultControllerError(globalObject, controller, error);
         return;
+    }
     case ControllerKind::Byte:
         readableByteStreamControllerError(globalObject, byteControllerOf(stream), error);
         return;

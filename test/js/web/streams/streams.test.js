@@ -22,7 +22,7 @@ import {
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, addAbortSignal, finished, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -329,6 +329,55 @@ describe("ReadableStream.prototype.tee", () => {
 });
 
 // Repeating tee() on a branch or textStream() on a text stream builds a chain of streams that call each other natively.
+describe("addAbortSignal() on a ReadableStream that Bun drives", () => {
+  it("errors the writable side of a TransformStream", async () => {
+    const cancelled = [];
+    const source = new ReadableStream({
+      pull(c) {
+        c.enqueue("x");
+      },
+      cancel(reason) {
+        cancelled.push(reason);
+      },
+    });
+    const transform = new TransformStream();
+    const piped = source.pipeTo(transform.writable);
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, transform.readable);
+    const reader = transform.readable.getReader();
+    expect(await reader.read()).toEqual({ value: "x", done: false });
+    controller.abort();
+    const error = await piped.then(
+      () => undefined,
+      e => e,
+    );
+    expect(error).toMatchObject({ name: "AbortError" });
+    await expect(reader.closed).rejects.toBe(error);
+    expect(cancelled).toEqual([error]);
+  });
+
+  it("leaves a JavaScript source and the other branch of a tee() alone, as controller.error() does", async () => {
+    const cancelled = [];
+    let sourceController;
+    const source = new ReadableStream({
+      start(c) {
+        sourceController = c;
+      },
+      cancel(reason) {
+        cancelled.push(reason);
+      },
+    });
+    const [aborted, other] = source.tee();
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, aborted);
+    controller.abort();
+    await expect(aborted.getReader().read()).rejects.toMatchObject({ name: "AbortError" });
+    sourceController.enqueue("x");
+    expect(await other.getReader().read()).toEqual({ value: "x", done: false });
+    expect(cancelled).toEqual([]);
+  });
+});
+
 describe("a deep chain of natively linked streams doesn't overflow the stack", () => {
   // Gives every link a tick to start, do its initial pull, and queue a read on its parent.
   const settle = `await new Promise(resolve => setImmediate(resolve));`;

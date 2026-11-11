@@ -948,6 +948,42 @@ describe("bounded output per input chunk", () => {
     await expect(reader.read()).rejects.toThrow("stop");
   });
 
+  test("addAbortSignal() on the readable mid-expansion settles the write and errors the writable", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const write = writer.write(bombs.brotli());
+    const queued = writer.write(new Uint8Array(1));
+
+    const first = await reader.read();
+    expect(first.value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, ds.readable);
+    controller.abort();
+    expect(await write).toBeUndefined();
+    const error = await queued.catch(e => e);
+    expect(error).toMatchObject({ name: "AbortError" });
+    await expect(writer.closed).rejects.toBe(error);
+    await expect(reader.read()).rejects.toBe(error);
+  });
+
+  test("addAbortSignal() on the readable during a multi-step flush settles the close", async () => {
+    const cs = new CompressionStream("zstd", { highWaterMark: 1024 });
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    await writer.write(randomBytes(100 * 1024));
+    const closed = writer.close();
+    expect((await reader.read()).value!.byteLength).toBe(1024);
+
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, cs.readable);
+    controller.abort();
+    const error = await closed.catch(e => e);
+    expect(error).toMatchObject({ name: "AbortError" });
+    await expect(reader.read()).rejects.toBe(error);
+  });
+
   // node:stream's addAbortSignal() errors the writable through its controller, the
   // other route into the erroring state (it clears the sink's algorithms on the way).
   test("addAbortSignal() on the writable mid-expansion settles the write", async () => {

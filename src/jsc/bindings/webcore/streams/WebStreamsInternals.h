@@ -252,6 +252,7 @@ void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error);
 
 // `$webStreamControllerError` — node:stream's addAbortSignal() erroring a WHATWG stream, i.e.
 // what `controller.error(e)` does, including its no-op once the stream left readable/writable.
+// The readable of a TransformStream errors all of it.
 void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
 void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 
@@ -511,6 +512,8 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
+// Errors the whole stream for an error that reached its readable side from outside (webStreamControllerError).
+void transformStreamReadableError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamErrorWritableAndUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamSetBackpressure(JSC::JSGlobalObject*, JSTransformStream*, bool backpressure); // userJS: no — TransformStreamOperations.cpp
 void transformStreamUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — TransformStreamOperations.cpp

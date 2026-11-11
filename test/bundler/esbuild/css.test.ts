@@ -4359,6 +4359,19 @@ describe("bundler", () => {
         "layers of the root: [y, z] in the sources, [z, y] in the bundle (conditions that hold: supports display:grid)",
       ],
     },
+    // The second copy of the import masks the first one. A stand-in for "v.b" ahead of it would then be ahead of
+    // the layers that the external style sheet declares inside "v", and the source files have them first.
+    SublayerBetweenTwoCopiesOfExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/e.css" layer(v);
+          @import "./a.css" layer(v);
+          @import "https://example.com/e.css" layer(v);
+        `,
+        "/a.css": `@layer b { .t { color: red } }`,
+      },
+      out: `@import "https://example.com/e.css" layer(v);@layer v{@layer b{.t{color:red}}}`,
+    },
   };
   for (const [name, { files, out }] of Object.entries(importPrologueCases)) {
     itBundled(`css/CSSImportPrologue${name}`, {
@@ -4385,14 +4398,13 @@ describe("bundler", () => {
     {
       name: "external imports",
       options: externalSheets,
-      wrong: [2, 5, 10, 11, 35, 37, 44, 45, 46, 50, 53, 55, 56, 57],
+      wrong: [2, 5, 10, 11, 35, 37, 44, 45, 50, 53, 55, 56, 57],
     },
     {
       name: "external imports, cycles, empty files and import conditions",
       options: { ...externalSheets, cycles: true, emptyFiles: true, importConditions: true },
       wrong: [
-        1, 2, 5, 6, 10, 11, 14, 17, 18, 21, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 43, 44, 45, 50, 53, 54, 55, 56,
-        58, 60,
+        1, 2, 5, 6, 10, 11, 14, 18, 21, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 43, 44, 45, 50, 53, 54, 55, 56,
       ],
     },
   ];

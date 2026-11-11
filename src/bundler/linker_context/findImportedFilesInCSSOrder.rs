@@ -1325,9 +1325,10 @@ impl<'o> LayerStandIns<'o> {
         }
         // A later copy masks an import. A stand-in behind it would then be ahead of the layers of its sheet.
         if end != 0 {
-            let later = &order[index + 1..];
             let masked = self.imports.iter().filter_map(|&(at, url)| {
                 let conditions = &order[at as usize].conditions;
+                // This import and the ones behind it. The stand-ins go ahead of this import.
+                let later = &order[index.max(at as usize + 1)..];
                 let is_masked = later.iter().any(|e| {
                     matches!(&e.kind, CssImportOrderKind::ExternalPath(path) if path.text == url)
                         && is_conditional_import_redundant(conditions, &e.conditions)

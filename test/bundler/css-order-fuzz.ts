@@ -242,6 +242,8 @@ export function evaluate(
   entry: string,
   state: ReadonlySet<string> = new Set(),
   externals: Externals = () => undefined,
+  // Chrome 99 to 121, Firefox 97 to 114 and Safari 15.4 to 17.4 drop an `@import` that has `supports()`.
+  dropsImportSupports = false,
 ): Evaluation {
   const order: Record<string, string[]> = {};
   let anon = 0;
@@ -278,7 +280,7 @@ export function evaluate(
             break;
           }
           sawImport = true;
-          if (node.supports !== undefined && !supportsHolds(node.supports, state)) break;
+          if (node.supports !== undefined && (dropsImportSupports || !supportsHolds(node.supports, state))) break;
           if (node.media !== undefined && !mediaHolds(node.media, state)) break;
           const layer =
             node.layer === undefined ? into : node.layer === "" ? child(into, "") : descend(into, node.layer);
@@ -551,12 +553,17 @@ export function generateGraph(seed: number, options: GraphOptions = {}) {
   return { files, entry: "/entry.css", externalSheets };
 }
 
-/** What the bundle of `files` does not have as its sources have it, over every state of the conditions. */
+/**
+ * What the bundle of `files` does not have as its sources have it, over every state of the conditions.
+ * `inOlderBrowser`: the bundle is applied by a browser that drops an `@import` with `supports()`. The source files
+ * are not, because Bun prints `@supports` rules for their conditions.
+ */
 export function cascadeProblems(
   files: Files,
   entry: string,
   bundle: string,
   externalSheets: Record<string, string> = {},
+  inOlderBrowser = false,
 ): Problem[] {
   const external = (url: string) => externalSheets[/\/(e\d+)\.css$/.exec(url)?.[1] ?? ""];
   const isExternal = (id: string) => /^e\d+$/.test(id);
@@ -569,7 +576,7 @@ export function cascadeProblems(
     const state = new Set(list.filter((_, i) => bits & (1 << i)));
     const where = list.length ? ` (conditions that hold: ${[...state].join(", ") || "none"})` : "";
     const expected = evaluate(files, entry, state, external);
-    const actual = evaluate({ "/bundle.css": bundle }, "/bundle.css", state, external);
+    const actual = evaluate({ "/bundle.css": bundle }, "/bundle.css", state, external, inOlderBrowser);
     for (const problem of compare(expected, actual, isExternal)) {
       const text = problem.text + where;
       if (seen.has(text)) continue;

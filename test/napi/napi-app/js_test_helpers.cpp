@@ -175,6 +175,22 @@ static napi_value call_fatal_exception(const Napi::CallbackInfo &info) {
   return result;
 }
 
+// perform_has(object, key): boolean
+static napi_value perform_has(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  bool has = false;
+  NODE_API_CALL(env, napi_has_property(env, info[0], info[1], &has));
+  return Napi::Boolean::New(env, has);
+}
+
+// perform_delete(object, key): boolean
+static napi_value perform_delete(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  bool deleted = false;
+  NODE_API_CALL(env, napi_delete_property(env, info[0], info[1], &deleted));
+  return Napi::Boolean::New(env, deleted);
+}
+
 // perform_get(object, key)
 static napi_value perform_get(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -679,6 +695,8 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
+  REGISTER_FUNCTION(env, exports, perform_has);
+  REGISTER_FUNCTION(env, exports, perform_delete);
   REGISTER_FUNCTION(env, exports, perform_get);
   REGISTER_FUNCTION(env, exports, perform_set);
   REGISTER_FUNCTION(env, exports, define_properties);

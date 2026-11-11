@@ -569,6 +569,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  it("napi_has_property and napi_delete_property keep the key while a Proxy runs code", async () => {
+    await checkSameOutput("test_property_key_outlives_user_code", []);
+  });
+
   describe("pending-exception gate", () => {
     it("refuses and performs no side effects while a napi exception is pending", async () => {
       const result = await checkSameOutput("test_pending_exception_gate", []);

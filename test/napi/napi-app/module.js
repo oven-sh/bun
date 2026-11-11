@@ -1722,6 +1722,37 @@ nativeTests.test_external_buffer_untransferable = () => {
   console.log("stats:", JSON.stringify(nativeTests.external_for_transfer_stats()));
 };
 
+// A key that is not a string becomes one that nothing but the call refers to.
+nativeTests.test_property_key_outlives_user_code = () => {
+  let seen = [];
+  const inner = new Proxy(
+    {},
+    {
+      has: (_, key) => (seen.push(key), false),
+      deleteProperty: (_, key) => (seen.push(key), true),
+    },
+  );
+  const churn = () => {
+    collectGarbage();
+    globalThis.churned = Array.from({ length: 1000 }, (_, i) => Buffer.alloc(41, 0x30 + (i % 10)).toString());
+  };
+  const outer = new Proxy(inner, {
+    get has() {
+      churn();
+    },
+    get deleteProperty() {
+      churn();
+    },
+  });
+  let made = 0;
+  const key = () => ({ toString: () => `key-${Buffer.alloc(36, 0x61).toString()}-${made++}` });
+  for (let i = 0; i < 5; i++) {
+    nativeTests.perform_has(outer, key());
+    nativeTests.perform_delete(outer, key());
+  }
+  console.log(seen.join("\n"));
+};
+
 // A worker creates the buffers and exits: the parent can only ever have copies,
 // and the worker's env teardown finalizes both on the thread that created them.
 nativeTests.test_external_buffer_worker_exit = async () => {

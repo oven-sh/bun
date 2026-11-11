@@ -485,7 +485,7 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     auto keyProp = toJS(key);
-    JSC::PropertyName name = keyProp.toPropertyKey(globalObject);
+    JSC::Identifier name = keyProp.toPropertyKey(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     bool hasProperty = target->hasProperty(globalObject, name);
@@ -558,7 +558,7 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     auto keyProp = toJS(key);
-    auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
+    JSC::Identifier name = keyProp.toPropertyKey(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     auto deleteResult = target->deleteProperty(globalObject, name);
@@ -587,7 +587,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     JSValue keyProp = toJS(key);
     NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
 
-    auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
+    JSC::Identifier name = keyProp.toPropertyKey(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     bool hasOwnProperty = target->hasOwnProperty(globalObject, name);
@@ -1650,7 +1650,7 @@ extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env
     JSC::EnsureStillAliveScope ensureAlive(obj);
 
     for (size_t i = 0; i < property_count; i++) {
-        auto name = JSC::PropertyName(toJS(property_names[i]).toPropertyKey(globalObject));
+        JSC::Identifier name = toJS(property_names[i]).toPropertyKey(globalObject);
         NAPI_RETURN_IF_EXCEPTION(env);
         JSValue value = toJS(property_values[i]);
         obj->putDirectMayBeIndex(globalObject, name, value.isEmpty() ? jsUndefined() : value);

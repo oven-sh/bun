@@ -1,3 +1,4 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -51,7 +52,7 @@ describe("Bun.wrapAnsi", () => {
     // wordWrap defaults on and is `options.wordWrap !== false`: only an
     // explicit `false` turns it off, other falsy values keep the default.
     test.each([undefined, null, 0, ""])("wordWrap: %p keeps word wrapping on", value => {
-      expect(Bun.wrapAnsi("hello world", 3, { wordWrap: value as boolean })).toBe("hello\nworld");
+      expect(Bun.wrapAnsi("hello world", 3, { wordWrap: value as any })).toBe("hello\nworld");
     });
 
     test("wordWrap: false breaks words character-by-character", () => {
@@ -71,7 +72,7 @@ describe("Bun.wrapAnsi", () => {
     // trim defaults on and is `options.trim !== false`: only an explicit
     // `false` turns it off, other falsy values keep the default.
     test.each([undefined, null, 0, ""])("trim: %p keeps trimming on", value => {
-      expect(Bun.wrapAnsi("hello world", 5, { trim: value as boolean })).toBe("hello\nworld");
+      expect(Bun.wrapAnsi("hello world", 5, { trim: value as any })).toBe("hello\nworld");
     });
 
     test("trim: false keeps the separator space on its own row", () => {
@@ -1118,5 +1119,17 @@ describe("Bun.wrapAnsi", () => {
       expect(stdout).toBe("match\n");
       expect(exitCode).toBe(0);
     });
+  });
+
+  test("throws when the output exceeds the string length limit", () => {
+    // Each of the 64 rows reopens the hyperlink.
+    const input = `\x1b]8;;http://example.com/${Buffer.alloc(100_000, "a")}\x07` + Buffer.alloc(64 * 2, "a ");
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      expect(() => Bun.wrapAnsi(input, 1).length).toThrow("Out of memory");
+      expect(() => Bun.wrapAnsi(input + "\u2603", 1).length).toThrow("Out of memory");
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
   });
 });

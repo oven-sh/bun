@@ -70,6 +70,10 @@ pub(super) mod property_id_mixin {
 
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
         let name = input.expect_ident()?;
+        // `transition-property: unset` is the css-wide keyword, not a property of that name.
+        if css::css_values::ident::is_reserved_custom_ident(name) {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
         Ok(from_string(name))
     }
 

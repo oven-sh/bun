@@ -54,7 +54,7 @@ test("fetch TLS ClientHello does not include ECH GREASE extension", async () => 
   await using server = net.createServer(socket => {
     const chunks: Buffer[] = [];
     let captured = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       if (captured) return;
       chunks.push(chunk);
       // Accumulate until we have a full TLSPlaintext record (type + version +

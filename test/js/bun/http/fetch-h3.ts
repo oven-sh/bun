@@ -32,7 +32,7 @@ function findCurlH3(): string | null {
 
 type Init = {
   method?: string;
-  headers?: HeadersInit;
+  headers?: Bun.HeadersInit;
   body?: string | Uint8Array | ArrayBuffer | Blob | null;
   signal?: AbortSignal;
   redirect?: "follow" | "manual";

@@ -44,7 +44,7 @@ function buildTarball(pkgJson: object) {
 // Regression test for https://github.com/oven-sh/bun/issues/31652
 //
 // `bun install -g @openai/codex` (and similar) aborted with
-// `error: Invalid dependency name ""`. The trigger is an *optional* dependency
+// `error: invalid dependency name ""`. The trigger is an *optional* dependency
 // declared with an empty key (`"optionalDependencies": { "": "..." }`) whose
 // target does not resolve on the current platform. An optional dependency that
 // fails to resolve keeps its empty name (the resolved-package name is never
@@ -85,8 +85,7 @@ test("install does not abort on an unresolved optional dependency with an empty 
       if (url.pathname === "/top/-/top-1.0.0.tgz") {
         return new Response(top.tgz, { headers: { "content-length": String(top.tgz.length) } });
       }
-      // The empty-name dependency resolves to a request for a package named "",
-      // i.e. the registry root. Make it 404 so the optional dep fails to resolve.
+      // A request for a package named "" would be a request for the registry root.
       if (url.pathname === "/") {
         emptyNameManifestRequested = true;
       }
@@ -114,11 +113,12 @@ test("install does not abort on an unresolved optional dependency with an empty 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The empty-name optional dependency must not abort the install.
-  expect(stderr).not.toContain('Invalid dependency name ""');
+  expect(stderr).not.toContain('invalid dependency name ""');
   // The requested package must still be installed.
   expect(await Bun.file(join(String(dir), "node_modules", "top", "package.json")).exists()).toBe(true);
-  // Sanity check that we actually exercised the empty-name resolution path.
-  expect(emptyNameManifestRequested).toBe(true);
+  // The dependency is left out, which only --verbose mentions, and the registry is not asked for it.
+  expect(stderr).not.toContain("warn:");
+  expect(emptyNameManifestRequested).toBe(false);
   // Assert the exit code last for a more useful message if a behavioral check fails.
   expect(exitCode).toBe(0);
 });

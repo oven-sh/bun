@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+const first =
+  typeof name === "string"
+    ? name
+    : /** @type {string} */ (
+        name.type === "Identifier"
+        ? /** @type {Identifier} */ (name).name
+        : /** @type {Node & { value?: unknown }} */ (name).value
+      );
+const second =
+  typeof name === "string"
+    ? /** @type {string} */ (
+        name.type === "Identifier"
+        ? /** @type {Identifier} */ (name).name
+        : /** @type {Node & { value?: unknown }} */ (name).value
+      )
+    : name;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const first =
+  typeof name === "string"
+    ? name
+    : /** @type {string} */ (
+        name.type === "Identifier"
+        ? /** @type {Identifier} */ (name).name
+        : /** @type {Node & { value?: unknown }} */ (name).value
+      );
+const second =
+  typeof name === "string"
+    ? /** @type {string} */ (
+        name.type === "Identifier"
+        ? /** @type {Identifier} */ (name).name
+        : /** @type {Node & { value?: unknown }} */ (name).value
+      )
+    : name;
+
+===================== End =====================

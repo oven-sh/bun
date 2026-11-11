@@ -6,7 +6,7 @@
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
 const Readable = require("internal/streams/readable");
-const transferToNativeReadable = $newCppFunction(
+const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFunction(
   "streams/BunStreamConsumers.cpp",
   "jsFunctionTransferToNativeReadableStream",
   1,
@@ -29,17 +29,7 @@ let dynamicallyAdjustChunkSize = (_?) => (
   (dynamicallyAdjustChunkSize = () => _)
 );
 
-type NodeReadable = import("node:stream").Readable;
-
-interface NativeReadable extends NodeReadable {
-  _readableState: {
-    flowing: boolean | null;
-    ended: boolean;
-    sync: boolean;
-    buffer: unknown[];
-    bufferIndex: number;
-    length: number;
-  };
+interface NativeReadable extends $Node.Readable {
   $bunNativePtr: NativePtr | undefined;
   $start?: typeof ensureConstructed;
   ref: typeof ref;
@@ -71,12 +61,13 @@ let debugId = 0;
 // `uncaughtOnListenerThrow`: a 'data' listener throw is an uncaughtException, as from Node's native read callback.
 function constructNativeReadable(
   readableStream: ReadableStream,
-  options,
+  options: $Node.ReadableOptions,
   uncaughtOnListenerThrow: boolean = false,
 ): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
-  const bunNativePtr = (readableStream as any).$bunNativePtr;
-  $assert(typeof bunNativePtr === "object", "Invalid native ptr");
+  const bunNativePtr = readableStream.$bunNativePtr;
+  // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
+  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
 
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
@@ -230,7 +221,7 @@ function pushEof(stream: NativeReadable) {
 // `push()` returning false means the Readable's buffer is at/above hwm (or
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
-function pushAndCheck(stream: NativeReadable, chunk: any) {
+function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
   let wantMore: boolean;
   try {
     wantMore = stream.push(chunk);
@@ -254,10 +245,10 @@ function readAfterListenerThrow(stream: NativeReadable) {
   stream.read(0);
 }
 
-function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {
+function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {
   if (result > 0) {
-    const slice = chunk.subarray(0, result);
-    chunk = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
+    const slice = chunk!.subarray(0, result);
+    chunk = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
     // Set before push(): a listener throw must not leave the delivered slice as the next pull buffer.
     stream[kRemainingChunk] = chunk;
     if (slice.byteLength > 0) {
@@ -272,7 +263,12 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
   return chunk;
 }
 
-function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk: any, isClosed: boolean) {
+function handleArrayBufferViewResult(
+  stream: NativeReadable,
+  result: ArrayBufferView,
+  chunk: Buffer | undefined,
+  isClosed: boolean,
+) {
   if (result.byteLength > 0) {
     pushAndCheck(stream, result);
   }

@@ -1,0 +1,53 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function id(value: any): any;
+# declare const which: number;
+# function returnsIt(value: unknown) { const got = id(value); return got; }
+# const values = [7, 1.5, "text", Symbol("made"), 10n, {}, () => 1, true, null];
+# print(typeof returnsIt(values[which]));
+# print("went on");
+# -- end of source
+# With testing=CheckProofsAtRunTime, a check whose type is a set of kinds is one call of a stub, which finds the kinds next to the throw word.
+# This test is the failing control of that stub, with one run per kind.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# Each kind of value leaves the stub by a different path, and the crash message names the kind.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeUnknownCallsReturnUndefined
+# RUN(INTEGER): run-in-shell mechanisms=all-Inlining globalThis.which = 0; globalThis.id = (value) => value;
+# INTEGER: bun: internal AOT error: type check failed
+# INTEGER-NEXT: found int32 in
+# INTEGER-NOT: went on
+# RUN(DOUBLE): run-in-shell mechanisms=all-Inlining globalThis.which = 1; globalThis.id = (value) => value;
+# DOUBLE: bun: internal AOT error: type check failed
+# DOUBLE-NEXT: found double in
+# DOUBLE-NOT: went on
+# RUN(TEXT): run-in-shell mechanisms=all-Inlining globalThis.which = 2; globalThis.id = (value) => value;
+# TEXT: bun: internal AOT error: type check failed
+# TEXT-NEXT: found string in
+# TEXT-NOT: went on
+# RUN(SYMBOL): run-in-shell mechanisms=all-Inlining globalThis.which = 3; globalThis.id = (value) => value;
+# SYMBOL: bun: internal AOT error: type check failed
+# SYMBOL-NEXT: found symbol in
+# SYMBOL-NOT: went on
+# RUN(BIGINT): run-in-shell mechanisms=all-Inlining globalThis.which = 4; globalThis.id = (value) => value;
+# BIGINT: bun: internal AOT error: type check failed
+# BIGINT-NEXT: found bigint in
+# BIGINT-NOT: went on
+# RUN(OBJECT): run-in-shell mechanisms=all-Inlining globalThis.which = 5; globalThis.id = (value) => value;
+# OBJECT: bun: internal AOT error: type check failed
+# OBJECT-NEXT: found object in
+# OBJECT-NOT: went on
+# RUN(FUNCTION): run-in-shell mechanisms=all-Inlining globalThis.which = 6; globalThis.id = (value) => value;
+# FUNCTION: bun: internal AOT error: type check failed
+# FUNCTION-NEXT: found function in
+# FUNCTION-NOT: went on
+# RUN(BOOLEAN): run-in-shell mechanisms=all-Inlining globalThis.which = 7; globalThis.id = (value) => value;
+# BOOLEAN: bun: internal AOT error: type check failed
+# BOOLEAN-NEXT: found boolean in
+# BOOLEAN-NOT: went on
+# RUN(NULL): run-in-shell mechanisms=all-Inlining globalThis.which = 8; globalThis.id = (value) => value;
+# NULL: bun: internal AOT error: type check failed
+# NULL-NEXT: found null in
+# NULL-NOT: went on
+# RUN(RIGHT): run-in-shell mechanisms=all-Inlining globalThis.which = 9; globalThis.id = (value) => value;
+# RIGHT: undefined
+# RIGHT: went on

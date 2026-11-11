@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunRun, isWindows } from "harness";
+import { bunRun, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -120,7 +120,8 @@ it.concurrent(
     if (exitCode !== 0) console.error(stderr || stdout);
     expect(exitCode).toBe(0);
   },
-  !isWindows ? 30_000 : 90_000,
+  // A build with AddressSanitizer takes WTF's and JavaScriptCore's memory from the sanitizer's allocator: the fixture takes a fifth longer and stood at 29 to 30 s.
+  isWindows ? 90_000 : isASAN ? 60_000 : 30_000,
 );
 // ✓ setInterval doesn't leak memory [9930.00ms]
 // ✓ setInterval doesn't leak memory [80188.00ms]

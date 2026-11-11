@@ -44,7 +44,8 @@ impl PoolStorage for PathBuffer {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> Option<R> {
         U8_POOL.try_with(f).ok()
     }
-    #[inline]
+    #[cold]
+    #[inline(never)]
     fn new_boxed() -> Box<Self> {
         // SAFETY: `PathBuffer` is `#[repr(transparent)]` over `[u8; N]`;
         // `new_zeroed` writes every byte to `0`, which is a valid `u8`, so the
@@ -61,7 +62,8 @@ impl PoolStorage for WPathBuffer {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> Option<R> {
         U16_POOL.try_with(f).ok()
     }
-    #[inline]
+    #[cold]
+    #[inline(never)]
     fn new_boxed() -> Box<Self> {
         // SAFETY: `WPathBuffer` is `#[repr(transparent)]` over `[u16; N]`;
         // `new_zeroed` writes every byte to `0`, which is a valid `u16`, so the
@@ -157,7 +159,7 @@ pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 /// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
 /// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
-#[inline]
+#[inline(never)]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
 }

@@ -1,0 +1,16 @@
+# `inner` tests `f` and calls it, `outer` only hands it on to `inner`: each only calls what arrives.
+# f1 = inner, f2 = outer, f3 = maker
+# -- source: handed-on-to-a-function-that-only-calls-it.ts
+# declare function sink(...values: unknown[]): void;
+# function inner(k: number, f?: () => number): number { let t = k; if (f !== undefined) { for (let i = 0; i < k; i++) t += f(); } return t; }
+# function outer(f: () => number): number { const t = inner(4, f); return t + 1; }
+# function maker(n: number) { const a = outer(() => n * 2); return a + 1; }
+# sink(maker(1), maker(2));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 
+# CHECK: parameter 1 {{*}}only-called
+# CHECK: function f2 
+# CHECK-NEXT: parameter 0 {{*}}only-called
+# RUN(WITHHELD): link functions mechanisms=all-CellsInFrames
+# WITHHELD-NOT: only-called

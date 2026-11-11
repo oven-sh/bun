@@ -7,9 +7,10 @@ test("defineProperty", () => {
   expect(CJS.a).toBe(1);
   expect(CJS.b).toBe(2);
   // non-enumerable getter/setter are not copied, matching node.js
-  expect(CJS.c).toBe(undefined);
+  expect(CJS.c as number | undefined).toBe(undefined);
 
-  expect(Bun.inspect(CJS.default)).toBe(`{\n  a: 1,\n  b: 2,\n  c: [Getter],\n}`);
+  // non-enumerable properties are not printed, matching node.js
+  expect(Bun.inspect(CJS.default)).toBe(`{\n  b: 2,\n}`);
 });
 export const __esModule = true;
 test("shows __esModule if it was exported", () => {

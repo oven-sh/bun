@@ -1,0 +1,19 @@
+# f1 = Sign, f2 = make
+# -- source: the-stores-of-a-constructor-function-that-is-handed-its-object-lean-on-no-guard.ts
+# declare function sink(...values: unknown[]): void;
+# declare function next(): any;
+# interface Sign { flags: number; name: string; list?: object[]; id: number; parent?: Sign; members?: object; exports?: object; twin?: Sign; only?: boolean; used?: number; place?: number; links?: object; }
+# function Sign(this: Sign, flags: number, name: string) {
+#     this.flags = flags; this.name = name; this.list = undefined; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined;
+#     this.twin = undefined; this.only = undefined; this.used = undefined; this.place = undefined; this.links = undefined;
+# }
+# const Maker: new (flags: number, name: string) => Sign = Sign as any;
+# function make(flags: any, name: any) { return new Maker(flags | 32, name); }
+# function fill(sign: Sign, value: object) { sign.exports = value; sign.place = 7; sign.members = value; sign.twin = sign; sign.only = true; sign.used = 3; sign.list = [sign]; sign.parent = sign; sign.links = value; }
+# let sum = 0;
+# for (let i = next(); i > 0; i--) { const sign = make(next(), next()); if (i === 7) fill(sign, [i]); sum += sign.flags + (sign.used ?? 0); }
+# sink(sum);
+# -- end of source
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:Body
+# PLAN-NOT: unit f1:ParameterGuard

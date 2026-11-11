@@ -1,0 +1,30 @@
+# -- source: main.js
+# function mixin(target, source) { Object.getOwnPropertyNames(source).forEach(function (name) { if (name !== "constructor") Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); }); return target; }
+# var Sized = { size: function () { return this.items.length; }, first: function () { return this.items[0]; } };
+# function Bag(a, b) { this.items = [a, b]; }
+# mixin(Bag.prototype, Sized);
+# function run(count) { var total = 0, kept = []; for (var i = 0; i < count; i++) { var bag = new Bag(i & 7, 1); if ((i & 1023) === 0) kept.push(bag); total += bag.size() + bag.first(); } return total + kept.length; }
+# print(run(10));
+# -- end of source
+# The loop of merge-descriptors. The names are worked out, so no statement lays `size` or `first` on the prototype object by name, and nothing is proven of what stands there.
+# Link expects under each name what the field of the literal holds (link/members-that-a-loop-copies-off-a-literal-are-expected-on-the-prototype-object.ir), the record of the class lists both, and each call in the loop asks the guard of its name and goes to the one function.
+# f1 = Bag, f2 = mixin, f3 = run, f4 = size, f5 = first, L0 = Bag
+# RUN(SIZE): walk f3 mechanisms=all
+# SIZE: {layout=L0 key="size"}
+# RUN(FIRST): walk f3 mechanisms=all
+# FIRST: {layout=L0 key="first"}
+# RUN(COPIED): walk f3 mechanisms=all
+# COPIED: frame {{*}} callee=f4
+# COPIED: frame {{*}} callee=f5
+# RUN(CALLED): walk f3 mechanisms=all-Inlining
+# CALLED: = CallDirect {{*}} function=f4
+# CALLED: = CallDirect {{*}} function=f5
+# RUN(ANSWER): run-in-shell
+# ANSWER: 50
+# ANSWER-NEXT: exited with 0
+# RUN(APART): run-in-shell mechanisms=all-Inlining
+# APART: 50
+# APART-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 50
+# CLOSED-NEXT: exited with 0

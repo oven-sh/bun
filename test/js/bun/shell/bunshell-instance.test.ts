@@ -83,7 +83,7 @@ test("$.json", async () => {
 test("$.lines", async () => {
   expect(await Array.fromAsync(await $`echo hello`.lines())).toEqual(["hello", ""]);
 
-  const lines = [];
+  const lines: string[] = [];
   for await (const line of $`echo hello`.lines()) {
     lines.push(line);
   }
@@ -96,14 +96,14 @@ test("$.arrayBuffer", async () => {
 });
 
 test("$.bytes", async () => {
-  expect(await $`echo hello`.bytes()).toEqual(new TextEncoder().encode("hello\n"));
+  expect(await ($`echo hello` as any).bytes()).toEqual(new TextEncoder().encode("hello\n"));
 });
 
 test("$.blob", async () => {
   expect(await $`echo hello`.blob()).toEqual(new Blob([new TextEncoder().encode("hello\n")]));
 });
 
-function make(expected: unknown) {
+function make(expected: string) {
   const inputType = [
     new Blob([expected]),
     Buffer.from(expected),

@@ -1,0 +1,46 @@
+# -- source: main.js
+# function Carrier() { this.weight = 1; }
+# function Wagon() { Carrier.call(this); this.wheels = 4; }
+# function Sledge() { Carrier.call(this); this.runners = 2; }
+# function hauls(carrier, count) { var total = 0; for (var i = 0; i < count; i++) total += carrier.load(i); return total; }
+# function loadSledges() { Object.setPrototypeOf(Sledge.prototype, Carrier.prototype); }
+# Carrier.prototype.load = function (n) { return this.weight + n; };
+# Object.setPrototypeOf(Wagon.prototype, Carrier.prototype);
+# publish(Carrier, Wagon, Sledge);
+# var wagon = new Wagon();
+# print(hauls(wagon, 3));
+# loadSledges();
+# change(Carrier, Wagon, Sledge);
+# print(hauls(wagon, 3));
+# var sledge = new Sledge();
+# print(hauls(pick() ? sledge : wagon, 3));
+# print(hauls(wagon, 3));
+# -- end of source
+# hauls() asks the guards of `load` of Wagon and of Sledge in one test. The statements that lay Sledge below Carrier run late, as those of a file that is loaded late do, and until its first object the guards of Sledge have not begun.
+# Until then they are in no word that counts guards, so the test goes by Wagon alone. From the first Sledge on each of them that does not hold is counted, whatever ended it and whenever.
+# RUN: run-in-shell globalThis.publish = () => { }; globalThis.change = () => { }; globalThis.pick = () => true;
+# CHECK: 6
+# CHECK-NEXT: 6
+# CHECK-NEXT: 6
+# CHECK-NEXT: 6
+# CHECK-NEXT: exited with 0
+# In the run LAID Sledge.prototype has a `load` of its own ahead of the first Sledge: no guard of that name ever holds, and a test that passed it over would call the `load` of Carrier on a Sledge.
+# RUN(LAID): run-in-shell globalThis.publish = () => { }; globalThis.change = (Carrier, Wagon, Sledge) => { Sledge.prototype.load = n => 1000 + n; }; globalThis.pick = () => true;
+# LAID: 6
+# LAID-NEXT: 6
+# LAID-NEXT: 3003
+# LAID-NEXT: 6
+# LAID-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell globalThis.publish = () => { }; globalThis.change = (Carrier, Wagon, Sledge) => { Sledge.prototype = { load(n) { return 2000 + n; } }; }; globalThis.pick = () => true;
+# REPLACED: 6
+# REPLACED-NEXT: 6
+# REPLACED-NEXT: 6003
+# REPLACED-NEXT: 6
+# REPLACED-NEXT: exited with 0
+# In the run BASE the `load` of Carrier is replaced while Carrier is only a base and Sledge has not begun. The guard of Wagon ends at once, that of Sledge never begins to hold.
+# RUN(BASE): run-in-shell globalThis.publish = () => { }; globalThis.change = (Carrier) => { Carrier.prototype.load = n => 50 + n; }; globalThis.pick = () => true;
+# BASE: 6
+# BASE-NEXT: 153
+# BASE-NEXT: 153
+# BASE-NEXT: 153
+# BASE-NEXT: exited with 0

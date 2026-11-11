@@ -48,6 +48,7 @@ public:
     ncrypto::EVPMDCtxPointer m_ctx;
     unsigned int m_mdLen { 0 };
     ByteSource m_digest;
+    std::array<uint8_t, EVP_MAX_MD_SIZE> m_shortDigest;
     bool m_finalized { false };
 
     ExternZigHash::Hasher* m_zigHasher { nullptr };
@@ -128,6 +129,7 @@ private:
 
 JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncUpdate);
 JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncDigest);
+JSC_DECLARE_HOST_FUNCTION(jsOneShotDigest);
 
 void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init);
 

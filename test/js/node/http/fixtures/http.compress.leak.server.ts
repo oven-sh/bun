@@ -8,7 +8,7 @@ const data = `<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
-    server.listen({ port: 0 }, (err, hostname, port) => {
+    server.listen({ port: 0 }, (err?: any, hostname?: string, port?: number) => {
       clearTimeout(timeout);
 
       if (err) {
@@ -51,9 +51,9 @@ var server = createServer(async (req, res) => {
     Bun.gc(true);
     const after = rss();
     console.log("heapStats", jsc.heapStats());
-    process.send({ baseline, after });
+    process.send!({ baseline, after });
   }
 });
 const url = await listen(server);
 console.log("server", "listening on", url.port);
-process.send(url.port);
+process.send!(url.port);

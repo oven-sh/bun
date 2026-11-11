@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# 'use strict';
+# function breaks(first, n, at) { const got = [first]; for (let j = 1; j <= n; j++) { got[j] = j; if (j === at) break; } return got; }
+# function returns(first, n, at) { const got = [first]; for (let j = 1; j <= n; j++) { got.push(j); if (j === at) return got; } return got; }
+# function born(n, l) { const got = []; for (let j = 1; j <= n; j++) got.push(l[j] + 1); return got; }
+# const l = [0, 5, 1, 7, 2, 9, 3];
+# let said = 0;
+# for (let t = 0; t < 9; t++) said = said * 3 + breaks(t, 1000 + t, 1 + t % 3).length + returns(t, 1000 + t, 1 + t % 2).length + born(t % 6, l).length;
+# print(said % 1000003);
+# -- end of source
+# A loop that its own text may leave at any turn says nothing of how far it fills its list: 25 places for a list of two were kept for as long as the list lived, and cost four times the fill. A list
+# born empty has the profile of its site, which has learned what its lists reach.
+# f1 = breaks, f2 = returns, f3 = born
+# RUN(COUNT): compile ClampedCapacitiesReserved mechanisms=all
+# COUNT: statistic ClampedCapacitiesReserved 0
+# RUN(BREAKS): walk f1 mechanisms=all
+# BREAKS-NOT: ReserveArrayCapacity
+# RUN(RETURNS): walk f2 mechanisms=all
+# RETURNS-NOT: ReserveArrayCapacity
+# RUN(BORN): walk f3 mechanisms=all
+# BORN-NOT: ReserveArrayCapacity
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 50447

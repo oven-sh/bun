@@ -14,8 +14,6 @@ pub(crate) mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
     #[path = "printDiff.rs"]
     pub(crate) mod print_diff;
-    #[path = "text_diff.rs"]
-    pub(crate) mod text_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────
@@ -24,7 +22,7 @@ pub(crate) mod diff {
 // single token if `bun_jsc` ever needs to be feature-gated again).
 macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 
-/// Stamps out an `impl Expect { #[host_fn(method)] pub fn $method(..) }` that
+/// Stamps out an `impl Expect { pub fn $method(..) }` that
 /// delegates to [`Expect::run_unary_predicate`]. Defined here (top-level,
 /// outside `cfg_jsc!`) so it can be addressed as
 /// `crate::unary_predicate_matcher!` from each `expect/toBe*.rs` file —
@@ -34,13 +32,17 @@ macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 macro_rules! unary_predicate_matcher {
     ($method:ident, $name:literal, |$v:ident| $pred:expr) => {
         impl $crate::test_runner::expect_core::Expect {
-            #[::bun_jsc::host_fn(method)]
             pub(crate) fn $method(
                 &self,
-                g: &::bun_jsc::JSGlobalObject,
-                f: &::bun_jsc::CallFrame,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                self.run_unary_predicate(g, f, $name, |$v: ::bun_jsc::JSValue| $pred)
+                self.run_unary_predicate(
+                    cx.global(),
+                    this_value.to_js(),
+                    $name,
+                    |$v: ::bun_jsc::JSValue| $pred,
+                )
             }
         }
     };
@@ -80,7 +82,7 @@ macro_rules! __expect_throw_dispatch {
     // base: no positional args left. `$this`/`$global` are always plain idents
     // at every call site (this/self, global/global_this); duplicating them
     // across the two colour branches is side-effect-free and avoids moving a
-    // `PostMatchGuard`/`scopeguard` before its natural scope end.
+    // `PostMatchGuard` before its natural scope end.
     (@go $this:expr, $global:expr, $sig:expr, $fmt:expr;
         bound = [$(($n:ident $v:expr))*];
         args  = [];
@@ -136,20 +138,26 @@ cfg_jsc! {
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
+    #[path = "dom_format.rs"]     pub(crate) mod dom_format;
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
+    #[path = "environment.rs"]    pub(crate) mod environment;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
+    #[path = "module_mock.rs"]    mod module_mock;
     #[path = "Order.rs"]          pub(crate) mod order;
     #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
     #[path = "snapshot.rs"]       pub(crate) mod snapshot;
+    #[path = "test_context.rs"]   pub(crate) mod test_context;
+    #[path = "test_context_around.rs"] pub(crate) mod test_context_around;
+    #[path = "test_context_fixtures.rs"] pub(crate) mod test_context_fixtures;
+    #[path = "test_context_parameter.rs"] mod test_context_parameter;
+    #[path = "vi_utils.rs"]       pub(crate) mod vi_utils;
+    #[path = "vi_wait.rs"]        pub(crate) mod vi_wait;
 
     // expect.rs is the umbrella file (Expect struct + asymmetric matchers +
     // ExpectStatic + mock helpers); each `expect/to*.rs` adds one inherent
-    // method or free host_fn to `Expect`. Declared `pub` because the
-    // generate-classes.ts Rust emitter resolves payload types at
-    // `crate::test_runner::expect_core::Expect*` (see
-    // build/debug/codegen/generated_classes.rs); the `pub mod expect` façade
+    // method to `Expect`. The `pub mod expect` façade
     // below layers matcher submodules + shims on top via `pub use`.
     #[path = "expect.rs"]
     pub(crate) mod expect_core;
@@ -168,13 +176,7 @@ pub(crate) mod expect {
     pub(crate) use super::expect_core::mock;
     pub(crate) use super::diff_format::DiffFormatter;
 
-    /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
-    /// `cache: true` slots from jest.classes.ts). Exposed as a
-    /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
-    /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
-    pub(crate) mod js {
-        ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
-    }
+    pub(crate) use crate::generated_bindgen::expect::js_Expect as js;
 
     /// Free-fn alias for `Expect::get_signature` — many matcher modules
     /// import it as a path item (`use super::get_signature`),
@@ -203,9 +205,8 @@ pub(crate) mod expect {
     use bun_jsc::console_object::Formatter;
 
     pub(crate) trait JSValueTestExt {
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
-        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
+        fn as_big_int_compare(self, other: JSValue) -> BigIntCompare;
         fn bind(
             self,
             global: &JSGlobalObject,
@@ -217,39 +218,13 @@ pub(crate) mod expect {
     }
     impl JSValueTestExt for JSValue {
         #[inline]
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
-            let fmt_options = FormatOptions {
-                enable_colors: false,
-                add_newline: false,
-                flush: false,
-                quote_strings: true,
-            };
-            JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global,
-                core::slice::from_ref(&self),
-                1,
-                out,
-                fmt_options,
-            )?;
-            // `FormatOptions.flush` is false, so the formatter does not flush
-            // internally; a buffered `out` would otherwise drop trailing
-            // snapshot bytes.
-            out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
-            Ok(())
-        }
-        #[inline]
         fn is_reg_exp(self) -> bool {
             self.is_cell() && self.js_type() == bun_jsc::JSType::RegExpObject
         }
         #[inline]
-        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare {
-            // Trait keeps the matcher modules' `(other, global)` ordering; the upstream
-            // inherent is `(global, other)` — adapt here so 75 matcher
-            // call-sites stay untouched.
+        fn as_big_int_compare(self, other: JSValue) -> BigIntCompare {
             use bun_jsc::ComparisonResult as R;
-            match JSValue::as_big_int_compare(self, global, other) {
+            match JSValue::as_big_int_compare(self, other) {
                 R::Equal => BigIntCompare::Equal,
                 R::Undefined => BigIntCompare::Undefined,
                 R::GreaterThan => BigIntCompare::GreaterThan,
@@ -278,10 +253,13 @@ pub(crate) mod expect {
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
-    #[inline]
+    #[cold]
+    #[inline(never)]
     pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
+        f.dom_printer = Some(super::dom_format::print_in_message);
+        f.call_own_getters = true;
         f
     }
 
@@ -347,26 +325,14 @@ pub(crate) mod expect {
         fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
-            frame: &bun_jsc::CallFrame,
+            this_value: JSValue,
+            other_value: JSValue,
             name: &'static str,
             rel: OrderingRelation,
         ) -> JsResult<JSValue> {
-            // `defer this.postMatch(globalThis)` — run on every exit path.
-            let this = scopeguard::guard(self, |this| this.post_match(global));
-
-            let this_value = frame.this();
-            let arguments: &[JSValue] = frame.arguments();
-
-            if arguments.is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "{name}() requires 1 argument"
-                )));
-            }
+            let this = self.post_match_guard(global);
 
             this.increment_expect_call_counter();
-
-            let other_value = arguments[0];
-            other_value.ensure_still_alive();
 
             let value: JSValue =
                 this.get_value(global, this_value, name, "<green>expected<r>")?;
@@ -383,9 +349,9 @@ pub(crate) mod expect {
             let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
                 rel.cmp_f64(value.as_number(), other_value.as_number())
             } else if value.is_big_int() {
-                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value, global))
+                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value))
             } else {
-                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value, global))
+                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value))
             };
 
             if not { pass = !pass; }
@@ -422,12 +388,16 @@ pub(crate) mod expect {
     }
     impl<'a> FormatterTestExt for Formatter<'a> {
         #[inline]
-        fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
+        fn with_quote_strings(mut self, b: bool) -> Self {
+            self.quote_strings = b;
+            self.dom_printer = Some(super::dom_format::print_in_message);
+            self.call_own_getters = true;
+            self
+        }
     }
 
     // ── matcher modules ───────────────────────────────────────────────
-    // Each file is `impl Expect { pub fn to_*(..) }` or a free
-    // `#[bun_jsc::host_fn(method)] pub fn to_*(this: &mut Expect, ..)`.
+    // Each file is `impl Expect { pub fn to_*(..) }`.
     // Trivial one-liners live together in `simple_matchers`.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
@@ -435,6 +405,8 @@ pub(crate) mod expect {
         };
     }
     matchers! {
+        "addEqualityTesters.rs"                 => add_equality_testers,
+        "getState.rs"                           => get_state,
         "simple_matchers.rs"                    => simple_matchers,
         "toBe.rs"                               => to_be,
         "toBeArrayOfSize.rs"                    => to_be_array_of_size,
@@ -462,6 +434,8 @@ pub(crate) mod expect {
         "toEqual.rs"                            => to_equal,
         "toEqualIgnoringWhitespace.rs"          => to_equal_ignoring_whitespace,
         "toHaveBeenCalled.rs"                   => to_have_been_called,
+        "toHaveBeenCalledBefore.rs"             => to_have_been_called_before,
+        "toHaveBeenCalledExactlyOnceWith.rs"    => to_have_been_called_exactly_once_with,
         "toHaveBeenCalledOnce.rs"               => to_have_been_called_once,
         "toHaveBeenCalledTimes.rs"              => to_have_been_called_times,
         "toHaveBeenCalledWith.rs"               => to_have_been_called_with,
@@ -471,12 +445,15 @@ pub(crate) mod expect {
         "toHaveLength.rs"                       => to_have_length,
         "toHaveNthReturnedWith.rs"              => to_have_nth_returned_with,
         "toHaveProperty.rs"                     => to_have_property,
+        "toHaveResolved.rs"                     => to_have_resolved,
+        "toHaveResolvedWith.rs"                 => to_have_resolved_with,
         "toHaveReturned.rs"                     => to_have_returned,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
         "toIncludeRepeated.rs"                  => to_include_repeated,
         "toMatch.rs"                            => to_match,
         "toMatchInlineSnapshot.rs"              => to_match_inline_snapshot,
         "toMatchObject.rs"                      => to_match_object,
+        "toMatchFileSnapshot.rs"                => to_match_file_snapshot,
         "toMatchSnapshot.rs"                    => to_match_snapshot,
         "toSatisfy.rs"                          => to_satisfy,
         "toStrictEqual.rs"                      => to_strict_equal,

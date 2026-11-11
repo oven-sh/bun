@@ -96,7 +96,7 @@ it("dispatchEvent fires addEventListener callbacks", () => {
   const view = new Bun.WebView({ width: 100, height: 100 });
   try {
     let fired = 0;
-    let target: EventTarget | null = null;
+    let target = null as EventTarget | null;
     const handler = (e: Event) => {
       fired++;
       target = e.target;
@@ -514,7 +514,7 @@ it("click dispatches native mousedown/mouseup/click with isTrusted", async () =>
   // acked both events — all JS handlers including the synthesized click
   // have run by the time await resolves.
   await view.click(50, 50);
-  const events = await view.evaluate("JSON.stringify(window.__ev)");
+  const events = await view.evaluate<string>("JSON.stringify(window.__ev)");
   const clicked = await view.evaluate("String(window.__clicked)");
   expect(JSON.parse(events)).toEqual(["down:true@50,50", "up:true", "click:true"]);
   expect(clicked).toBe("1");
@@ -542,7 +542,7 @@ itRendering("click(selector) waits for actionability, clicks center", async () =
   // resolves the center page-side and returns it. Button center is
   // (40+50, 60+40) = (90, 100).
   await view.click("#btn");
-  const events = await view.evaluate("JSON.stringify(__ev)");
+  const events = await view.evaluate<string>("JSON.stringify(__ev)");
   expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
@@ -624,7 +624,7 @@ itRendering("click(selector) with options", async () => {
       `),
   );
   await view.click("#b", { button: "right", modifiers: ["Shift"], clickCount: 2 });
-  const ev = await view.evaluate("JSON.stringify(__ev)");
+  const ev = await view.evaluate<string>("JSON.stringify(__ev)");
   expect(JSON.parse(ev)).toEqual([{ btn: 2, shift: true, det: 2 }]);
 });
 
@@ -656,7 +656,7 @@ it("scrollTo(selector) centers element in viewport", async () => {
   // scrollIntoView has already updated scrollY. The scroll event fires
   // on a later task (browser timing); we don't wait for it.
   await view.scrollTo("#target");
-  const r = await view.evaluate(
+  const r = await view.evaluate<string>(
     "JSON.stringify({y: scrollY, top: document.getElementById('target').getBoundingClientRect().top})",
   );
   const { y, top } = JSON.parse(r);
@@ -739,7 +739,7 @@ it("type inserts text via InsertText command, fires input/beforeinput", async ()
   // bypasses NSTextInputContext entirely.
   await view.type("hello 'world'");
   const value = await view.evaluate("document.getElementById('i').value");
-  const fired = await view.evaluate("JSON.stringify(window.__fired)");
+  const fired = await view.evaluate<string>("JSON.stringify(window.__fired)");
   expect(value).toBe("hello 'world'");
   // No keydown — this is the InsertText editing command, not a keyboard
   // event. beforeinput/input fire from the editing pipeline, trusted.
@@ -771,7 +771,7 @@ it("press dispatches virtual keys", async () => {
   await view.press("ArrowLeft");
   await view.press("Escape");
   const value = await view.evaluate("document.getElementById('i').value");
-  const keys = await view.evaluate("JSON.stringify(window.__keys)");
+  const keys = await view.evaluate<string>("JSON.stringify(window.__keys)");
   expect(value).toBe("hell");
   // Editing commands don't fire keydown — they're direct editing ops.
   // Only Escape (keyDown path) fires a keydown event.
@@ -795,7 +795,7 @@ it("press with modifiers fires keydown with modifier flags", async () => {
   // was being passed directly to parseModifiers which expects an array;
   // the modifiers field is now extracted first.
   await view.press("Escape", { modifiers: ["Shift"] });
-  const keys = await view.evaluate("JSON.stringify(__keys)");
+  const keys = await view.evaluate<string>("JSON.stringify(__keys)");
   expect(JSON.parse(keys)).toEqual([{ key: "Escape", shift: true, meta: false }]);
 });
 
@@ -817,7 +817,7 @@ itRendering("scroll dispatches native wheel event with isTrusted", async () => {
       `),
   );
   await view.scroll(0, 100);
-  const result = await view.evaluate("JSON.stringify({y: scrollY, w: __w})");
+  const result = await view.evaluate<string>("JSON.stringify({y: scrollY, w: __w})");
   const { y, w } = JSON.parse(result);
   // The double presentation-update barrier: first ensures the scrolling
   // tree is populated (commitScrollingTreeState in the layer commit),
@@ -869,7 +869,7 @@ itRendering("scroll: interleaved with click in same view", async () => {
   await view.scroll(0, 100);
   await view.click(25, 25);
   await view.scroll(0, 50);
-  const r = await view.evaluate("JSON.stringify({y:scrollY,c:__c})");
+  const r = await view.evaluate<string>("JSON.stringify({y:scrollY,c:__c})");
   expect(JSON.parse(r)).toEqual({ y: 150, c: 2 });
 });
 
@@ -902,7 +902,7 @@ itRendering("scroll: targets inner scrollable under view center", async () => {
   );
   await view.scroll(0, 60);
   const r = await view.evaluate("JSON.stringify({inner: document.getElementById('inner').scrollTop, doc: scrollY})");
-  const { inner, doc } = JSON.parse(r);
+  const { inner, doc } = JSON.parse(r as string);
   expect(inner).toBe(60);
   expect(doc).toBe(0);
 });
@@ -1248,6 +1248,59 @@ itPersistentDataStore("persistent dataStore: localStorage survives across instan
   await b.navigate(url);
   const got = await b.evaluate("String(localStorage.getItem('k'))");
   expect(got).toBe("survives");
+});
+
+// Runs in a subprocess because aborting the shared host would fail every other view in this file.
+it("dataStore.directory works, or only fails that view if WebKit doesn't have initWithDirectory:", async () => {
+  using dir = tempDir("webview-persist-old-webkit", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const html = h => "data:text/html," + encodeURIComponent(h);
+        const settle = fn => fn().catch(e => e.message);
+        const ephemeral = new Bun.WebView({ width: 100, height: 100 });
+        const persistent = new Bun.WebView({
+          width: 100,
+          height: 100,
+          dataStore: { directory: ${JSON.stringify(String(dir))} },
+        });
+        const failed = [];
+        persistent.onNavigationFailed = e => failed.push(e.message);
+        const result = {
+          persistent: await settle(async () => {
+            await persistent.navigate(html("<body>persistent</body>"));
+            return "navigated";
+          }),
+          ephemeral: await settle(async () => {
+            await ephemeral.navigate(html("<body>ephemeral</body>"));
+            return ephemeral.evaluate("document.body.textContent");
+          }),
+          failed,
+        };
+        persistent.close();
+        ephemeral.close();
+        console.log(JSON.stringify(result));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toEndWith("}\n");
+  const result = JSON.parse(stdout);
+  const unsupported =
+    'dataStore.directory needs a newer WebKit (macOS 15.2 or later); use dataStore: "ephemeral" or backend: "chrome"';
+  // Older macOS versions only have initWithDirectory: after a Safari update.
+  const supported = isMacOSVersionAtLeast(15.2) || result.persistent === "navigated";
+  expect(result).toEqual(
+    supported
+      ? { persistent: "navigated", ephemeral: "ephemeral", failed: [] }
+      : { persistent: unsupported, ephemeral: "ephemeral", failed: [unsupported] },
+  );
+  expect(exitCode, stderr).toBe(0);
 });
 
 it("ephemeral dataStore: localStorage does NOT survive across instances", async () => {

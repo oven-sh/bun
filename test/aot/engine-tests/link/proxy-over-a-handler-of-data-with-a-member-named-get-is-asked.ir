@@ -1,0 +1,32 @@
+# print(Object.create(new Proxy({}, { get: 1 })));
+# The control of proxy-over-a-handler-of-data-written-in-place-answers-what-its-target-answers.ir: the rule clears a handler without a member named `get`, whatever lies under the name.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L1 members=[{key="get" value=Number{value=1}}]} module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Data data=d0
+    v3 = Builtin builtin=Proxy
+    v4 = Construct v3, -, v1, v2
+    v5 = Builtin builtin=ObjectCreate
+    v6 = Call v5, -, v4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="print" [isFreeName]
+    v9 = Call v8, -, v6 calleeName="print"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

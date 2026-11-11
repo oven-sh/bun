@@ -242,6 +242,12 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       compiledFunctions: 0,
       reason: "anonymized function expression becomes outlineable; 0 slots needed",
     },
+    // The fixture is `if (function useFoo() { "use memo"; ... }) {}`. The statement does nothing, so minify.syntax
+    // removes it, and the compiled function with it.
+    "nested-function-discovery-if-test-expr": {
+      compiledFunctions: 0,
+      reason: "the statement that holds the function is dead code",
+    },
     // minify.syntax constant-folds `const x = 0` into the `useMemo` dependency
     // array, turning `[x]` into `[0]`; the manual-memoization parser only accepts
     // identifier / member expressions as dependencies, so it errors. This is a
@@ -354,14 +360,13 @@ async function compileInto(into: Compiled, minify: false | { syntax: true }): Pr
       external: ["*"],
       treeShaking: false,
       minify,
-      // @ts-expect-error — wired in JSBundler.rs but not yet in bun-types
       reactCompiler: true,
       reactCompilerParseTestPragmas: true,
       // Upstream's Babel harness enables the TS plugin unconditionally, so
       // many `.js` fixtures contain TS syntax (casts, type params).
       loader: { ".js": "tsx", ".mjs": "tsx" },
       throw: false,
-    });
+    } as Bun.BuildConfig);
 
     if (result.success) {
       for (const artifact of result.outputs) {

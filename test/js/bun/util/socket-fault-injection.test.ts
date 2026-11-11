@@ -12,19 +12,21 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
 
   test("set() validates syscall", () => {
     expect(() => fault.set({ syscall: "bogus" as any, action: "errno", errno: "ECONNRESET" })).toThrow(
-      /rule\.syscall must be one of/,
+      /^rule\.syscall must be "recv", "send", /,
     );
   });
 
   test("set() validates action", () => {
-    expect(() => fault.set({ syscall: "recv", action: "bogus" as any })).toThrow(/rule\.action must be one of/);
+    expect(() => fault.set({ syscall: "recv", action: "bogus" as any })).toThrow(
+      'rule.action must be "errno", "short", "zero", "excess", or "none"',
+    );
   });
 
   // Only recv/send/writev have a byte count to clamp; arming "short" on any other
   // syscall used to succeed silently and never fire. ssl_loop_buffer is an
   // allocation, so it has no byte count either.
   test("set() rejects 'short' for syscalls that cannot clamp a byte count", () => {
-    for (const syscall of ["sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer"] as const) {
+    for (const syscall of ["sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer", "ssl_write"] as const) {
       expect(() => fault.set({ syscall, action: "short", bytes: 1 })).toThrow(/only supported for syscall/);
     }
     expect(fault.set({ syscall: "recv", action: "short", bytes: 1 })).toBe(true);
@@ -35,7 +37,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // A zero return only means something for the data syscalls (EOF on the read
   // side, backpressure on the write side); connect's wrapper returns errno.
   test("set() rejects 'zero' for syscalls with no zero-return semantics", () => {
-    for (const syscall of ["connect", "accept", "ssl_loop_buffer"] as const) {
+    for (const syscall of ["connect", "accept", "ssl_loop_buffer", "ssl_write"] as const) {
       expect(() => fault.set({ syscall, action: "zero" })).toThrow(/only supported for syscall/);
     }
     for (const syscall of ["recv", "send", "writev", "sendmsg", "recvmsg"] as const) {
@@ -45,6 +47,11 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
 
   test("set() accepts ssl_loop_buffer with action 'errno'", () => {
     expect(fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM" })).toBe(true);
+  });
+
+  test("set() accepts ssl_write with action 'errno', with or without an fd", () => {
+    expect(fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL" })).toBe(true);
+    expect(fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", fd: 3 })).toBe(true);
   });
 
   // ssl_loop_buffer's hook is an allocation, so it checks with fd = -1; a rule
@@ -61,7 +68,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
 
   test("set() rejects unknown errno name", () => {
     expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ENOSUCHERR" as any })).toThrow(
-      /unknown errno name/,
+      /^rule\.errno must be "ECONNRESET", "EPIPE", /,
     );
   });
 
@@ -113,7 +120,9 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // and then never fire.
   test("set() rejects syscalls that have no fault hook", () => {
     for (const sc of ["socket", "close", "shutdown"]) {
-      expect(() => fault.set({ syscall: sc as any, action: "none" })).toThrow(/rule\.syscall must be one of/);
+      expect(() => fault.set({ syscall: sc as any, action: "none" })).toThrow(
+        /^rule\.syscall must be "recv", "send", /,
+      );
     }
   });
 

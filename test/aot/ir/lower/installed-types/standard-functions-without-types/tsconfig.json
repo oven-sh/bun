@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "typeRoots": ["./no-types-here"] } }

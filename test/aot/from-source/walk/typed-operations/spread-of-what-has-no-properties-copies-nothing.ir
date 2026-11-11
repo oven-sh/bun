@@ -1,0 +1,25 @@
+# `{ a, ...(p !== undefined ? { p } : undefined) }`: the front end lays the spread on each way: the one defines `p`, the other copies `undefined`. undefined, null, a boolean, a number, a bigint and a symbol have no properties of their own
+# to copy: nothing is built for such a copy, so nothing is taken to have written the literal, and the read of `a` behind the meeting is answered by what the literal was made with. A text has its characters: it is copied.
+# f1 = pick, f2 = keep, f3 = text
+# -- source: main.ts
+# declare function print(value: any): void;
+# function pick(a: number, p: number | undefined) { const o: any = { a, ...(p !== undefined ? { p } : undefined) }; return o.a; }
+# function keep(a: number, on: boolean) { return { a, ...(on ? { p: a } : null), ...(on ? (7 as any) : { q: a }) }; }
+# function text(a: number, on: boolean) { return { a, ...(on ? { p: a } : ("xy" as any)) }; }
+# print(pick(1, 2) + pick(3, undefined));
+# print(JSON.stringify(keep(1, true)) + JSON.stringify(keep(2, false)));
+# print(JSON.stringify(text(1, true)) + JSON.stringify(text(2, false)));
+# -- end of source
+# RUN(NOTHING): walk f1 f2 mechanisms=all
+# NOTHING-LABEL: code f1:Body
+# NOTHING-NOT: CopyDataProperties
+# NOTHING-LABEL: code f2:Body
+# NOTHING-NOT: CopyDataProperties
+# RUN(TEXT): walk f3 mechanisms=all
+# TEXT-LABEL: code f3:Body
+# TEXT: CopyDataProperties
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4
+# ANSWERS-NEXT: {"a":1,"p":1}{"a":2,"q":2}
+# ANSWERS-NEXT: {"a":1,"p":1}{"0":"x","1":"y","a":2}
+# ANSWERS-NEXT: exited with 0

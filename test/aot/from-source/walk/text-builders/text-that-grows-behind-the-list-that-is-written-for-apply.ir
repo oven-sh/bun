@@ -1,0 +1,15 @@
+# `hidden.apply(null, [line, i], (line += "g"))`: the text grows between the list and the call. The list that is made again for the call as written holds the text as it was when the list was written.
+# f1 = gather
+# -- source: text-that-grows-behind-the-list-that-is-written-for-apply.js
+# function gather(count) { let line = ""; let seen = 0; for (let i = 0; i < count; i++) { const got = hidden.apply(null, [line, i], (line += "g")); line += "k" + i; seen += got.length; } return line + "/" + seen; }
+# let last = ""; for (let turn = 0; turn < 30; turn++) last = gather(3);
+# print(last);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all globalThis.hidden = function (a, b) { return a + ":" + b; };
+# ANSWERS: gk0gk1gk2/15
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString
+# FORM-NOT: CallList
+# FORM: = NewArray

@@ -1,0 +1,8 @@
+# a type names one built-in, so naming the prototype of each class of a set could only end as a loss of both
+# -- source: main.mjs
+# function above(x) { return Object.getPrototypeOf(x) === null; }
+# console.log(above(new Map), above(new Set));
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup called ObjectGetPrototypeOf
+# CHECK-NOT: lookup let-go

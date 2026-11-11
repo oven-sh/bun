@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmAeadParams.h"
 #include "CryptoKeyRaw.h"
+#include "OpenSSLUtilities.h"
 #include <openssl/aead.h>
 #include <openssl/err.h>
 
@@ -39,11 +40,14 @@ static constexpr size_t tagSize = 16;
 
 static std::optional<Vector<uint8_t>> aeadSeal(const Vector<uint8_t>& key, const Vector<uint8_t>& nonce, const Vector<uint8_t>& plainText, const Vector<uint8_t>& additionalData)
 {
+    Vector<uint8_t> cipherText;
+    if (!tryAllocateOutputBuffer(cipherText, plainText.size() + tagSize)) [[unlikely]]
+        return std::nullopt;
+
     EVP_AEAD_CTX ctx;
     if (!EVP_AEAD_CTX_init(&ctx, EVP_aead_chacha20_poly1305(), key.begin(), key.size(), tagSize, nullptr))
         return std::nullopt;
 
-    Vector<uint8_t> cipherText(plainText.size() + tagSize);
     size_t outLength = 0;
     bool ok = EVP_AEAD_CTX_seal(&ctx, cipherText.begin(), &outLength, cipherText.size(),
         nonce.begin(), nonce.size(), plainText.begin(), plainText.size(),
@@ -58,11 +62,14 @@ static std::optional<Vector<uint8_t>> aeadSeal(const Vector<uint8_t>& key, const
 
 static std::optional<Vector<uint8_t>> aeadOpen(const Vector<uint8_t>& key, const Vector<uint8_t>& nonce, const Vector<uint8_t>& cipherText, const Vector<uint8_t>& additionalData)
 {
+    Vector<uint8_t> plainText;
+    if (!tryAllocateOutputBuffer(plainText, cipherText.size())) [[unlikely]]
+        return std::nullopt;
+
     EVP_AEAD_CTX ctx;
     if (!EVP_AEAD_CTX_init(&ctx, EVP_aead_chacha20_poly1305(), key.begin(), key.size(), tagSize, nullptr))
         return std::nullopt;
 
-    Vector<uint8_t> plainText(cipherText.size());
     size_t outLength = 0;
     bool ok = EVP_AEAD_CTX_open(&ctx, plainText.begin(), &outLength, plainText.size(),
         nonce.begin(), nonce.size(), cipherText.begin(), cipherText.size(),

@@ -1,0 +1,26 @@
+GET /
+GET /data x-asked-by:smoke
+GET /person/21?greeting=hi
+GET /person/abc
+GET /api/hello?name=ada
+POST /api/hello {"numbers":[1,2,3]}
+GET /old
+GET /hello.txt
+GET /nowhere
+GET /person/5/__data.json
+GET /form cookie:remembered=BEFORE
+FORM /form
+GET /stream
+GET /stream/__data.json
+GET /fails
+GET /throws
+GET /go
+GET /api/stream
+GET /api/cookie cookie:gone=1;%20kept=2
+FORM /api/form
+GET /grouped
+HEAD /data
+OPTIONS /api/hello
+GET /hello.txt range:bytes=2-5
+GET /hello.txt accept-encoding:gzip
+GET /_app/version.json

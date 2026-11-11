@@ -1,8 +1,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::String as BunString;
-use bun_core::strings;
+use bun_core::{StringView, strings};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
@@ -50,8 +49,12 @@ pub(crate) struct InitOptions<'a> {
 use crate::webcore::headers_ref::blob_content_type;
 
 #[inline]
-fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+fn headers_from(
+    global: &JSGlobalObject,
+    fetch_headers: Option<&FetchHeaders>,
+    blob: &Blob,
+) -> JsResult<Headers> {
+    bun_http_jsc::headers_jsc::from_fetch_headers(global, fetch_headers, blob_content_type(blob))
 }
 
 #[inline]
@@ -88,7 +91,7 @@ impl FileRoute {
     pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
-                let string = BunString::borrow_utf8(last_modified);
+                let string = StringView::borrow_utf8(last_modified);
                 let global = VirtualMachine::get().as_mut().global();
                 let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
@@ -124,9 +127,18 @@ impl FileRoute {
         }
     }
 
-    pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> RefPtr<FileRoute> {
-        let headers = headers_from(opts.headers, &blob);
-        RefPtr::new(FileRoute::new(blob, headers, opts.server, opts.status_code))
+    pub(crate) fn init_from_blob(
+        global: &JSGlobalObject,
+        blob: Blob,
+        opts: &InitOptions<'_>,
+    ) -> JsResult<RefPtr<FileRoute>> {
+        let headers = headers_from(global, opts.headers, &blob)?;
+        Ok(RefPtr::new(FileRoute::new(
+            blob,
+            headers,
+            opts.server,
+            opts.status_code,
+        )))
     }
 
     pub(crate) fn from_js(
@@ -165,7 +177,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
+                let headers = headers_from(global, response.get_init_headers(), &blob)?;
                 let status_code = response.status_code();
 
                 return Ok(Some(RefPtr::new(FileRoute::new(
@@ -184,7 +196,7 @@ impl FileRoute {
                     !b.is_heap_allocated(),
                     "expected blob not to be heap-allocated"
                 );
-                let headers = headers_from(None, &b);
+                let headers = headers_from(global, None, &b)?;
                 return Ok(Some(RefPtr::new(FileRoute::new(b, headers, None, 200))));
             }
         }
@@ -244,7 +256,7 @@ impl FileRoute {
         // Held until `on_response_complete`; a reload can drop the route
         // table's ref while a `FileResponseStream` is still streaming.
         let route = RefPtr::from_this(this);
-        if let Some(mut server) = route.server.get() {
+        if let Some(server) = route.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -466,7 +478,7 @@ impl FileRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = self.server.get() {
+        if let Some(server) = self.server.get() {
             server.on_static_request_complete();
         }
     }

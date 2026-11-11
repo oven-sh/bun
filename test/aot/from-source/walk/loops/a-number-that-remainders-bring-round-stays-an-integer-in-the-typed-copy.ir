@@ -1,0 +1,18 @@
+# -- source: a-number-that-remainders-bring-round-stays-an-integer-in-the-typed-copy.ts
+# declare function sink(value: unknown): void;
+# function sum(v: Uint8Array) { let a = 0, b = 0; for (let i = 0; i < v.length; i++) { a = (a + v[i]) % 255; b = (b + a) % 255; } return b * 256 + a; }
+# function main(n: number) { const v = new Uint8Array(64).fill(97); let s = 0; for (let r = 0; r < n; r++) s = sum(v); sink(s); }
+# const limits = JSON.parse("[3]");
+# main(limits[0] | 0);
+# -- end of source
+# Two sums are brought round a loop through a remainder by a written divisor: a = (a + v[i]) % 255. What comes round lies from 0 up to 254 whatever the turn adds, so the walk starts the row of the
+# loop there: the sums stay integers in registers and the remainders are taken on integers. The back edge judges that start as it judges every other. Until now the row began at the number that
+# entered, climbed to a number without fractions and the remainders ran on doubles.
+# f1 = sum
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK: int[0, 254] @Int32 = Mod {{*}}form=Integers
+# CHECK-NOT: = Mod {{*}}form=Numbers
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 14168
+# SHELL: exited with 0

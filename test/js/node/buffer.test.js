@@ -1,6 +1,6 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -197,7 +197,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
         expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
-        expect(new isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+        expect(() => new isAscii(new Buffer("abc"))).toThrow(TypeError);
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
       });
@@ -207,6 +207,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isUtf8(new Buffer("What did the 🦊 say?"))).toBeTrue();
         expect(isUtf8(new Buffer([129, 129, 129]))).toBeFalse();
+        expect(() => new isUtf8(new Buffer("abc"))).toThrow(TypeError);
 
         expect(isUtf8(new Buffer("abc").buffer)).toBeTrue();
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
@@ -2899,6 +2900,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("transcode", () => {
         expect(typeof BufferModule.transcode).toBe("function");
         const transcode = BufferModule.transcode;
+        expect(() => Reflect.construct(transcode, [Buffer.from("a"), "latin1", "utf8"])).toThrow(TypeError);
 
         expect(transcode(Buffer.from("hä", "latin1"), "latin1", "utf8")).toStrictEqual(Buffer.from("hä", "utf8"));
         expect(() => transcode(Buffer.from("a"), "b", "utf8")).toThrow(
@@ -4527,6 +4529,136 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       expect(buf.toString("hex")).toBe(untouched);
     });
 
+    // Node's native writers start with THROW_AND_RETURN_IF_NOT_STRING: they reject a value
+    // that is not a primitive string and never coerce it.
+    describe("with a value that is not a string", () => {
+      const NOT_A_STRING = expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "argument must be a string",
+      });
+      const nonStrings = () => [
+        123,
+        null,
+        undefined,
+        true,
+        1n,
+        Symbol("s"),
+        {},
+        [],
+        new String("ab"),
+        Buffer.from("ab"),
+        () => {},
+      ];
+
+      it.each([...strict, ...clamping])("%s throws ERR_INVALID_ARG_TYPE", method => {
+        const buf = dest();
+        for (const value of nonStrings()) {
+          expect(() => buf[method](value)).toThrow(NOT_A_STRING);
+          expect(() => buf[method](value, 0, 1)).toThrow(NOT_A_STRING);
+        }
+        expect(() => buf[method]()).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123)).toThrow(TypeError);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+
+      it.each([...strict, ...clamping])("%s does not coerce an object value", method => {
+        const calls = [];
+        const value = {
+          toString() {
+            calls.push("toString");
+            return source[method];
+          },
+          valueOf() {
+            calls.push("valueOf");
+            return source[method];
+          },
+          [Symbol.toPrimitive]() {
+            calls.push("toPrimitive");
+            return source[method];
+          },
+        };
+        // The handler is a Proxy too, so a lookup of any trap is recorded. A message built
+        // from the value would show up here as a `get` of "constructor".
+        const proxy = new Proxy(value, new Proxy({}, { get: (_, trap) => void calls.push(`trap ${trap}`) }));
+        const buf = dest();
+        expect(() => buf[method](value)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](proxy)).toThrow(NOT_A_STRING);
+        expect(calls).toEqual([]);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+
+      it.each([...strict, ...clamping])("%s throws on an empty, a detached and a plain Uint8Array receiver", method => {
+        const detached = Buffer.from(new ArrayBuffer(9));
+        structuredClone(detached.buffer, { transfer: [detached.buffer] });
+        expect(() => Buffer.alloc(0)[method](123)).toThrow(NOT_A_STRING);
+        expect(() => detached[method](123)).toThrow(NOT_A_STRING);
+        expect(() => Buffer.prototype[method].call(new Uint8Array(9), 123)).toThrow(NOT_A_STRING);
+      });
+
+      // utf8Write/latin1Write/asciiWrite check the bounds in a JS wrapper first. The native
+      // writer sees the value only after that, so a bounds error wins.
+      it.each(strict)("%s reports an out-of-bounds offset or length first", method => {
+        const buf = dest();
+        expect(() => buf[method](123, -1)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 10)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, Infinity)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 0, -1)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 0, 10)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 6, 4)).toThrow(OUT_OF_BOUNDS);
+        // In bounds, including the ranges that leave nothing to write.
+        expect(() => buf[method](123, 9)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, 0)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN, NaN)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, "abc")).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 1.5)).toThrow(NOT_A_STRING);
+      });
+
+      it.each(strict)("%s converts offset and length before it rejects the value", method => {
+        const converted = [];
+        const arg = (name, result) => ({
+          valueOf() {
+            if (!converted.includes(name)) converted.push(name);
+            return result;
+          },
+        });
+        expect(() => dest()[method](123, arg("offset", 0), arg("length", 1))).toThrow(NOT_A_STRING);
+        expect(converted).toEqual(["offset", "length"]);
+
+        const throwing = message => ({
+          valueOf() {
+            throw new Error(message);
+          },
+        });
+        expect(() => dest()[method](123, throwing("offset valueOf"))).toThrow("offset valueOf");
+        expect(() => dest()[method](123, 0, throwing("length valueOf"))).toThrow("length valueOf");
+      });
+
+      // base64/base64url/hex/ucs2 are the raw binding. It rejects the value before it reads
+      // offset or length, so the value error wins and neither argument is converted.
+      it.each(clamping)("%s rejects the value before it reads offset and length", method => {
+        const buf = dest();
+        expect(() => buf[method](123, -1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 10)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, Infinity)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, -1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 9, 1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, 0)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN, NaN)).toThrow(NOT_A_STRING);
+
+        const converted = [];
+        const arg = name => ({
+          valueOf() {
+            converted.push(name);
+            throw new Error(`${name} valueOf`);
+          },
+        });
+        expect(() => buf[method](123, arg("offset"), arg("length"))).toThrow(NOT_A_STRING);
+        expect(converted).toEqual([]);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+    });
+
     it("the documented write() wrapper is unchanged", () => {
       const buf = dest();
       expect(() => buf.write("hello", 6, 1000)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
@@ -5294,6 +5426,24 @@ describe("transcode allocation limits", () => {
   });
 });
 
+it("read*/write* called without a receiver throw the same error as .call(undefined)", () => {
+  for (const [name, a, b, c] of [
+    ["readInt8", 0],
+    ["readIntLE", 0, 1],
+    ["writeInt8", 0],
+    ["writeUIntBE", 0, 0, 1],
+    ["writeBigInt64LE", 0n, 0],
+  ]) {
+    // When a captured variable is called bare, JSC passes its scope object as `this`.
+    const callee = Buffer.prototype[name];
+    expect(() => callee(a, b, c)).toThrow('The "buf" argument must be of type Buffer. Received undefined');
+    // `constructor` is captured, so it lives in that scope object and is still uninitialized during the call.
+    // The error message must not read it to describe the receiver.
+    let constructor;
+    (() => constructor)();
+  }
+});
+
 // The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
 // bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
 // keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate
@@ -5584,4 +5734,72 @@ describe("read*/write* after JIT tier-up", () => {
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
   });
+});
+
+// The length pass doesn't count a UTF-16 unit for a 0x80 byte. If the byte is 0x61 by the conversion pass, that pass
+// writes one more unit than was allocated.
+it("UTF-8 decoders don't write out of bounds while another thread writes to the SharedArrayBuffer input", async () => {
+  const fixture = `
+    import { Worker, isMainThread, workerData, parentPort } from "node:worker_threads";
+    import { transcode } from "node:buffer";
+    import { StringDecoder } from "node:string_decoder";
+    if (!isMainThread) {
+      const bytes = new Uint8Array(workerData);
+      parentPort.postMessage("go");
+      for (;;) {
+        bytes.fill(0x80);
+        bytes.fill(0x61);
+      }
+    } else {
+      const iterations = 500;
+      const shared = new SharedArrayBuffer(512);
+      const buf = Buffer.from(shared).fill(0x61);
+      const worker = new Worker(import.meta.path, { workerData: shared });
+      worker.on("message", async () => {
+        let total = 0;
+        for (let i = 0; i < iterations; i++) total += buf.toString("utf8").length;
+        for (let i = 0; i < iterations; i++) {
+          try {
+            total += transcode(buf, "utf8", "ucs2").length;
+          } catch (e) {
+            if (e.code !== "U_INVALID_CHAR_FOUND") throw e;
+          }
+        }
+        const decoder = new StringDecoder("utf8");
+        for (let i = 0; i < iterations; i++) {
+          total += decoder.write(buf).length + decoder.text(buf, 0).length + decoder.end(buf).length;
+        }
+        for (const options of [{}, { ignoreBOM: true }]) {
+          const stream = new TextDecoderStream("utf-8", options);
+          const writer = stream.writable.getWriter();
+          const reader = stream.readable.getReader();
+          for (let i = 0; i < iterations; i++) {
+            writer.write(i & 1 ? buf : shared);
+            total += (await reader.read()).value.length;
+          }
+        }
+        let enqueued = 0;
+        const source = new ReadableStream({
+          pull(controller) {
+            controller.enqueue(enqueued & 1 ? buf : shared);
+            if (++enqueued >= iterations) controller.close();
+          },
+        });
+        for await (const text of new Response(source).textStream()) total += text.length;
+        console.log("ok", total > 0);
+        process.exit(0);
+      });
+    }
+  `;
+  using dir = tempDir("buffer-shared-decode-race", { "fixture.mjs": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "ok true\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });

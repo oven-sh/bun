@@ -2,12 +2,12 @@ use crate::mal_prelude::*;
 use bstr::BStr;
 
 use bun_alloc::Arena;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Range};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::handle_oom;
+use bun_core::{StackCheck, handle_oom};
 
 use crate::Graph::Graph;
-use crate::bun_css::css_parser::BundlerCssRule;
+use crate::bun_css::css_parser::{BundlerCssRule, ImportRule};
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
@@ -17,8 +17,10 @@ use bun_ast::Index as AstIndex;
 // `CssImportOrder` values are arena-backed (the inner `Vec`s point into bump
 // arenas and are never individually freed). Rust's `Vec` has `Drop`, so a
 // literal `*entry` is not `Copy`; we duplicate the values bitwise instead.
-// `conditions` slabs come from `deep_clone_conditions`, which allocates them
-// from the `LinkerGraph` arena (`graph.heap`). The `Vec` headers aliasing a
+// `conditions` slabs come from `fork_conditions`, which allocates them
+// from the `LinkerGraph` arena (`graph.heap`). Each `ImportConditions` in a slab
+// is a bitwise copy of the conditions of an `ImportRule`. The rule's stylesheet
+// owns their heap and outlives the link. The `Vec` headers aliasing a
 // slab are `mem::forget`'d everywhere (`CssImportOrder::drop` + the
 // post-`visit()` forget below); the slab itself is bulk-freed with the arena.
 // `wip_order`/`order` shuffles use `len`-truncation rather than
@@ -34,7 +36,7 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 /// Bitwise move of arena-backed entries from `wip` back into `order`'s
 /// buffer (which always has `cap >= wip.len`).
 #[inline]
-fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
+fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssImportOrder<'a>>) {
     debug_assert!(order.capacity() >= wip.len());
     // Do not Drop `order`'s prior entries — they were already
     // bitwise-copied into `wip` (see `bitwise_copy` callers above), so dropping
@@ -72,44 +74,128 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// as far as "@layer" is concerned. So we may in some cases keep both the
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
+///
+/// The traversal recurses once per `@import`. Returns `Err` if the import chain
+/// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
-    this: &'a mut LinkerContext,
-    temp_arena: &'a Arena,
+    this: &LinkerContext<'a>,
+    temp_arena: &Arena,
     entry_points: &[Index],
-) -> Vec<CssImportOrder> {
+) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
     let _ = temp_arena;
 
-    struct Visitor<'a> {
-        arena: &'a Arena,
+    struct Visitor<'v, 'a> {
+        arena: &'v Arena,
         // `BundledAst.css` SoA column.
-        css_asts: &'a [crate::bundled_ast::CssCol],
-        all_import_records: &'a [bun_ast::import_record::List<'a>],
-
-        // No `graph` field — `visit()` never reads it, and holding one would
-        // create an aliasing `&mut this.graph` borrow against
-        // `arena`/`css_asts` (which already borrow `this.graph`).
-        // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
-        // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
-        // backref, valid for the link step).
-        parse_graph: bun_ptr::BackRef<Graph<'a>>,
+        css_asts: &'v [crate::bundled_ast::CssCol],
+        all_import_records: &'v [bun_ast::import_record::List<'a>],
+        parse_graph: &'v Graph<'a>,
 
         has_external_import: bool,
         visited: Vec<Index>,
-        order: Vec<CssImportOrder>,
+        order: Vec<CssImportOrder<'a>>,
+        anonymous_layers: u32,
+
+        stack_check: StackCheck,
+        /// Set when the stack is nearly exhausted. The traversal then unwinds
+        /// without visiting anything else.
+        too_deep: Option<CssImportChainTooDeep>,
     }
 
-    impl<'a> Visitor<'a> {
+    impl<'v, 'a> Visitor<'v, 'a> {
         #[inline]
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
+        fn push_entry(
+            &mut self,
+            kind: CssImportOrderKind<'a>,
+            wrapping_conditions: &Vec<ImportConditions>,
+        ) {
+            self.order.push(CssImportOrder {
+                kind,
+                // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses
+                // `Drop` on it (see the note at `bitwise_copy`), so the aliased
+                // buffer is freed once with the arena.
+                conditions: unsafe { bitwise_copy(wrapping_conditions) },
+                condition_import_records: Vec::new(),
+            });
+        }
+
+        /// An import that loads no style sheet still adds its layer to the layer order.
+        fn push_layers_of_unloaded_import(&mut self, wrapping_conditions: &Vec<ImportConditions>) {
+            if wrapping_conditions.iter().any(|c| c.layer.is_some()) {
+                self.push_entry(
+                    CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                    wrapping_conditions,
+                );
+            }
+        }
+
+        /// The external import is hoisted out of the anonymous layer that its
+        /// neighbours share, so something else must hold the place of its sublayer.
+        fn push_sublayer_of_external_import(&mut self, conditions: &Vec<ImportConditions>) {
+            let names_a_sublayer = conditions
+                .iter()
+                .skip_while(|c| !c.has_anonymous_layer())
+                .any(|c| c.layer.as_ref().is_some_and(|layer| layer.v.is_some()));
+            if names_a_sublayer {
+                self.push_entry(
+                    CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                    conditions,
+                );
+            }
+        }
+
+        /// Every visit of a bare "layer" makes a new anonymous layer, also when it
+        /// is the same rule or its conditions look the same.
+        fn append_conditions(
+            &mut self,
+            conditions: &mut Vec<ImportConditions>,
+            import_rule: &ImportRule,
+        ) {
+            // SAFETY: never dropped (see the note at `bitwise_copy`).
+            let mut appended = unsafe { bitwise_copy(&import_rule.conditions) };
+            if appended.has_anonymous_layer()
+                && let Some(layer) = &mut appended.layer
+            {
+                self.anonymous_layers += 1;
+                layer.anonymous_id = self.anonymous_layers;
+            }
+            conditions.append_assume_capacity(appended);
+        }
+
+        /// Returns false if the traversal stopped because the chain is too deep.
+        fn visit_import(
+            &mut self,
+            importer: Index,
+            record: &ImportRecord<'a>,
+            wrapping_conditions: &mut Vec<ImportConditions>,
+            wrapping_import_records: &mut Vec<ImportRecord<'a>>,
+        ) -> bool {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.too_deep = Some(CssImportChainTooDeep {
+                    importer,
+                    range: record.range,
+                    kind: record.kind,
+                });
+                return false;
+            }
+            self.visit(
+                record.source_index,
+                wrapping_conditions,
+                wrapping_import_records,
+            );
+            self.too_deep.is_none()
+        }
+
         fn visit(
             &mut self,
             source_index: Index,
             wrapping_conditions: &mut Vec<ImportConditions>,
-            wrapping_import_records: &mut Vec<ImportRecord>,
+            wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) {
             debug!(
                 "Visit file: {}={}",
@@ -132,40 +218,34 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         source_index.get(),
                         self.input_file_pretty(source_index),
                     );
+                    self.push_layers_of_unloaded_import(wrapping_conditions);
                     return;
                 }
             }
 
-            self.visited.push(source_index);
-
+            // An asset, such as "./icon.svg", is not a style sheet.
             let Some(repr): Option<&BundlerStyleSheet> =
                 self.css_asts[source_index.get() as usize].as_deref()
             else {
-                return; // Sanity check
+                self.push_layers_of_unloaded_import(wrapping_conditions);
+                return;
             };
+            self.visited.push(source_index);
             let top_level_rules = &repr.rules;
 
-            // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
-            // Any pre-import layers come first
-            // if len(repr.AST.LayersPreImport) > 0 {
-            //     order = append(order, cssImportOrder{
-            //         kind:                   cssImportLayers,
-            //         layers:                 repr.AST.LayersPreImport,
-            //         conditions:             wrappingConditions,
-            //         conditionImportRecords: wrappingImportRecords,
-            //     })
-            // }
-
-            // `visited.pop()` happens at the end of this function; the early
-            // return above intentionally skips it.
+            // Any pre-import layers come first.
+            if !repr.layers_pre_import.is_empty() {
+                self.push_entry(
+                    CssImportOrderKind::Layers(Layers::borrow(&repr.layers_pre_import)),
+                    wrapping_conditions,
+                );
+            }
 
             // Iterate over the top-level "@import" rules
-            let mut import_record_idx: usize = 0;
             for rule in top_level_rules.v.iter() {
                 if let BundlerCssRule::Import(import_rule) = rule {
-                    // `defer import_record_idx += 1;` — increment at end of this arm
-                    let record =
-                        &self.all_import_records[source_index.get() as usize][import_record_idx];
+                    let record = &self.all_import_records[source_index.get() as usize]
+                        [import_rule.import_record_idx as usize];
 
                     // Follow internal dependencies
                     if record.source_index.is_valid() {
@@ -177,36 +257,30 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // arena-owned, so wrap the local header in
                             // `ManuallyDrop` to avoid a double-free.
                             let mut nested_conditions = core::mem::ManuallyDrop::new(
-                                deep_clone_conditions(wrapping_conditions, self.arena),
+                                fork_conditions(wrapping_conditions, self.arena),
                             );
-                            let mut nested_import_records =
-                                shallow_clone_records(wrapping_import_records);
 
-                            // Clone these import conditions and append them to the state
-                            nested_conditions.append_assume_capacity(
-                                import_rule.conditions_with_import_records(
-                                    self.arena,
-                                    &mut nested_import_records,
-                                ),
-                            );
-                            self.visit(
-                                record.source_index,
+                            // Append these import conditions to the state
+                            self.append_conditions(&mut nested_conditions, import_rule);
+                            let followed = self.visit_import(
+                                source_index,
+                                record,
                                 &mut nested_conditions,
                                 wrapping_import_records,
                             );
-                            // `nested_import_records` is *not* passed to `visit` (the
-                            // outer `wrapping_import_records` is), so it is uniquely
-                            // owned here — drop it normally to free the buffer.
-                            drop(nested_import_records);
-                            import_record_idx += 1;
+                            if !followed {
+                                return;
+                            }
                             continue;
                         }
-                        self.visit(
-                            record.source_index,
+                        if !self.visit_import(
+                            source_index,
+                            record,
                             wrapping_conditions,
                             wrapping_import_records,
-                        );
-                        import_record_idx += 1;
+                        ) {
+                            return;
+                        }
                         continue;
                     }
 
@@ -219,21 +293,17 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         // CSS file using a data URL.
                         if import_rule.has_conditions() {
                             let mut all_conditions =
-                                deep_clone_conditions(wrapping_conditions, self.arena);
-                            let mut all_import_records =
-                                shallow_clone_records(wrapping_import_records);
-                            all_conditions.append_assume_capacity(
-                                import_rule.conditions_with_import_records(
-                                    self.arena,
-                                    &mut all_import_records,
-                                ),
-                            );
+                                fork_conditions(wrapping_conditions, self.arena);
+                            let all_import_records = shallow_clone_records(wrapping_import_records);
+                            self.append_conditions(&mut all_conditions, import_rule);
+                            self.push_sublayer_of_external_import(&all_conditions);
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 conditions: all_conditions,
                                 condition_import_records: all_import_records,
                             });
                         } else {
+                            self.push_sublayer_of_external_import(wrapping_conditions);
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 // SAFETY: arena-backed `Vec` header; the pushed
@@ -255,8 +325,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         );
                         self.has_external_import = true;
                     }
-
-                    import_record_idx += 1;
                 }
             }
 
@@ -264,12 +332,16 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // matter for these because the output order is explicitly undfened
             // in the specification.
             for record in self.all_import_records[source_index.get() as usize].as_slice() {
-                if record.kind == ImportKind::Composes && record.source_index.is_valid() {
-                    self.visit(
-                        record.source_index,
+                if record.kind == ImportKind::Composes
+                    && record.source_index.is_valid()
+                    && !self.visit_import(
+                        source_index,
+                        record,
                         wrapping_conditions,
                         wrapping_import_records,
-                    );
+                    )
+                {
+                    return;
                 }
             }
 
@@ -281,38 +353,34 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 );
             }
             // Accumulate imports in depth-first postorder
-            self.order.push(CssImportOrder {
-                // `crate::Index` (= `bun_ast::Index`) and the
-                // `bun_ast::Index` carried by `CssImportOrderKind::SourceIndex`
-                // are the same underlying index type;
-                // both are `#[repr(transparent)]` over `u32`.
-                kind: CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
-                // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses
-                // `Drop` on it (see the note at `bitwise_copy`), so the aliased
-                // buffer is freed once with the arena.
-                conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                condition_import_records: Vec::new(),
-            });
+            // `crate::Index` (= `bun_ast::Index`) and the
+            // `bun_ast::Index` carried by `CssImportOrderKind::SourceIndex`
+            // are the same underlying index type;
+            // both are `#[repr(transparent)]` over `u32`.
+            self.push_entry(
+                CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
+                wrapping_conditions,
+            );
 
             let _ = self.visited.pop();
         }
     }
 
-    // Read MultiArrayList columns before constructing the visitor (borrowck).
     let css_asts_slice: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let all_import_records_slice = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
     let mut visitor = Visitor {
         arena,
-        parse_graph: bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
-        ),
+        parse_graph: this.parse_graph(),
         visited: Vec::<Index>::init_capacity(16),
         css_asts: css_asts_slice,
         all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
+        anonymous_layers: 0,
+        stack_check: StackCheck::init(),
+        too_deep: None,
     };
     let mut wrapping_conditions: Vec<ImportConditions> = Vec::new();
     let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
@@ -323,6 +391,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut wrapping_conditions,
             &mut wrapping_import_records,
         );
+        if visitor.too_deep.is_some() {
+            break;
+        }
+    }
+
+    if let Some(too_deep) = visitor.too_deep {
+        return Err(too_deep);
     }
 
     let has_external_import = visitor.has_external_import;
@@ -339,9 +414,21 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // evaluation.
     if has_external_import {
         // Pass 1: Pull out leading "@layer" and external "@import" rules
+        let is_statement = |entry: &CssImportOrder| match &entry.kind {
+            CssImportOrderKind::Layers(layers) => {
+                prints_as_layer_statement(layers.inner().is_empty(), entry.conditions.slice())
+            }
+            _ => false,
+        };
+        // An entry that declares only the layers of an import that was not loaded must
+        // not keep a later statement behind the hoisted imports.
+        let continues_prefix = |entry: &CssImportOrder| {
+            is_statement(entry)
+                || matches!(&entry.kind, CssImportOrderKind::Layers(layers) if layers.inner().is_empty())
+        };
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
-            if (matches!(entry.kind, CssImportOrderKind::Layers(_)) && is_at_layer_prefix)
+            if (is_statement(entry) && is_at_layer_prefix)
                 || matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
                 // SAFETY: `entry` is moved back into `order` via
@@ -349,15 +436,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                is_at_layer_prefix = false;
-            }
+            is_at_layer_prefix &= continues_prefix(entry);
         }
 
         // Pass 2: Append everything that we didn't pull out in pass 1
         is_at_layer_prefix = true;
         for entry in order.slice() {
-            if (!matches!(entry.kind, CssImportOrderKind::Layers(_)) || !is_at_layer_prefix)
+            if (!is_statement(entry) || !is_at_layer_prefix)
                 && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
                 // SAFETY: `entry` is moved back into `order` via
@@ -365,9 +450,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                is_at_layer_prefix = false;
-            }
+            is_at_layer_prefix &= continues_prefix(entry);
         }
 
         memcpy_and_reset(&mut order, &mut wip_order);
@@ -386,8 +469,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         // Borrowck: `order.at(i)` and `order.mut_(i)`
         // cannot overlap, and `is_conditional_import_redundant` needs to read
         // both `entry.conditions` and `order.at(j).conditions`. Hold raw
-        // pointers into the Vec buffer; `order.mut_(i)` only writes `.kind` and
-        // never reallocates, so the conditions pointer stays valid.
+        // pointers into the Vec buffer; `order.mut_(i)` never reallocates, and
+        // `entry` is not read after it.
         let order_ptr = order.as_mut_ptr();
         'next_backward: while i != 0 {
             i -= 1;
@@ -407,17 +490,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
-                            //
-                            // `crate::bun_css::LayerName` (lifetime-erased
-                            // shadow) and `::bun_css::LayerName` are distinct nominal
-                            // types; cast through `NonNull` to satisfy
-                            // `Layers::borrow`.
-                            let layer_names_ptr = core::ptr::NonNull::from(
-                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names,
-                            )
-                            .cast::<Vec<LayerName>>();
+                            let layer_names =
+                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names;
                             order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
+                                CssImportOrderKind::Layers(Layers::borrow(layer_names));
                             continue 'next_backward;
                         }
                     }
@@ -434,9 +510,22 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         if is_conditional_import_redundant(&entry.conditions, later) {
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
-                            // file with an empty layer list.
-                            order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+                            // file with an empty layer list, or keep the "@import" where
+                            // nothing else can do that among the hoisted imports.
+                            let earlier = &order.slice()[..i as usize];
+                            let has_earlier_copy = has_earlier_copy(earlier, entry);
+                            if !has_earlier_copy && !can_mask_external_import(earlier, entry) {
+                                break;
+                            }
+                            let masked = order.mut_(i as usize);
+                            masked.kind = CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+                            if has_earlier_copy {
+                                // The earlier copy declares the layers. Declaring them here
+                                // too could print a block ahead of a hoisted "@import".
+                                // SAFETY: 0 <= capacity. The truncated tail is arena-owned
+                                // (`fork_conditions`) and bulk-freed with the arena.
+                                unsafe { masked.conditions.set_len(0) };
+                            }
                             continue 'next_backward;
                         }
                     }
@@ -454,10 +543,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     {
         struct DuplicateEntry {
             // Lifetime-erased slice header — borrows either
-            // `css_asts[..].layer_names` (real `::bun_css::LayerName`) or
-            // `Layers::inner()` (shadow `LayerName`). Both nominal types should
-            // be reconciled; until then we compare via
-            // `LayerName::eql` on the shadow type and cast at the boundary.
+            // `css_asts[..].layer_names` or `Layers::inner()`.
             // `RawSlice` (vs raw `*const [_]`) so reads go through safe
             // `.slice()` under the back-reference invariant: the borrowed
             // storage (`css_asts` arena / `Layers` Vec) outlives this loop.
@@ -472,39 +558,35 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 &wip_order,
                 CssOrderDebugStep::WhileOptimizingRedundantLayerRules,
             );
+            // An external import prints an anonymous layer of its own, apart
+            // from the one that its neighbours share.
+            let in_anonymous_layer = entry
+                .conditions
+                .slice_const()
+                .iter()
+                .any(ImportConditions::has_anonymous_layer);
             match &mut entry.kind {
                 // Simplify the conditions since we know they only wrap "@layer"
                 CssImportOrderKind::Layers(layers) => {
-                    // Truncate the conditions at the first anonymous layer
-                    for (i, conditions) in entry.conditions.slice().iter().enumerate() {
-                        // The layer is anonymous if it's a "layer" token without any
-                        // children instead of a "layer(...)" token with children:
-                        //
-                        //   /* entry.css */
-                        //   @import "foo.css" layer;
-                        //
-                        //   /* foo.css */
-                        //   @layer foo;
-                        //
-                        // We don't need to generate this (as far as I can tell):
-                        //
-                        //   @layer {
-                        //     @layer foo;
-                        //   }
-                        //
-                        if conditions.has_anonymous_layer() {
-                            // SAFETY: `i < entry.conditions.len() <= capacity`;
-                            // shrinking exposes no uninitialized range. The
-                            // truncated tail is arena-owned (`deep_clone_conditions`)
-                            // and bulk-freed with the arena, so skipping `Drop` is sound.
-                            unsafe { entry.conditions.set_len((i as u32) as usize) };
-                            layers.replace(Vec::new());
-                            break;
-                        }
+                    // An external import with these exact conditions already
+                    // declares what this entry would.
+                    if layers.inner().is_empty()
+                        && !in_anonymous_layer
+                        && wip_order.slice().iter().any(|kept| {
+                            matches!(kept.kind, CssImportOrderKind::ExternalPath(_))
+                                && import_conditions_are_equal(
+                                    kept.conditions.slice_const(),
+                                    entry.conditions.slice_const(),
+                                )
+                        })
+                    {
+                        continue 'next_forward;
                     }
 
                     // If there are no layer names for this file, trim all conditions
-                    // without layers because we know they have no effect.
+                    // after the last named layer because we know they have no effect.
+                    // An anonymous layer ahead of a named one stays, as it holds the
+                    // place of that name among the sublayers of the anonymous layer.
                     //
                     // (They have no effect because this is a `.layer` import with no rules
                     //  and only layer declarations.)
@@ -539,7 +621,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             }
                             // SAFETY: `i` was just decremented from a value
                             // `<= len`, so `i < len <= capacity`. Truncated tail
-                            // is arena-owned (`deep_clone_conditions`) and
+                            // is arena-owned (`fork_conditions`) and
                             // bulk-freed with the arena.
                             unsafe { entry.conditions.set_len((i) as usize) };
                         }
@@ -557,43 +639,19 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // that this tests all import order entries (not just layer ones) because
             // sometimes non-layer ones can make following layer ones redundant.
             // layers_post_import
-            let layers_key: *const [LayerName] = match &entry.kind {
-                CssImportOrderKind::SourceIndex(idx) => {
-                    // See the LayerName nominal-type note above.
-                    std::ptr::from_ref::<[_]>(
-                        css_asts[idx.get() as usize]
-                            .as_deref()
-                            .unwrap()
-                            .layer_names
-                            .slice_const(),
-                    ) as *const [LayerName]
-                }
+            let layers_key: &[LayerName] = match &entry.kind {
+                CssImportOrderKind::SourceIndex(idx) => css_asts[idx.get() as usize]
+                    .as_deref()
+                    .unwrap()
+                    .layer_names
+                    .slice_const(),
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
             };
-            // SAFETY: every match arm yields a pointer to a live slice (`css_asts`
-            // arena, `entry.kind`'s `Layers`, or a static empty); the source-index
-            // arm is a `*const [_]`-level cast between layout-identical `LayerName`
-            // shadows (see the note above). Valid for this loop iteration.
-            let layers_key: &[LayerName] = unsafe { &*layers_key };
             let mut index: usize = 0;
             while index < layer_duplicates.len() as usize {
                 let dup_layers: &[LayerName] = layer_duplicates.at(index).layers.slice();
-                let both_equal = 'both_equal: {
-                    if layers_key.len() != dup_layers.len() {
-                        break 'both_equal false;
-                    }
-
-                    for (a, b) in layers_key.iter().zip(dup_layers) {
-                        if !a.eql(b) {
-                            break 'both_equal false;
-                        }
-                    }
-
-                    break 'both_equal true;
-                };
-
-                if both_equal {
+                if layer_lists_are_equal(layers_key, dup_layers) {
                     break;
                 }
                 index += 1;
@@ -611,6 +669,17 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             while j != 0 {
                 j -= 1;
                 let duplicate_index = duplicates[j];
+                // A file may have these names under "@media", which is no proof
+                // that it declares them for this list.
+                if matches!(entry.kind, CssImportOrderKind::Layers(_))
+                    && match wip_order.at(duplicate_index as usize).kind {
+                        CssImportOrderKind::Layers(_) => false,
+                        CssImportOrderKind::SourceIndex(_) => !layers_key.is_empty(),
+                        CssImportOrderKind::ExternalPath(_) => in_anonymous_layer,
+                    }
+                {
+                    continue;
+                }
                 if is_conditional_import_redundant(
                     &entry.conditions,
                     &wip_order.at(duplicate_index as usize).conditions,
@@ -641,7 +710,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             && duplicate_index as usize == wip_order.len() - 1
                         {
                             let other = wip_order.at(duplicate_index as usize);
-                            if matches!(other.kind, CssImportOrderKind::Layers(_))
+                            if let CssImportOrderKind::Layers(layers) = &other.kind
+                                && (layers_key.is_empty()
+                                    || core::ptr::eq(layers_key, layers.inner().slice()))
                                 && import_conditions_are_equal(
                                     entry.conditions.slice_const(),
                                     other.conditions.slice_const(),
@@ -732,7 +803,32 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         CssOrderDebugStep::AfterMergingAdjacentLayerRules,
     );
 
-    order
+    Ok(order)
+}
+
+/// Error for an `@import` (or cross-file `composes`) chain that's too deep for
+/// the thread's stack.
+pub(crate) struct CssImportChainTooDeep {
+    importer: Index,
+    range: Range,
+    kind: ImportKind,
+}
+
+impl CssImportChainTooDeep {
+    pub(crate) fn add_to_log(&self, sources: &[bun_ast::Source], log: &mut bun_ast::Log) {
+        log.add_range_error_fmt(
+            Some(&sources[self.importer.get() as usize]),
+            self.range,
+            format_args!(
+                "Maximum call stack size exceeded while following this \"{}\" chain",
+                if self.kind == ImportKind::Composes {
+                    "composes"
+                } else {
+                    "@import"
+                }
+            ),
+        );
+    }
 }
 
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
@@ -744,11 +840,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 /// one extra slot for the single `append_assume_capacity` each call site
 /// performs, so the header never reallocates.
 #[inline]
-fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
+fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
     let cap = list.len() as usize + 1;
     let slab = arena.alloc_uninit_slice::<ImportConditions>(cap);
     for (dst, src) in slab.iter_mut().zip(list.slice_const()) {
-        dst.write(src.deep_clone(arena));
+        // SAFETY: never dropped (see the note at `bitwise_copy`).
+        dst.write(unsafe { bitwise_copy(src) });
     }
     // SAFETY: `slab[..list.len()]` was just initialized; cap is the slab
     // length. The resulting `Vec` is never dropped (always `mem::forget`'d)
@@ -766,10 +863,10 @@ fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<Imp
 
 /// Shallow copy of `ImportRecord` values into a fresh allocation.
 #[inline]
-fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
+fn shallow_clone_records<'a>(list: &Vec<ImportRecord<'a>>) -> Vec<ImportRecord<'a>> {
     let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
     for r in list.slice_const() {
-        // `ImportRecord` is plain-old-data; its `Path<'static>` slices borrow
+        // `ImportRecord` is plain-old-data; its `Path` slices borrow
         // resolver storage.
         // SAFETY: `ImportRecord` is POD (borrowed slices, no owning `Drop`); a
         // bitwise duplicate aliasing the same resolver storage is sound and
@@ -777,6 +874,64 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
         out.append_assume_capacity(unsafe { bitwise_copy(r) });
     }
     out
+}
+
+fn layer_lists_are_equal(a: &[LayerName], b: &[LayerName]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.eql(b))
+}
+
+/// Whether two import orders print the same CSS. `CssImportOrder::hash` is not enough to tell.
+pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOrder]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            import_conditions_are_equal(a.conditions.slice_const(), b.conditions.slice_const())
+                && match (&a.kind, &b.kind) {
+                    (CssImportOrderKind::Layers(a), CssImportOrderKind::Layers(b)) => {
+                        layer_lists_are_equal(a.inner().slice(), b.inner().slice())
+                    }
+                    (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
+                        a.text == b.text
+                    }
+                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
+                        a.get() == b.get()
+                    }
+                    _ => false,
+                }
+        })
+}
+
+/// Whether a list of layer names under these conditions prints only "@layer"
+/// statements, which may precede an "@import".
+fn prints_as_layer_statement(no_names: bool, conditions: &[ImportConditions]) -> bool {
+    match conditions {
+        [] => true,
+        [only] => {
+            no_names
+                && only.layer.as_ref().is_some_and(|layer| layer.v.is_some())
+                && only.supports.is_none()
+                && only.media.media_queries.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Whether an earlier entry is the same import under the same conditions.
+fn has_earlier_copy(earlier: &[CssImportOrder], import: &CssImportOrder) -> bool {
+    earlier.iter().any(|e| {
+        css_import_orders_are_equal(core::slice::from_ref(e), core::slice::from_ref(import))
+    })
+}
+
+/// Whether an external "@import" with no earlier copy can give way to a later one.
+/// If its conditions have a layer, something at its place must still declare that
+/// layer. A statement ahead of all the hoisted imports can.
+fn can_mask_external_import(earlier: &[CssImportOrder], import: &CssImportOrder) -> bool {
+    let conditions = import.conditions.slice();
+    if !conditions.iter().any(|c| c.layer.is_some()) {
+        return true;
+    }
+    let is_external = |e: &CssImportOrder| matches!(e.kind, CssImportOrderKind::ExternalPath(_));
+    prints_as_layer_statement(true, conditions) && !earlier.iter().any(is_external)
 }
 
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
@@ -823,8 +978,8 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 /// For "lib.css", the entry with the conditions [supports(display: flex)] should
 /// make the entry with the conditions [supports(display: flex), screen] redundant.
 ///
-/// Note that all of this deliberately ignores the existence of "@layer" because
-/// that is handled separately. All of this is only for handling unlayered styles.
+/// A "@layer" condition that only the earlier one has means the two apply in
+/// different layers, so neither can stand for the other.
 fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
@@ -881,7 +1036,9 @@ fn is_conditional_import_redundant(
         return false;
     }
 
-    true
+    earlier.slice()[later.len()..]
+        .iter()
+        .all(|conditions| conditions.layer.is_none())
 }
 
 #[derive(Clone, Copy)]
@@ -945,15 +1102,9 @@ fn debug_css_order_impl(
     let arena = bun_alloc::Arena::new();
     let parse_graph = this.parse_graph();
     let ast_urls_for_css = parse_graph.ast.items_url_for_css();
-    // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
-    // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-    let unique_keys: &[&[u8]] = unsafe {
-        bun_ptr::boxed_slices_as_borrowed(
-            parse_graph
-                .input_files
-                .items_unique_key_for_additional_file(),
-        )
-    };
+    let unique_keys = parse_graph
+        .input_files
+        .items_unique_key_for_additional_file();
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &this.mangled_props;

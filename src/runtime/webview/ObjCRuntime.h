@@ -83,8 +83,8 @@ struct NSString : Ref {
     // Returns autoreleased; callers pass to ObjC methods that retain.
     static NSString fromWTF(const WTF::String &s)
     {
-        WTF::CString utf8 = s.utf8();
-        return msgCls<id>(cls, s_stringWithUTF8String, utf8.data());
+        WTF::UTF8CString utf8 = s.utf8();
+        return msgCls<id>(cls, s_stringWithUTF8String, utf8.legacyCStringPointer());
     }
     WTF::String toWTF() const
     {
@@ -474,6 +474,7 @@ struct WKWebViewConfiguration : Ref {
     static Class cls_WKProcessPool;
     static SEL s_nonPersistentDataStore;
     static SEL s_initWithDirectory; // macOS 15.2+ (SPI)
+    static bool s_hasInitWithDirectory; // if false, sending initWithDirectory: raises and the host aborts
     static SEL s_initWithConfiguration; // _initWithConfiguration: (SPI)
     static SEL s_setWebsiteDataStore;
     static SEL s_setProcessPool;

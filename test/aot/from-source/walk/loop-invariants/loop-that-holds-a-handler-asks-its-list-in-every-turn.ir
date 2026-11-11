@@ -1,0 +1,17 @@
+# the state of a handler is met anew from the blocks that stand under it, and with Handlers withheld it is empty. A read in the handler, or behind the place where it comes back, may find nothing noted of the list, so a loop that holds a handler block gets no row for its lists
+# f1 = sumsUnderAHandler, f2 = Box
+# -- source: loop-that-holds-a-handler-asks-its-list-in-every-turn.ts
+# declare function sink(...values: unknown[]): void;
+# class Box { x: number; constructor(x: number) { this.x = x; } }
+# function sumsUnderAHandler(list: number[], box: Box) { let s = 0; for (let i = 0; i < list.length; i++) { try { s += box.x; } catch { s -= list[i]; } s += list[i]; } return s; }
+# sink(sumsUnderAHandler, new Box(1), [1, 2, 3]);
+# -- end of source
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = HasArrayStorage
+# NEVER-NOT: = GetArrayStorage
+# RUN(EMPTY): walk f1 mechanisms=all-Handlers
+# EMPTY-NOT: = HasArrayStorage
+# EMPTY-NOT: = GetArrayStorage
+# RUN(READS): walk f1 mechanisms=all-Handlers
+# READS-LABEL: code f1:Body
+# READS: = GetArrayElement {{*}}level=Expected

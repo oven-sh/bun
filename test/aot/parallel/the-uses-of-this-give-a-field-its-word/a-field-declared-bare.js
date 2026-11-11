@@ -1,0 +1,5 @@
+// A class in a file without types: a constructor's parameter fills the field, so nothing is written of it; what the class's own methods do with `this.<name>` gives the field a word, as a parameter's uses give the parameter one. The word is expected alone: every read is guarded at the run. The data comes out of a text. The class declares the field bare, without a type or a value, and a method pushes views onto it.
+class Matrix { data; constructor(rows, columns) { this.data = []; for (let r = 0; r < rows; r++) this.data.push(new Float64Array(columns)); this.rows = rows; this.columns = columns; } set(r, c, value) { this.data[r][c] = value; return this; } sum() { let s = 0; for (let r = 0; r < this.rows; r++) for (let c = 0; c < this.columns; c++) s += this.data[r][c]; return s; } }
+const name = JSON.parse('"sum"');
+const matrix = new Matrix(3, 4).set(0, 0, 1.5).set(2, 3, 2.25);
+console.log(matrix[name]()); matrix.data[1] = [1, 2, 3, 4]; console.log(matrix[name]()); matrix.data = [[1, 1, 1, 1], 'abcd', new Uint8Array(4).fill(2)]; console.log(matrix[name]());

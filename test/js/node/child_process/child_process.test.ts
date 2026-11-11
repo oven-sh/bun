@@ -1859,24 +1859,171 @@ it("throw from a child stdio 'data' listener is an uncaughtException and the str
   });
 });
 
-it("throw from a child stdio 'data' listener with no handler is fatal", async () => {
+// Node ends the process at the throw. Bun ends it a little later, and until then the stream must not go on.
+describe("throw from a child stdio 'data' listener with no 'uncaughtException' handler", () => {
+  it("is fatal", async () => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      c.stdout.on("data", () => { throw new Error("data-throw-fatal"); });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.includes("error: data-throw-fatal"), exitCode }).toEqual({
+      stdout: "",
+      stderr: true,
+      exitCode: 1,
+    });
+  });
+
+  it("calls the listener once when the child writes without gaps", async () => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "process.stdout.write(Buffer.alloc(4 * 1024 * 1024, 97))"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      let calls = 0;
+      const seen = [];
+      c.stdout.on("data", () => { calls++; throw new Error("data-throw-fatal"); });
+      c.stdout.on("end", () => seen.push("end"));
+      c.stdout.on("close", () => seen.push("close"));
+      process.on("exit", code => console.log(JSON.stringify({ code, calls, seen })));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.includes("error: data-throw-fatal"), exitCode }).toEqual({
+      stdout: JSON.stringify({ code: 1, calls: 1, seen: [] }),
+      stderr: true,
+      exitCode: 1,
+    });
+  });
+
+  // The shell exits at once. What it left behind prints to stdout when the parent closes fd 3, which the parent does
+  // from 'exit'. So the data and the end of stdout come after 'exit', and only 'close' of the child is still due.
+  it.skipIf(!isPosix)("does not reach 'close', where a program would exit with the child's code", async () => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const c = spawn("sh", ["-c", "(read line <&3; printf hi) & exit 0"], { stdio: ["ignore", "pipe", "ignore", "pipe"] });
+      c.stdio[3].on("error", () => {});
+      c.stdout.on("data", () => { console.log("data"); throw new Error("data-throw-fatal"); });
+      c.stdout.on("end", () => console.log("end"));
+      c.on("exit", () => { console.log("exit"); c.stdio[3].end("\\n"); });
+      c.on("close", code => { console.log("close"); process.exit(code); });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.includes("error: data-throw-fatal"), exitCode }).toEqual({
+      stdout: "exit\ndata\n",
+      stderr: true,
+      exitCode: 1,
+    });
+  });
+
+  it("is fatal with only an 'unhandledRejection' handler", async () => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      process.on("unhandledRejection", () => console.log("unhandledRejection"));
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      c.stdout.on("data", () => { throw new Error("data-throw-fatal"); });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.includes("error: data-throw-fatal"), exitCode }).toEqual({
+      stdout: "",
+      stderr: true,
+      exitCode: 1,
+    });
+  });
+});
+
+// A writer that never pauses makes most native reads return at once. Then push() only buffers and 'data' comes out
+// of flow(), not out of push().
+describe("a 'data' listener that throws while the child writes without gaps", () => {
+  const SIZE = 4 * 1024 * 1024;
+  // `throws`: how many calls of the listener throw. `rejectionHandler`: also install an 'unhandledRejection' handler.
+  function run(name: "stdout" | "stderr", throws: number, rejectionHandler: boolean) {
+    // Byte i is i % 251, so a chunk that is lost, repeated or out of order shows at its first or last byte.
+    const writer = `const b = Buffer.alloc(${SIZE}); for (let i = 0; i < b.length; i++) b[i] = i % 251; process.${name}.write(b);`;
+    const script = `
+      const { spawn } = require("node:child_process");
+      let bytes = 0, data = 0, uncaught = 0, rejections = 0, end = 0, close = 0, inOrder = true;
+      process.on("uncaughtException", (e, origin) => {
+        if (origin !== "uncaughtException" || e.message !== "data-throw") {
+          console.log("unexpected: origin=" + origin + " message=" + (e && e.message));
+          process.exit(1);
+        }
+        // The report comes before the next chunk.
+        if (++uncaught !== data) inOrder = false;
+      });
+      ${rejectionHandler ? `process.on("unhandledRejection", () => { rejections++; });` : ""}
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], {
+        stdio: ["ignore", "${name === "stdout" ? "pipe" : "ignore"}", "${name === "stderr" ? "pipe" : "ignore"}"],
+      });
+      // Then only the stream holds the process: one that stops reading ends the run and does not hang it.
+      child.unref();
+      child.${name}.on("data", chunk => {
+        if (chunk[0] !== bytes % 251 || chunk[chunk.length - 1] !== (bytes + chunk.length - 1) % 251) inOrder = false;
+        bytes += chunk.length;
+        if (++data <= ${throws}) throw new Error("data-throw");
+      });
+      child.${name}.on("end", () => end++);
+      child.${name}.on("close", () => close++);
+      process.on("exit", () => {
+        console.log(JSON.stringify({ bytes, inOrder, everyThrowWasUncaught: uncaught === Math.min(data, ${throws}), rejections, end, close }));
+      });
+    `;
+    return Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  }
+
+  it.each([
+    ["stdout", 3, false],
+    ["stdout", Infinity, false],
+    ["stderr", Infinity, true],
+  ] as const)("child.%s, %d throws, 'unhandledRejection' handler: %p", async (name, throws, rejectionHandler) => {
+    await using proc = run(name, throws, rejectionHandler);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        bytes: SIZE,
+        inOrder: true,
+        everyThrowWasUncaught: true,
+        rejections: 0,
+        end: 1,
+        close: 1,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+it("a child stdio 'data' listener that throws keeps the chunk from the listeners after it", async () => {
   const script = `
     const { spawn } = require("node:child_process");
+    const seen = [];
+    process.on("uncaughtException", e => seen.push("uncaught " + e.message));
     const c = spawn(process.execPath, ["-e", "setTimeout(() => console.log('hi'), 50)"], {
       stdio: ["ignore", "pipe", "ignore"],
     });
-    c.stdout.on("data", () => { throw new Error("data-throw-fatal"); });
+    c.stdout.on("data", () => { seen.push("first"); throw new Error("data-throw"); });
+    c.stdout.on("data", () => seen.push("second"));
+    c.stdout.on("end", () => seen.push("end"));
+    c.stdout.on("close", () => console.log(seen.join(", ")));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr: stderr.includes("error: data-throw-fatal"), exitCode }).toEqual({
-    stdout: "",
-    stderr: true,
-    exitCode: 1,
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "first, uncaught data-throw, end",
+    stderr: "",
+    exitCode: 0,
   });
 });

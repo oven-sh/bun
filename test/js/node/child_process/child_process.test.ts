@@ -1814,8 +1814,10 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
 
 // Node dispatches child stdio 'data' from its native read callback, so a
 // listener throw is an uncaughtException, never an unhandledRejection.
-it("throw from a child stdio 'data' listener is an uncaughtException and the stream still ends", async () => {
-  const script = `
+it.concurrent(
+  "throw from a child stdio 'data' listener is an uncaughtException and the stream still ends",
+  async () => {
+    const script = `
     const { spawn } = require("node:child_process");
     let ue = 0, ur = 0, data = 0, closes = 0, n = 0;
     const N = 3;
@@ -1845,22 +1847,23 @@ it("throw from a child stdio 'data' listener is an uncaughtException and the str
     }
     next();
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "spawned=3 data=3 closes=3 ue=3 ur=0",
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "spawned=3 data=3 closes=3 ue=3 ur=0",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // Node ends the process at the throw. Bun ends it a little later, and until then the stream must not go on.
-describe("throw from a child stdio 'data' listener with no 'uncaughtException' handler", () => {
+describe.concurrent("throw from a child stdio 'data' listener with no 'uncaughtException' handler", () => {
   it("is fatal", async () => {
     const script = `
       const { spawn } = require("node:child_process");
@@ -2006,7 +2009,7 @@ describe("a 'data' listener that throws while the child writes without gaps", ()
   });
 });
 
-it("a child stdio 'data' listener that throws keeps the chunk from the listeners after it", async () => {
+it.concurrent("a child stdio 'data' listener that throws keeps the chunk from the listeners after it", async () => {
   const script = `
     const { spawn } = require("node:child_process");
     const seen = [];

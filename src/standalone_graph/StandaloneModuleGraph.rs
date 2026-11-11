@@ -1122,7 +1122,7 @@ impl LazySourceMap {
                     decompressed_files: decompressed_contents_slice.into_boxed_slice(),
                 });
 
-                stored.external_source_names = file_names;
+                stored.set_external_source_names(file_names);
                 // Never freed, like the graph that holds `stored`.
                 stored.standalone_module_graph = Some(Box::leak(data));
 

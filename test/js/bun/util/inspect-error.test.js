@@ -492,6 +492,193 @@ describe("source map remapping of the printed stack", () => {
     });
     expect(exitCode).toBe(1);
   });
+
+  // An empty entry in `sources` is the module that carries the map
+  // (magic-string writes one when it gets no `source`). A frame from it keeps
+  // the URL of that module, and only its line and column are remapped. No
+  // other file is read for the code frame.
+  describe("a source with no name is the module itself", () => {
+    const inline = map => "//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)) + "\n";
+    const code = [
+      "// @bun",
+      'export function thrower() { throw new Error("EMPTY"); }',
+      "export function caller() { thrower(); }",
+      "",
+    ].join("\n");
+    // One segment at column 0 of lines 2 and 3: line 2 -> 3:5, line 3 -> 21:5.
+    const map = { version: 3, sources: [""], sourcesContent: [null], names: [], mappings: ";AAEI;AAkBA" };
+    const withText = { ...map, sourcesContent: ["// The text in the map.\n// Line 2.\nconst fromTheMap = 3;\n"] };
+    // In this map line 3 is from the second source.
+    const twoSources = { ...map, sources: ["", "orig.ts"], sourcesContent: [null, null], mappings: ";AAEI;ACkBA" };
+
+    // The code frame at 3:5, from the module and from the text in the map.
+    const ofModule = [...code.split("\n", 3).map((line, i) => `${i + 1} | ${line}`), "        ^"];
+    const ofMap = ["1 | // The text in the map.", "2 | // Line 2.", "3 | const fromTheMap = 3;", "        ^"];
+    const codeFrame = inspected => inspected.split("\n").slice(0, 4);
+
+    // The "at thrower" and "at caller" lines, with `dir` removed.
+    const positions = (text, dir) =>
+      text
+        .replaceAll("\\", "/")
+        .replaceAll(dir.replaceAll("\\", "/") + "/", "")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => /^at (thrower|caller) /.test(line));
+    const frames = (thrower, caller = thrower) => [`at thrower (${thrower}:3:5)`, `at caller (${caller}:21:5)`];
+    // What each reader of a frame gives for one module.
+    const readers = (of, dir) => ({
+      stack: positions(of.stack, dir),
+      inspect: positions(of.inspect, dir),
+      stackThenInspect: positions(of.stackThenInspect, dir),
+      callSites: positions(of.callSites, dir),
+    });
+    const all = frames => ({ stack: frames, inspect: frames, stackThenInspect: frames, callSites: frames });
+
+    // main.js: `read(caller)` reads an error of a module in each way that remaps its frames.
+    const read = [
+      "function read(caller) {",
+      "  const thrown = () => { try { caller(); } catch (e) { return e; } };",
+      "  const of = { stack: thrown().stack, inspect: Bun.inspect(thrown()) };",
+      "  const stackWasRead = thrown();",
+      "  stackWasRead.stack;",
+      "  of.stackThenInspect = Bun.inspect(stackWasRead);",
+      "  Error.prepareStackTrace = (_, sites) =>",
+      "    sites.map(s => `at ${s.getFunctionName()} (${s.getFileName()}:${s.getLineNumber()}:${s.getColumnNumber()})`).join('\\n');",
+      "  of.callSites = thrown().stack;",
+      "  Error.prepareStackTrace = undefined;",
+      "  return of;",
+      "}",
+    ];
+
+    test.concurrent("in a file", async () => {
+      const { dir, out, stderr, exitCode } = await run({
+        "map-file.js": code,
+        "map-file.js.map": JSON.stringify(map),
+        "map-file-text.js": code,
+        "map-file-text.js.map": JSON.stringify(withText),
+        "inline.js": code + inline(map),
+        "inline-text.js": code + inline(withText),
+        "two-sources.js": code + inline(twoSources),
+        // A map that names its own file: an empty name gives what this one gives.
+        "own-name.js": code,
+        "own-name.js.map": JSON.stringify({ ...map, sources: ["own-name.js"] }),
+        "main.js": [
+          ...read,
+          "const out = {};",
+          'for (const name of ["map-file", "map-file-text", "inline", "inline-text", "two-sources", "own-name"]) {',
+          "  out[name] = read((await import(`./${name}.js`)).caller);",
+          "}",
+          "console.log(JSON.stringify(out));",
+          '(await import("./map-file.js")).caller();',
+        ].join("\n"),
+      });
+      const received = { uncaught: positions(stderr, dir) };
+      for (const name in out) {
+        received[name] = {
+          ...readers(out[name], dir),
+          codeFrame: codeFrame(out[name].inspect),
+          codeFrameAfterStack: codeFrame(out[name].stackThenInspect),
+        };
+      }
+      // Once `.stack` was read the printer does not go back to the map: the code
+      // frame is then the text of the module, also where the map has the text.
+      const expected = (file, codeFrame, caller = file) => ({
+        ...all(frames(file, caller)),
+        codeFrame,
+        codeFrameAfterStack: ofModule,
+      });
+      expect(received).toEqual({
+        "map-file": expected("map-file.js", ofModule),
+        "map-file-text": expected("map-file-text.js", ofMap),
+        "inline": expected("inline.js", ofModule),
+        "inline-text": expected("inline-text.js", ofMap),
+        "two-sources": expected("two-sources.js", ofModule, "orig.ts"),
+        "own-name": expected("own-name.js", ofModule),
+        uncaught: frames("map-file.js"),
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    // On a `blob:` module and on a module of a plugin, Bun.inspect and the uncaught error used to abort the process.
+    test.concurrent("in a module that has no directory", async () => {
+      const { dir, out, stderr, exitCode } = await run({
+        "main.js": [
+          ...read,
+          `const module = ${JSON.stringify(code + inline(map))};`,
+          "Bun.plugin({",
+          '  name: "plugin",',
+          "  setup(build) {",
+          '    build.module("virtual-module", () => ({ contents: module, loader: "js" }));',
+          '    build.onResolve({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({ path, namespace: "virtual" }));',
+          '    build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: module, loader: "js" }));',
+          "  },",
+          "});",
+          "const urls = {",
+          '  blob: URL.createObjectURL(new Blob([module], { type: "text/javascript" })),',
+          '  data: "data:text/javascript;base64," + Buffer.from(module).toString("base64"),',
+          '  virtual: "virtual-module",',
+          '  namespace: "virtual:module",',
+          "};",
+          "const out = { urls };",
+          "for (const name in urls) out[name] = read((await import(urls[name])).caller);",
+          "console.log(JSON.stringify(out));",
+          "(await import(urls.blob)).caller();",
+        ].join("\n"),
+      });
+      // Each module is shown by the URL it was imported with.
+      const { urls, ...modules } = out;
+      const received = { uncaught: positions(stderr.replaceAll(urls.blob, "MODULE"), dir) };
+      for (const name in modules) {
+        const of = modules[name];
+        for (const reader in of) of[reader] = of[reader].replaceAll(urls[name], "MODULE");
+        received[name] = readers(of, dir);
+      }
+      expect(received).toEqual({
+        blob: all(frames("MODULE")),
+        data: all(frames("MODULE")),
+        virtual: all(frames("MODULE")),
+        namespace: all(frames("MODULE")),
+        uncaught: frames("MODULE"),
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    // A plugin that rewrites a file can write such a map. The file on disk
+    // is then the original source, and the code frame is read from it.
+    test.concurrent("in a file that a plugin rewrote: the code frame is the file on disk", async () => {
+      const onDisk = [
+        "// The file on disk.",
+        "export function thrower() {",
+        '  throw new Error("EMPTY");',
+        "}",
+        "export function caller() {",
+        "  thrower();",
+        "}",
+        "",
+      ];
+      const { dir, out, stderr, exitCode } = await run({
+        "mod.js": onDisk.join("\n"),
+        "main.js": [
+          // Line 2 -> 3:3, line 3 -> 6:3.
+          `const rewritten = ${JSON.stringify(code + inline({ ...map, mappings: ";AAEE;AAGA" }))};`,
+          "Bun.plugin({",
+          '  name: "plugin",',
+          "  setup(build) {",
+          '    build.onLoad({ filter: /mod\\.js$/ }, () => ({ contents: rewritten, loader: "js" }));',
+          "  },",
+          "});",
+          'const { caller } = await import("./mod.js");',
+          "try { caller(); } catch (e) { console.log(JSON.stringify(Bun.inspect(e))); }",
+        ].join("\n"),
+      });
+      expect({ codeFrame: codeFrame(out), frames: positions(out, dir), stderr }).toEqual({
+        codeFrame: [...onDisk.slice(0, 3).map((line, i) => `${i + 1} | ${line}`), "      ^"],
+        frames: ["at thrower (mod.js:3:3)", "at caller (mod.js:6:3)"],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // The printer replaces an AggregateError with the members of its `errors`

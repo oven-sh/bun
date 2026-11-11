@@ -34,7 +34,8 @@ for (const [name, command] of commands) {
         ...bunEnv,
         NO_COLOR: "1",
       });
-      return { codes: [...new Set((stdout + stderr).match(/\bTS\d+\b/g))], exitCode };
+      // Doesn't match a "TS1" in the directory's random name: only a code has a colon after it.
+      return { codes: [...new Set((stdout + stderr).match(/\bTS\d+(?=: )/g))], exitCode };
     };
 
     test("reports nothing of what a folder without null checks allows", async () => {

@@ -177,7 +177,8 @@ module.exports = { pack };
         "node_modules/packer/locales/en.json": `{ "hello": "hello" }`,
         "node_modules/packer/locales/README.md": "# translations\n",
       });
-      const codes = (text: string) => [...text.matchAll(/TS\d+/g)].map(String);
+      // Doesn't match a "TS1" in the directory's random name: only a code has a colon after it.
+      const codes = (text: string) => [...text.matchAll(/\bTS\d+(?=: )/g)].map(String);
       const notes = (text: string) => text.split("\n").filter(line => /^ {13,}[a-z]/.test(line));
       const counted =
         "             note  2 regular expressions in packer are compiled at run time (--explain lists them)";

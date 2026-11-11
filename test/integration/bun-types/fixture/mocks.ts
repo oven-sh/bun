@@ -226,6 +226,8 @@ declare const holder: {
   shapes: (Circle | Square)[];
   caches: (Store | Cache)[];
   handler: ((id: number) => string) | ((key: string) => number);
+  expires: Date | string;
+  cache: Store | false;
   config: Json;
   grid: Grid;
   tree: Tree;
@@ -372,6 +374,14 @@ const mockedEither = jest.mocked(holder).either;
 if (mockedEither instanceof Store) useStore(mockedEither);
 // @ts-expect-error It can still be `null`.
 mockedEither.constructor;
+// A member that can also be a primitive is mocked. A `typeof` check or a check for a true value reaches the mocks.
+const mockedExpires = jest.mocked(holder).expires;
+if (typeof mockedExpires !== "string") mockedExpires.getTime.mockReturnValue(0);
+// @ts-expect-error Without a check, it can be a string.
+mockedExpires.getTime;
+const mockedCache = jest.mocked(holder).cache;
+if (mockedCache) mockedCache.get.mockReturnValue("x");
+if (mockedCache !== false) mockedCache.get.mockReturnValue("x");
 // The member itself, given to `jest.mocked()`, has the mocks of each type.
 const shape = jest.mocked(holder.shape);
 if (shape.kind === "circle") shape.radius.mockReturnValue(1);

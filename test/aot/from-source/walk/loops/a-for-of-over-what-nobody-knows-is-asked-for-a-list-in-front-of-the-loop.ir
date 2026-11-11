@@ -1,0 +1,21 @@
+# -- source: a-for-of-over-what-nobody-knows-is-asked-for-a-list-in-front-of-the-loop.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const list = id([0.5, 1.5, 2.5]);
+# function total(): number { let sum = 0; for (const x of list) sum += x; return sum; }
+# print(id(total)());
+# -- end of source
+# LIBRARY: own
+# f1 = total. Nobody knows what `list` holds: it may be a list, a collection, or go by the protocol. The step has an arm by index and an unlikely arm by protocol.
+# The blocks that the arm by protocol adds for itself (the call of next(), the helper of collections) were born with the usual frequency, so "a call on the usual way comes round" was noted of the loop, and a loop that steps an iteration was then never asked whether it may be built twice: every turn asked for the length and the kind of storage and carried its values boxed.
+# They are as unlikely as their arm now: the loop is built twice, and the typed copy stands behind one question for a list as made that holds raw numbers.
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE-LABEL: code f1:Body
+# TWICE: = HasArrayStorage {{*}}arrayStorage=Double
+# TWICE: isLoopHead=true
+# TWICE: isLoopHead=true
+# TWICE: = GetArrayElement {{*}}arrayStorage=Double level=Proven
+# TWICE: = Add {{*}}form=Numbers
+# RUN: run-in-shell mechanisms=all
+# CHECK: 4.5
+# CHECK-NEXT: exited with 0

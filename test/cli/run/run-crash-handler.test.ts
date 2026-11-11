@@ -1,7 +1,19 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isGlibc,
+  isLinux,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
+import { readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -13,7 +25,7 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
-const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
+const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
 
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
@@ -32,9 +44,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(exitCode).not.toBe(0);
 
     // The innermost frame of the trace must be the code that crashed (the
-    // js_panic test hook)...
+    // `panic` test hook)...
     const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
-    expect(firstFrame ?? "<no frames printed>").toContain("js_panic");
+    expect(firstFrame ?? "<no frames printed>").toContain("crash_handler_jsc::panic");
 
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost
@@ -43,6 +55,12 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   },
   60_000, // symbolizing the debug binary takes several seconds
 );
+
+// Read as it is, a return address that -mbranch-protection=pac-ret signed is the address of nothing.
+const hasPointerAuthentication = isLinux && isArm64 && /\bpaca\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
+test.if(hasPointerAuthentication)("a stack trace takes the signature off a return address", () => {
+  expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
+});
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by
@@ -127,6 +145,40 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// mimalloc provides `operator new` only on Linux without ASAN.
+describe.if(isLinux && !isASAN)("operator new that fails to allocate", () => {
+  test.concurrent("reports out of memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "operatorNew",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Bun has run out of memory");
+    expect(proc.signalCode).toBe("SIGABRT");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // `std::stable_sort` retries with half the buffer when this form returns null.
+  test.concurrent("returns null from new (std::nothrow)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("bun:internal-for-testing").crash_handler.operatorNew(true))`],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -403,7 +455,7 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
   await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
 
-  expect(proc.exited).resolves.not.toBe(0);
+  await expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
 
@@ -579,6 +631,64 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
     expect(stderr).toContain("abort() called");
     expect(stderr).toContain("oh no: Bun has crashed");
     expect({ exitCode, exited }).toEqual({ exitCode: null, exited: diedFrom("SIGABRT") });
+  });
+});
+
+// A preloaded shim fails the syscall. The `ulimit -n` value that makes the loop fail first differs between builds.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.skipIf(!isGlibc || !cc)("out of file descriptors while creating the event loop", () => {
+  const shim = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
+static int should_fail(const char *name) {
+  if (strcmp(getenv("FAIL_LOOP_SYSCALL"), name) != 0) return 0;
+  errno = strcmp(getenv("FAIL_LOOP_ERRNO"), "ENFILE") == 0 ? ENFILE : EMFILE;
+  return 1;
+}
+
+int epoll_create1(int flags) {
+  if (should_fail("epoll_create1")) return -1;
+  return ((int (*)(int)) dlsym(RTLD_NEXT, "epoll_create1"))(flags);
+}
+
+int eventfd(unsigned int initval, int flags) {
+  if (should_fail("eventfd")) return -1;
+  return ((int (*)(unsigned int, int)) dlsym(RTLD_NEXT, "eventfd"))(initval, flags);
+}
+`;
+
+  test.concurrent.each([
+    ["epoll_create1", "EMFILE", "bun ran out of file descriptors (ProcessFdQuotaExceeded)"],
+    ["eventfd", "EMFILE", "bun ran out of file descriptors (ProcessFdQuotaExceeded)"],
+    ["eventfd", "ENFILE", "Your computer ran out of file descriptors (SystemFdQuotaExceeded)"],
+  ])("%s failing with %s exits 1 with the file descriptor error", async (syscall, errno, message) => {
+    using dir = tempDir("loop-init-fd-limit", {
+      "shim.c": shim,
+      "app.js": "console.log('entry point ran');\n",
+    });
+    const shimPath = path.join(String(dir), "shim.so");
+    const compiled = Bun.spawnSync({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, "shim.c", "-ldl"],
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(compiled.stderr.toString()).toBe("");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app.js", "--debug-crash-handler-use-trace-string"],
+      cwd: String(dir),
+      env: { ...noReportEnv, LD_PRELOAD: shimPath, FAIL_LOOP_SYSCALL: syscall, FAIL_LOOP_ERRNO: errno },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: expect.stringContaining(message) });
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
   });
 });
 

@@ -1,0 +1,33 @@
+# `a` and `b` live across the yield. A turn reads `a` at its start and both again in arm after arm. No suspension can be come from between the first read of a turn and the others: each is read out
+# of the frame where the turn first reads it on that way, and the name holds in every block below. So does the name of the frame's own pointer, which is read out of its slot once in a turn.
+# In `twice` both names are read above an arm and again behind it: one read of each word (at 64 and 72) in the whole body.
+# -- source: what-is-read-out-of-the-frame-of-a-generator-holds-in-the-blocks-below.cjs
+# function* steps(a, b) { let count = 0, x = 0; for (;;) { if (a.flag ? x > b.n : x < a.n) count += b.n; else count -= a.n; if (b.flag ? x > a.n : x < b.n) count += a.n; else count -= b.n; if (a.flag ? x < b.n : x > a.n) count += a.n; else count -= b.n; x = yield count; if (x < 0) break; } }
+# function* twice(a, out) { for (let x = 0;;) { out.push(a); if (x > 1) out.push(x); out.push(a); x = yield out.length; } }
+# const it = steps({ n: 3, flag: true }, { n: 5, flag: false }); for (const x of [0, 4, 9, 2]) say(it.next(x).value); const list = []; const other = twice("a", list); for (const x of [0, 1, 2]) say(other.next(x).value); say(list.join());
+# -- end of source
+# RUN(POINTER): emit f1:CoroutineBody mechanisms=all
+# POINTER-LABEL: unit f1:CoroutineBody
+# POINTER-COUNT-1: = Load({{*}}offset = 0, frameSlots
+# POINTER-NOT: = Load({{*}}offset = 0, frameSlots
+# RUN(POINTER2): emit f2:CoroutineBody mechanisms=all
+# POINTER2-LABEL: unit f2:CoroutineBody
+# POINTER2-COUNT-1: = Load({{*}}offset = 0, frameSlots
+# POINTER2-NOT: = Load({{*}}offset = 0, frameSlots
+# RUN(FIRST): emit f2:CoroutineBody mechanisms=all
+# FIRST-LABEL: unit f2:CoroutineBody
+# FIRST-COUNT-1: = Load({{*}}offset = 64, InternalFields
+# FIRST-NOT: = Load({{*}}offset = 64, InternalFields
+# RUN(SECOND): emit f2:CoroutineBody mechanisms=all
+# SECOND-LABEL: unit f2:CoroutineBody
+# SECOND-COUNT-1: = Load({{*}}offset = 72, InternalFields
+# SECOND-NOT: = Load({{*}}offset = 72, InternalFields
+# RUN(SHELL): run-in-shell globalThis.say = (x) => print(String(x));
+# SHELL: 3
+# SHELL-NEXT: 6
+# SHELL-NEXT: 1
+# SHELL-NEXT: 4
+# SHELL-NEXT: 2
+# SHELL-NEXT: 4
+# SHELL-NEXT: 7
+# SHELL-NEXT: a,a,a,a,a,2,a

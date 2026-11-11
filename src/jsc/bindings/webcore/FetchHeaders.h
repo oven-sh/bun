@@ -44,7 +44,7 @@ class FetchHeaders : public RefCounted<FetchHeaders> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchHeaders, FetchHeaders);
 
 public:
-    enum class Guard {
+    enum class Guard : uint8_t {
         None,
         Immutable,
         Request,
@@ -72,32 +72,49 @@ public:
 
     inline uint32_t size() const
     {
-        return m_headers.size();
+        return internalHeaders().size();
     }
 
     inline uint32_t sizeAfterJoiningSetCookieHeader() const
     {
-        return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
+        return internalHeaders().commonHeaders().size() + internalHeaders().uncommonHeaders().size() + (internalHeaders().getSetCookieHeaders().size() > 0);
     }
 
-    String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }
-    bool fastHas(HTTPHeaderName name) const { return m_headers.contains(name); }
-    bool fastRemove(HTTPHeaderName name) { return m_headers.remove(name); }
+    String fastGet(HTTPHeaderName name) const { return internalHeaders().get(name); }
+    bool fastHas(HTTPHeaderName name) const { return internalHeaders().contains(name); }
+    bool fastRemove(HTTPHeaderName name)
+    {
+        ++m_nativeRemovals;
+        return m_headers.willChange().remove(name);
+    }
 
-    const Vector<String, 0>& getSetCookieHeaders() const { return m_headers.getSetCookieHeaders(); }
+    const Vector<String, 0>& getSetCookieHeaders() const { return internalHeaders().getSetCookieHeaders(); }
 
     class Iterator {
     public:
         explicit Iterator(FetchHeaders&);
         Iterator(FetchHeaders&, bool lowerCaseKeys);
+        Iterator(Iterator&&) = default;
         std::optional<KeyValuePair<String, String>> next();
 
+        // Points into the headers: valid until they change or nextEntry() is called again.
+        struct Entry {
+            const String* key { nullptr };
+            const String* value { nullptr };
+            std::optional<HTTPHeaderName> name;
+        };
+        const Entry* nextEntry();
+
     private:
+        void collectEntries();
+
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
-        Vector<String> m_keys;
+        // Sorted by key, then the Set-Cookie headers in the order they were added.
+        Vector<Entry> m_entries;
+        Vector<String> m_lowercasedKeys;
         uint64_t m_updateCounter { 0 };
-        size_t m_cookieIndex { 0 };
+        uint16_t m_nativeRemovals { 0 };
         bool m_lowerCaseKeys { true };
     };
     Iterator createIterator(bool lowerCaseKeys = true)
@@ -110,8 +127,8 @@ public:
         return Iterator(*this, true);
     }
 
-    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTF::move(headers); }
-    const HTTPHeaderMap& internalHeaders() const { return m_headers; }
+    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers.willChange() = WTF::move(headers); }
+    const HTTPHeaderMap& internalHeaders() const { return m_headers.get(); }
 
     void setGuard(Guard);
     Guard guard() const { return m_guard; }
@@ -119,11 +136,32 @@ public:
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
-    uint64_t m_updateCounter { 0 };
-
 private:
+    // An iterator points into the map while the counter stands still, so the one way to a map that can be changed moves it.
+    class CountedHeaderMap {
+    public:
+        explicit CountedHeaderMap(HTTPHeaderMap map)
+            : m_map(WTF::move(map))
+        {
+        }
+
+        const HTTPHeaderMap& get() const { return m_map; }
+        HTTPHeaderMap& willChange()
+        {
+            ++m_updateCounter;
+            return m_map;
+        }
+        uint64_t updateCounter() const { return m_updateCounter; }
+
+    private:
+        HTTPHeaderMap m_map;
+        uint64_t m_updateCounter { 0 };
+    };
+
     Guard m_guard;
-    HTTPHeaderMap m_headers;
+    // How often fastRemove() ran. An iterator compares it with the counter to tell that nothing else changed the map.
+    uint16_t m_nativeRemovals { 0 };
+    CountedHeaderMap m_headers;
 };
 
 inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)
@@ -135,13 +173,13 @@ inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)
 inline FetchHeaders::FetchHeaders(const FetchHeaders& other)
     : RefCounted<FetchHeaders>()
     , m_guard(other.m_guard)
-    , m_headers(other.m_headers)
+    , m_headers(other.internalHeaders())
 {
 }
 
 inline void FetchHeaders::setGuard(Guard guard)
 {
-    ASSERT(!m_headers.size());
+    ASSERT(!internalHeaders().size());
     m_guard = guard;
 }
 

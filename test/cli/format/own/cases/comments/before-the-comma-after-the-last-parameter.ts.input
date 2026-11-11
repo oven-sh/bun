@@ -1,0 +1,7 @@
+function a(b: number
+// 1
+,): void {}
+function c(d: number /* 2 */ ,): void {}
+function e(f: number
+/* 3 */
+,): void {}

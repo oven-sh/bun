@@ -1,0 +1,85 @@
+# Every line of test/aot/mock-sequences*.test.ts that `bun test --aot` prints otherwise than `bun test`:
+#   <fault> <way> <sequence> <step> <what is asked>: loud | SILENT | <what the compiled run says>
+# A fix takes its lines out: BUN_AOT_REWRITE_MOCK_SEQUENCES=1 writes the lines of what ran anew, keeps the first word by the key, and puts `?` in front of a new key.
+# The ways: see harness/mock-sequences.ts. `m` is the mocked module, user.js holds `import { flag } from m`.
+#   second-mock            vi.doMock(m, f1); await import(m); vi.doMock(m, f2) or mock.module(m, f2), vi.doUnmock(m), mock.restore(): what the loads behind the later event get
+#   late-rejection         vi.doMock(m, async () => { await 0; throw e }): what the loads behind the failure get
+#   require-beside-await   require(m) while the mock's async factory has not been called, or has not settled
+#   require-of-importer    require("./user.js") in place of import("./user.js")
+#   user-above             user.js lies in an image above m's
+#   bare-behind-rejection  vi.doMock(m) without a factory, behind a factory that rejected
+#   next-file              the next test file, which mocks nothing
+#   plains-accident        a factory fails, user.js fails to load, import(m) fails once more, then comes a mock that does not fail: `bun test` goes on answering import("./user.js") with the old error until its next eviction pass: the failing import(m) took the entry of m out of the registry, so the next mock finds nothing stale. A compiled run does the same unless m is a CommonJS module or user.js had loaded before: those lines are left.
+#   names-the-original     a comment or a string in the factory names vi.importActual, importOriginal or original: `bun test` reads the text of a factory, passes over comments and not over strings
+#   asks-for-the-original  the factory awaits its argument (under either name) or vi.importActual(m), in double or single quotes, and may throw behind that
+#   body-awaits            m holds a top-level await
+#   body-throws            the body of m throws behind its exports
+# A `+` behind the fault: the compiler on Bun's main branch prints that line as `bun test` does: it was lost since.
+# `~ wavers <way> <sequence> <step> <what is asked>`: one of the two runs says now one thing, now another there: the line is not judged.
+~ wavers one throws-over+over+over.js.late 1 body the body:
+~ wavers one throws-over+over+over.js.late 2 body the body:
+~ wavers one throws-over+over+over.js.late 2 over held:
+~ wavers one throws-over+over+over.js.late 2 over names:
+~ wavers one throws-over+over+over.js.late 2 over values:
+~ wavers one throws-over+over+over.js.late 3 over held:
+~ wavers one throws-over+over+over.js.late 3 over names:
+~ wavers one throws-over+over+over.js.late 3 over values:
+late-rejection alone one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
+names-the-original one comment+string+single.cjs.late 1 body the body: SILENT | nothing
+names-the-original one comment+string+single.cjs.late.throws 1 body the body: SILENT | nothing
+names-the-original one comment+string+single.cjs.late.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.cjs.late.throws 2 string values: SILENT | import string2 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.cjs.late.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.cjs.required 1 body the body: SILENT | nothing
+names-the-original one comment+string+single.cjs.required.throws 1 body the body: SILENT | nothing
+names-the-original one comment+string+single.cjs.required.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.cjs.required.throws 2 string values: SILENT | import string2 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.cjs.required.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.late.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.js.late.throws 2 string values: SILENT | import threw the body throws 1 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.late.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.required.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.js.required.throws 2 string values: SILENT | import threw the body throws 1 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.required.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+second-mock one module+rejects+two.js.late 3 two held: SILENT | late real,real,real top none
+body-awaits+ one one+rejects+single-over.js.required.awaits 1 body the body: SILENT | runs behind 3 single-over
+body-awaits one one+rejects+single-over.js.required.awaits 2 rejects names: loud | import threw tardy boom 3 late threw tardy boom 2 top none
+body-awaits one one+rejects+single-over.js.required.awaits 2 rejects values: loud | import threw tardy boom 1 require threw require() async module "dep.js" is unsup late threw require() async module "user-late.js" is top none
+body-awaits one one+rejects+single-over.js.required.awaits 3 single-over held: loud | late threw Cannot access 'flag' before initializati top none
+late-rejection one one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
+late-rejection one one+rejects-over+one.js.late 3 one held: loud | late threw Cannot access 'flag' before initializati top none
+asks-for-the-original one one+throws-late+reset.js.late 3 reset held: loud | late threw Cannot access 'flag' before initializati top none
+asks-for-the-original+ one one+throws-late+reset.js.late 3 reset names: loud | import threw overdue boom 7 over real late threw overdue boom 6 over real top none
+second-mock one one+throws-over+one.cjs.late 1 body the body: SILENT | nothing
+asks-for-the-original one original+actual+throws-late.cjs.late 2 body the body: SILENT | runs behind 3 throws-late
+asks-for-the-original one original+actual+throws-late.cjs.required 2 body the body: SILENT | runs behind 3 throws-late
+asks-for-the-original one original+actual+throws-late.cjs.required 3 throws-late names: SILENT | import threw overdue boom 2 over real late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+asks-for-the-original one original+actual+throws-late.cjs.required 3 throws-late values: SILENT | import threw overdue boom 1 over real require real late ,, top none
+body-awaits one rejects+module+actual.js.late.awaits 1 body the body: SILENT | nothing
+body-awaits+ one rejects+module+actual.js.late.awaits 1 rejects names: loud | nothing
+body-awaits one rejects+module+actual.js.late.awaits 1 rejects values: loud | nothing
+body-awaits+ one rejects+module+actual.js.late.awaits 2 module held: loud | nothing
+body-awaits one rejects+module+actual.js.late.awaits 2 module names: loud | nothing
+body-awaits one rejects+module+actual.js.late.awaits 2 module values: loud | nothing
+body-awaits one rejects+module+actual.js.late.awaits 3 actual held: loud | nothing
+body-awaits+ one rejects+module+actual.js.late.awaits 3 actual names: loud | nothing
+body-awaits+ one rejects+module+actual.js.late.awaits 3 actual values: loud | nothing
+require-of-importer one rejects+one+unmock.cjs.required 1 rejects names: SILENT | import threw tardy boom 2 late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer one rejects+one+unmock.cjs.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer one rejects+one+unmock.cjs.required 2 one held: SILENT | late real,real,real top none
+require-of-importer one rejects+one+unmock.cjs.required 3 unmock held: SILENT | late real,real,real top none
+require-of-importer one rejects+one+unmock.js.required 2 body the body: SILENT | nothing
+late-rejection one rejects+reset+bare.cjs.late 2 reset names: loud | import threw tardy boom 8 late threw tardy boom 6 top none
+late-rejection one rejects+reset+bare.cjs.late 2 reset values: loud | import threw tardy boom 5 require real late threw tardy boom 6 top none
+plains-accident one rejects+reset+bare.cjs.late 3 bare names: loud | import default+flag+plain late threw tardy boom 6 top none
+plains-accident one rejects+reset+bare.cjs.late 3 bare values: loud | import real require real late threw tardy boom 6 top none
+names-the-original+ one string+single+rejects.js.late 2 body the body: SILENT | runs behind 3 rejects
+asks-for-the-original one throws-late+reset+single-actual.cjs.required 1 throws-late names: SILENT | import threw overdue boom 2 over real late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+asks-for-the-original one throws-late+reset+single-actual.cjs.required 1 throws-late values: SILENT | import threw overdue boom 1 over real require real late real,real,real top none
+asks-for-the-original one throws-late+reset+single-actual.cjs.required 2 body the body: SILENT | runs behind 1 throws-late
+asks-for-the-original one throws-late+reset+single-actual.cjs.required 2 reset held: SILENT | late real,real,real top none
+asks-for-the-original+ one throws-late+reset+single-actual.cjs.required 2 reset names: loud | import threw overdue boom 5 over real late threw overdue boom 4 over real top none
+asks-for-the-original one throws-late+reset+single-actual.cjs.required 3 body the body: SILENT | runs behind 2 reset
+asks-for-the-original one throws-late+reset+single-actual.cjs.required 3 single-actual held: SILENT | late real,real,real top none
+second-mock one throws-over+one+throws-over.cjs.late 1 body the body: SILENT | nothing
+second-mock one throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing

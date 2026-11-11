@@ -1,0 +1,9 @@
+# JSON.parse declares no receiver: what it does behind its reviver touches what it was passed, not the namespace that it was read off
+# -- source: a-reviver-lets-the-namespace-of-its-row-go-nowhere.ts
+# console.log(JSON.parse(process.argv[2]!, (key, value) => value));
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by JSONRawJSON

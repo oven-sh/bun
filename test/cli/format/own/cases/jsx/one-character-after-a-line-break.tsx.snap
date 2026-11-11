@@ -1,0 +1,50 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = (
+  <p>
+    Some words, and more of them, that do not fit on one line, whatever is done.
+    <br />
+    <br />
+    A sentence that starts with a word of one letter and goes on for a while,
+    you see.
+  </p>
+);
+const b = (
+  <div>
+    What is new: <br />🌔 A dark mode <br />
+    A dark mode <br />
+    ⚡️ Quick navigation <br />
+    é dark mode <br />
+    Ab dark mode <br />, and more <br />
+    I
+    <br />- <b>c</b>
+    <i>d</i>x<i>e</i>🌔<i>f</i>
+  </div>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = (
+  <p>
+    Some words, and more of them, that do not fit on one line, whatever is done.
+    <br />
+    <br />
+    A sentence that starts with a word of one letter and goes on for a while, you see.
+  </p>
+);
+const b = (
+  <div>
+    What is new: <br />🌔 A dark mode <br />
+    A dark mode <br />
+    ⚡️ Quick navigation <br />
+    é dark mode <br />
+    Ab dark mode <br />, and more <br />
+    I
+    <br />- <b>c</b>
+    <i>d</i>x<i>e</i>🌔<i>f</i>
+  </div>
+);
+
+===================== End =====================

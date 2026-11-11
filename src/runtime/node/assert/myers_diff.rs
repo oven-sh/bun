@@ -28,7 +28,7 @@ type int = i64; // must be large enough to hold all valid values of `uint` w/o o
 /// `u8`/`u16`, string-line equality for slice types) and a way to detect
 /// "is this a pointer/slice" inside `backtrack`. Both are expressed via this
 /// trait — implement it for any new line type.
-pub trait Line: Copy {
+pub(crate) trait Line: Copy {
     /// Whether this line type is a pointer/slice type.
     const IS_POINTER: bool;
     /// Equality with optional trailing-comma tolerance.
@@ -372,14 +372,14 @@ pub enum Error {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DiffKind {
+pub(crate) enum DiffKind {
     Insert,
     Delete,
     Equal,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Diff<T> {
+pub(crate) struct Diff<T> {
     pub(crate) kind: DiffKind,
     pub value: T,
 }

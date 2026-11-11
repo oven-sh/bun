@@ -2,7 +2,6 @@ use crate::mal_prelude::*;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{String as BunString, strings};
@@ -25,8 +24,7 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
-/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -66,13 +64,6 @@ pub(crate) fn write_output_files_to_disk(
             return Err(e.into());
         }
     };
-    // Optimization: when writing to disk, we can re-use the memory
-    // between iterations: MaxHeapAllocator retains the largest allocation.
-    // DynAlloc is currently `()` so the arena
-    // handles below are placeholders; allocation routes through global mimalloc.
-    let mut max_heap_allocator = MaxHeapAllocator::init();
-    let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
-    let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
     let mut pathbuf = bun_paths::path_buffer_pool::get();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
@@ -195,11 +186,6 @@ pub(crate) fn write_output_files_to_disk(
         }
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
-        // Reset the reusable
-        // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the arena, so when
-        // `code_allocator` is wired up it can borrow through `_code_allocator`.
-        let _code_allocator = max_heap_allocator.scope();
 
         let rel_parent =
             paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
@@ -386,14 +372,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
-                let loader: Loader = if chunk.entry_point.is_entry_point() {
-                    parse_graph.input_files.items_loader()
-                        [chunk.entry_point.source_index() as usize]
-                } else {
-                    Loader::Js
-                };
-
-                if loader.is_javascript_like() {
+                if c.chunk_gets_bytecode(chunk) {
                     let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
@@ -406,8 +385,10 @@ pub(crate) fn write_output_files_to_disk(
                         &code_result.buffer,
                         &source_provider_url,
                         c.options.bytecode_depth,
+                        c.options.optimize_bytecode,
                         None,
                     ) {
+                        let bytecode = crate::bytecode_sidecar::frame(bytecode);
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
                             "Bytecode cache generated {}: {}",
@@ -534,6 +515,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let output_kind = c.chunk_output_kind(chunk);
 
+        chunk.final_output_size = code_result.buffer.len();
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
             input_path,

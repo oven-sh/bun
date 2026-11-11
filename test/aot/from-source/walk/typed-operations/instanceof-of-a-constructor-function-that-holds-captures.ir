@@ -1,0 +1,15 @@
+# -- source: instanceof-of-a-constructor-function-that-holds-captures.js
+# var K = function () { function K(v) { if (!(this instanceof K)) throw new TypeError("called without new"); this.v = v; } return K; }();
+# function run(n) { var t = 0; for (var i = 0; i < n; i++) t += new K(i).v; return t; }
+# sink(run(9));
+# -- end of source
+# What a transpiler writes for a class: the function names itself, out of the environment of the function that is called at once, so its closure holds a capture.
+# The function is made once, its prototype object is settled ahead of every object and nothing lies on it under Symbol.hasInstance: all of it proven, so no guard is asked.
+# That the run time cannot make the closure by itself, because it holds captures, matters to the record of the class, which only a guard goes by.
+# f1 = run, with K copied in . f3 = K
+# RUN: walk f1 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = InstanceOf
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = InstanceOf
+# CHECK: Return

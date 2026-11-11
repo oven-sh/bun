@@ -1,0 +1,22 @@
+# A view lies in a buffer, and the engine makes no buffer over its bound: the length of a view is at most that bound over the size of an element.
+# So the counters of a loop over doubles, and their sums, are int32; bytes alone may pass it. The length itself is read as it lies in the cell, in 64 bits.
+# -- source: the-length-of-a-view-is-bounded-by-the-size-of-its-elements.ts
+# declare function sink(...values: unknown[]): void;
+# function doubles(view: Float64Array): number { return view.length; }
+# function words(view: Int32Array): number { return view.length; }
+# function halves(view: Uint16Array): number { return view.length; }
+# function bytes(view: Uint8Array): number { return view.length; }
+# function wide(view: BigInt64Array): number { return view.length; }
+# sink(doubles, words, halves, bytes, wide);
+# -- end of source
+# RUN: walk f1 f2 f3 f4 f5 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[0, 536870912] @Int64 = GetTypedArrayLength
+# CHECK-LABEL: code f2:Body
+# CHECK: : int[0, 1073741824] @Int64 = GetTypedArrayLength
+# CHECK-LABEL: code f3:Body
+# CHECK: : int[0, 2147483648] @Int64 = GetTypedArrayLength
+# CHECK-LABEL: code f4:Body
+# CHECK: : int[0, 4294967296] @Int64 = GetTypedArrayLength
+# CHECK-LABEL: code f5:Body
+# CHECK: : int[0, 536870912] @Int64 = GetTypedArrayLength

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, tempDir } from "harness";
 import { spawn as cpSpawn, spawnSync as cpSpawnSync, execFile, fork } from "node:child_process";
 import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 // controller). v2: a sibling of our own cgroup (children of a populated cgroup
 // can't get controllers). v1: directly under the memory hierarchy root.
 function setupCgroup(): { dir: string; version: 1 | 2; relative: string; canOOM: boolean } | null {
-  if (!isLinux || process.getuid?.() !== 0) return null;
+  if (!isLinux || !isRoot) return null;
   const name = `bun-spawn-test-${process.pid}`;
   const candidates: { dir: string; version: 1 | 2; relative: string }[] = [];
 

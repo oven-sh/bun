@@ -1,0 +1,23 @@
+# f1 = size
+# -- source: instanceof-tells-two-classes-apart.ts
+# class Circle {
+#   radius: number;
+#   constructor(radius: number) { this.radius = radius; }
+# }
+# class Square {
+#   side: number;
+#   constructor(side: number) { this.side = side; }
+# }
+# function size(shape: Circle | Square): number {
+#   if (shape instanceof Circle) return shape.radius;
+#   return shape.side;
+# }
+# declare const input: any;
+# (globalThis as any).answer = size(input ? new Circle(+input) : new Square(+input));
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 12, patches 0, moves 0, unlikely or rare 4.
+# RUN(X64): steps most:12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 12

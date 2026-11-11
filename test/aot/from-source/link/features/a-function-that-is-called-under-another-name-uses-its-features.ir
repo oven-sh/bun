@@ -1,0 +1,7 @@
+# a constant holds the function: the look follows it to its call
+# -- source: a-function-that-is-called-under-another-name-uses-its-features.ts
+# const held = Bun.color;
+# console.log(held("red", "hex"));
+# -- end of source
+# RUN: features
+# CHECK: by BunColor named

@@ -19,11 +19,14 @@ enum class DisconnectReason;
 
 using AnyServerPtr = void*;
 
-class InspectorHTTPServerAgent final : public InspectorAgentBase, public Inspector::HTTPServerBackendDispatcherHandler {
+class InspectorHTTPServerAgent final : public InspectorAgentBase, public Inspector::HTTPServerBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorHTTPServerAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorHTTPServerAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorHTTPServerAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorHTTPServerAgent);
 
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorHTTPServerAgent(JSC::JSGlobalObject&);
     virtual ~InspectorHTTPServerAgent();
 

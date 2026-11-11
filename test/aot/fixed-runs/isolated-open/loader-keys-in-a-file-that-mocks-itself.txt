@@ -1,0 +1,23 @@
+No program may name a module by a key of the loader, behind a NUL: import(), importActual(), importMock() and require() of such a name are refused, also in a test file that has a mock of itself whose factory takes the original.
+#### itself.test.ts
+import { test, vi } from "bun:test";
+
+async function attempts() {
+  for (const specifier of ["\0bun:module-mock", "\0\0bun:module-mock", "\0node:fs", "\0/etc/hostname"]) {
+    const row = [];
+    for (const load of [() => import(specifier), () => vi.importActual(specifier), () => vi.importMock(specifier), () => require(specifier)]) {
+      try {
+        row.push("loaded " + Object.keys(await load()).length);
+      } catch (error) {
+        row.push(error.constructor.name);
+      }
+    }
+    console.error("| CASE", JSON.stringify(specifier), row.join(" | "));
+  }
+}
+test("a test file that mocks itself", async () => {
+  vi.doMock(import.meta.path, async importOriginal => ({ a: 1 }));
+  await attempts();
+});
+#### package.json
+{ "name": "mock-internal-key" }

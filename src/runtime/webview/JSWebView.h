@@ -72,7 +72,6 @@ inline const char* screenshotMimeType(ScreenshotFormat f)
 class JSWebView final : public WebCore::JSEventTarget {
 public:
     using Base = WebCore::JSEventTarget;
-    using DOMWrapped = WebViewEventTarget;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     WebViewBackend m_backend = WebViewBackend::WebKit;

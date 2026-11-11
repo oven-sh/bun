@@ -10,7 +10,7 @@
 //!
 //! Port of ValidateNoDerivedComputationsInEffects.ts.
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -29,9 +29,31 @@ pub(crate) fn validate_no_derived_computations_in_effects(
     let effects_to_validate: Vec<(FunctionId, Vec<IdentifierId>)> = {
         let ids = &env.identifiers;
         let tys = &env.types;
-        let mut candidate_deps: HashMap<IdentifierId, Vec<IdentifierId>> = HashMap::new();
-        let mut functions_map: HashMap<IdentifierId, FunctionId> = HashMap::new();
-        let mut locals_map: HashMap<IdentifierId, IdentifierId> = HashMap::new();
+        // All that is collected is read at such a call.
+        let is_effect_with_deps = |value: &InstructionValue| match value {
+            InstructionValue::CallExpression { callee, args, .. }
+            | InstructionValue::MethodCall {
+                property: callee,
+                args,
+                ..
+            } => {
+                args.len() == 2
+                    && is_use_effect_hook_type(
+                        &tys[ids[callee.identifier.0 as usize].type_.0 as usize],
+                    )
+            }
+            _ => false,
+        };
+        if !func.body.blocks.values().any(|block| {
+            (block.instructions.iter())
+                .any(|iid| is_effect_with_deps(&func.instructions[iid.0 as usize].value))
+        }) {
+            return Ok(());
+        }
+
+        let mut candidate_deps: IdMap<IdentifierId, Vec<IdentifierId>> = IdMap::new();
+        let mut functions_map: IdMap<IdentifierId, FunctionId> = IdMap::new();
+        let mut locals_map: IdMap<IdentifierId, IdentifierId> = IdMap::new();
         let mut result = Vec::new();
 
         for (_, block) in &func.body.blocks {
@@ -63,13 +85,13 @@ pub(crate) fn validate_no_derived_computations_in_effects(
                                 (&args[0], &args[1])
                             {
                                 if let (Some(&func_id), Some(dep_elements)) = (
-                                    functions_map.get(&arg0.identifier),
-                                    candidate_deps.get(&arg1.identifier),
+                                    functions_map.get(arg0.identifier),
+                                    candidate_deps.get(arg1.identifier),
                                 ) {
                                     if !dep_elements.is_empty() {
                                         let resolved: Vec<IdentifierId> = dep_elements
                                             .iter()
-                                            .map(|d| locals_map.get(d).copied().unwrap_or(*d))
+                                            .map(|d| locals_map.get(*d).copied().unwrap_or(*d))
                                             .collect();
                                         result.push((func_id, resolved));
                                     }
@@ -84,13 +106,13 @@ pub(crate) fn validate_no_derived_computations_in_effects(
                                 (&args[0], &args[1])
                             {
                                 if let (Some(&func_id), Some(dep_elements)) = (
-                                    functions_map.get(&arg0.identifier),
-                                    candidate_deps.get(&arg1.identifier),
+                                    functions_map.get(arg0.identifier),
+                                    candidate_deps.get(arg1.identifier),
                                 ) {
                                     if !dep_elements.is_empty() {
                                         let resolved: Vec<IdentifierId> = dep_elements
                                             .iter()
-                                            .map(|d| locals_map.get(d).copied().unwrap_or(*d))
+                                            .map(|d| locals_map.get(*d).copied().unwrap_or(*d))
                                             .collect();
                                         result.push((func_id, resolved));
                                     }
@@ -147,8 +169,8 @@ fn validate_effect(
         }
     }
 
-    let mut seen_blocks: HashSet<BlockId> = HashSet::new();
-    let mut dep_values: HashMap<IdentifierId, Vec<IdentifierId>> = HashMap::new();
+    let mut seen_blocks: HashSet<BlockId> = HashSet::default();
+    let mut dep_values: HashMap<IdentifierId, Vec<IdentifierId>> = HashMap::default();
     for dep in effect_deps {
         dep_values.insert(*dep, vec![*dep]);
     }
@@ -163,7 +185,7 @@ fn validate_effect(
         }
 
         for phi in &block.phis {
-            let mut aggregate: HashSet<IdentifierId> = HashSet::new();
+            let mut aggregate: HashSet<IdentifierId> = HashSet::default();
             for operand in phi.operands.values() {
                 if let Some(deps) = dep_values.get(&operand.identifier) {
                     for d in deps {
@@ -193,7 +215,7 @@ fn validate_effect(
                 | InstructionValue::TemplateLiteral { .. }
                 | InstructionValue::CallExpression { .. }
                 | InstructionValue::MethodCall { .. } => {
-                    let mut aggregate: HashSet<IdentifierId> = HashSet::new();
+                    let mut aggregate: HashSet<IdentifierId> = HashSet::default();
                     for operand in value_operands(&instr.value) {
                         if let Some(deps) = dep_values.get(&operand) {
                             for d in deps {

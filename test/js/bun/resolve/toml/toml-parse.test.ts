@@ -57,15 +57,15 @@ test("Bun.TOML.parse rejects trailing backslash-CR in multiline basic string (#3
 // The old parser swapped the `\t` / `\f` escape output codepoints; the spec
 // defines `\t` = U+0009 and `\f` = U+000C.
 test("Bun.TOML.parse produces correct codepoints for \\t and \\f escapes", () => {
-  expect(Bun.TOML.parse('k = "a\\tb"').k).toBe("a\u0009b");
-  expect(Bun.TOML.parse('k = "a\\fb"').k).toBe("a\u000cb");
+  expect((Bun.TOML.parse('k = "a\\tb"') as any).k).toBe("a\u0009b");
+  expect((Bun.TOML.parse('k = "a\\fb"') as any).k).toBe("a\u000cb");
 });
 
 // The old parser decoded a literal CRLF to two LFs when the multiline string
 // also contained a backslash escape; the spec normalizes CRLF to one LF.
 test("Bun.TOML.parse normalizes literal CRLF to LF in multiline basic strings", () => {
   const input = 'k = """a\r\nb\\tc"""';
-  expect(Bun.TOML.parse(input).k).toBe("a\nb\tc");
+  expect((Bun.TOML.parse(input) as any).k).toBe("a\nb\tc");
 });
 
 // Duplicate detection for non-ASCII keys: keys are stored as UTF-16 EStrings

@@ -155,11 +155,6 @@ impl Members {
         self.len()
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     pub fn iter(&self) -> MembersIter<'_> {
         match self {
             Members::Empty => MembersIter::Inline(&[], &[], 0),
@@ -330,10 +325,6 @@ impl Members {
     }
 }
 
-// `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
-// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
-// longer derives `Clone` (private `origin` field); callers that need a shallow copy must
-// `core::mem::take` or `core::ptr::read` instead.
 pub struct Scope {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
@@ -359,6 +350,9 @@ pub struct Scope {
     // inside that scope can be renamed. We conservatively assume that the
     // evaluated code might reference anything that it has access to.
     pub contains_direct_eval: bool,
+
+    // Set on a "with" scope and every scope that encloses it, for compute_reserved_names_for_scope.
+    pub contains_with: bool,
 
     // This is to help forbid "arguments" inside class body scopes
     pub forbid_arguments: bool,
@@ -392,6 +386,7 @@ impl Scope {
         label_ref: Ref::NONE,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
+        contains_with: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,
         is_after_const_local_prefix: false,

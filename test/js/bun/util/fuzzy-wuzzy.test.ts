@@ -35,7 +35,7 @@ function log(from, ...message: any[]) {
 }
 
 const Promise = globalThis.Promise;
-globalThis.Promise = function (...args) {
+(globalThis as any).Promise = function (...args) {
   if (args.length === 0) {
     return Promise.resolve();
   }
@@ -50,7 +50,7 @@ globalThis.Promise = function (...args) {
     }
   });
 };
-globalThis.Promise.prototype = Promise.prototype;
+(globalThis.Promise as any).prototype = Promise.prototype;
 Object.assign(globalThis.Promise, Promise);
 
 function wrap(input, from) {
@@ -67,29 +67,29 @@ function wrap(input, from) {
 }
 
 // Don't allow these to be called
-delete process.exit;
-delete process._reallyExit;
-delete process.reallyExit;
-delete process.abort;
-delete process.kill;
-delete process._kill;
-delete process._destroy;
-delete process._events;
-delete process.openStdin;
-delete process.emitWarning;
+delete (process as any).exit;
+delete (process as any)._reallyExit;
+delete (process as any).reallyExit;
+delete (process as any).abort;
+delete (process as any).kill;
+delete (process as any)._kill;
+delete (process as any)._destroy;
+delete (process as any)._events;
+delete (process as any).openStdin;
+delete (process as any).emitWarning;
 require("stream").Readable.prototype.destroy = () => {};
-delete globalThis.Loader;
+delete (globalThis as any).Loader;
 // ** Uncatchable errors in tests **
-delete ReadableStreamDefaultReader.prototype["closed"];
-delete ReadableStreamBYOBReader.prototype["closed"];
-delete WritableStreamDefaultWriter.prototype["ready"];
-delete WritableStreamDefaultWriter.prototype["closed"];
+delete (ReadableStreamDefaultReader.prototype as any)["closed"];
+delete (ReadableStreamBYOBReader.prototype as any)["closed"];
+delete (WritableStreamDefaultWriter.prototype as any)["ready"];
+delete (WritableStreamDefaultWriter.prototype as any)["closed"];
 Object.defineProperty(ReadableStreamDefaultReader.prototype, "closed", { value: false });
 Object.defineProperty(ReadableStreamBYOBReader.prototype, "closed", { value: false });
 Object.defineProperty(WritableStreamDefaultWriter.prototype, "ready", { value: Promise.resolve() });
 Object.defineProperty(WritableStreamDefaultWriter.prototype, "closed", { value: false });
-WebAssembly.compile = () => {};
-WebAssembly.instantiate = () => {};
+(WebAssembly as any).compile = () => {};
+(WebAssembly as any).instantiate = () => {};
 // ** Uncatchable errors in tests **
 
 const banned = [
@@ -116,16 +116,16 @@ const banned = [
 ];
 const drainMicrotasks = require("bun:jsc").drainMicrotasks;
 
-import.meta.require.cache["bun:jsc"] = {};
-delete console.takeHeapSnapshot;
-delete console.clear;
-delete console.warn;
-delete console.time;
-delete console.timeEnd;
-delete console.trace;
-delete console.timeLog;
-delete console.assert;
-Bun.generateHeapSnapshot = () => {};
+import.meta.require.cache["bun:jsc"] = {} as any;
+delete (console as any).takeHeapSnapshot;
+delete (console as any).clear;
+delete (console as any).warn;
+delete (console as any).time;
+delete (console as any).timeEnd;
+delete (console as any).trace;
+delete (console as any).timeLog;
+delete (console as any).assert;
+(Bun as any).generateHeapSnapshot = () => {};
 
 const ignoreList = [
   Object.prototype,
@@ -188,7 +188,7 @@ function allThePropertyNames(object, banned) {
 
 if (ENABLE_LOGGING) {
   {
-    const original = Reflect.construct;
+    const original: (...args: any[]) => any = Reflect.construct;
     Reflect.construct = function (...args) {
       try {
         console.log(args?.[0]?.name || args?.[1]?.name || args?.[0]?.name || args?.[0]?.[Symbol.toStringTag]);
@@ -197,7 +197,7 @@ if (ENABLE_LOGGING) {
     };
   }
   {
-    const original = Reflect.apply;
+    const original: (...args: any[]) => any = Reflect.apply;
     Reflect.apply = function (...args) {
       try {
         console.log(args?.[0]?.name || args?.[1]?.name || args?.[0]?.name || args?.[0]?.[Symbol.toStringTag]);
@@ -270,7 +270,7 @@ function callAllMethods(object, rootName) {
 }
 
 function constructAllConstructors(object, rootName) {
-  const queue: { value: unknown; from: string }[] = [];
+  const queue: { value: any; from: string }[] = [];
   const seen = new Set([object?.subarray]);
   for (const methodName of allThePropertyNames(object, constructBanned)) {
     const fullName = rootName + "." + methodName;
@@ -294,7 +294,7 @@ function constructAllConstructors(object, rootName) {
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], method);
         (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(new " + fullName + "())" }));
         constructs++;
-      } catch (e) {
+      } catch (e: any) {
         Error.captureStackTrace(e);
       }
     }
@@ -325,7 +325,7 @@ function constructAllConstructors(object, rootName) {
 }
 
 function constructAllConstructorsWithSubclassing(object, rootName) {
-  const queue: { value: unknown; from: string }[] = [];
+  const queue: { value: any; from: string }[] = [];
   const seen = new Set([object?.subarray]);
   for (const methodName of allThePropertyNames(object, constructBanned)) {
     const fullName = rootName + "." + methodName;
@@ -365,7 +365,7 @@ function constructAllConstructorsWithSubclassing(object, rootName) {
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], Subclass);
         (Bun.inspect?.(returnValue), queue.push({ value: returnValue, from: "(newSubclass " + fullName + "())" }));
         subclasses++;
-      } catch (e) {
+      } catch (e: any) {
         Error.captureStackTrace(e);
       }
     }

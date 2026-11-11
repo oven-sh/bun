@@ -1,0 +1,20 @@
+# `try { Below.prototype = made; risky(); kept = null; } catch (error) { alias = kept; }`: the store under `prototype` is the first operation of its block, and the block hands `made` to its handler.
+# The arguments of a handler are read at the place of that first operation, so the object seemed to leave at the store alone: it passed for made to be the prototype and known under no other name.
+# What was then stored through the alias reached no layout: `alias.hello = ..; new Below().hello()` entered the method of the base.
+# f1 = Base, f2 = Below, f3 = risky
+# -- source: alias.ts
+# declare function sink(...values: unknown[]): void;
+# function Base(this: any) {}
+# function Below(this: any) { this.tag = 1; }
+# function risky() { throw new Error("stop"); }
+# Base.prototype.hello = function () { return "base"; };
+# const made = Object.create(Base.prototype);
+# let kept = made;
+# let alias: any = null;
+# try { Below.prototype = made; risky(); kept = null; } catch (error) { alias = kept; }
+# alias.hello = function () { return "alias"; };
+# sink(new (Below as any)().hello());
+# -- end of source
+# RUN(SCAN): summary f0
+# SCAN: Store Closure f2 "prototype"
+# SCAN-NOT: made-for-it

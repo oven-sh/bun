@@ -162,6 +162,78 @@ test.concurrent.each([
   expect(stderr).toContain("boom");
 });
 
+// Natively streamed bodies whose producer failed while nothing was reading them:
+// the native stream holds the error, with no JS rejection anywhere, when
+// Bun.serve renders the Response. Nothing is committed to the client at that
+// point, so the failure goes to error(), as it does when the handler returns
+// the failed fetch() Response itself or when such a producer fails before its
+// first byte right after Bun.serve attaches (see end_chunk). These used to be
+// sent as a complete `200` with `Content-Length: 0`, with the error reported
+// nowhere in either mode. The started variant used to abort the whole process
+// instead: `panic: range end index 262144 out of range for slice of length 0`.
+//
+// [variant, what error() received]
+const failedBeforeRender = [
+  ["native-errored-before-render", "ECONNRESET"],
+  ["native-rewriter-errored-before-render", "ECONNRESET"],
+  ["native-started-errored-before-render", "boom"],
+] as const;
+
+for (const flags of [[], ["development"]]) {
+  const mode = flags.length ? "development" : "production";
+  test.concurrent.each(failedBeforeRender)(
+    `%s in ${mode} mode: error() receives the stored error and answers the request`,
+    async (variant, received) => {
+      const { stdout, stderr, exitCode } = await runFixture(variant, ...flags);
+      expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        result: {
+          statusLine: "HTTP/1.1 500 Internal Server Error",
+          cleanChunkedTerminator: false,
+          body: `err-body:${received}`,
+          errorCb: 1,
+          unhandled: 0,
+          secondStatusLine: "HTTP/1.1 200 OK",
+        },
+        // error() handled it, so nothing is reported behind its back.
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Without an error() callback it is treated like any other unhandled handler
+  // failure: the default 500 goes out, the error is reported on stderr, and (as
+  // for a throwing handler) the process exit status becomes 1. The default body
+  // is mode-specific and not pinned.
+  test.concurrent(
+    `native stream errored before render, no error() (${mode}): default 500 and the error is reported`,
+    async () => {
+      const { stdout, stderr, exitCode } = await runFixture(
+        "native-errored-before-render",
+        ...flags,
+        "no-error-handler",
+      );
+      const { statusLine, secondStatusLine, errorCb, unhandled } = JSON.parse(stdout);
+      expect({
+        statusLine,
+        secondStatusLine,
+        errorCb,
+        unhandled,
+        // One report: its first line names the error.
+        reports: stderr.match(/^TypeError: ECONNRESET/gm),
+        exitCode,
+      }).toEqual({
+        statusLine: "HTTP/1.1 500 Internal Server Error",
+        secondStatusLine: "HTTP/1.1 200 OK",
+        errorCb: 0,
+        unhandled: 0,
+        reports: ["TypeError: ECONNRESET"],
+        exitCode: 1,
+      });
+    },
+  );
+}
+
 // The body errors after a chunk has already been flushed to the client. The
 // 200 is irrevocable at that point, but the connection must be closed without
 // the terminating `0\r\n\r\n` chunk (RFC 9112 section 7) so the client can

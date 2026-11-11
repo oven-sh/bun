@@ -41,19 +41,19 @@ public:
     ~URLSearchParams();
 
     static ExceptionOr<Ref<URLSearchParams>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&&);
-    static Ref<URLSearchParams> create(const String& string, DOMURL* associatedURL)
-    {
-        return adoptRef(*new URLSearchParams(string, associatedURL));
-    }
+    static ExceptionOr<Ref<URLSearchParams>> create(const String& string, DOMURL* associatedURL);
 
-    void append(const String& name, const String& value);
+    // Use this instead of WTF::URLParser::parseURLEncodedForm, which aborts if a name, a value or the list of pairs is too big for a Vector.
+    static ExceptionOr<Vector<KeyValuePair<String, String>>> parseURLEncodedForm(StringView);
+
+    ExceptionOr<void> append(const String& name, const String& value);
     void remove(const StringView name, const String& value = {});
     String get(const StringView name) const;
     Vector<String> getAll(const StringView name) const;
     bool has(const StringView name, const String& value = {}) const;
-    void set(const String& name, const String& value);
+    ExceptionOr<void> set(const String& name, const String& value);
     String toString() const;
-    void updateFromAssociatedURL();
+    ExceptionOr<void> updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
     size_t memoryCost() const;
@@ -72,7 +72,7 @@ public:
 
 private:
     const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }
-    URLSearchParams(const String&, DOMURL*);
+    URLSearchParams(Vector<KeyValuePair<String, String>>&&, DOMURL*);
     URLSearchParams(const Vector<KeyValuePair<String, String>>&);
     void updateURL();
 

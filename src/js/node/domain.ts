@@ -1,20 +1,49 @@
 // Import Events
-let EventEmitter;
+let EventEmitter: typeof import("./events").default | undefined;
 
 const ObjectDefineProperty = Object.defineProperty;
 
+type AnyFunction = (...args: any[]) => unknown;
+
+declare global {
+  namespace $Node {
+    interface Domain extends EventEmitter {
+      add(emitter: EventEmitter): void;
+      remove(emitter: EventEmitter): void;
+      bind(fn: AnyFunction): () => void;
+      intercept(fn: AnyFunction): (err?: unknown) => void;
+      run(fn: AnyFunction, ...args: unknown[]): unknown;
+      dispose(): this;
+      enter(): this;
+      exit(): this;
+    }
+  }
+}
+
+interface DomainError extends Error {
+  domainEmitter?: unknown;
+  domainThrown?: boolean;
+}
+
+interface DomainModule {
+  createDomain(): $Node.Domain;
+  create(): $Node.Domain;
+  _stack: $Node.Domain[];
+  active: $Node.Domain | null;
+}
+
 // Export Domain
-var domain: any = {};
+var domain = {} as DomainModule;
 domain.createDomain = domain.create = function () {
   if (!EventEmitter) {
     EventEmitter = require("node:events");
   }
-  var d = new EventEmitter();
+  var d = new EventEmitter!() as $Node.Domain;
 
-  function emitError(e) {
+  function emitError(this: unknown, e?: unknown) {
     e ||= $ERR_UNHANDLED_ERROR();
     if (typeof e === "object") {
-      e.domainEmitter = this;
+      (e as DomainError).domainEmitter = this;
       ObjectDefineProperty(e, "domain", {
         __proto__: null,
         configurable: true,
@@ -22,18 +51,18 @@ domain.createDomain = domain.create = function () {
         value: d,
         writable: true,
       });
-      e.domainThrown = false;
+      (e as DomainError).domainThrown = false;
     }
     d.emit("error", e);
   }
 
-  d.add = function (emitter) {
+  d.add = function (emitter: $Node.EventEmitter) {
     emitter.on("error", emitError);
   };
-  d.remove = function (emitter) {
+  d.remove = function (emitter: $Node.EventEmitter) {
     emitter.removeListener("error", emitError);
   };
-  d.bind = function (fn) {
+  d.bind = function (fn: AnyFunction) {
     return function () {
       var args = Array.prototype.slice.$call(arguments);
       try {
@@ -43,8 +72,8 @@ domain.createDomain = domain.create = function () {
       }
     };
   };
-  d.intercept = function (fn) {
-    return function (err) {
+  d.intercept = function (fn: AnyFunction) {
+    return function (err?: unknown) {
       if (err) {
         emitError(err);
       } else {
@@ -57,7 +86,7 @@ domain.createDomain = domain.create = function () {
       }
     };
   };
-  d.run = function (fn, ...args) {
+  d.run = function (this: $Node.Domain, fn: AnyFunction, ...args: unknown[]) {
     this.enter();
     try {
       return fn.$apply(this, args);
@@ -67,16 +96,16 @@ domain.createDomain = domain.create = function () {
       this.exit();
     }
   };
-  d.dispose = function () {
+  d.dispose = function (this: $Node.Domain) {
     this.removeAllListeners();
     return this;
   };
-  d.enter = function () {
+  d.enter = function (this: $Node.Domain) {
     stack.push(this);
     domain.active = process.domain = this;
     return this;
   };
-  d.exit = function () {
+  d.exit = function (this: $Node.Domain) {
     const index = stack.lastIndexOf(this);
     if (index === -1) return this;
     stack.splice(index, stack.length);
@@ -89,7 +118,7 @@ domain.createDomain = domain.create = function () {
 // Domains entered via enter()/run() and not yet exited, innermost last.
 // process.domain mirrors the top of the stack like in node so other modules
 // can observe the currently active domain.
-const stack: any[] = [];
+const stack: $Node.Domain[] = [];
 domain._stack = stack;
 domain.active = null;
 

@@ -1,0 +1,24 @@
+# -- source: main.ts
+# function make() {
+#     const read = () => late;
+#     const store = (value: number) => { late = value; };
+#     let answers = "";
+#     try { answers += read(); } catch (error) { answers += error instanceof ReferenceError; }
+#     try { store(1); answers += ",stored"; } catch (error) { answers += "," + (error instanceof ReferenceError); }
+#     let late = 7;
+#     answers += "," + read();
+#     store(8);
+#     return answers + "," + read();
+# }
+# print(make());
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# late is not listed where the scope would have been made. Its word among the variables begins as absent, and both closures go on asking.
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: true,true,7,8
+# RUN(MADE): run-in-shell mechanisms=all-PromotedEnvironments
+# MADE: true,true,7,8
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: true,true,7,8

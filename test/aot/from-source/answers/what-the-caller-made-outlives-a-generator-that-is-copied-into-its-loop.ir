@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function make() { return { x: 1, y: 2 }; }
+# const o = make(), other = make();
+# for (const e of (function* () { yield o; })()) e.x = 5;
+# print(o.x);
+# print(other.x + other.y);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime ends, at the return of a copy in line, the lives of what was built since the copy's frame was laid. The frame of a generator that is copied into the one loop that consumes it is laid by another road than that of a call: it ends no lives: `other` is the caller's.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: run-in-shell mechanisms=all
+# CHECK: 5
+# CHECK: 3
+# CHECK: went on

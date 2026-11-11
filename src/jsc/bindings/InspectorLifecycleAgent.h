@@ -16,11 +16,14 @@ class BackendDispatcher;
 class LifecycleReporterFrontendDispatcher;
 enum class DisconnectReason;
 
-class InspectorLifecycleAgent final : public InspectorAgentBase, public Inspector::LifecycleReporterBackendDispatcherHandler {
+class InspectorLifecycleAgent final : public InspectorAgentBase, public Inspector::LifecycleReporterBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorLifecycleAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorLifecycleAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorLifecycleAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorLifecycleAgent);
 
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorLifecycleAgent(JSC::JSGlobalObject&);
     virtual ~InspectorLifecycleAgent();
 

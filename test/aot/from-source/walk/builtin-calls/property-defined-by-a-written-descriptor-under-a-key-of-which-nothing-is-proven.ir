@@ -1,0 +1,21 @@
+# for (const [name, read] of Object.entries(all)) Object.defineProperty(target, name, { get: read, enumerable: true, configurable: true }): the name comes out of a pair and nothing is proven of it,
+# so the row for a descriptor that is written out turned away: the literal was made and the built-in called, 1,471 times up to the prompt of a real program: the whole of its distance to the old compiler there.
+# The literal is fresh and nobody else has it: whatever code a key runs to say what it stands for cannot look at it. What the built-in does first is to refuse what is no object: so the object must be proven one.
+# -- source: main.ts
+# declare function print(value: any): void;
+# function expose(target: object, all: Record<string, () => number>): void {
+#   for (const [name, read] of Object.entries(all)) Object.defineProperty(target, name, { get: read, enumerable: true, configurable: true });
+# }
+# const shown: any = {};
+# expose(shown, { one: () => 1, two: () => 2 });
+# expose(shown, { three: () => 3 });
+# print(shown.one + shown.two + shown.three);
+# print(Object.keys(shown).join());
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = ToPropertyKey
+# CHECK: DefineOwnProperty
+# CHECK-NOT: ObjectDefineProperty/0
+# RUN(CALL): run-in-shell
+# CALL: 6
+# CALL: one,two,three

@@ -5,6 +5,7 @@
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::time::Instant;
 
 use crate::Error;
 use bun_picohttp as picohttp;
@@ -27,6 +28,7 @@ pub struct Stream {
     // BACKREF: weak back-pointer, cleared before terminal callbacks.
     // Lifetime-erased — the stream never reads borrowed fields through this.
     pub(crate) client: Option<NonNull<HTTPClient<'static>>>,
+    pub(crate) opened_at: Instant,
 
     /// HEADERS + CONTINUATION fragments, decoded once END_HEADERS arrives.
     pub(crate) header_block: Vec<u8>,
@@ -130,6 +132,7 @@ impl Stream {
             id,
             async_http_id,
             client,
+            opened_at: Instant::now(),
             header_block: Vec::new(),
             body_buffer: Vec::new(),
             decoded_bytes: Vec::new(),

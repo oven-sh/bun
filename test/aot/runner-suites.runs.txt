@@ -26,6 +26,11 @@ test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from vitest leaves a modu
 # runs the modules that import the mocked one again under plain, and not under compiled.
 test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > the next test file gets the original []
 test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > two mocks of one export: the newest is stored again, and both are undone
+# In these compiled runs the mocked module once more than plain, behind the module or the test file that asks for it: for vi.importActual() in a module that waited or behind a second mock,
+# and for a mock without a factory of a module that is linked.
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > a mock that takes the place of another one, before the body ends and right behind it
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > it is linked, and imports the module that mocks it: a module that imports it reads the mock, or what the body assigns where the mock is made of its exports
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > vi.importActual() in a module that waited gives every export of the original
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > in files that mock the same module differently []

@@ -2800,10 +2800,8 @@ describe.each([
     expect(calls).toEqual(["set 5", "set 6", "set 7"]);
 
     // Behind a Proxy or another context, the global of the context keeps a copy of the value, where Node.js keeps none.
-    if (kind === "a plain object") {
-      delete (held as { accessor?: number }).accessor;
-      expect(runInContext(`Object.hasOwn(globalThis, "accessor")`, context)).toBe(false);
-    }
+    delete (held as { accessor?: number }).accessor;
+    expect(runInContext(`Object.hasOwn(globalThis, "accessor")`, context)).toBe(kind !== "a plain object");
   });
 });
 
@@ -2981,6 +2979,15 @@ test("a Proxy as the contextified object gets the traps of a store, a definition
   ]);
   expect(trapsOf(() => runInContext("delete this.data", context))).toEqual(["deleteProperty data"]);
   expect(Object.keys(target)).toEqual(["accessor"]);
+});
+
+// Node.js keeps no copy on the global either.
+test("a definition over a Proxy that hides the property goes to the Proxy alone", () => {
+  const target = {};
+  const context = createContext(new Proxy(target, { getOwnPropertyDescriptor: () => undefined }));
+  runInContext(`Object.defineProperty(globalThis, "hidden", { value: 1, configurable: true })`, context);
+  expect(Object.getOwnPropertyNames(target)).toEqual(["hidden"]);
+  expect(runInContext(`Object.hasOwn(globalThis, "hidden")`, context)).toBe(false);
 });
 
 test("a Proxy as the contextified object decides a delete", () => {

@@ -1183,7 +1183,7 @@ static ALWAYS_INLINE bool getDeclaredPropertySlotOfContextifiedObject(JSGlobalOb
         return false;
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* first = object;
+    [[maybe_unused]] JSObject* first = object;
     while (true) {
         Structure* structure = object->structureID().decode();
         if (!index && !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) {

@@ -100,6 +100,54 @@ describe.concurrent("compile: new URL(relative, import.meta.url)", () => {
     },
   );
 
+  test("a plugin's virtual module keeps its URL as written, never embedding from a guessed directory", async () => {
+    // The virtual module's path is relative, so it has no directory on disk to resolve "./x.txt"
+    // against. A real lib/x.txt exists in the build directory, so probing a guessed directory would
+    // find it; the URL must be left as written instead, like any target missing at build time.
+    using build = tempDir("new-url-asset-virtual", {
+      "build.ts": /* ts */ `
+        const result = await Bun.build({
+          entrypoints: ["./index.ts"],
+          compile: { outfile: "app" },
+          plugins: [{
+            name: "virtual",
+            setup(b) {
+              b.onResolve({ filter: /^virtual:mod$/ }, () => ({ path: "lib/mod.js", namespace: "virtual" }));
+              b.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+                contents: 'export const href = new URL("./x.txt", import.meta.url).href;',
+                loader: "js",
+              }));
+            },
+          }],
+        });
+        if (!result.success) {
+          console.error(result.logs.join("\\n"));
+          process.exit(1);
+        }
+      `,
+      "index.ts": /* ts */ `
+        import { href } from "virtual:mod";
+        console.log(JSON.stringify({ relative: href.endsWith("/x.txt"), embedded: Bun.embeddedFiles.length }));
+      `,
+      "lib/x.txt": "must not be embedded",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      cwd: String(build),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildErr, buildCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(buildErr).toBe("");
+    expect(buildCode).toBe(0);
+
+    const { stdout, stderr, code } = await run(join(String(build), "app" + exe));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ relative: true, embedded: 0 });
+    expect(code).toBe(0);
+  });
+
   test("a nested new URL inside a Worker's URL argument is not embedded either", async () => {
     using build = tempDir("new-url-asset-worker-nested", {
       "index.ts": /* ts */ `

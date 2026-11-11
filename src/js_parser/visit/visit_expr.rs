@@ -2674,7 +2674,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        let dir = self.source.path.name().dir;
+        // Only a module that is a file on disk has a directory to resolve against. A plugin's virtual
+        // module (another namespace, or a relative path) would make the check below probe the wrong place,
+        // so its URL is left as written, like any target that does not exist at build time.
+        let source = self.source;
+        if !(source.path.is_file() && bun_paths::is_absolute(source.path.text)) {
+            return;
+        }
+        let dir = source.path.name().dir;
         let mut joined = bun_paths::path_buffer_pool::get();
         let joined_len = {
             let abs = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::resolve_path::platform::Auto>(

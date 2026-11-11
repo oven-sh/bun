@@ -2233,10 +2233,14 @@ describe.concurrent("bun fmt", () => {
         ["a ` b\n    ``c`` d\n", "a ` b\n``c`` d\n", "a ` b\n`c` d\n"],
         // Only the runs before a span count.
         ["``a`` ` ``b``\n", "`a` ` ``b``\n", "`a` ` `b`\n"],
+        // Those and the runs in the code together.
+        ["a `` b ```x ` y```\n", "a `` b ```x ` y```\n", "a `` b ``x ` y``\n"],
+        ["a ` b ```x `` y```\n", "a ` b ```x `` y```\n", "a ` b `x `` y`\n"],
         // Prettier is right about these: an escaped backtick is no run, and a run with a closer is a span.
         ["a \\` b ``c``\n", "a \\` b `c`\n", null],
         ["x ` y ` z ``c``\n", "x `y` z `c`\n", null],
         ["a ` b\n\n``c``\n", "a ` b\n\n`c`\n", null],
+        ["| h | i |\n| - | - |\n| x ` | ``c`` |\n", "| h   | i   |\n| --- | --- |\n| x ` | `c` |\n", null],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
         expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before));
@@ -2258,6 +2262,14 @@ describe.concurrent("bun fmt", () => {
         const files = { "a.md": before, "b.md": after };
         const result = await format(files, [], { reads: Object.keys(files) });
         expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("in a template", async () => {
+        const text = "const a = markdown`\nA stray \\` backtick and then \\`\\`code\\`\\`\n`;\n";
+        const files = { "a.js": text };
+        const result = await format(files, [], { reads: ["a.js"] });
+        expect(result.files).toEqual({ "a.js": text });
         expect(result.exitCode).toBe(0);
       });
 

@@ -1,9 +1,13 @@
+// One build for each program. A build reads what the program stores on the classes of the library and how it links them
+// (class_stores.rs and prototype_links.rs in src/sema/check/aot), so one that held two of these cases would judge each beside
+// the other.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { run } from "./harness/run";
-import { test } from "./supported";
+import { built, slot, spawned } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
+import { test, testOneByOne } from "./supported";
 
 const head = `
 import http from "node:http";
@@ -54,28 +58,58 @@ for (const [name, deed] of Object.entries(deeds)) {
   files[`${name}-later.mjs`] = `${head}const later = () => { ${deed} };${server}`;
 }
 
-async function serve(dir: string, entry: string) {
-  const executable = join(dir, entry.replace(".mjs", isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", executable], dir, bunEnv);
-  expect(built.exitCode).toBe(0);
-  const path = executable + ".counts";
-  const { stdout, exitCode } = await run([executable], dir, { ...bunEnv, BUN_JSC_aotCountsPath: path });
-  const line = readFileSync(path, "utf8")
-    .split("\n")
-    .find(line => line.endsWith("\tcounter:ClassGuardBitsInvalidated"));
-  return { stdout, exitCode, guardBitsEnded: Number(line?.split("\t")[0] ?? 0) };
+// Six answers of "ok", the sizes of the six bodies that the server read, and how often the two functions of a tracing patch were called.
+const untraced = "6 5,5,5,5,5,5 0 0\n";
+const traced = "6 5,5,5,5,5,5 6 6\n";
+const counter = "counter:ClassGuardBitsInvalidated";
+
+/**
+ * Builds one program and starts it. The run prints `prints` and nothing else, ends well, and writes one line of the counter.
+ * The answer is the number on that line: how many guard bits the run ended.
+ */
+async function serve(entry: string, prints: string) {
+  using dir = tempDir("aot-short-roads-under-a-tracing-patch", { [entry]: files[entry] });
+  const folder = String(dir);
+  const executable = join(folder, entry.replace(".mjs", isWindows ? ".exe" : ""));
+  const counts = executable + ".counts";
+  const build = [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation, entry, "--outfile", executable];
+  // No more programs are built at once than the machine has processors.
+  return await slot(async () => {
+    built(await spawned(build, folder, bunEnv));
+    const answer = await spawned([executable], folder, { ...bunEnv, BUN_JSC_aotCountsPath: counts });
+    expect({ entry, ...answer }).toEqual({ entry, stdout: prints, stderr: "", exitCode: 0, signal: null });
+    const counted = readFileSync(counts, "utf8")
+      .split("\n")
+      .filter(line => line.endsWith(`\t${counter}`));
+    expect({ entry, [counter]: counted }).toEqual({ entry, [counter]: [expect.stringMatching(/^\d+\t/)] });
+    return Number(counted[0].split("\t")[0]);
+  });
 }
 
-test("plain stores of functions over and beside the library's methods end no guard that a quiet server keeps; what sees a read or a store above its messages ends some, whoever wrote its functions and whenever it is laid", async () => {
-  using dir = tempDir("aot-short-roads-under-a-tracing-patch", files);
-  const quiet = await serve(String(dir), "quiet.mjs");
-  expect(quiet).toMatchObject({ stdout: "6 5,5,5,5,5,5 0 0\n", exitCode: 0 });
-  expect(await serve(String(dir), "traced.mjs")).toEqual({ ...quiet, stdout: "6 5,5,5,5,5,5 6 6\n" });
-  const endsMore: Record<string, boolean> = {};
-  for (const entry of Object.keys(files).filter(entry => /-(ahead|later)\.mjs$/.test(entry))) {
-    const { guardBitsEnded, ...answer } = await serve(String(dir), entry);
-    expect({ entry, ...answer }).toEqual({ entry, stdout: quiet.stdout, exitCode: 0 });
-    endsMore[entry] = guardBitsEnded > quiet.guardBitsEnded;
-  }
-  expect(endsMore).toEqual(Object.fromEntries(Object.keys(endsMore).map(entry => [entry, true])));
-}, 900_000);
+let quiet: Promise<number> | undefined;
+/** The guard bits that the server ends which nothing is laid over. Every other program is held against it, so it is built once. */
+const endedByAQuietServer = () => (quiet ??= serve("quiet.mjs", untraced));
+
+// The programs are built beside one another. A debug build of Bun holds more than a gigabyte of memory for each build, so there
+// they are built one by one.
+const declare = isDebug ? testOneByOne : test.concurrent;
+
+declare("a quiet server answers its six requests, and its run counts the guard bits that it ended", async () => {
+  expect(await endedByAQuietServer()).toBeGreaterThanOrEqual(0);
+});
+
+declare(
+  "plain stores of functions over and beside the library's methods end no guard that a quiet server keeps",
+  async () => {
+    const [ended, endedByQuiet] = await Promise.all([serve("traced.mjs", traced), endedByAQuietServer()]);
+    expect(ended).toBe(endedByQuiet);
+  },
+);
+
+declare.each(Object.keys(deeds).flatMap(deed => [[deed, "ahead"] as const, [deed, "later"] as const]))(
+  "%s, laid %s: what sees a read or a store above the messages of a server ends some guards, whoever wrote its functions",
+  async (deed, moment) => {
+    const [ended, endedByQuiet] = await Promise.all([serve(`${deed}-${moment}.mjs`, untraced), endedByAQuietServer()]);
+    expect(ended).toBeGreaterThan(endedByQuiet);
+  },
+);

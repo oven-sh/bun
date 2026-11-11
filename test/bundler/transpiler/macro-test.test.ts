@@ -969,3 +969,45 @@ test("assigning to require.extensions while a pool thread resolves a macro", asy
     exitCode: 0,
   });
 });
+
+// The VM that a pool thread makes for its first macro copies the env of the main thread, which
+// `process.env` writes the proxy variables of. Without a lock, a debug build with ASAN reported the
+// use of a freed value in about two of five such processes.
+test("writing process.env.HTTP_PROXY while pool threads create their macro VM", async () => {
+  using dir = tempDir("macro-proxy-env", {
+    "macro.ts": `export function macro() {\n  return "found";\n}\n`,
+    "uses.ts": `import { macro } from "./macro.ts" with { type: "macro" };\nexport const value = macro();\n`,
+    "main.cjs": `
+      const keys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"];
+      const values = Array.from({ length: 16 }, (_, i) => Buffer.alloc(1000 + i, "x").toString());
+      let pending = 32;
+      (async () => {
+        const uses = Promise.all(
+          Array.from({ length: pending }, (_, i) => import("./uses.ts?" + i).finally(() => pending--)),
+        );
+        for (let i = 0; pending > 0; i++) {
+          for (const key of keys) {
+            if (i % 8 === 7) delete process.env[key];
+            else process.env[key] = values[i % values.length];
+          }
+          if (i % 1024 === 0) await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log([...new Set((await uses).map(module => module.value))].join());
+      })();
+    `,
+  });
+  async function run() {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "16" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+  const expected = { lastLine: "found", stderr: "", exitCode: 0 };
+  expect(await Promise.all([run(), run(), run(), run()])).toEqual([expected, expected, expected, expected]);
+});

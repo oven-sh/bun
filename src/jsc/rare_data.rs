@@ -361,13 +361,10 @@ pub type H2PaddedFrameBuffer = [u8; 16384];
 // ProxyEnvStorage
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Serialises `Bun__setEnvValue`'s slot swap + `env.map.put` against a worker's
-/// `clone_from` + `env.map.cloneWithAllocator`. Closes two races: (1) worker
-/// reading a slot `Arc` concurrently with the parent dropping it to refcount 0;
-/// (2) the env map being iterated during clone while the parent's `put()`
-/// rehashes it. Callers hold the guard across the paired env-map op — the
-/// mutex doubles as the env-map serialisation point even though it owns only
-/// the slots.
+/// Serialises `Bun__setEnvValue`'s slot swap against a worker's `clone_from`,
+/// which could read a slot `Arc` while the parent drops it to refcount 0.
+/// Callers hold the guard across the paired env-map op, so that a worker's map
+/// matches its slots. The map itself is under the lock of `bun_dotenv::Loader`.
 ///
 /// PORTING.md §Concurrency: lock owns the data — no sidecar `Mutex<()>` field.
 #[derive(Default)]

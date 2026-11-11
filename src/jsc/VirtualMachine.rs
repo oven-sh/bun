@@ -6622,7 +6622,12 @@ impl VirtualMachine {
         self.restore_test_time_zone();
         if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {
             let mut slots = self.proxy_env_storage.lock();
-            slots.restore(&mut self.transpiler.env_mut().map, snapshot);
+            // SAFETY: the VM's loader is live, and only this thread writes its map.
+            unsafe {
+                bun_dotenv::Loader::update_map(self.transpiler.env, |map| {
+                    slots.restore(map, snapshot)
+                })
+            };
         }
     }
 

@@ -8,11 +8,12 @@
 //   #### name alone                    says nothing
 // Each program is the one entry point of a build of its own, so none hides the fault of another, and a build that fails takes no other program along.
 // To see a new one fail: <a Bun that has the fault> test test/aot/fixed.test.ts -t "<name>"
-import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDirWithBunTypes } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { built, slot, spawned, told, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { describe, test } from "./supported";
 
 type Program = {
@@ -56,14 +57,9 @@ function read(text: string) {
   return programs;
 }
 
-// An executable is a copy of Bun with the program in it, and with a sanitizer that copy is several hundred megabytes for each of some 200 programs.
-// The programs are held to what compiled code prints, and ask nothing of the file that holds it. So with a sanitizer, on Linux, a build writes its
-// program alone (harness/program-alone.ts), as the builds of the stored programs do (run-parallel.ts): the compile is the same.
-// AOT_REAL_EXECUTABLES=1 around a run asks for the executables, as it does there.
-const atTheBuild =
-  isLinux && isASAN && !process.env.AOT_REAL_EXECUTABLES ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: "1" } : bunEnv;
-// The copy of Bun without debug information is what an executable is made of. A build that is given one writes an executable whatever that variable says.
-const forAnExecutable = atTheBuild.BUN_AOT_WRITES_PROGRAM_ALONE ? [] : withoutDebugInformation();
+// AOT_PROGRAMS_ALONE=1 around a run asks each build for its program alone (harness/program-alone.ts). A build that is given a copy of Bun to make
+// an executable of writes an executable all the same, so then it is given none.
+const forAnExecutable = bunEnv.BUN_AOT_WRITES_PROGRAM_ALONE ? [] : withoutDebugInformation();
 
 const folderOfPrograms = join(import.meta.dir, "fixed");
 // The folders are removed when the file is done, not behind each `describe`: a hook between two of them ends the group of cases that run beside one
@@ -89,7 +85,7 @@ for (const file of readdirSync(folderOfPrograms).sort()) {
           const outfile = `${basename(entry).replace(/\.\w+$/, "")}-${names.indexOf(name)}`;
           const statistics = counts.length ? ["--explain=statistics"] : [];
           const words = ["--aot", "--root=.", ...flags, ...statistics, ...forAnExecutable, entry, "--outfile", outfile];
-          const build = await spawned([bunExe(), "build", "--compile", ...words], folder, atTheBuild);
+          const build = await spawned([bunExe(), "build", "--compile", ...words], folder, bunEnv);
           try {
             built(build);
             const ran = await spawned([join(folder, outfile)], folder, bunEnv);

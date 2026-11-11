@@ -20,6 +20,8 @@ pub mod StandaloneModuleGraph;
 pub mod compiled_program;
 mod executable_file;
 pub mod executable_request;
+#[cfg(not(windows))]
+pub use compiled_program::has_descriptors;
 pub use compiled_program::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };
@@ -27,5 +29,5 @@ pub use executable_file::with_executable_image;
 
 // Re-export the flat surface most downstream callers use.
 pub use StandaloneModuleGraph::{
-    BASE_PATH, BASE_PUBLIC_PATH, File, StandaloneModuleGraph as Graph, is_bun_standalone_file_path,
+    BASE_PUBLIC_PATH, File, StandaloneModuleGraph as Graph, is_bun_standalone_file_path,
 };

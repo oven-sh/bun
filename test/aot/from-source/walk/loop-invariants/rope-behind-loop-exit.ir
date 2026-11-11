@@ -1,0 +1,22 @@
+# A rope was flattened before every loop that reads its characters, also where the loop leaves before its first read.
+# f1: an element decides, which the preheader cannot know: the string may stay a rope, and the first read resolves it. f2: a relation over values that enter the loop decides: it is tested in front.
+# f3 reads first: nothing is tested but the loop's own bound.
+# -- source: rope-behind-loop-exit.ts
+# function find(s: string, marks: boolean[]): number { for (let i = 0; i < s.length; i++) { if (marks[i]) return i; if (s.charCodeAt(i) === 58) return -i; } return -1; }
+# function scan(s: string, max: number): number { let n = 0; for (let i = 0; i < s.length; i++) { if (i > max) break; if (s.charCodeAt(i) === 32) n++; } return n; }
+# function count(s: string): number { let n = 0; for (let i = 0; i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; }
+# const size = process.argv.length;
+# console.log(find("abc:def" + size, [size > 9]), scan("a b c" + size, size), count("a b c" + size));
+# -- end of source
+# RUN: walk f1 f2 f3 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = FlattenString {{*}} [mayStayRope]
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: mayStayRope
+# CHECK: [[begins]]: boolean @Boolean = Less
+# CHECK: [[stays]]: boolean @Boolean = LogicalNot
+# CHECK: = FlattenString {{*}}, [[begins]], [[stays]] traits
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: mayStayRope
+# CHECK: [[starts]]: boolean @Boolean = Less
+# CHECK: = FlattenString {{*}}, [[starts]] traits

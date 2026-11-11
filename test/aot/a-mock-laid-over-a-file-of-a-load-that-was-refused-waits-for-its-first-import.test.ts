@@ -44,8 +44,12 @@ test("a member of the ring is mocked", async () => {
   expect(await said("e1.mjs", "e0.mjs")).toEqual(waits);
 });
 
-test("the file that asks for the name is mocked", async () => {
-  expect(await said("e1.mjs", "e3.mjs")).toEqual(waits);
+// The name is one that only the mock can have, and it has it: plain Bun answers so too.
+test("the file that asks for the name is mocked, and answers", async () => {
+  expect(await said("e1.mjs", "e3.mjs")).toEqual({
+    ...waits,
+    said: ["early SyntaxError", "behind the call", "the factory runs", "loaded"],
+  });
 });
 
 test("the file that was imported early is the one that is mocked", async () => {

@@ -61,7 +61,6 @@ export function getLightStdioWriteStreams(
     // For a stream that was never ended, destroyed or listened to.
     function writeToThis(data: any, encoding?: unknown, cb?: unknown): boolean {
       if (typeof encoding === "function") cb = encoding;
-      if (isFile) hasEmittedError = false;
       const maybePromise = writeToSink(fd, data);
       if (!$isPromise(maybePromise)) {
         if (typeof cb === "function") cb(null);
@@ -74,15 +73,19 @@ export function getLightStdioWriteStreams(
         err => {
           if (typeof cb === "function") cb(err);
           // errorOrDestroy(): nobody listens for "error", so emitting it throws the error, and it is emitted once. A stream over a file
-          // emits behind the callbacks of the writes that failed with this one, outside of any promise, and may emit again for a later write.
-          if (hasEmittedError) return;
-          hasEmittedError = true;
-          if (!isFile) throw err;
-          queueMicrotask(() => {
+          // is destroyed, which emits on the next tick, and _undestroy() lets it emit again.
+          if (isFile) {
+            hasEmittedError = false;
             nextTick(() => {
+              if (hasEmittedError) return;
+              hasEmittedError = true;
               throw err;
             });
-          });
+            return;
+          }
+          if (hasEmittedError) return;
+          hasEmittedError = true;
+          throw err;
         },
       );
       return false;

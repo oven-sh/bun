@@ -21,7 +21,7 @@
 # OPTIONS: check=Validate
 # RUN: compile LoopVisits
 # Since operators on bits alone bring `a` round, it starts as an int32 at every head and misfits nowhere: two walks a loop, and one more of the innermost.
-# CHECK: statistic LoopVisits 17
+# CHECK: statistic LoopVisits 16
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: -6
 # SHELL: exited with 0

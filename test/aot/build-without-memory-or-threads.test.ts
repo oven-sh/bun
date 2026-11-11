@@ -320,6 +320,27 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
     });
   }, 120_000);
 
+  // At two frames an operand, the threads would need 20 MB.
+  const operands = 200_000;
+  test.each([
+    ["commas", `(a${", a".repeat(operands)})`, "number"],
+    ["&&", `a${" && a".repeat(operands)}`, "number"],
+    ["||", `a${" || a".repeat(operands)}`, "number"],
+    ["??", `a${" ?? a".repeat(operands)}`, "number"],
+    ["a sum in a test", `(a${" + a".repeat(operands)}) == a ? 1 : "s"`, "string"],
+    ["a function before ||", `(v => v)${" || a".repeat(operands)}`, "function"],
+  ])("operator chains take no stack: %s", async (_, expression, type) => {
+    await Bun.write(join(cwd, "chain.js"), `let a = Number("1");\nconst x = ${expression};\nconsole.log(typeof x);\n`);
+    const executable = join(cwd, "chain");
+    expect(await run([...buildOf("chain.js"), executable], { ...shimEnv, STACK: String(4 << 20) })).toEqual({
+      stdout: expect.any(String),
+      errors: [],
+      exitCode: 0,
+      signal: null,
+    });
+    expect((await run([executable], bunEnv)).stdout).toBe(`${type}\n`);
+  });
+
   // These threads and no others.
   async function expectEndsOfBuildsRefusedThread(program: string) {
     // A program this small is otherwise compiled on one thread.

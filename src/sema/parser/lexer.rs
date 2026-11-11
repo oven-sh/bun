@@ -103,6 +103,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) attach_comments: bool,
     /// `hir::rare::LEGACY_OCTAL`
     pub(crate) has_legacy_octal: bool,
+    /// `Options::accepts_legacy_octal`
+    pub(crate) accepts_legacy_octal: bool,
     /// `Options::recovers`
     pub(crate) recovers: bool,
     /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
@@ -314,6 +316,7 @@ impl<'a> Lexer<'a> {
             max_relevant_node_start: 0,
             flagged: Vec::new(),
             has_legacy_octal: false,
+            accepts_legacy_octal: false,
             recovers: false,
             errors: Vec::new(),
             skips_jsdoc_asterisks: false,
@@ -464,8 +467,8 @@ impl<'a> Lexer<'a> {
         if self.is_ecmascript && !self.compiles() {
             self.flagged.push((code, start as u32, end as u32));
         }
-        self.has_legacy_octal |= self.compiles();
-        self.is_ecmascript
+        self.has_legacy_octal |= self.compiles() || self.accepts_legacy_octal;
+        self.is_ecmascript || self.accepts_legacy_octal
     }
 
     /// Drops the comments from `pos` on. That text is scanned again, possibly as something else.
@@ -1489,7 +1492,7 @@ impl<'a> Lexer<'a> {
         if !self.flag(code, pos, end) {
             return None;
         }
-        if is_reported_by_bun_run && self.compiles() {
+        if is_reported_by_bun_run && (self.compiles() || self.accepts_legacy_octal) {
             self.flagged.push((code, pos as u32, end as u32));
         }
         push_codepoint_wtf8_joined(text, c);

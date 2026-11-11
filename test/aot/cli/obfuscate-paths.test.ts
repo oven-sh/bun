@@ -3,9 +3,9 @@
 // all four where a name that is made when the program runs may be that of any file.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
+import { bytesAndStoredStrings } from "../harness/executable-bytes";
 import { buildFlags } from "../harness/flags";
 import { describe, test } from "../supported";
 
@@ -23,7 +23,7 @@ async function buildBoth(files: Record<string, string>, folder: string) {
   const reference = await spawned([await compile(folder, entry, "reference")], folder, env);
   const executable = await compile(folder, entry, "obfuscated", buildFlags.obfuscate);
   const obfuscated = await spawned([executable], folder, env);
-  const bytes = readFileSync(executable);
+  const bytes = bytesAndStoredStrings(executable);
   return { reference, obfuscated, held: names.filter(name => bytes.includes(name)) };
 }
 

@@ -632,6 +632,10 @@ impl<'a, 's> Finder<'a, 's> {
         if self.file.decisions.is_dead_expr(expression) {
             return false;
         }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            alternatives.push(Alternative::Other);
+            return true;
+        }
         let expression = hir.skip_type_assertions(expression);
         let held = match hir[expression].kind {
             ExprKind::Fn(function) => Alternative::Function(HeldFunction {

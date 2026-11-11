@@ -27,8 +27,8 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Layout, LayoutKind, Variable, VariableFlags, VariableInitialization};
 use crate::ir::parallel::map_each;
 use crate::ir::{
-    DeclaredType, FunctionKey, Id, InParallel, LayoutId, LayoutKey, ModuleId, StringId, TypeFlags,
-    TypeTable, VariableKey, for_each_mut,
+    DeclaredType, FunctionKey, Id, InParallel, LayoutId, LayoutKey, ModuleId, PackedLayout,
+    StringId, TypeFlags, TypeTable, VariableKey, for_each_mut,
 };
 use crate::load::{ProgramFile, ProjectId};
 use crate::lower::ObjectTypeKey;
@@ -123,7 +123,7 @@ pub(super) fn forget_library_layouts_without_definition(
                     || is_defined[local_to_merged[layout.index()] as usize].load(Ordering::Relaxed)
             };
             for (_, definition) in &mut unit.layout_definitions {
-                definition.base = definition.base.filter(|&base| has_layout(base));
+                definition.set_base(definition.base().filter(|&base| has_layout(base)));
             }
             unit.supertype_edges
                 .retain(|&(layout, supertype)| has_layout(layout) && has_layout(supertype));
@@ -132,7 +132,7 @@ pub(super) fn forget_library_layouts_without_definition(
 }
 
 fn order_definitions_of_layout(
-    definitions: &mut [(LayoutId, Layout)],
+    definitions: &mut [(LayoutId, PackedLayout)],
     start: u32,
     types: &mut [(u32, ObjectTypeKey)],
 ) {
@@ -141,13 +141,13 @@ fn order_definitions_of_layout(
     for (index, (_, definition)) in (0..).zip(definitions.iter()) {
         let ty =
             types_of_definitions.next_if(|&&(of_definition, _)| of_definition == start + index);
-        order.push((ty.map(|&(_, ty)| ty), definition.position, index));
+        order.push((ty.map(|&(_, ty)| ty), definition.position(), index));
     }
     if order.is_sorted() {
         return;
     }
     order.sort_unstable();
-    let mut taken: SmallVec<[Layout; 8]> = SmallVec::new();
+    let mut taken: SmallVec<[PackedLayout; 8]> = SmallVec::new();
     taken.extend(definitions.iter_mut().map(|it| core::mem::take(&mut it.1)));
     for (definition, &(.., from)) in definitions.iter_mut().zip(&order) {
         definition.1 = core::mem::take(&mut taken[from as usize]);
@@ -288,7 +288,7 @@ fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
                 key,
                 FunctionKey::Signature(_) | FunctionKey::ClassSignature(_)
             );
-            let number = match is_function_type && definition.parameters.is_empty() {
+            let number = match is_function_type && !definition.has_parameters() {
                 true => WITHOUT_PARAMETERS | number_of_pair(unit as u32, index),
                 false => number_of_pair(unit as u32, index),
             };
@@ -341,8 +341,8 @@ fn list_defined_layouts(
                 site: DefinitionSite { unit, index },
                 object_type: ty.map(|&(_, ty)| ty),
                 is_mentioned_by_code: link_unit.layouts_named_by_code.binary_search(id).is_ok(),
-                has_place: definition.module.is_some(),
-                base: definition.base.map(|base| merged.layout(link_unit, base)),
+                has_place: definition.has_module(),
+                base: (definition.base()).map(|base| merged.layout(link_unit, base)),
             });
         }
     }

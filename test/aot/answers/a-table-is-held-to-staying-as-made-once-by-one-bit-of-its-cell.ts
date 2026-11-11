@@ -16,7 +16,7 @@
 // # RUN: run-in-shell $SHELL
 // # CHECK: 4 of 4 of 4
 // # CHECK-NEXT: exited with 0
-function twice(table: Map<string, number>, name: string): number { const before = (table.get(name) ?? 0) + (table.get(name) ?? 0); report(before); return before + (table.get(name) ?? 0); }
+function twice(table: Map<string, number>, name: string): number { const before = (table.get(name) ?? 0) + (table.get("b") ?? 2); report(before); return before + (table.get(name) ?? 0); }
 function lengthOf(view: Uint8Array): number { return view.length; }
 report(twice(new Map([["a", 2]]), "a"));
 report(lengthOf(new Uint8Array(3)));

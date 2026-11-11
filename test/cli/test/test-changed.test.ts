@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -128,6 +128,117 @@ describe.concurrent("bun test --changed", () => {
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The scan is made only for its import graph. It reads a macro import as an ordinary import: the file of the
+  // macro is a module of the graph, and no macro runs.
+  const macroImports = [
+    ["an import attribute", `"./src/macro" with { type: "macro" }`],
+    ["the macro: prefix", `"macro:./src/macro"`],
+  ] as const;
+  const macroNames = ["calls.test.ts", "plain.test.ts"];
+  const macroFixture = (specifier: string) => ({
+    "package.json": JSON.stringify({ name: "changed-macro", type: "module" }),
+    // A call of the macro leaves a file behind.
+    "src/macro.ts": `import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nimport { base } from "./base";\nexport function one() {\n  writeFileSync(join(import.meta.dir, "MACRO_RAN"), "");\n  return base;\n}\n`,
+    "src/base.ts": `export const base = 1;\n`,
+    "calls.test.ts": `import { test, expect } from "bun:test";\nimport { one } from ${specifier};\ntest("calls", () => expect(one()).toBe(1));\n`,
+    "plain.test.ts": `import { test, expect } from "bun:test";\ntest("plain", () => expect(1).toBe(1));\n`,
+    "README.md": "hello\n",
+  });
+
+  test.each(
+    macroImports.flatMap(([form, specifier]) =>
+      [
+        ["the file of the macro", "macro.ts"],
+        ["a file that the macro imports", "base.ts"],
+      ].map(([what, changed]) => [form, what, specifier, changed] as const),
+    ),
+  )("a macro imported with %s: a change to %s selects the test that calls it", async (_, __, specifier, changed) => {
+    using dir = tempDir("test-changed-macro", macroFixture(specifier));
+    initRepo(String(dir));
+
+    appendFileSync(join(String(dir), "src", changed), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, macroNames)).toEqual(["calls.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(macroImports)("a macro imported with %s is not called by the scan", async (_, specifier) => {
+    using dir = tempDir("test-changed-macro-scan", macroFixture(specifier));
+    initRepo(String(dir));
+
+    // No test is selected, so only the scan could call the macro.
+    appendFileSync(join(String(dir), "README.md"), "more\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({
+      ran: ranFiles(stderr, macroNames),
+      macroRan: existsSync(join(String(dir), "src", "MACRO_RAN")),
+    }).toEqual({ ran: [], macroRan: false });
+    expect(stderr).toContain("no test files are affected");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro that needs the preload does not hide the other imports of its caller", async () => {
+    // The scan runs before the preload. A macro that it called would throw here, and a file with an error has no
+    // import records.
+    using dir = tempDir("test-changed-macro-preload", {
+      "package.json": JSON.stringify({ name: "changed-macro-preload", type: "module" }),
+      "bunfig.toml": `[test]\npreload = ["./preload.ts"]\n`,
+      "preload.ts": `globalThis.REGION = "eu";\n`,
+      "src/region.ts": `export function region() {\n  if (!globalThis.REGION) throw new Error("the preload did not run");\n  return globalThis.REGION;\n}\n`,
+      "src/dep.ts": `export const dep = 1;\n`,
+      "calls.test.ts": `import { test, expect } from "bun:test";\nimport { dep } from "./src/dep";\nimport { region } from "./src/region" with { type: "macro" };\ntest("calls", () => expect(region() + dep).toBe("eu1"));\n`,
+      "plain.test.ts": `import { test, expect } from "bun:test";\ntest("plain", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+
+    appendFileSync(join(String(dir), "src", "dep.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, macroNames)).toEqual(["calls.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file that only the result of a macro names does not select the test", async () => {
+    // The scan runs no macro, so it does not see a specifier that a macro computes.
+    using dir = tempDir("test-changed-macro-result", {
+      "package.json": JSON.stringify({ name: "changed-macro-result", type: "module" }),
+      "src/paths.ts": `export function imported() {\n  return "./src/imported.ts";\n}\nexport function required() {\n  return "./src/required.ts";\n}\n`,
+      "src/imported.ts": `export const value = 1;\n`,
+      "src/required.ts": `export const value = 2;\n`,
+      "calls.test.ts": `import { test, expect } from "bun:test";\nimport { imported, required } from "./src/paths" with { type: "macro" };\ntest("calls", async () => {\n  expect((await import(imported())).value + require(required()).value).toBe(3);\n});\n`,
+    });
+    initRepo(String(dir));
+
+    appendFileSync(join(String(dir), "src", "imported.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "src", "required.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, macroNames)).toEqual([]);
+    expect(stderr).toContain("no test files are affected");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the scan removes one macro: prefix, as a call of the macro does", async () => {
+    // With the prefix more than once, the rest names no file: not for the call of the macro, and not for the scan.
+    const import_ = (prefixes: number) =>
+      `import { test, expect } from "bun:test";\nimport { one } from "${Buffer.alloc(prefixes * "macro:".length, "macro:").toString()}./src/macro";\ntest("calls", () => expect(one()).toBe(1));\n`;
+    using dir = tempDir("test-changed-macro-prefixes", {
+      "package.json": JSON.stringify({ name: "changed-macro-prefixes", type: "module" }),
+      "src/macro.ts": `export function one() {\n  return 1;\n}\n`,
+      "twice.test.ts": import_(2),
+      "often.test.ts": import_(20_000),
+    });
+    initRepo(String(dir));
+
+    appendFileSync(join(String(dir), "src", "macro.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("no test files are affected");
     expect(exitCode).toBe(0);
   });
 
@@ -427,6 +538,8 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
       "dep-b.ts": `export const B = 2;\n`,
       "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "./dep-a";\ntest("wa", () => expect(A).toBe(1));\n`,
       "wb.test.ts": `import { test, expect } from "bun:test";\nimport { B } from "./dep-b";\ntest("wb", () => expect(B).toBe(2));\n`,
+      "macro-c.ts": `export function C() {\n  return 3;\n}\n`,
+      "wc.test.ts": `import { test, expect } from "bun:test";\nimport { C } from "./macro-c" with { type: "macro" };\ntest("wc", () => expect(C()).toBe(3));\n`,
     });
     initRepo(String(dir));
 
@@ -457,6 +570,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     await waitFor("Ran 0 tests");
     expect(buf).not.toContain("wa.test.ts:");
     expect(buf).not.toContain("wb.test.ts:");
+    expect(buf).not.toContain("wc.test.ts:");
 
     // Touch dep-a.ts: watcher restarts, --changed now sees an uncommitted
     // change to dep-a.ts and should run only wa.test.ts. Sync on the
@@ -475,6 +589,14 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     await waitFor("Ran 1 test across 1 file", before2);
     const afterB = buf.slice(before2);
     expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wb.test.ts"]);
+
+    // Touch macro-c.ts: no run has loaded wc.test.ts, so the file of its macro
+    // is watched only because the scan made it a module of the graph.
+    const before3 = buf.length;
+    appendFileSync(join(String(dir), "macro-c.ts"), "// touched\n");
+    await waitFor("Ran 1 test across 1 file", before3);
+    const afterC = buf.slice(before3);
+    expect(ranFiles(afterC, ["wa.test.ts", "wb.test.ts", "wc.test.ts"])).toEqual(["wc.test.ts"]);
 
     proc.kill();
     reader.releaseLock();

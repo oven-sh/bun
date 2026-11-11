@@ -116,6 +116,8 @@ Macros run synchronously in the transpiler during the visiting phase, after the 
 
 Bun's bundler is multi-threaded, so macros execute in parallel in multiple spawned JavaScript "workers".
 
+`bun test --changed`, `bun install --analyze`, `bun add --analyze` and `bun create <component>` first scan your files to find what they import. That scan does not run macros. It follows a macro import to its file like an ordinary import, and it does not see an `import()` or a `require()` whose specifier is the result of a macro. Macros still run afterwards, when the selected tests or the generated project run.
+
 ## Dead code elimination
 
 The bundler performs dead code elimination after running and inlining macros. Given the following macro:

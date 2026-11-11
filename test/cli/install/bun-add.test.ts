@@ -2,6 +2,7 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { randomBytes } from "crypto";
+import { existsSync } from "fs";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -294,19 +295,23 @@ it("bun add --only-missing should not install existing package", async () => {
   }
 });
 
-// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json. `urls` collects
+// Writes `source` to `entry` and returns what `bun <command> --analyze` adds to package.json. `urls` collects
 // its registry requests.
 async function analyze(
   command: "add" | "install",
   source: string,
-  { packageJson = { name: "foo" }, urls = [] }: { packageJson?: object; urls?: string[] } = {},
+  {
+    packageJson = { name: "foo" },
+    urls = [],
+    entry = "entry-point.ts",
+  }: { packageJson?: object; urls?: string[]; entry?: string } = {},
 ) {
   setHandler(dummyRegistry(urls));
   await writeFile(join(package_dir, "package.json"), JSON.stringify({ version: "0.0.1", ...packageJson }));
-  await writeFile(join(package_dir, "entry-point.ts"), source);
+  await writeFile(join(package_dir, entry), source);
   // The registry has no tarball for most of these names.
   await using proc = spawn({
-    cmd: [bunExe(), command, "--analyze", "--lockfile-only", "./entry-point.ts"],
+    cmd: [bunExe(), command, "--analyze", "--lockfile-only", `./${entry}`],
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -414,6 +419,69 @@ it("bun add --analyze uses the nearest package.json with a name above the import
     }),
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
   expect(urls).toEqual([`${root_url}/bar`]);
+});
+
+// `--analyze` bundles the entry point to learn what it imports. It reads a macro import as an ordinary import: the
+// file of the macro is a file of the bundle, and the macro is not called.
+it.each(
+  (["add", "install"] as const).flatMap(command =>
+    [
+      ["an import attribute", `"./macro.ts" with { type: "macro" }`],
+      ["the macro: prefix", `"macro:./macro.ts"`],
+    ].map(([form, specifier]) => [command, form, specifier] as const),
+  ),
+)("bun %s --analyze adds what the file of a macro imported with %s imports", async (command, _, specifier) => {
+  // `bar` is not installed, so a call of the macro would fail to load its file.
+  await writeFile(join(package_dir, "macro.ts"), `import "bar";\nexport function one() {\n  return 1;\n}\n`);
+  const source = `import { one } from ${specifier};\nconsole.log(one());\n`;
+  expect(await analyze(command, source)).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+});
+
+it.each(["add", "install"] as const)(
+  "bun %s --analyze does not call a macro, and does not add a package that only its result names",
+  async command => {
+    await writeFile(
+      join(package_dir, "macro.ts"),
+      `import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nexport function name(n: string) {\n  writeFileSync(join(import.meta.dir, "MACRO_RAN"), "");\n  return n;\n}\n`,
+    );
+    const source = `import "baz";\nimport { name } from "./macro.ts" with { type: "macro" };\nawait import(name("bar"));\nrequire(name("qux"));\n`;
+    expect(await analyze(command, source)).toEqual({ added: ["baz"], errors: [], exitCode: 0 });
+    expect(existsSync(join(package_dir, "MACRO_RAN"))).toBe(false);
+  },
+);
+
+// The bundle is linked before `--analyze` reads it, so the file of a macro is checked as the file of an ordinary
+// import is. A TypeScript file drops an import that it never uses, so these are .js files.
+it.each([
+  [
+    "names an export that its file does not have",
+    `export function one() {\n  return 1;\n}\n`,
+    `No matching export in "macro.js" for import "missing"`,
+  ],
+  ["names a file that does not parse", `export function missing( {\n  return 1;\n}\n`, `Expected "}" but found "1"`],
+])("bun add --analyze fails for a macro import that is never called and %s", async (_, macro, error) => {
+  await writeFile(join(package_dir, "macro.js"), macro);
+  const source = `import { missing } from "./macro.js" with { type: "macro" };\nimport "baz";\n`;
+  expect(await analyze("add", source, { entry: "entry-point.js" })).toEqual({
+    added: [],
+    errors: expect.arrayContaining([expect.stringContaining(error)]),
+    exitCode: 1,
+  });
+});
+
+it("bun add --analyze fails for a require() that reaches a macro whose file has a top-level await", async () => {
+  // The program runs: for the runtime the file of the macro is not a dependency of the module that calls the macro.
+  await writeFile(join(package_dir, "macro.ts"), `await 0;\nexport function one() {\n  return 1;\n}\n`);
+  await writeFile(
+    join(package_dir, "calls.ts"),
+    `import { one } from "./macro.ts" with { type: "macro" };\nexport const value = one();\n`,
+  );
+  const source = `import "baz";\nconsole.log(require("./calls.ts").value);\n`;
+  expect(await analyze("add", source)).toEqual({
+    added: [],
+    errors: [expect.stringContaining(`the transitive dependency "macro.ts" contains a top-level await`)],
+    exitCode: 1,
+  });
 });
 
 it("bun add --analyze should scan dependencies", async () => {

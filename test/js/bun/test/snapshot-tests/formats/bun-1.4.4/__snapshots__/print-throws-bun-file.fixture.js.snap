@@ -1,0 +1,91 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`a getter that returns a revoked Proxy 1`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`a getter that returns a Proxy whose ownKeys throws 1`] = `
+{
+  "proxy": [native code],
+}
+`;
+
+exports[`what looks like a DOM node, with a getter that throws 1`] = `
+HTMLDivElement {
+  "attributes": [],
+  "childNodes": [native code],
+  "nodeType": 1,
+  "tagName": "DIV",
+}
+`;
+
+exports[`what looks like a React 19 element, with a getter that throws 1`] = `
+{
+  "$$typeof": Symbol(react.transitional.element),
+  "_owner": null,
+  "key": null,
+  "props": [native code],
+  "type": "b",
+}
+`;
+
+exports[`with property matchers 1`] = `
+{
+  "ok": Any<Number>,
+  "proxy": [native code],
+}
+`;
+
+exports[`with a hint: the hint 1`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`in a describe a getter that returns a revoked Proxy 1`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`two calls and one that prints 1`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`two calls and one that prints 2`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`two calls and one that prints 3`] = `"the third of the test"`;
+
+exports[`a thrown error whose message has such a getter 1`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`a promise 1`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;
+
+exports[`a promise 2`] = `
+{
+  "ok": 1,
+  "proxy": [native code],
+}
+`;

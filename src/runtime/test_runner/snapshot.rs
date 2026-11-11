@@ -97,7 +97,7 @@ impl Format {
 struct Entry {
     value: Box<[u8]>,
     checked: bool,
-    /// Its test did not run to the end, so `remove_obsolete` keeps it even if unchecked.
+    /// `remove_obsolete` keeps it even if unchecked: its test did not run to the end, or `--update-snapshots` can't print its value.
     stays: bool,
     /// `value` is of this run, not of the file.
     written: bool,
@@ -133,6 +133,21 @@ pub(crate) enum Outcome {
     Written,
     /// Not counted yet: the caller bumps `passed` or `failed`.
     Mismatch { saved: Box<[u8]> },
+}
+
+/// An entry that a call has not taken yet: its key in the file and a copy of its text.
+#[derive(PartialEq, Eq)]
+pub(crate) struct NextEntry {
+    key: Vec<u8>,
+    pub(crate) saved: Box<[u8]>,
+}
+
+/// Who took the number of a `NextEntry`.
+#[derive(PartialEq, Eq)]
+pub(crate) enum EntryTaken {
+    ByTheCall,
+    /// The print that judged the entry took a snapshot itself, so the entry is no longer the call's.
+    ByThePrint,
 }
 
 pub(crate) enum FileOutcome {
@@ -443,6 +458,69 @@ impl Snapshots {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
     }
 
+    /// Appends `counter` to `key`, a snapshot's name in `format`. Returns the key the file has it under: `key`, or Bun's.
+    #[inline(always)]
+    fn key_in_file(
+        &self,
+        expect: &Expect,
+        format: Format,
+        hint: &[u8],
+        key: &mut Vec<u8>,
+        counter: usize,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        let mut counter_string_buf = [0u8; 32];
+        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
+        key.push(b' ');
+        key.extend_from_slice(counter);
+
+        let mut key_in_file = None;
+        if self.values.contains(key.as_slice()) {
+            key_in_file = Some(key.clone());
+        } else if format != Format::Bun && self.may_hold_entries_of_bun() {
+            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
+            key_of_bun.push(b' ');
+            key_of_bun.extend_from_slice(counter);
+            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
+        }
+        Ok(key_in_file)
+    }
+
+    /// The entry that the next call of the running test with `hint` takes. Counts and marks nothing.
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn next_entry(&self, expect: &Expect, format: Format, hint: &[u8]) -> Option<NextEntry> {
+        let mut key = Self::name_of(expect, format, hint).ok()?;
+        let counter = self.counts.get(key.as_slice()).copied().unwrap_or(0) + 1;
+        let key = self.key_in_file(expect, format, hint, &mut key, counter).ok()??;
+        let saved = self.values.get(&key)?.value.clone();
+        Some(NextEntry { key, saved })
+    }
+
+    /// Gives a call whose value can't be printed now the number of `entry`. `is_of_older_bun`: an older Bun wrote it for the value.
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn take_entry(
+        &mut self,
+        expect: &Expect,
+        format: Format,
+        hint: &[u8],
+        entry: &NextEntry,
+        is_of_older_bun: bool,
+    ) -> Result<EntryTaken, Error> {
+        if self.next_entry(expect, format, hint).as_ref() != Some(entry) {
+            return Ok(EntryTaken::ByThePrint);
+        }
+        // `--update-snapshots` can't print the value either, so it leaves the entry, whatever the result of the test is.
+        if is_of_older_bun
+            && self.update_snapshots
+            && let Some(kept) = self.values.get_mut(&entry.key)
+        {
+            kept.stays = true;
+        }
+        self.add_count(expect, format, hint)?;
+        Ok(EntryTaken::ByTheCall)
+    }
+
     pub(crate) fn match_or_write(
         &mut self,
         files: &FileList,
@@ -453,20 +531,7 @@ impl Snapshots {
         let format = self.format_of(files, expect)?;
 
         let (mut key, counter) = self.add_count(expect, format, hint)?;
-        let mut counter_string_buf = [0u8; 32];
-        let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
-        key.push(b' ');
-        key.extend_from_slice(counter);
-
-        let mut key_in_file = None;
-        if self.values.contains(&key) {
-            key_in_file = Some(key.clone());
-        } else if format != Format::Bun && self.may_hold_entries_of_bun() {
-            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
-            key_of_bun.push(b' ');
-            key_of_bun.extend_from_slice(counter);
-            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
-        }
+        let key_in_file = self.key_in_file(expect, format, hint, &mut key, counter)?;
 
         // What the entry holds before this call: the value of the file, or a value that this run wrote.
         let (mut is_of_the_file, mut is_of_this_run) = (false, false);
@@ -744,7 +809,7 @@ impl Snapshots {
                     from += at + 1;
                 }
             }
-            // Not `=`: see `File::keeps_all`.
+            // Not `=`: see `File::keeps_all` and `take_entry`.
             values.values_mut()[i].stays |= stays;
         }
         if all_ran_to_the_end { Ran::ToTheEnd } else { Ran::NotAll }

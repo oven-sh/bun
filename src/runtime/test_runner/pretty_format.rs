@@ -2397,7 +2397,14 @@ impl<'a> Formatter<'a> {
                     // exit — restore before propagating any exception from the property iterator.
                     self.always_newline_scope = prev_always_newline_scope;
                     self.quote_strings = prev_quote_strings;
-                    self.same_as_older_bun &= result?;
+                    match result {
+                        Ok(is_same) => self.same_as_older_bun &= is_same,
+                        Err(error) => {
+                            // A getter can have thrown it, and an older Bun called none.
+                            self.same_as_older_bun = false;
+                            return Err(error);
+                        }
+                    }
 
                     if iter_i == 0 {
                         let object_name = value.get_class_name(self.global_this)?;
@@ -3538,19 +3545,21 @@ impl bun_io::Write for ExpectedText<'_> {
 #[derive(Copy, Clone)]
 pub(crate) struct PrintError {
     pub(crate) error: JsError,
-    /// A snapshot serializer threw it, and not the value.
-    pub(crate) is_of_serializer: bool,
+    pub(crate) thrower: Thrower,
+}
+
+#[derive(Copy, Clone)]
+pub(crate) enum Thrower {
+    Value,
+    /// A snapshot serializer, and not the value.
+    Serializer,
+    /// The value, before the print ran anything that an older Bun's print did not run. So that one threw too.
+    ValueAsOnOlderBun,
 }
 
 impl From<JsError> for PrintError {
     fn from(error: JsError) -> Self {
-        PrintError { error, is_of_serializer: false }
-    }
-}
-
-impl From<PrintError> for JsError {
-    fn from(thrown: PrintError) -> Self {
-        thrown.error
+        PrintError { error, thrower: Thrower::Value }
     }
 }
 
@@ -3583,7 +3592,16 @@ impl JestPrettyFormat {
         let mut formatter = Formatter::new(global);
         formatter.snapshot_format = format;
         formatter.serializers = Self::serializers(global)?;
-        let thrown = |formatter: &Formatter<'_>, error| PrintError { error, is_of_serializer: formatter.serializer_threw };
+        let thrown = |formatter: &Formatter<'_>, error| {
+            let as_on_older_bun =
+                !formatter.snapshot_format.is_pretty_format() && formatter.same_as_older_bun && formatter.serializers.is_none();
+            let thrower = match (formatter.serializer_threw, as_on_older_bun) {
+                (true, _) => Thrower::Serializer,
+                (false, true) => Thrower::ValueAsOnOlderBun,
+                (false, false) => Thrower::Value,
+            };
+            PrintError { error, thrower }
+        };
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
             let tag = Tag::get(value, global)?;

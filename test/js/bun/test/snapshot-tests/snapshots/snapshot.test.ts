@@ -3187,6 +3187,531 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
   });
 
+  // Jest 30.5.2 and Vitest 5.1.0 wrote the first lines and the first entries of
+  // formats/bun-1.4.4/__snapshots__/print-throws-*-file.fixture.js.snap. Bun 1.4.4 appended the other entries with its own
+  // keys, and wrote the file in Bun's format whole. To add a case, run it under that version.
+  describe("in a file, of a value that the format of the file cannot print", () => {
+    // The tests of a fixture, their snapshots, the tests and the snapshots of --update-snapshots, and a test that prints.
+    const fixtures = [
+      ["print-throws-jest-file.fixture.js", 16, 20, 1, 2, "what Jest wrote"],
+      ["print-throws-vitest-file.fixture.js", 13, 17, 1, 2, "what Vitest wrote"],
+      ["print-throws-bun-file.fixture.js", 10, 13, 0, 0, "with a hint"],
+    ] as const;
+    const folder = join(import.meta.dir, "..", "formats", "bun-1.4.4");
+    function copy() {
+      const dir = tempDir("snapshot-print-throws", {});
+      cpSync(folder, String(dir), { recursive: true });
+      return dir;
+    }
+    // Every test file of `dir` and every snapshot file.
+    const filesOf = (dir: unknown) =>
+      Object.fromEntries(
+        (readdirSync(String(dir), { recursive: true }) as string[])
+          .filter(name => name.includes(".fixture.") || name.includes(".test.js"))
+          .sort()
+          .map(name => [name.replaceAll("\\", "/"), readFileSync(join(String(dir), name), "latin1")]),
+      );
+    const snapOf = (name: string) => "__snapshots__/" + name + ".snap";
+    const entry = (key: string, text: string) => "\nexports[`" + key + "`] = `" + text + "`;\n";
+    // What Bun 1.4.4 wrote under `key`, between the backticks.
+    function written(fixture: string, key: string) {
+      const text = readFileSync(join(folder, snapOf(fixture)), "utf8");
+      const start = text.indexOf("`] = `", text.indexOf("exports[`" + key + "`]")) + "`] = `".length;
+      return text.slice(start, text.indexOf("`;\n", start));
+    }
+    const getter = written("print-throws-jest-file.fixture.js", "an own getter 1");
+    const message = written("print-throws-jest-file.fixture.js", "a thrown error whose cause getter throws 1");
+    const nothing = written("print-throws-vitest-file.fixture.js", "a thrown object 1");
+    const revoked = written("print-throws-bun-file.fixture.js", "a thrown error whose message has such a getter 1");
+    const prelude = `
+        const marker = new Error("not ready");
+        const caught = f => { try { f(); } catch (error) { return error; } };
+        const bad = () => ({ ok: 1, get bad() { throw marker; } });
+        const thrower = error => () => { throw error; };
+      `;
+    const passed = ({ pass, fail, stderr }: { pass: number; fail: number; stderr: string }) => ({
+      pass,
+      fail,
+      stderr: fail ? stderr : "",
+    });
+    // The snapshots in the summary of a run that added none.
+    const snapshotsOf = ({ stderr }: { stderr: string }) => Number(stderr.match(/^ *(\d+) snapshots, /m)?.[1] ?? 0);
+
+    test.each(
+      fixtures.flatMap(([fixture, tests, snapshots]) =>
+        ["true", "false"].map(CI => [fixture, CI, tests, snapshots] as const),
+      ),
+    )("%s: what Bun 1.4.4 wrote passes, and is left alone (CI: %s)", async (fixture, CI, tests, snapshots) => {
+      using dir = copy();
+      const before = filesOf(dir);
+      const run = await runTests(String(dir), { CI }, "./" + fixture);
+      expect(passed(run)).toEqual({ pass: tests, fail: 0, stderr: "" });
+      expect(snapshotsOf(run)).toBe(snapshots);
+      expect(filesOf(dir)).toEqual(before);
+      expect(run.exitCode).toBe(0);
+    });
+
+    test.each(fixtures)(
+      "%s: --update-snapshots fails with what the print throws, and keeps what Bun 1.4.4 wrote",
+      async (fixture, tests, _, printed, snapshots) => {
+        using dir = copy();
+        const before = filesOf(dir);
+        const updated = await runTests(String(dir), { CI: "false" }, "--update-snapshots", "./" + fixture);
+        expect({ pass: updated.pass, fail: updated.fail }).toEqual({ pass: printed, fail: tests - printed });
+        expect(updated.stderr).toContain(fixture.includes("bun-file") ? "Proxy has already been revoked" : "not ready");
+        // A call that fails is no snapshot of the summary.
+        expect(snapshotsOf(updated)).toBe(snapshots);
+        expect(filesOf(dir)).toEqual(before);
+        expect(updated.exitCode).toBe(1);
+      },
+    );
+
+    test.each(fixtures)(
+      "%s: --update-snapshots of one test keeps what Bun 1.4.4 wrote for the others",
+      async (fixture, _, __, ___, ____, one) => {
+        using dir = copy();
+        const before = filesOf(dir);
+        const updated = await runTests(String(dir), { CI: "false" }, "--update-snapshots", "-t", one, "./" + fixture);
+        expect(updated.pass + updated.fail).toBe(1);
+        expect(filesOf(dir)).toEqual(before);
+      },
+    );
+
+    test.each(fixtures)(
+      "%s: a run that adds an entry counts what Bun 1.4.4 wrote as passed, and keeps the order of the file",
+      async (fixture, tests, snapshots) => {
+        using dir = copy();
+        const path = join(String(dir), fixture);
+        const added = `test("z, a new one", () => { expect("new").toMatchSnapshot(); });\n`;
+        writeFileSync(path, readFileSync(path, "latin1") + added, "latin1");
+        const before = filesOf(dir);
+        const write = await runTests(String(dir), { CI: "false" }, "./" + fixture);
+        expect(write.stderr).toContain(`snapshots: ${snapshots} passed, 1 added`);
+        const snap = snapOf(fixture);
+        expect(filesOf(dir)).toEqual({ ...before, [snap]: before[snap] + entry("z, a new one 1", '"new"') });
+
+        const read = await runTests(String(dir), { CI: "true" }, "./" + fixture);
+        expect(passed(read)).toEqual({ pass: tests + 1, fail: 0, stderr: "" });
+        expect([write.exitCode, read.exitCode]).toEqual([0, 0]);
+      },
+    );
+
+    // Jest's and Vitest's files pass in Bun's format, which calls no `toJSON` and prints a getter that throws as an older Bun did.
+    test.each(fixtures.slice(0, 2))(
+      "%s: with Bun's first line the file passes, and --update-snapshots too",
+      async (fixture, tests) => {
+        using dir = copy();
+        const snap = join(String(dir), snapOf(fixture));
+        const text = readFileSync(snap, "latin1");
+        writeFileSync(snap, headers.bun + text.slice(text.indexOf("\n") + 1), "latin1");
+        const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots", "./" + fixture);
+        expect(passed(updated)).toEqual({ pass: tests, fail: 0, stderr: "" });
+        const read = await runTests(String(dir), { CI: "true" }, "./" + fixture);
+        expect(passed(read)).toEqual({ pass: tests, fail: 0, stderr: "" });
+        expect([updated.exitCode, read.exitCode]).toEqual([0, 0]);
+      },
+    );
+
+    test.each(["jest", "vitest", "bun"] as const)(
+      "a file of %s: another text, and no entry, end in what the print threw",
+      async format => {
+        using dir = tempDir("snapshot-print-throws", {
+          "a.test.js": `
+              ${prelude}
+              // Every format reads this getter and the keys of what it returns. An older Bun printed the getter.
+              const value = () => ({ ok: 1, get p() { return new Proxy({}, { ownKeys() { throw marker; } }); } });
+              test("z", () => { expect(1).toMatchSnapshot(); });
+              test("another text", () => {
+                expect(caught(() => expect(value()).toMatchSnapshot())).toBe(marker);
+                expect(caught(() => expect(value()).toMatchSnapshot("no entry"))).toBe(marker);
+                expect(caught(() => expect(value()).toMatchSnapshot({ ok: expect.any(Number) }))).toBe(marker);
+                // An older Bun compared the two entries, so the calls have their numbers.
+                expect("next").toMatchSnapshot();
+              });
+            `,
+          [snapOf("a.test.js")]:
+            headers[format] +
+            entry("z 1", "1") +
+            entry("another text 1", "other") +
+            entry("another text 2", "other") +
+            entry("another text 3", '"next"'),
+        });
+        const before = filesOf(dir);
+        const run = await runTests(String(dir), { CI: "false" });
+        expect(passed(run)).toEqual({ pass: 2, fail: 0, stderr: "" });
+        expect(snapshotsOf(run)).toBe(2);
+        expect(filesOf(dir)).toEqual(before);
+        expect(run.exitCode).toBe(0);
+      },
+    );
+
+    test.each(["jest", "vitest"] as const)(
+      "a file of %s: the print of an older Bun runs once, and a snapshot that it takes is not the call's",
+      async format => {
+        using dir = tempDir("snapshot-print-throws", {
+          "a.test.js": `
+              ${prelude}
+              test("z", () => { expect(1).toMatchSnapshot(); });
+              test("once more at most", () => {
+                let calls = 0;
+                const proxy = () => new Proxy({}, { ownKeys() { calls++; throw marker; } });
+                const counted = call => { calls = 0; return [caught(call) === marker, calls]; };
+                expect([
+                  counted(() => expect(proxy()).toMatchSnapshot()),
+                  counted(() => expect(proxy()).toMatchSnapshot("no entry")),
+                ]).toEqual([[true, 2], [true, 1]]);
+              });
+              test("the print takes the entry", () => {
+                let prints = 0;
+                const taker = new Proxy({}, {
+                  ownKeys() {
+                    if (++prints === 1) throw marker;
+                    expect({}).toMatchSnapshot();
+                    return [];
+                  },
+                });
+                expect(caught(() => expect(taker).toMatchSnapshot())).toBe(marker);
+                expect("second").toMatchSnapshot();
+                expect(prints).toBe(2);
+              });
+            `,
+          [snapOf("a.test.js")]:
+            headers[format] +
+            entry("z 1", "1") +
+            entry("once more at most 1", "other") +
+            entry("the print takes the entry 1", "{}") +
+            entry("the print takes the entry 2", '"second"'),
+        });
+        const before = filesOf(dir);
+        const run = await runTests(String(dir), { CI: "false" });
+        expect(passed(run)).toEqual({ pass: 3, fail: 0, stderr: "" });
+        expect(filesOf(dir)).toEqual(before);
+        expect(run.exitCode).toBe(0);
+      },
+    );
+
+    test("a file of bun: a print that an older Bun ran the same way fails as it did there", async () => {
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": `
+            ${prelude}
+            test("throws once", () => {
+              let traps = 0;
+              const once = new Proxy({}, { ownKeys() { if (traps++) return []; throw marker; } });
+              expect(caught(() => expect(once).toMatchSnapshot())).toBe(marker);
+              expect(traps).toBe(1);
+            });
+            test("takes no number", () => {
+              const proxy = new Proxy({}, { ownKeys() { throw marker; } });
+              expect(caught(() => expect(proxy).toMatchSnapshot())).toBe(marker);
+              expect("next").toMatchSnapshot();
+            });
+          `,
+        [snapOf("a.test.js")]: headers.bun + entry("throws once 1", "{}") + entry("takes no number 1", '"next"'),
+      });
+      const before = filesOf(dir);
+      const run = await runTests(String(dir), { CI: "false" });
+      expect(passed(run)).toEqual({ pass: 2, fail: 0, stderr: "" });
+      expect(filesOf(dir)).toEqual(before);
+      expect(run.exitCode).toBe(0);
+    });
+
+    test.each([
+      ["jest", `{ ok: 1, get bad() { throw new Error("not ready"); } }`, "bad"],
+      ["vitest", `{ ok: 1, get bad() { throw new Error("not ready"); } }`, "bad"],
+      ["bun", `{ get p() { return new Proxy({}, { ownKeys() { throw new Error("not ready"); } }); } }`, "ownKeys"],
+    ] as const)(
+      "a file of %s: another text fails the test with the error of the print, its frames and no diff",
+      async (format, value, frame) => {
+        using dir = tempDir("snapshot-print-throws", {
+          "a.test.js": `
+              test("z", () => { expect(1).toMatchSnapshot(); });
+              test("another text", () => { expect(${value}).toMatchSnapshot(); });
+            `,
+          [snapOf("a.test.js")]: headers[format] + entry("z 1", "1") + entry("another text 1", "other"),
+        });
+        const before = filesOf(dir);
+        const run = await runTests(String(dir), { CI: "false" });
+        expect(run.stderr).toContain(`error: not ready\n      at ${frame} (`);
+        expect(run.stderr).not.toContain("Received");
+        expect(filesOf(dir)).toEqual(before);
+        expect({ pass: run.pass, fail: run.fail, exitCode: run.exitCode }).toEqual({ pass: 1, fail: 1, exitCode: 1 });
+      },
+    );
+
+    test("what a snapshot serializer throws is reported, also over what an older Bun wrote", async () => {
+      const file = (module: string) => `
+          import { test, expect } from ${JSON.stringify(module)};
+          const error = f => { try { f(); return "no error"; } catch (error) { return error.name + ": " + error.message; } };
+          test("z", () => { expect(1).toMatchSnapshot(); });
+          test("t", () => {
+            console.log(JSON.stringify({
+              number: error(() => {
+                expect.addSnapshotSerializer({ test: value => value === "number", serialize: () => 5 });
+                expect("number").toMatchSnapshot("number");
+              }),
+              test: error(() => {
+                expect.addSnapshotSerializer({ test(value) { if (value === "test") throw new RangeError("in test()"); }, serialize: () => "" });
+                expect(["test"]).toMatchSnapshot("test");
+              }),
+              serialize: error(() => {
+                expect.addSnapshotSerializer({ test: value => value === "serialize", serialize() { throw new RangeError("in serialize()"); } });
+                expect({ a: "serialize" }).toMatchSnapshot("serialize");
+              }),
+              forever: error(() => {
+                expect.addSnapshotSerializer({ test: value => value === "forever", serialize: (value, ...rest) => rest.pop()(value, ...rest) });
+                expect("forever").toMatchSnapshot("forever");
+              }),
+            }));
+          });
+        `;
+      const entries =
+        entry("z 1", "1") +
+        entry("t: number 1", '"number"') +
+        entry("t: test 1", '\n[\n  "test",\n]\n') +
+        entry("t: serialize 1", '\n{\n  "a": "serialize",\n}\n') +
+        entry("t: forever 1", '"forever"');
+      const { log, stderr, exitCode } = await logOf({
+        "a.test.js": file("bun:test"),
+        [snapOf("a.test.js")]: headers.jest + entries,
+        "b.test.js": file("vitest"),
+        [snapOf("b.test.js")]: headers.vitest + entries,
+        "c.test.js": file("bun:test"),
+        [snapOf("c.test.js")]: headers.bun + entries,
+      });
+      const reported = {
+        number: "TypeError: A snapshot serializer must return a string, received number",
+        test: "RangeError: in test()",
+        serialize: "RangeError: in serialize()",
+        forever: "RangeError: Maximum call stack size exceeded.",
+      };
+      expect(log.map(line => JSON.parse(line))).toEqual([reported, reported, reported]);
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    test("a thrown value: what a read throws that an older Bun did not make is no failure, and no getter is read again", async () => {
+      // An older Bun read the message of an error too, so it got no further than what that read throws.
+      const messageOfAnError = (name: string) => `
+          test("the message of an error${name}", () => {
+            let reads = 0;
+            const error = Object.defineProperty(new Error(), "message", { get() { if (reads++) return "outer"; throw marker; } });
+            expect(caught(() => expect(thrower(error)).toThrowErrorMatchingSnapshot())).toBe(marker);
+            expect(reads).toBe(1);
+          });
+        `;
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": `
+            ${prelude}
+            test("z", () => { expect(1).toMatchSnapshot(); });
+            test("the cause of an error", () => {
+              const reads = { message: 0, cause: 0 };
+              const error = Object.defineProperties(new Error(), {
+                message: { get() { reads.message++; return "outer"; } },
+                cause: { get() { reads.cause++; throw marker; } },
+              });
+              expect(thrower(error)).toThrowErrorMatchingSnapshot();
+              expect(reads).toEqual({ message: 1, cause: 1 });
+            });
+            test("the message of a thrown object", () => {
+              let reads = 0;
+              expect(thrower({ get message() { reads++; throw marker; } })).toThrowErrorMatchingSnapshot();
+              expect(reads).toBe(1);
+            });
+            ${messageOfAnError("")}
+            ${messageOfAnError(", over a text of nothing")}
+          `,
+        [snapOf("a.test.js")]:
+          headers.jest +
+          entry("z 1", "1") +
+          entry("the cause of an error 1", message) +
+          entry("the message of a thrown object 1", nothing) +
+          entry("the message of an error 1", message) +
+          entry("the message of an error, over a text of nothing 1", nothing),
+        "b.test.js": `
+            ${prelude}
+            ${messageOfAnError("")}
+            test("the message of an error whose print throws", () => {
+              let reads = 0;
+              const revoked = () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy; };
+              const value = () => ({ ok: 1, get proxy() { return revoked(); } });
+              const error = Object.defineProperty(new Error(), "message", { get() { reads++; return value(); } });
+              expect(thrower(error)).toThrowErrorMatchingSnapshot();
+              expect(reads).toBe(1);
+            });
+          `,
+        [snapOf("b.test.js")]:
+          headers.bun +
+          entry("the message of an error 1", message) +
+          entry("the message of an error whose print throws 1", revoked),
+      });
+      const before = filesOf(dir);
+      const run = await runTests(String(dir), { CI: "true" });
+      expect(passed(run)).toEqual({ pass: 7, fail: 0, stderr: "" });
+      expect(filesOf(dir)).toEqual(before);
+      expect(run.exitCode).toBe(0);
+    });
+
+    test("a file whose keys are in the runner's order is compared in the format of that runner only", async () => {
+      const files = (z: string, ofVitest: string, ofJest: string) => ({
+        "a.test.js": `
+            import { test, expect } from "vitest";
+            ${prelude}
+            ${firstLine}
+            class Foo { a = 1; toJSON() { throw marker; } }
+            test("a class", () => { console.log(firstLine(() => expect(new Foo()).toMatchSnapshot())); });
+            test("a getter", () => { console.log(firstLine(() => expect(bad()).toMatchSnapshot())); });
+            test("a thrown object", () => { console.log(firstLine(() => expect(thrower(bad())).toThrowErrorMatchingSnapshot())); });
+          `,
+        // Vitest 5.1.0 writes the first text for the class without its toJSON().
+        [snapOf("a.test.js")]:
+          ofVitest +
+          z +
+          entry("a class 1", '\nFoo {\n  "a": 1,\n}\n') +
+          entry("a getter 1", getter) +
+          entry("a thrown object 1", nothing),
+        "b.test.js": `
+            ${prelude}
+            ${firstLine}
+            test("t", () => {
+              const error = Object.defineProperty(new Error("outer"), "cause", { get() { throw marker; } });
+              console.log(firstLine(() => expect(thrower(error)).toThrowErrorMatchingSnapshot()));
+            });
+          `,
+        [snapOf("b.test.js")]: ofJest + z + entry("t 1", message),
+      });
+      const [inOrder, appendedTo, ofBun] = await Promise.all([
+        logOf(files("", headers.vitest, headers.jest)),
+        logOf(files(entry("z 1", "1"), headers.vitest, headers.jest)),
+        logOf(files("", headers.bun, headers.bun)),
+      ]);
+      expect(inOrder.log).toEqual(["not ready", "not ready", "not ready", "not ready"]);
+      expect(appendedTo.log).toEqual(["passes", "passes", "passes", "passes"]);
+      expect(ofBun.log).toEqual(["passes", "passes", "passes", "passes"]);
+      expect([inOrder.exitCode, appendedTo.exitCode, ofBun.exitCode]).toEqual([0, 0, 0]);
+    });
+
+    test("--update-snapshots keeps what an older Bun wrote, and the keys of the calls after it, whatever the test does with the error", async () => {
+      const tests = `
+          ${prelude}
+          test("z", () => { expect(1).toMatchSnapshot(); });
+          test("caught", () => {
+            caught(() => expect(bad()).toMatchSnapshot());
+            expect("second").toMatchSnapshot();
+          });
+          test("caught, and no other call", () => { caught(() => expect(bad()).toMatchSnapshot()); });
+          test("soft", () => {
+            expect.soft(bad()).toMatchSnapshot();
+            expect("second").toMatchSnapshot();
+          });
+          test("one title", () => { expect(bad()).toMatchSnapshot(); });
+          test("one title", () => { expect("second").toMatchSnapshot(); });
+          describe("in a describe", () => {
+            test("with a hint", () => { caught(() => expect(bad()).toMatchSnapshot("the hint")); });
+          });
+        `;
+      const entries =
+        entry("z 1", "1") +
+        entry("caught 1", getter) +
+        entry("caught 2", '"second"') +
+        entry("caught, and no other call 1", getter) +
+        entry("soft 1", getter) +
+        entry("soft 2", '"second"') +
+        entry("one title 1", getter) +
+        entry("one title 2", '"second"') +
+        entry("in a describe with a hint: the hint 1", getter);
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": tests,
+        [snapOf("a.test.js")]: headers.jest + entries,
+        "b.test.js": `
+            import { describe, test, expect } from "vitest";
+            ${tests}
+            // It passes because it throws, and Vitest's format takes that for a test that ran to its end.
+            test.fails("fails", () => {
+              expect(bad()).toMatchSnapshot();
+              throw new Error("as expected");
+            });
+            test("an inline snapshot first", () => {
+              caught(() => expect(bad()).toMatchInlineSnapshot(\`${getter}\`));
+              expect("second").toMatchSnapshot();
+            });
+          `,
+        [snapOf("b.test.js")]:
+          headers.vitest + entries + entry("fails 1", getter) + entry("an inline snapshot first 2", '"second"'),
+      });
+      const before = filesOf(dir);
+      const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+      expect({ pass: updated.pass, fail: updated.fail }).toEqual({ pass: 12, fail: 4 });
+      // The calls that print: `z`, and the second of four tests in each file, and of the last test.
+      expect(snapshotsOf(updated)).toBe(9);
+      expect(filesOf(dir)).toEqual(before);
+
+      const read = await runTests(String(dir), { CI: "true" });
+      expect(passed(read)).toEqual({ pass: 16, fail: 0, stderr: "" });
+      expect(filesOf(dir)).toEqual(before);
+      expect([updated.exitCode, read.exitCode]).toEqual([1, 0]);
+    });
+
+    test("a call that passes takes its number, through a retry, a repeat, a hook and the expect of a test", async () => {
+      const tests = `
+          ${prelude}
+          test("z", () => { expect(1).toMatchSnapshot(); });
+          test("four calls", () => {
+            expect(bad()).toMatchSnapshot();
+            expect(bad()).toMatchSnapshot("the hint");
+            expect(bad()).toMatchSnapshot();
+            expect("fourth").toMatchSnapshot();
+          });
+          let attempts = 0;
+          test("retried", { retry: 1 }, () => {
+            expect(bad()).toMatchSnapshot();
+            if (attempts++ === 0) throw new Error("again");
+          });
+          test("repeated", { repeats: 2 }, () => { expect(bad()).toMatchSnapshot(); });
+          describe("a hook", () => {
+            beforeEach(() => { expect(bad()).toMatchSnapshot(); });
+            test("of a test", () => {});
+          });
+        `;
+      const entries =
+        entry("z 1", "1") +
+        entry("four calls 1", getter) +
+        entry("four calls: the hint 1", getter) +
+        entry("four calls 2", getter) +
+        entry("four calls 3", '"fourth"') +
+        entry("retried 1", getter) +
+        entry("repeated 1", getter) +
+        entry("a hook (unnamed) 1", getter);
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": tests,
+        [snapOf("a.test.js")]: headers.jest + entries,
+        "b.test.js": `
+            import { beforeEach, describe, test, expect } from "vitest";
+            ${tests}
+            test("the expect of a test", ({ expect }) => {
+              expect(bad()).toMatchSnapshot();
+              expect.soft(bad()).toMatchSnapshot();
+            });
+            describe.concurrent("a concurrent group", () => {
+              test("one", ({ expect }) => { expect(bad()).toMatchSnapshot(); });
+              test("two", ({ expect }) => { expect(bad()).toMatchSnapshot(); });
+            });
+          `,
+        [snapOf("b.test.js")]:
+          headers.vitest +
+          entries +
+          entry("the expect of a test 1", getter) +
+          entry("the expect of a test 2", getter) +
+          entry("a concurrent group one 1", getter) +
+          entry("a concurrent group two 1", getter),
+      });
+      const before = filesOf(dir);
+      const run = await runTests(String(dir), { CI: "true" });
+      expect(passed(run)).toEqual({ pass: 13, fail: 0, stderr: "" });
+      expect(snapshotsOf(run)).toBe(26);
+      expect(filesOf(dir)).toEqual(before);
+      expect(run.exitCode).toBe(0);
+    });
+  });
+
   test("passes when it is what an older Bun wrote for a mock function or a class that native code makes", async () => {
     const printed = `{\n  "Buffer": [class Function],\n  "Response": [class Response],\n  "URL": [class Function],\n  "mock": [class Function],\n}`;
     const { log, stderr, exitCode } = await logOf({

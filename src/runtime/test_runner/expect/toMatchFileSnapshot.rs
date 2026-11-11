@@ -62,7 +62,9 @@ impl Expect {
         if value.is_string_literal() {
             received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
         } else {
-            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)?;
+            // No older Bun wrote a file snapshot, so what the print throws is the result.
+            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)
+                .map_err(|thrown| thrown.error)?;
             if received.len() > 2 && received.starts_with(b"\n") && received.ends_with(b"\n") {
                 received.pop();
                 received.remove(0);

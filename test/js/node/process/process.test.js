@@ -183,8 +183,11 @@ it("process.loadEnvFile fills the object that replaced process.env", async () =>
       const { spawnSync } = require("child_process");
       const environment = process.env;
       environment.OVERLAY_SET = "environment";
-      // What a child with no \`env\` option reads.
-      const child = name => spawnSync(process.execPath, ["-e", "console.log(process.env." + name + ")"], { encoding: "utf8" }).stdout.trim();
+      // What a child with no \`env\` option reads, and its exit code.
+      const child = name => {
+        const { stdout, status } = spawnSync(process.execPath, ["-e", "console.log(process.env." + name + ")"], { encoding: "utf8" });
+        return [stdout.trim(), status];
+      };
       const out = {};
 
       process.env = { ...environment };
@@ -216,7 +219,7 @@ it("process.loadEnvFile fills the object that replaced process.env", async () =>
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-    out: { copy: "file", overlay: ["environment", "file"], frozen: "file" },
+    out: { copy: ["file", 0], overlay: ["environment", "file"], frozen: ["file", 0] },
     stderr: "",
     exitCode: 0,
   });

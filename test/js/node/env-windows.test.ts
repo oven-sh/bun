@@ -69,7 +69,7 @@ test.if(isWindows)("a write of a new variable asks no prototype for its name in 
          own: names.map(name => Object.hasOwn(process.env, name)),
          listed: names.map(name => Object.keys(process.env).includes(name)),
          read: [process.env.ZZ_Inherited_Accessor, process.env.ZZ_Inherited_Value],
-         child: child.stdout.toString().trim(),
+         child: [child.stdout.toString().trim(), child.exitCode],
          // The copies that JSON.stringify() and console.log() get.
          copies: [JSON.parse(JSON.stringify(process.env)), process.env[Symbol.for("nodejs.util.inspect.custom")]()].map(
            copy => Object.hasOwn(copy, "__proto__") && copy.__proto__,
@@ -87,7 +87,7 @@ test.if(isWindows)("a write of a new variable asks no prototype for its name in 
       own: [true, true],
       listed: [true, true],
       read: ["written", "same"],
-      child: "written same",
+      child: ["written same", 0],
       copies: ["shown", "shown"],
     },
     stderr: "",

@@ -1,5 +1,5 @@
 import { exposedInternals } from "bun:internal-for-testing";
-import { describe, expect, it, jest } from "bun:test";
+import { afterAll, describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -656,8 +656,11 @@ it.each(["before the first read", "after a chunk"])(
 // drains the buffer calls `_read()` while `needReadable` is false, so that push emitted no 'readable', and when it left
 // more than highWaterMark buffered nothing ever read again (#48514). Node's native sources push from a later turn.
 function readExactly(stream, size) {
-  const { promise, resolve } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers();
   let missing = size;
+  for (const event of ["end", "close", "error"]) {
+    stream.on(event, err => reject(new Error(`'${event}' with ${missing} bytes missing`, { cause: err })));
+  }
   stream.on("readable", function onReadable() {
     if (stream.readableLength === 0) return;
     missing -= stream.read(Math.min(missing, stream.readableLength)).length;
@@ -672,6 +675,7 @@ function readExactly(stream, size) {
 // Bun.file() is the pipe reader's source (FileReader): a pull can return a
 // number of bytes read into the view, or a chunk larger than the view.
 const readExactlyDir = tempDir("fromweb-readable-exact", { "big.bin": Buffer.alloc(1024 * 1024, "x") });
+afterAll(() => readExactlyDir[Symbol.dispose]());
 describe.each([
   ["Blob.stream()", size => new Blob([Buffer.alloc(size, "x")]).stream()],
   ["Response.body", size => new Response(Buffer.alloc(size, "x")).body],

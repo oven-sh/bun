@@ -1585,12 +1585,19 @@ it("child.stdout keeps emitting 'readable' when read(n) drains the buffer exactl
     try {
       await once(c.stderr!, "data");
       const stdout = c.stdout!;
-      const { promise, resolve } = Promise.withResolvers<void>();
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
       let missing = 300_000;
+      for (const event of ["end", "close", "error"]) {
+        stdout.on(event, (err?: Error) =>
+          reject(new Error(`stdout '${event}' with ${missing} bytes missing`, { cause: err })),
+        );
+      }
+      c.on("exit", code => reject(new Error(`child exited with ${code}, ${missing} bytes missing`)));
       stdout.on("readable", function onReadable() {
         if (stdout.readableLength === 0) return;
         // Let the child refill the pipe first, so the pull that read() starts
-        // finds more than one chunk ready, as it does for a slow consumer.
+        // finds more than one chunk ready, as it does for a slow consumer. The
+        // fill level of the kernel pipe cannot be observed without reading it.
         Atomics.wait(wait, 0, 0, 100);
         missing -= stdout.read(Math.min(missing, stdout.readableLength)).length;
         if (missing === 0) {
@@ -1623,7 +1630,7 @@ it.concurrent.each(["before", "after"])(
         c.stdout.on("data", d => { bytes += d.length; if (calls++ === 0) throw new Error("boom"); });
         c.stdout.on("end", () => ends++);
       }
-      if (${JSON.stringify(when)} === "after") c.stderr.once("data", () => setTimeout(listen, 50));
+      if (${JSON.stringify(when)} === "after") c.stderr.once("data", listen);
       else listen();
       c.on("close", () => console.log(JSON.stringify({ bytes, uncaught, ends })));
     `;

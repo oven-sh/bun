@@ -174,7 +174,7 @@ function pump(stream: NativeReadable) {
       drained = ptr.drain();
     } catch (err) {
       stream[kPendingRead] = false;
-      errorOrDestroy(stream, err);
+      errorOrDestroy(stream, err as Error);
       return;
     }
     stream[kConstructed] = true;
@@ -188,13 +188,14 @@ function pump(stream: NativeReadable) {
       return;
     }
   }
-  const chunk = getRemainingChunk(stream, stream._readableState.highWaterMark);
+  let chunk: Buffer | undefined;
   let result: any;
   try {
+    chunk = getRemainingChunk(stream, stream._readableState.highWaterMark);
     result = ptr.pull(chunk, stream[kCloseState]);
   } catch (err) {
     stream[kPendingRead] = false;
-    errorOrDestroy(stream, err);
+    errorOrDestroy(stream, err as Error);
     return;
   }
   $assert(result !== undefined);
@@ -248,7 +249,8 @@ function rethrow(err: any) {
 }
 
 // Stores the unused part of `chunk` for the next pull before it pushes, so a
-// throw from a listener cannot hand that part out again.
+// throw from a listener cannot hand that part out again. EOF is queued after
+// the push, so the last chunk's 'readable' runs before the stream ends.
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);
@@ -292,11 +294,14 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffe
     chunk = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
   }
   stream[kRemainingChunk] = chunk;
-  if (isClosed) {
-    process.nextTick(pushEof, stream);
-  }
-  if (slice !== undefined && slice.byteLength > 0) {
-    pushAndCheck(stream, slice);
+  try {
+    if (slice !== undefined && slice.byteLength > 0) {
+      pushAndCheck(stream, slice);
+    }
+  } finally {
+    if (isClosed) {
+      process.nextTick(pushEof, stream);
+    }
   }
 }
 
@@ -307,11 +312,14 @@ function handleArrayBufferViewResult(
   isClosed: boolean,
 ) {
   stream[kRemainingChunk] = chunk;
-  if (isClosed) {
-    process.nextTick(pushEof, stream);
-  }
-  if (result.byteLength > 0) {
-    pushAndCheck(stream, result);
+  try {
+    if (result.byteLength > 0) {
+      pushAndCheck(stream, result);
+    }
+  } finally {
+    if (isClosed) {
+      process.nextTick(pushEof, stream);
+    }
   }
 }
 

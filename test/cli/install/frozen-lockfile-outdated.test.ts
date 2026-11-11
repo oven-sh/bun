@@ -92,12 +92,14 @@ async function installed(
   return { packageDir, lock: await lockText(packageDir, lockfile) };
 }
 
-// The version of `name` that the installed package at `from` loads, under either linker.
-async function loadedVersion(packageDir: string, from: string, name: string) {
+// The directory of `name` that the installed package at `from` loads, under either linker.
+async function loadedDir(packageDir: string, from: string, name: string) {
   let dir = realpathSync(join(packageDir, from));
   while (dir !== dirname(dir) && !existsSync(join(dir, "node_modules", name, "package.json"))) dir = dirname(dir);
-  return (await file(join(dir, "node_modules", name, "package.json")).json()).version;
+  return join(dir, "node_modules", name);
 }
+const loadedVersion = async (packageDir: string, from: string, name: string) =>
+  (await file(join(await loadedDir(packageDir, from, name), "package.json")).json()).version;
 
 const writeRoot = (dir: string, json: PackageJson) => write(join(dir, "package.json"), JSON.stringify(json));
 const writeMember = (dir: string, json: PackageJson) =>
@@ -329,17 +331,42 @@ describe.concurrent("--frozen-lockfile fails when", () => {
 
   // https://github.com/oven-sh/bun/issues/48528: a merge drops the nested entry of a package's dependency, so the row
   // binds to the root's copy of that name, which the range that the package declares rules out.
-  test.each(["hoisted", "isolated"] as const)(
-    "bun.lock binds a package's dependency to a version that its range rules out, %s linker",
-    async linker => {
-      // one-range-dep@1.0.0 depends on no-deps@^1.0.0
+  describe.each([
+    // one-range-dep@1.0.0 depends on no-deps@^1.0.0
+    {
+      title: "the root pins a version outside it",
+      root: { "no-deps": "2.0.0", "one-range-dep": "1.0.0" },
+      dependent: "one-range-dep",
+      note: "note: bun.lock resolves no-deps ^1.0.0 of one-range-dep@1.0.0 to no-deps@2.0.0",
+      nested: "1.1.0",
+      rootVersion: "2.0.0",
+    },
+    // one-fixed-dep@1.0.0 depends on no-deps@1.0.0, and the root's ^1.0.0 accepts 1.0.0 too. The repair must not move
+    // the root's own row down to it.
+    {
+      title: "the root's range overlaps it",
+      root: { "no-deps": "^1.0.0", "one-fixed-dep": "1.0.0" },
+      dependent: "one-fixed-dep",
+      note: "note: bun.lock resolves no-deps 1.0.0 of one-fixed-dep@1.0.0 to no-deps@1.1.0",
+      nested: "1.0.0",
+      rootVersion: "1.1.0",
+    },
+  ])("bun.lock binds a package's dependency to a version that its range rules out: $title", shape => {
+    test.each(["hoisted", "isolated"] as const)("%s linker", async linker => {
       const { packageDir, lock } = await installed(
-        { name: "root", version: "1.0.0", dependencies: { "no-deps": "2.0.0", "one-range-dep": "1.0.0" } },
+        {
+          name: "root",
+          version: "1.0.0",
+          dependencies: shape.root,
+          patchedDependencies: { "no-deps@1.1.0": "patches/no-deps@1.1.0.patch" },
+        },
         member,
         "bun.lock",
         linker,
       );
-      const nested = /\n *"one-range-dep\/no-deps": \["no-deps@1\.1\.0", [^\n]*\n/;
+      const nested = new RegExp(
+        `\\n *"${shape.dependent}\\/no-deps": \\["no-deps@${shape.nested.replaceAll(".", "\\.")}", [^\\n]*\\n`,
+      );
       expect(lock).toMatch(nested);
       const stale = lock.replace(nested, "\n");
       await write(join(packageDir, "bun.lock"), stale);
@@ -348,25 +375,39 @@ describe.concurrent("--frozen-lockfile fails when", () => {
       for (const args of [["install", "--frozen-lockfile"], ["ci"]]) {
         const frozen = await bun(packageDir, ...args);
         expect(frozen.stderr).toContain(frozenError);
-        expect(frozen.stderr).toContain("note: bun.lock resolves no-deps ^1.0.0 of one-range-dep@1.0.0 to no-deps@2.0.0");
+        expect(frozen.stderr).toContain(shape.note);
         expect(await lockText(packageDir)).toBe(stale);
         expect(frozen.exitCode).toBe(1);
       }
 
+      // a dry run lists what the install puts in node_modules, and writes nothing
+      const dry = await bun(packageDir, "install", "--dry-run");
+      expect(dry.stdout).toContain(`no-deps@${shape.nested}`);
+      expect(dry.stdout).toContain(`no-deps@${shape.rootVersion}`);
+      expect(await lockText(packageDir)).toBe(stale);
+      expect(dry.exitCode).toBe(0);
+
       // the advice in the error has to work, and the root's own no-deps stays
       const plain = await bun(packageDir, "install");
       expect(plain.stderr).toContain("Saved lockfile");
+      expect(plain.stderr).not.toContain("no longer applies");
       expect(await lockText(packageDir)).toBe(lock);
-      expect(await loadedVersion(packageDir, "node_modules/one-range-dep", "no-deps")).toBe("1.1.0");
-      expect(await loadedVersion(packageDir, ".", "no-deps")).toBe("2.0.0");
+      expect(await loadedVersion(packageDir, `node_modules/${shape.dependent}`, "no-deps")).toBe(shape.nested);
+      expect(await loadedVersion(packageDir, ".", "no-deps")).toBe(shape.rootVersion);
+      expect(existsSync(join(await loadedDir(packageDir, ".", "no-deps"), "patched.txt"))).toBe(
+        shape.rootVersion === "1.1.0",
+      );
+      expect(
+        existsSync(join(await loadedDir(packageDir, `node_modules/${shape.dependent}`, "no-deps"), "patched.txt")),
+      ).toBe(shape.nested === "1.1.0");
       expect(plain.exitCode).toBe(0);
 
       const after = await bun(packageDir, "install", "--frozen-lockfile");
       expect(after.stderr).not.toContain("error:");
       expect(await lockText(packageDir)).toBe(lock);
       expect(after.exitCode).toBe(0);
-    },
-  );
+    });
+  });
 
   test("and prints what changed, also as bun install --production", async () => {
     const unpatched = without(root, "patchedDependencies");

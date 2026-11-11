@@ -678,10 +678,6 @@ pub fn install_with_manager(
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
     // A row that a frozen install refuses because the lockfile binds it outside its range.
     let mut row_frozen_refuses: Option<DependencyID> = None;
-    if !manager.options.dry_run {
-        Output::flush();
-        crate::update_transitive::warn_orphaned_patches(manager);
-    }
     let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
         count_requests_removed_from_lockfile(manager, &lockfile_before_clean)
     } else {
@@ -716,7 +712,7 @@ pub fn install_with_manager(
             // A frozen install takes the versions that the lockfile has for the rows that a rule
             // names. One that the lockfile binds outside the range it declares fails below.
             row_frozen_refuses = frozen_refuses(&manager.lockfile, &outside);
-        } else if !outside.is_empty() && !manager.options.dry_run {
+        } else if !outside.is_empty() {
             moved_outside_ranges = reresolve_rows_outside_ranges(
                 manager,
                 outside,
@@ -741,6 +737,13 @@ pub fn install_with_manager(
                 loaded_bun_lockfile,
             );
         }
+    }
+
+    // After the rows outside their range moved: a patch for the version such a row brings back is
+    // not orphaned.
+    if !manager.options.dry_run {
+        Output::flush();
+        crate::update_transitive::warn_orphaned_patches(manager);
     }
 
     // append scripts to lockfile before generating new metahash
@@ -2467,24 +2470,16 @@ fn rows_outside_ranges(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
                 && (!(dependency.behavior.is_peer() || dependency.behavior.is_optional())
                     || lockfile.overrides.has_rule_for_name(dependency.name_hash))
                 && (package_id as usize) < resolutions.len()
-                && resolutions[package_id as usize].tag == ResolutionTag::Npm
-                && effective_range(lockfile, row as DependencyID, dependency).is_some_and(
-                    |version| {
-                        version.try_npm().is_some_and(|npm| {
-                            // Under another name the row follows an `npm:` alias, not the range.
-                            npm.name.slice(buf) == names[package_id as usize].slice(buf)
-                                // An empty range and `*` resolve to `latest`, even if that is a
-                                // prerelease, which no range accepts.
-                                && !npm.version.is_empty()
-                                && !crate::npm::is_any_version_range(version.literal.slice(buf))
-                                && !npm.version.satisfies(
-                                    resolutions[package_id as usize].npm().version,
-                                    buf,
-                                    buf,
-                                )
-                        })
-                    },
-                )
+                && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
+                    .is_some_and(|version| {
+                        crate::dedupe::version_outside_range(
+                            &version,
+                            buf,
+                            names[package_id as usize],
+                            &resolutions[package_id as usize],
+                            buf,
+                        )
+                    })
         })
         .map(|(row, (_, &package_id))| (row as DependencyID, package_id))
         .collect()
@@ -2505,19 +2500,6 @@ fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: Packa
                     || npm.version.satisfies(resolved.version, buf, buf))
         })
     })
-}
-
-/// The range the resolver asks the registry for: the `overrides` rule that applies to `dependency`,
-/// else its catalog entry, else what it declares. The rule lookup only runs for a name a rule names.
-fn effective_range(
-    lockfile: &Lockfile,
-    row: DependencyID,
-    dependency: &Dependency,
-) -> Option<crate::dependency::Version> {
-    if lockfile.overrides.has_rule_for_name(dependency.name_hash) {
-        return crate::dedupe::effective_version(lockfile, row, dependency);
-    }
-    lockfile.resolve_catalog_dependency(dependency)
 }
 
 /// Drops the rows of `outside` that the lockfile binds for a reason of its own: a peer or an
@@ -2596,7 +2578,7 @@ fn note_row_outside_range(lockfile: &Lockfile, lockfile_name: &str, row: Depende
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependency = &lockfile.buffers.dependencies[row as usize];
     let package_id = lockfile.buffers.resolutions[row as usize];
-    let range = effective_range(lockfile, row, dependency)
+    let range = crate::dedupe::effective_version(lockfile, row, dependency)
         .map_or(dependency.version.literal, |version| version.literal);
     let owner = lockfile.get_parent_pkg_of_dependency(row);
     match owner.filter(|&owner| {
@@ -2654,7 +2636,18 @@ fn reresolve_rows_outside_ranges(
     if manager.log_mut().has_errors() {
         manager.crash();
     }
-    redirect_moved_edges(&mut manager.lockfile, &moved, false);
+    // A rule moves every row of its name, so the rows that shared the old package follow. A row
+    // that only its own range moved takes nothing with it: the others accept what they have.
+    let by_rule: Vec<(DependencyID, PackageID)> = {
+        let lockfile: &Lockfile = &manager.lockfile;
+        (moved.iter().copied())
+            .filter(|&(row, _)| {
+                let dependency = &lockfile.buffers.dependencies[row as usize];
+                crate::dedupe::applied_override(lockfile, row, dependency).is_some()
+            })
+            .collect()
+    };
+    redirect_moved_edges(&mut manager.lockfile, &by_rule, false);
 
     let before_clean = clean_lockfile(manager, log_level)?;
     *root = *manager.lockfile.packages.get(0);

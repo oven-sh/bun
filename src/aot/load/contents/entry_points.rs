@@ -372,6 +372,7 @@ fn collect_named_workers(
         let of_code = contents.known_code_workers.iter();
         workers.extend(of_code.map(|&at| (file, at)));
     }
+    workers.shared_sort_unstable();
     workers
 }
 

@@ -7,7 +7,9 @@ use super::summary::{collect_names_followed, collect_program_file_paths};
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
 use crate::builtins::{BuiltinValuePaths, RuntimeModule, builtin_type_paths, table};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_node};
+use crate::diagnostics::{
+    Diagnostic, DiagnosticBuffer, Diagnostics, ProgramView, Span, range_of_node,
+};
 use crate::ir::generated::ModuleRequestKind;
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
@@ -913,12 +915,14 @@ impl Build<'_> {
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
                 let without_file = std::mem::take(&mut self.missing_node_workers);
                 let resolves = std::mem::take(&mut self.resolves_that_miss);
+                let mut said = DiagnosticBuffer::default();
                 for warning in without_file.into_iter().chain(resolves) {
                     let is_unreached = |span| lies_in_left_out_code(view.files(), &left_out, span);
                     if !warning.span.is_some_and(is_unreached) {
-                        self.diagnostics.add(Some(view), warning);
+                        said.push(warning);
                     }
                 }
+                self.diagnostics.add_buffer(view, said);
                 self.diagnostics.forgive_unasked_comments(|span| {
                     lies_in_left_out_code(view.files(), &left_out, span)
                         || lies_in_dead_code(view.files(), span)

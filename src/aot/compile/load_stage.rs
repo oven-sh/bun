@@ -4,7 +4,8 @@ use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
-    Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
+    Diagnostic, DiagnosticBuffer, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages,
+    ProgramView, Span,
 };
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
@@ -909,9 +910,11 @@ impl<'a> Build<'a> {
             sources: &sources.application,
         };
         if !options.load.runs_tests {
+            let mut said = DiagnosticBuffer::default();
             for diagnostic in find_unknown_node_workers(files, &contents) {
-                self.diagnostics.add(Some(view), diagnostic);
+                said.push(diagnostic);
             }
+            self.diagnostics.add_buffer(view, said);
             if !options.aot.checks_only {
                 self.missing_node_workers = find_missing_node_workers(files, &contents);
             }

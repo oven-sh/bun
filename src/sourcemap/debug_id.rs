@@ -10,14 +10,17 @@ pub(crate) struct Check<'a> {
 }
 
 impl Check<'_> {
-    /// Dashes and the case of letters do not count: a UUID is written with or without them.
+    /// A UUID is 32 hex digits, written with or without dashes and in either case. Any other id is compared as it is.
     pub(crate) fn is_id_of_file(&self, map_id: &[u8]) -> bool {
         fn digits(id: &[u8]) -> impl Iterator<Item = u8> + '_ {
             id.iter()
                 .filter(|unit| **unit != b'-')
                 .map(u8::to_ascii_lowercase)
         }
-        digits(self.file_id).eq(digits(map_id))
+        let is_uuid = |id: &[u8]| {
+            digits(id).count() == 32 && digits(id).all(|digit| digit.is_ascii_hexdigit())
+        };
+        self.file_id == map_id || (is_uuid(self.file_id) && digits(self.file_id).eq(digits(map_id)))
     }
 
     #[cold]

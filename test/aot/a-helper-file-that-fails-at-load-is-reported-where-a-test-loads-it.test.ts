@@ -38,7 +38,8 @@ test("as in bun test", async () => {
     counts: plain.counts,
     exitCode: plain.exitCode,
   });
-  expect(compiled.stderr).not.toMatch(/TS\d+/);
+  // Doesn't match a "TS1" in the directory's random name: only a code has a colon after it.
+  expect(compiled.stderr).not.toMatch(/\bTS\d+: /);
   const errorLines = (text: string) => text.split("\n").filter(line => line.startsWith("error"));
   expect(errorLines(compiled.stderr)).toEqual(errorLines(plain.stderr));
   expect(compiled.stderr.match(/SyntaxError/g)?.length).toBe(plain.stderr.match(/SyntaxError/g)?.length);

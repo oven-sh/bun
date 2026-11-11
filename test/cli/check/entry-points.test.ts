@@ -292,7 +292,8 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   // `--no-bundle` prints the program to stdout.
   const printed = command === "bun build --no-bundle --check" ? stderr : stdout + stderr;
   expect({
-    codes: [...new Set(printed.match(/\bTS\d+/g))],
+    // Doesn't match a "TS6" in the directory's random name: only a code has a colon after it.
+    codes: [...new Set(printed.match(/\bTS\d+(?=: )/g))],
     mentionsFile: printed.includes(entry.wrong),
     ran: command === "bun --check" && stdout.includes("it ran"),
     exitCode,
@@ -471,7 +472,7 @@ test("doesn't deadlock with more files in a bundle, or more concurrent builds, t
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Doesn't match a "TS6" in the directory's random name.
-    return { codes: (stdout + stderr).match(/\bTS\d{4,5}\b/g) ?? [], stdout, exitCode };
+    return { codes: (stdout + stderr).match(/\bTS\d+(?=: )/g) ?? [], stdout, exitCode };
   };
   const [right, wrong, builds] = await Promise.all([
     run(["build", "--check", "index.ts", "--outdir", "out"]),

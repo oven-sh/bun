@@ -15,8 +15,8 @@
 # -- end of source
 # RUN(ASKED): walk f3 mechanisms=all-Inlining
 # ASKED-LABEL: code f3:Body
-# ASKED: [[given]]: int @Double = CallDirect {{*}}function=f1
-# ASKED: CheckProof [[given]] checkedType=int typeWithoutProof=number source=Field
+# ASKED: [[given]]: int[0, 4294967295] @Double = CallDirect {{*}}function=f1
+# ASKED: CheckProof [[given]] checkedType=int[0, 4294967295] typeWithoutProof=number source=Field
 # ASKED: = NumberToInteger [[given]]
 # RUN(RIGHT): run-in-shell
 # RIGHT: 1

@@ -1,14 +1,14 @@
-# the look at the loop counts each access by what its typed form does, so it sees that no turn writes the field. The read of it, and the conversion of what was read, are built in the block in front of the loop
+# the look at the loop counts each access by what its typed form does, so it sees that no turn writes the field. The read of it is built in the block in front of the loop
 # class Box { x: number; constructor(x: number) { this.x = x; } }
 # function sum(o: Box, n: number) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.x) | 0; return s; }
 # console.log(sum(new Box(2), 5));
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[read]]: {{*}} = GetSlot {{*}}key="x"
-# CHECK-NEXT: [[number]]: {{*}} @OptionalDouble = Box [[read]]
 # CHECK: isLoopHead=true
 # CHECK-NOT: GetSlot
-# CHECK: = Add {{*}}, [[number]] form=Numbers
+# CHECK: = TypeTest [[read]] testedType=undefined
+# CHECK: = Add {{*}} form=Integers
 # With loop invariants withheld each turn reads.
 # RUN(WITHHELD): walk f1 mechanisms=all-LoopInvariants
 # WITHHELD-LABEL: code f1:Body

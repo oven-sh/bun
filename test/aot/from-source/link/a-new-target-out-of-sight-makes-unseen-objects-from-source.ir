@@ -1,0 +1,13 @@
+# Reflect.construct() enters Low's constructor with Array as new.target. Link does not see such an object, and a class that only unseen code holds is not one of the row.
+# What is made through Low is then an object of Low, or one that no layout of the row describes: `ask` is not handed what Top's constructor makes.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known one-callee {{*}}result=string
+# CHECK-NEXT: parameter 0 expected=undefined|null|boolean|number|string|symbol|bigint|L1
+# -- source: a-new-target-out-of-sight-makes-unseen-objects-from-source.js
+# class Top { constructor() { this.top = "t"; } who() { return "top"; } }
+# class Low extends Top { constructor() { super(); this.low = "l"; } who() { return "low"; } }
+# function ask(one) { return typeof one.who + one.low + one.top; }
+# const first = new Low();
+# const second = Reflect.construct(Low, [], Array);
+# console.log(ask(first), ask(second), second instanceof Low);
+# -- end of source

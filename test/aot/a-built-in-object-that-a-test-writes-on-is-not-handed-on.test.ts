@@ -56,11 +56,11 @@ const uses: Record<string, { text: string; handsOn: boolean; seen?: string }> = 
     handsOn: true,
     seen: "string",
   },
-  // The guess is held at run time: whoever regains the object and loads under a name that nobody has read is refused, aloud.
+  // The file reads the receivers of a spy, so all that process leads to is compiled, and it still hands on no module.
   "process comes back out of the record of a spy": {
     text: `const spy = spyOn(process, "uptime"); process.uptime(); try { say(typeof spy.mock.contexts[0].getBuiltinModule(${made}).EOL); } catch (error) { say(error.message.slice(0, 24)); }`,
     handsOn: false,
-    seen: "Cannot load 'node:os': i",
+    seen: "string",
   },
 };
 

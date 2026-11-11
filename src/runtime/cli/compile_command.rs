@@ -178,6 +178,9 @@ pub(crate) enum CompileFailure {
     OverwritesEntryPoint {
         outfile: Vec<u8>,
     },
+    OverwritesSource {
+        outfile: Vec<u8>,
+    },
     FileNotWritten {
         path: Vec<u8>,
         error: bun_sys::Error,

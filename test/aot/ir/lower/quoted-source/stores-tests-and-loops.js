@@ -1,5 +1,5 @@
 // RUN: link
-// A store and a deletion are quoted whole, `in` and `instanceof` with both operands, a loop with its head, a list pattern by itself.
+// A store and a deletion are quoted whole, `in` and `instanceof` with both operands, a loop with its head, a list pattern by itself. A pattern in text that is quoted already is a part of that text.
 export function probe(holder, list) {
   holder.a.b = list.length;
   delete holder.a.b;
@@ -10,4 +10,4 @@ export function probe(holder, list) {
   const [one, { two = 2 }, ...rest] = list;
   [holder.a] = list;
 }
-// CHECK: quotedSourceText="holder.a.b = list.lengthdelete holder.a.b\x22b\x22 in holder.aholder instanceof holder.aitem of listconst [first] of list[first][one, { two = 2 }, ...rest][holder.a]"
+// CHECK: quotedSourceText="holder.a.b = list.lengthdelete holder.a.b\x22b\x22 in holder.aholder instanceof holder.aitem of listconst [first] of list[one, { two = 2 }, ...rest][holder.a]"

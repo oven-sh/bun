@@ -143,6 +143,7 @@ export default b.declarations(
   operation("putOwnContiguousIndex", "PutOwnContiguousIndex"),
   operation("putOwnDoubleIndex", "PutOwnDoubleIndex"),
   operation("putOwnInt32Index", "PutOwnInt32Index"),
+  operation("sortNumbers", "SortNumbers"),
   operation("truncateNewArray", "TruncateNewArray"),
   operation("tryCopyFilledElements", "TryCopyFilledElements"),
   operation("tryFillNewArray", "TryFillNewArray"),

@@ -92,7 +92,7 @@ const copies: Record<string, string> = {
 const buildsWithoutSql = `const [, , entry, outfile, executablePath] = process.argv;
 const result = await Bun.build({
   entrypoints: [entry],
-  compile: { outfile, aot: true, trim: { remove: ["sql"] }, ...(executablePath && { executablePath }) },
+  compile: { outfile, aot: !entry.includes("without-aot"), trim: { remove: ["sql"] }, ...(executablePath && { executablePath }) },
 });
 for (const log of result.logs) console.error(String(log));
 process.exit(result.success ? 0 : 1);
@@ -175,6 +175,53 @@ async function builtExecutables(folder: string, file: string) {
     600_000,
   );
 
+  // With AoT, built-in prototypes are read-only.
+  test(
+    "a trap in the chain of Function.prototype throws out of a read of a removed function without AoT",
+    () =>
+      slot(async () => {
+        using dir = tempDir("reads-of-removed-built-ins", {
+          "build.mjs": buildsWithoutSql,
+          "without-aot.js": `const box = { self: globalThis };
+const value = box.self[process.argv[2]][process.argv[3]];
+const read = process.argv[4] === "in" ? () => "begin" in value : () => value.begin;
+const has = () => {
+  throw new Error("trapped");
+};
+const prototype = Object.getPrototypeOf(Function.prototype);
+Object.setPrototypeOf(Function.prototype, new Proxy({}, { has }));
+let answer;
+try {
+  answer = read();
+} catch (error) {
+  answer = error.code ?? error.message;
+}
+Object.setPrototypeOf(Function.prototype, prototype);
+console.log(answer);
+`,
+        });
+        const folder = String(dir);
+        const carrier = copyWithoutDebugInformation ? [copyWithoutDebugInformation] : [];
+        built(
+          await spawned(
+            [bunExe(), "build.mjs", "./without-aot.js", join(folder, "without-sql"), ...carrier],
+            folder,
+            bunEnv,
+          ),
+        );
+        for (const name of ["sql", "SQL"]) {
+          for (const read of ["get", "in"]) {
+            for (const validateExceptionChecks of ["0", "1"]) {
+              const env = { ...bunEnv, BUN_JSC_validateExceptionChecks: validateExceptionChecks };
+              const { stdout } = await spawned([join(folder, "without-sql"), "Bun", name, read], folder, env);
+              expect({ name, read, stdout }).toEqual({ name, read, stdout: "trapped\n" });
+            }
+          }
+        }
+      }),
+    600_000,
+  );
+
   test(
     "a copy of Bun has every member, and what the program names on it works",
     () =>
@@ -199,6 +246,36 @@ async function builtExecutables(folder: string, file: string) {
             answers.push((await spawned([join(folder, name), "sql", "SQL", "postgres"], folder, bunEnv)).stdout);
           const expected = "&lt;a&gt; function function function\n";
           expect({ title, answers }).toEqual({ title, answers: [expected, expected, expected] });
+        }
+      }),
+    600_000,
+  );
+
+  test(
+    "what prints an object prints one that holds a removed function",
+    () =>
+      slot(async () => {
+        const printed: Record<string, string> = {
+          "the global object": "inspect(globalThis)",
+          "the global object, deeper": "inspect(globalThis, { depth: 4 })",
+          "Bun under a name from run time": "inspect(found)",
+          "Bun under a name from run time, by format()": 'format("%o", found)',
+          "Bun under a name from run time, by Bun.inspect()": "Bun.inspect(found)",
+        };
+        for (const [title, expression] of Object.entries(printed)) {
+          using dir = tempDir("reads-of-removed-built-ins", {
+            "program.mjs": `import { format, inspect } from "node:util";
+const box = { self: globalThis };
+const found = box[process.argv[2]][process.argv[3]];
+console.log(${expression}.length > 100);
+`,
+          });
+          const folder = String(dir);
+          await builtExecutables(folder, "program.mjs");
+          const answers: string[] = [];
+          for (const name of ["whole", "trimmed"])
+            answers.push((await spawned([join(folder, name), "self", "Bun"], folder, bunEnv)).stdout);
+          expect({ title, answers }).toEqual({ title, answers: ["true\n", "true\n"] });
         }
       }),
     600_000,

@@ -336,6 +336,42 @@ describe("zlib.gunzip", () => {
   });
 });
 
+// Each chunk comes from one write on the thread pool, and its callback starts the next write. Node runs the
+// immediate between two of those callbacks, so the listener is back before the next chunk.
+describe("a 'data' listener that is off for one setImmediate", () => {
+  it.concurrent.each([
+    ["createGunzip", "gzipSync"],
+    ["createInflate", "deflateSync"],
+    ["createBrotliDecompress", "brotliCompressSync"],
+    ["createZstdDecompress", "zstdCompressSync"],
+  ])("misses no chunk of %s", async (create, compress) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const zlib = require("node:zlib");
+          const stream = zlib.${create}();
+          let bytes = 0;
+          const onData = chunk => {
+            bytes += chunk.length;
+            stream.off("data", onData);
+            setImmediate(() => stream.on("data", onData));
+          };
+          stream.on("data", onData);
+          stream.on("end", () => console.log(bytes));
+          stream.end(zlib.${compress}(Buffer.alloc(300000, "x")));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "300000\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe.each(["ArrayBuffer", "SharedArrayBuffer"])("%s of another realm", name => {
   function fromOtherRealm(text) {
     return vm.runInNewContext(

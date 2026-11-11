@@ -530,7 +530,7 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::CppTask => {
+        task_tag::CppTask | task_tag::CppSourceEventTask => {
             cast!(CppTask).run(global)?;
         }
 
@@ -883,7 +883,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1679,7 +1679,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([Bundler], bun_bundler::bundle_v2::api::JSBundler::Load)
         }
         task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
-        task_tag::CppTask => release!(CppTask),
+        task_tag::CppTask | task_tag::CppSourceEventTask => release!(CppTask),
         task_tag::DuplexUpgradeContext => {
             release_in!([Sockets], crate::socket::DuplexUpgradeContext)
         }

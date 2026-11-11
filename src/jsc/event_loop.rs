@@ -77,6 +77,12 @@ pub struct EventLoop {
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
+    /// Since the immediates last ran, `tick()` delivered posted work, or took with an immediate
+    /// pending. While it is set and an immediate is pending, `tick()` holds posted work back:
+    /// see `take_posted_tasks`.
+    delivered_posted_since_check: bool,
+    /// Posted work that `tick()` took off `concurrent_tasks` and holds back, oldest first.
+    held_posted_tasks: Vec<Task>,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
     concurrent_plugin_requests: ConcurrentQueue,
     plugin_requests: Queue,
@@ -133,6 +139,8 @@ impl Default for EventLoop {
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
+            delivered_posted_since_check: false,
+            held_posted_tasks: Vec::new(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: Queue::init(),
             plugin_request_refills_left: Self::CONCURRENT_REFILLS_PER_TICK,
@@ -307,6 +315,19 @@ impl Drop for EventLoopEnterNoCheckpointGuard {
         unsafe { (*self.loop_).exit_without_checkpoint() };
     }
 }
+
+/// Indexed by a task's tag: whether a take that moves the task delivers posted work
+/// (see [`EventLoop::take_posted_tasks`]).
+static COUNTS_AS_DELIVERED: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut tag = 0;
+    while tag < table.len() {
+        let task_tag = bun_event_loop::TaskTag(tag as u8);
+        table[tag] = !(task_tag.is_source_event() || task_tag.is_module_loading());
+        tag += 1;
+    }
+    table
+};
 
 /// What [`EventLoop::enter_js`] found.
 enum EnterJs<'a> {
@@ -674,7 +695,17 @@ impl EventLoop {
         }
     }
 
+    /// Takes everything that other threads posted, and returns how many tasks that added.
     pub fn tick_concurrent_with_count(&mut self) -> usize {
+        let start_count = self.tasks.readable_length();
+        let _ = self.take_all_posted_tasks();
+        self.tasks.readable_length() - start_count
+    }
+
+    /// What a take does whether or not it may move posted work: the keep-alive changes that
+    /// other threads queued, the signals that arrived, and the GC timer that is due.
+    #[inline(always)]
+    fn fold_posted_state(&mut self) {
         self.apply_concurrent_ref_delta();
 
         #[cfg(unix)]
@@ -689,22 +720,89 @@ impl EventLoop {
         }
 
         self.run_imminent_gc_timer();
+    }
 
-        let start_count = self.tasks.readable_length();
+    /// Moves everything that other threads posted into `tasks`, oldest first: what an earlier
+    /// take held back, then the new tasks. Returns whether it moved work that counts as
+    /// delivered (see `take_posted_tasks`).
+    #[inline(never)]
+    fn take_all_posted_tasks(&mut self) -> bool {
+        self.fold_posted_state();
+        let mut delivered = false;
+        if !self.held_posted_tasks.is_empty() {
+            delivered = self.release_held_posted_tasks();
+        }
         if let Some(macro_loop) = self.macro_loop_if_not_running() {
             macro_loop.apply_concurrent_ref_delta();
             let batch = macro_loop.concurrent_tasks.pop_batch();
-            Self::take_concurrent_tasks(&mut self.tasks, batch);
+            delivered |= self.move_macro_posted_batch::<false>(batch);
         }
+        let batch = self.concurrent_tasks.pop_batch();
+        delivered | self.move_posted_batch::<false>(batch)
+    }
 
-        let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
+    /// The take while `tick()` holds posted work back: only the
+    /// [source events](bun_event_loop::TaskTag::is_source_event) move into `tasks`. The rest
+    /// goes to `held_posted_tasks`, which the next `take_all_posted_tasks` moves first.
+    #[cold]
+    #[inline(never)]
+    fn take_posted_source_events(&mut self) {
+        // A macro's loop stops ticking when the macro returns. What it held would wait for the
+        // next macro, so it holds nothing.
+        // SAFETY: `vm()` is the live owning VM; only the address of a sibling field is taken.
+        if core::ptr::eq(self, unsafe {
+            core::ptr::addr_of!((*self.vm()).macro_event_loop)
+        }) {
+            let _ = self.take_all_posted_tasks();
+            return;
+        }
+        self.fold_posted_state();
+        if let Some(macro_loop) = self.macro_loop_if_not_running() {
+            macro_loop.apply_concurrent_ref_delta();
+            let batch = macro_loop.concurrent_tasks.pop_batch();
+            let _ = self.move_macro_posted_batch::<true>(batch);
+        }
+        let batch = self.concurrent_tasks.pop_batch();
+        let _ = self.move_posted_batch::<true>(batch);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn release_held_posted_tasks(&mut self) -> bool {
+        let mut delivered = false;
+        for task in self.held_posted_tasks.drain(..) {
+            delivered |= COUNTS_AS_DELIVERED[task.tag.0 as usize];
+            let _ = self.tasks.write_item(task);
+        }
+        delivered
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn move_macro_posted_batch<const HOLD_WORK: bool>(
+        &mut self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) -> bool {
+        self.move_posted_batch::<HOLD_WORK>(batch)
+    }
+
+    /// Moves a batch into `tasks` in order. With `HOLD_WORK`, a task that is not a source event
+    /// goes to `held_posted_tasks`. Returns whether it moved work that counts as delivered.
+    #[inline(always)]
+    fn move_posted_batch<const HOLD_WORK: bool>(
+        &mut self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) -> bool {
+        let count = batch.count;
         if count == 0 {
-            return self.tasks.readable_length() - start_count;
+            return false;
         }
 
-        let mut iter = concurrent.iterator();
-        let _ = self.tasks.ensure_unused_capacity(count);
+        let mut delivered = false;
+        let mut iter = batch.iterator();
+        if !HOLD_WORK {
+            let _ = self.tasks.ensure_unused_capacity(count);
+        }
 
         // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
         let mut to_destroy: Option<*mut ConcurrentTaskItem> = None;
@@ -726,6 +824,11 @@ impl EventLoop {
                 to_destroy = Some(task);
             }
 
+            if HOLD_WORK && !task_ref.task.tag.is_source_event() {
+                self.held_posted_tasks.push(task_ref.task);
+                continue;
+            }
+            delivered |= COUNTS_AS_DELIVERED[task_ref.task.tag.0 as usize];
             // LinearFifo's fields are private — `write_item` is the
             // public path (single-slot copy, same complexity).
             let _ = self.tasks.write_item(task_ref.task);
@@ -736,7 +839,7 @@ impl EventLoop {
             let _ = unsafe { bun_core::heap::take(dest) };
         }
 
-        self.tasks.readable_length() - start_count
+        delivered
     }
 
     /// The macro loop, when this is the regular loop and no macro is running.
@@ -840,6 +943,7 @@ impl EventLoop {
     pub fn has_pending_tasks(&self) -> bool {
         self.tasks.readable_length() > 0
             || self.plugin_requests.readable_length() > 0
+            || !self.held_posted_tasks.is_empty()
             || self.has_concurrent_tasks()
     }
 
@@ -859,10 +963,12 @@ impl EventLoop {
         if self.plugin_requests.readable_length() == 0
             && self.plugin_request_refills_left > 0
             && !self.concurrent_plugin_requests.is_empty()
+            && !self.holds_posted_work()
         {
             self.plugin_request_refills_left -= 1;
             let batch = self.concurrent_plugin_requests.pop_batch();
             Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
+            self.delivered_posted_since_check = true;
         }
         if let Some(request) = self.plugin_requests.read_item() {
             self.plugin_requests.reset_head_if_empty();
@@ -883,10 +989,47 @@ impl EventLoop {
         self.entered_event_loop_count -= 1;
     }
 
+    /// Whether `tick()` holds posted work back until the immediates have run.
+    #[inline]
+    fn holds_posted_work(&self) -> bool {
+        self.delivered_posted_since_check && !self.immediate_tasks.is_empty()
+    }
+
+    /// `tick()`'s take of what other threads posted.
+    ///
+    /// Node takes finished thread-pool work once per loop iteration, and runs the `setImmediate`
+    /// callbacks before it takes again. So an immediate that a callback queues runs before work
+    /// that was not finished when that callback ran. `tick()` takes several times, and drivers
+    /// call `tick()` several times, before `tick_immediate_tasks` runs. To keep Node's order,
+    /// a take that delivers posted work (or that finds an immediate pending) is the last one
+    /// that an immediate has to wait for: from then on, while an immediate is pending, takes
+    /// hold posted work back until `tick_immediate_tasks` has run.
+    ///
+    /// A [source event](bun_event_loop::TaskTag::is_source_event) is never held back and does
+    /// not count as delivered work. Neither does a step of the module loader: the entry script
+    /// has not run the code that comes after its imports.
+    #[inline]
+    fn take_posted_tasks(&mut self) {
+        let immediate_pending = !self.immediate_tasks.is_empty();
+        if immediate_pending && self.delivered_posted_since_check {
+            self.take_posted_source_events();
+            return;
+        }
+        if self.take_all_posted_tasks() || immediate_pending {
+            self.delivered_posted_since_check = true;
+        }
+    }
+
+    /// For a driver that calls `tick()` again with no `auto_tick*()` between, so the immediates
+    /// do not run: the next `tick()` takes posted work whether or not an immediate is pending.
+    pub fn allow_posted_tasks(&mut self) {
+        self.delivered_posted_since_check = false;
+    }
+
     fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
         let ctx = self.vm();
         self.plugin_request_refills_left = Self::CONCURRENT_REFILLS_PER_TICK;
-        self.tick_concurrent();
+        self.take_posted_tasks();
         self.process_gc_timer();
 
         // Note: reshaped for borrowck — `vm_ref()` is `&'static`, so the
@@ -904,7 +1047,7 @@ impl EventLoop {
                     break 'tick;
                 }
                 refills += 1;
-                self.tick_concurrent();
+                self.take_posted_tasks();
                 self.global_ref()
                     .handle_rejected_promises()
                     .map_err(|_| Stopped)?;
@@ -920,7 +1063,7 @@ impl EventLoop {
                 break;
             }
             refills += 1;
-            self.tick_concurrent();
+            self.take_posted_tasks();
             if self.tasks.readable_length() > 0 {
                 continue;
             }
@@ -932,7 +1075,7 @@ impl EventLoop {
                 break;
             }
             refills += 1;
-            self.tick_concurrent();
+            self.take_posted_tasks();
         }
 
         self.global_ref()
@@ -1044,6 +1187,9 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
+        for task in core::mem::take(&mut self.held_posted_tasks) {
+            let _ = self.tasks.write_item(task);
+        }
         let batch = self.concurrent_tasks.pop_batch();
         Self::take_concurrent_tasks(&mut self.tasks, batch);
         let batch = self.concurrent_plugin_requests.pop_batch();
@@ -1079,6 +1225,7 @@ impl EventLoop {
         debug_assert!(
             self.tasks.readable_length() == 0
                 && self.concurrent_tasks.is_empty()
+                && self.held_posted_tasks.is_empty()
                 && self.plugin_requests.readable_length() == 0
                 && self.concurrent_plugin_requests.is_empty(),
             "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
@@ -1151,6 +1298,8 @@ impl EventLoop {
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
+        unsafe { (*this).delivered_posted_since_check = false };
+        // SAFETY: as above.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
         // SAFETY: as above.
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
@@ -1565,7 +1714,8 @@ pub(crate) fn get_active_tasks(
         active_tasks: vm_ref.active_tasks,
         tasks: event_loop.tasks.readable_length(),
         immediate_tasks: event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len(),
-        concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty(),
+        concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty()
+            && event_loop.held_posted_tasks.is_empty(),
         loop_active: vm_ref.platform_loop_opt().is_some_and(|h| h.is_active()),
         event_loop_alive: vm_ref.is_event_loop_alive(),
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),

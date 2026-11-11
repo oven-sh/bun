@@ -259,6 +259,8 @@ impl<'a> Coordinator<'a> {
                 self.abort_all(signal);
                 return;
             }
+            // The bounded wait below polls with no `auto_tick*()`, so no immediate runs there.
+            self.vm.event_loop_ref().allow_posted_tasks();
             self.vm.event_loop_ref().tick();
             self.run_pending_reaps();
             self.assign_work_to_waiting_workers();

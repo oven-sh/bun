@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
@@ -497,4 +497,171 @@ it("timers/promises clears its timers with the globals that were there when it s
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
+});
+
+// Node takes the work that its thread pool finished once per loop iteration, and runs the `setImmediate`
+// callbacks before it takes again. So an immediate that a callback queues runs before work that was not
+// finished when that callback ran.
+describe("setImmediate and work that other threads finish", () => {
+  // `digest()`: Bun computes a digest of fewer than 64 bytes at the call and posts the result to the loop, as a
+  // thread posts finished work. So no thread decides the order in the scripts that use it.
+  const prelude = `
+    const log = [];
+    const digest = () => crypto.subtle.digest("SHA-256", new Uint8Array(63));
+    process.on("exit", () => console.log(log.join(" ")));
+  `;
+  const startup = `
+    digest().then(() => log.push("work"));
+    setImmediate(() => log.push("immediate"));
+  `;
+  const files = {
+    "dep.mjs": `export const x = 1;`,
+    // Each result queues an immediate and starts the next digest.
+    "chain.cjs": `${prelude}
+      let n = 0;
+      const step = () => digest().then(() => {
+        const i = ++n;
+        log.push("work" + i);
+        setImmediate(() => log.push("immediate" + i));
+        if (i < 3) step();
+      });
+      if (process.argv[2] === "timer") setTimeout(step, 1);
+      else step();
+    `,
+    // The same chain on the thread pool. Each callback waits until the pool has posted the next result.
+    "pool-chain.cjs": `${prelude}
+      const fs = require("fs");
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      const step = i => fs.stat(__filename, () => {
+        log.push("work" + i);
+        if (i === 3) return;
+        step(i + 1);
+        setImmediate(() => log.push("immediate" + i));
+        while (getEventLoopStats().concurrentTasksEmpty) {}
+      });
+      step(1);
+    `,
+    // A loop of immediates counts the turns. Each callback of the chain must get a turn of its own.
+    "spin.cjs": `
+      const crypto = require("crypto");
+      let turns = 0, last = -1, calls = 0, sameTurn = 0, done = false;
+      (function spin() { turns++; if (!done) setImmediate(spin); })();
+      (function next() {
+        crypto.pbkdf2("a", "b", 1, 8, "sha256", () => {
+          calls++;
+          if (turns === last) sameTurn++;
+          last = turns;
+          if (calls === 50) { done = true; console.log(JSON.stringify({ calls, sameTurn })); return; }
+          process.nextTick(next);
+        });
+      })();
+    `,
+    // Work that is finished when the entry script returns runs before the immediates of the script.
+    "startup.cjs": prelude + startup,
+    "startup-import.mjs": `import { x } from "./dep.mjs";${prelude}${startup}`,
+    "startup-dynamic-import.mjs": `const { x } = await import("./dep.mjs");${prelude}${startup}`,
+    // Two results of one take both run before the immediates that they queue.
+    "batch.cjs": `${prelude}
+      digest().then(() => { log.push("work1"); setImmediate(() => log.push("immediate1")); });
+      digest().then(() => { log.push("work2"); setImmediate(() => log.push("immediate2")); });
+    `,
+    // A message is not work of the thread pool: the immediate does not hold it back. Here the immediate
+    // closes the receiver, so a message that was held back would be lost.
+    "message.cjs": `${prelude}
+      let post, close;
+      if (process.argv[2] === "port") {
+        const { port1, port2 } = new (require("node:worker_threads").MessageChannel)();
+        port2.on("message", () => log.push("message"));
+        post = () => port1.postMessage(1);
+        close = () => port2.close();
+      } else {
+        const a = new BroadcastChannel("x"), b = new BroadcastChannel("x");
+        b.onmessage = () => log.push("message");
+        post = () => a.postMessage(1);
+        close = () => { a.close(); b.close(); };
+      }
+      digest().then(() => {
+        log.push("work");
+        setImmediate(() => { log.push("immediate"); close(); });
+        post();
+      });
+    `,
+    // A cleared immediate stays in the queue until the immediates run. The work behind it still arrives.
+    "cleared.cjs": `${prelude}
+      digest().then(() => {
+        log.push("work1");
+        clearImmediate(setImmediate(() => log.push("never")));
+        digest().then(() => log.push("work2"));
+      });
+    `,
+    // The notice that closes the listening port arrives while an immediate is pending.
+    "port-exit.cjs": `
+      const { port1, port2 } = new (require("node:worker_threads").MessageChannel)();
+      port2.once("message", () => {});
+      port1.close();
+      setImmediate(() => {});
+      process.on("exit", () => console.log("exit"));
+    `,
+    // A plugin's onLoad queues an immediate. The bundler posts its next request while the microtask runs.
+    "plugin.mjs": `
+      import { readFileSync } from "node:fs";
+      const log = [];
+      let n = 0;
+      const result = await Bun.build({
+        entrypoints: [import.meta.dir + "/plugin/m1.x"],
+        plugins: [{
+          name: "order",
+          setup(build) {
+            build.onLoad({ filter: /\\.x$/ }, args => {
+              const i = ++n;
+              log.push("load" + i);
+              setImmediate(() => log.push("immediate" + i));
+              queueMicrotask(() => { const end = performance.now() + Number(process.argv[2]); while (performance.now() < end) {} });
+              return { contents: readFileSync(args.path, "utf8"), loader: "js" };
+            });
+          },
+        }],
+      });
+      await new Promise(resolve => setImmediate(resolve));
+      console.log(result.success, log.join(" "));
+    `,
+    "plugin/m1.x": `import "./m2.x";`,
+    "plugin/m2.x": `import "./m3.x";`,
+    "plugin/m3.x": `export {};`,
+  };
+
+  const alternating = "work1 immediate1 work2 immediate2 work3";
+  const cases: [name: string, argv: string[], stdout: string][] = [
+    ["a chain of results from the entry script", ["chain.cjs"], alternating + " immediate3"],
+    ["a chain of results from a timer", ["chain.cjs", "timer"], alternating + " immediate3"],
+    ["a chain of thread pool callbacks", ["pool-chain.cjs"], alternating],
+    ["a loop of immediates beside a chain of thread pool callbacks", ["spin.cjs"], `{"calls":50,"sameTurn":0}`],
+    // The microtask has to last until the bundler thread has posted its next request.
+    [
+      "the requests of a bundler plugin",
+      ["plugin.mjs", isDebug || isASAN ? "300" : "50"],
+      "true load1 immediate1 load2 immediate2 load3 immediate3",
+    ],
+    ["work that is finished when a CommonJS entry returns", ["startup.cjs"], "work immediate"],
+    ["work that is finished when an entry with an import returns", ["startup-import.mjs"], "work immediate"],
+    ["work that is finished after an import() in the entry", ["startup-dynamic-import.mjs"], "work immediate"],
+    ["two results of one take", ["batch.cjs"], "work1 work2 immediate1 immediate2"],
+    ["a port message from a work callback", ["message.cjs", "port"], "work message immediate"],
+    ["a BroadcastChannel message from a work callback", ["message.cjs", "channel"], "work message immediate"],
+    ["work behind a cleared immediate", ["cleared.cjs"], "work1 work2"],
+    ["a port that closes while an immediate is pending", ["port-exit.cjs"], "exit"],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, argv, expected) => {
+    using dir = tempDir("immediate-order", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...argv],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+  });
 });

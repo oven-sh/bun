@@ -131,6 +131,12 @@ public:
     // target's thread when the work whose completion this is was initiated, or Regular for work no
     // script there initiated.
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
+    // postTaskTo() for an event of a source that has a handle of its own in Node's loop: a message
+    // port, a BroadcastChannel, a worker. Node can run such an event in the poll phase that caused
+    // it, so the target's loop does not hold it back for a pending setImmediate callback, as it does
+    // the result of work (bun_event_loop::TaskTag::is_source_event). Use one of the two for all the
+    // posts of one source: their order is kept only among posts of the same kind.
+    WEBCORE_EXPORT static bool postSourceEventTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
@@ -185,6 +191,8 @@ public:
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
+    static bool postTaskTo(ScriptExecutionContextIdentifier, BunLoopKind, Function<void(ScriptExecutionContext&)>&&, bool isSourceEvent);
+
     std::atomic<bool> m_isTerminating { false };
     RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;

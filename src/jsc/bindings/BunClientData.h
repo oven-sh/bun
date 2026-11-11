@@ -26,8 +26,8 @@ class WorkerMessagingProxy;
 class EventLoopTask;
 }
 // Post to the VM's `kind` loop through a reference and give it up in one step (a reference taken only
-// to outlive a lock).
-extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
+// to outlive a lock). `isSourceEvent`: see ScriptExecutionContext::postSourceEventTo().
+extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind, bool isSourceEvent);
 extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
 extern "C" void Bun__VmHandle__wake(const BunVmHandleRef*); // any thread
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.

@@ -320,6 +320,8 @@ impl Debugger {
             if wait == Wait::Off {
                 break;
             }
+            // `Wait::Shortly` polls with no `auto_tick*()`, so no immediate runs here.
+            this.event_loop_mut().allow_posted_tasks();
             this.event_loop_mut().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
             let wait = match this.debugger.as_deref() {

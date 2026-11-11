@@ -78,6 +78,7 @@ pub mod task_tag {
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,
+        CppSourceEventTask,       // a CppTask that is a source event (`TaskTag::is_source_event`)
         DuplexUpgradeContext,
         FetchTasklet,
         FetchTaskletDeinit,
@@ -235,6 +236,29 @@ impl TaskTag {
     #[inline]
     pub fn is_plugin_request(self) -> bool {
         self == task_tag::BundleV2PluginResolve || self == task_tag::BundleV2PluginLoad
+    }
+
+    /// An event of a source that has a handle of its own in Node's loop (a message port, a
+    /// `BroadcastChannel`, a worker's events, `fs.watch`, an N-API thread-safe function, an
+    /// addon's `uv_async_t`), and not the result of work that Node finishes on its thread
+    /// pool. Node can run it in the poll phase that caused it, before the `setImmediate`
+    /// callbacks. So the JS event loop does not hold it back for a pending immediate, as it
+    /// does other posted tasks.
+    #[inline]
+    pub const fn is_source_event(self) -> bool {
+        self.0 == task_tag::CppSourceEventTask.0
+            || self.0 == task_tag::FSWatchTask.0
+            || self.0 == task_tag::ThreadSafeFunction.0
+            || self.0 == task_tag::UvLoopDispatch.0
+    }
+
+    /// A step of the module loader: a module that was fetched or transpiled on another thread
+    /// comes back.
+    #[inline]
+    pub const fn is_module_loading(self) -> bool {
+        self.0 == task_tag::AsyncModule.0
+            || self.0 == task_tag::PollPendingModulesTask.0
+            || self.0 == task_tag::RuntimeTranspilerStore.0
     }
 
     /// The tag's identifier, for diagnostics.

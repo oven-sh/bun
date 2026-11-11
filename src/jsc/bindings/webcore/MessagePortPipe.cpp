@@ -53,7 +53,7 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
     // while a wakeup is in flight. The task captures the ctxId it was posted
     // to so drainAndDispatch can detect if the side moved to a different
     // context before the task ran.
-    bool posted = ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
+    bool posted = ScriptExecutionContext::postSourceEventTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
         pipe->drainAndDispatch(side, ctxId);
     });
     if (!posted) {
@@ -335,7 +335,7 @@ void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
     }
     if (!ctxId)
         return;
-    ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
+    ScriptExecutionContext::postSourceEventTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
         RefPtr<MessagePort> port;
         {
             Locker locker { pipe->m_sides[peerSide].lock };

@@ -218,7 +218,7 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
             return;
         m_toWorker.drainScheduled = true;
     }
-    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    bool posted = ScriptExecutionContext::postSourceEventTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainMessagesToWorkerGlobalScope(context);
     });
     if (!posted) {
@@ -394,7 +394,7 @@ void WorkerMessagingProxy::workerThreadStarted()
         if (m_state.load() != State::Pending)
             return;
     }
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
+    ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;
@@ -444,7 +444,7 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
             return;
         m_toParent.drainScheduled = true;
     }
-    bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    bool posted = ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded);
     });
     if (!posted) {
@@ -455,7 +455,7 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
 
 void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
+    ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -487,7 +487,7 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         CLEAR_IF_EXCEPTION(scope);
     }
 
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy(), message = message.isolatedCopy()](ScriptExecutionContext& context) {
+    return ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy(), message = message.isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -526,7 +526,7 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
 
 void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -546,7 +546,7 @@ void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()
 
 void WorkerMessagingProxy::postFailedToStartErrorToWorkerObject()
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -568,7 +568,7 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool sto
     // Last thing the worker thread does with this object. If the parent context is gone the task is
     // dropped and the proxy (with the thread's ref on it) leaks; the parent's own exit path
     // (parentContextWillDestroy) is what normally prevents that.
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, exitCode, stoppedByParent](ScriptExecutionContext&) {
+    ScriptExecutionContext::postSourceEventTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, exitCode, stoppedByParent](ScriptExecutionContext&) {
         protectedThis->workerGlobalScopeDestroyedInternal(exitCode, stoppedByParent);
     });
 }

@@ -348,15 +348,25 @@ impl VmHandle {
 
     /// Queue a C++ `EventLoopTask` on the VM's `kind` loop from another
     /// thread (WebCore's `postTaskTo` / `postTaskConcurrently`), or delete it
-    /// unrun if the VM is closed.
+    /// unrun if the VM is closed. `source_event`: the task is a
+    /// [source event](bun_event_loop::TaskTag::is_source_event) (`postSourceEventTo`).
     ///
     /// # Safety
     /// `task` is a live heap `WebCore::EventLoopTask` the caller hands over.
-    pub unsafe fn post_cpp_task(&self, kind: LoopKind, task: *mut crate::cpp_task::CppTask) {
+    pub unsafe fn post_cpp_task(
+        &self,
+        kind: LoopKind,
+        task: *mut crate::cpp_task::CppTask,
+        source_event: bool,
+    ) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
-        let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
+        let mut task_item = bun_event_loop::Task::init(task);
+        if source_event {
+            task_item.tag = bun_event_loop::task_tag::CppSourceEventTask;
+        }
+        let ct = ConcurrentTaskItem::create(task_item);
         if let Posted::Refused(ct) = self.post(kind, ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
@@ -720,6 +730,7 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
 
 /// Any thread: post a C++ task to the VM's `kind` loop through a reference and
 /// give the reference up (queued, or deleted unrun if the VM is closed).
+/// `source_event`: as for [`VmHandle::post_cpp_task`].
 ///
 /// # Safety
 /// `r` came from `Bun__VmHandle__retain*` and is not used afterwards; `task` is
@@ -729,11 +740,12 @@ pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
     r: *const Shared,
     task: *mut crate::cpp_task::CppTask,
     kind: LoopKind,
+    source_event: bool,
 ) {
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::from_ref(r) };
     // SAFETY: fn contract.
-    unsafe { handle.post_cpp_task(kind, task) };
+    unsafe { handle.post_cpp_task(kind, task, source_event) };
 }
 
 /// JS thread: adjust this VM's keep-alive directly.

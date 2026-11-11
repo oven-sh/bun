@@ -25,6 +25,20 @@ This prevents infinite loops when `setImmediate` is called within a `setImmediat
 
 Thread-safe queue for tasks enqueued from worker threads or async operations. These are moved to the main task queue before processing.
 
+`tick()` takes from this queue when it starts, and again after each batch of tasks (at most 8 more times). Drivers also call `tick()` several times before they run the immediates. Node takes the work that its thread pool finished once per loop iteration, and runs the `setImmediate` callbacks before it takes again. To keep that order, `EventLoop::take_posted_tasks` holds posted work back in this case:
+
+- A take since the immediates last ran delivered posted work, or found an immediate pending.
+- An immediate is pending now.
+
+The work stays in `held_posted_tasks` until `tick_immediate_tasks` has run. With no immediate pending, `tick()` takes as often as before.
+
+Two kinds of task are exempt:
+
+- A source event (`TaskTag::is_source_event`): a message port or `BroadcastChannel` message, a worker's events, an `fs.watch` event, an N-API thread-safe function call, an addon's `uv_async_send`. Node can run these in the same loop iteration as the callback that caused them. They are never held back, and they do not count as delivered work. C++ posts one with `ScriptExecutionContext::postSourceEventTo`.
+- A step of the module loader (`TaskTag::is_module_loading`). It does not count as delivered work, because the entry script has not run the code after its imports.
+
+A driver that calls `tick()` again with no `auto_tick*()` between (the REPL, the debugger's short wait) calls `allow_posted_tasks()` first.
+
 ### 4. Deferred Task Queue (`src/event_loop/DeferredTaskQueue.rs`)
 
 For operations that should be batched and deferred until after microtasks drain (e.g., buffered HTTP response writes, file sink flushes). This avoids excessive system calls while maintaining responsiveness.
@@ -44,6 +58,7 @@ Built-in JSC microtask queue for promises and queueMicrotask.
 ```
 ┌─────────────────────────────────────┐
 │  1. Tick concurrent tasks           │ ← Move tasks from concurrent queue
+│                                     │   (take_posted_tasks, see above)
 └──────────────┬──────────────────────┘
                │
                ▼

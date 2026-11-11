@@ -169,8 +169,10 @@ public:
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // Those of them that a mock named or reached: what has called import() for one of them goes with it.
         WTF::UncheckedKeyHashSet<String> modulesToEvictWithCallers = {};
-        // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
+        // The pending loads those modules are waiting for, and the evaluations that `modulesLeftForLater` waits for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
+        // The ES and CommonJS modules that a walk left because a module was being evaluated: see `waits` in evictModulesAndTheirImporters(). Weak, as in ImportCallers.
+        WTF::UncheckedKeyHashMap<JSC::JSCell*, JSC::Weak<JSC::JSCell>> modulesLeftForLater = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
@@ -197,6 +199,7 @@ public:
         {
             importCalls.clear();
             importCallsOfCommonJS.clear();
+            modulesLeftForLater.clear();
             testFilesToReplace.clear();
         }
 

@@ -3159,6 +3159,8 @@ struct ModulesToEvict {
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
+    // With `hasLoadSettled`: the walk runs as a job, and not inside a call that the program made.
+    bool isJob { false };
     // The same, for the end of a mock over a compiled file that had run: the program holds what the file exported, so nothing is listed here.
     bool endsMockOverCompiledFileThatHadRun { false };
 #if ENABLE(AOT)
@@ -3329,6 +3331,18 @@ static void clearCompiledProgramFailures(Zig::GlobalObject* globalObject)
 }
 #endif
 
+// The module that the scope of the frame's function leads to. Null for code that is in none, as that of a CommonJS module.
+static JSC::AbstractModuleRecord* moduleOfFrame(JSC::StackVisitor& visitor)
+{
+    auto callee = visitor->callee();
+    auto* code = callee.isCell() ? dynamicDowncast<JSC::JSCallee>(callee.asCell()) : nullptr;
+    for (JSC::JSScope* scope = code ? code->scope() : nullptr; scope; scope = scope->next()) {
+        if (auto* environment = dynamicDowncast<JSC::JSModuleEnvironment>(scope))
+            return environment->moduleRecord();
+    }
+    return nullptr;
+}
+
 __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, ModulesToEvict&& evict)
 {
     auto& plugins = globalObject->onLoadPlugins;
@@ -3400,6 +3414,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         plugins.testFilesToReplace.add(key);
         return true;
     };
+    // The modules that are being evaluated, and those whose evaluation waits at a top-level await. The end of a test file takes the latter as they are. See `waits`.
+    UncheckedKeyHashSet<String> running, suspended;
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         String key(mapKey.first);
         auto* record = entry->record();
@@ -3413,6 +3429,10 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             evict.abandonedModules.append(key);
         // It may have failed because of a mock, and JSC forgets a failed module's requests, so it's never found as an importer.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating)
+            running.add(key);
+        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && !evict.isEndOfTestFile)
+            suspended.add(key);
         bool isEvictedWithAll = evict.all && !(evict.exceptPackages && isExternalizedByVitest(globalObject, key));
         if (isEvictedWithAll || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError()))
             keys.append(key);
@@ -3550,12 +3570,51 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 
     // What called import() for a module that a mock changed or stood in for goes with it, and so on from each module that goes so. Not with a module that failed by itself: whoever caught that holds nothing of it.
     UncheckedKeyHashSet<String> callersGo;
-    if (hasImportCalls || (!evict.all && !loading.isEmpty())) {
+    bool leavesModules = false, bodyRuns = true;
+    if (hasImportCalls || (!evict.all && !(loading.isEmpty() && plugins.modulesLeftForLater.isEmpty()))) {
         Vector<String> held;
         auto hold = [&](const String& key) {
             if (callersGo.add(key).isNewEntry)
                 held.append(key);
         };
+        // A walk can come from inside a module body: by a call that ends a mock, a require() that ends a load, or a factory that stops there.
+        bodyRuns = !running.isEmpty();
+        JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) {
+            auto* codeBlock = visitor->isCompiledFrame() || visitor->isInlinedDFGFrame() ? nullptr : visitor->codeBlock();
+            auto* function = codeBlock ? dynamicDowncast<JSC::FunctionExecutable>(codeBlock->ownerExecutable()) : nullptr;
+            if (!codeBlock || (function && function->isBuiltinFunction()))
+                return WTF::IterationStatus::Continue;
+            String key;
+            // The wrapper of a CommonJS module is called with the module as `this`.
+            auto* commonJSModule = function ? dynamicDowncast<Bun::JSCommonJSModule>(visitor->callFrame()->thisValue()) : nullptr;
+            if (codeBlock->codeType() == JSC::ModuleCode) {
+                bodyRuns = true;
+                if (auto* record = moduleOfFrame(visitor))
+                    key = registeredKeys.get(record);
+            } else if (commonJSModule) {
+                bodyRuns = true;
+                key = requireKeys.get(commonJSModule);
+            }
+            if (!key.isNull())
+                running.add(key);
+            return WTF::IterationStatus::Continue;
+        });
+        bool isEvaluating = bodyRuns || !suspended.isEmpty();
+        // What an earlier walk left goes now, if no module is evaluated. Nothing evaluates a module again that has left the registry or the require cache since.
+        if (!isEvaluating) {
+            for (auto& left : std::exchange(plugins.modulesLeftForLater, {})) {
+                String key;
+                if (left.value.get() != left.key)
+                    continue;
+                if (auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(left.key))
+                    key = registeredKeys.get(record);
+                else if (auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(left.key))
+                    key = requireKeys.get(commonJSModule);
+                bool isQueued;
+                if (!key.isNull() && take(emptyString(), key, isQueued))
+                    hold(key);
+            }
+        }
         for (auto& key : plugins.modulesToEvictWithCallers)
             hold(key);
         // The modules that wait for a load are walked first, with all that called import() for them. `onlyCallersIn` is for the listed modules, which are held once those are done.
@@ -3569,41 +3628,43 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 hold(key);
             return walked < held.size();
         };
+        UncheckedKeyHashMap<String, Bun::JSCommonJSModule*> commonJSModules;
+        // A module does not go before its evaluation has ended: the next import of it would start a second run inside the first. What goes with a module that waited for a load does not go while any module is evaluated: the program did not ask for that at this point, and the next import by a body that runs, or that goes on after its await, would evaluate it again. What stays is kept by itself, because the modules that lead to it may have gone by the next walk.
+        auto waits = [&](const String& importer) {
+            if (evicted.contains(importer) || !plugins.testFileOfModule.get(importer) || plugins.testFiles.contains(importer))
+                return false;
+            if (!(running.contains(importer) || suspended.contains(importer) || (isEvaluating && !holdsListed)))
+                return false;
+            auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, importer));
+            JSC::JSCell* module = entry ? entry->record() : nullptr;
+            if (!module) {
+                if (commonJSModules.isEmpty()) {
+                    for (auto& [commonJSModule, key] : requireKeys)
+                        commonJSModules.add(key, commonJSModule);
+                }
+                module = commonJSModules.get(importer);
+            }
+            if (!module)
+                return false;
+            plugins.modulesLeftForLater.set(module, JSC::Weak<JSC::JSCell> { module });
+            leavesModules = true;
+            return true;
+        };
         auto takeCaller = [&](const String& key, const String& importer) {
             // A module that made a mock would make it again: it goes once the test file has ended, with JSMock__replaceModuleOfTestFile().
             if (plugins.modulesThatMocked.contains(fileOfModuleKey(importer)) || (onlyCallersIn && !onlyCallersIn->contains(importer)))
                 return;
             bool isQueued;
-            if (take(key, importer, isQueued))
+            if (!waits(importer) && take(key, importer, isQueued))
                 hold(importer);
-        };
-        // The stop of a factory can come inside a load that a module body began, so it takes no ES module whose body still runs: that body would run a second time inside the first. What goes with a waiting module beyond the factory's chain (`beyondChain`) must be known to have ended, and a CommonJS module does not say whether it runs.
-        UncheckedKeyHashSet<String> beyondChain;
-        auto mayGo = [&](const String& importer, JSC::AbstractModuleRecord* record, bool isBeyondChain) {
-            if (!evict.onlyCallersIn)
-                return true;
-            auto* cyclic = record ? dynamicDowncast<JSC::CyclicModuleRecord>(record) : nullptr;
-            if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating)
-                return false;
-            if (!isBeyondChain || evict.onlyCallersIn->contains(importer))
-                return true;
-            if (cyclic)
-                beyondChain.add(importer);
-            return !!cyclic;
         };
         UncheckedKeyHashMap<String, Vector<String>> requireKeysOfFile;
         for (size_t walked = 0; walked < held.size() || holdListed(walked); ++walked) {
             String key = held[walked];
             if (auto importers = importersOf.find(key); importers != importersOf.end()) {
                 bool isQueued;
-                bool isBeyondChain = beyondChain.contains(key);
                 for (auto& importer : importers->value) {
-                    if (evict.onlyCallersIn) {
-                        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, importer));
-                        if (!mayGo(importer, entry ? entry->record() : nullptr, isBeyondChain))
-                            continue;
-                    }
-                    if (take(key, importer, isQueued) && (callersGo.add(importer).isNewEntry || isQueued))
+                    if (!waits(importer) && take(key, importer, isQueued) && (callersGo.add(importer).isNewEntry || isQueued))
                         held.append(importer);
                 }
             }
@@ -3613,8 +3674,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                     auto importer = caller.value.get() == caller.key ? registeredKeys.find(caller.key) : registeredKeys.end();
                     if (importer == registeredKeys.end())
                         return true;
-                    if (mayGo(importer->value, caller.key, !holdsListed))
-                        takeCaller(key, importer->value);
+                    takeCaller(key, importer->value);
                     return false;
                 });
                 if (callers->value.isEmpty())
@@ -3627,10 +3687,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 }
                 for (auto& file : files->value) {
                     if (auto importers = requireKeysOfFile.find(file); importers != requireKeysOfFile.end()) {
-                        for (auto& importer : importers->value) {
-                            if (mayGo(importer, nullptr, !holdsListed))
-                                takeCaller(key, importer);
-                        }
+                        for (auto& importer : importers->value)
+                            takeCaller(key, importer);
                     }
                 }
             }
@@ -3653,6 +3711,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         loader->clearAll();
         plugins.importCalls.clear();
         plugins.importCallsOfCommonJS.clear();
+        plugins.modulesLeftForLater.clear();
     }
     UncheckedKeyHashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
@@ -3739,6 +3798,18 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
     plugins.modulesToEvictOnceLoaded = WTF::move(stay);
 
+    // A module that was left at its top-level await goes when its evaluation ends: the job below is a reaction on that too.
+    Vector<JSC::CyclicModuleRecord*, 4> leftAtAwait;
+    for (auto& left : plugins.modulesLeftForLater) {
+        auto* cyclic = !bodyRuns && left.value.get() == left.key ? dynamicDowncast<JSC::CyclicModuleRecord>(left.key) : nullptr;
+        if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            leftAtAwait.append(cyclic);
+    }
+    for (auto* cyclic : leftAtAwait) {
+        JSC::JSPromise* evaluation = cyclic->evaluate(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        awaited.add(evaluation);
+    }
     // This function runs again each time one of these loads settles. A second reaction on the ones still pending would double the runs per load.
     auto alreadyAwaited = std::exchange(plugins.loadsOfModulesToEvict, {});
     JSC::JSFunction* didSettle = nullptr;
@@ -3750,6 +3821,14 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             didSettle = JSC::JSFunction::create(vm, globalObject, 0, String(), jsFunctionEvictModulesThatHaveLoaded, ImplementationVisibility::Private);
         pendingLoad->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), jsUndefined());
     }
+    // What this walk left goes in a job of its own. If a module is evaluated then too, the next walk that comes when none is takes it.
+    if (leavesModules && !evict.isJob) {
+        if (!didSettle)
+            didSettle = JSC::JSFunction::create(vm, globalObject, 0, String(), jsFunctionEvictModulesThatHaveLoaded, ImplementationVisibility::Private);
+        auto* settled = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        settled->fulfill(vm, jsUndefined());
+        settled->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), jsUndefined());
+    }
 }
 
 static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vector<String>&& modules)
@@ -3759,23 +3838,29 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vecto
 
 static void evictModulesGivenTheOriginal(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock&& stopped)
 {
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    // The modules that wait for a load and have loaded go first, with all that called import() for them. Inside a synchronous load this does nothing: the walk below then takes them, with the callers that cannot still be running.
-    if (!globalObject->onLoadPlugins.modulesToEvictWithCallers.isEmpty()) {
-        Bun::evictModulesThatHaveLoaded(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-    }
     ModulesToEvict evict { WTF::move(stopped.givenTheOriginal) };
     // A module that the factory loaded may have called import() for one of them. One that was loaded before, and called import() for the factory, keeps nothing of them.
     evict.onlyCallersIn = &stopped.importChain;
-    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+}
+
+// Inside a synchronous load a module is evaluated before its load settles, so the walk waits until that load has returned.
+static void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject, bool isJob)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    bool hasModulesLeft = isJob && !plugins.modulesLeftForLater.isEmpty();
+    if ((plugins.modulesToEvictOnceLoaded.isEmpty() && !hasModulesLeft) || globalObject->vm().m_synchronousModuleQueue) [[likely]]
+        return;
+    ModulesToEvict evict;
+    evict.hasLoadSettled = true;
+    evict.isJob = isJob;
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvictModulesThatHaveLoaded, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    Bun::evictModulesThatHaveLoaded(globalObject);
+    evictModulesThatHaveLoaded(defaultGlobalObject(lexicalGlobalObject), true);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -8046,7 +8131,7 @@ bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMoc
     return Zig::registeredModuleMock(globalObject, key) == mock;
 }
 
-// The module whose code called import(): the one that the scope of the calling function leads to. Null for code that is in none, as that of a CommonJS module.
+// The module whose code called import(). Null for code that is in none, as that of a CommonJS module.
 static JSC::AbstractModuleRecord* moduleThatCalledImport(JSC::VM& vm)
 {
     JSC::AbstractModuleRecord* caller = nullptr;
@@ -8059,12 +8144,7 @@ static JSC::AbstractModuleRecord* moduleThatCalledImport(JSC::VM& vm)
         auto* function = codeBlock ? dynamicDowncast<JSC::FunctionExecutable>(codeBlock->ownerExecutable()) : nullptr;
         if (!codeBlock || (function && function->isBuiltinFunction()))
             return WTF::IterationStatus::Continue;
-        auto callee = visitor->callee();
-        auto* code = callee.isCell() ? dynamicDowncast<JSC::JSCallee>(callee.asCell()) : nullptr;
-        for (JSC::JSScope* scope = code ? code->scope() : nullptr; scope && !caller; scope = scope->next()) {
-            if (auto* environment = dynamicDowncast<JSC::JSModuleEnvironment>(scope))
-                caller = environment->moduleRecord();
-        }
+        caller = Zig::moduleOfFrame(visitor);
         return WTF::IterationStatus::Done;
     });
     return caller;
@@ -8093,11 +8173,7 @@ void didCallImport(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader,
 
 void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)
 {
-    if (globalObject->onLoadPlugins.modulesToEvictOnceLoaded.isEmpty() || globalObject->vm().m_synchronousModuleQueue) [[likely]]
-        return;
-    Zig::ModulesToEvict evict;
-    evict.hasLoadSettled = true;
-    Zig::evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+    Zig::evictModulesThatHaveLoaded(globalObject, false);
 }
 
 void evictModuleThatNothingFetches(Zig::GlobalObject* globalObject, const JSC::Identifier& key)

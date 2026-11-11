@@ -58,6 +58,7 @@ test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, wh
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the module that re-exports it, then the one that re-exports that
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the other way round
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the second without a factory
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the variable holds a number that is no integer, and the first is removed
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > vi.doMock() takes the place of the first
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by a preload, as its mock: the imports of the file get the mock
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by an earlier test file: the imports of the file get the mock

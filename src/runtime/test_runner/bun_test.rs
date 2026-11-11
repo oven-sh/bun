@@ -914,6 +914,17 @@ impl BunTest {
         }
     }
 
+    /// `get_current_state_data()`, except that a concurrent group names the entry whose callback is on the stack.
+    /// Only the synchronous part of that callback gets an entry: `on_stack` is empty again before its microtasks run.
+    pub(crate) fn get_caller_state_data(&self) -> RefDataValue {
+        match self.get_current_state_data() {
+            RefDataValue::Execution { group_index, entry_data: None } => {
+                RefDataValue::Execution { group_index, entry_data: self.execution.on_stack.get() }
+            }
+            current => current,
+        }
+    }
+
     pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);

@@ -513,12 +513,7 @@ pub(crate) fn get_current_test(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         return Ok(JSValue::UNDEFINED);
     };
     let buntest = strong.get();
-    let running = match buntest.get_current_state_data() {
-        RefDataValue::Execution { group_index, entry_data: None } => {
-            RefDataValue::Execution { group_index, entry_data: buntest.execution.on_stack.get() }
-        }
-        running => running,
-    };
+    let running = buntest.get_caller_state_data();
     let (RefDataValue::Execution { group_index, entry_data: Some(entry_data) }, Some((sequence, _))) =
         (running, buntest.execution.get_current_and_valid_execution_sequence(&running))
     else {

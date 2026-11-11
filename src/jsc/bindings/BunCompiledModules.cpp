@@ -200,6 +200,7 @@ extern "C" bool Bun__AOT__allowsCodeFromDisk();
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 extern "C" bool isBunTest;
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" bool JSMock__isModuleLoadOfPreload(Zig::GlobalObject*);
 
 static bool reloadsFilesFromDisk()
 {
@@ -702,7 +703,7 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
         return rejected();
     if (!module)
         return nullptr;
-    if (isBunTest && !JSMock__isInPreload(globalObject)) {
+    if (isBunTest && !JSMock__isModuleLoadOfPreload(globalObject)) {
         unsigned testFile = globalObject->onLoadPlugins.testFile;
         auto loadedBy = AOT::evaluatedBy(globalObject, *module);
         if (loadedBy != AOT::LoadedBy::Preload)

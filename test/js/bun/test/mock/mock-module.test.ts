@@ -4263,6 +4263,89 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
       ["--preload", "./preload.ts"],
     );
   });
+
+  describe("a preload's beforeEach()", () => {
+    const firstFile = (test: string, first = "") => `
+      import { test, vi } from "bun:test";
+      ${test}("first", async () => { await 1; ${first} });
+      ${test}("second", async () => { await 1; });
+    `;
+
+    test.each([
+      ["one after the other", "test"],
+      ["at once", "test.concurrent"],
+    ])("mocks, unmocks and resets for every test file, for tests that run %s", async (_, test) => {
+      await expectFixturesToPass(
+        {
+          "preload.ts": `
+            import { beforeEach, mock, vi } from "bun:test";
+            mock.module("./unmocked-by-hook", () => ({ which: "preload" }));
+            globalThis.resetByHook = await import("./reset-by-hook");
+            let done = false;
+            beforeEach(() => {
+              if (done) return;
+              done = true;
+              mock.module("./mocked-by-hook", () => ({ which: "hook" }));
+              vi.doMock("./mocked-by-hook-too", () => ({ which: "hook" }));
+              vi.doUnmock("./unmocked-by-hook");
+              vi.resetModules();
+            });
+          `,
+          "mocked-by-hook.ts": `export const which = "real";`,
+          "mocked-by-hook-too.ts": `export const which = "real";`,
+          "unmocked-by-hook.ts": `export const which = "real";`,
+          "reset-by-hook.ts": `export const loads = globalThis.resetByHookLoads = (globalThis.resetByHookLoads ?? 0) + 1;`,
+          "1.test.ts": firstFile(test),
+          "2.test.ts": `
+            import { expect, test } from "bun:test";
+            test("the next file", async () => {
+              expect([
+                (await import("./mocked-by-hook")).which,
+                (await import("./mocked-by-hook-too")).which,
+                (await import("./unmocked-by-hook")).which,
+                (await import("./reset-by-hook")) === resetByHook,
+                (await import("./reset-by-hook")).loads,
+              ]).toEqual(["hook", "hook", "real", false, 2]);
+            });
+          `,
+        },
+        3,
+        ["--preload", "./preload.ts"],
+      );
+    });
+
+    // A module's imports load after the hook's callback has returned, so the stack can't name the owner of the whole graph.
+    test.each([
+      ["one after the other", "test"],
+      ["at once", "test.concurrent"],
+    ])("imports a module that the next file gets in one piece, for tests that run %s", async (_, test) => {
+      await expectFixturesToPass(
+        {
+          "preload.ts": `
+            import { beforeEach } from "bun:test";
+            let started = false;
+            beforeEach(async () => {
+              if (started) return;
+              started = true;
+              await import("./root");
+            });
+          `,
+          "root.ts": `export { id as depId } from "./dep";`,
+          "dep.ts": `export const id = globalThis.depLoads = (globalThis.depLoads ?? 0) + 1;`,
+          // The reset takes out what the file loaded. What a preload loaded comes back for the next file.
+          "1.test.ts": firstFile(test, "vi.resetModules();"),
+          "2.test.ts": `
+            import { expect, test } from "bun:test";
+            test("the next file", async () => {
+              expect((await import("./root")).depId).toBe((await import("./dep")).id);
+            });
+          `,
+        },
+        3,
+        ["--preload", "./preload.ts"],
+      );
+    });
+  });
 });
 
 describe.concurrent("a mocked module that exports then", () => {

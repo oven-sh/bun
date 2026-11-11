@@ -466,6 +466,105 @@ describe.concurrent("stubs made in a preload apply to every test file", () => {
     });
   });
 
+  describe("including stubs made in the preload's beforeEach(), aroundEach() and afterEach()", () => {
+    // Each stub is made once, so the next file only has it if it is the preload's.
+    const stub = `
+      const made = new Set();
+      function stub(name) {
+        if (made.has(name)) return;
+        made.add(name);
+        vi.stubGlobal("viUtils" + name, name);
+        vi.stubEnv("VI_UTILS_" + name.toUpperCase(), name);
+      }
+    `;
+    const firstFile = (describe: string, test: string, second = `async () => { await 1; }`) => `
+      import { describe, test, vi } from "bun:test";
+      ${describe}("tests", () => {
+        ${test}("first", async () => { await 1; });
+        ${test}("second", ${second});
+      });
+    `;
+    // The file after the first one expects, while it loads and in its test, the stubs whose name has `true` and no other.
+    const nextFile = (stubbed: Record<string, boolean>) => {
+      const names = Object.keys(stubbed);
+      const seen = names.map(name => `[globalThis.viUtils${name}, process.env.VI_UTILS_${name.toUpperCase()}]`);
+      const expected = names.map(name => (stubbed[name] ? `["${name}", "${name}"]` : `[undefined, undefined]`));
+      return `
+        import { expect, test } from "bun:test";
+        const whileItLoads = [${seen}];
+        test("next", () => expect([whileItLoads, [${seen}]]).toEqual([[${expected}], [${expected}]]));
+      `;
+    };
+    async function runFiles(preload: string, first: string, next: string, flags: readonly string[] = []) {
+      const { stderr, exitCode } = await run(
+        ["test", "--preload", "./preload.ts", ...flags, "./first.test.ts", "./next.test.ts"],
+        { "preload.ts": preload, "first.test.ts": first, "next.test.ts": next },
+      );
+      return { results: results(stderr), exitCode };
+    }
+    const passed = { results: ["(pass) tests > first", "(pass) tests > second", "(pass) next"], exitCode: 0 };
+
+    test.each([
+      ["one after the other", "describe", "test", []],
+      ["as test.concurrent", "describe", "test.concurrent", []],
+      ["in a describe.concurrent", "describe.concurrent", "test", []],
+      ["under --concurrent", "describe", "test", ["--concurrent"]],
+      ["as test.concurrent under --max-concurrency=1", "describe", "test.concurrent", ["--max-concurrency=1"]],
+    ] as const)("for tests that run %s", async (_, describe, test, flags) => {
+      const preload = `
+        import { afterEach, aroundEach, beforeEach, vi } from "bun:test";
+        ${stub}
+        beforeEach(() => stub("BeforeEach"));
+        aroundEach(async runTest => {
+          stub("AroundEach");
+          await runTest();
+        });
+        afterEach(() => stub("AfterEach"));
+      `;
+      const next = nextFile({ BeforeEach: true, AroundEach: true, AfterEach: true });
+      expect(await runFiles(preload, firstFile(describe, test), next, flags)).toEqual(passed);
+    });
+
+    test.each([
+      ["for tests that run one after the other, also after the hook awaits", "test", true],
+      // The runner names the hook of a concurrent test only while the hook's callback is on the stack.
+      ["for tests that run at once, only until the hook awaits", "test.concurrent", false],
+    ] as const)("%s", async (_, test, afterAwait) => {
+      const preload = `
+        import { beforeEach, vi } from "bun:test";
+        ${stub}
+        beforeEach(async () => {
+          stub("BeforeAwait");
+          await 1;
+          stub("AfterAwait");
+        });
+      `;
+      const next = nextFile({ BeforeAwait: true, AfterAwait: afterAwait });
+      expect(await runFiles(preload, firstFile("describe", test), next)).toEqual(passed);
+    });
+
+    test("but not a stub that a concurrent test makes while the hook of another test is pending", async () => {
+      const preload = `
+        import { beforeEach } from "bun:test";
+        globalThis.secondTestHasStubbed = Promise.withResolvers();
+        let hooks = 0;
+        beforeEach(async () => {
+          if (++hooks === 1) await secondTestHasStubbed.promise;
+        });
+      `;
+      const second = `() => {
+        vi.stubGlobal("viUtilsOfTest", "OfTest");
+        vi.stubEnv("VI_UTILS_OFTEST", "OfTest");
+        secondTestHasStubbed.resolve();
+      }`;
+      const first = firstFile("describe", "test.concurrent", second);
+      expect(await runFiles(preload, first, nextFile({ OfTest: false }))).toEqual({
+        results: ["(pass) tests > second", "(pass) tests > first", "(pass) next"],
+        exitCode: 0,
+      });
+    });
+  });
+
   test("even if its afterEach() undoes them, but not if the preload undid them itself", async () => {
     const { stderr, exitCode } = await run(["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"], {
       "preload.ts": `

@@ -100,3 +100,5 @@ test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wai
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
 # This one: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
+# The next one: a hook of a preload imports a file for concurrent tests, and a test resets the modules. Plain books the load to the test file and runs the file again for the next one. Compiled books it to the preload. Every test passes.
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's beforeEach() > imports a module that the next file gets in one piece, for tests that run at once

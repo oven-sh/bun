@@ -509,7 +509,7 @@ As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a
 
 Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files.
 
-Mocks made in a `--preload` script apply to every test file.
+Mocks made in a `--preload` script apply to every test file. So do mocks made in a `beforeAll()`, `beforeEach()` or `afterEach()` hook of the script. The exception is a `beforeEach()` or `afterEach()` hook that runs for concurrent tests: a mock that the hook makes after its first `await` is removed when the test file ends.
 
 A test file can mock a module that the preload script already mocked. With `vi.mock()` and `vi.doMock()`, only the modules the test file imports get the file's mock. Modules the preload script imported keep what they imported, as in Vitest. With `mock.module()` and `jest.mock()`, the modules the preload script imported get the file's mock too.
 
@@ -789,7 +789,7 @@ test("lazy import", async () => {
 });
 ```
 
-- Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
+- Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script, or by a `beforeAll()`, `beforeEach()` or `afterEach()` hook of the script, apply to every file. The exception is a `beforeEach()` or `afterEach()` hook that runs for concurrent tests: a stub that the hook makes after its first `await` is undone with the file.
 - `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
 
 ### Differences from Vitest

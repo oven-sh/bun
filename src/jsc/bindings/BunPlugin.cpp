@@ -3219,6 +3219,8 @@ static void giveLoadedModuleBackToPreloadModuleMock(Zig::GlobalObject* globalObj
 }
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+// For booking who loads a module. A graph loads across ticks, so this one doesn't ask which callback is on the stack.
+extern "C" bool JSMock__isModuleLoadOfPreload(Zig::GlobalObject*);
 
 __attribute__((minsize)) static void moveLoadedModule(Zig::GlobalObject* globalObject, const String& from, const String& to)
 {
@@ -4529,7 +4531,7 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     RETURN_IF_EXCEPTION(scope, false);
     loaded.compiledModule = module;
     mock->unevaluatedCompiledModule = module.index();
-    mock->testFileOfFirstLoad = Bun::isBunTest && !JSMock__isInPreload(globalObject) ? globalObject->onLoadPlugins.testFile : 0;
+    mock->testFileOfFirstLoad = Bun::isBunTest && !JSMock__isModuleLoadOfPreload(globalObject) ? globalObject->onLoadPlugins.testFile : 0;
     // `bun test` books who fetched a key at the fetch, and this is one: what comes back under the key at the end of the mock is this test file's.
     if (mock->testFileOfFirstLoad)
         JSC::AOT::markEntryOwnedByTestFile(globalObject, module);
@@ -6162,7 +6164,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     LoadedModule loaded = findLoadedModule(globalObject, specifier.keyString);
     RETURN_IF_EXCEPTION(scope, {});
     // What a preload loads is given back to the next test file under its own key.
-    if (!loaded.esmNamespace && !loaded.commonJSModule && !loaded.staleESMEntry && !loaded.staleCommonJSEntry && !JSMock__isInPreload(globalObject))
+    if (!loaded.esmNamespace && !loaded.commonJSModule && !loaded.staleESMEntry && !loaded.staleCommonJSEntry && !JSMock__isModuleLoadOfPreload(globalObject))
         globalObject->onLoadPlugins.loadedByImportActual.add(specifier.key);
 #if ENABLE(AOT)
     if (auto asked = vm.hasCompiledCode() && Bun::isBunTest ? Bun::compiledModuleForPath(specifier.key) : std::nullopt; asked && !JSC::AOT::hasStartedLoading(globalObject, *asked)) {
@@ -7661,7 +7663,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         return globalObject->onLoadPlugins.run(globalObject, specifier->toWTFString(BunString::ZeroCopy), onLoad);
     };
 
-    if (isBunTest && !Zig::JSMock__isInPreload(globalObject)) {
+    if (isBunTest && !Zig::JSMock__isModuleLoadOfPreload(globalObject)) {
         // require() of a loaded ES module and import() of a loaded CommonJS one get here too, but load nothing and keep the owner.
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

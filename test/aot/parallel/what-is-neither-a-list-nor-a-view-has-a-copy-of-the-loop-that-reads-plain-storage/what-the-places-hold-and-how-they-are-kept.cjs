@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // The places hold int32s, fractions, -0, NaN, texts, objects with valueOf, undefined, null, big integers and holes; the storage turns from one kind into another between the calls and grows past its room.
 const said = [];

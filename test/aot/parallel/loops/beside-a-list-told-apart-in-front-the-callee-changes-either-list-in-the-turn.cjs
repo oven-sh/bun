@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const from = JSON.parse('[1.5,2.5,3.5]'), list = JSON.parse('[' + Array.from({ length: 24 }, (_, i) => i + 0.5).join() + ']');

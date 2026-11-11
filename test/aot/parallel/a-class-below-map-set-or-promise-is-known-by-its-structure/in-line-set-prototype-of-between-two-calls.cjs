@@ -1,6 +1,6 @@
 // Between two calls the object is laid below another prototype by a built-in called in line: what the look showed ends there.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new H(); function make(t) { return one; }

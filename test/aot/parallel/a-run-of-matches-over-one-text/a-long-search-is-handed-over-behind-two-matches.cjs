@@ -1,4 +1,4 @@
-// COUNT: counter:RegExpLongSearchesHandedOver >= 4
+// COUNT: counter:RegExpLongSearchesInterpreted >= 4
 'use strict';
 const rounds = Number(process.argv[2] ?? 1);
 const short = value => { const text = JSON.stringify(value); return text === undefined ? 'undefined' : text.length > 60 ? text.slice(0, 28) + '..' + text.length + '..' + text.slice(-24) : text; };

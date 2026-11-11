@@ -1,5 +1,5 @@
 // Heir.count finds the field above: whoever files that answer makes the class above whole.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms >= 0
+// STATISTIC: StaticFieldGuardsReused >= 0
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

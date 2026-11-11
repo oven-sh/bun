@@ -1,4 +1,4 @@
-// STATISTIC: ConstantsOfFilesReadInFrontOfLoops >= 1
+// STATISTIC: ModuleConstantReadsHoisted >= 1
 "use strict";
 const table = [];
 function none(n) { let s = 0; for (let i = 0; i < n; i++) s += table[i]; return s + ":" + table.length + Array.isArray(table); }

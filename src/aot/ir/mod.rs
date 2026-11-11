@@ -26,6 +26,7 @@ mod body_decode;
 mod body_walk;
 mod finish;
 mod name_class;
+mod packed_body;
 #[cfg(any(test, feature = "ir_text"))]
 mod print_body;
 #[cfg(any(test, feature = "ir_text"))]

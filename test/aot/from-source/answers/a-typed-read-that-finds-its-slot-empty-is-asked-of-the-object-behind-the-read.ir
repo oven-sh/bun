@@ -13,8 +13,10 @@
 # print(looks(parcels[1]), looksAtFresh(2));
 # -- end of source
 # LIBRARY: own
-# A read of a field that the object does not hold yet finds its slot empty and answers undefined while the guard of the class under the name holds. A value laid on the prototype must be found.
-# The load itself is not asked where the slot is empty: it may stand ahead of the guards that give the empty slot a meaning. Under testing=CheckWalkAtRunTime the question stands behind the read, where the program has it.
+# A read of a field that the object does not have yet finds its slot empty and returns undefined as long as the class guard for that name holds.
+# A value that the program stores on the prototype must be found.
+# The load itself is not checked when the slot is empty, because it may be placed before the guards that give the empty slot its meaning.
+# With testing=CheckWalkAtRunTime the check is placed after the read, where the program has the read.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: undefined undefined
 # RIGHT-NEXT: above above
@@ -23,12 +25,13 @@
 # ASKED: undefined undefined
 # ASKED-NEXT: above above
 # ASKED-NEXT: exited with 0
-# The lie, testing=GuardsAndFactsAreTakenToHold, bites: by itself both reads answer undefined in silence.
-# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold
+# The injected fault, testing=AssumeGuardsAndFacts, has an effect here: on its own it makes both reads return undefined silently.
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts
 # BITES: undefined undefined
 # BITES-NEXT: undefined undefined
 # BITES-NEXT: exited with 0
-# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts
 # ASKEDLIE: undefined undefined
-# ASKEDLIE-NEXT: AOT: what the compiler remembers in place of a read by name answered a value under the name fragile, and the object, asked again, answers another.{{*}}
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: a property read that the compiler replaced with a known value found a value for 'fragile', but a full lookup finds another one
 # ASKEDLIE: crashed with

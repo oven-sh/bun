@@ -527,11 +527,6 @@ static JSValue handleVirtualModuleResult(
             if (exports) {
                 commonJSModule->setExportsObject(exports);
                 commonJSModule->hasEvaluated = true;
-                if (wasModuleMock) {
-                    JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didRequireModuleMock>(globalObject, object, commonJSModule);
-                    if (scope.exception()) [[unlikely]]
-                        return rejectOrResolve({});
-                }
                 return commonJSModule;
             }
         }
@@ -903,7 +898,7 @@ JSValue fetchCommonJSModule(
 
     if (Bun::hasCompiledModules() && !target->moduleGraph()) [[unlikely]] {
         String requesterPath = Bun::requesterForRequire(target, referrer ? referrer->toWTFString(BunString::ZeroCopy) : String());
-        JSC::AOT::ModuleRequesterScope asker(globalObject, requesterPath);
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, requesterPath);
         bool hasRun = requireCompiledModule(globalObject, target, specifierWtfString, !!typeAttribute);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun)

@@ -168,7 +168,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
             const auto& compiledFrame = frame.compiledFrame();
-            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.hasCalleeInFrame ? 2 : 0) | 1;
+            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | 1;
         }
 #endif
         auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
@@ -644,7 +644,7 @@ static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
     JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
     if (frame.isAsyncFrame() || frame.compiledFrame().isAtFailedTailCall)
         return description.name(vm);
-    return description.stackTraceName(vm, frame.callee(), frame.compiledFrame().hasCalleeInFrame);
+    return description.stackTraceName(vm);
 }
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)

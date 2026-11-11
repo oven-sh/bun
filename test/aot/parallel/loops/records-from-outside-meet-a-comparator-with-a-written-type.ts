@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 const said: unknown[] = [];
 function outside<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function hidden<T>(value: T): T { return ({ value } as any)[JSON.parse('"value"')]; }

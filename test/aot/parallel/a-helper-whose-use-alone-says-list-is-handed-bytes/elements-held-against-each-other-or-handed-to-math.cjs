@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 4
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 4
 // `if (s[i] > m) m = s[i]` and `Math.max(m, s[i])` say as much of numbers as a sum does: the loop asks in front for a list, bytes or another view. A relation with a written text says nothing of numbers.
 const key = JSON.parse('"go"');
 const greatest = { go(s) { let m = s[0]; for (let i = 0; i < s.length; i++) if (s[i] > m) m = s[i]; return m; } };

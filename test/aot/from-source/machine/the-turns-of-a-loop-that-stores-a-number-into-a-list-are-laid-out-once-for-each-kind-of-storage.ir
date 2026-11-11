@@ -28,8 +28,8 @@
 # front of them, as for lists that are read and for views; the rest of fewer turns asks in place. All five roads: 1,880. A list of int32s that is to take fractions is converted in front, as before.
 # `shift` reads its list by key: it goes on asking for int32 storage, which types the read.
 # f1 = fill, f2 = halve, f3 = shift
-# RUN: compile LoopsLaidOutForOneKindOfStorage mechanisms=all
-# CHECK: statistic LoopsLaidOutForOneKindOfStorage 4
+# RUN: compile UnrolledLoopsForIndexingType mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 4
 # RUN(FILL): walk f1:Body mechanisms=all
 # FILL-NOT: arrayStorage=Contiguous
 # FILL: [isWritable, admitsInt32Storage]

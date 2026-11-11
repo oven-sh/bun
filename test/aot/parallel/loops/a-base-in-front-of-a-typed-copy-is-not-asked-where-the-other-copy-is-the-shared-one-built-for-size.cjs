@@ -1,4 +1,4 @@
-// STATISTIC: BasesInFrontOfTypedCopiesAskedForLists <= 0
+// STATISTIC: InvariantBasesGuardedAsArrays <= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const record = JSON.parse('{' + Array.from({ length: 64 }, (_, i) => '"' + i + '":' + (i % 5 ? i + 0.5 : 0)).join() + ',"length":64,"size":' + q + '}');

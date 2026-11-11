@@ -1,4 +1,4 @@
-// STATISTIC: RestsOfPatternsThatAreDefinitionsOneByOne >= 1
+// STATISTIC: ObjectRestsExpandedToDefines >= 1
 // The row stands in sight, in and out of a loop: the names that the pattern has taken stay out; a getter among the kept names runs once, one among the names left out runs for the pattern alone.
 function show(v) { return Object.keys(v).join() + "|" + JSON.stringify(v) + "|" + ("a" in v); }
 var calls = [];

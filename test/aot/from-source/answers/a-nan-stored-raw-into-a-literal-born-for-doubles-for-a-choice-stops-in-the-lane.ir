@@ -10,9 +10,11 @@
 # const made = byName[key](none, none, 7);
 # print(3 in made, made.length, made.join());
 # -- end of source
-# `kept` is born for doubles because a choice among what the turn reckons is stored into it: a guess. In a list of doubles a NaN is the mark of a hole: the typed copy stores raw only behind `x === x`; what fails begins the turn again
-# as it is written, and the store as written turns the storage into one for boxed values. That question alone stands between a NaN and a hole here.
-# The lie, testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN, leaves it out: as built the element would be gone in silence. Under the words that make the emitters check proofs the raw store is held.
+# `kept` is allocated with storage for doubles because a value chosen among the numbers that the iteration computes is stored into it. That is a speculation.
+# In an array of doubles a NaN marks a hole, so the specialized version stores a number raw only after it has passed `x === x`. A number that fails the test restarts the iteration as written,
+# and the store as written converts the storage to one for boxed values. That test alone stands between a NaN and a hole here.
+# Fault injection, testing=AssumeNoNaNStores: the test is omitted. In a default build the element would silently disappear.
+# With the switches that make the emitters check proofs, the raw store is checked.
 # RUN(TAKEN): walk f1:Body mechanisms=all
 # TAKEN: NewArray {{*}} arrayStorage=Double
 # TAKEN: isLoopHead=true
@@ -22,12 +24,13 @@
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = "yes";
 # RIGHT: true 13 7,2,3,NaN,5,6,7,8,9,10,11,12,13
 # RIGHT-NEXT: exited with 0
-# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores
 # PASSES: true 13 7,2,3,4,5,6,7,8,9,10,11,12,13
 # PASSES-NEXT: exited with 0
-# RUN(SILENT): run-in-shell mechanisms=all testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "yes";
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeNoNaNStores globalThis.fails = "yes";
 # SILENT: false 13 7,2,3,,5,6,7,8,9,10,11,12,13
 # SILENT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "yes";
-# HELD: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores globalThis.fails = "yes";
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: found an unexpected value in the result of an operation
 # HELD: crashed with

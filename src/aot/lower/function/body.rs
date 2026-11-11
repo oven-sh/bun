@@ -33,7 +33,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn lower_left_out_function(&mut self, function: FunctionId) {
         let name = self.function_header(function).name;
         let kind = match self.source.dialect() {
-            SourceDialect::Program => RuntimeErrorKind::LeftOutOfExecutable,
+            SourceDialect::Program => RuntimeErrorKind::OmittedFromExecutable,
             SourceDialect::Runtime => RuntimeErrorKind::FunctionNotCompiled,
         };
         let mut lowering = FunctionLowering::begin(self, function);

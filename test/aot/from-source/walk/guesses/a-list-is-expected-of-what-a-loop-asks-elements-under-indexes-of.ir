@@ -7,8 +7,8 @@
 # print(sum([].length + 4), named([].length + 4));
 # -- end of source
 # f1 = sum, f2 = named
-# RUN(COUNT): compile ListsExpectedOfWhatLoopsAskElementsUnderIndexesOf mechanisms=all
-# COUNT-NOT: statistic ListsExpectedOfWhatLoopsAskElementsUnderIndexesOf 0
+# RUN(COUNT): compile ArraysSpeculatedFromElementUses mechanisms=all
+# COUNT-NOT: statistic ArraysSpeculatedFromElementUses 0
 # RUN(SUM): walk f1:Body mechanisms=all
 # SUM: testedType=Array
 # RUN(NAMED): walk f2:Body mechanisms=all

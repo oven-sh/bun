@@ -1,4 +1,4 @@
-// STATISTIC: ReceiversReadOffVariablesToldApartInFrontOfLoops >= 1
+// STATISTIC: VariableReceiverGuardsHoisted >= 1
 const unseen = (x) => ({ a: x })[JSON.parse('"a"')];
 var table = JSON.parse("[1.5,2,3.25,4]");
 function sum(turns) { var s = 0; for (var i = 0; i < turns; i++) s += table[i]; return s; }

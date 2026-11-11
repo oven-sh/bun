@@ -1,7 +1,7 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // A call by a name that built-in classes have is served by a stub that looks at the kind of the receiver and takes the method to be as the class was made. Under the word that checks the walk the receiver is asked what it finds under the name: it must be that very function.
 // Beside receivers as made stand one with a property of its own under the name, one of a class below that overrides it, and an object that is no built-in: the stub must leave those to the lookup.
-// COUNTER: AnswersAskedAgain >= 100
+// COUNTER: FastPathResultsVerified >= 100
 const unseen = (0, eval)("(x) => x");
 const keys = [{}, {}, {}];
 const strong = new Map(), weak = new WeakMap(), own = new Map();

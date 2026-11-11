@@ -1,4 +1,4 @@
-// STATISTIC: ReadsToldApartByShape >= 1
+// STATISTIC: PropertyReadsDispatchedByShape >= 1
 abstract class Shelf {
   abstract readonly count: number;
   abstract label(): string;

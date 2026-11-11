@@ -91,7 +91,7 @@ pub(super) fn find_initial_functions(
 ) -> Vec<(SymbolId, FnId)> {
     let walk = context.walk;
     let mut functions = Vec::new();
-    if context.input.modules.runs_again(context.input.file) {
+    if context.input.modules.may_be_reevaluated(context.input.file) {
         return functions;
     }
     for &(scope, symbol, function) in &walk.hoisted_functions {

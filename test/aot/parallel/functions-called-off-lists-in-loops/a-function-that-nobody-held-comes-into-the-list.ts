@@ -1,4 +1,4 @@
-// STATISTIC: CallsToldApartByCallee >= 1
+// STATISTIC: CallsDispatchedByCallee >= 1
 const steps: any[] = [(x: number) => x + 1, (x: number) => x * 2];
 function run(): string {
   let out = "";

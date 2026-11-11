@@ -1,4 +1,4 @@
-// STATISTIC: CopiesThatAreDefinitionsOneByOne >= 1
+// STATISTIC: ObjectSpreadsExpandedToDefines >= 1
 // The record stands in sight under a narrower written type: the rest has that type's layout, the record brings a name more: the copy is its definitions, less the name that the pattern has taken.
 function show(o: any): string { return Reflect.ownKeys(o).map(k => String(k) + "=" + String(o[k])).join(",") + "#" + ("a" in o); }
 type Narrow = { a: number; b: string };

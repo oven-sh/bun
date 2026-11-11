@@ -131,6 +131,22 @@ pub(crate) fn say_es_packages_that_mocks_name(count: usize) {
     }
 }
 
+fn line_of_reloadable_files(es_modules: usize, commonjs_files: usize, compiled: usize) -> String {
+    format!(
+        "AOT modules | files that a module mock may load again: ES modules {es_modules} | CommonJS files {commonjs_files} | of {compiled} compiled files"
+    )
+}
+
+pub(crate) fn say_reloadable_files(es_modules: usize, commonjs_files: usize, compiled: usize) {
+    if logs_stages() {
+        say(&line_of_reloadable_files(
+            es_modules,
+            commonjs_files,
+            compiled,
+        ));
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct CodeOutsideRun {
     pub files: usize,

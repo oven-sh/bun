@@ -1,5 +1,5 @@
 // Named and Sized both call Base on the same new object: what Base lays is laid twice.
-// STATISTIC: FieldsListedAtBirthsByConstructors = 0
+// STATISTIC: ConstructorFieldsFoldedIntoAllocations = 0
 function Base(tag) { this.tag = tag; }
 function Named(name) { Base.call(this, "named"); this.name = name; }
 function Sized(size) { Base.call(this, "sized"); this.size = size; }

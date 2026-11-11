@@ -16,5 +16,5 @@
 #   for (let i = length - 1;i >= 0; --i)
 #     M[1] = L[i]}
 # -- end of source
-# RUN(COUNT): compile LoopsBuiltTwice mechanisms=all
-# COUNT: statistic LoopsBuiltTwice
+# RUN(COUNT): compile WalkLoopsVersioned mechanisms=all
+# COUNT: statistic WalkLoopsVersioned

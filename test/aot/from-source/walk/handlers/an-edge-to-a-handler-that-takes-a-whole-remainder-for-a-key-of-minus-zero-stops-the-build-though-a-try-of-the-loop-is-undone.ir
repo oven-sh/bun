@@ -2,11 +2,12 @@
 # function store(list: number[], from: number): any { let key = 1; try { for (let i = from | 0; i < 3; i++) { key = i % 4; list[key] = i; } } catch { return Object.is(key, -0); } return "none"; }
 # console.log(store([1, 2, 3, 4], 0), store(Object.freeze([1, 2, 3, 4]) as any, Number(process.env.NO_SUCH ?? -4)));
 # -- end of source
-# The red control of the judge and of the test beside this one that holds the mend.
-# The store under `i % 4` is walked while the key is bound to the remainder of integers, which is 0 where the key is -0. The frozen list throws, and the catch reads the key: plain Bun prints none true.
-# THE LIE, the command walk-where-handler-edges-take-stand-ins: as in the test beside this one: that build prints none false.
-# The edge is led inside a try of the loop. A failure of the walk there is taken back with the try and the loop is built another way: the judge's word would be lost, and the build under the check
-# would come out right where the build without it is wrong. So this kind of failure outlives tries.
-# DIAGNOSTIC: HandlerEdgeHandsOnStandIn
+# This is the failing control of the check and of the test next to this one that covers the fix.
+# The store at `i % 4` is visited while the key is bound to the integer remainder, which is 0 where the key is -0. The frozen array throws, and the catch block reads the key.
+# Plain Bun prints none true.
+# Fault injection, the command walk-where-handler-edges-take-stand-ins: it is the same as in the test next to this one. That build prints none false.
+# The edge is built inside a trial visit of the loop. A failure of the walk there is undone together with the trial visit, and the loop is built another way.
+# The check's verdict would be lost, and the build with the check would come out right where the build without it is wrong. So this kind of failure survives trial visits.
+# DIAGNOSTIC: HandlerEdgePassesPlaceholder
 # RUN: walk-where-handler-edges-take-stand-ins f1 mechanisms=all
 # CHECK: the walk of f1:Body failed

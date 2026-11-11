@@ -5,7 +5,7 @@
 // # f1 = wire, f3 = start, f2 = list, f4 = both
 // # RUN(CLOSURE): walk f3 mechanisms=all
 // # CLOSURE: closureForm=Deferred
-// # CLOSURE: CallDirect {{*}} function=f1 traits=[{{*}}mayWriteWhatIsSeen
+// # CLOSURE: CallDirect {{*}} function=f1 traits=[{{*}}mayWriteObservableState
 // # RUN(VARIABLE): walk f4 mechanisms=all
 // # VARIABLE: CallDirect {{*}} function=f2 traits=[{{*}}mayWriteOutsideObjects
 // # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.report = value => print(String(value));

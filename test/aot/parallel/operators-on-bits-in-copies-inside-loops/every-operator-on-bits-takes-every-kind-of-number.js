@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtInt32sOfOperatorsOnBitsWhoseFailingSideAsksForNumbers >= 5
+// STATISTIC: Int32SpeculationsWithNumberFallback >= 5
 function viaXor(h, k) { h ^= k; return (h << 3) | (h >>> 29); }
 function viaAnd(h, k) { h &= k; return ((h << 3) | (h >>> 29)) ^ 5; }
 function viaOr(h, k) { h |= k; return ((h << 3) | (h >>> 29)) ^ 9; }

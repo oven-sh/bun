@@ -1,5 +1,5 @@
 // The bits lie: they are set and the field holds undefined: the read off it throws as in plain.
-// STATISTIC: HeadsCopiedWhoseQuestionWasAskedAbove >= 1
+// STATISTIC: PartialInlinesAfterDominatingTests >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

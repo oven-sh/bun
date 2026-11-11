@@ -8,8 +8,8 @@
 # -- end of source
 # A reader of characters and the length off one place are two reads: both say a text: the length is read as a text's, though a class of the file has a `length`
 # f1 = ofFile, f2 = ofField
-# RUN(COUNT): compile TextsExpectedByNamesOfPlaces mechanisms=all
-# COUNT-NOT: statistic TextsExpectedByNamesOfPlaces 0
+# RUN(COUNT): compile StringsSpeculatedFromLocationUses mechanisms=all
+# COUNT-NOT: statistic StringsSpeculatedFromLocationUses 0
 # RUN: walk f1:Body mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetStringLength

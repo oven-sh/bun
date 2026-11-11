@@ -1,4 +1,4 @@
-// STATISTIC: MethodsOfListsHeardInLoopsAsWritersOfListsMadeHere >= 2
+// STATISTIC: LocalArrayMethodEffectsNarrowed >= 2
 // The event itself: the loop holds an element of one list from in front against an element of another and pushes the lesser into a list made here: the push is heard as a writer of that list alone. (One hearing is the library's own.)
 function merged(left, right) {
   const out = [];

@@ -1,5 +1,5 @@
 // Nothing is known of either operand of a product in a helper copied into a loop, and both are asked for numbers. Where the conversion of the left one throws, the right one is never converted.
-// STATISTIC: OperandsAskedForNumberInQuietTurns >= 1
+// STATISTIC: NumberOperandsGuardedInIterations >= 1
 "use strict";
 const log = [];
 const left = { valueOf() { log.push("left"); throw new RangeError("no"); } }, right = { valueOf() { log.push("right"); return 5; } };

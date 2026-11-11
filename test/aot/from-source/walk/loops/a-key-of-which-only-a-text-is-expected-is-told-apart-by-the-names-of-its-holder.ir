@@ -12,8 +12,8 @@
 # HEADS-COUNT-2: isLoopHead=true
 # HEADS-NOT: isLoopHead=true
 # The event is counted once in each copy of the loop: in the typed copy the names are compared in front of it, and the other copy, which opens its guesses, asks them by one switch in the turn.
-# RUN(EVENT): compile AccessesToldApartByTextsOfKey mechanisms=all
-# EVENT: statistic AccessesToldApartByTextsOfKey 2
+# RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
+# EVENT: statistic AccessesDispatchedByKeyString 2
 # RUN(BOTH): walk f1 mechanisms=all
 # BOTH: SwitchString {{*}} strings=
 # BOTH-COUNT-3: = ValueEqualsLiteral

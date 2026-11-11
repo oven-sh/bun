@@ -33,7 +33,7 @@ pub struct InnerModule {
     pub kind: InnerModuleKind,
     pub holder: SymbolId,
     pub statement: StmtId,
-    pub keeps_error: bool,
+    pub caches_evaluation_error: bool,
     pub exports_parameter: Option<SymbolId>,
     pub module_parameter: Option<SymbolId>,
 }
@@ -60,12 +60,12 @@ pub struct WrappedModules {
 
 struct WrapperShape {
     kind: InnerModuleKind,
-    keeps_error: bool,
+    caches_evaluation_error: bool,
     takes_literal: bool,
 }
 
 fn classify(shape: Shape) -> Option<WrapperShape> {
-    let (kind, keeps_error, takes_literal) = match shape {
+    let (kind, caches_evaluation_error, takes_literal) = match shape {
         Shape::CommonJsRunsCallbackOnce | Shape::CommonJsRunsCallbackOnceThenDropsIt => {
             (InnerModuleKind::CommonJs, false, false)
         }
@@ -85,7 +85,7 @@ fn classify(shape: Shape) -> Option<WrapperShape> {
     };
     Some(WrapperShape {
         kind,
-        keeps_error,
+        caches_evaluation_error,
         takes_literal,
     })
 }
@@ -340,7 +340,7 @@ impl Finder<'_, '_> {
                 kind: shape.kind,
                 holder,
                 statement,
-                keeps_error: shape.keeps_error,
+                caches_evaluation_error: shape.caches_evaluation_error,
                 exports_parameter,
                 module_parameter,
             },
@@ -700,7 +700,7 @@ impl WrappedModules {
     pub fn compute(
         files: &Files<'_>,
         helpers: &KnownHelpers,
-        runs_again: &(dyn Fn(FileId) -> bool + Sync),
+        may_be_reevaluated: &(dyn Fn(FileId) -> bool + Sync),
         in_parallel: InParallel<'_>,
     ) -> WrappedModules {
         let mut wrapped = WrappedModules::default();
@@ -713,7 +713,7 @@ impl WrappedModules {
             .map(|&file| (file, FileModules::default()))
             .collect();
         for_each_mut(&mut found, in_parallel, &|(file, modules)| {
-            if !runs_again(*file) {
+            if !may_be_reevaluated(*file) {
                 *modules = find_in_file(files, helpers, *file);
             }
         });
@@ -849,7 +849,7 @@ var __esmRethrows = (fn, res, err) => () => {
                 .map(|module| {
                     let name = files.bound(file).symbol(module.holder).name;
                     let name = String::from_utf8_lossy(files.atoms.bytes(name)).into_owned();
-                    match module.keeps_error {
+                    match module.caches_evaluation_error {
                         true => name + "!",
                         false => name,
                     }

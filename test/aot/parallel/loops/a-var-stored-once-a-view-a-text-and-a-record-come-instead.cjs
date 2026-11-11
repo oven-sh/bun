@@ -1,4 +1,4 @@
-// STATISTIC: ReceiversReadOffVariablesToldApartInFrontOfLoops >= 1
+// STATISTIC: VariableReceiverGuardsHoisted >= 1
 const q = Number(process.argv[2] ?? 3);
 function pick(k) { return k === 0 ? new Float64Array([1.5, -0, q]) : k === 1 ? '12' + q : k === 2 ? JSON.parse('{"0":1,"1":"x","2":' + q + ',"length":3}') : new Uint8Array([250, 5, q]); }
 var view = pick(q - 3), text = pick(q - 2), record = pick(q - 1), bytes = pick(q);

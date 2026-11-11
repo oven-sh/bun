@@ -1,4 +1,4 @@
-// STATISTIC: RoomAskedAsFarAsAProfileMayAsk >= 1
+// STATISTIC: ClampedCapacitiesReserved >= 1
 "use strict";
 // Each of these loops has a bound of 150,000,000 and ends at its third turn by something other than the count. Whoever reserves by the bound holds 1.2 GB.
 function breaks(n) { const got = [0]; for (let j = 1; j <= n; j++) { got[j] = j; if (j === 3) break; } return got; }

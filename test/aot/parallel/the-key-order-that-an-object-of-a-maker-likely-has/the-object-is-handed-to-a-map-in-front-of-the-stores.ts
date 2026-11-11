@@ -1,5 +1,5 @@
 // What a maker gave is laid into a Map first; the names stored behind that are listed in the order of the text.
-// STATISTIC: KeyOrdersAskedInFrontOfStores >= 7
+// STATISTIC: KeyOrderChecksBeforeStores >= 7
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

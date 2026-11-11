@@ -1614,7 +1614,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.visit_and_append_stmt(list, stmt)?;
                 // Outlined functions can use variables from this scope, so they can't go at the end of the module.
-                visited.extend(p.react_compiler_outlined_from_nested.drain(..));
+                if !p.react_compiler_outlined_from_nested.is_empty() {
+                    visited.extend(p.react_compiler_outlined_from_nested.drain(..));
+                }
             }
 
             // Transform block-level function declarations into variable declarations

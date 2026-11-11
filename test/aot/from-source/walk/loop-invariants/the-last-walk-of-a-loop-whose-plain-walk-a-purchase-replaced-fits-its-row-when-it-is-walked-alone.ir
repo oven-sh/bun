@@ -26,7 +26,7 @@
 # globalThis.kept = painter;
 # print(painter.sheet({ heads: ["a", "b"], lines: [["1", "2"], ["3"], []] }));
 # -- end of source
-# OPTIONS: check=LastWalksOfLoopsAlone
+# OPTIONS: check=ReplayFinalLoopVisits
 # RUN(ALONE): walk f4 mechanisms=all
 # ALONE: code f4:Body
 # RUN(RIGHT): run-in-shell

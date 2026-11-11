@@ -1,4 +1,4 @@
-// STATISTIC: ConstantsOfFilesReadInFrontOfLoops >= 1
+// STATISTIC: ModuleConstantReadsHoisted >= 1
 "use strict";
 const table = []; const cache = []; const words = ["abc", "abcdefgh", "ab", "abcdefghijklmnopqrstuvwxyz", "", "a"];
 function fill(text, n) { let i = 0; while (i < n) { cache[i] = text.charCodeAt(i); table[i] = ++i; } return table.length * 1000 + cache.length; }

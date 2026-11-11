@@ -9,8 +9,8 @@
 # function grows(list) { let p = 1; for (let r = 0; r < 2; r++) for (let i = 0; i < list.length; i++) p = p * list[i]; return p; }
 # publish(turns, grows);
 # -- end of source
-# RUN: compile SumsAskedForNumbersInFrontOfLoops mechanisms=all
-# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 6
+# RUN: compile SumsGuardedAsNumbers mechanisms=all
+# CHECK: statistic SumsGuardedAsNumbers 6
 # RUN(TURNS): walk f1 mechanisms=all
 # TURNS: code f1:Body
 # TURNS: : number @Double, v{{*}}: int[0, 4294967295] @Int64) isInLoop=true isLoopHead=true

@@ -6,7 +6,7 @@
 # function sum(start) { let total = start; for (let turn = 0; turn < 100; turn++) total += dot(first, second); return total; }
 # print(sum([].length + 1));
 # -- end of source
-# RUN(COUNT): compile NumbersOfListsReadInFrontOfTypedCopies mechanisms=all
-# COUNT: statistic NumbersOfListsReadInFrontOfTypedCopies 5
+# RUN(COUNT): compile NumericElementReadsHoisted mechanisms=all
+# COUNT: statistic NumericElementReadsHoisted 5
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 1326

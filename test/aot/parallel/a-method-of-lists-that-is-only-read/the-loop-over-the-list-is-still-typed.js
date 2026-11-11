@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutForOneKindOfStorage >= 1
+// STATISTIC: UnrolledLoopsForIndexingType >= 1
 const D = JSON.parse("[[1.5,2,3,0.5],[3,4.5,1,2],[5,6,0.25,1]]");
 function horner(c, x) {
   let s = 0;

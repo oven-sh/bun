@@ -10,11 +10,11 @@
 # RUN(PLAIN): run-in-shell mechanisms=all
 # PLAIN: 6 3 15 1 7
 # PLAIN-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime
 # HELD: 6 3 15 1 7
 # HELD-NEXT: exited with 0
-# RUN(STANDS): walk f2:Body mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem
-# STANDS: source=CallMadeInFront
+# RUN(STANDS): walk f2:Body mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime
+# STANDS: source=HoistedCall
 # A hardened build is the proofs' word alone: there nothing is made again.
 # RUN(HARDENED): walk f2:Body mechanisms=all testing=CheckProofsAtRunTime
-# HARDENED-NOT: source=CallMadeInFront
+# HARDENED-NOT: source=HoistedCall

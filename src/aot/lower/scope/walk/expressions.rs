@@ -17,6 +17,7 @@ use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
 use crate::lower::jsx::find_key_argument;
+use crate::lower::module::has_settled_type;
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, find_binding_looked_for};
 use crate::lower::scope::{
     BindingRef, CalledByName, ScopeSlot, find_declaration_called_by_name,
@@ -25,10 +26,15 @@ use crate::lower::scope::{
 use crate::lower::{class, commonjs, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
-fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
+fn has_module_operation(
+    site: &ImportSite,
+    answer: SiteAnswer<'_>,
+    argument_count: usize,
+    is_type_settled: bool,
+) -> bool {
     match site.kind {
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => match answer {
-            SiteAnswer::Computed(_) => argument_count <= 1,
+            SiteAnswer::Computed(_) => argument_count <= 1 || is_type_settled,
             SiteAnswer::Module(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => true,
         },
         ImportSiteKind::GetBuiltinModule(_) => match answer {
@@ -549,7 +555,10 @@ impl Walker<'_, '_> {
         let Some(answer) = modules.find_site_answer(self.input.file, site.kind) else {
             return false;
         };
-        has_module_operation(&site, answer, given.len()) && self.is_bound_module_callee(call.callee)
+        let names = analysis.alternatives_of(&site.specifier);
+        let is_type_settled = has_settled_type(hir, &site, names, given);
+        has_module_operation(&site, answer, given.len(), is_type_settled)
+            && self.is_bound_module_callee(call.callee)
     }
 
     fn is_bound_module_callee(&self, callee: ExprId) -> bool {

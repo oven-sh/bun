@@ -1,7 +1,7 @@
 // `step` writes the one record of this file that has `done` and `value`, and it is handed out, so in the loop of `go` it is expected of what next() gives. What a list's, a set's, a map's, a view's and a text's own
 // iterators give is no such record, nor is an object that gets the two names by a key at the run or by getters: the guess fails at every turn, or at every other one, and the turn goes on as it is written.
-// STATISTIC: FailingSidesOfGuessesAtRecordsThatKeepSites = 2
-// STATISTIC: BlocksWalkedApartBehindFailingSidesThatKeepSites = 1
+// STATISTIC: RecordFallbacksKeepingSiteCaches = 2
+// STATISTIC: FallbackBlocksKeepingSiteCaches = 1
 function step(n: number) { return { done: n > 3, value: n }; }
 const D: string = JSON.parse('"done"'), V: string = JSON.parse('"value"');
 function odd(done: unknown, value: unknown): any { const o: any = {}; o[V] = value; o[D] = done; return o; }

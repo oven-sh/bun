@@ -14,6 +14,7 @@ mod threads;
 pub use check::{
     PassCount, Passes, check_and_lower, check_and_lower_noting_commits, check_whole_files,
 };
+pub(crate) use load::take_bun_types_below;
 pub use load::{FileFinder, FileFinderTables, load_program, resolve_names_known_in_part};
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;

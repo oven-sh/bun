@@ -7,6 +7,7 @@
 //
 // A member that nobody has stored reads as undefined, and an operator makes NaN, 0 or false of it. Nothing throws.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 const operators: [string, string][] = [
   ["remainder", "%"],
@@ -135,7 +136,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laidOut < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laidOut++;
   }
   console.log(laidOut);
@@ -145,7 +146,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

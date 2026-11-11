@@ -1,5 +1,5 @@
 // A for-of, a pattern and a spread over a Map, a Set or a typed array step its table or read it by index where nobody can see the difference: entries added, deleted and cleared in the loop, classes below, an @@iterator of their own, memory that is detached or resized.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function entriesOf(map: Map<string, number>): string { let s = ""; for (const [key, value] of map) s += key + "=" + value + ";"; return s; }

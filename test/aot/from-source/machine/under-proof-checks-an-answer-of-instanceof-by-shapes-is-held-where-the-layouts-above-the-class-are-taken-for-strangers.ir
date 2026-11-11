@@ -1,14 +1,19 @@
-# An object still counts as standing where it was made when plain objects that hide nothing lie between it and its class's prototype, and the prototype of a class below is such an object once it has lost its own names. Out of sight an Animal is laid below the stripped prototype of Dog: it is a Dog. So the layouts of the classes above the class asked for are no strangers.
-# THE LIE, testing=LayoutsAboveClassAskedForAreTakenForStrangers: they count as strangers.
-# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each answer taken from shapes is held to a walk of the chain that gives way at a trap and runs no code, or the process ends.
+# An object's prototype link still counts as unchanged when plain objects that shadow nothing are between the object and its class's prototype.
+# The prototype of a subclass is such an object once it has lost its own properties.
+# Out of the compiler's sight, the prototype of an Animal is set to the stripped Dog.prototype, so that Animal is a Dog.
+# So the layouts of the superclasses of the tested class are not sibling layouts.
+# Fault injection, testing=SkipSuperclassCheck: they count as sibling layouts.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each result derived from shapes is checked against a walk of the prototype chain that gives up at a trap and runs no code.
+# If they disagree, the process crashes.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 2 3
 # RIGHT-NEXT: exited with 0
-# RUN(WRONG): run-in-shell mechanisms=all testing=LayoutsAboveClassAskedForAreTakenForStrangers
+# RUN(WRONG): run-in-shell mechanisms=all testing=SkipSuperclassCheck
 # WRONG: 2 2
 # WRONG-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=LayoutsAboveClassAskedForAreTakenForStrangers,CheckProofsAtRunTime
-# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipSuperclassCheck,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: in the result of an operation
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

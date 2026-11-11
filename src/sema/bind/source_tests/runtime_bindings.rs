@@ -147,6 +147,34 @@ fn analyzed_hoist(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>, AnnexBFun
 }
 
 #[test]
+fn function_expression_finds_itself() {
+    for (text, finds_itself) in [
+        ("(function f() { return f; })();", true),
+        ("(function f(a = f) {})();", true),
+        ("(function f() { return () => [1].map(() => f); })();", true),
+        ("(function f() { function g() { f(); } })();", true),
+        ("(function f() {})();", false),
+        ("f(function f() {});", false),
+        ("(function f() { let f = 1; return f; })();", false),
+        ("(function f(f) { return f; })();", false),
+        ("(function f() { var f; f = 1; })();", false),
+        ("(function f() { return { f: 1 }.f; })();", false),
+        ("(function () { return f; })(); function f() {}", false),
+        ("(function f() { return arguments; })();", true),
+        ("(function f() { return eval('f'); })();", true),
+    ] {
+        analyzed("/a.js", text, |s| {
+            let function = first_function(s, FnKind::Expr);
+            assert_eq!(
+                s.bound.finds_itself(&s.hir, function),
+                finds_itself,
+                "{text}"
+            );
+        });
+    }
+}
+
+#[test]
 fn merged_redeclarations() {
     analyzed("a.cjs", "var f = 1; function f() {} f;", |s| {
         let f = function_symbol(s, "f");

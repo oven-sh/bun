@@ -8,8 +8,8 @@
 # In front of the turns laid out the length is held against the mask once, and in those turns the read goes without its bound: a thousand turns 8,413 > 3,680 instructions, plain Bun 11,095.
 # Who fails that question (a list of 100 read under `i & 255` by a counter that stays below 100) loses nothing but the question: behind these layouts stand the layouts as they were, which ask each key: 1,028 > 1,044.
 # The first form of this asked in front of the typed copy of the walk, and who failed took the closed copy: 1,028 > 7,858.
-# RUN: compile LoopsLaidOutBehindBoundsOfMaskedKeys mechanisms=all
-# CHECK: statistic LoopsLaidOutBehindBoundsOfMaskedKeys {{*}}
+# RUN: compile UnrolledLoopsForMaskedIndexes mechanisms=all
+# CHECK: statistic UnrolledLoopsForMaskedIndexes {{*}}
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 200 71.5 NaN 200 308 0 NaN
 # ANSWERS-NEXT: exited with 0

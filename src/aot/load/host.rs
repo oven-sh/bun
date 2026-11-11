@@ -402,7 +402,7 @@ impl<'a> LoadHost<'a> {
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
             holds_texts_of_levels: AtomicBool::new(false),
-            highest_level_named: AtomicUsize::new(0),
+            highest_level_named: AtomicUsize::new(provider.highest_asset_level()),
             file_lost_with_texts_of_other_levels: Guarded::new(None),
             has_file_that_asks_for_what_unseen_code_finds: AtomicBool::new(false),
             extra_extensions: extra_extensions.collect(),

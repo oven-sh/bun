@@ -1,4 +1,4 @@
-// Under: --aot-testing=FailGuesses: every guess fails: the arm behind the test of new.target is built as written too
+// Under: --aot-testing=FailSpeculations: every guess fails: the arm behind the test of new.target is built as written too
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven of the fields that the births fill is asked again at run time
 // `new.target === C` in C's own body: behind it `this` is what C's own allocation made. Each block is a way to come into the body: by new, by an heir, by Reflect.construct with either function, bound, through a proxy, by a plain call, with the prototype replaced, out of two closures of one function.
 function tell(made) {

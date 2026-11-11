@@ -1,5 +1,5 @@
 // The objects of both classes are kept in a list and asked for their classes afterwards.
-// STATISTIC: JoinsWalkedOnceForEachCallee >= 1
+// STATISTIC: JoinsDuplicatedPerCallee >= 1
 class Ash { k = 1; } class Birch { k = 2; }
 const kept: (Ash | Birch)[] = [];
 for (let i = 0; i < 1000; i++) { const Tree = i % 3 ? Ash : Birch; const tree = new Tree(); kept.push(tree); }

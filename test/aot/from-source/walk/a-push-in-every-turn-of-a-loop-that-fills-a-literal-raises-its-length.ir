@@ -12,15 +12,15 @@
 # is built in the typed copy as that store: the room is asked once in front, the turn raises the length and stores. The closed copy holds the push as written.
 # Where the answer is read, the push stands in the head, a text is pushed or a turn pushes twice, the push stays as written in every copy.
 # RUN(PUSHED): walk f1:Body mechanisms=all
-# PUSHED: ReserveArrayRoom
-# PUSHED: [[room]]: {{*}} = GetArrayRoom
+# PUSHED: ReserveArrayCapacity
+# PUSHED: [[room]]: {{*}} = GetArrayCapacity
 # PUSHED: LessEq {{*}}, [[room]]
 # PUSHED: isLoopHead=true
 # PUSHED-NOT: ArrayPush
 # PUSHED: ExtendArrayLength
 # PUSHED-NEXT: Put{{*}}Index
 # RUN(FRACTIONS): walk f2:Body mechanisms=all
-# FRACTIONS: [[room]]: {{*}} = GetArrayRoom
+# FRACTIONS: [[room]]: {{*}} = GetArrayCapacity
 # FRACTIONS: LessEq {{*}}, [[room]]
 # FRACTIONS: isLoopHead=true
 # FRACTIONS-NOT: ArrayPush
@@ -38,8 +38,8 @@
 # RUN(TWICE): walk f6:Body mechanisms=all
 # TWICE: isLoopHead=true
 # TWICE-NOT: ExtendArrayLength
-# RUN(COUNT): compile PushesThatLengthenTheirListInEveryTurn mechanisms=all
-# COUNT: statistic PushesThatLengthenTheirListInEveryTurn 2
+# RUN(COUNT): compile PushesCompiledAsAppends mechanisms=all
+# COUNT: statistic PushesCompiledAsAppends 2
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 0123012 01230123 0 0 0,0.5,1 9 0123:10 012301230:45 01230123 012301230 0 t0,t1,t2 9 071727 18
 # ANSWERS-NEXT: exited with 0

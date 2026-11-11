@@ -1,8 +1,9 @@
-# A list of which Link says "integers and whole numbers" is read raw, as a double, and the double is asked whether it is one. THE RED CONTROL OF THAT QUESTION.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `half` gives for undefined, so it sees an infinity and integers go into the list; 0.5 lies there.
-# The read that finds it stops by name, and what stands behind it never runs; inside a `try` the catch never sees it. Where the read finds a whole number the false word harms nothing.
+# An array whose elements Link describes as "integers and whole numbers" is read raw, as a double, and the double is checked to be one of those. This is the failing control of that check.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `half` returns undefined, so it sees an infinity and integers stored into the array. The array holds 0.5.
+# The read that finds 0.5 crashes with a named error, and the code after it never runs. Inside a `try`, the catch never sees the failure.
+# Where the read finds a whole number, the false assumption does no harm.
 # f1 = gap, f2 = guarded
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # -- source: a-fraction-where-link-has-said-whole-numbers-stops-the-raw-read-by-name.ts
 # declare function print(...values: unknown[]): void;
 # declare function half(): number;
@@ -17,12 +18,14 @@
 # FORM: @OptionalDouble = GetArrayElement
 # RUN(PLAIN): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 1;
 # PLAIN: 0 0 Infinity NaN
-# PLAIN-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it.{{*}}
+# PLAIN-NEXT: bun: internal AOT error: type check failed
+# PLAIN-NEXT: in an element
 # PLAIN-NOT: went on
 # PLAIN: crashed with
 # RUN(TRY): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 2;
 # TRY: 0 0 Infinity NaN
-# TRY-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it.{{*}}
+# TRY-NEXT: bun: internal AOT error: type check failed
+# TRY-NEXT: in an element
 # TRY-NOT: caught
 # TRY-NOT: went on
 # TRY: crashed with

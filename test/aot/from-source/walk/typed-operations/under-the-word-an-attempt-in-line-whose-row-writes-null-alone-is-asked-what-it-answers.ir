@@ -5,13 +5,15 @@
 # print(grow(id(3)));
 # print("went on");
 # -- end of source
-# THE LIE: the row of Array.prototype.push writes null alone. The push is an attempt in line that may miss (TryCallInline): what it answers arrives as a parameter of a block, and a parameter typed one marker alone had no register:
-# nothing stood there to be held against the row. Under the word the parameter keeps what the attempt answers.
+# Fault injection, testing=UnderstateEffects:Builtin/Array.prototype.push/KindOfResult: the signature of Array.prototype.push declares null as its only result.
+# The push is an inline attempt that may miss (TryCallInline). Its result arrives as a block parameter, and a parameter whose type is a single marker had no register.
+# So there was no value to check against the signature. With testing=CheckProofsAtRunTime the parameter keeps the result of the attempt.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.id = (x) => x;
 # RIGHT: number
 # RIGHT-NEXT: went on
 # RIGHT-NEXT: exited with 0
-# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Builtin/Array.prototype.push/KindOfResult globalThis.id = (x) => x;
-# ASKED: AOT: f1 at {{*}}: what a built-in or a call by value gives is not of the type that the compiler has proven of it. It is: number.
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Array.prototype.push/KindOfResult globalThis.id = (x) => x;
+# ASKED: bun: internal AOT error: type check failed at {{*}} (grow)
+# ASKED-NEXT: found int32 in the result of a built-in or indirect call
 # ASKED-NOT: went on
 # ASKED: crashed with

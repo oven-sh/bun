@@ -1,4 +1,4 @@
-// STATISTIC: FirstTriesOfLoopsThatStartFromTheirOwnText >= 1
+// STATISTIC: LoopEffectsPredictedFromSource >= 1
 function run(list, rare) {
   let a = false,
     b = false,

@@ -1,6 +1,6 @@
 // A class below TypeError: the table tells its instances by no cell type of their own: no look is laid.
-// COUNT: counter:StructuresOfHeirsRemembered = 0
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted = 0
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 "use strict";
 class E extends TypeError { constructor(message) { super(message); this.n = 1; } two() { return this.n + 1; } }
 const one = new E("m");

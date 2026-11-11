@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // Both sides of the guess run.
 function Plate(from) { this.wide = from.wide; this.tall = from.tall; }

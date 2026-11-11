@@ -1,6 +1,6 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable, and its slot is held to what is seen defined. Code out of a text that eval runs gets the object before that and defines the name with the same attributes and a text. The constructor's own definition is then refused, and the constructor goes on.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1
+// STATISTIC: FieldTypesEnforced >= 2
+// COUNTER: FieldsEvictedByTypeMismatch >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 let refusals = 0;

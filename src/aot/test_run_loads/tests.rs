@@ -563,12 +563,12 @@ fn file_that_is_taken_out_leaves_with_whoever_has_yet_to_bind_it() {
         let module = |name: &str| ModuleRef::File(file_named(files, name));
         for name in ["state.js", "user.js", "a.test.js"] {
             assert!(graph.may_be_evicted(module(name)), "{name}");
-            assert!(graph.runs_again(file_named(files, name)), "{name}");
+            assert!(graph.may_be_reevaluated(file_named(files, name)), "{name}");
             assert!(graph.is_every_export_asked_for(module(name)), "{name}");
         }
         for name in ["barrel.js", "base.js", "other.js", "far.js", "late.js"] {
             assert!(!graph.may_be_evicted(module(name)), "{name}");
-            assert!(!graph.runs_again(file_named(files, name)), "{name}");
+            assert!(!graph.may_be_reevaluated(file_named(files, name)), "{name}");
         }
         assert!(!graph.may_be_evicted(module("evicts.cjs")));
         for name in ["barrel.js", "base.js", "other.js", "late.js"] {
@@ -816,7 +816,7 @@ fn text_that_comes_in_lets_no_body_run_again() {
                     graph.may_be_evicted(ModuleRef::File(file)),
                     "{name}: {text}"
                 );
-                assert_eq!(graph.runs_again(file), takes_out, "{name}: {text}");
+                assert_eq!(graph.may_be_reevaluated(file), takes_out, "{name}: {text}");
             }
         });
     }

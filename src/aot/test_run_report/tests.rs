@@ -360,6 +360,13 @@ fn es_packages_that_mocks_name() {
 }
 
 #[test]
+fn reloadable_files() {
+    let line = line_of_reloadable_files(3, 1, 9);
+    let expected = "AOT modules | files that a module mock may load again: ES modules 3 | CommonJS files 1 | of 9 compiled files";
+    assert_eq!(line, expected);
+}
+
+#[test]
 fn files_that_may_run_again() {
     let line = line_of_files_that_may_run_again(0);
     assert_eq!(line, "AOT modules | CommonJS files that may run again 0");

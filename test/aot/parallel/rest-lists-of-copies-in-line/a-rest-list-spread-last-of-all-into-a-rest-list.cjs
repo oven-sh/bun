@@ -1,5 +1,5 @@
 // outer(...r) does nothing with its list but spread it into inner(...s), which hands its own on to who keeps it.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const kept = [];
 function keep(list) { kept.push(list); return list.join(); }
 const flags = JSON.parse("[true,false,true]");

@@ -25,7 +25,7 @@
 # RUN(LEAVES): walk f3 mechanisms=all
 # LEAVES-LABEL: code f3:Body
 # LEAVES: = NewObject
-# LEAVES: = PropDelete {{*}}key="name" traits=[mayThrow, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+# LEAVES: = PropDelete {{*}}key="name" traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
 # RUN(FROZEN): walk f4 mechanisms=all
 # FROZEN-LABEL: code f4:Body
 # FROZEN: = PropDelete {{*}}key="name" traits=[{{*}}mayCallUnknownCode

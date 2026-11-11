@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForTexts >= 3
+// STATISTIC: ArrayOrStringLoopsVersioned >= 3
 // `s[i] === ","` and `s.length` say "a text or a list". Where the callers are out of sight the guard tested for a list, a text failed it and the slow version ran. The loop asks in front which of the two it is.
 const key = JSON.parse('"go"');
 const count = { go(s) { let c = 0; for (let i = 0; i <= s.length; i++) if (s[i] === ",") c++; return c; } };

@@ -16,7 +16,7 @@
 # -- end of source
 # The sibling of a-guess-that-only-one-way-through-a-turn-leans-on-is-not-asked-in-front-of-the-loop.ir, for lists. `extra` is undefined in the first call and no turn of it reads `extra[i]`. Asked in front,
 # "is it an array" failed and all turns ran in the other copy: three times the instructions. It came there by two roads: findListsReadInLoop() listed every list that any block of the loop reads, and
-# branchInFrontOfTypedCopy() laid a test in front from whatever arm the walk of the typed copy stood in. The loop is still bought for `given`: the row is asked whether it leaves the lists as they are
+# tryBranchInPreheader() laid a test in front from whatever arm the walk of the typed copy stood in. The loop is still bought for `given`: the row is asked whether it leaves the lists as they are
 # with `extra` among them, since its read is typed on its own way, where a failing test begins the turn again in the other copy.
 # f1 = inOneArm, f2 = inEveryTurn; v1 = extra. The test's VALUE may be made in front, since the loop does not change `extra`; what counts is where the BRANCH on it stands: in f1 a jump follows the test.
 # OPTIONS: check=Validate

@@ -8,8 +8,8 @@
 # Whatever the walk builds into a block that stands in front of an open loop may take only what stands in front of that loop. That is asked where every operation is built, in every build, and a no stops the
 # build by name: without it such code was built in silence and the executable died where the function's body should have been (exit 132).
 # The lying word passes over the question that keeps this branch in its turn, so that its arms go in front and name `shape` by a record of the turn: the red control of that question and of every net over it.
-# RUN: compile mechanisms=all testing=WhatConditionsOfArmsInFrontOfLoopsSpeakOfIsTakenToStandInFront
-# DIAGNOSTIC: OperandInFrontOfLoopIsMadeInItsTurns
+# RUN: compile mechanisms=all testing=AssumeInvariantOperands
+# DIAGNOSTIC: HoistedOperandNotInvariant
 
 module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
 entry module=m0

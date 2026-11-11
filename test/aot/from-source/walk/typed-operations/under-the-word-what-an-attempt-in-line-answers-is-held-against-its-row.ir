@@ -5,10 +5,12 @@
 # print(grow(id(3)));
 # print("went on");
 # -- end of source
-# THE LIE: the row of Array.prototype.push writes 0 alone. The push is an attempt in line that may miss (TryCallInline): what it answers arrives as a parameter of a block, so no record of it went by the check of records.
-# Under the word it is held against what the parameter says, at the head of the way on.
-# OPTIONS: testing=CheckProofsAtRunTime,RowSaysLess:Builtin/Array.prototype.push/RangeOfResult
+# Fault injection: the signature of Array.prototype.push declares 0 as its only result.
+# The push is an inline attempt that may miss (TryCallInline). Its result arrives as a block parameter, so the check that runs on each operation never saw an operation for it.
+# With testing=CheckProofsAtRunTime the result is checked against the type of the parameter, at the start of the block where execution continues.
+# OPTIONS: testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Array.prototype.push/RangeOfResult
 # RUN: run-in-shell mechanisms=all globalThis.id = (x) => x;
-# CHECK: AOT: f1 at {{*}}: what a built-in or a call by value gives is not of the type that the compiler has proven of it.
+# CHECK: bun: internal AOT error: type check failed at {{*}} (grow)
+# CHECK-NEXT: in the result of a built-in or indirect call
 # CHECK-NOT: went on
 # CHECK: crashed with

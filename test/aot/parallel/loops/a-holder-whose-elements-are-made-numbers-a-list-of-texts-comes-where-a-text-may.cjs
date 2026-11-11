@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForTexts >= 1
+// STATISTIC: ArrayOrStringLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const s = JSON.parse('[' + Array.from({ length: 40 }, (_, i) => '"' + (i + q) + '.5"').join() + ']');

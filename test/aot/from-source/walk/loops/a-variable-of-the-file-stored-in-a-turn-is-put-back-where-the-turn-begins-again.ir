@@ -16,9 +16,9 @@
 # CHECK: = PutDoubleIndex
 # CHECK: frequency=Rare
 # CHECK: = PutModuleVariable [[held]] variable=[[turns]]
-# RUN(COUNT): compile StoresPutBackWhereTurnsBeginAgain mechanisms=all
-# COUNT-NOT: StoresPutBackWhereTurnsBeginAgain 0
-# COUNT: statistic StoresPutBackWhereTurnsBeginAgain
+# RUN(COUNT): compile StoresUndoneAtIterationRestarts mechanisms=all
+# COUNT-NOT: StoresUndoneAtIterationRestarts 0
+# COUNT: statistic StoresUndoneAtIterationRestarts
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: 16 15 14 34
 # SHELL-NEXT: 16 15 14 34

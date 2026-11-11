@@ -1,6 +1,6 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // A name comes to lie above the receiver when the prototype of an object in the middle of the chain is changed, in the loop that reads the name through a getter. The load of the receiver's own slot stands in front of the turns; the guards that make an empty slot mean undefined stand in them, and where they fail the turn begins again and the load is thrown away. Under the word that checks the walk the load alone may not be held against the object.
-// COUNTER: AnswersAskedAgain >= 1
+// COUNTER: FastPathResultsVerified >= 1
 const printValue = (...all) => console.log(all.map(one => (Object.is(one, -0) ? "-0" : String(one))).join(" "));
 const shelf_1 = { get label() { return this._label; }, set label(value) { this._label = value; } };
 function makeMiddle_1(tag) { const middle = Object.create(shelf_1); middle.tag = tag; return middle; }

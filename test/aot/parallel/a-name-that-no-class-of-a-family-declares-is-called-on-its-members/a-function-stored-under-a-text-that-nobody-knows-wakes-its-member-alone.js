@@ -1,6 +1,6 @@
 // Under: --aot-check=FlowFixpoint: a function stored on one member under a text that nobody knows is found beside ITS fields: it wants that member as its receiver, so its porter wakes that member, alone; the check wakes every sleeper and nothing grows.
-// STATISTIC: SharedCallsWhoseSilentMembersSleep >= 1
-// STATISTIC: SleepersWokenInSharedCalls >= 1
+// STATISTIC: SharedCallsWithDormantMembers >= 1
+// STATISTIC: DormantMembersActivated >= 1
 class Base { tag() { return 0; } }
 class A extends Base { a() { return "a"; } }
 class B extends Base { b() { return "b"; } }

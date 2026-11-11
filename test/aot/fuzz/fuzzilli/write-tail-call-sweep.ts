@@ -6,6 +6,7 @@
 //   bun write-tail-call-sweep.ts count
 //   bun write-tail-call-sweep.ts named <pattern> <folder> [most]
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 const N = 1000000;
 // The text that declares the callee, the kind of its first call, and how the callee or the receiver is named.
@@ -268,7 +269,10 @@ else if (process.argv[2] === "named") {
   let laidOut = 0;
   for (let at = 0; at < all && laidOut < atMost; at++) {
     if (!pattern.test(programs[at].name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${programs[at].name}`, programs[at].text);
+    writeFileSync(
+      `${folder}/${pad(at)}-${programs[at].name}`,
+      printThroughBranch(programs[at].text, at, programs[at].name),
+    );
     laidOut++;
   }
   console.log(laidOut);
@@ -277,7 +281,10 @@ else if (process.argv[2] === "named") {
   mkdirSync(folder, { recursive: true });
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
-    writeFileSync(`${folder}/${pad(at)}-${programs[at].name}`, programs[at].text);
+    writeFileSync(
+      `${folder}/${pad(at)}-${programs[at].name}`,
+      printThroughBranch(programs[at].text, at, programs[at].name),
+    );
   }
   console.log(Math.min(count, all));
 }

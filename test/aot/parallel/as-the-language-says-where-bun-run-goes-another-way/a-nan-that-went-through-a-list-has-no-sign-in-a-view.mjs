@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences": the bytes of a NaN. On x64 `bun run` stores fff8000000000000, the NaN as the processor made it. The language allows both.
+// The bytes of a NaN. On x64 `bun run` stores fff8000000000000, the NaN as the processor made it. The language allows both.
 const numbers = new Float64Array([Infinity, -Infinity, 0]);
 const bytes = new BigUint64Array(numbers.buffer);
 const kept = [];

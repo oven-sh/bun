@@ -27,8 +27,8 @@
 # for (const one of owners) said.push(outside.map((ask) => { try { return String(ask(one)); } catch (error) { return (error as Error).name; } }).join(" | "));
 # print(said.join("\n") + "\n" + made);
 # -- end of source
-# RUN(COUNT): compile EmptySlotsAskedForTruthAsTheyLie mechanisms=all
-# COUNT: statistic EmptySlotsAskedForTruthAsTheyLie 2
+# RUN(COUNT): compile EmptySlotConversionsSkipped mechanisms=all
+# COUNT: statistic EmptySlotConversionsSkipped 2
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 0 | -3 | -1 | undefined | 1 | 0 | undefined | 1 | 0 | 0 | thing 0 | 0
 # RIGHT-NEXT: 0 | -3 | -1 | undefined | 1 | 1 | undefined | 1 | 1 | 1 | thing 1 | 1

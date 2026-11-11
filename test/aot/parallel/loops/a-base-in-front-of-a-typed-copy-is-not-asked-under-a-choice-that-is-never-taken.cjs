@@ -1,4 +1,4 @@
-// STATISTIC: BasesInFrontOfTypedCopiesAskedForLists <= 0
+// STATISTIC: InvariantBasesGuardedAsArrays <= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const rows = JSON.parse('[' + Array.from({ length: 64 }, (_, i) => '{"v":' + (i + q + 0.5) + '}').join() + ']'), nums = JSON.parse('[' + Array.from({ length: 64 }, (_, i) => (i * 37) % 101).join() + ']');

@@ -1,5 +1,5 @@
 // Every turn of `for (let ..)` has a fresh scope: a closure made in turn k keeps turn k's values, and an inner loop reads them through it.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 0
+// STATISTIC: CapturedVariableReadsHoisted >= 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

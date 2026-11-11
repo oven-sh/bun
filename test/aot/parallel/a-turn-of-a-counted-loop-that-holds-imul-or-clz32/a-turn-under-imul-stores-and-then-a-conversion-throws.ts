@@ -1,4 +1,4 @@
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 1
+// STATISTIC: UnrolledLoopsEmitted >= 1
 // Each turn stores its counter and its sum. A conversion that throws, or a BigInt, stands at each of the first ten places in turn: what was stored is what the turn in front stored.
 function mix(list: number[], done: Int32Array): number {
   let hash = -3;

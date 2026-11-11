@@ -12,6 +12,7 @@
 // says when it is read, so what is printed is the order in which the files of the graph are run and their exports are read. That order is plain to see where each file has run to its end before the next
 // one asks for it. Here one of them has not.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // What stands in the entry in front of LOADS, how it loads `./m1.mjs`, and the kind of file it is. BEFORE is the load of `./m4.cjs`, or nothing.
 const entries: [string, string, string, string][] = [
@@ -139,7 +140,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laid < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laid++;
   }
   console.log(laid);
@@ -149,7 +150,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

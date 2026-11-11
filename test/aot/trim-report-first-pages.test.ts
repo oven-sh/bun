@@ -311,8 +311,8 @@ test.failing(
   },
 );
 test.failing("a formatter that is handed to such code keeps its locale: every locale for de", async () => {
-  const handedOver = await report(
+  const escapedReport = await report(
     `import { promisify } from "node:util"; const count = new Intl.NumberFormat("de"); const later: any = promisify((x: any, done: any) => done(null, x)); later(count).then((x: any) => console.log(x.format(1)));`,
   );
-  expect(handedOver.locales).toBe("locales: de");
+  expect(escapedReport.locales).toBe("locales: de");
 });

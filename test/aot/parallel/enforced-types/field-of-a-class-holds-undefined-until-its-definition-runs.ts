@@ -1,5 +1,5 @@
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1
-// COUNTER: FieldsLeftSlotByStoreOfOtherType <= 8
+// COUNTER: FieldsEvictedByTypeMismatch >= 1
+// COUNTER: FieldsEvictedByTypeMismatch <= 8
 // A field of a class is defined as undefined in front of the body of its constructor, an optional member is given undefined or left out, and `null` stands where a reference is written. None of that takes a field out of its slot:
 // every held type lets the two lie there. The one text at the end does, which shows that the slots are held at all. This morning's trial left the two out: 28,044 of 28,694 fields that left their slots held `undefined`.
 // Under: --aot-testing=CheckProofsAtRunTime: the type that a slot is held to

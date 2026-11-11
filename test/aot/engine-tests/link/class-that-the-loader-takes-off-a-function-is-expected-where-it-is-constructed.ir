@@ -12,7 +12,7 @@
 # FORM: TypeTest {{*}}testedType=f2
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}]
-module m1 path="node:events" displayPath="node:events" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1 syntheticExports=[{name="Point" variable=g0}]
+module m1 path="node:events" displayPath="node:events" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1 syntheticExports=[{name="Point" variable=g0}]
 entry module=m0
 layout L0 kind=Instance name="Point" module=m1 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 variable g0 name="Point" module=m1 declared={type=anything|absent}

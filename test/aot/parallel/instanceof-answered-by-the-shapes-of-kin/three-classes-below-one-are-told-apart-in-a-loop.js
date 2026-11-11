@@ -1,6 +1,6 @@
 // A miss is an object of a sister class: its shape says no.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 3
-// STATISTIC: QuestionsOfInstanceOfThatKinDecideForEveryShape >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 3
+// STATISTIC: InstanceOfTestsDecidedByHierarchy >= 2
 const rows = JSON.parse("[" + Array.from({ length: 48 }, (_, i) => '{"x":' + i + ',"y":' + (i * 7 % 5) + "}").join() + "]");
 class Shape {}
 class Circle extends Shape { constructor(r) { super(); this.r = r; } }

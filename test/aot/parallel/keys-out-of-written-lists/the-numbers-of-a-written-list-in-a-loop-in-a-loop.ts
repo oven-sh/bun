@@ -1,4 +1,4 @@
-// STATISTIC: ElementsOfConstantListsReadAsWritten >= 4
+// STATISTIC: ConstantArrayElementsFolded >= 4
 function weigh(n: number): string {
   let total = 0, texts = "";
   for (let i = 0; i < n; i++) {

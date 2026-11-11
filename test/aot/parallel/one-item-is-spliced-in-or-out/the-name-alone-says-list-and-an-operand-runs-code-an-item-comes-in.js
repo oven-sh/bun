@@ -1,5 +1,5 @@
 // One site, every kind of receiver: lists that the stub serves, lists that it leaves early and late, what is no list as made. The door is read under a key, so the list is out of sight at the site.
-// COUNT: operation:operationAOTArraySpliceItemIntoAnyList <= 215
+// COUNT: operation:operationAOTArraySpliceItemGeneric <= 215
 const doors = { into(list, place, item) { list.splice(place(list), 0, item); } };
 const [OUT, INTO] = JSON.parse('["out","into"]');
 const go = (door, ...rest) => doors[door](...rest);

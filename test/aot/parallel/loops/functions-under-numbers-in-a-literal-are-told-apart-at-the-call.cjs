@@ -1,4 +1,4 @@
-// STATISTIC: CallsToldApartByCallee >= 1
+// STATISTIC: CallsDispatchedByCallee >= 1
 "use strict";
 const z = JSON.parse("0"); let last = 0;
 const ways = { 0: (x) => x + 1, 1: (x) => x * 2 };

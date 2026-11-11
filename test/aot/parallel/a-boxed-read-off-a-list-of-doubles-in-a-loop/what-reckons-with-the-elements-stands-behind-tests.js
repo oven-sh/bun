@@ -1,4 +1,4 @@
-// STATISTIC: BoxedReadsInLoopsWithAnArmForDoubles >= 8
+// STATISTIC: BoxedReadsWithDoublePath >= 8
 // Four reads stand in one block of a loop. What reckons with them stands behind tests, in later blocks. The list is proven a list, what it holds is known to nobody.
 const lists = JSON.parse('{"fractions":[0.5,1.5,-0,3,4.25,-5.5,6.75,8,1e300,-1e-300,0.1,0.2],"whole":[1,2,3,4,5,6,7,8,9,10,11,12],"mixed":[1,2.5,3,4.5,5,6.5,7,8.5,9,10.5,11,12.5]}');
 function Grid() { this.cells = null; }

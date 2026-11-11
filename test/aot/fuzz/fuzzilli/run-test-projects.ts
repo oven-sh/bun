@@ -2161,7 +2161,7 @@ function difference(plain: Ended, other: Ended): [string, string, string] | unde
   if (other.timedOut && !plain.timedOut)
     return ["never ends", "", `the run was ended behind ${options["ends-within"]} s`];
   const crash =
-    /^.*(panic|Segmentation fault|ASSERTION FAILED|Illegal instruction|AOT: |which the compiler assumed).*$/m.exec(
+    /^.*(panic|Segmentation fault|ASSERTION FAILED|Illegal instruction|AOT: |internal AOT error|which the compiler assumed).*$/m.exec(
       other.stderr,
     )?.[0];
   if ((other.signal && !plain.signal) || (crash && !plain.stderr.includes(crash)))

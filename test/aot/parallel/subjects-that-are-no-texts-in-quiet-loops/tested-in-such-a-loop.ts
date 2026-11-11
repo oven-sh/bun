@@ -1,5 +1,5 @@
 // The same loop with test on a written RegExp. What is printed is what plain Bun prints.
-// STATISTIC: OperandsAskedForTextInQuietTurns >= 1
+// STATISTIC: StringOperandsGuardedInIterations >= 1
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const told: string[] = [];
 const lines: string[] = unseen(["a=1", "b", 42, { toString() { told.push("converted"); return "c=3"; } }, "d=4", null, "=", 1.5]);

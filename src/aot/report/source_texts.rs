@@ -31,7 +31,7 @@ enum Text {
 pub struct ModuleSource {
     pub path: Box<[u8]>,
     text: Text,
-    types_in_function_text: Option<PackedTypeRanges>,
+    erased_type_ranges: Option<PackedTypeRanges>,
     origin: ModuleOrigin,
 }
 
@@ -40,7 +40,7 @@ impl ModuleSource {
         ModuleSource {
             path: path.into(),
             text: Text::Kept(text.into()),
-            types_in_function_text: None,
+            erased_type_ranges: None,
             origin: ModuleOrigin::Program,
         }
     }
@@ -57,9 +57,9 @@ impl ModuleSource {
         }
     }
 
-    pub fn with_function_text(self, types_in_function_text: Option<PackedTypeRanges>) -> Self {
+    pub fn with_function_source(self, erased_type_ranges: Option<PackedTypeRanges>) -> Self {
         ModuleSource {
-            types_in_function_text,
+            erased_type_ranges,
             ..self
         }
     }
@@ -89,22 +89,22 @@ impl ModuleSource {
         }
     }
 
-    pub fn function_text_len(&self) -> usize {
-        let types = self.types_in_function_text.as_ref();
+    pub fn function_source_len(&self) -> usize {
+        let types = self.erased_type_ranges.as_ref();
         types.map_or(0, |types| types.kept_len(self.len()))
     }
 
-    pub fn copy_function_text_to(&self, destination: &mut [u8]) {
-        if let Some(types) = &self.types_in_function_text
+    pub fn copy_function_source_to(&self, destination: &mut [u8]) {
+        if let Some(types) = &self.erased_type_ranges
             && let Some(text) = self.text()
         {
             types.remove_from(text, destination);
         }
     }
 
-    pub fn function_text(&self) -> Vec<u8> {
-        let mut text = vec![0; self.function_text_len()];
-        self.copy_function_text_to(&mut text);
+    pub fn function_source(&self) -> Vec<u8> {
+        let mut text = vec![0; self.function_source_len()];
+        self.copy_function_source_to(&mut text);
         text
     }
 
@@ -278,14 +278,14 @@ mod tests {
     fn builders_keep_what_the_other_set() {
         let types = || Some(PackedTypeRanges::default());
         let origin_last = ModuleSource::new(b"node:fs", b"a;")
-            .with_function_text(types())
+            .with_function_source(types())
             .with_origin(ModuleOrigin::Runtime);
         let origin_first = ModuleSource::new(b"node:fs", b"a;")
             .with_origin(ModuleOrigin::Runtime)
-            .with_function_text(types());
+            .with_function_source(types());
         for source in [origin_last, origin_first] {
             assert_eq!(source.origin(), ModuleOrigin::Runtime);
-            assert_eq!(BString::from(source.function_text()), "a;");
+            assert_eq!(BString::from(source.function_source()), "a;");
         }
     }
 
@@ -293,20 +293,20 @@ mod tests {
     fn long_text_that_repeats_itself_is_read_back_byte_for_byte() {
         let text = b"const value = call(1, 2, 3);\n".repeat(4096);
         let source = ModuleSource::new(b"/p/long.js", &text)
-            .with_function_text(Some(PackedTypeRanges::default()));
+            .with_function_source(Some(PackedTypeRanges::default()));
         assert_eq!(source.len(), text.len());
-        assert_eq!(source.function_text_len(), text.len());
+        assert_eq!(source.function_source_len(), text.len());
         assert!(source.text() == Some(&text[..]));
-        assert!(source.function_text() == text);
+        assert!(source.function_source() == text);
     }
 
     #[test]
-    fn source_without_function_text_writes_nothing() {
+    fn function_source_defaults_to_empty() {
         let source = ModuleSource::new(b"/p/a.ts", b"a();");
-        assert_eq!(source.function_text_len(), 0);
-        assert!(source.function_text().is_empty());
+        assert_eq!(source.function_source_len(), 0);
+        assert!(source.function_source().is_empty());
         let mut destination = *b"kept";
-        source.copy_function_text_to(&mut destination);
+        source.copy_function_source_to(&mut destination);
         assert_eq!(&destination, b"kept");
     }
 

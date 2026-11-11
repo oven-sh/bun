@@ -1,7 +1,7 @@
 // What is odd is handed over unseen: where views are SEEN to arrive at the rows, the copy for lists is not bought.
 // Loops whose turns find a row and store into it once or twice, with values carried round and work behind the stores. A turn that finds an odd row begins again in the other copy of the loop; a store that was done in kind is put back first. Whatever is found, and whatever a setter does to what lies ahead, plain's answer comes out.
-// STATISTIC: RowsAskedOnceWhereTurnsBeginAgain >= 2
-// STATISTIC: StoresPutBackWhereTurnsBeginAgain >= 1
+// STATISTIC: RowStoreRegionsRestartingIterations >= 2
+// STATISTIC: StoresUndoneAtIterationRestarts >= 1
 "use strict";
 const unseen = value => ({ value })[JSON.parse('"value"')];
 function pushed(...values) { const row = []; for (const value of values) row.push(value); return row; }

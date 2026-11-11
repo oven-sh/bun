@@ -58,6 +58,13 @@ impl CompileFailure {
                 out.extend_from_slice(b"failed to create executable: ");
                 out.extend_from_slice(error.name().as_bytes());
             }
+            CompileFailure::OverwritesEntryPoint { outfile } => {
+                out.extend_from_slice(b"the executable would overwrite ");
+                out.extend_from_slice(outfile);
+                out.extend_from_slice(
+                    b", which is an entry point. Choose another path with --outfile",
+                );
+            }
             CompileFailure::FileNotWritten { path, error } => {
                 out.extend_from_slice(b"failed to write ");
                 out.extend_from_slice(path);

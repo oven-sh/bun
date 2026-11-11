@@ -1,5 +1,5 @@
-// STATISTIC: TruthsAskedOfRawElementsInTurnsLaidOut >= 2
-// STATISTIC: LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked >= 1
+// STATISTIC: UnrolledLoopRawTruthinessTests >= 2
+// STATISTIC: UnrolledLoopsForInt32Truthiness >= 1
 "use strict";
 // A list of doubles holds 0, -0, a NaN that was reckoned, a NaN of other bits out of a view, a hole, the least number there is and both infinities: each is as true as the read would have found it.
 const said = [];

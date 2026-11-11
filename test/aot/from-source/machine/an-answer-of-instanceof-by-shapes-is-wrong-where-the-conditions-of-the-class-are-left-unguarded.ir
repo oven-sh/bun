@@ -1,15 +1,18 @@
-# In a loop `x instanceof Dog` is answered by shapes behind a guard of what the class itself must keep: no Symbol.hasInstance of its own among it. Out of sight Dog gets one that says yes to all.
-# THE LIE, testing=ConditionsOfClassAskedForAreLeftUnguarded: that guard is not built.
-# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the answer is also held to a look that gives way: from the class asked for up its own chain the first own property under
-# Symbol.hasInstance must be the engine's own, by identity, as a data property, or the process ends. The look runs no code.
+# In a loop, `x instanceof Dog` is decided from shapes, after a guard on the conditions that the class itself must keep. One of them is that it has no Symbol.hasInstance of its own.
+# Out of the compiler's sight, Dog gets one that returns true for everything.
+# Fault injection, testing=SkipClassGuards: that guard is not built.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the result is also checked against a lookup that can give up.
+# From the tested class up its own prototype chain, the first own property under Symbol.hasInstance must be the engine's own, by identity and as a data property. Otherwise the process crashes.
+# The lookup runs no code.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 2 5
 # RIGHT-NEXT: exited with 0
-# RUN(WRONG): run-in-shell mechanisms=all testing=ConditionsOfClassAskedForAreLeftUnguarded
+# RUN(WRONG): run-in-shell mechanisms=all testing=SkipClassGuards
 # WRONG: 2 2
 # WRONG-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=ConditionsOfClassAskedForAreLeftUnguarded,CheckProofsAtRunTime
-# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipClassGuards,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: in the result of an operation
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

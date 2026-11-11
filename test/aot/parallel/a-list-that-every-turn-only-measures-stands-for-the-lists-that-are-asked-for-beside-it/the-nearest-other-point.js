@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedForBesideListsInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedBesideArrays >= 1
 const rounds = Number(process.argv[2] ?? 3);
 const easts = JSON.parse("[0.25, 137.25, 24.25, 161.25, 48.25, 185.25]");
 const norths = JSON.parse("[0.5, 53.5, 106.5, 159.5, 212.5, 15.5]");

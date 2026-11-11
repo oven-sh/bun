@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtListsWhoseFailingSideAsksForViews = 0
+// STATISTIC: ArraySpeculationsWithTypedArrayFallback = 0
 "use strict";
 function lit(grid) { let s = 0; for (let r = 0; r < grid.length; r++) for (let c = 0; c < grid[r].length; c++) if (grid[r][c]) s++; return s; }
 const go = { lit }[JSON.parse('"lit"')];

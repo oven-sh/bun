@@ -25,8 +25,6 @@ bitflags::bitflags! {
         const ALLOCATIONS = 1 << 5;
         const FORMS = 1 << 6;
         const STATISTICS = 1 << 7;
-        const ONLY_UNKNOWN_CODE = 1 << 8;
-        const ONLY_UNPROVEN_TYPE = 1 << 9;
     }
 }
 
@@ -98,6 +96,7 @@ pub struct AotOptions {
     pub checks_only: bool,
     /// `bun check --aot`: the program's own TypeScript is checked file by file, as `bun check` checks it.
     pub looks_for_type_errors: bool,
+    pub dependency_type_errors: DependencyTypeErrors,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
     /// `bun test --globals=vitest`.
@@ -122,6 +121,9 @@ pub struct AotOptions {
     /// What `--define` or bunfig.toml names, without what the build defines by itself. `bun run` replaces these too.
     pub user_defined_names: Vec<Box<[u8]>>,
     pub option_words: Vec<Box<[u8]>>,
+    pub hardening_names: Vec<Box<[u8]>>,
+    /// Option words that only `hardening_names` ask for.
+    pub hardening_words: Vec<Box<[u8]>>,
 }
 
 /// `bun test --aot`: what the runner tells the build, because no file of the run spells it. The build itself finds what the files replace.
@@ -133,6 +135,17 @@ pub struct ReplacedByTests {
     pub test_files: Vec<Vec<u8>>,
     /// The file of each `--preload`. One that nothing resolves: as it is written.
     pub preloads: Vec<Vec<u8>>,
+}
+
+/// `bun check --aot`: type errors in the TypeScript sources of dependencies.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum DependencyTypeErrors {
+    #[default]
+    NotChecked,
+    /// One warning for each package.
+    Counted,
+    /// `--all`: each is an error, like one in the program's own files.
+    Listed,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -178,6 +191,7 @@ impl Default for AotOptions {
             missing_tsconfig_override: None,
             checks_only: false,
             looks_for_type_errors: false,
+            dependency_type_errors: DependencyTypeErrors::NotChecked,
             runs_tests: false,
             has_globals_of_vitest: false,
             counts_executions: false,
@@ -191,6 +205,8 @@ impl Default for AotOptions {
             platform: None,
             user_defined_names: Vec::new(),
             option_words: Vec::new(),
+            hardening_names: Vec::new(),
+            hardening_words: Vec::new(),
         }
     }
 }
@@ -199,7 +215,7 @@ impl Default for AotOptions {
 mod tests {
     use super::*;
 
-    const MEMBERS: [ExplainSet; 10] = [
+    const MEMBERS: [ExplainSet; 8] = [
         ExplainSet::TEXT,
         ExplainSet::JSON,
         ExplainSet::CHECKS,
@@ -208,8 +224,6 @@ mod tests {
         ExplainSet::ALLOCATIONS,
         ExplainSet::FORMS,
         ExplainSet::STATISTICS,
-        ExplainSet::ONLY_UNKNOWN_CODE,
-        ExplainSet::ONLY_UNPROVEN_TYPE,
     ];
 
     #[test]
@@ -242,6 +256,7 @@ mod tests {
             missing_tsconfig_override,
             checks_only,
             looks_for_type_errors,
+            dependency_type_errors,
             runs_tests,
             has_globals_of_vitest,
             counts_executions,
@@ -255,6 +270,8 @@ mod tests {
             platform,
             user_defined_names,
             option_words,
+            hardening_names,
+            hardening_words,
         } = AotOptions::default();
         let ReplacedByTests {
             builtins,
@@ -295,6 +312,7 @@ mod tests {
         assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);
         assert!(!looks_for_type_errors);
+        assert_eq!(dependency_type_errors, DependencyTypeErrors::NotChecked);
         assert!(!runs_tests);
         assert!(!has_globals_of_vitest);
         assert!(!counts_executions);
@@ -309,6 +327,8 @@ mod tests {
         assert!(thread_count.is_none());
         assert!(user_defined_names.is_empty());
         assert!(option_words.is_empty());
+        assert!(hardening_names.is_empty());
+        assert!(hardening_words.is_empty());
     }
 
     #[test]
@@ -320,6 +340,6 @@ mod tests {
             seen.insert(member);
         }
         assert_eq!(seen, ExplainSet::all());
-        assert_eq!(seen.bits(), 0b11_1111_1111);
+        assert_eq!(seen.bits(), 0b1111_1111);
     }
 }

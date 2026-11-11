@@ -23,9 +23,10 @@
 # const appended = behind([1.5], kindsOf("append"));
 # print(2 in appended, appended.join());
 # -- end of source
-# In a list of doubles a NaN is the mark of a hole, so a number goes in raw only behind `x === x`; what fails leaves for the stub. The emitter held two raw stores of the library's own operations to that and none
-# of the program's: a store by key, a push, an append. Under the words that make the emitters check proofs each of them is held now; as users build nothing is added.
-# The lie, testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN, leaves the arms' own test out: as built the element, nothing by nothing, would be gone in silence.
+# In an array of doubles a NaN marks a hole, so a number is stored raw only after it has passed `x === x`. A number that fails the test goes to the stub.
+# The emitter used to check two raw stores of the library's own operations for that, and none of the program's: a store by key, a push and an append.
+# With the switches that make the emitters check proofs, each of them is checked now. In a user's build, nothing is added.
+# Fault injection, testing=AssumeNoNaNStores: the test of each of these paths is omitted. In a default build the element, which is 0 / 0, would silently disappear.
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = "all";
 # RIGHT: true 0.5,NaN,0.5
 # RIGHT-NEXT: true 1.5,0.5,NaN,0.5
@@ -36,23 +37,26 @@
 # HELD-NEXT: true 1.5,0.5,NaN,0.5
 # HELD-NEXT: true 1.5,0.5,NaN,0.5
 # HELD-NEXT: exited with 0
-# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores
 # PASSES: true 0.5,0.5,0.5
 # PASSES-NEXT: true 1.5,0.5,0.5,0.5
 # PASSES-NEXT: true 1.5,0.5,0.5,0.5
 # PASSES-NEXT: exited with 0
-# RUN(SILENT): run-in-shell mechanisms=all testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "all";
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeNoNaNStores globalThis.fails = "all";
 # SILENT: false 0.5,,0.5
 # SILENT-NEXT: false 1.5,0.5,,0.5
 # SILENT-NEXT: true 1.5,0.5,,0.5
-# RUN(STORE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "store";
-# STORE: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
+# RUN(STORE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores globalThis.fails = "store";
+# STORE: bun: internal AOT error: type check failed
+# STORE-NEXT: found an unexpected value in the result of an operation
 # STORE: crashed with
-# RUN(PUSH): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "push";
+# RUN(PUSH): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores globalThis.fails = "push";
 # PUSH: true 0.5,0.5,0.5
-# PUSH: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
+# PUSH: bun: internal AOT error: type check failed
+# PUSH-NEXT: found an unexpected value in the result of an operation
 # PUSH: crashed with
-# RUN(APPEND): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = "append";
+# RUN(APPEND): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeNoNaNStores globalThis.fails = "append";
 # APPEND: true 1.5,0.5,0.5,0.5
-# APPEND: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
+# APPEND: bun: internal AOT error: type check failed
+# APPEND-NEXT: found an unexpected value in the result of an operation
 # APPEND: crashed with

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsWhereViewAndItsHeirShareCopy >= 2
+// STATISTIC: TypedArraySubclassLoopsVersioned >= 2
 // A Buffer and a Uint8Array run the same walked loop: where no turn calls anything they share one copy, as under a written `Uint8Array`. Where a turn calls, each keeps its own: what is known of the names below a class does not outlive other code.
 const key = JSON.parse('"go"');
 const hashed = { go(d) { let h = 7; for (let i = 0; i <= d.length; i++) h = (h * 31 + d[i]) | 0; return h; } };

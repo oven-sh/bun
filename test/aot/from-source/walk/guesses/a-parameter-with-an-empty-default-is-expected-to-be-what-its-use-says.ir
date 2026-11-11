@@ -5,9 +5,9 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject
-# CHECK: = ShapeTest {{*}}[refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}[rejectsMarkedObjects]
 # CHECK: = GetSlot {{*}}key="label" {{*}}level=Proven
-# CHECK: = ShapeTest {{*}}[refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}[rejectsMarkedObjects]
 # CHECK: = PropGet {{*}}key="label"
 # CHECK: = GetSlot {{*}}key="depth"
 # -- source: a-parameter-with-an-empty-default-is-expected-to-be-what-its-use-says.cjs

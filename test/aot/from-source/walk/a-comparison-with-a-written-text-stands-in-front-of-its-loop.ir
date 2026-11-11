@@ -10,8 +10,8 @@
 # WRITTEN text read the text alone: a rope goes into a local buffer, nothing is flattened, nothing is thrown, nothing is allocated: the answer hangs on the text alone. So the comparison is built in that
 # form where it may then stand in front. THE SAID PRICE: a loop that takes no turn pays the comparison once (7 instructions), one turn 0 to 2; every further turn saves 7. No guard: a copy of the head's
 # test costs 5 to 9 at every entry to spare those 7. Only what cannot fail and is as cheap as this leaves a loop whose first turn is not known.
-# RUN: compile ComparisonsWithTextsThatStandInFrontOfLoops mechanisms=all
-# CHECK: statistic ComparisonsWithTextsThatStandInFrontOfLoops 3
+# RUN: compile StringLiteralComparisonsHoisted mechanisms=all
+# CHECK: statistic StringLiteralComparisonsHoisted 3
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

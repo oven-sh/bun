@@ -1,5 +1,5 @@
 // The names of the doors come from outside, so nothing is copied in line and the list is out of sight where it is spliced.
-// COUNT: operation:operationAOTArraySpliceOfAnyList <= 32
+// COUNT: operation:operationAOTArraySpliceGeneric <= 32
 const [OUT, INTO] = JSON.parse('["out","into"]');
 const reads = { out(list, at) { return list.splice(at, 1); } };
 const ask = (door, ...rest) => reads[door](...rest);

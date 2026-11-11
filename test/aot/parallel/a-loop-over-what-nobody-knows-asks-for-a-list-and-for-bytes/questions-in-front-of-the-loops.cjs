@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 7
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 7
 // Functions ask of their parameter whether it is there, what it is and how long it is, in front of a loop over it.
 "use strict";
 const out = [], names = JSON.parse('["truth","nullish","kind","list","none","empty","class","same","turned"]');

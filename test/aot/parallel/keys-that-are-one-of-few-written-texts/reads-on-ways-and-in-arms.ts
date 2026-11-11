@@ -1,4 +1,4 @@
-// STATISTIC: MeetingsWalkedForEachTextOfKey >= 1
+// STATISTIC: JoinsDuplicatedPerKeyString >= 1
 const said: unknown[] = [];
 class Point { x = 1; y = 2; z = 3; get w() { said.push("w is read"); return 4; } }
 class Bare { x = "only x"; }

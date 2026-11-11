@@ -1,5 +1,5 @@
 // Two ways end with a call that takes the list; a third reads it.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const kept = [];
 function first(list) { kept.push(list); return "first" + list.join(); }
 function second(list) { kept.push(list); return "second" + list.length; }

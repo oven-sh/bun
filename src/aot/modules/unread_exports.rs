@@ -30,7 +30,7 @@ fn own_variable(file: FileId, export: &ModuleExport) -> Option<SymbolId> {
 }
 
 fn answers_require_with_namespace(interop: Interop) -> bool {
-    interop.require_result != RequireResult::DefaultExport || interop.answers_loader_with_namespace
+    interop.require_result != RequireResult::DefaultExport || interop.loader_returns_namespace
 }
 
 impl ExportReads {
@@ -90,7 +90,7 @@ impl ExportReads {
         match module {
             ModuleRef::File(file) => self.keep_every_name(file),
             ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
+            | ModuleRef::Facade(_)
             | ModuleRef::Check(_)
             | ModuleRef::Runtime(_)
             | ModuleRef::External { .. } => {}

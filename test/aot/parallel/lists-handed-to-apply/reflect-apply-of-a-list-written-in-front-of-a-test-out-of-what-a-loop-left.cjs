@@ -1,5 +1,5 @@
 // The list is written in front of a test, out of a name that a loop has swapped and that nothing reads behind the list; the call stands behind the test.
-// STATISTIC: CallsForwardedBehindTestsOfTheirTargets >= 1
+// STATISTIC: CallsForwardedAfterTargetChecks >= 1
 const table = { join: (one, two) => one + two, count() { return arguments.length; } };
 const data = JSON.parse('{"from":0,"turns":3,"names":["join","count"]}');
 function pick(first, second, from, turns, target) {

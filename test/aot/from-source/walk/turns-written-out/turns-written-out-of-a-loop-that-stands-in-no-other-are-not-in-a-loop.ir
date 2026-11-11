@@ -14,8 +14,8 @@
 # AROUND-NOT: int[0, 3] @Int32) isInLoop=true isLoopHead=true
 # AROUND: isInLoop=true isLoopHead=true
 # AROUND: = GetArrayElement
-# RUN(COUNT): compile LoopsWrittenOutInNoLoop mechanisms=all-Inlining
-# COUNT: statistic LoopsWrittenOutInNoLoop 1
+# RUN(COUNT): compile OutermostLoopsFullyUnrolled mechanisms=all-Inlining
+# COUNT: statistic OutermostLoopsFullyUnrolled 1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 6 12
 # ANSWERS-NEXT: exited with 0

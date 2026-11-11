@@ -55,7 +55,7 @@ async function price(name: string) {
     if (after >= 2 * before && after - before > 0.3) {
       const [plainAgain, oursAgain] = await both();
       [before, after] = [Math.min(before, plainAgain.seconds), Math.min(after, oursAgain.seconds)];
-      for (const word of ["IgnoreExpectedTypes", "WritesBodiesStraight"])
+      for (const word of ["IgnoreExpectedTypes", "ForceStraightCompilation"])
         arms.push(
           (await build(word, `--aot-testing=${word}`)).code === 0
             ? (await run([join(folder, word)], folder, 90)).seconds.toFixed(2)

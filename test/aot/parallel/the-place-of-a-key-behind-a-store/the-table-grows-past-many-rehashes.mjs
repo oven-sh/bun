@@ -1,4 +1,4 @@
-// STATISTIC: PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey >= 1
+// STATISTIC: MapEntryIndicesSurvivingInserts >= 1
 const turns = Number(process.argv[2] ?? 3);
 const said = [];
 const tell = (...words) => said.push(words.map(word => (typeof word === "object" && word !== null ? JSON.stringify(word) : String(word))).join(" "));

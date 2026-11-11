@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // Records out of JSON.parse.
 const parsed = JSON.parse('[' + Array.from({ length: 8 }, (_, i) => '{"tall":' + i + ',"wide":2}').join() + ']');

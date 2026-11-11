@@ -11,8 +11,8 @@
 # of a parameter does: the loop whose turns hold elements against elements asks in front for a text, what is no text runs the loop as it would be walked without that guess (it asks for a list),
 # and in a loop the failing side of the guess at the length asks for a text.
 # f1 = mirrored
-# RUN(COUNT): compile TextsOrListsAskedForWhereElementsAreHeldAgainstElements mechanisms=all
-# COUNT-NOT: statistic TextsOrListsAskedForWhereElementsAreHeldAgainstElements 0
+# RUN(COUNT): compile StringsSpeculatedFromElementComparisons mechanisms=all
+# COUNT-NOT: statistic StringsSpeculatedFromElementComparisons 0
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = GetArrayLength

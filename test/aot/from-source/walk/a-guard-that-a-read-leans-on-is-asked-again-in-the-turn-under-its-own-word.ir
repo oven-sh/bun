@@ -15,21 +15,25 @@
 # print(watch(one, new Crate("other"), 20, 5), watch(one, Crate.prototype, 20, 5), watch(two, spare, 20, 99), two.note, Object.keys(one).join());
 # -- end of source
 # f2 = watch. The program of a-guard-is-asked-in-the-turn-where-a-typed-store-may-create-a-field-from-source.ir.
-# testing=CheckWalkAtRunTime holds the walk against itself: where a read of a slot that may be empty goes without a look above because the state remembers that the guard of the class holds, the guard is asked
-# again in front of the read, and the process ends where it does not hold. THE LIE lays the row of PutSlotOrAdd false (it ends no guard): the second version of the loop asks the guard once, in front of the loop,
-# and its turn leans on that. The test built again must stand IN THE TURN: it is neither answered by the table of known answers nor carried in front of the loop: both go by the belief that it audits.
-# Four tests under the name: the first version's own and the one built again behind it, the second version's in front of its loop and the one built again in its turn. Built as any other operation there are three:
-# the check in the turn then hangs on the test in front of the loop and always passes.
-# RUN(LEANS): walk f2 mechanisms=all testing=RowSaysLess:Operation/PutSlotOrAdd/MemberGuards
+# The switch testing=CheckWalkAtRunTime checks the walk against itself.
+# A read of a slot that may be empty skips the lookup on the prototype chain where the state remembers that the guard of the class holds.
+# With the switch, the guard is tested again before such a read, and the process crashes where the guard does not hold.
+# The injected fault makes the effects entry of PutSlotOrAdd false: the entry says that the operation invalidates no guard.
+# So the second version of the loop tests the guard once, in the preheader, and its iteration relies on that.
+# The test that is built again must be in the iteration.
+# It is neither resolved from the table of known results nor hoisted to the preheader, because both of those rely on the assumption that it audits.
+# There are four tests of the name: the first version's own test and the one built again after it, the second version's test in its preheader and the one built again in its iteration.
+# If the test were built like any other operation, there would be three: the check in the iteration would then depend on the test in the preheader and would always pass.
+# RUN(LEANS): walk f2 mechanisms=all testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards
 # LEANS-COUNT-2: = AreMembersUnchanged conditions=[{layout=L0 key="note"}]
-# LEANS-NOT: source=WhatIsRemembered
-# RUN(AGAIN): walk f2 mechanisms=all testing=RowSaysLess:Operation/PutSlotOrAdd/MemberGuards,CheckWalkAtRunTime
+# LEANS-NOT: source=RememberedFact
+# RUN(AGAIN): walk f2 mechanisms=all testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards,CheckWalkAtRunTime
 # AGAIN-COUNT-4: = AreMembersUnchanged conditions=[{layout=L0 key="note"}]
-# RUN(INTURN): walk f2 mechanisms=all testing=RowSaysLess:Operation/PutSlotOrAdd/MemberGuards,CheckWalkAtRunTime
+# RUN(INTURN): walk f2 mechanisms=all testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards,CheckWalkAtRunTime
 # INTURN: isLoopHead=true
 # INTURN: isLoopHead=true
 # INTURN: [[again]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="note"}]
-# INTURN-NEXT: CheckProof [[again]] checkedType=true {{*}}source=WhatIsRemembered
+# INTURN-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact
 # INTURN-NEXT: = GetSlotOrUndefined {{*}} key="note"
 # RUN(RIGHT): run-in-shell testing=CheckWalkAtRunTime
 # RIGHT: 0 14 20 above tag

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 1
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 1
 // Where use alone says "a list of numbers", what is neither a list nor bytes ran the slow version before there was a front: the closed copy is the better road already, and a copy of its own would be bytes for nothing. (Where nothing was expected it has one.)
 const key = JSON.parse('"go"');
 const T = { go(d) { let h = 7; for (let i = 0; i <= d.length; i++) h = (h * 31 + d[i]) | 0; return h; } };

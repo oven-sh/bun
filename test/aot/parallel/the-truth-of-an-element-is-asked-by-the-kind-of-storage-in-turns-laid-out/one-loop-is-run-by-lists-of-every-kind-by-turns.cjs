@@ -1,5 +1,5 @@
-// STATISTIC: TruthsAskedOfRawElementsInTurnsLaidOut >= 2
-// STATISTIC: LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked >= 1
+// STATISTIC: UnrolledLoopRawTruthinessTests >= 2
+// STATISTIC: UnrolledLoopsForInt32Truthiness >= 1
 "use strict";
 // The same loop is run by a list of whole numbers, of doubles, of values, one gone sparse, one frozen, a copy-on-write literal, a view, an arguments object and an object with places, by turns; and a list changes its kind between two calls.
 const said = [];

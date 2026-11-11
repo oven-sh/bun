@@ -1,4 +1,4 @@
-// STATISTIC: DeletesOfNamesThatFreshObjectsDoNotHold >= 1
+// STATISTIC: FreshObjectDeletesFolded >= 1
 'use strict';
 const said = [];
 const show = (k, v) => v === undefined ? "<undefined>" : v;

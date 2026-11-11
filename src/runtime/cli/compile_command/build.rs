@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use bun_aot::engine::{
     EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
     has_compiler, image_alignment, used_features,
@@ -7,7 +5,7 @@ use bun_aot::engine::{
 use bun_aot::statistics::{log_part_outside_stages, log_time_outside_stages};
 use bun_ast::Loader;
 use bun_bundler::aot::{
-    AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint, FilesForFileSystem,
+    AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint, FileIdentity, FilesForFileSystem,
 };
 use bun_bundler::options::{self, OutputFile};
 use bun_core::{CodeGenerationFromStrings, ZBox};
@@ -36,7 +34,7 @@ use bun_trim::TrimPlan;
 
 use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
-    configuration, reports, trimming,
+    RequestOrigin, configuration, reports, trimming,
 };
 use crate::cli::build_command::{collect_compile_assets, to_embedded_name};
 
@@ -84,6 +82,7 @@ pub(crate) fn compile_to_executable(
     } else {
         target_base_public_path(request.executable.target.os, b"root/")
     };
+    let compiler_called_at = bun_core::time::nano_timestamp();
     let mut build = match build_program(request, bundler, target, module_prefix) {
         Ok(build) => build,
         Err(failure) => {
@@ -106,7 +105,8 @@ pub(crate) fn compile_to_executable(
         None => None,
     };
     log_part_outside_stages("behind the engine: used features, trimming");
-    let mut outcome = reports::collect_reports(&build, options, &used, &trimming);
+    let mut outcome =
+        reports::collect_reports(&build, options, &used, &trimming, compiler_called_at);
     log_part_outside_stages("behind the engine: reports");
 
     let outfile = match request.product {
@@ -118,6 +118,13 @@ pub(crate) fn compile_to_executable(
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
     if let Some(outfile) = outfile {
+        if let Some(outfile) = outfile
+            && request.origin == RequestOrigin::CompileCommand
+        {
+            let written = request.entry_points.iter().copied();
+            let sources = build.entry_points.iter().map(|it| &it.source_path[..]);
+            check_entry_points_are_kept(outfile, written, sources)?;
+        }
         let product = ProductInputs {
             module_prefix,
             outfile,
@@ -137,6 +144,61 @@ pub(crate) fn compile_to_executable(
     Ok(outcome)
 }
 
+/// Letter case and `./` spell one place in several ways, so the files themselves are compared. The executable replaces what
+/// is at `outfile`: a link to an entry point is another place, unless it is the entry point as it was `written`.
+pub(crate) fn check_entry_points_are_kept<'a>(
+    outfile: &[u8],
+    mut written: impl Iterator<Item = &'a [u8]>,
+    mut sources: impl Iterator<Item = &'a [u8]>,
+) -> Result<(), CompileFailure> {
+    let path = ZBox::from_bytes(outfile);
+    let (Ok(place), Ok(target)) = (bun_sys::lstat(&path), bun_sys::stat(&path)) else {
+        return Ok(());
+    };
+    let target_identity = identify(&target, || real_path(outfile));
+    let source = sources.find(|path| {
+        bun_sys::stat(&ZBox::from_bytes(path))
+            .is_ok_and(|found| identify(&found, || real_path(path)).is_same_file(&target_identity))
+    });
+    let Some(source) = source else {
+        return Ok(());
+    };
+    let is_overwritten = match bun_sys::S::ISLNK(place.st_mode as _) {
+        // Of a file with several hard links, one is replaced and the others stay.
+        false => target.st_nlink == 1 || real_path(outfile) == real_path(source),
+        true => {
+            let link = identify(&place, || real_path_of_link(outfile));
+            written.any(|path| {
+                bun_sys::lstat(&ZBox::from_bytes(path)).is_ok_and(|found| {
+                    identify(&found, || real_path_of_link(path)).is_same_file(&link)
+                })
+            })
+        }
+    };
+    match is_overwritten {
+        true => Err(CompileFailure::OverwritesEntryPoint {
+            outfile: outfile.to_vec(),
+        }),
+        false => Ok(()),
+    }
+}
+
+fn identify(stat: &bun_sys::Stat, find_path: impl FnOnce() -> Option<Vec<u8>>) -> FileIdentity {
+    FileIdentity::new(stat.st_dev as u64, stat.st_ino as u64, find_path)
+}
+
+/// The path of the link itself.
+fn real_path_of_link(path: &[u8]) -> Option<Vec<u8>> {
+    let folder = bun_paths::dirname(path).filter(|folder| !folder.is_empty());
+    let folder = real_path(folder.unwrap_or(b"."))?;
+    Some([&folder[..], b"/", bun_paths::basename(path)].concat())
+}
+fn real_path(path: &[u8]) -> Option<Vec<u8>> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let found = bun_sys::realpath(&ZBox::from_bytes(path), &mut buffer).ok()?;
+    Some(found.to_vec())
+}
+
 #[allow(clippy::needless_pass_by_value)] // made for this call
 fn write_product(
     request: &mut CompileRequest<'_, '_>,
@@ -144,7 +206,6 @@ fn write_product(
     product: ProductInputs<'_>,
     outcome: &mut CompileOutcome,
 ) -> Result<(), CompileFailure> {
-    let started = Instant::now();
     let options = request.options;
     let (assets_named_at_root, files_for_file_system_alone) = add_assets(
         request,
@@ -261,7 +322,6 @@ fn write_product(
         if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
             bun_core::print_errorln!("AOT test build | program bytes {}", length);
         }
-        outcome.executable_time = started.elapsed();
         return Ok(());
     };
 
@@ -290,7 +350,6 @@ fn write_product(
         });
         build.output_files.truncate(1);
         outcome.output_files = core::mem::take(&mut build.output_files);
-        outcome.executable_time = started.elapsed();
         return Ok(());
     }
 
@@ -342,7 +401,6 @@ fn write_product(
     // The main entry point's file stands for the executable among the artifacts.
     build.output_files.truncate(1);
     outcome.output_files = core::mem::take(&mut build.output_files);
-    outcome.executable_time = started.elapsed();
     Ok(())
 }
 
@@ -578,7 +636,8 @@ fn add_assets(
     );
     // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
     let log = unsafe { &mut *request.log };
-    warn_where_file_system_lacks(
+    warn_about_shared_asset_names(&named_at_root, output_files, log);
+    emit_not_embedded_warnings(
         files_for_file_system,
         root_directory,
         &laid,
@@ -588,7 +647,42 @@ fn add_assets(
     Ok((named_at_root, encode_files_for_file_system_alone(laid)))
 }
 
-fn warn_where_file_system_lacks(
+/// `named_at_root` is `CompiledProgram::assets_named_at_root`: the executable tries its folders in that order, so the first one that holds a name hides the others.
+fn warn_about_shared_asset_names(
+    named_at_root: &[u8],
+    output_files: &[OutputFile],
+    log: &mut bun_ast::Log,
+) {
+    let mut paths_by_name: std::collections::BTreeMap<Vec<u8>, Vec<&[u8]>> = Default::default();
+    let folders = bun_core::strings::split(named_at_root, b"\0");
+    for folder in folders.filter(|it| !it.is_empty()) {
+        for file in output_files {
+            let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+            if let Some(below @ [b'/', ..]) = path.strip_prefix(folder) {
+                let name = [bun_paths::basename(folder), below].concat();
+                paths_by_name.entry(name).or_default().push(path);
+            }
+        }
+    }
+    for (name, paths) in paths_by_name.iter().filter(|it| it.1.len() > 1) {
+        let quoted: Vec<String> = paths
+            .iter()
+            .map(|path| bun_core::fmt::quote(path).to_string())
+            .collect();
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "assets {} share the path {} in the executable. That path reads {}. Each asset is also at its own path",
+                quoted.join(" and "),
+                bun_core::fmt::quote(name),
+                quoted[0],
+            ),
+        );
+    }
+}
+
+fn emit_not_embedded_warnings(
     files_for_file_system: &FilesForFileSystem,
     root_directory: &[u8],
     laid: &[PathForFileSystemAlone],
@@ -603,7 +697,7 @@ fn warn_where_file_system_lacks(
     let with_text = with_text.filter(|file| !has_no_text(file));
     let with_text = with_text.map(|it| bun_core::strings::remove_leading_dot_slash(&it.dest_path));
     let found: std::collections::BTreeSet<&[u8]> = laid.chain(with_text).collect();
-    for (path, warning) in &files_for_file_system.warnings_if_lacking {
+    for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
         let spelled = with_forward_slashes(path);
         if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
             log.warnings += 1;
@@ -730,7 +824,7 @@ fn add_data_files_under_root(
     for data_file in data_files {
         let spelled = with_forward_slashes(data_file);
         let is_below_root = spelled.starts_with(&root) && spelled.get(root.len()) == Some(&b'/');
-        let under_root = path_under_root(root_directory, b"/", data_file);
+        let under_root = path_from_root(root_directory, b"/", data_file);
         if !is_below_root || under_root.is_none_or(|it| it != below_root(&spelled)) {
             continue;
         }
@@ -897,6 +991,7 @@ fn add_assets_under_root(
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
     let mut paths_of_files_given: Vec<Box<[u8]>> = Vec::new();
+    let mut outside_folders: Vec<Box<[u8]>> = Vec::new();
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
@@ -915,8 +1010,8 @@ fn add_assets_under_root(
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
-        let under_root = path_under_root(root_directory, working_directory.as_bytes(), asset_path);
-        let embedded_path = under_root.as_deref().unwrap_or(&asset_name);
+        let from_root = path_from_root(root_directory, working_directory.as_bytes(), asset_path);
+        let embedded_path = from_root.as_deref().unwrap_or(&asset_name);
         let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
             .unwrap_or(embedded_path.len());
         if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
@@ -924,14 +1019,23 @@ fn add_assets_under_root(
                 asset: asset.clone(),
             });
         }
+        // A folder outside the root directory was embedded under its base name before it kept its path.
+        let folder_given = from_root.as_deref().map(|it| graph_path(it, b""));
+        let is_folder = !files.is_empty()
+            && files
+                .iter()
+                .all(|file| file.dest_path[..] != asset_name[..]);
+        if let Some(folder) = folder_given.filter(|it| is_folder && it.starts_with(b"../")) {
+            outside_folders.push(folder.into_boxed_slice());
+        }
         for mut file in files {
             let is_file_given = file.dest_path[..] == asset_name[..];
-            if let Some(under_root) = &under_root {
+            if let Some(from_root) = &from_root {
                 let path_in_asset = file
                     .dest_path
                     .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
-                file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+                file.dest_path = graph_path(from_root, path_in_asset).into_boxed_slice();
             }
             if is_file_given {
                 paths_of_files_given.push(file.dest_path.clone());
@@ -953,12 +1057,15 @@ fn add_assets_under_root(
     }
     Ok(find_assets_named_at_root(
         &paths_of_files_given,
+        &outside_folders,
         output_files,
     ))
 }
 
+/// Folders may share a base name: the executable tries each.
 fn find_assets_named_at_root(
     paths_of_files_given: &[Box<[u8]>],
+    outside_folders: &[Box<[u8]>],
     output_files: &[OutputFile],
 ) -> Vec<u8> {
     let is_taken = |base_name: &[u8]| {
@@ -976,23 +1083,26 @@ fn find_assets_named_at_root(
             .map(|path| bun_paths::basename(path));
         base_names.filter(|&name| name == base_name).count() > 1
     };
-    paths_of_files_given
+    let files = paths_of_files_given.iter().filter(|path| {
+        let base_name = bun_paths::basename(path);
+        !is_shared(base_name) && !is_taken(base_name)
+    });
+    let folders = outside_folders
         .iter()
-        .filter(|path| {
-            let base_name = bun_paths::basename(path);
-            !is_shared(base_name) && !is_taken(base_name)
-        })
+        .filter(|path| !is_taken(bun_paths::basename(path)));
+    files
+        .chain(folders)
         .flat_map(|path| path.iter().copied().chain([0]))
         .collect()
 }
 
-fn path_under_root(
+/// `None` if no relative path leads there, as on another Windows drive.
+fn path_from_root(
     root_directory: &[u8],
     working_directory: &[u8],
     asset_path: &[u8],
 ) -> Option<Vec<u8>> {
-    let written_path =
-        resolve_path::join_abs_string::<platform::Auto>(working_directory, &[asset_path]).to_vec();
+    let written_path = join_file_path(working_directory, asset_path);
     let written_folder = bun_paths::dirname(&written_path)?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     let real_folder =
@@ -1004,10 +1114,50 @@ fn path_under_root(
         [b'/' | b'\\', folders @ ..] => Some([folders, b"/"].concat()),
         _ => None,
     };
+    let folders_above_root = |folder: &'_ [u8]| {
+        let relative = relative_file_path(root_directory, folder);
+        relative
+            .starts_with(b"..")
+            .then(|| [&relative[..], b"/"].concat())
+    };
     let folders = real_folder
         .and_then(folders_below_root)
-        .or_else(|| folders_below_root(written_folder))?;
+        .or_else(|| folders_below_root(written_folder))
+        .or_else(|| folders_above_root(real_folder.unwrap_or(written_folder)))?;
     Some([&folders[..], bun_paths::basename(&written_path)].concat())
+}
+
+fn split_file_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bun_core::strings::split(path, b"/").filter(|name| !name.is_empty() && *name != b".")
+}
+
+/// `path.resolve(folder, path)`. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a file's name.
+fn join_file_path(folder: &[u8], path: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        return resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec();
+    }
+    let folder = split_file_path(folder).filter(|_| !path.starts_with(b"/"));
+    let mut names: Vec<&[u8]> = Vec::new();
+    for name in folder.chain(split_file_path(path)) {
+        match name {
+            b".." => drop(names.pop()),
+            _ => names.push(name),
+        }
+    }
+    [b"/", &names.join(&b"/"[..])[..]].concat()
+}
+
+/// `path.relative(from, to)` of two absolute paths, by the same rule.
+fn relative_file_path(from: &[u8], to: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        return resolve_path::relative(from, to).to_vec();
+    }
+    let from: Vec<&[u8]> = split_file_path(from).collect();
+    let to: Vec<&[u8]> = split_file_path(to).collect();
+    let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let up = core::iter::repeat_n(&b".."[..], from.len() - shared);
+    let names: Vec<&[u8]> = up.chain(to[shared..].iter().copied()).collect();
+    names.join(&b"/"[..])
 }
 
 fn add_assets_in_place(

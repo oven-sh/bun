@@ -1,4 +1,4 @@
-// STATISTIC: ReadsThatAskTheirSitesBuiltInFrontOfLoops >= 1
+// STATISTIC: SiteCachedReadsHoisted >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 function Store() {}

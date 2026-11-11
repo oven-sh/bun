@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // An index of the holder becomes an accessor: the getter runs once for each read, in its turn, and may change the holder; a setter alone reads as undefined.
 const said = [];

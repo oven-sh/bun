@@ -1,6 +1,6 @@
-// Under: --aot-testing=FailGuesses:7:61: some guesses fail in the middle of the loops
-// Under: --aot-testing=FailGuesses:3:50: others do
-// Under: --aot-testing=FailGuesses: every guess fails
+// Under: --aot-testing=FailSpeculations:7:61: some guesses fail in the middle of the loops
+// Under: --aot-testing=FailSpeculations:3:50: others do
+// Under: --aot-testing=FailSpeculations: every guess fails
 function show(...all) { return all.map(one => (typeof one)[0] + (Object.is(one, -0) ? "-0" : String(one))).join(" "); }
 function run(a, b, mark) {
   let s = 0, x = 0, h = 0;

@@ -12,8 +12,8 @@
 # RUN(ASKED): walk f1 mechanisms=all
 # ASKED: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # ASKED: GetArrayElement {{*}}arrayStorage=Double
-# RUN(BEHIND): compile LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage mechanisms=all
-# BEHIND-NOT: statistic LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage 0
+# RUN(BEHIND): compile LoopsReversionedForOtherIndexingType mechanisms=all
+# BEHIND-NOT: statistic LoopsReversionedForOtherIndexingType 0
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0

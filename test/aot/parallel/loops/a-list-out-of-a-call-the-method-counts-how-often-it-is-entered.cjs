@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 0
+// STATISTIC: WalkLoopsVersioned >= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 class Store { entered = 0; held = [1.5, 2.5, 3.5, q]; rows() { this.entered++; return this.held; } }

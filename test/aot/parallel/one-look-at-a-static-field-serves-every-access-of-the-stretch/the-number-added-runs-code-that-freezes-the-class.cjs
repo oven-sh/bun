@@ -1,5 +1,5 @@
 // valueOf freezes the class between the read and the store: strict code throws.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms >= 0
+// STATISTIC: StaticFieldGuardsReused >= 0
 "use strict";
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }

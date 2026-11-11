@@ -1,5 +1,5 @@
 // Every row has a shape of its own: the site misses in every turn.
-// STATISTIC: ReadsThatAskTheirSitesInTurnsThatCall >= 1
+// STATISTIC: SiteCachedReadsBesideCalls >= 1
 "use strict";
 const k = JSON.parse('"go"');
 const V = JSON.parse("[" + Array.from({ length: 64 }, (_, i) => '{"z' + i + '":1,"a":' + i + ',"b":' + i / 2 + "}").join() + "]");

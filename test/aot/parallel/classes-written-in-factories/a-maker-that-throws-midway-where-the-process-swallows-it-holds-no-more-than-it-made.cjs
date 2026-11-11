@@ -1,4 +1,4 @@
-// STATISTIC: CapturesOfClassesStoredForGoodPromoted >= 10
+// STATISTIC: PermanentClassCapturesPromoted >= 10
 "use strict";
 const refs = [], out = [];
 const trips = JSON.parse("true");

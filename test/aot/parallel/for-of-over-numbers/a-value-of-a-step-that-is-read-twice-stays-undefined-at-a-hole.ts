@@ -1,5 +1,5 @@
 // A hole is read as NaN only where the element's one reader is arithmetic beside a number. Read twice, joined to a text or compared, it stays undefined.
-// STATISTIC: StepsOfListsThatReadHolesAsNaN >= 4
+// STATISTIC: IteratorStepHoleChecksRemoved >= 4
 function twice(list: number[]): string { let s = 0; let t = ""; for (const v of list) { s += v; t += String(v) + ","; } return s + " " + t; }
 function text(list: number[]): string { let t = "x"; for (const v of list) t += v; return t; }
 function test(list: number[]): number { let n = 0; for (const v of list) if (v === undefined) n++; return n; }

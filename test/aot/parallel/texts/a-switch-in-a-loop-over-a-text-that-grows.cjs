@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: SwitchesThatAskLengthsOfRopesInFront >= 1
+// STATISTIC: StringSwitchRopeLengthChecks >= 1
 // A text grows by a letter, narrow or wide, in a field and in a local, and is switched over in each turn: by few and by many cases, short, long, empty, beyond what the stub writes down.
 const o = JSON.parse('{"t":""}'), A = JSON.parse('"abcdefg\\n"'), U = JSON.parse('"ab\\u4e2dd"');
 const L = "abcdefg\nabcdefg\nabc", M = "abcdefg\n".repeat(17).slice(0, 130);

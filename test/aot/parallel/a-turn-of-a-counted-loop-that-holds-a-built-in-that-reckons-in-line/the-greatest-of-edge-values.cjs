@@ -5,4 +5,4 @@ function folded(a, from) { let h = from; for (let i = 0; i < a.length; i++) { co
 function each(a, h) { let s = ""; for (let i = 0; i < a.length; i++) { const x = a[i]; s += say(Math.max(h, x)) + " "; } return s; }
 for (const from of [0, -0, 1, NaN, Infinity, -Infinity, 2147483647, -2147483648]) console.log(say(from), say(folded(doubles, from)), say(folded(list, from)), say(folded(ints, from)), say(folded(new Float64Array([0, -0, 0, -0, 0, -0, 0, -0, 0]), from)), say(folded(new Float64Array([-0, 0, -0, 0, -0, 0, -0, 0, -0, 0]), from)));
 console.log(each(doubles, 0)); console.log(each(doubles, -0)); console.log(each(ints, 3));
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 1
+// STATISTIC: UnrolledLoopsEmitted >= 1

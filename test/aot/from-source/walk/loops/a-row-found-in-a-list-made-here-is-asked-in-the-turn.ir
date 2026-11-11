@@ -8,7 +8,7 @@
 # sink(f, run);
 # -- end of source
 # `d` is proven a list by the guard and `centers` is made here: the rows of both are asked in the turn, and one that is no list of numbers begins the outer turn again.
-# STATISTIC: ElementsAskedInTurnsOfTypedCopies >= 1
+# STATISTIC: ElementsGuardedInIterations >= 1
 # RUN: compile mechanisms=all
 # CHECK: image not empty
 # RUN(ANSWERS): run-in-shell globalThis.sink = (f, run) => { print(f(0)); const say = d => { let said; try { said = String(run(d, 0)); } catch (e) { said = e.name; } print(said); }; say([[0.5, 0], [5, 5.5], [9, 0.25], [8, 1]]); say([["0", 0], [5, "5"], [9, 0], [5, 5]]); say([[0, 0], [5, 5], [9, 0], null]); say([[0, 0], [5, 5], [9, 0], 7]); say([[0], [5, 5], [9, 0]]); say(5); };

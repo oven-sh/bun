@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail <= 1
+// STATISTIC: CallsInlinedAfterFailedGuards <= 1
 declare const process: { readonly argv: readonly string[] };
 export {};
 interface Reading { low: number; mid: number; high: number }

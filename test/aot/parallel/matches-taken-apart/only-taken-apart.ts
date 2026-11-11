@@ -1,5 +1,5 @@
 // Every shape here only takes the result of exec | match apart: the array is never made. What is printed is what plain Bun prints.
-// STATISTIC: MatchesTakenInParts >= 11
+// STATISTIC: RegExpMatchAllocationsElided >= 11
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const lines: string[] = unseen(["color=red", "size=", "=none", "plain", "", "wide=中文", "a=b=c", "UP=down"]);
 const told: string[] = [];

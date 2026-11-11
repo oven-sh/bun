@@ -1,6 +1,6 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate
-// STATISTIC: ReadsThroughSuperGuardedInFrontOfArgumentsBuiltOnce >= 2
-// STATISTIC: CallsThroughSuperMadeBehindGuards >= 3
+// STATISTIC: SuperMethodLookupsGuarded >= 2
+// STATISTIC: SuperCallsDevirtualized >= 3
 const words = JSON.parse('{"proto":"prototype","price":"price"}');
 const log = [];
 let deed = () => {};

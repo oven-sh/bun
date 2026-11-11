@@ -1,5 +1,5 @@
 // What the makers hand to unknown code comes back with another order.
-// STATISTIC: KeyOrdersAskedInFrontOfStores >= 28
+// STATISTIC: KeyOrderChecksBeforeStores >= 28
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

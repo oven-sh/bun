@@ -1,5 +1,5 @@
 // At the join the ways hand on different objects: nothing may be taken for the answer of the call.
-// STATISTIC: KeyOrdersAskedInFrontOfStores >= 0
+// STATISTIC: KeyOrderChecksBeforeStores >= 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

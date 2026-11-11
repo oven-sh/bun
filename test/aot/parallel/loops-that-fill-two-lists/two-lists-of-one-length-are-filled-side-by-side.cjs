@@ -1,4 +1,4 @@
-// STATISTIC: KeysOfLaterStoresAskedInFrontOfTheFirst >= 1
+// STATISTIC: LaterStoreBoundsChecksHoisted >= 1
 "use strict";
 function fresh(n) { const l = []; for (let k = 0; k < n; k++) l.push(k); return l; }
 

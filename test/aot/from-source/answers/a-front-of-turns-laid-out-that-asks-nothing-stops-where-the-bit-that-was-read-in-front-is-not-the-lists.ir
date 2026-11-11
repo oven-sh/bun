@@ -4,15 +4,18 @@
 # var T = { go(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i] * b[i]; return s; } };
 # print(T[key](halves(16), halves(16)));
 # -- end of source
-# What the front of the turns laid out has found is believed in every one of those turns. testing=CheckProofsAtRunTime and testing=TestsEveryPosition write checks into each turn in the walk, and a turn that holds
-# them is not laid out: so in those lanes no layout was ever run. Under testing=EmittersAloneTestEveryPosition the walk writes nothing more, the turns are laid out as in an executable, and each access holds what it
-# is told against memory. Beside a list that lies inside its length the other has its kind READ in front, and each read branches on the bit. The lie turns the bit round, whatever is handed.
+# Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckProofsAtRunTime and testing=CheckBoundsAtRunTime the walk adds checks to each iteration,
+# and an iteration that holds such checks is not unrolled, so no unrolled loop ever ran in those test lanes. With testing=CheckBoundsInEmittersOnly the walk adds nothing,
+# the loop is unrolled as in an executable, and each access checks the facts that it was given against memory.
+# Next to an array whose accesses are within its own length, the other array has its indexing type read at the entry, and each read of that array branches on the bit.
+# Fault injection, testing=SkipUnrollEntryChecks: the bit is inverted, whatever array is passed.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 1364
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
 # HELD: 1364
 # HELD-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,QuestionsInFrontOfTurnsLaidOutAreTakenToHold
-# LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # LIE: crashed with

@@ -1,5 +1,5 @@
 // A closure over a counter is handed to a function that calls itself and only calls what it is handed, or on one node keeps it. What was kept still counts behind the return of its maker.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const kept = [];
 function walk(node, visit) { if (!node) return 0; return visit(node.value) + walk(node.left, visit) + walk(node.right, visit); }

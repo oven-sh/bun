@@ -1,5 +1,5 @@
 // `[...path, key]` handed down at each step of a walk: the list is born holding the path, with room for the key.
-// STATISTIC: LiteralsBornHoldingTheListSpreadRightBehind >= 1
+// STATISTIC: ArrayLiteralsAllocatedFromSpread >= 1
 // COUNT: operation:operationAOTAppendElements <= 2
 // COUNT: operation:operationAOTArrayPush <= 40
 interface Knot { name: string; kids: Knot[] }

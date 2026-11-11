@@ -87,7 +87,7 @@ const countsOfCharacters = new Set([
   "SourceBytesOfPackages",
   "SourceBytesOfDeclarations",
   "SourceBytesOfBun",
-  "TextBytesEmitted",
+  "StringBytesEmitted",
 ]);
 // The code of an image is laid out in whole pages of 16 KB, so what the last page of size 0 has left over is filled for nothing: 127,205 bytes of functions
 // and then 254,705 were counted as 114,688 and 245,760, which is 2.14 times. Its parts are counted to the byte and judged: FunctionBytesEmitted,

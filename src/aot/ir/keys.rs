@@ -10,7 +10,7 @@ use crate::modules::SyntheticExportId;
 pub enum FunctionKey {
     ModuleBody(FileId),
     WrappedModuleBody(FileId),
-    FaceBody(FileId),
+    FacadeBody(FileId),
     CheckBody(FileId),
     Instantiation(FileId),
     Source(FunctionRef),
@@ -90,7 +90,6 @@ pub enum VariableKey {
     MockOfRuntimeModule(RuntimeModule),
     RequiresMadeForOwnFile(FileId),
     RequiresMadeForOtherFolders(FileId),
-    /// The requires that the real createRequire() made in the file for a written path other than the file's own.
     RequiresMadeForPaths(FileId),
 }
 
@@ -99,7 +98,7 @@ impl FunctionKey {
         match *self {
             FunctionKey::ModuleBody(file)
             | FunctionKey::WrappedModuleBody(file)
-            | FunctionKey::FaceBody(file)
+            | FunctionKey::FacadeBody(file)
             | FunctionKey::CheckBody(file)
             | FunctionKey::Instantiation(file)
             | FunctionKey::AccessorGetter { file, .. }
@@ -222,7 +221,7 @@ mod tests {
         let keys = [
             FunctionKey::ModuleBody(FILE),
             FunctionKey::WrappedModuleBody(FILE),
-            FunctionKey::FaceBody(FILE),
+            FunctionKey::FacadeBody(FILE),
             FunctionKey::CheckBody(FILE),
             FunctionKey::Instantiation(FILE),
             FunctionKey::Source(FUNCTION),

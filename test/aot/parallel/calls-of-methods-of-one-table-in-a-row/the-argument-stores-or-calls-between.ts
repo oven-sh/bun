@@ -1,4 +1,4 @@
-// STATISTIC: RowsOfCallsOfMethodsOfOneTableBehindOneTest >= 1
+// STATISTIC: CollectionCallRunsGuardedOnce >= 1
 const OUT: unknown[] = [];
 class Sym { name: unknown; decl: Sym | undefined; flags: number; constructor(name: unknown, flags: number) { this.flags = flags; this.name = name; this.decl = undefined; } }
 function show(table: Map<unknown, Sym>): string { let s = table.size + ":"; for (const [k, v] of table) s += (Object.is(k, -0) ? "-0" : typeof k === "object" ? "obj" : String(k)) + "=" + v.flags + ","; return s; }

@@ -41,9 +41,9 @@
 # print(field.made(52, 3), field.made(52, 99), field.made(52.5, 90), field.made(52.5, 3), field.made(NaN, 3), field.made(2 ** 32 + 52, 3), field.made(-0, 0), field.round(5, 0.5), field.round(2.5, 0.5), field.texts(52, "n3"), field.texts(52.5, "n3"));
 # -- end of source
 # f2 = made, f3 = round, f4 = texts
-# RUN(EVENT): compile KeysHeldToWholeNumbersInTurnsOfTypedCopies mechanisms=all
+# RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
 # One for each kind of storage that the turn tells apart.
-# EVENT: statistic KeysHeldToWholeNumbersInTurnsOfTypedCopies 3
+# EVENT: statistic NumberKeysGuardedInIterations 3
 # RUN(MADE): walk f2 mechanisms=all
 # MADE-LABEL: code f2:Body
 # MADE: = TypeTest {{*}}testedType=i32

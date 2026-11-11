@@ -31,6 +31,6 @@
 # TAKE: = PutEnvironmentField
 # TAKE: = PutEnvironmentField
 # The class of this file writes `next` itself, so the text speaks and what was seen is not asked: the order at the place is what is proven, what the text says, what is seen.
-# RUN(COUNT): compile NextMethodsTestedForFunctionExpected NextMethodsTestedForFunctionWritten mechanisms=all
-# COUNT: statistic NextMethodsTestedForFunctionExpected 0
-# COUNT: statistic NextMethodsTestedForFunctionWritten 3
+# RUN(COUNT): compile SpeculatedNextMethodsGuarded DeclaredNextMethodsGuarded mechanisms=all
+# COUNT: statistic SpeculatedNextMethodsGuarded 0
+# COUNT: statistic DeclaredNextMethodsGuarded 3

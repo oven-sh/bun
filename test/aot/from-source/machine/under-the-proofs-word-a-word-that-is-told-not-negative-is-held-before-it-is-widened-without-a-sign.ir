@@ -1,14 +1,16 @@
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the walk tells that `at * 2 + 1` is no less than one.
-# A narrow word that is told to be no less than nought is widened without a sign: -1 became 4294967295, and the part of the view that begins there is empty where JavaScript gives its last element: in silence.
-# Under CheckProofsAtRunTime the word's sign is asked where it is widened, and the process stops by name.
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So -1 passes `-1 < at`, after which the walk has proven that `at * 2 + 1` is at least one.
+# A 32-bit integer that is proven to be at least zero is zero-extended. So -1 silently became 4294967295.
+# The subarray of the view that begins there is empty, whereas JavaScript returns the view's last element.
+# With CheckProofsAtRunTime, the integer's sign is checked where it is zero-extended, and the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: none 57
 # RIGHT-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
-# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed at {{*}} (behind)
 # STOPPED: crashed with SIGABRT
-# RUN(ALONE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EqualIntegersAreTakenToBeLess
-# ALONE: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(ALONE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# ALONE: bun: internal AOT error: type check failed at {{*}} (behind)
 # ALONE: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

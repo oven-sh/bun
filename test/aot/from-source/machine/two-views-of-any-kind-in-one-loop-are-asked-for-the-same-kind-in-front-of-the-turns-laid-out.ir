@@ -6,9 +6,9 @@
 # Two holders in one loop, both views of any kind. The second was never asked in front whether it is as made (the question went by the one kind of a class, and a union's class has none), so its length might follow
 # memory that another thread grows and was read in every turn; and a turn with two such views was not laid out. Two Int32Arrays of 1,000 multiplied and added up: 29,146 instructions, plain Bun 14,068.
 # It is asked; the length stands in front; the turns are laid out once for each kind that BOTH types list, and in front of them both cells are asked for that kind. Two kinds at once take the loop as written. 13,448.
-# RUN: compile LoopsLaidOutForEachKindOfView mechanisms=all
+# RUN: compile UnrolledLoopsForTypedArrays mechanisms=all
 # The second: the copy in which the first is a view of any kind and the other a list: laid out by the view's kind, the list's storage read in front.
-# CHECK: statistic LoopsLaidOutForEachKindOfView 2
+# CHECK: statistic UnrolledLoopsForTypedArrays 2
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 55 262136 2.25 -21 NaN 0
 # ANSWERS-NEXT: exited with 0

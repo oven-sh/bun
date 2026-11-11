@@ -11,8 +11,8 @@
 # against elements speak for lists, bytes, views and texts. Here the turns fill a row, as an edit distance does: now the text is asked for in front of whatever else is, and in the copy where the
 # first holder is a text the holder whose elements meet its elements is expected to be a text too.
 # f1 = marks
-# RUN(COUNT): compile TextsOrListsAskedForWhereElementsAreHeldAgainstElements mechanisms=all
-# COUNT-NOT: statistic TextsOrListsAskedForWhereElementsAreHeldAgainstElements 0
+# RUN(COUNT): compile StringsSpeculatedFromElementComparisons mechanisms=all
+# COUNT-NOT: statistic StringsSpeculatedFromElementComparisons 0
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = TypeTest v0 testedType=string

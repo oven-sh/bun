@@ -1,5 +1,5 @@
-// STATISTIC: LoopsOverWrittenKeysWhoseTurnsAreWrittenOut >= 2
-// STATISTIC: ElementsOfConstantListsReadAsWritten >= 5
+// STATISTIC: ConstantKeyLoopsFullyUnrolled >= 2
+// STATISTIC: ConstantArrayElementsFolded >= 5
 class Peg { x = 1; y = 2; z = 3; }
 function sum(peg: Peg): number {
   let total = 0;

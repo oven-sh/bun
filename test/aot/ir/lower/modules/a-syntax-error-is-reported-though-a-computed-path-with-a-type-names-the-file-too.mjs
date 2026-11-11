@@ -2,7 +2,6 @@
 // What is said of that form was dropped by the path of the file, which the file itself shares: its own syntax error went with it, and the build ended in an internal error.
 // RUN: lower
 // DIAGNOSTIC: TS1134 part.mjs:1
-// DIAGNOSTIC: TS100088 main.mjs:2
 
 // FILE: main.mjs
 import "./part.mjs";

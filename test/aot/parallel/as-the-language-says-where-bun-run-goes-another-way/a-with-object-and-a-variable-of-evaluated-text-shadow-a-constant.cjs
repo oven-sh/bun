@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". The transpiler of `bun run` writes the constant in place of the name: "1" and "1".
+// The transpiler of `bun run` writes the constant in place of the name: "1" and "1".
 const count = 1;
 with ({ count: 2 }) console.log(count);
 function declaresByText() {

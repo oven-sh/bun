@@ -1,4 +1,4 @@
-// Which async functions hold an `await` of their own: HasWrittenAwait. The parser of the engine says it of what Bun's transpiler prints, so what that folds away or
+// Which async functions hold an `await` of their own: HasLiveAwait. The parser of the engine says it of what Bun's transpiler prints, so what that folds away or
 // drops behind a `return` does not count, nor does an `await` of a function written inside. The image lists the async functions without the flag.
 // RUN: lower
 
@@ -34,11 +34,11 @@ export async function awaitInTheArmNotTaken() { return true ? 1 : await x; }
 // CHECK: function {{*}}name="awaitOfAMethodOfAClass"{{*}}HasExplicitName] thisType=
 // CHECK: function {{*}}name="awaitOfAnInnerArrow"{{*}}HasExplicitName] thisType=
 // CHECK: function {{*}}name="awaitOfAnInnerFunction"{{*}}HasExplicitName] thisType=
-// CHECK: function {{*}}name="awaits"{{*}}HasExplicitName] syntax=[HasWrittenAwait] thisType=
-// CHECK: function {{*}}name="awaitsBehindATestOfAType"{{*}}HasExplicitName] syntax=[HasWrittenAwait] thisType=
-// CHECK: function {{*}}name="awaitsInAKey"{{*}}HasExplicitName] syntax=[HasWrittenAwait] thisType=
-// CHECK: function {{*}}name="awaitsWhereNeverReached"{{*}}HasExplicitName] syntax=[HasWrittenAwait] thisType=
-// CHECK: function {{*}}name="forAwait"{{*}}HasExplicitName] syntax=[HasWrittenAwait] thisType=
+// CHECK: function {{*}}name="awaits"{{*}}HasExplicitName] syntax=[HasLiveAwait] thisType=
+// CHECK: function {{*}}name="awaitsBehindATestOfAType"{{*}}HasExplicitName] syntax=[HasLiveAwait] thisType=
+// CHECK: function {{*}}name="awaitsInAKey"{{*}}HasExplicitName] syntax=[HasLiveAwait] thisType=
+// CHECK: function {{*}}name="awaitsWhereNeverReached"{{*}}HasExplicitName] syntax=[HasLiveAwait] thisType=
+// CHECK: function {{*}}name="forAwait"{{*}}HasExplicitName] syntax=[HasLiveAwait] thisType=
 // CHECK: function {{*}}name="noAwait"{{*}}HasExplicitName] thisType=
 // CHECK: function {{*}}name="wordInAComment"{{*}}HasExplicitName] thisType=
 // CHECK: function {{*}}name="wordInARegularExpression"{{*}}HasExplicitName] thisType=

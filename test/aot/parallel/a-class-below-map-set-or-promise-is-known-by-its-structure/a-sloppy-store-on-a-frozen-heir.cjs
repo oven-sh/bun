@@ -1,6 +1,6 @@
 // A sloppy store into a frozen object changes nothing and throws nothing.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
-// COUNT: counter:StructuresOfHeirsRefused >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected >= 1
 function make() { "use strict"; return class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } }; }
 const H = make(); const one = new H();
 function f(t) { if (t === 150) Object.freeze(one); var s = 0; for (var i = 0; i < 8; i++) { one.n = i; s += one.two(); } return s; }

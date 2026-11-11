@@ -1,6 +1,6 @@
 // The names of the doors come from outside, so nothing is copied in line and the list is out of sight where it is spliced.
-// COUNT: operation:operationAOTArraySpliceOfAnyList <= 12
-// COUNT: operation:operationAOTArraySpliceItemIntoAnyList <= 8
+// COUNT: operation:operationAOTArraySpliceGeneric <= 12
+// COUNT: operation:operationAOTArraySpliceItemGeneric <= 8
 const [OUT, INTO] = JSON.parse('["out","into"]');
 const roomy = (...items) => { const list = Array.from(items); list.push(items[0]); list.pop(); return list; };
 const reads = { out(list, at) { return list.splice(at, 1); }, into(list, at, item) { return list.splice(at, 0, item); }, first(list, at) { return list.splice(at, 1)[0]; }, taken(list, at) { const [item] = list.splice(at, 1); return item; } };

@@ -1,5 +1,5 @@
 // The twin of its sister: main.cjs is the same letter for letter; the other file's statement lays its function under another name. The same count on both.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 8
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 8
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Struct(name, args) { this.name = name; this.args = args; }

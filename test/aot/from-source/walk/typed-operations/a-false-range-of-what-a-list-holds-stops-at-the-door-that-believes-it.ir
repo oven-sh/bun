@@ -7,12 +7,14 @@
 # print(last() < 0 ? "negative" : "at least nothing");
 # print("went on");
 # -- end of source
-# THE LIE: Link takes what the shell's `id` gives for undefined, so all that it sees go into the list are written integers that are not negative: int[0, 2147483647], and that is what it says of the result of last() too. The list holds -7. The read is asked for an int32 and says no more. The result is believed to lie in the range by whoever calls: so the door of the result asks for the range, and stops.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So all that it sees stored into the array are integer literals that are not negative: int[0, 2147483647], and it claims the same range for the result of last(). The array holds -7.
+# The read is checked for an int32 and claims nothing narrower. Every caller relies on the result being in the range, so the entry check of the result tests for the range, and the process crashes.
 # RUN: run-in-shell mechanisms=all
 # CHECK: negative
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=UnseenCodeAnswersUndefined
-# LIE: the result of a call is not of the type that the compiler has proven of it.
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumeUnknownCallsReturnUndefined
+# LIE: in a call result
 # LIE-NOT: went on
 # LIE: crashed

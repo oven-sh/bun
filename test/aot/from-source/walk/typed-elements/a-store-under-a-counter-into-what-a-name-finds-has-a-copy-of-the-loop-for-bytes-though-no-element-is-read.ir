@@ -15,7 +15,7 @@
 # RIGHT: 3
 # RIGHT-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
 # HELD: 3
 # HELD-NEXT: 200,200,200,200,200,200,200,200,3,4,5,6,7,8,9,10,11,12,13,14,200,200,200,200,200,200,200,200,200,200,200,200
 # HELD-NEXT: exited with 0

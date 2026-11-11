@@ -1,5 +1,5 @@
 // A pattern whose text the build has foreseen takes the text that lies in the executable, whether the program hands a rope or a flat text. What the program can see of the pattern stays what plain Bun shows: its source, its flags, what it matches, the error of a text that is no pattern, and that two patterns of one text are two objects.
-// COUNTER: RegExpTextsTakenOutOfImage >= 30
+// COUNTER: RegExpPatternsFoundInImage >= 30
 // COUNTER: RegExpsCreatedWithoutRecord = 6
 const out = [];
 function join(parts) {

@@ -4,13 +4,14 @@
 # print(first(JSON.parse('{"abc":1}')));
 # print("went on");
 # -- end of source
-# A row's holding(..) seeds, in Link, the contents of the object that the row makes. Of the type of the holder itself the proven level reads no contents. Where Link's word types a read, the walk lays a test behind the read in every build.
-# THE LIE: Object.keys() is taken to make a list that holds null alone.
+# The holding(..) clause of a signature seeds, in Link, the contents of the object that the built-in allocates. The proven level reads no contents from the type of the container itself.
+# Where Link's claim gives a read its type, the walk emits a check after the read in every build.
+# Fault injection, testing=UnderstateEffects:Builtin/Object.keys/ContentsOfResult: Object.keys() is assumed to return an array that holds only null.
 # RUN: run-in-shell mechanisms=all
 # CHECK: string
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Object.keys/ContentsOfResult
-# LIE: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Object.keys/ContentsOfResult
+# LIE: found string in an element
 # LIE-NOT: went on
 # LIE: crashed

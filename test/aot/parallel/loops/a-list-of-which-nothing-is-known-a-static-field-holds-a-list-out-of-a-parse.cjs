@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 class Table { static rows = JSON.parse('[' + Array.from({ length: 40 }, (_, i) => i + q + 0.5).join() + ']'); }

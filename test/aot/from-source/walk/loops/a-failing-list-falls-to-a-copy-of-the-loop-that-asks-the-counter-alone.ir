@@ -10,7 +10,7 @@
 # print(sum([0.5, 1.5, 2.5]), sum([0.5, undefined, 2.5, 3.5]), sum([2, "x", 4]), sum([]), sum({ length: 2, 0: 4, 1: 5 }), sum("29"), sum({ length: 1.5, 0: 3 }), sum([, 5, , 7]));
 # -- end of source
 # f1 = sum
-# RUN(EVENT): compile LoopsWhoseOtherCopyAsksCountersAlone mechanisms=all
-# EVENT: statistic LoopsWhoseOtherCopyAsksCountersAlone 1
+# RUN(EVENT): compile CounterOnlyFallbackVersionsBuilt mechanisms=all
+# EVENT: statistic CounterOnlyFallbackVersionsBuilt 1
 # RUN(ANSWERS): run-in-shell hand = function () { };
 # ANSWERS: 6 8 8 0 11 0922 0 14

@@ -1,4 +1,4 @@
-// STATISTIC: ReceiversReadOffVariablesToldApartInFrontOfLoops >= 1
+// STATISTIC: VariableReceiverGuardsHoisted >= 1
 const unseen = (x) => ({ a: x })[JSON.parse('"a"')];
 const parsed = JSON.parse('{"numbers":[1.5,2,3.25,4],"texts":["a","b","c","d"]}');
 function early() { try { return unseen(sum)(1); } catch (error) { return error.constructor.name; } }

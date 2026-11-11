@@ -1,5 +1,5 @@
 // A lookup whose answer only feeds a throw that the handler ignores is passed by only while it is the built-in's: a get of the class and an own has must run.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 let ran = 0;
 class H extends Map { probe(k) { try { throw new Error(this.get(k)); } catch { return 1; } } asked(k) { try { throw this.has(k); } catch { return 2; } } }

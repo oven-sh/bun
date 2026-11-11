@@ -1,5 +1,5 @@
 // Nothing is known of either operand of a product in a helper copied into a loop, and both are asked for numbers. One pair is of objects: their conversions run left first and once each.
-// STATISTIC: OperandsAskedForNumberInQuietTurns >= 1
+// STATISTIC: NumberOperandsGuardedInIterations >= 1
 "use strict";
 const log = [];
 const left = { valueOf() { log.push("left"); return 2; } }, right = { valueOf() { log.push("right"); return 5; } };

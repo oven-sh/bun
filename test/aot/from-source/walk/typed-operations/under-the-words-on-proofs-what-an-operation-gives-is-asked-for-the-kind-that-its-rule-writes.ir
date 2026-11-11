@@ -18,7 +18,7 @@
 # PROOFS: a number other:string other:undefined 6
 # PROOFS-NEXT: went on
 # PROOFS-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Operation/TypeOf/KindOfResult
-# LIE: what an operation gives is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Operation/TypeOf/KindOfResult
+# LIE: found string in the result of an operation
 # LIE-NOT: went on
 # LIE: crashed with

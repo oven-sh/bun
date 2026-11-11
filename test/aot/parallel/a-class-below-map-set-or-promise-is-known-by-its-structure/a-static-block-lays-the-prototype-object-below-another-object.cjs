@@ -1,5 +1,5 @@
 // A static block lays the prototype object of the class below another object while the class is being defined: the guard ends, and the examination finds another link than the built-in's.
-// COUNT: counter:StructuresOfHeirsRefused >= 1
+// COUNT: counter:BuiltinSubclassStructuresRejected >= 1
 "use strict";
 const other = { get(k) { return -1; }, has(k) { return false; }, get size() { return 50; } };
 class H extends Map { static { Object.setPrototypeOf(this.prototype, other); } look(k) { return this.get(k); } count() { return this.size; } }

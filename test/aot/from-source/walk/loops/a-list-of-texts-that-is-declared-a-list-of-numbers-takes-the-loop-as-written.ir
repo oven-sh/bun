@@ -6,7 +6,7 @@
 # print(typeof T[key]([1.5, 2.5]), T[key]([1.5, 2.5]), typeof T[key](texts), T[key](texts));
 # -- end of source
 # The typed copy of the loop reads the elements as doubles. What lets a list in is the last test in front of it: the kind of its storage. A list of texts that is declared a list of numbers fails it and takes the loop as written.
-# The word KindsAskedInFrontAreTakenForGiven takes that test to pass: what stands for a text is read as a double and summed: the answer is a number where it should be a text, in silence.
+# The word SkipStorageChecks takes that test to pass: what stands for a text is read as a double and summed: the answer is a number where it should be a text, in silence.
 # Where the walk checks its proofs every such read asks the kind again: with both words the program stops by name.
 # f1 = each
 # RUN: walk f1 mechanisms=all
@@ -16,9 +16,10 @@
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: number 14 string 00a10b
 # ANSWERS-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=KindsAskedInFrontAreTakenForGiven
+# RUN(LIE): run-in-shell mechanisms=all testing=SkipStorageChecks
 # LIE: number 14 number
 # LIE-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=KindsAskedInFrontAreTakenForGiven,CheckProofsAtRunTime
-# HELD: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipStorageChecks,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed at {{*}} (each)
+# HELD-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # HELD: crashed with

@@ -19,7 +19,7 @@ const ENGINE_FEATURES_OUTSIDE_LANGUAGE: [Feature; 3] =
     [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
 
 // Megabytes of code and data. Evaluated text and computed keys don't keep them: the program has to name them or list them in `allow`.
-const KEPT_ONLY_WHEN_NAMED: [TrimFeature; 3] = [
+const RETAINED_BY_NAME: [TrimFeature; 3] = [
     TrimFeature::Intl,
     TrimFeature::Temporal,
     TrimFeature::Webassembly,
@@ -27,7 +27,7 @@ const KEPT_ONLY_WHEN_NAMED: [TrimFeature; 3] = [
 
 // A megabyte too. Nobody comes by the test runner without naming `Bun.jest`, "bun:test", "bun:test/vitest" or "node:test": its classes hang under no name.
 // The name `test` of `allow` and `remove` also covers `bun test`, which no program enters.
-const TEST_RUNNER_KEPT_ONLY_WHEN_NAMED: Feature = Feature::Test;
+const TEST_RUNNER_RETAINED_BY_NAME: Feature = Feature::Test;
 
 // A path that is computed at run time may name a data file on disk: JSON, TOML, text.
 const LOADS_FILES_FROM_DISK: Feature = Feature::DataFileLoaders;
@@ -212,12 +212,12 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, input: &TrimI
     retained.insert_set(&features, RetainReason::NotRequested);
 }
 
-pub fn features_kept_only_when_named() -> FeatureSet {
+pub fn features_retained_by_name() -> FeatureSet {
     let mut features = FeatureSet::EMPTY;
-    for name in KEPT_ONLY_WHEN_NAMED {
+    for name in RETAINED_BY_NAME {
         features.union_with(&name.features());
     }
-    features.insert(TEST_RUNNER_KEPT_ONLY_WHEN_NAMED);
+    features.insert(TEST_RUNNER_RETAINED_BY_NAME);
     features
 }
 
@@ -255,7 +255,7 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
 
 fn features_reachable_by_text() -> FeatureSet {
     let mut features = language_features();
-    features.subtract(&features_kept_only_when_named());
+    features.subtract(&features_retained_by_name());
     features
 }
 
@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn only_cause_opening_whole_runtime_retains_what_has_to_be_named() {
-        let only_when_named = features_kept_only_when_named();
+        let only_when_named = features_retained_by_name();
         for feature in [
             Feature::IntlCollation,
             Feature::IntlSegmenter,
@@ -792,11 +792,11 @@ mod tests {
 
     #[test]
     fn what_compiled_code_enters_stays_where_the_image_lists_it() {
-        let used = using(&[Feature::OperationsOnMapsAndSets]);
+        let used = using(&[Feature::MapAndSetOperations]);
         for request in [TrimRequest::default(), removing_unused()] {
             let decision = decide_request(&used, &request);
-            assert!(!decision.unused.contains(Feature::OperationsOnMapsAndSets));
-            assert!(decision.unused.contains(Feature::OperationsOnProxies));
+            assert!(!decision.unused.contains(Feature::MapAndSetOperations));
+            assert!(decision.unused.contains(Feature::ProxyOperations));
         }
         let template = TrimRequest {
             is_template: true,

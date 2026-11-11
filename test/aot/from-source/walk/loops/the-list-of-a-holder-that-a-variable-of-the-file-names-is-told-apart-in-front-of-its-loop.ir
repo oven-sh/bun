@@ -6,8 +6,8 @@
 # function sum(start) { let total = start; for (let place = 0; place < shelf.rows.length; place++) total = total + shelf.rows[place]; return total; }
 # print(sum([].length + 1));
 # -- end of source
-# RUN(COUNT): compile ConstantsOfFilesReadInFrontOfLoops LoopsBuiltForListsAndForBytes mechanisms=all
-# COUNT: statistic ConstantsOfFilesReadInFrontOfLoops 2
-# COUNT: statistic LoopsBuiltForListsAndForBytes 1
+# RUN(COUNT): compile ModuleConstantReadsHoisted ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ModuleConstantReadsHoisted 2
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 11.5

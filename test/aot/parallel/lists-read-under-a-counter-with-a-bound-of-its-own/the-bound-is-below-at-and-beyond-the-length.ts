@@ -1,5 +1,5 @@
 // `for (i < n) sum += list[i]` where n is less than, equal to and greater than the length of the list.
-// STATISTIC: ReadsOfListsHeldBelowLesserBound >= 1
+// STATISTIC: LoopBoundsClampedToArrays >= 1
 function sumTo(list: number[], n: number) {
     n |= 0;
     let sum = 0;

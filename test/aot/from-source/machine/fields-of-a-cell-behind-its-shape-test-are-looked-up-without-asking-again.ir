@@ -25,11 +25,11 @@
 # RIGHT: 270
 # RIGHT-NEXT: exited with 0
 # A class that the test lets through and the table does not hold is still asked for.
-# RUN(HIGHEST): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f2/ShapesOfField
-# HIGHEST: AOT: 
+# RUN(HIGHEST): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f2/ShapesOfField
+# HIGHEST: bun: internal AOT error:
 # HIGHEST-NOT: exited with 0
-# RUN(MIDDLE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f2/MiddleShapesOfField
-# MIDDLE: AOT: 
+# RUN(MIDDLE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f2/MiddleShapesOfField
+# MIDDLE: bun: internal AOT error:
 # MIDDLE-NOT: exited with 0
 # When the bound was taken: loop: operations 59, patches 1, moves 3, unlikely 32.
 # RUN(X64): loops most:62 f2 mechanisms=all-Inlining

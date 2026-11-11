@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltForListsAndForBytes >= 5
+// STATISTIC: ArrayOrUint8ArrayLoopsVersioned >= 5
 // What a function reads off its parameter outside its loops and gives to a call, a condition or the result; and five that a loop begins with, names or is handed.
 "use strict";
 const out = [], names = JSON.parse('["tail","rest","made","mean","twice","horner","bound","first","given","kept"]');

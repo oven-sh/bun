@@ -1,5 +1,5 @@
 // The element of the written list is what a loop read last; nothing reads it behind the list, and the call stands behind a test.
-// STATISTIC: CallsForwardedBehindTestsOfTheirTargets >= 1
+// STATISTIC: CallsForwardedAfterTargetChecks >= 1
 const table = { join: (one, two) => one + two };
 const rows = JSON.parse('[["a","b"],["c"],["d","e","f"],[]]');
 function pick(texts, target) {

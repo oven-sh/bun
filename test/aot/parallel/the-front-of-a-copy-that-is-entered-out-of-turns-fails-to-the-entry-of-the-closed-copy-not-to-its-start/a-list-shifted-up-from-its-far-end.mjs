@@ -1,5 +1,5 @@
-// Under: --aot-testing=FailGuesses:7:61: a guess in the front of the copy that the typed copy leaves for fails in the middle of the loop
-// Under: --aot-testing=FailGuesses: every guess fails
+// Under: --aot-testing=FailSpeculations:7:61: a guess in the front of the copy that the typed copy leaves for fails in the middle of the loop
+// Under: --aot-testing=FailSpeculations: every guess fails
 let m = 5;
 function show(...all) { return all.map(one => (typeof one)[0] + (Object.is(one, -0) ? "-0" : String(one))).join(" "); }
 class Kept { l = []; }

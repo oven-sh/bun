@@ -1,5 +1,5 @@
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 1
-// STATISTIC: ReadsByNameThatAskTheirSitesAlone >= 1
+// STATISTIC: UnrolledLoopsEmitted >= 1
+// STATISTIC: SiteCachedReadsEmitted >= 1
 const rounds = +process.argv[2] || 3;
 const data = JSON.parse('{"rows":[3,1,4,1,5,9,2,6,5,3,5]}');
 let s = rounds & 1;

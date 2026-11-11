@@ -28,5 +28,5 @@
 # -- end of source
 # REQUIRES: arm64
 # AS-USERS-BUILD: the check of the slots stored at heads where a head leaves out a Save runs in every build, and under the check of the runner the allocation is checked anyway
-# DIAGNOSTIC: SpillSlotLacksItsValue f4
-# RUN: emit f4 mechanisms=all testing=SavesAtHeadsThatPatchesAloneReadAreLeftOut
+# DIAGNOSTIC: WrongValueInSpillSlot f4
+# RUN: emit f4 mechanisms=all testing=DropPatchOnlySaves

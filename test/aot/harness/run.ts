@@ -5,7 +5,7 @@ import { reportsToTheRunnerAlone, throughAtOnce } from "./without-core-dump";
 
 const { watch } = endAtMemoryLimitTogether();
 
-/** Runs a command to its end, or for `limit` milliseconds: then the command is killed, and what it has printed comes back. */
+/** Runs a command to completion. With `limit`, kills it after that many milliseconds and returns what it printed so far. */
 export async function run(
   cmd: string[],
   cwd?: string,

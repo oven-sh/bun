@@ -1,5 +1,5 @@
 // Letters outside the first plane, a lone half at the end, and a limit beyond the text: undefined comes round.
-// STATISTIC: GuardsOfCopiesAskedInFrontBehindStoresOfTurns >= 1
+// STATISTIC: InlineeGuardsHoistedPastStores >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

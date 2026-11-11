@@ -27,7 +27,7 @@ describe("records that are filled between calls", () => {
     const plain = await spawned([bunExe(), "./main.cjs", "5"], root, bunEnv);
     expect({
       exitCode: build.exitCode,
-      birthsFinishedWhereLiteralsEnd: count("BirthsFinishedWhereLiteralsEnd") > 0,
+      birthsFinishedWhereLiteralsEnd: count("AllocationsFinishedAtLiteralEnds") > 0,
       stdout: ran.stdout,
     }).toEqual({
       exitCode: 0,

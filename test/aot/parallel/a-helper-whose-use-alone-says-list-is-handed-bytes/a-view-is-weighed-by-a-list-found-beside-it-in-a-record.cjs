@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: ListsAskedForBesideViewsInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedBesideTypedArrays >= 1
 // Both holders come out of a record of which nothing is known. The nest is built once for each kind that the first may be; behind the test for a view, as behind the test for a list, the second is asked for a list of numbers in front, and what is none goes on to a copy in which the first is still what it was found to be.
 const steps = JSON.parse('["run"]');
 function run(d, t) { const { pixels, kernel, width, height } = d, out = new Float64Array(pixels.length); for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) { let s = 0; for (let ky = -1; ky <= 1; ky++) for (let kx = -1; kx <= 1; kx++) s += pixels[(y + ky) * width + x + kx] * kernel[(ky + 1) * 3 + kx + 1]; out[y * width + x] = s + (t & 7); } return out.join(); }

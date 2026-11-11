@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
-// STATISTIC: LoopsOfIterationsBuiltForTextsAndForLists >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
+// STATISTIC: ForOfLoopsVersionedByIterable >= 1
 const log = [];
 const outside = JSON.parse('["ab!c", "!", "fine", ""]');
 const strict = input => { let seen = ""; for (const ch of input) { if (ch === "!") throw new RangeError("at " + seen); seen += ch; } return seen; };

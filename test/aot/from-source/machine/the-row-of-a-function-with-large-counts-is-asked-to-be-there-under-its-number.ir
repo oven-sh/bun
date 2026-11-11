@@ -1,11 +1,12 @@
-# A function of 256 parameters: its length does not fit the byte that the image keeps for each closure function, so the byte says that the counts are listed, and the run time looks the row up by the function's number.
-# THE LIE, testing=RowsOfFunctionsWithLargeCountsAreLeftOut: the image writes the mark and leaves the row out.
-# In every build the row found is asked to be there and to bear the number asked for, or the process ends.
+# The function has 256 parameters. Its length does not fit in the byte that the image keeps for each closure function.
+# So the byte says that the counts are listed, and the runtime looks up the entry by the function's number.
+# Fault injection, testing=DropLargeCountEntries: the image writes the mark and omits the entry.
+# In every build the runtime checks that the entry it found exists and carries the requested number. Otherwise the process crashes.
 # AS-USERS-BUILD: the run time asks the row in every build.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 256
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=RowsOfFunctionsWithLargeCountsAreLeftOut
+# RUN(HELD): run-in-shell mechanisms=all testing=DropLargeCountEntries
 # HELD: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

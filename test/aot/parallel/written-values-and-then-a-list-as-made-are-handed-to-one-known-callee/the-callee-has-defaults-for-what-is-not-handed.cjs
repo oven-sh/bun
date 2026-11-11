@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList >= 1
+// STATISTIC: SpreadCallsUnpackedToParameters >= 1
 function inner(who, count, first = "default one", second = "default two") { return count + ":" + first + ":" + second; }
 function outer(...rest) { return inner(outer, rest.length, ...rest); }
 const byValue = JSON.parse("[0,1]").map(() => outer);

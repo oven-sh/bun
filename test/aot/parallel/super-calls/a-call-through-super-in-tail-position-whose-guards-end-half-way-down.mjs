@@ -1,4 +1,4 @@
-// STATISTIC: CallsThroughSuperMadeBehindGuards >= 1
+// STATISTIC: SuperCallsDevirtualized >= 1
 // half a million calls deep another function is laid above: from there on the call through super goes as it is written, and it leaves no frame either
 const words = JSON.parse('{"walk":"walk"}');
 class Path { walk(left, seen) { if (!left) return "first " + seen; if (left === 500000) Path.prototype[words.walk] = later; return this.walk(left - 1, seen + 1); } }

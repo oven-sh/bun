@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: ElementsThatEnterLoopsAskedForNumbers >= 3
+// STATISTIC: EnteringElementsGuardedAsNumbers >= 3
 // `let m = s[0]; for (..) if (s[i] > m) m = s[i];`: the element read in front of the loop enters it. In the copy for a list of numbers it is asked for a number in front; an empty list, a hole or a text at the first place goes on to the next copy.
 const key = JSON.parse('"go"');
 const greatest = { go(s) { let m = s[0]; for (let i = 1; i < s.length; i++) if (s[i] > m) m = s[i]; return m; } };

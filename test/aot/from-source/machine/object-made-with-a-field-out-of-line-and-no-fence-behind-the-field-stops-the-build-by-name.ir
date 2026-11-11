@@ -1,4 +1,7 @@
-# A fence behind late stores of a new object. The code below makes an object with `info` from the start; `info` lies out of line, so it is stored behind the fence of the fields in line and wants a fence of its own. THE LIE, testing=FencesBehindLateStoresAreLeftOut: the emitters leave that fence out. Every build asks for it, on every processor, so the build stops by name. Without the lie: object-made-with-a-field-out-of-line-has-a-fence-behind-the-field.ir.
+# This test covers the fence after late stores to a new object. The code below allocates an object that has `info` from the start.
+# `info` is an out-of-line field, so it is stored after the fence for the inline fields and needs a fence of its own.
+# Fault injection, testing=SkipFencesAfterLateStores: the emitters omit that fence. Every build requires it, on every processor, so the build fails with a named internal error.
+# Without the fault: object-made-with-a-field-out-of-line-has-a-fence-behind-the-field.ir.
 # f1 = plain, f2 = later, f3 = carry
 # -- source: object-made-with-a-field-out-of-line-and-no-fence-behind-the-field-stops-the-build-by-name.ts
 # declare function sink(...values: unknown[]): void;
@@ -17,5 +20,5 @@
 #     Return v2
 # }
 # -- end of code
-# DIAGNOSTIC: NoFenceBehindLateStores
-# RUN: emit-code mechanisms=all testing=FencesBehindLateStoresAreLeftOut
+# DIAGNOSTIC: MissingFenceAfterLateStores
+# RUN: emit-code mechanisms=all testing=SkipFencesAfterLateStores

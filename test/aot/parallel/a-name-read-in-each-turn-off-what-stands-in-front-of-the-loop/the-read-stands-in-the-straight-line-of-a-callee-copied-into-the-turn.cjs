@@ -1,4 +1,4 @@
-// STATISTIC: ReadsThatAskTheirSitesBuiltInFrontOfLoops >= 2
+// STATISTIC: SiteCachedReadsHoisted >= 2
 "use strict";
 const holders = JSON.parse('[{"limits":{"port":5}},{"limits":null},null]');
 function part(holder) { return holder.limits.port * 2; }

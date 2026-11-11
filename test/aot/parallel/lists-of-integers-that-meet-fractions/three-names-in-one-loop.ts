@@ -1,5 +1,5 @@
 // One loop reads under two names and scales under a third; the names are one list, or two in every way. What is printed is what plain Bun prints.
-// STATISTIC: ListsConvertedInFrontOfTypedCopies >= 1
+// STATISTIC: ArraysConvertedToDoubleStorage >= 1
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const told: string[] = [];
 function integers(n: number): number[] { const list: number[] = []; for (let i = 0; i < n; i++) list.push(i + 1); return list; }

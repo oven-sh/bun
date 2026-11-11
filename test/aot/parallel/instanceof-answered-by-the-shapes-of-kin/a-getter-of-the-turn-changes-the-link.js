@@ -1,5 +1,5 @@
 // No call is written in the turn: a getter that the turn reads changes the link.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 const sizes = JSON.parse("[1,2,3,4,5,6,7,8]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

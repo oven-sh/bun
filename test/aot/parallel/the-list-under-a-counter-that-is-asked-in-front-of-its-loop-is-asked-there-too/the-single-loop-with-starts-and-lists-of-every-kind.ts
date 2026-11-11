@@ -1,4 +1,4 @@
-// STATISTIC: ListsTakenUnderCountersAskedInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedUnderSpeculatedCounters >= 1
 const rounds = +process.argv[2]! || 3;
 const say = (x: unknown) => Object.is(x, -0) ? "-0" : String(x);
 function up(list: any, i: any, t: any): any { while (list[i] < t) i++; return i; }

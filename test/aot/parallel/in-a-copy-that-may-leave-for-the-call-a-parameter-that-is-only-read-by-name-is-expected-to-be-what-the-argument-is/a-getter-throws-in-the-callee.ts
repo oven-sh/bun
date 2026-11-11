@@ -1,5 +1,5 @@
 // The first name throws on what comes: the error and what ran in front of it are as in plain.
-// STATISTIC: ParametersOfCopiesExpectedToBeWhatArgumentsAre >= 1
+// STATISTIC: ArgumentSpeculationsPassedToInlinees >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

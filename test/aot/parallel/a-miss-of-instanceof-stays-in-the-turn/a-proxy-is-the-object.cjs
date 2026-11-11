@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. One element is a Proxy whose trap names the prototype of another class than its target's and counts its runs.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

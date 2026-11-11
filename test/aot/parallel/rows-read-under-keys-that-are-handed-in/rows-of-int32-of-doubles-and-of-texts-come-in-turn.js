@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInTurnsOfTypedCopies >= 1
+// STATISTIC: ArraysGuardedInIterations >= 1
 let turns = 0;
 function one(d, a, b) {
   let sum = 0;

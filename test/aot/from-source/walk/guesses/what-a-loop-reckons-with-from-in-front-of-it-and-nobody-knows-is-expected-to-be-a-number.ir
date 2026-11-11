@@ -6,6 +6,6 @@
 # `px` and `py` come from in front of the loop and nobody knows what they are. A subtraction on such a value may run other code in the middle of a turn: no turn of the typed copy came round, and the copy was undone.
 # The loop's own text subtracts them: they are expected to be numbers and are asked once, in front of it. So the loop keeps its typed copy, and in its turns a row is asked for the kind of its storage.
 # Nothing of the library is reached and this is the only loop: without the expectation no list is asked in a turn of a typed copy.
-# STATISTIC: ListsAskedInTurnsOfTypedCopies >= 1
+# STATISTIC: ArraysGuardedInIterations >= 1
 # RUN: compile mechanisms=all
 # CHECK: image not empty

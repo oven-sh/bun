@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList = 0
+// STATISTIC: SpreadCallsUnpackedToParameters = 0
 function inner(who, count, first) { return arguments.length + ":" + count + ":" + first; }
 function outer(...rest) { return inner(outer, rest.length, ...rest); }
 const byValue = JSON.parse("[0,1]").map(() => outer);

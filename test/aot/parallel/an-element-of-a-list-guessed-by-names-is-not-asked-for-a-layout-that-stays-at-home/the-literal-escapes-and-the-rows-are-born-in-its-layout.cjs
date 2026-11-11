@@ -1,5 +1,5 @@
 // The literal is handed out, so parsers may make its layout: the expectation stays.
-// STATISTIC: ElementsOfListsGuessedByNamesNotAskedForLayoutsThatStayWithCompiledCode = 0
+// STATISTIC: UnescapedShapesDroppedForElements = 0
 'use strict';
 const crates = JSON.parse('[' + Array.from({ length: 24 }, (_, i) => '{"wide":' + (i + 0.5) + ',"tall":' + (i * 0.5 + 0.25) + ',"drift":' + (i * 0.25 + 0.125) + ',"sink":0.5}').join() + ']');
 const handedOut = { wide: 1.5, tall: 2.5, drift: 3.5, sink: 4.5 };

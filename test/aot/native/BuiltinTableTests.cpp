@@ -355,10 +355,10 @@ static void testModulesListWhatRowsSayNativeCodeReads()
             BuiltinName name = load.exports[place];
             AOT_TEST_CHECK(std::ranges::contains(module.exportsReadByNativeCode, name));
             const BuiltinHostUses& uses = load.usesOfExports[place];
-            bool membersAloneAreKept = uses.areListed && !uses.list.empty() && std::ranges::all_of(uses.list, [](const BuiltinHostUse& use) {
+            bool isMemberOnly = uses.areListed && !uses.list.empty() && std::ranges::all_of(uses.list, [](const BuiltinHostUse& use) {
                 return use.use == BuiltinHostReadUse::Kept && !use.memberPath.empty();
             });
-            AOT_TEST_CHECK(membersAloneAreKept || !std::ranges::contains(module.exportsOfWhichMembersAloneAreKept, name));
+            AOT_TEST_CHECK(isMemberOnly || !std::ranges::contains(module.memberOnlyExports, name));
         }
         namesInRows += load.exports.size();
     };

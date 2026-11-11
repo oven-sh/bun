@@ -1,4 +1,4 @@
-// STATISTIC: CountersThatLoopsInsideStepAskedInFrontOfLoops >= 1
+// STATISTIC: NestedLoopCounterGuardsHoisted >= 1
 const rounds = +process.argv[2]! || 3;
 const marks: number[] = JSON.parse("[1,1,1,0,1,1,0,1]");
 function climb(list: number[], from: number, until: number): number {

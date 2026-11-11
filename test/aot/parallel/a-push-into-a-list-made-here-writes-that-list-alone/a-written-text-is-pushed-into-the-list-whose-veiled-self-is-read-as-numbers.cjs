@@ -1,5 +1,5 @@
 // Env of the executable: BUN_JSC_slowPathAllocsBetweenGCs=3
-// THE RED CONTROL OF Walker::isOtherThanRestOf(): with its last line turned to "another" this program gives wrong numbers: as built it looks right.
+// THE RED CONTROL OF Walker::classifyAgainstAllocations(): with its last line turned to "another" this program gives wrong numbers: as built it looks right.
 // The push brings a text, a boolean, null or a record that is written in the turn itself: it runs no other code and changes the kind of the storage at once. What is read and reckoned with as a number is the same list, come back through a veil, chosen by a condition, or out of a record.
 "use strict";
 const said = [];

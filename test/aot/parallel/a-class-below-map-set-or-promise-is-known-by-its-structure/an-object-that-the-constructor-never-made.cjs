@@ -1,5 +1,5 @@
 // Reflect.construct makes an object below the class's prototype that the constructor never saw, with a text where the field holds a number: nothing about the field's value is taken on trust.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const real = new H(); const fake = Reflect.construct(Map, [], H); fake.n = 'x'; function make(t) { return t % 3 ? real : fake; }

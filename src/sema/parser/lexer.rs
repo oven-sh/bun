@@ -16,7 +16,8 @@ use bun_core::strings::{
 use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{
-    Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind, NodeOrName,
+    Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind,
+    IGNORE_COMMENT_MARKER, NodeOrName,
 };
 
 mod runtime_text;
@@ -49,6 +50,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) private_names: Vec<Atom>,
     /// `hir::File::comment_directives`
     pub(crate) comment_directives: Vec<CommentDirective>,
+    /// `hir::File::ignore_comments`
+    pub(crate) ignore_comments: Vec<(u32, u32)>,
     /// The comments before the first token.
     pub(crate) leading_comments: Vec<(u32, u32)>,
     /// `hir::File::comments`
@@ -303,6 +306,7 @@ impl<'a> Lexer<'a> {
             atoms,
             names,
             comment_directives: Vec::new(),
+            ignore_comments: Vec::new(),
             leading_comments: Vec::new(),
             comments: Vec::new(),
             newline_since_comment: false,
@@ -1340,6 +1344,16 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(last_line, pos, end);
+        if last_line != start {
+            // A `bun-ignore` comment may go on below its first line.
+            let mut first = start + 2;
+            while first < end && matches!(src[first], b'*' | b' ' | b'\t') {
+                first += 1;
+            }
+            if first < end && src[first] == b'b' {
+                self.ignore_comment_at(first, end);
+            }
+        }
         Some(end)
     }
 
@@ -1352,6 +1366,18 @@ impl<'a> Lexer<'a> {
         }
         if pos < end && src[pos] == b'@' {
             self.comment_directive_at(start, pos + 1, end);
+        } else if pos < end && src[pos] == b'b' {
+            self.ignore_comment_at(pos, end);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn ignore_comment_at(&mut self, name: usize, end: usize) {
+        // After a lookahead, the same comment is scanned again.
+        let is_new = (self.ignore_comments.last()).is_none_or(|last| last.1 < end as u32);
+        if is_new && self.src[name..end].starts_with(IGNORE_COMMENT_MARKER) {
+            self.ignore_comments.push((name as u32, end as u32));
         }
     }
 

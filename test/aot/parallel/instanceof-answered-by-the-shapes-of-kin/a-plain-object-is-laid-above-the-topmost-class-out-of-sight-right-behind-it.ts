@@ -1,5 +1,5 @@
 // Right behind the topmost animal a function that the build does not see lays a plain object between the class's prototype and Object.prototype. Later the plain object is laid below Marked's prototype: every animal is Marked from then on.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 class Marked { mark = 1; }
 class Stamped extends Marked {}
 const middle: object = {};

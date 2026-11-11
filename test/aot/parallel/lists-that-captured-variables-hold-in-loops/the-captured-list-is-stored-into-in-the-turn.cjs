@@ -1,4 +1,4 @@
-// STATISTIC: CapturedListsReadInFrontOfLoops >= 1
+// STATISTIC: CapturedArrayReadsHoisted >= 1
 "use strict";
 function make() { let list = [0, 0, 0, 0, 0, 0]; return { bump(by) { for (let i = 0; i < list.length; i++) list[i] = (list[i] + by + i) | 0; return list.join(); }, swap() { list = list.slice().reverse(); } }; }
 const box = make();

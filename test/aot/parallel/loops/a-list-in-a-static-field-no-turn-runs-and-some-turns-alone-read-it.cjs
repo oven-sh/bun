@@ -1,4 +1,4 @@
-// STATISTIC: StaticFieldsAskedInFrontOfLoops >= 1
+// STATISTIC: StaticFieldGuardsHoisted >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 class Store { static rows = []; static weights = [2.5, 3.5, q]; }

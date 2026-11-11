@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. Midway the prototype of the second class is laid below that of the first, by code that the compiler cannot see through: from then on the instances of the second are instances of the first, which only the chain itself tells.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

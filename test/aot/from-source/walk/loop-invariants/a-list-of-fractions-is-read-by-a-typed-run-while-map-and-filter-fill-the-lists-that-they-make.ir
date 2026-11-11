@@ -26,8 +26,8 @@
 # Both copies of map take the run whose slow stores stand behind the loop, so their turns write the storage of no list and need no such word: the list that `x => x + 1` fills is born for fractions; the list that the map of
 # mixed values fills is born without a kind, and its store takes the list as it finds it or refuses. (Before, that store was TryPutIndex, which may turn the list in the turn, and that loop was counted here too: 2.)
 # A count cannot tell a loop that needs the word no more from a loop that has lost its typed run: so the run over `prices` in the map of mixed values is pinned itself.
-# RUN(EVENT): compile LoopsOverTestedListsThatFillWhatIsMadeHere mechanisms=all
-# EVENT: statistic LoopsOverTestedListsThatFillWhatIsMadeHere 1
+# RUN(EVENT): compile VersionedLoopsFillingLocalArrays mechanisms=all
+# EVENT: statistic VersionedLoopsFillingLocalArrays 1
 # RUN(MIXED): walk f2 mechanisms=all
 # MIXED-LABEL: code f2:Body
 # MIXED: = HasArrayStorage {{*}}arrayStorage=Double

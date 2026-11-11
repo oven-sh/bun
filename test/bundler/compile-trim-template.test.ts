@@ -121,7 +121,9 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
       "error: the Bun executable that this build starts from doesn't have the JIT compilers, which this executable needs",
     );
     expect(refused.exitCode).toBe(1);
+    // Without --trim there is no such executable, so the build has no figure for what --trim removed.
     expect(await build("bundles.ts", "bundles", "--trim", "--compile-executable-path", template)).toMatchObject({
+      stdout: expect.stringMatching(/ compile +bundles(?:\.exe)?  \d+\.\d MB\n/),
       exitCode: 0,
     });
     expect(await spawned([join(folder, "bundles")], folder, bunEnv)).toMatchObject({

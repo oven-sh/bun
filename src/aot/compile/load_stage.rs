@@ -3,7 +3,9 @@ use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, O
 use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, Span};
+use crate::diagnostics::{
+    Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
+};
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
@@ -27,10 +29,13 @@ use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
+use bun_options_types::aot_options::DependencyTypeErrors;
+use bun_options_types::aot_options::ExplainSet;
 use bun_sema::atom::{Atom, Interner};
+use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::aot::FileOrigin;
-use bun_sema::fold::FoldInputs;
-use bun_sema::hir::{ExprId, ExprKind};
+use bun_sema::fold::{Constant, FoldInputs, FoldedValue};
+use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
 };
@@ -173,7 +178,7 @@ fn warn_of_guesses_left_out(
             let found = host.find_file_that_require_finds(&folder, name);
             found.is_some_and(|path| held.contains(&path[..]))
         };
-        let guessed = files.analysis(file).names_out_of_data_files.iter();
+        let guessed = files.analysis(file).names_from_data_files.iter();
         let guessed = guessed.filter(|it| it.2 && !is_held(files.atoms().bytes(it.0)));
         let guessed: Vec<(ExprId, Atom)> = guessed.map(|it| (it.1, it.0)).collect();
         for of_site in guessed.chunk_by(|one, next| one.0 == next.0) {
@@ -241,6 +246,91 @@ fn warn_of_folders_unread_at_resolves(
             diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&found]));
         }
     }
+}
+
+fn find_resolves_that_miss(view: ProgramView<'_, '_>, host: &LoadHost<'_>) -> Vec<Diagnostic> {
+    let mut warnings = Vec::new();
+    let files = view.files();
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        let member_of = |expression: ExprId| match hir.member_key(expression) {
+            Some((object, MemberKey::Name(name))) => {
+                Some((hir.skip_type_assertions(object), files.atoms().bytes(name)))
+            }
+            _ => None,
+        };
+        let is_import_meta = |it: ExprId| matches!(hir[it].kind, ExprKind::ImportMeta);
+        let takes_folder = |callee: ExprId| {
+            let named = source.builtins.builtin_of_expression(callee);
+            named.is_some_and(table::is_path_resolver)
+        };
+        let is_resolver = |callee: ExprId| {
+            takes_folder(callee)
+                || matches!(member_of(callee), Some((object, b"resolveSync")) if is_import_meta(object))
+        };
+        let is_own_folder = |folder: ExprId| {
+            let folder = hir.skip_type_assertions(folder);
+            let own = [&b"dir"[..], b"dirname", b"path", b"filename", b"url"];
+            matches!(member_of(folder), Some((object, name)) if is_import_meta(object) && own.contains(&name))
+                || matches!(
+                    files.bound(file).binding(folder),
+                    Binding::CommonJs(CommonJsVariable::Dirname | CommonJsVariable::Filename)
+                )
+        };
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Call(call) = hir[expression].kind else {
+                continue;
+            };
+            if analysis.decisions.is_dead_expr(expression) {
+                continue;
+            }
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            let mut given: Vec<ExprId> = hir.ids(hir[call].args).collect();
+            let resolver = match member_of(callee) {
+                Some((object, b"call")) if is_resolver(object) && !given.is_empty() => {
+                    given.remove(0);
+                    object
+                }
+                Some((object, b"apply")) if is_resolver(object) && given.len() > 1 => {
+                    if let ExprKind::Array(listed) = hir[hir.skip_type_assertions(given[1])].kind {
+                        given = hir.ids(listed).collect();
+                    } else {
+                        given = vec![given[1]];
+                    }
+                    object
+                }
+                _ if is_resolver(callee) => callee,
+                _ => continue,
+            };
+            let Some(&path) = given.first() else {
+                continue;
+            };
+            let span = Span::of_node(hir, file, NodeData::Expr(path));
+            let name = match analysis.decisions.constant(hir, path) {
+                FoldedValue::Constant(Constant::String(name))
+                | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => name,
+                FoldedValue::Constant(_)
+                | FoldedValue::ConstantOutsideDeadZone(_)
+                | FoldedValue::Unknown => continue,
+            };
+            if takes_folder(resolver) && !given.get(1).is_some_and(|&it| is_own_folder(it)) {
+                continue;
+            }
+            let folder = host.directory_of(files.file_name(file));
+            let found = host.find_file_that_require_finds(&folder, files.atoms().bytes(name));
+            if let Some(found) = found.filter(|found| !held.contains(&found[..])) {
+                let code = Code::ResolvedFileNotEmbedded;
+                let found = host.display_path_of(&found);
+                warnings.push(Diagnostic::new(code, Some(span), &[&found]));
+            }
+        }
+    }
+    warnings
 }
 
 fn warn_of_made_requires_that_go_out_of_sight(
@@ -563,6 +653,8 @@ impl<'a> Build<'a> {
             mocks_any_file: options.load.runs_tests,
             follows_paths_to_functions_of_other_files: options.load.runs_tests,
             looks_for_type_errors: options.aot.looks_for_type_errors,
+            checks_dependency_sources: options.aot.dependency_type_errors
+                != DependencyTypeErrors::NotChecked,
             ..options.code.clone()
         };
         let host = LoadHost::new(LoadHostInput {
@@ -709,7 +801,7 @@ impl<'a> Build<'a> {
             && !contents.run.loads.reads_files_from_disk()
             && !roots.imports_uncompiled_code
             && !compiled_files.any(|&file| {
-                contents.run.loads_compiled_files_alone.get(file.idx()) != Some(&true)
+                contents.run.rejects_uncompiled_code.get(file.idx()) != Some(&true)
                     && may_run_code_outside_image(files, file)
             });
         let session = shared.sessions.runtime;
@@ -764,8 +856,18 @@ impl<'a> Build<'a> {
                 warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
                 warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
                 warn_of_made_requires_that_go_out_of_sight(&mut self.diagnostics, view);
+                self.resolves_that_miss = find_resolves_that_miss(view, host);
             }
         }
+        let aot = &options.aot;
+        let ignore_comment_options = IgnoreCommentOptions {
+            should_report_stale: !aot.checks_only
+                && !aot.runs_in_place
+                && !aot.loads_code_from_disk,
+            should_list_silenced: aot.explain.contains(ExplainSet::TEXT),
+        };
+        self.diagnostics
+            .read_ignore_comments(view, ignore_comment_options);
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);
             self.started_workers.named_at =

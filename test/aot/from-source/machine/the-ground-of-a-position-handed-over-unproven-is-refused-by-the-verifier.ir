@@ -1,8 +1,10 @@
-# `for (let i = 0; i + 2 < w.length; i += 3) { v[i] = ..; v[i + 1] = ..; }`: the test is of ANOTHER list's length: it shows nothing of a position in `v`.
-# THE LIE, testing=GroundsOfPositionsBelowSumsAreHandedOverUnproven: the ground of a position below a sum that has passed below a length is handed over without the prover: the raw store takes it and would write behind the end of its list.
-# The verifier asks the prover at the store and refuses the build. Without the lie: parallel/a-position-below-a-sum-that-has-passed-below-the-length/a-store-by-another-lists-length-into-fractions.cjs, built with the verifier, says what plain says.
+# `for (let i = 0; i + 2 < w.length; i += 3) { v[i] = ..; v[i + 1] = ..; }`: the condition tests the length of another array, so it proves nothing about an index into `v`.
+# Fault injection, testing=SkipBoundsProof: the evidence for an index that is below a sum that has tested below a length is passed on without consulting the prover.
+# The raw store accepts it and would write past the end of its array.
+# The verifier consults the prover at the store and rejects the build.
+# Without the fault, parallel/a-position-below-a-sum-that-has-passed-below-the-length/a-store-by-another-lists-length-into-fractions.cjs, built with the verifier, prints what plain Bun prints.
 # DIAGNOSTIC: OpcodeNotInForm 1
-# RUN: walk f1:Body mechanisms=all testing=GroundsOfPositionsBelowSumsAreHandedOverUnproven
+# RUN: walk f1:Body mechanisms=all testing=SkipBoundsProof
 # CHECK: the walk of f1:Body failed
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

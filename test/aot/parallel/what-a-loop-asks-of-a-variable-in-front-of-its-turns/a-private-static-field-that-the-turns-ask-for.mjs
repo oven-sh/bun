@@ -1,4 +1,4 @@
-// STATISTIC: VariablesAskedWhetherTheyAreThereReadInFrontOfLoops >= 1
+// STATISTIC: AbsenceTestedVariableReadsHoisted >= 1
 class Box {
   static #held;
   static lay(value) {

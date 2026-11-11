@@ -2,8 +2,8 @@
 // and their failing sides ask for no column of the method table: eight guards end, not eight for each of nine classes, and no word of a table is written
 // STATISTIC: MethodTableSelectors = 0
 // STATISTIC: MethodTableBytes = 0
-// COUNTER: ClassGuardBitsEnded = 8
-// COUNTER: MethodTableMadeWritable = 0
+// COUNTER: ClassGuardBitsInvalidated = 8
+// COUNTER: MethodTablePagesMadeWritable = 0
 const replaceAll = (0, eval)('(Base, count) => { for (let k = 0; k < count; k++) Base.prototype["m" + k] = () => 2; }');
 class Base { m0() { return 1; } m1() { return 1; } m2() { return 1; } m3() { return 1; } m4() { return 1; } m5() { return 1; } m6() { return 1; } m7() { return 1; } }
 class C0 extends Base { } function r0(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.m0(); return t; } const o0 = new C0();

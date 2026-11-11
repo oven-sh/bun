@@ -14,7 +14,7 @@
 # RUN(OVER): walk f1 mechanisms=all
 # OVER-LABEL: code f1:Body
 # OVER: = GetArrayElement {{*}}readsHoleAsNaN
-# RUN(COUNT): compile HolesReadAsNaNInTurnsThatStore mechanisms=all
-# COUNT: statistic HolesReadAsNaNInTurnsThatStore 1
+# RUN(COUNT): compile StoringLoopHoleChecksRemoved mechanisms=all
+# COUNT: statistic StoringLoopHoleChecksRemoved 1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 103 1,1,1,1,1,1,1,1,1,1

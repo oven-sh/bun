@@ -4,12 +4,13 @@
 # print(fixed(JSON.parse("1.5")));
 # print("went on");
 # -- end of source
-# The door behind a call of a built-in asks the kinds and the classes that the record names. THE LIE: the row writes null alone.
+# The entry check after a call of a built-in tests for the kinds and the classes that the type of the call operation names.
+# Fault injection, testing=UnderstateEffects:Builtin/Number.prototype.toFixed/KindOfResult: the signature of the built-in declares null as its only result.
 # RUN: run-in-shell mechanisms=all
 # CHECK: string
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Number.prototype.toFixed/KindOfResult
-# LIE: Number.prototype.toFixed (call) is declared as null, and native code answered with something else: string. This is a bug in Bun.
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Number.prototype.toFixed/KindOfResult
+# LIE: expected null, found string in the result of Number.prototype.toFixed
 # LIE-NOT: went on
 # LIE: crashed

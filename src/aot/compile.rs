@@ -63,7 +63,7 @@ use crate::statistics::{
     log_time_outside_stages,
 };
 use bun_ast::Log;
-use bun_options_types::aot_options::TargetPlatform;
+use bun_options_types::aot_options::{ExplainSet, TargetPlatform};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::FileId;
@@ -158,6 +158,7 @@ pub(crate) struct Build<'a> {
     unreached_runtime_files: Vec<FileId>,
     circular_runtime_files: Vec<(FileId, u32)>,
     written_function_names: Vec<u8>,
+    resolves_that_miss: Vec<Diagnostic>,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) stays_in_compiled_files: bool,
     keeps_library_code_without_names: bool,
@@ -198,10 +199,10 @@ pub(crate) struct BoundBuild {
     pub projects: PerProject<BoundProject>,
 }
 
-fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
+fn fill_function_sources(program: &mut Program, texts: &SourceTexts) {
     for (index, module) in program.modules.iter_mut().enumerate() {
         if let Some(source) = texts.get(ModuleId::new(index)) {
-            module.function_text = source.function_text();
+            module.function_source = source.function_source();
         }
     }
 }
@@ -299,12 +300,12 @@ fn collect_paths_of_modules_without_bodies(program: &Program) -> Vec<(usize, Vec
         .collect()
 }
 
-fn describe_library_modules_lacked(
+fn describe_missing_library_modules(
     engine: &EngineResult,
     paths_of_modules_without_bodies: &[(usize, Vec<u8>)],
 ) -> Option<String> {
     let mut names: Vec<String> = Vec::new();
-    for record in engine.library_modules_lacked() {
+    for record in engine.missing_library_modules() {
         let module = record.module_id().index();
         let found = paths_of_modules_without_bodies.binary_search_by_key(&module, |entry| entry.0);
         names.push(match found {
@@ -316,7 +317,7 @@ fn describe_library_modules_lacked(
         return None;
     }
     Some(format!(
-        "the program evaluates modules of Bun's library that the load has left out: {}",
+        "the program evaluates built-in modules that the load stage removed: {}",
         names.join(", ")
     ))
 }
@@ -409,6 +410,7 @@ pub fn compile(
     #[cfg(not(test))]
     let started_workers = core::mem::take(&mut build.started_workers);
     build.clock.add_to(&mut build.statistics);
+    build.diagnostics.has_run_to_end = !has_errors;
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
     #[cfg(not(test))]
@@ -481,6 +483,7 @@ impl<'a> Build<'a> {
             unreached_runtime_files: Vec::new(),
             circular_runtime_files: Vec::new(),
             written_function_names: Vec::new(),
+            resolves_that_miss: Vec::new(),
             started_workers: StartedWorkers::default(),
             stays_in_compiled_files: false,
             keeps_library_code_without_names: false,
@@ -527,7 +530,8 @@ impl<'a> Build<'a> {
         if named.any(|function| function.index() >= function_count) {
             self.diagnostics.add_internal_error(InternalError {
                 stage: Stage::LinkAndEmit,
-                message: b"the program names a function that the link has not handed over".to_vec(),
+                message: b"the program refers to a function that the link stage did not pass on"
+                    .to_vec(),
             });
             return Err(Stage::LinkAndEmit);
         }
@@ -548,7 +552,7 @@ impl<'a> Build<'a> {
             },
             || match writes_program_file {
                 true => {
-                    put_function_texts_into(&mut program, texts);
+                    fill_function_sources(&mut program, texts);
                     let functions = functions.into_program_functions(&in_parallel);
                     let functions = LinkedFunctions::of_program_functions(functions);
                     emit_with_bodies_in_bytes(&mut program, functions, &in_parallel)
@@ -648,10 +652,14 @@ impl<'a> Build<'a> {
         );
         crate::test_run_report::say_code_that_build_does_not_see(&engine);
         self.statistics.add_values(engine.statistics());
-        self.diagnostics
-            .add_engine_records(&engine, &output.texts, self.options.aot.runs_tests);
-        self.report_library_functions_lacked(&engine);
-        self.report_library_modules_lacked(&engine);
+        self.diagnostics.add_engine_records(
+            &engine,
+            &output.texts,
+            self.options.aot.runs_tests,
+            self.options.aot.explain.contains(ExplainSet::TEXT),
+        );
+        self.report_missing_library_functions(&engine);
+        self.report_missing_library_modules(&engine);
         if engine_options.makes_image()
             && engine.image().is_none()
             && !self.diagnostics.has_errors()
@@ -664,13 +672,13 @@ impl<'a> Build<'a> {
         engine
     }
 
-    fn report_library_functions_lacked(&mut self, engine: &EngineResult) {
+    fn report_missing_library_functions(&mut self, engine: &EngineResult) {
         if self.options.load.omits_builtin_modules {
             return;
         }
         let platform = self.platform;
         let holds_named_functions_of_host_alone = self.keeps_library_code_without_names;
-        let lacked = engine.library_functions_lacked().iter();
+        let lacked = engine.missing_library_functions().iter();
         let lacked = lacked.map(|record| RuntimeFunction(record.function));
         let names: Vec<String> = lacked
             .filter_map(|function| match table::runtime_function(function) {
@@ -689,7 +697,7 @@ impl<'a> Build<'a> {
             return;
         }
         let message = format!(
-            "the program enters functions of Bun's library that the load has left out: {}",
+            "the program calls built-in functions that the load stage removed: {}",
             names.join(", ")
         );
         self.diagnostics.add_internal_error(InternalError {
@@ -698,12 +706,12 @@ impl<'a> Build<'a> {
         });
     }
 
-    fn report_library_modules_lacked(&mut self, engine: &EngineResult) {
+    fn report_missing_library_modules(&mut self, engine: &EngineResult) {
         if self.options.load.omits_builtin_modules {
             return;
         }
         let paths = &self.paths_of_modules_without_bodies;
-        let Some(message) = describe_library_modules_lacked(engine, paths) else {
+        let Some(message) = describe_missing_library_modules(engine, paths) else {
             return;
         };
         self.diagnostics.add_internal_error(InternalError {

@@ -35,8 +35,8 @@
 # for these twelve, 40,600 for two hundred.
 # f1 = run
 # OPTIONS: check=Validate
-# RUN: compile WalksOfLoops
-# CHECK: statistic WalksOfLoops 50
+# RUN: compile LoopVisits
+# CHECK: statistic LoopVisits 50
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 12
 # SHELL: exited with 0

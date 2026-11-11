@@ -1,5 +1,5 @@
 // The twin: no loop stands anywhere in this program: every access looks for itself, not one byte more.
-// STATISTIC: StaticFieldsAccessedOnLookOfTheirArms = 0
+// STATISTIC: StaticFieldGuardsReused = 0
 "use strict";
 class Tally { static count = 1; }
 function once(by) { Tally.count += by; return Tally.count * 2; }

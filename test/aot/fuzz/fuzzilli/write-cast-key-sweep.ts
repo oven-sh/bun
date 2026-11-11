@@ -9,6 +9,7 @@
 // Where one reading takes `Math["abs" as "abs"]` for `Math.abs` and the other for a key that nobody knows, they part on what the program needs. A program that uses much of the library anyway hides that, so
 // these print one expression and declare only what the expression names. Some are refused by the type check, which is an answer too.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // What holds the member, what it needs declared, the member's name, and the arguments of a call.
 const holders: [string, string, string, string, string][] = [
@@ -120,7 +121,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laid < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laid++;
   }
   console.log(laid);
@@ -130,7 +131,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

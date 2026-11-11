@@ -1,4 +1,4 @@
-// STATISTIC: VariablesThatQuietTurnsStoreReadInFrontOfLoops >= 1
+// STATISTIC: LoopStoredVariableReadsHoisted >= 1
 var total = JSON.parse("0");
 function add(turns) {
   for (let turn = 0; turn < turns; turn++) total = total + turn;

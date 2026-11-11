@@ -1,5 +1,5 @@
 // For 100 turns an animal is a stranger to Marked by its shape. Then a function that the build does not see lays a plain object above the topmost animal's prototype, and 100 turns later the plain object is laid below Marked's prototype.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 class Marked { mark = 1; }
 class Stamped extends Marked {}
 const middle: object = {};

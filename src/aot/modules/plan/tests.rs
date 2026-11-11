@@ -248,17 +248,17 @@ fn a_commonjs_file_that_may_run_again_keeps_its_object() {
     let read = "const lib = require('./lib.cjs'); console.log(lib.first, lib.second);";
     let caught = format!("try {{ require('./lib.cjs'); }} catch {{}} {read}");
     with_plan(&[("main.cjs", &caught[..]), ("lib.cjs", lib)], |plan| {
-        assert!(plan.graph.runs_again(plan.file("lib.cjs")));
+        assert!(plan.graph.may_be_reevaluated(plan.file("lib.cjs")));
         assert_eq!(plan.shape("lib.cjs"), Shape::Value);
         assert_eq!(plan.holder("main.cjs", "lib"), None);
     });
     let late = format!("exports.read = function () {{ {read} }};");
     with_plan(&[("main.cjs", &late[..]), ("lib.cjs", lib)], |plan| {
-        assert!(plan.graph.runs_again(plan.file("lib.cjs")));
+        assert!(plan.graph.may_be_reevaluated(plan.file("lib.cjs")));
         assert_eq!(plan.shape("lib.cjs"), Shape::Value);
     });
     with_plan(&[("main.cjs", read), ("lib.cjs", lib)], |plan| {
-        assert!(!plan.graph.runs_again(plan.file("lib.cjs")));
+        assert!(!plan.graph.may_be_reevaluated(plan.file("lib.cjs")));
         assert_eq!(plan.shape("lib.cjs"), Shape::Names);
         let exports = View::Exports(plan.module("lib.cjs"));
         assert_eq!(plan.holder("main.cjs", "lib"), Some(exports));
@@ -932,9 +932,9 @@ fn the_run_time_answers_a_require_of_a_file_that_a_module_it_requires_imports() 
     ];
     with_plan(&files, |plan| {
         let graph = &plan.graph;
-        assert!(graph.may_be_imported_while_it_runs(plan.module("k.cjs")));
+        assert!(graph.is_importable_during_evaluation(plan.module("k.cjs")));
         for file in ["main.mjs", "other.mjs", "beside.cjs", "late.cjs"] {
-            assert!(!graph.may_be_imported_while_it_runs(plan.module(file)));
+            assert!(!graph.is_importable_during_evaluation(plan.module(file)));
         }
         let sites = [Site::AsToday, plan.evaluates("beside.cjs", false)];
         assert_eq!(plan.sites("late.cjs"), sites);
@@ -963,13 +963,13 @@ fn the_run_time_answers_a_require_of_a_file_that_an_import_call_names_while_the_
         let graph = &plan.graph;
         for file in ["itself.cjs", "above.cjs"] {
             assert!(
-                graph.may_be_imported_while_it_runs(plan.module(file)),
+                graph.is_importable_during_evaluation(plan.module(file)),
                 "{file}"
             );
         }
         for file in ["main.mjs", "below.cjs", "beside.cjs", "other.cjs"] {
             assert!(
-                !graph.may_be_imported_while_it_runs(plan.module(file)),
+                !graph.is_importable_during_evaluation(plan.module(file)),
                 "{file}"
             );
         }
@@ -1074,9 +1074,9 @@ fn a_module_that_the_graph_has_never_heard_of_has_neutral_answers() {
         };
         assert_eq!(plan.graph.shape(inner), Shape::AsToday);
         assert!(plan.graph.requests_of(inner).is_empty());
-        assert!(plan.graph.requests_of(ModuleRef::Face(file)).is_empty());
+        assert!(plan.graph.requests_of(ModuleRef::Facade(file)).is_empty());
         assert!(plan.graph.requests_of(ModuleRef::Check(file)).is_empty());
-        assert!(!plan.graph.keeps_error(inner));
+        assert!(!plan.graph.caches_evaluation_error(inner));
         assert!(plan.graph.exports_of(inner).is_empty());
         assert_eq!(plan.graph.inner_module(file, FnId(7)), None);
     });
@@ -1110,7 +1110,7 @@ init_y();
         assert_eq!(targets_of(plan.module("main.mjs")), [y]);
         assert_eq!(targets_of(y), [x]);
         assert!(targets_of(x).is_empty());
-        assert!(!plan.graph.keeps_error(x));
+        assert!(!plan.graph.caches_evaluation_error(x));
         let mut holders = plan.graph.wrapped().of_file(file).iter();
         assert!(holders.all(|inner| plan.graph.erased(file, inner.statement)));
     });

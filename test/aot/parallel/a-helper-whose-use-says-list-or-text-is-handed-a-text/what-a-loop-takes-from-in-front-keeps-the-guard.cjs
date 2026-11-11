@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltForListsAndForTexts >= 1
+// STATISTIC: ArrayOrStringLoopsVersioned >= 1
 // Where a loop takes what was read off the holder in front of it (the length as a start or as a bound), the guard keeps its word, as it does for lists and bytes. A question in front that no loop takes leaves the front standing.
 const key = JSON.parse('"go"');
 const down = { go(s) { let c = 0; for (let i = s.length - 1; i >= 0; i--) if (s[i] === ",") c++; return c; } };

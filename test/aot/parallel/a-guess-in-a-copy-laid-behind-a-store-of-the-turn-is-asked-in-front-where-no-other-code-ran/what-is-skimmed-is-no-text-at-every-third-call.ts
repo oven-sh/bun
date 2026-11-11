@@ -1,5 +1,5 @@
 // At every third call an object with the two methods stands where the text is expected: the guard in front fails and the closed copy runs.
-// STATISTIC: GuessesInCopiesAskedInFrontBehindStoresOfTurns >= 1
+// STATISTIC: InlineeSpeculationsHoistedPastStores >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

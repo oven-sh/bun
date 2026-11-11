@@ -1,5 +1,5 @@
 // The constructors take an argument and throw in some turns.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Tree { k; constructor(k) { if (k % 7 === 0) throw new RangeError("seven"); this.k = k; } next() { return new this.constructor(this.k + 1); } }
 class Ash extends Tree { constructor(k) { super(k * 2); } }
 let sum = 0, thrown = 0;

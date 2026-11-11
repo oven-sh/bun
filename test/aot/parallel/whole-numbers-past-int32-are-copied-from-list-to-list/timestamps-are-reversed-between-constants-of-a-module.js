@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage >= 1
+// STATISTIC: LoopsReversionedForOtherIndexingType >= 1
 // Under: --aot-harden=proof-checks: the kind found in front of the turns is held against the cell at every access
 "use strict";
 const N = 256, a = new Array(N), b = new Array(N); for (let i = 0; i < N; i++) { a[i] = 1762400000000 + i * 1000; b[i] = a[i]; }

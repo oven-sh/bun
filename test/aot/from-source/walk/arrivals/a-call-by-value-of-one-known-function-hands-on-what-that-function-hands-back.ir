@@ -27,8 +27,8 @@
 #   b0(v1: anything?ParameterOfEscapedFunction @JSValue, v2: anything?ParameterOfEscapedFunction @JSValue) entry=0:
 #     v3: Array @Cell = NewArray contents=anything traits=[mayCollect, mayTouchMemory]
 #     v4: f1 @JSValue = GetModuleVariable variable=g0 traits=[mayCollect, mayTouchMemory]
-#     v5: anything?ResultOfUnknownCallee @JSValue = CallList v4, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
-#     v6: i32 @Int32 = CallDirect v5, v0 function=f2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything?ResultOfUnknownCallee @JSValue = CallList v4, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: i32 @Int32 = CallDirect v5, v0 function=f2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v7: i32 @JSValue = Box v6
 #     v8: i32 @Double = Unbox v7
 #     Return v8

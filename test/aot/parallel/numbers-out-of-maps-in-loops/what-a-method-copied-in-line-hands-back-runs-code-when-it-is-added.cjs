@@ -1,5 +1,5 @@
 // An object with a valueOf comes out at times: the turn begins again in the closed copy and the code runs once a turn, not twice.
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 1
+// STATISTIC: MapResultsGuardedAsNumbers >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.hits = 0; } look(k) { return this.get(k); } }
 class P { constructor() { this.x = 0; } }

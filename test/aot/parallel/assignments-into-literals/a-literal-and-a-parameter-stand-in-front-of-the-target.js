@@ -1,6 +1,6 @@
 // STATISTIC: OwnKeyWalksExpanded >= 1
 // A literal and a parameter stand in front of the target: the way where the keys of the parameter are as expected and the way where they are not.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 let work = 0;
 function merge(given, depth) {
   for (let i = 0; i < 2; i++) work = (work + i) | 0;

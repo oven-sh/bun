@@ -17,7 +17,7 @@
 # CHECKED: = NewObject -,
 # CHECKED: = GetClassPrototype {{*}}[readsClassObjectItself]
 # CHECKED: [[same]]: boolean @Boolean = StrictEq
-# CHECKED-NEXT: CheckProof [[same]] checkedType=true {{*}}source=WhatIsRemembered
+# CHECKED-NEXT: CheckProof [[same]] checkedType=true {{*}}source=RememberedFact
 # RUN(QUIET): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = () => { }; globalThis.change = () => { };
 # QUIET: 30
 # QUIET-NEXT: 1030

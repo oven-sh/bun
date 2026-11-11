@@ -1,4 +1,4 @@
-// STATISTIC: StepsOfIteratorsThatAreNeverMade >= 4
+// STATISTIC: IteratorAllocationsElidedInSteps >= 4
 const n = JSON.parse("3"), log = [];
 const make = () => { const m = new Map(); for (let i = 0; i < 4; i++) m.set("k" + i, i / 2); return m; };
 { const m = make();

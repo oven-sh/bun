@@ -2,7 +2,7 @@ use super::effects::{can_lose_trust, requested_diagnostics};
 use super::queue::{LOWERING_ROUNDS, ROLE_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
-use bun_sema::check::aot::LeftOutBodies;
+use bun_sema::check::aot::{FileOrigin, LeftOutBodies};
 use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Requested};
 use bun_sema::hir::FileKind;
@@ -88,15 +88,26 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let files = loaded.files();
     let is_left_out = |file: FileId| is_left_out(request, file);
     let is_checker_renewed = AtomicBool::new(false);
-    let requested = |file: FileId| match is_left_out(file) {
-        true => Requested::Types,
-        false => requested_diagnostics(
-            loaded.origin(file),
-            !files.needs_another_program(file)
-                && !files.module_options(file).keeps_type_errors_to_itself
-                && !loaded.is_excluded_by_project(file)
-                && files.hir(file).syntax_errors().next().is_none(),
-        ),
+    let checks_dependency_sources = request.code.checks_dependency_sources;
+    let requested = |file: FileId| {
+        if is_left_out(file) {
+            return Requested::Types;
+        }
+        let is_asked_otherwise = !files.module_options(file).keeps_type_errors_to_itself
+            && !loaded.is_excluded_by_project(file)
+            && files.hir(file).syntax_errors().next().is_none();
+        let origin = loaded.origin(file);
+        match checks_dependency_sources
+            && is_asked_otherwise
+            && origin == FileOrigin::DependencySource
+            && files.matches_own_project_checks(file)
+        {
+            true => Requested::All,
+            false => requested_diagnostics(
+                origin,
+                is_asked_otherwise && !files.needs_another_program(file),
+            ),
+        }
     };
     let slots = slots_by_file(files, roles, files_to_lower);
     let products: Vec<Guarded<Option<T>>> =
@@ -209,7 +220,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     incomplete.retain(|file| !roles.incomplete.contains(file));
     CheckedProgram {
         lowered,
-        diagnostics: loaded.program_origins().apply_effects(diagnostics),
+        diagnostics: loaded
+            .program_origins()
+            .apply_effects_to_check(diagnostics, checks_dependency_sources),
         incomplete,
         #[cfg(test)]
         rounds: report.rounds,

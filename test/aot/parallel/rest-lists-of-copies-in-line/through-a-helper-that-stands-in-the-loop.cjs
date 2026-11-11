@@ -1,5 +1,5 @@
 // The call of fire(flag, ...args) stands in a small helper, and the helper in the loop: a copy within a copy.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const kept = [];
 function keep(list) { kept.push(list); return list.length; }
 const flags = JSON.parse("[true,false,true]");

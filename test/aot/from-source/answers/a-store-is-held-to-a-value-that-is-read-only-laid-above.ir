@@ -9,7 +9,8 @@
 # print(makes(2, true));
 # -- end of source
 # LIBRARY: own
-# A store into an object just made may create its field where stores pass above its class. A value that is read only, laid above, makes the store throw.
+# A store into a freshly allocated object may create its field if nothing on the prototype chain of its class intercepts stores of that name.
+# A read-only data property that the program defines on the prototype chain makes the store throw.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: true
 # RIGHT-NEXT: TypeError
@@ -18,13 +19,14 @@
 # ASKED: true
 # ASKED-NEXT: TypeError
 # ASKED-NEXT: exited with 0
-# The lie, testing=GuardsAndFactsAreTakenToHold, bites: by itself it lays the field in silence.
-# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold
+# The injected fault, testing=AssumeGuardsAndFacts, has an effect here: on its own it makes the store create the field silently.
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts
 # BITES: true
 # BITES-NEXT: true
 # BITES-NEXT: exited with 0
-# Under testing=CheckWalkAtRunTime the object itself is asked in front of the store, by an inquiry that reads no guard.
-# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold
+# With testing=CheckWalkAtRunTime the object itself is queried before the store, by a lookup that reads no guard.
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts
 # ASKEDLIE: true
-# ASKEDLIE-NEXT: AOT: a store by name that is laid into a slot takes the name fragile to find nothing that stands in its way, and the object, asked in front of the store, answers a value that is read only. This is a bug in Bun.
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: a property store to a fixed slot assumes that 'fragile' is a writable data property, but a full lookup finds a read-only property
 # ASKEDLIE: crashed with

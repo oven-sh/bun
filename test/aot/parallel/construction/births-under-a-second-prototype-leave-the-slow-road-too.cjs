@@ -1,6 +1,6 @@
 // `new` of a value that holds a constructor function asks the run time for `this`. The quick road finds the words that such an object is born with through the structure it has remembered.
 // A second prototype gives the same layout a second structure: its first birth goes the slow road and lays the way for the rest, as the first structure's did.
-// COUNTER: ThisMadeBySlowOperation <= 400
+// COUNTER: CreateThisSlowPaths <= 400
 "use strict";
 function Point() {}
 Point.prototype.norm = function () { return 5; };

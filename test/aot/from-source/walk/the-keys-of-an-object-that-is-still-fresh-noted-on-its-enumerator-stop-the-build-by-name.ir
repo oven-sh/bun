@@ -8,6 +8,6 @@
 # that is right only because no object is fresh behind its own ForInOpen: the open's row says that it runs the object's protocols, and such a use lets a fresh object leave.
 # Whoever keeps an object fresh across its open must end the note in that branch. That is asked wherever the note is laid, in every build, and a no stops the build by name.
 # The lying word passes fresh lists over where operations take them, so that the list is still fresh behind its open: the red control of that question.
-# RUN: walk f1:Body mechanisms=all testing=NothingIsDoneToFreshLists
+# RUN: walk f1:Body mechanisms=all testing=IgnoreFreshArrayEscapes
 # CHECK: the walk of f1:Body failed
-# DIAGNOSTIC: KeysOfFreshObjectNotedOnEnumerator
+# DIAGNOSTIC: EnumeratorCurrentForFreshObject

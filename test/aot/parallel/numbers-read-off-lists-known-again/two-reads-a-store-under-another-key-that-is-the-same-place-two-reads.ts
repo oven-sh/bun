@@ -1,4 +1,4 @@
-// STATISTIC: NumbersReadOffListsKnownAgain >= 1
+// STATISTIC: NumericElementReadsEliminated >= 1
 const rounds = Number(process.argv[2] ?? 3);
 function halves(n: number): number[] { const list: number[] = []; for (let i = 0; i < n; i++) list.push(i + 0.5); return list; }
 function walk(list: number[], at: number): number {

@@ -149,7 +149,7 @@ pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) 
             field.flags = field.flags.without(FieldFlags::IS_REQUIRED);
             field.flags |= FieldFlags::IS_NEVER_WRITTEN;
             if is_required && is_read[key.index()].load(Ordering::Relaxed) {
-                field.flags |= FieldFlags::IS_REQUIRED_AND_READ_THOUGH_NEVER_WRITTEN;
+                field.flags |= FieldFlags::WAS_REQUIRED_AND_READ;
             }
         }
     });
@@ -263,7 +263,7 @@ export function read(holder: Holder): number { return (holder[kState] ?? 0) + ho
         assert_eq!(under_symbol.expect("kState").flags, FieldFlags::IS_REQUIRED);
         assert_eq!(
             flags_of_field(program, holder, "never"),
-            FieldFlags::IS_NEVER_WRITTEN | FieldFlags::IS_REQUIRED_AND_READ_THOUGH_NEVER_WRITTEN
+            FieldFlags::IS_NEVER_WRITTEN | FieldFlags::WAS_REQUIRED_AND_READ
         );
     }
 
@@ -366,7 +366,7 @@ export function define(gate: Gate, laid: Laid): void {
     fn a_required_name_that_is_read_and_never_written_says_so() {
         assert_eq!(
             flags_in_made_outside("Parsed", "left"),
-            FieldFlags::IS_NEVER_WRITTEN | FieldFlags::IS_REQUIRED_AND_READ_THOUGH_NEVER_WRITTEN
+            FieldFlags::IS_NEVER_WRITTEN | FieldFlags::WAS_REQUIRED_AND_READ
         );
         assert_eq!(
             flags_in_made_outside("Parsed", "_parsedBrand"),

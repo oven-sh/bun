@@ -11,7 +11,7 @@
 # RUN: walk f1 mechanisms=-Inlining
 # CHECK-LABEL: code f1:Body
 # CHECK: [[made]]: L{{*}} @Cell = NewObject
-# CHECK: EndLifeOfCell [[made]]
+# CHECK: EndCellLifetime [[made]]
 # CHECK: Return
 # RUN(BACK): walk f2 f3 mechanisms=-Inlining
-# BACK-NOT: EndLifeOfCell
+# BACK-NOT: EndCellLifetime

@@ -7,8 +7,8 @@
 # console.log(behindAnotherBranch(2), underHandler(3), writtenInTurn(4));
 # -- end of source
 # The other sides: a branch that not every turn passes, a loop under a handler, a condition that the turn makes.
-# RUN: compile BranchesOverConstantsBuiltInFrontOfLoops mechanisms=all
-# CHECK: statistic BranchesOverConstantsBuiltInFrontOfLoops 0
+# RUN: compile ConstantDiamondsHoisted mechanisms=all
+# CHECK: statistic ConstantDiamondsHoisted 0
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

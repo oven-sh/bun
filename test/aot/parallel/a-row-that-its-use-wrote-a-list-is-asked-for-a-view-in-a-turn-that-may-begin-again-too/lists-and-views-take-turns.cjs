@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtListsWhoseFailingSideAsksForViews >= 9
+// STATISTIC: ArraySpeculationsWithTypedArrayFallback >= 9
 "use strict";
 // Every second row is a view.
 function fill(grid, side, weight) {

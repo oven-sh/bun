@@ -1,4 +1,4 @@
-// STATISTIC: ListsExpectedOfPlaces >= 1
+// STATISTIC: ArraysSpeculatedFromLocationUses >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3); const log = []; let asked = 0, kept;
 const P = q > 99 ? JSON.parse(process.argv[3]) : new Proxy([4, q], { get(o, k, r) { log.push(String(k)); return Reflect.get(o, k, r); } });

@@ -1,9 +1,9 @@
 // answers: with-library
-// # codegen/AOTStraightEmitter.h: one sweep over the body as read, every value boxed in a word of the frame, each operation in its most general form. With testing=WritesBodiesStraight every body that has such a form takes it.
+// # codegen/AOTStraightEmitter.h: one sweep over the body as read, every value boxed in a word of the frame, each operation in its most general form. With testing=ForceStraightCompilation every body that has such a form takes it.
 // # The operators, reads and writes by name and by key, literals, patterns, loops, switches, closures, handlers, tail calls and classes, on numbers, texts, nothing and objects.
-// # OPTIONS: testing=WritesBodiesStraight
-// # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
-// # STRAIGHT-NOT: statistic UnitsWrittenStraight 0
+// # OPTIONS: testing=ForceStraightCompilation
+// # RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
+// # STRAIGHT-NOT: statistic StraightUnitsCompiled 0
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 57 of 57 of 57

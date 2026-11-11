@@ -1,4 +1,4 @@
-// STATISTIC: SumsThatGoRoundAsNumbersInTypedBuildsAlone >= 1
+// STATISTIC: SumsSpecializedAsNumbers >= 1
 "use strict";
 // The sums grow beyond 2^31 and 2^53.
 const list = JSON.parse('[2147483647,2147483647,9007199254740991]');

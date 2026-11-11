@@ -34,7 +34,7 @@ console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegati
 
 // GENERATED: compute withAHugeMember theComputedMember theFraction negated doubled next distance
 // CHECK-LABEL: function {{*}}name="compute"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="given"
@@ -44,13 +44,13 @@ console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegati
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="withAHugeMember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[-2147483648, 2147483648]}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[-2147483648, 2147483648]}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: int[-2147483648, 2147483648]):
 // CHECK-NEXT: v1 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="theComputedMember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v1 = PropGet v0 key="First"
@@ -58,21 +58,21 @@ console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegati
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="theFraction"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Double number=0.5
 // CHECK-NEXT: v1 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="negated"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Negate v0
 // CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsInt32Promise]}
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Integer integer=2
 // CHECK-NEXT: v2 = Mul v0, v1
@@ -80,7 +80,7 @@ console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegati
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Integer integer=1
 // CHECK-NEXT: v2 = Add v0, v1
@@ -88,7 +88,7 @@ console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegati
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="distance"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=i32 flags=[IsInt32Promise]}] {
 // CHECK-NEXT: b0(v0: i32):
 // CHECK-NEXT: v1 = Builtin builtin=Math
 // CHECK-NEXT: v2 = Builtin builtin=MathAbs

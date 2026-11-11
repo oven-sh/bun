@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInTurnsOfTypedCopies >= 1
+// STATISTIC: ArraysGuardedInIterations >= 1
 const steps = JSON.parse(`["run"]`);
 const ops = { run };
 let turns = 0;

@@ -8,21 +8,22 @@
 # function fresh() { const made = []; for (let i = 0; i < 4; i++) made.push(9.5 + i); return made; }
 # print(halves(fresh(), 4).join(), halves(fresh(), 6).join());
 # -- end of source
-# `kept` comes from outside and the bound is not its length: in the typed copy the turn asks `key < length` itself and stores raw behind the answer; where it fails the turn begins again as it is written, and the list grows.
-# THE LIE, testing=LengthsAskedInTurnsAreTakenForGiven: the turn passes that question over. NO RUN UNDER THE LIE ALONE IS STORED: it would write two numbers behind the end of the list.
-# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the store holds its position against the length, or the process stops by name, in front of the store.
+# `kept` comes from outside the function, and the loop bound is not its length. So in the specialized version the iteration checks `key < length` itself and stores raw after the check.
+# Where the check fails, the iteration restarts in the generic version, and the array grows.
+# Fault injection, testing=SkipLengthChecks: the iteration skips that check. No run with the fault alone is stored, because it would write two numbers past the end of the array.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the store checks its index against the length. If the check fails, the process crashes with a named error before the store.
 # AS-USERS-BUILD: under the checks of the runner the verifier of the code refuses the lie at the store (walk/a-raw-store-into-a-list-without-a-ground-is-refused.ir): what the emitters hold under the words is asked without them
 # RUN(TAKEN): walk f1:Body mechanisms=all
 # TAKEN: isLoopHead=true
 # TAKEN: [[length]]: {{*}} = GetArrayLength
 # TAKEN: Less {{*}}, [[length]] form=Integers
 # TAKEN: PutDoubleIndex {{*}}isInBounds
-# RUN(LIED): walk f1:Body mechanisms=all testing=LengthsAskedInTurnsAreTakenForGiven
+# RUN(LIED): walk f1:Body mechanisms=all testing=SkipLengthChecks
 # LIED-NOT: isInBounds
 # LIED: PutDoubleIndex
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: 0.25,0.75,1.25,1.75 0.25,0.75,1.25,1.75,2.25,2.75
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=LengthsAskedInTurnsAreTakenForGiven,TestsEveryPosition
-# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipLengthChecks,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
 # HELD: crashed with SIGABRT

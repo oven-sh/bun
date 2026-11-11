@@ -1,5 +1,5 @@
 // The link changes INSIDE a turn of the loop that asks: the objects behind it in the same walk over the list answer by the new chain.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 const sizes = JSON.parse("[1,2,3,4,5,6,7,8]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

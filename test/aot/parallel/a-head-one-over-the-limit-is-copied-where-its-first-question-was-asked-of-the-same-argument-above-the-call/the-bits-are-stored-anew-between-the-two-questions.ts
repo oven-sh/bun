@@ -1,5 +1,5 @@
 // Between the two questions the bits are cleared: the copy asks for itself, so the answer is the callee's.
-// STATISTIC: HeadsCopiedWhoseQuestionWasAskedAbove >= 1
+// STATISTIC: PartialInlinesAfterDominatingTests >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

@@ -9,6 +9,19 @@ use crate::module_format::{
 };
 use crate::session::Arena;
 
+pub(super) fn bind<'s>(
+    hir: &mut File<'s>,
+    options: BindOptions,
+    inputs: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    debug_assert!(options.runtime.is_some());
+    debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
+    hir.reset_strict();
+    bind_below_defines(hir, options, inputs.names_in_place(), atoms, arena)
+}
+
 pub(super) fn run<'s>(
     hir: &mut File<'s>,
     options: BindOptions,
@@ -17,11 +30,8 @@ pub(super) fn run<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
-    debug_assert!(options.runtime.is_some());
-    debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
-    hir.reset_strict();
     let names_in_place = inputs.names_in_place();
-    let mut bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
+    let mut bound = bind(hir, options, inputs, atoms, arena);
     if bound.ran_out_of_stack {
         return (bound, FileAnalysis::default());
     }
@@ -128,14 +138,15 @@ fn create_analysis<'s>(
         answers_of_resolvers: scan.answers_of_resolvers,
         names_of_workers: scan.names_of_workers,
         paths_of_changed_files: scan.paths_of_changed_files,
-        paths_of_files_read: scan.paths_of_files_read,
-        files_read_beside_callers: scan.files_read_beside_callers,
-        own_urls_handed: scan.own_urls_handed,
+        module_relative_reads: scan.module_relative_reads,
+        caller_relative_reads: scan.caller_relative_reads,
+        known_load_names: scan.known_load_names,
+        own_url_arguments: scan.own_url_arguments,
         exported_file_changers: scan.exported_file_changers,
-        asked_of_other_files: scan.asked_of_other_files,
-        asked_of_data_files: scan.asked_of_data_files,
-        asked_of_own_exports: scan.asked_of_own_exports,
-        names_out_of_data_files: scan.names_out_of_data_files,
+        other_file_queries: scan.other_file_queries,
+        data_file_queries: scan.data_file_queries,
+        own_export_queries: scan.own_export_queries,
+        names_from_data_files: scan.names_from_data_files,
         names_resolved_from_listed_folders: scan.names_resolved_from_listed_folders,
         options_of_resolves_with_unread_folders: scan.options_of_resolves_with_unread_folders,
         keys_stored_in_caches: scan.keys_stored_in_caches,

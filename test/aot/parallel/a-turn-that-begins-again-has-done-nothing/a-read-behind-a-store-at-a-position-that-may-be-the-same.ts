@@ -1,4 +1,4 @@
-// STATISTIC: TurnsThatBeginAgain >= 1
+// STATISTIC: IterationRestartsEmitted >= 1
 // An element found at a position shows that the position lies inside the list, and a store there goes in line and asks nothing. A read behind such a store sees it where the two positions are one.
 function meets(count: number, filled: number, last: number, turns: number, step: number): string {
   const list: number[] = new Array(count); for (let i = 0; i < filled; i++) list[i] = i * step;

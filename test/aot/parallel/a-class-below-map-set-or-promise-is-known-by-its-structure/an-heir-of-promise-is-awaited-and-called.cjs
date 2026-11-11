@@ -1,5 +1,5 @@
 // A class below Promise: its methods are called in a loop, and then() makes more of its kind.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Promise { constructor(run) { super(run); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const one = new H(resolve => resolve(5));

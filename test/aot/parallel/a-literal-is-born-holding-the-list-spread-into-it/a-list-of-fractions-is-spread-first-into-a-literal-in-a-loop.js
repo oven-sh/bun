@@ -1,6 +1,6 @@
 // Lists whose storage is one of fractions are spread first into a literal in a loop: the copy holds them raw. A hole among them is undefined in the copy; NaN, -0 and the infinities stay what they are;
 // 127 and 128 elements; what is written behind is a fraction, a whole number, a text, nothing. Each copy is then pushed onto, stored into and shortened, and the list given stays as it was.
-// STATISTIC: LiteralsBornHoldingTheListSpreadRightBehind >= 3
+// STATISTIC: ArrayLiteralsAllocatedFromSpread >= 3
 const turns = JSON.parse("4");
 function copies(given) { const made = []; for (let i = 0; i < turns; i++) made.push([...given]); return made; }
 function grown(given, more) { const made = []; for (let i = 0; i < turns; i++) made.push([...given, more]); return made; }

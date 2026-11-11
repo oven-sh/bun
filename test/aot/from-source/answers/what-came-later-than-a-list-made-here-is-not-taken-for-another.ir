@@ -4,15 +4,20 @@
 # function text(n) { const out = []; out.push(1, 2, 3); const d = veil(out); let sum = 0; for (let i = 0; i < d.length && i < n; i++) { sum = (sum + d[i]) | 0; out.push("7"); } return sum + "/" + d.length; }
 # print(text(3), text(5), text(9));
 # -- end of source
-# Where a loop writes objects made here alone, what is known of every OTHER object outlives its head. Who is another is an argument of identity by the order of making: what stood before the first such object was made cannot be it;
-# of what came later nothing is known (Walker::isOtherThanRestOf()). Here the list that is read came later: it is the list made here, back through a veil: so it is not tested in front of the loop for a storage of numbers.
-# THE LIE, testing=ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere: it is taken for another: it is tested in front, and its elements are read as numbers all round the loop while the turn pushes a text into it.
-# As built the answers look right even so, because a list into which a written text is pushed is born with boxed storage and fails that front. THE WRONG NUMBERS SHOW UNDER COLLECTIONS, where it is born otherwise:
-# test/aot/parallel/a-push-into-a-list-made-here-writes-that-list-alone/a-written-text-is-pushed-into-the-list-whose-veiled-self-is-read-as-numbers.cjs, built with this word, is wrong in 105 of 144 cells, silently.
+# Where a loop writes only objects that were allocated in this function, what is known about every other object survives the loop header.
+# Whether a value is another object is decided by the order of allocation: a value that existed before the first such object was allocated cannot be that object.
+# Nothing is known about a value that came later (Walker::classifyAgainstAllocations()).
+# Here the array that is read came later: it is the array allocated here, returned through veil(). So no hoisted guard tests it for numeric storage.
+# Fault injection, testing=AssumeLaterValuesUnaliased: the compiler assumes that it is another object.
+# The guard is hoisted, and the elements are read as numbers throughout the loop while each iteration pushes a string into the array.
+# In a default build the results still look right, because an array into which a string literal is pushed is allocated with boxed storage and fails the hoisted guard.
+# The wrong numbers show up under garbage collections, where the array is allocated differently. The program is
+# test/aot/parallel/a-push-into-a-list-made-here-writes-that-list-alone/a-written-text-is-pushed-into-the-list-whose-veiled-self-is-read-as-numbers.cjs.
+# Built with this switch, it is silently wrong in 105 of the 144 results that it prints.
 # f2 = text
 # RUN: walk f2 mechanisms=all
 # CHECK-NOT: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
-# RUN(LIE): walk f2 mechanisms=all testing=ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere
+# RUN(LIE): walk f2 mechanisms=all testing=AssumeLaterValuesUnaliased
 # LIE: HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
 # LIE: isLoopHead=true
 # LIE: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]

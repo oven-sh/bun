@@ -5,7 +5,7 @@
 // CHECK-NEXT: Return
 // CHECK: function {{*}}name="evaluate"
 // CHECK-NEXT: b0
-// CHECK-NEXT: NewRuntimeError runtimeError=LeftOutOfExecutable name="evaluate"
+// CHECK-NEXT: NewRuntimeError runtimeError=OmittedFromExecutable name="evaluate"
 
 // FILE: main.mjs
 // Nobody imports `evaluate` and nobody names it in lib.mjs, so its body is left out: what stands for it throws. The tables of the file still name the function, so it is declared. But no

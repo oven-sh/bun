@@ -8,9 +8,11 @@
 # print(byValue(JSON.parse("0"), JSON.parse('"ab"')));
 # print("went on");
 # -- end of source
-# A conversion out of a box goes by the type of what lies in it: what is no int32 is read as a double, and what is no number is taken for the first marker of the type, unasked. Under a false proof that is silent.
-# Under the words on proofs those two arms ask. Here the guard of f1 unboxes its operand for a Body that takes a Double, one record behind its own test: no check in the Body can see what came.
-# THE LIE: testing=RowSaysLess:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass.
+# An unboxing conversion goes by the type of the boxed value.
+# A value that is not an int32 is read as a double, and a value that is not a number is taken for the first marker of the type, both without a check.
+# With a false proof that goes wrong silently. With the proof-checking switches those two branches check.
+# Here the guard of f1 unboxes its operand for a Body that takes a Double, one operation after its own test, so no check in the Body can see what arrived.
+# Fault injection, testing=UnderstateEffects:Callee/f1/TestsOfGuard: the emitter lets every test of the guard of f1 pass.
 # f1 = sum
 # RUN: plan units mechanisms=all
 # CHECK: unit f1:Body (Double)
@@ -20,13 +22,13 @@
 # RIGHT-NEXT: 0NaNabNaNabNaNabNaNab
 # RIGHT-NEXT: went on
 # RIGHT-NEXT: exited with 0
-# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,RowSaysLess:Callee/f1/TestsOfGuard
+# RUN(ENTRIES): run-in-shell mechanisms=all testing=CheckProofsAtEntries,UnderstateEffects:Callee/f1/TestsOfGuard
 # ENTRIES: 40 -1
-# ENTRIES: what an operation gives is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ENTRIES: found string in the result of an operation
 # ENTRIES-NOT: went on
 # ENTRIES: crashed
-# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Callee/f1/TestsOfGuard
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Callee/f1/TestsOfGuard
 # PROOFS: 40 -1
-# PROOFS: what an operation gives is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# PROOFS: found string in the result of an operation
 # PROOFS-NOT: went on
 # PROOFS: crashed

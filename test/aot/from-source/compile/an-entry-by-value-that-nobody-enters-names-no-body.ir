@@ -34,8 +34,8 @@
 # CHECK: unit f3:GenericCallEntry {{*}} bytes
 # CHECK: unit f4:Body {{*}} bytes
 # CHECK: unit f4:GenericCallEntry {{*}} bytes
-# RUN(COUNT): compile EntriesThatNobodyEnters mechanisms=all
-# COUNT: statistic EntriesThatNobodyEnters 3
+# RUN(COUNT): compile GenericEntriesProvenUnreachable mechanisms=all
+# COUNT: statistic GenericEntriesProvenUnreachable 3
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f1 callers-known one-callee
 # LINK: function f2 callers-known one-callee

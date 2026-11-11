@@ -2,7 +2,7 @@
 // Where a stub answers a closed read by name with "an accessor", it enters the getter itself. What the getter gives cannot be checked afterwards, so under the word that checks the walk the choice of the getter is checked before the call: the caller records receiver and name, and the stub asks whether that name still finds that getter.
 // The getter above is shadowed by another on the object between, uncovered again, taken away and laid anew. Where the table of slots does not drop what depends on a chain, the second round enters the old getter in silence and the fourth dies; under the word the second round stops by name.
 // The second half holds what must not ring: a getter whose first step is a call through another accessor of the same receiver, a trap of a proxy that does the same, a read that throws and is followed by such a call, getters of a class, and a native getter.
-// COUNTER: AnswersAskedAgain >= 400
+// COUNTER: FastPathResultsVerified >= 400
 const unseen = (0, eval)("(x) => x");
 const top = unseen({ get late() { return "top " + this.own; } });
 const middle = unseen(Object.setPrototypeOf({ mid: 1 }, top));

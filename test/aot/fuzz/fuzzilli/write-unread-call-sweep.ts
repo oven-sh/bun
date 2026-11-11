@@ -8,6 +8,7 @@
 // Where the ways of a call part by the receiver they meet again behind it. A way that has ended brings no value to the meeting, and neither does one that is alive where nobody reads the value: a compiler that
 // tells the two by the value alone drops a living way. The frame around the call is one in which that showed; every part of it was needed.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 const calls: [string, string][] = [
   ["a-statement", "holder.bump();"],
@@ -147,7 +148,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && written < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     written++;
   }
   console.log(written);
@@ -157,7 +158,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

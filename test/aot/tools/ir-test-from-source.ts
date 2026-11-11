@@ -112,8 +112,8 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
     return lines.map((line, index) => {
       if (record.kind === "module")
         return withoutField(line, "positions")
-          .replace(/ functionText="(?:[^"\\]|\\.)*"/, "")
-          .replace(" flags=[KeepsError]", "")
+          .replace(/ functionSource="(?:[^"\\]|\\.)*"/, "")
+          .replace(" flags=[CachesEvaluationError]", "")
           .replaceAll("/$bunfs/root/", "")
           .replace(/\/\$bun\/text\/[^"/]*%2f/g, "/$bun/text/");
       if (record.kind === "entry") return withoutField(line, "hostReads");
@@ -121,7 +121,7 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
       if (record.kind !== "function") return line;
       // An operation says where in the text it stands, as in a build of the program.
       if (index) return line;
-      return withoutField(line, "text");
+      return withoutField(line, "sourceRange");
     });
   }
 

@@ -1,5 +1,5 @@
 // The prototype object of the class gains a get and an accessor under size midway, and loses them again: no method of the class stands between the loop and the map.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { constructor() { super(); this.hits = 0; } }
 const one = new H(); for (let k = 0; k < 8; k++) Map.prototype.set.call(one, k, k);

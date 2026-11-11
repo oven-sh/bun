@@ -9,7 +9,7 @@
 # FEATURES-NOT: by BunServe
 
 layout L0 module=m0 fields=[{key="parse" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
-module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="file" module=m0 kind=CommonJsModule results=[{type=anything}] {

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: ListsAskedForBesideListsInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedBesideArrays >= 1
 // What was asked in front of the loop holds only as long as nothing in a turn changes it.
 var names = JSON.parse('["first","second","odd"]'), world = globalThis;
 var tools = {

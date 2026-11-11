@@ -1,5 +1,5 @@
 // Three closures of two functions, each with a capture of its own.
-// STATISTIC: JoinsWalkedOnceForEachCallee >= 1
+// STATISTIC: JoinsDuplicatedPerCallee >= 1
 function adder(n: number) { return (x: number) => x + n; } function scaler(n: number) { return (x: number) => x * n; }
 const add3 = adder(3), add9 = adder(9), by2 = scaler(2);
 let sum = 0;

@@ -7,11 +7,16 @@
 # -- end of source
 # LIBRARY: own
 # f2 = run. What is in sight of a list made here (its length, its elements) is taken by an operation that is no read, and no record of a read is left.
-# THE LIE, testing=NothingIsDoneToFreshLists: no operation but an append lets a fresh list leave or writes it. So 3, 4, 5 stay in sight where memory holds 5, 4, 3.
-# Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the taker holds what is in sight against memory: the cell as made, the length, each element: Walker::checkWhatIsInSightOfList().
+# Fault injection, testing=IgnoreFreshArrayEscapes: no operation except an append counts as letting a fresh array escape or as writing to it.
+# So the walk still tracks 3, 4, 5 where memory holds 5, 4, 3.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the consuming operation checks the tracked contents against memory:
+# that the cell is pristine, the length, and each element. See Walker::checkWhatIsInSightOfList().
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: 4,3
 # RIGHT-NEXT: exited with 0
-# RUN(NAMED): run-in-shell mechanisms=all testing=NothingIsDoneToFreshLists,CheckProofsAtRunTime
-# NAMED: AOT: f2 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(NAMED): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckProofsAtRunTime
+# NAMED: bun: internal AOT error: redundancy elimination check failed at {{*}} (run)
+# NAMED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# NAMED-NEXT: This is a bug in Bun, not in your code.
+# NAMED-NEXT: and please report it: https://github.com/oven-sh/bun/issues
 # NAMED-NEXT: crashed with

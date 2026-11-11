@@ -89,6 +89,6 @@ neverConverted = { "an-accessor-at-a-place", "grows-in-the-loop", "is-cut-in-the
 folder = sys.argv[1]
 os.makedirs(folder, exist_ok=True)
 for name, (says, deed) in deeds.items():
-    counted = "" if name in neverConverted else "// STATISTIC: ListsConvertedInFrontOfTypedCopies >= 1\n"
+    counted = "" if name in neverConverted else "// STATISTIC: ArraysConvertedToDoubleStorage >= 1\n"
     open(os.path.join(folder, name + ".ts"), "w").write(head % (says, counted) + deed + "\n" + tail)
 print(len(deeds), "programs")

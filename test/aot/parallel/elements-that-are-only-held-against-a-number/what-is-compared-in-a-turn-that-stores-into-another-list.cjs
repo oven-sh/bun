@@ -1,4 +1,4 @@
-// STATISTIC: HolesReadAsNaNInTurnsThatStore >= 2
+// STATISTIC: StoringLoopHoleChecksRemoved >= 2
 "use strict";
 function fresh(n) { const l = []; for (let k = 0; k < n; k++) l.push(k * 3 % 7); return l; }
 function mark(l, m, n, b) { let c = 0; for (let i = 0; i < n; i++) { if (l[i] === b) c++; m[i] = c; } return c + JSON.stringify(m); }

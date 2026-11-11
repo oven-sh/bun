@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the walk as users build it, and every raw store asks its position at the run.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the walk as users build it, and every raw store asks its position at the run.
 "use strict";
 function show(x) { if (x === null || x === undefined) return String(x); if (ArrayBuffer.isView(x)) return x.constructor.name + "[" + Array.prototype.map.call(x, v => Object.is(v, -0) ? "-0" : String(v)).join(",") + "]"; if (Array.isArray(x)) return "list " + x.length + "[" + x.map(String).join(",") + "]"; return "object " + JSON.stringify(x); }
 function roots(xs, out) { for (let i = 0; i < xs.length; i++) out[i] = Math.sqrt(xs[i]); return out; }

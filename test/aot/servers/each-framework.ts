@@ -360,7 +360,7 @@ export function testFramework(framework: string) {
     expect({
       stderr: built.stderr,
       exitCode: built.exitCode,
-      purchasesOfLoopsThatFailed: Number(/^PurchasesOfLoopsThatFailed (\d+)$/m.exec(built.stderr)?.[1]),
+      purchasesOfLoopsThatFailed: Number(/^LoopVersioningAttemptsFailed (\d+)$/m.exec(built.stderr)?.[1]),
     }).toEqual({
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,

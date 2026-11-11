@@ -1,4 +1,4 @@
-// STATISTIC: HoldersAskedForBytesPastNamesOfListsAndViews >= 1
+// STATISTIC: Uint8ArraysSpeculatedDespiteSharedMethods >= 1
 "use strict";
 const hide = v => [v][JSON.parse("0")], out = [], show = v => Object.is(v, -0) ? "-0" : typeof v === "object" && v !== null ? JSON.stringify(Array.from(v.length >= 0 ? v : [], e => (typeof e === "bigint" ? e + "n" : e))) : String(v);
 function sieve(s, n) { s.fill(1); let c = 0; for (let i = 2; i * i < s.length; i++) if (s[i]) for (let j = i * i; j < s.length; j += i) s[j] = 0; for (let i = 2; i < s.length; i++) c += s[i] * 1; return c; }

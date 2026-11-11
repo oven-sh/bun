@@ -14,9 +14,9 @@ using Flags = OptionSet<ImageFlag>;
 static constexpr Flags refusesOriginals { ImageFlag::RefusesOriginalsBesideMocks };
 static constexpr Flags closed = refusesOriginals;
 static constexpr Flags runsText = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::LetsGlobalObjectGo };
-static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LetsGlobalObjectGo };
+static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AllowsLibrarySource, ImageFlag::LetsGlobalObjectGo };
 static constexpr Flags loadsCodeFromOutside = runsModuleFromOutside | Flags { ImageFlag::LoadsCodeOutsideImage };
-static constexpr Flags runsTextThatLoadsCode = runsOnlyCodeOfImage ? runsText : loadsCodeFromOutside;
+static constexpr Flags runsTextThatLoadsCode = isHardenedBuild ? runsText : loadsCodeFromOutside;
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -270,7 +270,7 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
   b0():
 )IR"
 
-#define AOT_STORES_PATH_OF_MAIN_MODULE(replaceableBuiltins) R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] body=f0
+#define AOT_STORES_PATH_OF_MAIN_MODULE(replaceableBuiltins) R"IR(module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] body=f0
 entry module=m0
 )IR" replaceableBuiltins R"IR(function f0 name="main" module=m0 )IR" AOT_COMMONJS_SIGNATURE R"IR(    v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="path" [isFreeName]
@@ -296,7 +296,7 @@ static constexpr ASCIILiteral holdsMockOfFileBesideRuntimeModuleWhoseOriginalMay
 variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
 variable g2 module=m2 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock, OriginalMayRun]
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}]
-module m1 path="/mocked.cjs" displayPath="mocked.cjs" kind=CommonJs flags=[KeepsError, MayBeMocked] requireResult=ModuleExports body=f1 exportsVariable=g0
+module m1 path="/mocked.cjs" displayPath="mocked.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeMocked] requireResult=ModuleExports body=f1 exportsVariable=g0
 module m2 path="node:fs" displayPath="node:fs" kind=Runtime flags=[MayBeMocked] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeFs
 entry module=m0
 entry module=m1
@@ -358,9 +358,9 @@ static void testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen()
 
 static void testStoreIntoPathOfMainModuleIsTakenWhereFrontEndLeftItOpen()
 {
-    AOT_TEST_CHECK(imageFlagsOf(storesPathOfMainModuleLeftOpen).contains(ImageFlag::StoresPathOfMainModule));
-    AOT_TEST_CHECK(!imageFlagsOf(storesPathOfMainModuleDecidedInCode).contains(ImageFlag::StoresPathOfMainModule));
-    AOT_TEST_CHECK(!imageFlagsOf(storesPathOfMainModuleDecidedInCode, { "admit=Inspector"_s }).contains(ImageFlag::StoresPathOfMainModule));
+    AOT_TEST_CHECK(imageFlagsOf(storesPathOfMainModuleLeftOpen).contains(ImageFlag::SetsMainModulePath));
+    AOT_TEST_CHECK(!imageFlagsOf(storesPathOfMainModuleDecidedInCode).contains(ImageFlag::SetsMainModulePath));
+    AOT_TEST_CHECK(!imageFlagsOf(storesPathOfMainModuleDecidedInCode, { "admit=Inspector"_s }).contains(ImageFlag::SetsMainModulePath));
 }
 
 static void testExcludedTextLeavesTheProgramClosed()

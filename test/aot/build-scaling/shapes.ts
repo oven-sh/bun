@@ -1119,7 +1119,7 @@ export const shapes: Shape[] = [
     counted: "classes",
     size: 250,
     entry: "main.js",
-    growsSoFar: "4.13 times in ClassesClimbedAboveMembersOfFamilies",
+    growsSoFar: "4.13 times in AncestorClassesVisited",
     write: size => ({
       "main.js": `let count = 0;\n` + lines(size, index => `class C${index}${index ? ` extends C${index - 1}` : ""} { m${index}() { return ${index}; } }\ncount += new C${index}().m${index}() & 1;`) + `console.log(count);\n`,
     }),
@@ -2394,7 +2394,8 @@ export const shapes: Shape[] = [
     // The look for type errors asks for `value.kind` with a declared type of its own behind each test, and makes the property of the tag, its type and the map from tags to
     // members anew for what each test leaves of the union.
     growsSoFarInInstructions: between ? "3.56 times in instructions" : "3.60 times in instructions",
-    size: 300,
+    // A count that looks quadratic is measured at four times the size too. A list of more than 1,000 members of the union is an error there (TS2590).
+    size: 240,
     entry: "main.ts",
     write: (size: number) => ({
       "tsconfig.json": withoutLibraryTypes,
@@ -2842,7 +2843,7 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 150,
     entry: "main.ts",
-    counts: ["CopiesWalkedWhereTheirGuardsFail"],
+    counts: ["CallsInlinedAfterFailedGuards"],
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts":
@@ -3981,7 +3982,7 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 80,
     entry: "main.js",
-    counts: ["WalksOfLoops", "ValuesWalked"],
+    counts: ["LoopVisits", "ValuesWalked"],
     write: size => ({
       "main.js":
         `function deep(turns) {\n  let kept = 0, count = 0;\n` +
@@ -3994,7 +3995,7 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 20,
     entry: "main.js",
-    counts: ["WalksOfLoops", "ValuesWalked"],
+    counts: ["LoopVisits", "ValuesWalked"],
     write: size => ({
       "main.js":
         `class P { constructor(w) { this.w = w; } }\nfunction deep(p, turns) {\n  let kept = 0, count = 0;\n` +
@@ -4025,7 +4026,7 @@ export const shapes: Shape[] = [
     // At this size the row grew 2.25 times in instructions and 3.16 times in memory (12,800 loops: 952 MB); at a quarter of it the squares stayed under the bound.
     size: 6400,
     entry: "main.js",
-    counts: ["WalksOfLoops", "ValuesWalked"],
+    counts: ["LoopVisits", "ValuesWalked"],
     write: size => ({
       "main.js":
         `const unseen = x => [x][JSON.parse("0")];\nfunction run(m) {\n  let sum = 0${upTo(size, index => `, x${index} = 0`).join("")};\n  for (let r = 0; r < m; r++) {\n` +
@@ -4125,7 +4126,7 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 400,
     entry: "main.js",
-    counts: ["WalksOfLoops", "ValuesWalked"],
+    counts: ["LoopVisits", "ValuesWalked"],
     write: size => ({
       "main.js":
         `const unseen = x => [x][JSON.parse("0")];\nfunction run(m) {\n  let sum = 0;\n` +
@@ -4138,7 +4139,7 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 40,
     entry: "main.js",
-    counts: ["WalksOfLoops", "ValuesWalked"],
+    counts: ["LoopVisits", "ValuesWalked"],
     write: size => ({
       "main.js":
         `const unseen = x => [x][JSON.parse("0")];\nfunction c0(a, b) { return a + b; }\n` +
@@ -4780,9 +4781,10 @@ console.log(typeof outmost.inner);
   },
   {
     // The same without a call in the loop: there each sum may have a register in the loop and wait in the frame elsewhere, and there are no more registers than sixteen.
+    // On arm64 a sum takes 524 bytes of code up to about 2,500 sums and 681 from there on. Sizes on either side of that bend read 2.20 times in instructions; it is straight below it (2.01) and above it (2.00).
     name: "sums of fractions that one loop without a call adds to, all alive past the calls behind it",
     counted: "sums",
-    size: 2500,
+    size: 5000,
     entry: "main.js",
     write: size => ({
       "main.js":
@@ -5007,7 +5009,7 @@ console.log(typeof outmost.inner);
     counted: "cases",
     size: 1000,
     entry: "main.mjs",
-    counts: ["LaterReadsAskedWhetherTheyCount"],
+    counts: ["LaterUsesScannedForLiveness"],
     write: size => ({
       "main.mjs":
         `const seed = process.argv.length;\nfunction g(x) { return (x * 31 + seed) % 1009; }\nconst h = [g, x => x + seed][seed % 2];\n` +
@@ -6277,7 +6279,7 @@ console.log(typeof outmost.inner);
     counted: "cases",
     size: 4000,
     entry: "main.js",
-    counts: ["BirthsLaidWhereCellsAreNeeded"],
+    counts: ["AllocationsSunk"],
     write: size => ({
       "main.js":
         `function run(kind, rare, kept) {\n  switch (kind) {\n` +
@@ -6810,7 +6812,7 @@ export {};
     counted: "elements",
     size: 400,
     entry: "main.js",
-    counts: ["BlocksReachedBySearchesForWaysToReads"],
+    counts: ["BlocksVisitedByLivenessSearches"],
     write: size => ({
       "main.js":
         `"use strict";\nfunction made(count, width) { const grid = []; for (let r = 0; r < count; r++) { const row = []; for (let j = 0; j < width; j++) row.push((r * 7 + j * 3) % 11 + 0.25); grid.push(row); } return grid; }\n` +
@@ -6861,7 +6863,7 @@ export {};
     counted: "statements",
     size: 250,
     entry: "main.cjs",
-    counts: ["StoresPutBackWhereTurnsBeginAgain"],
+    counts: ["StoresUndoneAtIterationRestarts"],
     write: size => ({
       "main.cjs":
         `"use strict";\nconst V = JSON.parse("[" + Array.from({ length: 64 }, (_, i) => i & 63).join() + "]");\nconst O = JSON.parse("[" + Array.from({ length: ${size + 1} }, () => 0).join() + "]");\n` +
@@ -6915,7 +6917,7 @@ export {};
     counted: "calls",
     size: 8,
     entry: "main.js",
-    counts: ["StoresPutBackWhereTurnsBeginAgain"],
+    counts: ["StoresUndoneAtIterationRestarts"],
     write: size => ({
       "main.js":
         `function acc(out, a) { out[0] = out[0] + a[0]; out[1] = out[1] + a[1]; out[2] = out[2] + a[2]; return out; }\nvar o = [0.5, 1.75, 3.5], p = [1.5, 2.5, 3.5];\n` +
@@ -7859,6 +7861,19 @@ export {};
         `function long(): boolean {\n  let all = true;\n  for (let i = 0; i < turns; i++) {\n` +
         lines(size, () => `    all = first(make(), other() + i) && all;`) +
         `  }\n  return all;\n}\nconsole.log(long(), made, sum);\n`,
+    }),
+  },
+  {
+    // Each call is inlined, and its type check is fused with the unboxing after it. Every check searched all the values not yet unboxed, and every slow call searched all the rare regions.
+    name: "consecutive calls reassign one variable",
+    counted: "calls",
+    size: 16000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `function step(x: number): number { return x + 1; }\nfunction run(x: number): number {\n` +
+        lines(size, () => `  x = step(x);`) +
+        `  return x;\n}\nconsole.log(run(JSON.parse("7")));\n`,
     }),
   },
 ];

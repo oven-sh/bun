@@ -33,7 +33,7 @@
 # LOOSE-NOT: "right" {{*}}filled-at-birth
 # RUN: walk f2 mechanisms=all-Inlining-ParameterGuards
 # CHECK-LABEL: code f2:Body
-# CHECK: ShapeTest {{*}}[refusesMarkedObjects]
+# CHECK: ShapeTest {{*}}[rejectsMarkedObjects]
 # CHECK: GetSlot {{*}}key="first"
 # CHECK: GetSlot {{*}}key="second"
 # CHECK: GetSlot {{*}}key="third"

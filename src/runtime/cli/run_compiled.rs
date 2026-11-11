@@ -1403,6 +1403,20 @@ pub(crate) extern "C" fn Bun__AOT__hasImmediatesYetToRun(global: &bun_jsc::JSGlo
 }
 
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOT__transpilerJobsScheduled(
+    global: &bun_jsc::JSGlobalObject,
+) -> u64 {
+    global.bun_vm().transpiler_store.jobs_scheduled
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOT__transpilerJobsCompleted(
+    global: &bun_jsc::JSGlobalObject,
+) -> u64 {
+    global.bun_vm().transpiler_store.jobs_completed
+}
+
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
     refusal: &bun_core::String,
     source_url: &bun_core::String,

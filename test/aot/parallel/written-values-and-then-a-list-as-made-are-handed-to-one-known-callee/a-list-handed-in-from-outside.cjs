@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList = 0
+// STATISTIC: SpreadCallsUnpackedToParameters = 0
 function inner(who, count, first, second) { return [typeof who, count, first === undefined ? "none" : first, second === undefined ? "none" : second].join(":"); }
 
 const lists = JSON.parse('[[],[1],[1,2],[1,2,3,4,5]]');

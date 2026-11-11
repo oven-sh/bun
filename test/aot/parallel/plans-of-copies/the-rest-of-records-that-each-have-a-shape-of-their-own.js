@@ -1,8 +1,8 @@
 // Nine hundred parcels, each with one name of its own beside the names they share. The rest of a pattern is taken of each one once:
 // no two copies have the same source, so a plan made for one serves nobody. Only what is copied a second time gets a plan.
 // (The bound leaves room for parcels that fall on one place of the table of copies remembered: about fifty of nine hundred.)
-// COUNTER: AssignmentPlansMade <= 150
-// COUNTER: PropertyListsMade <= 250
+// COUNTER: AssignmentPlansCreated <= 150
+// COUNTER: PropertyListsCreated <= 250
 const parcels = [];
 for (let i = 0; i < 900; i++) {
   const parcel = { id: i, label: "p" + i };

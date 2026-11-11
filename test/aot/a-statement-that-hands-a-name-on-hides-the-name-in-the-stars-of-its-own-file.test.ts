@@ -1,6 +1,6 @@
 // A file's own `export { round } from "./wide.mjs"` hides `round` in that file's `export *`, also where the statement leads back to the
 // file that asked. That is the rule of the specification, and Node 25 answers the same. `bun test` falls back to the file's stars there, so
-// it is no reference for these programs, and the answers are written down. docs/compiler/compatibility.mdx has the row.
+// it is no reference for these programs, and the answers are written down.
 // In a ring that is made of stars alone the compiled run answers as `bun test` does.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

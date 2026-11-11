@@ -1,5 +1,8 @@
-# The Saves at the heads of a framed part. `clear` sets up its frame late, in the arm that calls; `this` waits in a slot across the call, and behind it the slow road of the store to `#timer` alone reads it, as a cold operand out of that slot: the head of the arm saves it. THE LIE, testing=SavesAtHeadsThatPatchesAloneReadAreLeftOut: the pruning of those Saves passes over the places that patches read, so it leaves this one out and the slot is read without its value.
-# No check is asked for here, as in a build of a user: the allocation is checked all the same, because a head left out a Save, and the build stops by name. Without that check it would end well and the code would be wrong.
+# This test covers the Saves at the heads (the entry blocks) of a framed part. `clear` sets up its frame late, in the branch that makes the call.
+# `this` stays in a slot across the call. After the call only the slow path of the store to `#timer` reads it, as a cold operand from that slot, so the head of the branch saves it.
+# Fault injection, testing=DropPatchOnlySaves: the pruning of those Saves ignores the locations that patches read, so it omits this Save and the slot is read without its value.
+# The test requests no check, as in a user's build. The allocation is checked anyway, because a head omitted a Save, and the build fails with a named internal error.
+# Without that check the build would succeed and the code would be wrong.
 # f3 = clear
 # -- source: a-save-at-a-head-that-a-cold-operand-alone-reads-and-that-is-left-out-stops-the-build-by-name.ts
 # declare function sink(...values: unknown[]): void;
@@ -13,5 +16,5 @@
 # -- end of source
 # REQUIRES: x86_64
 # AS-USERS-BUILD: the check of the allocation where a head leaves out a Save runs in every build, and under the check of the runner the allocation is checked anyway
-# DIAGNOSTIC: SpillSlotLacksItsValue f3
-# RUN: emit f3 mechanisms=all testing=SavesAtHeadsThatPatchesAloneReadAreLeftOut
+# DIAGNOSTIC: WrongValueInSpillSlot f3
+# RUN: emit f3 mechanisms=all testing=DropPatchOnlySaves

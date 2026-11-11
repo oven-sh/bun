@@ -1,5 +1,6 @@
-# "use strict"; let reader; function go(turns) { let sum = 0; for (let outer = 0; outer < turns; outer++) for (let turn = 0; turn < turns; turn++) { sum += reader(turn); } return sum; }
-# try { console.log(String(go(Number("0")))); } catch (error) { console.log(error.name); } const held = { width: Number("5") }; function read(turn) { return held.width + turn; } reader = read; try { console.log(String(go(Number("3")))); } catch (error) { console.log(error.name); }
+# "use strict"; let reader; let seen = ""; function go(turns) { let sum = 0; for (let outer = 0; outer < turns; outer++) for (let turn = 0; turn < turns; turn++) { sum += reader(turn); } return sum; }
+# try { seen += String(go(Number("0"))); } catch (error) { seen += error.name; } const held = { width: Number("5") }; function read(turn) { return held.width + turn; } reader = read;
+# try { seen += String(go(Number("3"))); } catch (error) { seen += error.name; } module.exports = seen;
 # The walk hoists the read of `reader` into the preheader of the two loops. The code verifier accepts that read only after it checks summary lists.
 # A build that does not verify code frees those lists after Link. These three commands always run the verifier, so they request the lists before the program is prepared.
 # Without that request, a release testaot dereferenced a freed list here and crashed.
@@ -12,150 +13,117 @@
 # ALONE-NOT: differ
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
-layout L0 module=m0 position=286 fields=[{key="width" declared={type=anything} flags=[IsRequired]}] place=286 ownFieldCount=1
-layout L1 module=m0 place=0
-layout L2 module=m0 place=0
-variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=7
+layout L0 module=m0 position=291 fields=[{key="width" declared={type=anything} flags=[IsRequired]}] place=291 ownFieldCount=1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=12
 variable g1 name="reader" module=m0 declared={type=undefined|null|function|absent flags=[IsExpected]} place=3
-variable g2 name="held" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable] place=5
+variable g2 name="held" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable] place=6
 function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewObject layout=L1 @0
-    v1 = FinishObject v0 @0
-    PutModuleVariable v1 variable=g0 @0
-    v3 = NewClosure function=f1 @0
-    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
-    v5 = NewClosure function=f2 @0
-    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
-    v7 = Undefined @14
-    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]} @14
-    PutModuleVariable v8 variable=g1 @14
-    Jump -> next b1() @184
-  b1() handler=b2():
-    v10 = Builtin builtin=GlobalThis @190
-    v11 = PropGet v10 key="console" [isFreeName] @190
-    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]} @190
-    v13 = PropGet v12 key="log" @190
-    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @190
-    v15 = Builtin builtin=String @202
-    v16 = Builtin builtin=Number @212
-    v17 = String string="0" @219
-    v18 = Call v16, -, v17 calleeName="Number" @212
-    v19 = Call v4, -, v18 calleeName="go" @209
-    v20 = Call v15, -, v19 calleeName="String" @202
-    v21 = Call v14, v12, v20 calleeKey="log" calleeName="console.log" @198
-    Jump -> next b3() @190
-  b2() role=CatchHandler:
-    v22 = CatchValue @244
-    v23 = Builtin builtin=GlobalThis @246
-    v24 = PropGet v23 key="console" [isFreeName] @246
-    v25 = Convert v24 declared={type=builtin(Console) flags=[IsExpected]} @246
-    v26 = PropGet v25 key="log" @246
-    v27 = Convert v26 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @246
-    v28 = PropGet v22 key="name" @258
-    v29 = Call v27, v25, v28 calleeKey="log" calleeName="console.log" @254
-    Jump -> next b3() @246
-  b3():
-    v30 = Builtin builtin=Number @295
-    v31 = String string="5" @302
-    v32 = Call v30, -, v31 calleeName="Number" @295
-    v33 = NewObject -, v32 layout=L0 fields=[0] @286
-    v34 = FinishObject v33 @286
-    PutModuleVariable v34 variable=g2 @279
-    v36 = GetModuleVariable variable=g1 @360
-    v37 = CheckInitialized v36 name="reader" @360
-    v38 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]} @360
-    PutModuleVariable v38 variable=g1 @360
-    Jump -> next b4() @375
-  b4() handler=b5():
-    v40 = Builtin builtin=GlobalThis @381
-    v41 = PropGet v40 key="console" [isFreeName] @381
-    v42 = Convert v41 declared={type=builtin(Console) flags=[IsExpected]} @381
-    v43 = PropGet v42 key="log" @381
-    v44 = Convert v43 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @381
-    v45 = Builtin builtin=String @393
-    v46 = Builtin builtin=Number @403
-    v47 = String string="3" @410
-    v48 = Call v46, -, v47 calleeName="Number" @403
-    v49 = Call v4, -, v48 calleeName="go" @400
-    v50 = Call v45, -, v49 calleeName="String" @393
-    v51 = Call v44, v42, v50 calleeKey="log" calleeName="console.log" @389
-    Jump -> next b6() @381
-  b5() role=CatchHandler:
-    v52 = CatchValue @435
-    v53 = Builtin builtin=GlobalThis @437
-    v54 = PropGet v53 key="console" [isFreeName] @437
-    v55 = Convert v54 declared={type=builtin(Console) flags=[IsExpected]} @437
-    v56 = PropGet v55 key="log" @437
-    v57 = Convert v56 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @437
-    v58 = PropGet v52 key="name" @449
-    v59 = Call v57, v55, v58 calleeKey="log" calleeName="console.log" @445
-    Jump -> next b6() @437
-  b6():
-    v60 = Undefined @437
-    Return v60 @437
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Undefined @14
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]} @14
+    PutModuleVariable v5 variable=g1 @14
+    v7 = String string="" @37
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @37
+    Jump -> next b1() @199
+  b1() handler=b3(v8):
+    v9 = Builtin builtin=String @213
+    v10 = Builtin builtin=Number @223
+    v11 = String string="0" @230
+    v12 = Call v10, -, v11 calleeName="Number" @223
+    v13 = Call v1, -, v12 calleeName="go" @220
+    v14 = Call v9, -, v13 calleeName="String" @213
+    v15 = Add v8, v14 @213
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @205
+    Jump -> next b2() @205
+  b2() handler=b3(v16):
+    Jump -> next b4(v16) @205
+  b3(v17) role=CatchHandler:
+    v18 = CatchValue @254
+    v19 = PropGet v18 key="name" @264
+    v20 = Add v17, v19 @264
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @256
+    Jump -> next b4(v21) @256
+  b4(v22):
+    v23 = Builtin builtin=Number @300
+    v24 = String string="5" @307
+    v25 = Call v23, -, v24 calleeName="Number" @300
+    v26 = NewObject -, v25 layout=L0 fields=[0] @291
+    v27 = FinishObject v26 @291
+    PutModuleVariable v27 variable=g2 @284
+    v29 = GetModuleVariable variable=g1 @365
+    v30 = CheckInitialized v29 name="reader" @365
+    v31 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @365
+    PutModuleVariable v31 variable=g1 @365
+    Jump -> next b5() @380
+  b5() handler=b7(v22):
+    v33 = Builtin builtin=String @394
+    v34 = Builtin builtin=Number @404
+    v35 = String string="3" @411
+    v36 = Call v34, -, v35 calleeName="Number" @404
+    v37 = Call v1, -, v36 calleeName="go" @401
+    v38 = Call v33, -, v37 calleeName="String" @394
+    v39 = Add v22, v38 @394
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]} @386
+    Jump -> next b6() @386
+  b6() handler=b7(v40):
+    Jump -> next b8(v40) @386
+  b7(v41) role=CatchHandler:
+    v42 = CatchValue @435
+    v43 = PropGet v42 key="name" @445
+    v44 = Add v41, v43 @445
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]} @437
+    Jump -> next b8(v45) @437
+  b8(v46):
+    PutModuleVariable v46 variable=g0 @459
+    v48 = Undefined @459
+    Return v48 @459
 }
-function f1 name="go" module=m0 position=26 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="go" module=m0 position=41 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    v1 = Integer @57
-    v2 = Convert v1 declared={type=number flags=[IsExpected]} @57
-    v3 = Integer @77
-    v4 = Convert v3 declared={type=number flags=[IsExpected]} @77
-    Jump -> next b1(v2, v4) @69
+    v1 = Integer @72
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @72
+    v3 = Integer @92
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @92
+    Jump -> next b1(v2, v4) @84
   b1(v5, v6):
-    LoopHint @69
-    v8 = Less v6, v0 @88
-    Branch v8 -> taken b2(), notTaken b6() @88
+    LoopHint @84
+    v8 = Less v6, v0 @103
+    Branch v8 -> taken b2(), notTaken b6() @103
   b2():
-    v9 = Integer @120
-    v10 = Convert v9 declared={type=number flags=[IsExpected]} @120
-    Jump -> next b3(v5, v10) @113
+    v9 = Integer @135
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @135
+    Jump -> next b3(v5, v10) @128
   b3(v11, v12):
-    LoopHint @113
-    v14 = Less v12, v0 @130
-    Branch v14 -> taken b4(), notTaken b5() @130
+    LoopHint @128
+    v14 = Less v12, v0 @145
+    Branch v14 -> taken b4(), notTaken b5() @145
   b4():
-    v15 = GetModuleVariable variable=g1 @154
-    v16 = CheckInitialized v15 name="reader" @154
-    v17 = Call v16, -, v12 calleeName="reader" @154
-    v18 = Add v11, v17 @154
-    v19 = Convert v18 declared={type=number flags=[IsExpected]} @147
-    v20 = Increment v12 @137
-    v21 = Convert v20 declared={type=number flags=[IsExpected]} @137
-    Jump -> next b3(v19, v21) @137
+    v15 = GetModuleVariable variable=g1 @169
+    v16 = CheckInitialized v15 name="reader" @169
+    v17 = Call v16, -, v12 calleeName="reader" @169
+    v18 = Add v11, v17 @169
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @162
+    v20 = Increment v12 @152
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @152
+    Jump -> next b3(v19, v21) @152
   b5():
-    v22 = Increment v6 @95
-    v23 = Convert v22 declared={type=number flags=[IsExpected]} @95
-    Jump -> next b1(v11, v23) @95
+    v22 = Increment v6 @110
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @110
+    Jump -> next b1(v11, v23) @110
   b6():
-    Return v5 @177
+    Return v5 @192
 }
-function f2 name="read" module=m0 position=310 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="read" module=m0 position=315 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    v1 = GetModuleVariable variable=g2 @339
-    v2 = CheckInitialized v1 name="held" @339
-    v3 = PropGet v2 key="width" @339
-    v4 = Add v3, v0 @352
-    Return v4 @352
+    v1 = GetModuleVariable variable=g2 @344
+    v2 = CheckInitialized v1 name="held" @344
+    v3 = PropGet v2 key="width" @344
+    v4 = Add v3, v0 @357
+    Return v4 @357
 }
 function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    v1 = HasJSType v0 first=5 last=5 @78
-    v2 = ToBoolean v1 @78
-    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
-  b1(v3):
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
-    v5 = StepArrayIterator v4 @229
-    v6 = ResultAt v5 index=1 @286
-    v7 = ResultAt v5 @334
-    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
-    v9 = CreateIteratorResult v6, v8 @266
-    Return v9 @266
-  b2(v10):
-    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
-    Unreachable @110
-}
-runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

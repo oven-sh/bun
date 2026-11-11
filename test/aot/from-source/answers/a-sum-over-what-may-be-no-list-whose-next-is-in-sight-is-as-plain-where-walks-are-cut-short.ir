@@ -56,10 +56,10 @@
 # -- end of source
 # A walk of a loop that is cut short inside the step is undone and walked again. The lines below are what plain Bun prints.
 # RUN: run-in-shell mechanisms=all
-# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:1:0
-# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:2:1
-# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:3:1
-# RUN: run-in-shell mechanisms=all testing=CutWalksOfLoopsShort:5:2
+# RUN: run-in-shell mechanisms=all testing=AbortLoopVisits:1:0
+# RUN: run-in-shell mechanisms=all testing=AbortLoopVisits:2:1
+# RUN: run-in-shell mechanisms=all testing=AbortLoopVisits:3:1
+# RUN: run-in-shell mechanisms=all testing=AbortLoopVisits:5:2
 # CHECK: 0 [6] ends |
 # CHECK-NEXT: 0 [10] ends |
 # CHECK-NEXT: 0 [0] ends |

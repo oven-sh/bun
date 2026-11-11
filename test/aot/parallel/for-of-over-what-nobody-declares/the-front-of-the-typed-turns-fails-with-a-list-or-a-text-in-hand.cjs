@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
 const log = [];
 const outside = JSON.parse('[["a", "+", "b", "+"], "a+b+", [], "", ["+"], "+", ["\\ud83d\\ude00", "+"], "\\ud83d\\ude00+"]');
 const starts = JSON.parse('[0, 1, 0.5, 2147483646, 9007199254740991, -0, "s", null, true, [1], {"k": 1}]');

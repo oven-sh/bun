@@ -31,6 +31,22 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    pub fn is_import_attribute_settled(&self, attributes: ExprId, key: Atom) -> bool {
+        let Some(ExprKind::Object(props)) = self.exprs.get(attributes.idx()).map(|it| it.kind)
+        else {
+            return false;
+        };
+        let mut found = 0;
+        let are_plain = props.iter().map(|prop| &self[prop]).all(|prop| {
+            let is_key = prop.key == PropKey::Name(key);
+            found += usize::from(is_key);
+            prop.kind == PropKind::Init
+                && matches!(prop.key, PropKey::Name(_))
+                && (!is_key || matches!(self[prop.value].kind, ExprKind::String(_)))
+        });
+        are_plain && found == 1
+    }
+
     pub fn find_name_of_loaded_import(&self, name: Atom) -> Option<(Atom, Atom)> {
         let mut loaded = self.imports.iter().filter(|it| it.loaded_as.is_some());
         loaded.find_map(|it| {

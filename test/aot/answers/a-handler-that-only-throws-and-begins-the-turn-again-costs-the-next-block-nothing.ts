@@ -3,9 +3,9 @@
 // # The handler block only throws, and nothing of the turn was done: the turn begins again in the other copy and the block is not walked. The next block of the frame, the handler of the `try` in front, is walked from its first operation: `e` is what was caught.
 // # The place behind the catch once stayed noted in the frame and the next handler block lost its CatchValue: the compiler stopped in the walk of `total`.
 // # f1 = pick, f2 = id, f3 = total
-// # RUN(COUNT): compile TurnsThatBeginAgain mechanisms=all
+// # RUN(COUNT): compile IterationRestartsEmitted mechanisms=all
 // # One turn begins again: the one that throws. It has done nothing yet, so the other copy does the whole turn. (There were two: the typed copy tested what `pick` answers for a number. Since a declared field is born with what its constructor stores, Link proves i32 of `v`: the test is gone by that proof.)
-// # COUNT: statistic TurnsThatBeginAgain 1
+// # COUNT: statistic IterationRestartsEmitted 1
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 3 of 3 of 3

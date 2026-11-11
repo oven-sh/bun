@@ -6,8 +6,8 @@
 # function run(count, unit) { for (let i = 0; i < count; i++) labelled[i] = label(prices[i], unit); return labelled.join(); }
 # publish(run);
 # -- end of source
-# RUN: compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
-# CHECK: statistic ListsAskedForBesideListsInFrontOfLoops 0
+# RUN: compile ArraysGuardedBesideArrays mechanisms=all
+# CHECK: statistic ArraysGuardedBesideArrays 0
 # RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(4, 1)); print(run(4, " kg")); };
 # SHELL: 1.75,2.25,2.75,3.25
 # SHELL-NEXT: 0.75 kg,1.25 kg,1.75 kg,2.25 kg

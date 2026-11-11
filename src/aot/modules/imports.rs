@@ -436,7 +436,7 @@ pub(super) fn find_modules_that_program_may_answer_for(
         }
     }
     found.retain(|&module| match module {
-        ModuleRef::File(_) | ModuleRef::Face(_) => true,
+        ModuleRef::File(_) | ModuleRef::Facade(_) => true,
         ModuleRef::Runtime(module) => {
             !matches!(module, RuntimeModule::Bun | RuntimeModule::BunTest)
         }
@@ -1315,7 +1315,7 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_required_name(RequiredName {
                     asked_by: Some(asked_by),
                     is_found_unless_mocked: true,
-                    is_asked_for_by_star: true,
+                    is_requested_by_star_export: true,
                     ..RequiredName::new(ModuleRef::File(named), export_name)
                 });
             }

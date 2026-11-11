@@ -14,6 +14,6 @@
 # CHECK: = GetTypedArrayLength {{*}} typedArrayType=9
 # CHECK: = PutTypedArrayElement {{*}} typedArrayType=9 {{*}}level=Proven
 # CHECK: = PutTypedArrayElement {{*}} typedArrayType=9 {{*}}level=Proven
-# RUN(COUNT): compile RowsThatAreNoListsAskedForViews mechanisms=all
+# RUN(COUNT): compile TypedArrayRowStoreRegionsGuarded mechanisms=all
 # Two copies of the loop, two kinds of views in each.
-# COUNT: statistic RowsThatAreNoListsAskedForViews 4
+# COUNT: statistic TypedArrayRowStoreRegionsGuarded 4

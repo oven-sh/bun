@@ -95,7 +95,8 @@ export function mocksFromOneTestFileToTheNext(): EverydayMockCase[] {
               "  lines.push(await told(() => room.look()));",
               `  lines.push(await told(${kind === "cjs" ? '() => require("./hall.cjs").look()' : 'async () => (await import("./hall.mjs")).look()'}));`,
               "});",
-              `afterAll(() => {\n  console.log("SAID ${name} " + lines.join() + " ran " + (globalThis.ran ?? 0));\n});`,
+              // A branch that is never taken: a compiler that folds it the wrong way changes the line.
+              `afterAll(() => {\n  let text = lines.join() + " ran " + (globalThis.ran ?? 0);\n  if (process.argv.length > 99) text = "a long command line";\n  console.log("SAID ${name} " + text);\n});`,
             ]
               .filter(Boolean)
               .join("\n") + "\n";
@@ -151,7 +152,7 @@ export function mocksLaidTwice(): EverydayMockCase[] {
             const text = [
               'import { jest, mock, test, vi } from "bun:test";',
               "let laid = 0;",
-              `const lay = () => {\n  laid++;\n  ${call}("./lamp.KIND", () => (${made}));\n  console.log("SAID laid " + laid);\n};`,
+              `const lay = () => {\n  laid++;\n  ${call}("./lamp.KIND", () => (${made}));\n  let text = "laid " + laid;\n  if (process.argv.length > 99) text = "a long command line";\n  console.log("SAID " + text);\n};`,
               'test("both", async () => {',
               "  try {",
               "    lay();",

@@ -7,8 +7,8 @@
 # f1 = counted
 # Both arms of the choice hand `value` itself over, the one as "v0, which is a text", the other as "v0, which is none": where the two meet, the join made a parameter: one value joined with itself, of which the join says no
 # more than v0 says. The parameter that the text writes there is bound to v0, as a name of the ways has been.
-# RUN(EVENT): compile ParametersAtJoinsThatAreTheValueNarrowedOnEveryWay mechanisms=all
-# EVENT-NOT: statistic ParametersAtJoinsThatAreTheValueNarrowedOnEveryWay 0
+# RUN(EVENT): compile NarrowedArgumentsFoldedAtJoins mechanisms=all
+# EVENT-NOT: statistic NarrowedArgumentsFoldedAtJoins 0
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: Return v0

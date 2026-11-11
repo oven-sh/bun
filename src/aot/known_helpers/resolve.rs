@@ -492,7 +492,7 @@ fn find_required_file(
         SiteAnswer::Module(ModuleRef::File(required)) => Some(required),
         SiteAnswer::Module(
             ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
+            | ModuleRef::Facade(_)
             | ModuleRef::Check(_)
             | ModuleRef::Runtime(_)
             | ModuleRef::External { .. },

@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the walk as users build it, and every raw store asks its position at the run.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the walk as users build it, and every raw store asks its position at the run.
 function show(x: unknown): string { if (Array.isArray(x)) { const parts: string[] = []; for (let i = 0; i < x.length; i++) parts.push(i in x ? (Object.is(x[i], -0) ? "-0" : typeof x[i] + ":" + String(x[i])) : "hole"); return "list " + x.length + "[" + parts.join(",") + "]"; } return String(x); }
 function floor(xs: number[], out: number[]): number[] { for (let i = 0; i < xs.length; i++) out[i] = xs[i] > 0 ? xs[i] : 0; return out; }
 function greater(xs: number[], ys: number[], out: number[]): number[] { for (let i = 0; i < xs.length; i++) out[i] = xs[i] > ys[i] ? xs[i] : ys[i]; return out; }

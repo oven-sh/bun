@@ -1,5 +1,5 @@
 // The same, called without further operands.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const table = { one: (a, b) => "one" + a + b, many: [(a, b) => "x" + a, (a, b) => "y" + b] };
 const names = JSON.parse('["one","many","none"]');
 function each(list, args) { let text = ""; for (let i = 0; i < list.length; i++) text += list[i].apply(undefined, args); return text + "/" + args.length; }

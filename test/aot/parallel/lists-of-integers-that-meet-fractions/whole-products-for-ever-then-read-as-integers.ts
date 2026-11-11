@@ -1,5 +1,5 @@
 // The factors are 2 and 0.5 in turn, so no fraction is ever stored; other loops and built-in methods take the elements as integers: shifts, positions in a table, indexOf, includes, pop, push, at. What is printed is what plain Bun prints.
-// STATISTIC: ListsConvertedInFrontOfTypedCopies >= 1
+// STATISTIC: ArraysConvertedToDoubleStorage >= 1
 function scale(list: number[], by: number): void { for (let at = 0; at < list.length; at++) list[at] = list[at] * by; }
 function bits(list: number[]): number { let all = 0; for (let at = 0; at < list.length; at++) all ^= list[at] << (at & 7); return all; }
 function place(list: number[], table: string[]): string { let text = ""; for (let at = 0; at < list.length; at++) text += table[list[at] & 3]; return text; }

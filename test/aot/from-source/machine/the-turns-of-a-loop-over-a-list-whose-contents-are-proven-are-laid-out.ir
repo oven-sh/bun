@@ -1,7 +1,7 @@
 # Where Link has proven what a list holds, the walk writes `CheckProof source=Contents [isLeftToTestBehind]` in front of the test that asks in full. That check has no code: the test behind it is the check. It was not
 # among the operations of turns laid out, so an operation without code shut every loop over a list of the file out of the row. The loop is built twice (the list's storage is asked in front): both builds are laid out.
-# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
-# EVENT: statistic LoopsWhoseTurnsAreLaidOut 2
+# RUN(EVENT): compile UnrolledLoopsEmitted mechanisms=all
+# EVENT: statistic UnrolledLoopsEmitted 2
 # RUN(WALK): walk f1 mechanisms=all
 # WALK: = CheckProof {{*}} source=Contents [isLeftToTestBehind]
 # -- source: main.cjs

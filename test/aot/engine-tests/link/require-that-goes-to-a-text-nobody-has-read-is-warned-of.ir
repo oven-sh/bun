@@ -1,7 +1,7 @@
 # const vm = require("node:vm"); vm.runInNewContext(text, { require });
 # The text names the file that it loads, and nobody has read the text: the executable refuses what was not compiled into it. The build cannot know the name, so it says once, of no place, that a loader has left.
 # OPTIONS: exclude=CodeOutsideImage
-# DIAGNOSTIC: LoaderIsHeldByUnseenCode 1
+# DIAGNOSTIC: RequirePassedToUnseenCode 1
 # RUN: link functions mechanisms=all
 # CHECK: function f0
 

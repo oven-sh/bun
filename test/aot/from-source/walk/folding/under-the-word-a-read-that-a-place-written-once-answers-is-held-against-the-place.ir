@@ -14,9 +14,9 @@
 # RUN(KEPT): walk f1 mechanisms=all testing=CheckProofsAtRunTime
 # KEPT-LABEL: code f1:Body
 # KEPT-COUNT-2: = GetModuleVariable
-# KEPT-NOT: followsItsStore
+# KEPT-NOT: isKnownInitialized
 # RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
-# HELD-COUNT-2: source=WhatIsRemembered
+# HELD-COUNT-2: source=RememberedFact
 # RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime globalThis.text = () => "4"; globalThis.call = () => { };
 # RIGHT: 44
 # RIGHT-NEXT: exited with 0

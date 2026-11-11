@@ -218,7 +218,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         WTF::String requesterPath = from.isString() ? from.toWTFString(globalObject) : WTF::String();
         RETURN_IF_EXCEPTION(scope, );
         // The asker chooses the words of the refusal alone.
-        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForImporter(requesterPath));
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(requesterPath));
         scope.release();
         JSC::AOT::checkModuleAccess(globalObject, *module);
         return;

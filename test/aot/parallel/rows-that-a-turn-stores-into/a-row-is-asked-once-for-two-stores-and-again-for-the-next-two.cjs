@@ -1,6 +1,6 @@
 // Six stores into the row that the turn finds: a stretch reaches to its second store, so the row is asked three times, and each stretch has one rest as written behind its first store.
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 3
-// STATISTIC: RestsOfStretchesThatMayRunAsWritten >= 3
+// STATISTIC: RowStoreRegionsGuarded >= 3
+// STATISTIC: PartialRegionFallbacksEmitted >= 3
 "use strict";
 function pushed(...values) { const row = []; for (const value of values) row.push(value); return row; }
 function scaled(count, grid, factor, from, to) { for (let i = from - 1; i >= to; i--) { for (let k = 0; k < count; k++) { grid[k][i] = grid[k][i] * factor; grid[k][i + 1] = grid[k][i + 1] * factor + grid[k][i]; grid[k][i + 2] = grid[k][i + 2] * factor; grid[k][i + 3] = grid[k][i + 3] * factor + grid[k][i + 2]; grid[k][i + 4] = grid[k][i + 4] * factor; grid[k][i + 5] = grid[k][i + 5] * factor + grid[k][i + 4]; } } }

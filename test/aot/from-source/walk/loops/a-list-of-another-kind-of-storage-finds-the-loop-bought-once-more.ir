@@ -36,8 +36,8 @@
 # FAR: = IsElementPresent {{*}}arrayStorage=Int32
 # FAR: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # FAR: = IsElementPresent {{*}}arrayStorage=Double
-# RUN(COUNT): compile LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage mechanisms=all
-# COUNT: statistic LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage 6
+# RUN(COUNT): compile LoopsReversionedForOtherIndexingType mechanisms=all
+# COUNT: statistic LoopsReversionedForOtherIndexingType 6
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 240 240 17179869424
 # ANSWERS: 250 250

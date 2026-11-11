@@ -1,5 +1,5 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable, and its slot is held to what is seen defined. Code out of a text calls Object.freeze on the object before that: the definition throws and the name stays absent.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
+// STATISTIC: FieldTypesEnforced >= 2
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 let refusals = 0;

@@ -18,13 +18,13 @@
 // # WORD: isInLoop=true isLoopHead=true
 // # WORD-NOT: = GetConstructPrototype
 // # WORD: [[members]]: boolean @Boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="x"}, {kind=MemberPassedByStores layout=L0 key="y"}]
-// # WORD-NEXT: CheckProof [[members]] checkedType=true {{*}}source=WhatIsRemembered
+// # WORD-NEXT: CheckProof [[members]] checkedType=true {{*}}source=RememberedFact
 // # WORD: = NewObject {{*}}layout=L0 fields=[0, 1]
 // # WORD: = GetClassPrototype [[function]] layout=L0 traits
 // # WORD-NEXT: CheckProof {{*}}source=OtherOperation
 // # WORD-NEXT: = GetClassPrototype [[function]] layout=L0 [readsClassObjectItself]
 // # WORD: [[same]]: boolean @Boolean = StrictEq
-// # WORD-NEXT: CheckProof [[same]] checkedType=true {{*}}source=WhatIsRemembered
+// # WORD-NEXT: CheckProof [[same]] checkedType=true {{*}}source=RememberedFact
 // # WORD-NOT: = GetConstructPrototype
 // # The road on which the body is entered by a call and the allocation lists no store.
 // # RUN(ENTERED): walk f8 mechanisms=all testing=CheckProofsAtRunTime
@@ -38,8 +38,9 @@
 // # CHECKED: 12 of 12 of 12
 // # CHECKED-NEXT: exited with 0
 // # A lie: the guards in front of the loops are taken to hold, so the typed turns go on behind another object under `prototype`. Under the word the process stops by name.
-// # RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold $SHELL
-// # LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+// # RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts $SHELL
+// # LIE: bun: internal AOT error: redundancy elimination check failed
+// # LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 // # LIE: crashed with
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

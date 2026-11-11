@@ -3,5 +3,5 @@
 # LIBRARY: own
 # PROGRAM-OF: link-read-off-the-prototype-of-a-class-lets-go-what-stands-above-it.ir
 # RUN: link functions mechanisms=all
-# CHECK-NOT: FlowStandsOnWhatNoLongerHolds
+# CHECK-NOT: StaleFlowAssumption
 # CHECK-NOT: function f2 unreached

@@ -1,17 +1,18 @@
 // A loop that calls one of a few functions out of a variable asks in front of its turns which of them the variable holds. That read is none of the reads of the text: what holds of those, that a store
 // stands in front of each, does not hold of it. Where the first store stands in the turn the variable still holds undefined there, so the read takes the word as it lies and claims nothing.
-// `--aot-testing=VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven` takes the read to hold what is proven of the variable. Under `--aot-harden=proof-checks` every such claim is asked at run time:
+// `--aot-testing=AssumeVariablesInitialized` takes the read to hold what is proven of the variable. Under `--aot-harden=proof-checks` every such claim is asked at run time:
 // with both the program stops by name, in front of its first turn. `fuzz/fuzzilli/write-variable-that-a-loop-uses-sweep.ts` writes these programs and their neighbors.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
+import { expectFaultyBuild } from "./harness/fault-injection";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const CHECKED = "--aot-harden=proof-checks";
-const WORD = "--aot-testing=VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven";
+const WORD = "--aot-testing=AssumeVariablesInitialized";
 const peek = `function peek() {
   return held;
 }
@@ -71,24 +72,16 @@ describe.skipIf(!!unsupported)("the read that a loop lays in front of itself", (
         expect(plain.exitCode).toBe(0);
         const counted = await build("right", CHECKED, "--explain=statistics");
         expect(counted.exitCode).toBe(0);
-        expect(counted.stderr).toMatch(/^\s*FewClosuresInVariablesReadInFrontOfLoops\s+[1-9]/m);
-        expect(counted.stderr).toMatch(/^\s*ReadsInFrontOfLoopsThatGiveTheWordAsItLies\s+[1-9]/m);
+        expect(counted.stderr).toMatch(/^\s*CalleeVariableReadsHoisted\s+[1-9]/m);
+        expect(counted.stderr).toMatch(/^\s*RawVariableReadsHoisted\s+[1-9]/m);
         const right = await spawned([executable("right")], folder, env);
         expect({ stdout: right.stdout, exitCode: right.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
         const built = await build("held", CHECKED, WORD);
-        // A Bun that is built with assertions or a sanitizer verifies the code of every unit: there the build itself refuses what the word lays.
-        if (isASAN || isDebug) {
-          expect(built.stderr).toContain(
-            "is typed by a proof that leaves out the word that its variable is born with, and nothing vouches for it",
-          );
-          expect(built.exitCode).not.toBe(0);
-          return;
-        }
-        expect(built.exitCode).toBe(0);
+        const diagnostic =
+          "is typed by a proof that leaves out the word that its variable is born with, and nothing vouches for it";
+        if (!expectFaultyBuild(built, diagnostic)) return;
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
-        expect(held.stderr).toContain(
-          "what a variable holds is not of the type that the compiler has proven of it. It is: undefined.",
-        );
+        expect(held.stderr).toContain("found undefined in a local variable");
         expect(held.stdout).not.toContain("SAID");
         expect(held.exitCode).not.toBe(0);
       }));

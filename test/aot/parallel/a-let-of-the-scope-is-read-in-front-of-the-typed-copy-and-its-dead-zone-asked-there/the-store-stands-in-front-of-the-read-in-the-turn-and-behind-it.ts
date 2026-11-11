@@ -1,5 +1,5 @@
 // The turn itself stores the variable, once in front of the read through the helper and once behind it.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies = 0
+// STATISTIC: CapturedVariableReadsHoisted = 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

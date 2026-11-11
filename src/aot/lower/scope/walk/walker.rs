@@ -341,8 +341,8 @@ impl<'x, 's> Walker<'x, 's> {
             is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
         let wrapper_slots = match keeps_wrapper {
             true => {
-                let runs_again = input.modules.runs_again(input.file);
-                commonjs::WrapperSlots::of(bound, decisions, runs_again)
+                let may_be_reevaluated = input.modules.may_be_reevaluated(input.file);
+                commonjs::WrapperSlots::of(bound, decisions, may_be_reevaluated)
             }
             false => commonjs::WrapperSlots::default(),
         };
@@ -387,7 +387,7 @@ impl<'x, 's> Walker<'x, 's> {
                 wrapper_slots,
                 has_values_of_each_run: is_commonjs
                     && !keeps_wrapper
-                    && input.modules.runs_again(input.file),
+                    && input.modules.may_be_reevaluated(input.file),
                 keeps_first_exports: is_commonjs
                     && !keeps_wrapper
                     && commonjs::keeps_first_exports(

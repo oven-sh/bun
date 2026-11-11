@@ -15,9 +15,9 @@
 # print(up(a, 0, 3), up(a, 1.5, 3), up(a, "1", 3), up(a, -1, 3), up(["a"], 0, 3), down(a, 0.5, 4), down(a, 0.5, 2.5), down(a, 0.5, NaN), turned(b, 0, 5), b.join(), turned(b, 0.5, 2.5), Object.keys(b).length);
 # -- end of source
 # f1 = swap, f2 = up, f3 = down, f4 = turned
-# RUN(EVENT): compile ListsTakenUnderCountersAskedInFrontOfLoops ListsNotListedThatCopiesOfCalleesStoreInto mechanisms=all
-# EVENT: statistic ListsTakenUnderCountersAskedInFrontOfLoops 2
-# EVENT: statistic ListsNotListedThatCopiesOfCalleesStoreInto 3
+# RUN(EVENT): compile ArraysGuardedUnderSpeculatedCounters InlineeStoredArraysNotGuarded mechanisms=all
+# EVENT: statistic ArraysGuardedUnderSpeculatedCounters 2
+# EVENT: statistic InlineeStoredArraysNotGuarded 3
 # RUN(UP): walk f2 mechanisms=all
 # UP-LABEL: code f2:Body
 # UP: = GetArrayElement {{*}}level=Proven [keyIsIntegral

@@ -6,7 +6,7 @@
 # CHECK: flags {{*}}AdmitsUnknownJavaScript
 
 module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
-module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="heapSize" variable=g0 isKnownMember=true}]
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="heapSize" variable=g0 isKnownMember=true}]
 entry module=m0
 variable g0 name="heapSize" module=m1 declared={type=anything}
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

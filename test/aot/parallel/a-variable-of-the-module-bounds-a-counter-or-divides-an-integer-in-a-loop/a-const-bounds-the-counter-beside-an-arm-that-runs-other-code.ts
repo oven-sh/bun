@@ -1,4 +1,4 @@
-// STATISTIC: HeadsThatAskBoundInVariable >= 2
+// STATISTIC: VariableLoopBoundsHoisted >= 2
 class Box { constructor(public v: number) {} }
 const N = Number(process.argv[2] ?? "12"); let seen = 0; const trap: any = {};
 Object.defineProperty(trap, "v", { get() { seen += 100; return 1; } });

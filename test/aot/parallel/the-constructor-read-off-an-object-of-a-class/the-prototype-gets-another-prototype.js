@@ -1,5 +1,5 @@
 // The prototype of one heir loses its constructor and gets the prototype of a class outside the row.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Tree { k = 0; again() { return new this.constructor(); } }
 class Ash extends Tree { k = 1; }
 class Birch extends Tree { k = 20; }

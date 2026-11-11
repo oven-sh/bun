@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate
-// STATISTIC: CallsThroughSuperMadeBehindGuards >= 1
+// STATISTIC: SuperCallsDevirtualized >= 1
 const words: Record<string, string> = JSON.parse('{"weigh":"weigh","proto":"prototype"}');
 class Root { weigh(by: number): number { return by; } }
 class Middle extends Root {}

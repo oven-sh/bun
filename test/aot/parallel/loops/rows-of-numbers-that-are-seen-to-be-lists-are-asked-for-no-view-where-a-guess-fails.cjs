@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtListsWhoseFailingSideAsksForViews = 0
+// STATISTIC: ArraySpeculationsWithTypedArrayFallback = 0
 "use strict";
 function turned(V, j) { j = j | 0; let h = 0; for (let k = 0; k < V.length; k++) { h = V[k][j + 1]; V[k][j + 1] = 0.6 * V[k][j] + 0.8 * h; V[k][j] = 0.8 * V[k][j] - 0.6 * h; } return h; }
 const go = { turned }[JSON.parse('"turned"')];

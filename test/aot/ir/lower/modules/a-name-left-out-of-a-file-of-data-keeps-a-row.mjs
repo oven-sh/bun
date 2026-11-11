@@ -1,7 +1,7 @@
 // The build keeps no variable for a name of a file of data that no written import reads. The name keeps a row: it names the variable of `default` and says that it was left out, so the run time lists it and hands nothing out under it.
 // A file of which compiled code takes the namespace, or reads every name, has no such row.
 // RUN(SHORT): link
-// SHORT: module {{*}}short.json" kind=Data {{*}}exports=[{name="a" variable=[[a]]}, {name="b" variable=[[whole]] isLeftOut=true}, {name="default" variable=[[whole]]}]
+// SHORT: module {{*}}short.json" kind=Data {{*}}exports=[{name="a" variable=[[a]]}, {name="b" variable=[[whole]] isOmitted=true}, {name="default" variable=[[whole]]}]
 // RUN(WHOLE): link
 // WHOLE: module {{*}}whole.json" kind=Data {{*}}exports=[{name="a" variable=[[a]]}, {name="b" variable=[[b]]}, {name="default" variable=[[whole]]}]
 // RUN(READ): link

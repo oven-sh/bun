@@ -1,4 +1,4 @@
-// STATISTIC: LoopsThatHoldLoopsWrittenOut >= 1
+// STATISTIC: LoopNestsFullyUnrolled >= 1
 "use strict";
 function spread(table, other, stored) {
     let sum = 0;

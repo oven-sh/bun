@@ -8,7 +8,7 @@ use bun_aot_interface::report::{
 use bun_aot_interface::statistics::{StatisticId, Statistics};
 use bun_aot_interface::{Opaque, SourceProvider};
 use bun_ast::Log;
-use bun_options_types::aot_options::ExplainSet;
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
@@ -36,9 +36,8 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_log_time_outside_stages(_name: &str) { absent() }
     fn bun_aot_log_part_outside_stages(_name: &str) { absent() }
     fn bun_aot_new_report_line(_kind: ExplainSet, _text: Vec<u8>) -> ReportEntry { absent() }
-    fn bun_aot_write_summary(_input: &ReportInput<'_>, _out: &mut Vec<u8>) { absent() }
-    fn bun_aot_write_developer_options(_option_words: &[Box<[u8]>], _out: &mut Vec<u8>) { absent() }
-    fn bun_aot_write_untyped_note(_statistics: &Statistics, _out: &mut Vec<u8>) { absent() }
+    fn bun_aot_write_summary(_input: &ReportInput<'_>, _has_colors: bool, _out: &mut Vec<u8>) { absent() }
+    fn bun_aot_write_developer_options(_options: &AotOptions, _out: &mut Vec<u8>) { absent() }
     fn bun_aot_collect_report_entries(_input: &ReportInput<'_>, _kinds: ExplainSet) -> Vec<ReportEntry> { absent() }
     fn bun_aot_report_entries_to_messages(_texts: &SourceTexts, _entries: &[ReportEntry]) -> Vec<ReportMessage> { absent() }
     fn bun_aot_write_obfuscation_map(_engine: &EngineResult, _texts: &SourceTexts, _file_name: &[u8], _debug_id: Option<&[u8]>) -> Result<Vec<u8>, SourceChanged> { absent() }

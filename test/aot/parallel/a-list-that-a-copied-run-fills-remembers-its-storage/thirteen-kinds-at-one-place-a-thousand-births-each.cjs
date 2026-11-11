@@ -1,4 +1,4 @@
-// STATISTIC: ListsFilledByCopiedRunsThatRememberStorageAtSite >= 1
+// STATISTIC: InlineeArraysGivenAllocationProfiles >= 1
 "use strict";
 const show = list => list.length + ":" + Array.from({ length: list.length }, (_, i) => i in list ? (list[i] === undefined ? "<u>" : Object.is(list[i], -0) ? "-0" : typeof list[i] === "object" ? JSON.stringify(list[i]) : typeof list[i] + " " + String(list[i])) : "<hole>").join(",");
 const plainly = (rows, take) => { const out = []; out.length = rows.length; for (let i = 0; i < rows.length; i++) out[i] = take(rows[i]); return out; };

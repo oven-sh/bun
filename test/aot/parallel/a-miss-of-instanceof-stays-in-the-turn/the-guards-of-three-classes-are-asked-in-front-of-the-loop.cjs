@@ -1,7 +1,7 @@
 // A helper copied in line tells three classes apart in a loop. The guards of all three questions are asked once in front of the typed copy of the loop, also those of the second and the third, which stand under a branch of the helper:
 // so none of them is asked in a turn.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
-// STATISTIC: GuardsOfInstanceOfAskedInFrontOfTypedCopies >= 3
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
+// STATISTIC: InstanceOfGuardsHoisted >= 3
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

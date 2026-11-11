@@ -1,5 +1,5 @@
 // A generator method under the iterator symbol: a field that may be null holds the object that is gone over.
-// STATISTIC: GeneratorMethodsWalkedInPlaceOfIterations >= 1
+// STATISTIC: GeneratorMethodsInlinedIntoIterations >= 1
 class Bag { constructor(private a: number[]) {} *[Symbol.iterator]() { for (const x of this.a) yield x; } }
 class Holder { bag: Bag | null = null; }
 function sum(holder: Holder): string { try { let s = 0; for (const x of holder.bag!) s += x; return String(s); } catch (e) { return (e as Error).constructor.name + ": " + (e as Error).message; } }

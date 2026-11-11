@@ -17,8 +17,8 @@
 # RUN(AROUND): walk f3 mechanisms=all-Inlining
 # AROUND-LABEL: code f3:Body
 # AROUND-NOT: int[0, 8] @Int32) isInLoop=true isLoopHead=true
-# RUN(COUNT): compile ShortLoopsLeftAsLoopsForWhatTheyBecome mechanisms=all-Inlining
-# COUNT: statistic ShortLoopsLeftAsLoopsForWhatTheyBecome 2
+# RUN(COUNT): compile FullUnrollingsRejectedForSize mechanisms=all-Inlining
+# COUNT: statistic FullUnrollingsRejectedForSize 2
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 120 40 240
 # ANSWERS-NEXT: exited with 0

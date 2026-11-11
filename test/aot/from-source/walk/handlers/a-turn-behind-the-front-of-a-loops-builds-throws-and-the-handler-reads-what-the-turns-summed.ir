@@ -35,7 +35,7 @@
 # CHECK-NEXT: 18|null|99
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
 # FAILING: at 5 in round 0|0|1.5
 # FAILING-NEXT: 18|null|105
 # FAILING-NEXT: 18|null|99

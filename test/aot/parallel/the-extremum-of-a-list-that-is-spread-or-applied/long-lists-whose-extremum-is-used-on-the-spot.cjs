@@ -1,5 +1,5 @@
 // The call stands in no tail position, so the function of the prelude is asked first: a list longer than the arguments that a call reserves room for goes as written, and is refused where plain refuses it.
-// STATISTIC: LibraryFunctionsEnteredBehindRows >= 2
+// STATISTIC: LibraryFunctionsCalledDirectly >= 2
 'use strict';
 const out = [];
 function all(label, list) {

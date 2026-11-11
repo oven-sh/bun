@@ -6,8 +6,8 @@
 # print(pick(given[0], given[1]), pick(given[2], given[3]), pick(given[4], given[5]), bits(given[0], given[1]), bits(given[2], given[3]));
 # -- end of source
 # f1 = pick, f2 = bits. Behind `i < bound`, bound from 0 to 3, the walk tells int[0, 2] of i, and `i < 3` is folded: no test, no other arm. In f2 `i >>> 0` hands i on, for it lies from 0 to 2.
-# i is a raw int32: the name behind the test has no box, so the word that checks proofs (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) asked nothing of it: a range that is false
-# gave the other arm in silence. Now the range is held against the number where the fold is made. As users build, nothing is asked.
+# i is a raw int32. The value after the test is not boxed, so the switch that checks proofs (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks enables) used to check nothing about it.
+# A false range silently gave the other branch. Now the range is checked against the number where the fold is made. A default build checks nothing.
 # RUN(HELD): walk f1 f2 mechanisms=all testing=CheckProofsAtRunTime
 # HELD-LABEL: code f1:Body
 # HELD: = Narrowed
@@ -19,10 +19,12 @@
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: low out out 1 3
 # RIGHT-NEXT: exited with 0
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: 3 passes `i < bound` under a bound of 3, and the fold answers for it in silence.
-# RUN(LIE): run-in-shell mechanisms=all testing=EqualIntegersAreTakenToBeLess
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So 3 passes `i < bound` with a bound of 3, and the fold silently decides the result for it.
+# RUN(LIE): run-in-shell mechanisms=all testing=TreatEqualIntegersAsLess
 # LIE: low low out
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
-# STOPPED: AOT: f{{*}} at {{*}}: what a test has let pass is not of the type that the compiler has proven of it
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed
+# STOPPED-NEXT: in a value narrowed by a branch
 # STOPPED-NOT: low low
 # STOPPED: crashed with

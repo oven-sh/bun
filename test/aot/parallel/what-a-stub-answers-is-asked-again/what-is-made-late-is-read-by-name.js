@@ -1,6 +1,6 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // What a class, a function and their prototype objects hold is made late: at the first look. Under the word that checks the walk the asking goes through lazy prototypes as the run time's own filing does, and passes a slim closure by: it makes nothing that the program has not made. Six rounds of sixteen readers over five subjects answer alike.
-// COUNTER: AnswersAskedAgain >= 100
+// COUNTER: FastPathResultsVerified >= 100
 const unseen = (x) => [x][JSON.parse("0")];
 class Base { constructor(i) { this.own = i; } method() { return this.own; } get seen() { return this.own + 1; } static make(i) { return new this(i); } static kept = 5; }
 class Heir extends Base { other() { return 2; } }

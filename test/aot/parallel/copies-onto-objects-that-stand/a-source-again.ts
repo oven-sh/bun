@@ -1,4 +1,4 @@
-// STATISTIC: CopiesThatAreDefinitionsOneByOne >= 1
+// STATISTIC: ObjectSpreadsExpandedToDefines >= 1
 // The source is born with the layout that the copy expects and changed behind its birth through a key that nobody knows: the layout alone says nothing of that: the copy asks the object for its own keys.
 const log: string[] = [];
 function show(o: any): string { return Reflect.ownKeys(o).map(k => String(k) + "=" + String(Object.getOwnPropertyDescriptor(o, k)!.get ? "getter" : o[k])).join(","); }

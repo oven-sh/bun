@@ -1,5 +1,5 @@
 // A plain object stands between the topmost animal's prototype and Object.prototype from the class's own static block on; later IT is laid below Marked's prototype: every animal is Marked from then on.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin = 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy = 2
 class Marked { mark = 1; }
 class Stamped extends Marked {}
 const middle: object = {};

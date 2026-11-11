@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsOfWhatIsNoObjectThatRunNoCode >= 1
+// STATISTIC: PrimitiveCalleesTreatedAsThrows >= 1
 // `N.add` lies in a slot that may be empty. The arm where it is undefined throws and runs no code: the turn stays quiet, and what the turn reads of the views stands in front of the loop.
 function add(out, a, b) { out[0] = a[0] + b[0]; out[1] = a[1] + b[1]; return out; }
 function dot(a, b) { return a[0] * b[0] + a[1] * b[1]; }

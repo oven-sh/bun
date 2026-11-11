@@ -1,5 +1,5 @@
 // The construction through this.constructor passes a number, a text and an object; the only other caller of the constructor passes 1.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Point { constructor(x) { this.x = x; } again(value) { return new this.constructor(value); } }
 const first = new Point(1);
 let sum = 0;

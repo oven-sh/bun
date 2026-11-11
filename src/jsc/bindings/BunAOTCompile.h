@@ -40,8 +40,8 @@ extern "C" BunAOTResult* Bun__AOT__compile(
     void* programOwner,
     const JSC::AOT::Wire::CompileOptions*,
     const JSC::AOT::HostThreadPool*, // Its function is still called after this has returned, and what it is handed runs then: the pool lives as long as the process.
-    size_t (*sizeOfFunctionText)(void* owner, uint32_t module),
-    void (*copyFunctionText)(void* owner, uint32_t module, uint8_t* destination));
+    size_t (*functionSourceSize)(void* owner, uint32_t module),
+    void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination));
 extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult*, JSC::AOT::Wire::ResultSection);
 extern "C" void Bun__AOT__freeResult(BunAOTResult*);
 extern "C" size_t Bun__AOT__imageAlignment();

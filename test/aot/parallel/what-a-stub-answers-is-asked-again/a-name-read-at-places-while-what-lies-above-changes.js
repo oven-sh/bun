@@ -1,7 +1,7 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // A closed read by name is answered by a stub: out of the place of the read, a site, or the table of slots. Under the word that checks the walk the caller asks receiver and name again behind every such read, behind `in`, behind hasOwn and behind a read that only gives its truth, unless a getter or the run time stood behind the answer.
 // What lies above the receivers changes between the rounds: a value is laid, becomes an accessor, is taken away; another object is laid between. Where the table does not drop what hangs on a chain every round but the first stops by name.
-// COUNTER: AnswersAskedAgain >= 3000
+// COUNTER: FastPathResultsVerified >= 3000
 const unseen = (0, eval)("(x) => x");
 class Kind { constructor(i) { this.own = i; if (i % 2) this.sometimes = i; } get seen() { return this.own + 1; } }
 const above = unseen({ high: 1 }), middle = unseen(Object.setPrototypeOf({ mid: 2 }, above)), low = [];

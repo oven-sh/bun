@@ -1,6 +1,6 @@
 // Two functions call themselves and one another through a choice between the two.
-// STATISTIC: CallsToldApartByCallee >= 1
-// STATISTIC: JoinsWalkedOnceForEachCallee >= 1
+// STATISTIC: CallsDispatchedByCallee >= 1
+// STATISTIC: JoinsDuplicatedPerCallee >= 1
 function down(n: number): number { const next = n & 1 ? down : half; return n <= 0 ? 0 : 1 + next(n - 1); }
 function half(n: number): number { const next = n % 3 ? down : half; return n <= 0 ? 0 : 1 + next(n >> 1); }
 let sum = 0;

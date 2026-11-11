@@ -1,6 +1,6 @@
 "use strict";
-// STATISTIC: AnswersOfLookupsAskedForNumbers >= 2
-// STATISTIC: LookupsBuiltInFrontOfLoops >= 2
+// STATISTIC: MapResultsGuardedAsNumbers >= 2
+// STATISTIC: CollectionLookupsHoisted >= 2
 const turns = JSON.parse("8") | 0;
 const table = new Map(Object.entries(JSON.parse("{\"a\":1,\"b\":2}")));
 function sum() { let s = 0; for (let i = 0; i < turns; i++) s += table.get("a") + table.get("b"); return s; }

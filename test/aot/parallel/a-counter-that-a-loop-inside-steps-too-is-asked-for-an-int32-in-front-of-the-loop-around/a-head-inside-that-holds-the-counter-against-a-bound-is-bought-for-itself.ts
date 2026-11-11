@@ -1,4 +1,4 @@
-// STATISTIC: CountersThatLoopsInsideStepAskedInFrontOfLoops = 0
+// STATISTIC: NestedLoopCounterGuardsHoisted = 0
 const rounds = +process.argv[2]! || 3;
 class Sum {
   a = 1; b = 0;

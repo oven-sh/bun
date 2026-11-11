@@ -21,7 +21,7 @@ async function run(cmd: string[], cwd: string, seconds: number) {
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const purchasesOfLoopsThatFailed = /^PurchasesOfLoopsThatFailed (\d+)$/m.exec(stderr)?.[1];
+  const purchasesOfLoopsThatFailed = /^LoopVersioningAttemptsFailed (\d+)$/m.exec(stderr)?.[1];
   return {
     stdout,
     stderr: stderr.split("\n").slice(-30).join("\n"),

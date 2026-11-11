@@ -1,5 +1,5 @@
 // A name made at run time spells constructor: a static method of one heir, a definition on the prototype of the other.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 const name = "constr" + "uctor";
 class Tree { k = 0; again() { return new this.constructor(); } }
 class Ash extends Tree { k = 1; static [name]() { return 9; } }

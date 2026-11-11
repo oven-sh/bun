@@ -13,7 +13,7 @@
 # The list and the position lie in two words more of the iteration's state, so the form holds for any flow: `yield*` in an async generator resumes in three places.
 # Resumed by throw or return the wrapper is made after all, round a fresh iterator of the engine: neither steps it, both only ask it for a method.
 # Where nothing says that a list comes, nothing is asked: the iterator and `next` stay values of the frame.
-# STATISTIC: AsyncIterationsOverListsSteppedByIndex = 2
+# STATISTIC: AsyncArrayIterationsIndexed = 2
 # RUN: walk f1:CoroutineBody mechanisms=all
 # CHECK-LABEL: code f1:CoroutineBody
 # CHECK: = NewHeapWords numberOfWords=6

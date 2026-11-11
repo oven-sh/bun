@@ -1,6 +1,6 @@
-// STATISTIC: TruthsAskedOfRawElementsInTurnsLaidOut >= 2
-// STATISTIC: LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked >= 1
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
+// STATISTIC: UnrolledLoopRawTruthinessTests >= 2
+// STATISTIC: UnrolledLoopsForInt32Truthiness >= 1
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the turns are laid out as users build them, and every raw access asks its position at the run
 "use strict";
 // A hole is as false as undefined only while nothing lies under its index above the list: an object laid between the list and Array.prototype holds a number there, then zero, then a getter that changes the list.
 const said = [];

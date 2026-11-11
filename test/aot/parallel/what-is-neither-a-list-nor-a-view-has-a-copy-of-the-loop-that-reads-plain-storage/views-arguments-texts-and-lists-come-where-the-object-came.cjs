@@ -1,4 +1,4 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 // The same loop is handed an ordinary object, then views of every kind, both kinds of arguments objects, texts, String objects, lists of every storage, a function and primitives.
 const said = [];
 function sum(like) { let s = 0; for (let j = 0; j < like.length; j++) s += like[j]; return s; }

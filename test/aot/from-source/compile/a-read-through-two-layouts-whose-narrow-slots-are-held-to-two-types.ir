@@ -14,7 +14,7 @@
 # code f1:Body {
 #   frame 0 callee=f1 callPosition=4294967295 module=m0
 #   b0(v0: anything?ParameterOfEscapedFunction @JSValue) entry=0:
-#     v1: anything?ContentsOfEscapedObject @JSValue = GetSlot v0 key="other" receivers=[L2, L3] level=Expected [holdsDeclaredType] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v1: anything?ContentsOfEscapedObject @JSValue = GetSlot v0 key="other" receivers=[L2, L3] level=Expected [holdsDeclaredType] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v1
 # }
 # -- end of code

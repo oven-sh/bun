@@ -1,5 +1,5 @@
 // The turns store into lists, so no row is asked in them.
-// STATISTIC: ListsAskedInTurnsOfTypedCopies = 0
+// STATISTIC: ArraysGuardedInIterations = 0
 const steps = JSON.parse(`["run"]`);
 const ops = { run };
 function call(d, t) {

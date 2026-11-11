@@ -35,7 +35,7 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
             file.declare_inner_module_body(callback);
         }
     }
-    file.declare_face_body();
+    file.declare_facade_body();
     file.declare_check_body();
     file.declare_instantiation();
     let data = match kind {
@@ -204,15 +204,15 @@ impl FileLowering<'_, '_, '_, '_> {
             true => &[],
             false => &self.hir.text,
         };
-        let embeds_function_text = self.inputs.options.embeds_function_text && !is_placeholder;
-        let types_in_function_text = embeds_function_text.then(|| self.finish_function_texts());
+        let embeds_function_source = self.inputs.options.embeds_function_source && !is_placeholder;
+        let erased_type_ranges = embeds_function_source.then(|| self.finish_function_sources());
         let mut positions = crate::emit::source_positions(text, compute_ecma_line_starts(text));
-        (positions.quoted_texts, positions.text_of_quotes) = self.take_quoted_texts();
+        (positions.quoted_sources, positions.quoted_source_text) = self.take_quoted_sources();
         ModuleFragment {
             body: roots.body,
             data: roots.data,
             positions,
-            types_in_function_text,
+            erased_type_ranges,
             throws_at_load: false,
         }
     }

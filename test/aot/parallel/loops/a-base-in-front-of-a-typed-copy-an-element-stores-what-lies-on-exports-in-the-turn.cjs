@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 1
+// STATISTIC: WalkLoopsVersioned >= 1
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 function fresh() { exports.rows = JSON.parse('[1.5,2.5,3.5,4.5,5.5,6.5]'); }

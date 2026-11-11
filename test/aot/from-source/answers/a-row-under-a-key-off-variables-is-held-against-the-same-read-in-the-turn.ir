@@ -6,16 +6,19 @@
 # function f() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
 # print(f(), counted);
 # -- end of source
-# The row found in front under a key read off variables of the file is remembered through the turns. Under testing=CheckProofsAtRunTime the read stands in the turn too and is held against the row remembered.
-# Here an accessor hands out another list at each call; the operation that runs no code answers absent and the loop runs as written. The lie reads by the road that runs code: the row is remembered falsely and the check stops.
-# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
-# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# The holder and the key of the row `data[w]` are read from module variables. The row is looked up in the preheader and is remembered across the iterations.
+# With testing=CheckProofsAtRunTime the read is also built inside the iteration, and its result is checked against the remembered row.
+# Here an accessor returns a different array at each call. The operation that runs no code returns absent, and the loop runs as written.
+# The injected fault, testing=UseGenericOwnKeyReads, makes the lookup take the generic path, which runs code. The wrong row is remembered, and the check crashes the process.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 18 2
 # RIGHT-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # HELD: 18 2
 # HELD-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad
-# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UseGenericOwnKeyReads
+# STOPPED: bun: internal AOT error: redundancy elimination check failed
+# STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # STOPPED: crashed with

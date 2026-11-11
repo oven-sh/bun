@@ -17,6 +17,6 @@ function heard(event) {
 add("ping", heard);
 console.log(send(new Event("ping")));
 /* Output:
-Error: process.finalization was not compiled into this executable because the compiler saw no use of it. Your code called addEventListener() or dispatchEvent() without a receiver, so the `target` of an event is the global object, and the compiler didn't see that call. To keep everything that the global object leads to, write `void dispatchEvent` once anywhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+Error: process.finalization was not compiled into this executable because the compiler saw no use of it. Your code reached it through the `target` of an event on the global object. To keep it, write `void dispatchEvent` anywhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 true
 */

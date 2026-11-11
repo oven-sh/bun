@@ -1,7 +1,7 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // Four kinds of answers that differ from what a second look finds, rightly: each was a false alarm of a first form of the net.
 // A getter that lays a value in its own place: what it gave is not what lies there now. The length of a view and the size of a table: the stub reads them in line where the object finds a native getter. The name of a function: a new string each time. An accessor without a getter: undefined.
-// COUNTER: AnswersAskedAgain >= 100
+// COUNTER: FastPathResultsVerified >= 100
 const unseen = (0, eval)("(x) => x");
 function lazy() { return unseen({ get once() { Object.defineProperty(this, "once", { value: [1, 2], configurable: true }); return "the first answer"; } }); }
 function readOnce(x) { return x.once; }

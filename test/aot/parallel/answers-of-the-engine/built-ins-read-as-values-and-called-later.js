@@ -1,5 +1,5 @@
 // A built-in that is read as a value and called later, through a variable, a field, a parameter or `call`, without its `this` or as a constructor, is the same function: it answers as it does where it is called by its name.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function attempt(way) { try { return way(); } catch (error) { return error.name; } }
 const convert = Number;

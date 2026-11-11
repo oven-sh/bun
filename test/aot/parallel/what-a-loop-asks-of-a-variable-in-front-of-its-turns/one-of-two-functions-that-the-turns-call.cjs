@@ -1,5 +1,5 @@
-// STATISTIC: FewClosuresInVariablesReadInFrontOfLoops >= 1
-// STATISTIC: ReadsInFrontOfLoopsThatGiveTheWordAsItLies >= 1
+// STATISTIC: CalleeVariableReadsHoisted >= 1
+// STATISTIC: RawVariableReadsHoisted >= 1
 var pick;
 let total = "";
 let turn = 0;

@@ -1,4 +1,4 @@
-// STATISTIC: RestsOfPatternsThatAreDefinitionsOneByOne >= 1
+// STATISTIC: ObjectRestsExpandedToDefines >= 1
 // The row is born with the layout that the pattern's loop expects and changed behind its birth through a key that nobody knows: the layout alone says nothing of that: the copy asks the row for its own keys.
 const log = [];
 function show(o) { return Reflect.ownKeys(o).map(k => String(k) + "=" + String(Object.getOwnPropertyDescriptor(o, k).get ? "getter" : o[k])).join(","); }

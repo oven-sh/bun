@@ -20,6 +20,6 @@
 # turn that was given up: its field need not be put back. It is.
 # TODO: the loops of the walk: a store that puts back the field of an object that nobody sees again, in the arm where the turn begins again
 # RUN(WALK): walk f2:Body testing=CheckEffectsAtRunTime mechanisms=all
-# WALK-NOT: putsBackWhatTurnStored
-# WALK: = TurnBeginsAgain
-# WALK-NOT: putsBackWhatTurnStored
+# WALK-NOT: undoesIterationStore
+# WALK: = CheckIterationRestart
+# WALK-NOT: undoesIterationStore

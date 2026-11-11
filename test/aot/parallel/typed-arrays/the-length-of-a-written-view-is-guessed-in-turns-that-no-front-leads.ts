@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtLengthsThatTakeInstancesBelow = 5
+// STATISTIC: TypedArrayLengthSpeculationsAllowingSubclasses = 5
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: where the length is believed by the note the weaker test is asked again
 // The index steps by what was read, or the bytes lie in a field that is read in the turn: no front leads such a loop, and each read of the length has a guess of its own. It takes a Buffer where Uint8Array is
 // written, for the length alone. What has a length, a name or a prototype of its own, an heir, another view, a list and a text go the other way.

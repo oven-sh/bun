@@ -68,7 +68,7 @@ impl FileScan<'_, '_> {
         });
         let mut required = graph.required_names(file).iter();
         let link_would_miss_name = !matches!(target, ModuleRef::External { .. })
-            && required.any(|it| it.module == target && !it.is_found_unless_mocked);
+            && required.any(|it| it.module == target && !self.has_found(it));
         (!is_asked_otherwise && !link_would_miss_name).then_some(target)
     }
 

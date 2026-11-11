@@ -1,4 +1,4 @@
-// STATISTIC: LoopsLaidOutOnceAKindThatAreComeBackTo >= 1
+// STATISTIC: UnrolledLoopsWithSharedReentry >= 1
 const out: number[] = [], o = { n: 0 };
 let text = "", backs = 0, noted = 0;
 function note(x: number): void { noted = (noted * 3 + x) | 0; if ((noted & 31) === 7) out.push(noted); }

@@ -9,13 +9,13 @@
 # f1 = whole, f2 = halves, f3 = behindTwo. The code generator lays the turns of a counted loop out in a row: the count and the kind of storage are asked once a row, and the row polls once. A turn that raised the
 # length of the list that it fills was left as written, for the raise writes what is seen. The raise stands in the block that leads back, right in front of its store, like the stores that were laid out already:
 # a turn of the row that has come there is done whole, and one that leaves has done nothing.
-# RUN(COUNT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all
-# COUNT: statistic LoopsWhoseTurnsAreLaidOut 6
+# RUN(COUNT): compile UnrolledLoopsEmitted mechanisms=all
+# COUNT: statistic UnrolledLoopsEmitted 6
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 0:undefined 9.8 0 1:0 9.8 0123012 7:3 9.8.7.6.1.0.3 01230123 8:3.5 9.8.7.6.1.0.3.2 012301230 9:4 9.8.7.6.1.0.3.2.13 012301230123012 15:7 9.8.7.6.1.0.3.2.13.12.15.14.9.8.11 0123012301230123 16:7.5
 # ANSWERS: 40:19.5 9.8.7.6.1.0.3.2.13.12.15.14.9.8.11.10.21.20.23.22.17.16.19.18.29.28.31.30.25.24.27.26.37.36.39.38.33.32.35.34
 # ANSWERS-NEXT: exited with 0
 # ANSWERS-NEXT: the source prints the same
-# RUN(HELD): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # HELD: 40:19.5 9.8.7.6.1.0.3.2.13.12.15.14.9.8.11.10.21.20.23.22.17.16.19.18.29.28.31.30.25.24.27.26.37.36.39.38.33.32.35.34
 # HELD-NEXT: exited with 0

@@ -8,10 +8,10 @@
 # were values from in front: parameters, locals. A variable of the file is read in the head, so use alone spoke: "a list of lists", asked in every turn and failed in every turn: 33,079 instructions three hundred turns where
 # parameters take 1,817 and plain Bun 2,584. Now the head may begin with reads of variables that the text of the loop does not store: they are read in front of the loop, their dead zones asked there (who is in one runs the
 # loop as walked before and throws where it is written), and holder and key of the row are named by what the state knows of the variables: 1,791.
-# RUN(EVENT): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all
-# EVENT: statistic RowsFoundUnderKeysInFrontOfLoops 1
-# RUN(CHECKED): compile RowsFoundUnderKeysInFrontOfLoops mechanisms=all testing=CheckProofsAtRunTime
-# CHECKED: statistic RowsFoundUnderKeysInFrontOfLoops 1
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# RUN(CHECKED): compile KeyedRowLookupsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic KeyedRowLookupsHoisted 1
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 78 78
 # RIGHT-NEXT: exited with 0

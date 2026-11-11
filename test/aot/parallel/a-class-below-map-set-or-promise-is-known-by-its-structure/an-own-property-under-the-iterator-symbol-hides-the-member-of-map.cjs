@@ -1,5 +1,5 @@
 // The look at the structure says nothing of own properties under symbols: a member under a symbol is read by name.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { first() { return this[Symbol.iterator]().next().value[0]; } }
 const one = new H(); one.set(5, 6); let sum = 0;

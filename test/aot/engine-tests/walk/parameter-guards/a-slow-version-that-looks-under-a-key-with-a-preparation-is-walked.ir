@@ -6,8 +6,8 @@
 #   function area(point: Point, scale: number) { return point.x * scale * (point.y * scale) + point.x + point[kHeaders]; }      function other(point: Point, scale: number) { .. + point[kOther]; }
 # LIBRARY: own
 # The body of main.js and the slow version of `other` are written straight; that of `area` was the third.
-# RUN(COUNT): compile UnitsWrittenStraight mechanisms=all
-# COUNT: statistic UnitsWrittenStraight 2
+# RUN(COUNT): compile StraightUnitsCompiled mechanisms=all
+# COUNT: statistic StraightUnitsCompiled 2
 # Written straight it loaded the variable and handed its value to the stub. Walked it names the key and reads no variable.
 # RUN(BYTES): bytes f2:SlowBody mechanisms=all
 # BYTES-NOT: Variable "kHeaders"

@@ -1,4 +1,4 @@
-// STATISTIC: AccessesToldApartByTextsOfKey >= 1
+// STATISTIC: AccessesDispatchedByKeyString >= 1
 const said: unknown[] = [];
 class Point { x = 1; y = 2; z = 3; }
 class Pair { x = 0; y = 0; }

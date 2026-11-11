@@ -5,19 +5,20 @@
 # print(cut(fresh(), 1), cut(fresh(), 4), cut(fresh(), 9));
 # -- end of source
 # f1 = cut. The key is held below the length, the length is stored over, and the element is read. The store ends what the walk knows of the length: the read asks for itself and finds nothing behind the new end.
-# THE LIE, testing=StoresOfLengthsAreTakenToEndNothing: the read is taken to lie inside on the test in front of the store. NO RUN UNDER THE LIE ALONE IS STORED: it would read behind the end of the list.
-# Under --aot-harden=ignore-told-ranges (testing=TestsEveryPosition) the read holds its position against the length, or the process stops by name.
+# Fault injection, testing=IgnoreLengthStores: the walk assumes that the read is in bounds because of the test before the store.
+# No run with the fault alone is stored, because it would read past the end of the array.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the read checks its index against the length. If the check fails, the process crashes with a named error.
 # AS-USERS-BUILD: under the checks of the runner the verifier of the code refuses the lie at the read (walk/a-length-written-between-the-ground-of-an-access-and-the-access-is-refused.ir): what the emitters hold under the words is asked without them
 # RUN(TAKEN): walk f1:Body mechanisms=all
 # TAKEN: SetArrayLength
 # TAKEN-NOT: isInBounds
 # TAKEN: GetArrayElement
-# RUN(LIED): walk f1:Body mechanisms=all testing=StoresOfLengthsAreTakenToEndNothing
+# RUN(LIED): walk f1:Body mechanisms=all testing=IgnoreLengthStores
 # LIED: SetArrayLength
 # LIED: GetArrayElement {{*}}isInBounds
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: 1.5 undefined -1
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=StoresOfLengthsAreTakenToEndNothing,TestsEveryPosition
-# HELD: AOT: f{{*}}is not of the type that the compiler has proven of it
+# RUN(HELD): run-in-shell mechanisms=all testing=IgnoreLengthStores,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
 # HELD: crashed with SIGABRT

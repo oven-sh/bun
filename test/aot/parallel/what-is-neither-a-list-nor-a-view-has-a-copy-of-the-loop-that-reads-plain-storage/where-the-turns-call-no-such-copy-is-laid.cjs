@@ -1,5 +1,5 @@
-// STATISTIC: LoopsWithCopyForWhatIsNeitherListNorView = 1
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
+// STATISTIC: OrdinaryObjectLoopsVersioned = 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
 "use strict";
 // Two loops over a holder of which nothing is known. The turns of the first call nothing: what is neither a list nor a view has a copy of it.
 // The turns of the second call what nobody knows: there no read could ask its site or its storage, the copy would be one more walk of the loop as written, and it is not laid.

@@ -1,6 +1,6 @@
 // The guards of three questions are asked in front of the typed copy of a loop. The guard of the third class has ended before the loop begins, and no element reaches its question.
 // The loop goes on in a typed copy that asks the later guards in their own arms, so the ended guard costs nothing.
-// STATISTIC: GuardsOfInstanceOfRefusedInFrontOfTypedCopies >= 1
+// STATISTIC: InstanceOfGuardsNotHoisted >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

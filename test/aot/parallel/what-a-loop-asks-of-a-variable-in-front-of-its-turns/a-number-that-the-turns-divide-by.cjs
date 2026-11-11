@@ -1,4 +1,4 @@
-// STATISTIC: DivisorsInVariablesReadInFrontOfLoops >= 1
+// STATISTIC: DivisorVariableReadsHoisted >= 1
 var held;
 if (Number("1")) (held = Number("7"));
 let total = 0;

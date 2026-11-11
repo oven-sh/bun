@@ -1414,7 +1414,7 @@ fn throw_outside_declared_type<'a>(
 ) -> JSValue {
     cx.heap
         .type_error(format_args!(
-            "{member} is declared as {declared}, and native code answered with something else. This is a bug in Bun."
+            "internal AOT error: type check failed: expected {declared} in the result of {member}. This is a bug in Bun, not in your code."
         ))
         .into_host_fn_return(cx)
 }

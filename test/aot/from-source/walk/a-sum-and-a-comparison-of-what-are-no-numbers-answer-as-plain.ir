@@ -1,4 +1,6 @@
-# The lie of a-sum-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.ir: texts, a text beside a number, null, big integers, an object whose valueOf counts its calls, lists, a boolean, NaN, -0, a symbol: the first turn begins again in the closed copy: every answer is plain's and valueOf runs as often.
+# This test gives the speculation of a-sum-of-two-values-that-say-nothing-asks-both-for-numbers-where-the-turn-may-begin-again.ir operands that prove it wrong.
+# The operands are strings, a string next to a number, null, BigInts, an object whose valueOf counts its calls, arrays, a boolean, NaN, -0 and a symbol.
+# The first iteration restarts in the generic version. Every result is what plain Bun prints, and valueOf runs the same number of times.
 # -- source: a-sum-and-a-comparison-of-what-are-no-numbers-answer-as-plain.js
 # const sums = { go: (a, b) => a + b }, orders = { go: (a, b) => a < b }, names = JSON.parse('["go"]');
 # const sum = sums[names[0]], less = orders[names[0]];

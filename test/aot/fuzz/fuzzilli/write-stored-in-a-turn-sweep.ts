@@ -7,6 +7,7 @@
 //
 // Until something is stored a `var` or a `let` without a value holds undefined, in the first turn of a loop as anywhere else.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // What stands in front, and what stands at the very end of the file. NAMES are the variables.
 const declareds: [string, string, string][] = [
@@ -182,7 +183,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laidOut < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laidOut++;
   }
   console.log(laidOut);
@@ -192,7 +193,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

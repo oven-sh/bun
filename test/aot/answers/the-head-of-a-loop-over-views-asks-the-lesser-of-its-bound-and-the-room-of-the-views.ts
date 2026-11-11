@@ -17,8 +17,8 @@
 // # FORM-LABEL: code f6:Body
 // # FORM: = GetTypedArrayElement {{*}}isInsideView
 // # FORM: = GetTypedArrayElement {{*}}isInsideView
-// # RUN(COUNT): compile CountersHeldBelowRoomOfViews
-// # COUNT: CountersHeldBelowRoomOfViews
+// # RUN(COUNT): compile LoopBoundsClampedToTypedArrays
+// # COUNT: LoopBoundsClampedToTypedArrays
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 152 of 152 of 152

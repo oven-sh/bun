@@ -1,166 +1,59 @@
 # Fuzzing the ahead-of-time compiler
 
-`run.ts` generates small programs forever. It runs each one twice, once with `bun <file>` and once as an executable built with `bun build --compile --aot`, and keeps every program where the two
-runs differ, the build fails, or the executable crashes.
+`run.ts` generates small programs. It runs each one twice, with `bun <file>` and as an executable built with `bun build --compile --aot`. It keeps every program where the two runs differ, the build fails or the executable crashes.
 
-Nothing in this folder runs in CI except the fuzzer's own tests (`../fuzzer-*.test.ts`). Run it by hand after a compiler change, for as long as you can spare a machine.
+CI runs only the fuzzer's own tests (`../fuzzer-*.test.ts`). Run the fuzzer by hand after a compiler change.
 
-## Run it
+## Run
 
 ```sh
 bun test/aot/fuzz/run.ts --seconds 3600 --jobs 16 --out /tmp/fuzz
 ```
 
-- `bun` must be built from this tree (`bun run build:release` leaves it at `build/release/bun`). The Bun that runs the script is the Bun under test; `--bun <path>` tests another one.
-- Start it from the repository root. It needs no network and no reference build.
-- Two sources start `python3` and generate nothing if it is missing. `--rewritten` needs the `typescript` package, which `bun install` at the root installs.
-- The comment at the top of `run.ts` lists every option.
+Start it from the repository root. The Bun that runs the script is the Bun under test, and `--bun <path>` tests another one. The comment at the top of `run.ts` lists every option.
 
-| Goal                                    | Command                                                                                  |
-| --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Check that the fuzzer itself works      | `--seconds 120 --jobs 4` (a few hundred programs)                                        |
-| A change to one part of the compiler    | ten minutes to an hour of the sources that target it: `--sources <a>,<b> --seconds 3600` |
-| A release, or a change to flow analysis | every source overnight: `--rounds --seconds 3600 --jobs 32`, until `<out>/STOP` exists   |
+| Command | What it does |
+| --- | --- |
+| `run.ts --sources <a>,<b>` | uses only these sources |
+| `run.ts --batch 1` | gives every program its own build. A shared build hides some bugs |
+| `run.ts --gc-stress 1,2,3,5,7,11` | collects at every n-th slow-path allocation |
+| `run.ts --rewritten` | also rewrites each program so that the compiler knows less about it. It needs the `typescript` package, which `bun install` at the root installs. Without it nothing is rewritten |
+| `run.ts --replay <source>:<seed>` | generates one program again and prints it with its verdicts. `--print-only` only prints it |
+| `run-as-tests.ts --seconds 600 --jobs 16 --out /tmp/as-tests` | runs each program as a test file, with `bun test` and with `bun test --aot` |
+| `burst.ts --minutes 60 --out /tmp/burst` | starts many runs with different options side by side |
 
-A build takes about a second of one core, so sixteen jobs judge tens of thousands of programs an hour. Most findings come in the first hour after a change.
+One run tests one way to build. Several runs with different options find more than one wide run.
 
-On Linux every program, plain and compiled, runs in its own PID namespace and process group (`unshare --user --pid`, `setsid`) where the kernel allows it, so a generated program cannot signal
-anything but itself. In addition, a program that mentions `kill` is not run at all (`accepted-differences.tsv`).
-
-## Options that find different bugs
-
-One run tests one way to build. Several runs side by side, each with different options, find more than one wide run.
-
-```sh
-.. --modes default,separate-entry-points                      # every program is an entry point that a Worker starts: several globals in one executable
-.. --batch 1                                                  # every program gets its own build: a shared build hides false facts, and only here does the compiler prove what it can only prove about a small program
-.. --gc-stress 1,2,3,5,7,11 --compiled-run-seconds 60         # a collection at every n-th slow-path allocation
-.. --rewritten                                                # also rewrite each program so that it prints the same and the compiler knows less about it
-.. --decoy-shapes 33,65,130,300                               # build beside that many unrelated object shapes that use the same property names
-.. --workers 4                                                # four workers run each program at once
-.. --threads 16 --jobs 2 --batch 64                           # the compiler's own threads, and bugs that only show in a shared build
-.. --no-verifiers                                             # leave the compiler's verifiers off, as in a user's build
-```
-
-With an AddressSanitizer build, pass `--bun <path> --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"`. To test several builds of Bun on the same programs, start one run per build with the same `--seed`.
-
-Some sources need their own settings to be useful:
-
-| Sources                                                        | Options                                                                                                      |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `out-of-memory-recovery`, `builtin-allocation-after-full-heap` | `--batch 4 --run-environment BUN_JSC_markedBlockCageSizeInMB=64 --compiled-run-seconds 150`                  |
-| `work-during-stack-unwinding`, `stack-overflow-points`         | `--gc-stress 0,0,7,23 --compiled-run-seconds 60`                                                             |
-| `workers-terminated-midway`                                    | `--batch 4 --compiled-run-seconds 40`                                                                        |
-| `regexp-heavy-backtracking`                                    | `--batch 1 --run-seconds 30 --compiled-run-seconds 200`                                                      |
-| `last-reference-read-during-allocation`                        | `--run-environment "BUN_JSC_slowPathAllocsBetweenGCs=1 BUN_JSC_scribbleFreeCells=1 BUN_JSC_useZombieMode=1"` |
-| `builtin-own-properties-by-name`                               | `--single-file --no-verifiers --modes default --batch 1`                                                     |
-
-`burst.ts` starts many such runs side by side, shares the machine's cores among them, and lists what they found in `<out>/NEW.tsv`:
-
-```sh
-bun test/aot/fuzz/burst.ts --minutes 60 --out /tmp/burst
-```
-
-Four of its lanes run `fuzzilli/lane.ts` instead of `run.ts`; see `fuzzilli/README.md`.
-
-## Programs as test files
-
-`run-as-tests.ts` draws from the same sources and runs each program as a test file, once with `bun test` and once with `bun test --aot`. Under `--aot` a program has to print what the plain run prints or, where compiled code differs from plain Bun on purpose, what its executable prints. Anything else is behavior that only a test run has.
-
-```sh
-bun test/aot/fuzz/run-as-tests.ts --seconds 600 --jobs 16 --out /tmp/as-tests
-bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --isolate --out /tmp/as-tests    # eight test files to a run, compiled as one program
-bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --parallel=4 --out /tmp/as-tests # the same in four processes
-bun test/aot/fuzz/run-as-tests.ts --multi-file --together 24 --flags --parallel=24      # each program split into files that import each other
-bun test/aot/fuzz/run-as-tests.ts --multi-file --as-packages --together 24 --flags --isolate # and those files in a package under node_modules
-```
-
-One program in ten comes from the three sources of this driver alone. `exports-replaced-by-tests`: a small project whose test file replaces what a module exports (`spyOn(lib, "f")`, `mock.module`, a store to the exports of a CommonJS file) and asks every road to it (the named import, the namespace, a barrel, a file that imported it first, a call inside the module, `require()`, `import()`) before, meanwhile and after. `built-ins-replaced-by-tests`: test files that replace a built-in (a store, `spyOn`, `defineProperty`, a name made at run time ..), use it from the test file or from a file it imports, and put it back. Where the compiled run says that a test can't replace a member, that scene is left out and the rest of the program is compared. `modules-loaded-again-by-tests`: a test file that loads a module again (deletes it from `require.cache` and asks for it anew, or imports it under a query) and then asks every module object it holds which instance answers.
-
-With `--parallel` a run prints what its files print on stderr, so the driver reads it there. If no test file prints a line in any run, it says `nothing judged` instead of passing.
-
-It prints a line `FIND as-a-test ..` for each failure and keeps the files and the outputs under `<out>/findings`. A program that fails beside others is tried again by itself; the line says `only together` if it then passes. It does not reduce.
-
-## Sources
-
-A source turns a number, the seed, into a program. `--sources a,b:8` picks sources and weights them; by default all are used. A source's name is its file name. The comment at the top of each file
-says what its programs are about.
-
-- **Generators.** Most `.ts` files in this folder export `generate(random)`, which writes a random program about one subject. `sources.ts` registers them.
-- **Tables.** A few files count their programs and export `programOf(index)`, for example every kind of loop crossed with every kind of typed array. The seed picks the row.
-- **Lists**, in `sources/`. Where some programs need a flag, an environment variable or extra entry points, a file in `sources/` lists them with the helpers in `family.ts`.
-- **Scripts.** `case-scripts/*.py` each write a folder of small cases (source `scripted-cases`); `generators/python/*.py` each write one random program per seed (source `by-python`).
-- **Stored programs.** `mutation` mutates the programs in `../parallel`; `stored-programs` runs them unchanged; `stored-programs-in-hot-loop` moves their top-level code into a function that a loop calls.
-
-Every second program is also generated as `<source>-multi-file`: its top-level declarations move into up to four more files, some of them JavaScript, some with incomplete or invalid
-declaration files, some published as packages. `--single-file` turns that off.
-
-`unsound-types` (in `generators/`) builds each program from one hole in TypeScript's type system, so that a value reaches a place whose type excludes it without a cast, `any` or `!`. `type-check.ts` asks
-TypeScript itself; programs it rejects are listed in `refused-by-typescript.tsv` and not run. The table `filed` at the top of the generator lists holes that hit an already filed bug; remove a line
-when its fix lands.
-
-`json-for-generated-types.ts` is a separate tool. It generates TypeScript types, writes one program that parses JSON under each of them, builds it and lets it generate its own inputs:
-
-```sh
-bun test/aot/fuzz/json-for-generated-types.ts --seconds 3600 --jobs 16 --out /tmp/json
-```
+`burst.ts` takes the whole machine. In one minute on 192 cores its runs wrote about 900,000 small files into the temporary folder, so check `df -i` there first. A `tmpfs` runs out of inodes long before it runs out of space.
 
 ## Findings
 
-`<out>/findings.tsv` gets one line per finding: time, build mode, kind of failure, `<source>:<seed>`, a name, and the first two lines that differ. `<out>/findings/<name>/` holds
+`<out>/findings/<name>/` holds the reduced program, the original, the output of both runs and `finding.json`. `<out>/as-tests/<name>.<ext>` is the reduced program in the format of `../parallel`.
 
-- `reduced.*`, the program reduced as far as the failure allows (a folder if it has several files), and `original.*`;
-- `plain.txt` and `compiled.txt`, the output of the two runs;
-- `driver-errors.txt`, beside `findings/`: faults of the fuzzer itself. Each may have cost a finding, so `run.ts` ends with exit code 1 where there is one.
-- `finding.json`: seed, source, mode, flags, and whether the failure goes away without the verifiers or the written types.
+A signal or a failed assertion is always a bug. A timeout on a busy machine is not.
 
-`<out>/as-tests/<name>.<ext>` is the reduced program again in the format of `../parallel`, with its flags, entry points and exit code in its first lines.
+`accepted-differences.tsv` lists the differences that are intended. A finding that matches a line is counted and not kept. The comment at the top of the file describes the format.
 
-Kinds of failure: `different output`, `different exit code`, `crash` and `hang` for the executable; `internal compiler error`, `build crash`, `build hang`, `build error` and `build refused` for the
-build. A signal or a failed assertion is always a bug. A timeout on a busy machine is not. Under `--gc-stress` or `--run-env` a run that does not end is a `hang` only if plain Bun ends under the same
-settings in the same time; otherwise the program counts as skipped.
+To turn a finding into a test:
 
-A difference in output or exit code that an executable built without `--aot` shows too comes from the bundler or the standalone runtime, not from the compiler. It is listed in
-`<out>/same-without-aot.tsv` and is not a finding.
+1. Replay it on a fresh build.
+2. Reduce its file under `<out>/as-tests/` by hand. `bun test/aot/run-parallel.ts --root=<out>/as-tests <file>` runs it the way CI does.
+3. Commit the small program with the fix, as `test/aot/parallel/<topic>/<what-it-tests>.<ext>`. Commit no seeds and no generator output.
 
-`bun test/aot/fuzz/run.ts --replay <source>:<seed>` generates the same program again and prints it with its verdicts; `--print-only` only prints it.
+## Add a source
 
-## Accepted differences
+A source turns a seed into a program. Its name is its file name.
 
-`accepted-differences.tsv` lists differences that are intended (locked built-ins, for example), bugs in plain Bun, and things a test setup cannot do. Each line is a regular expression, who is
-responsible, and the reason. A finding that matches is counted and not kept. The comment at the top of the file describes the format. Try a new line on the seed that produced the finding before you
-commit it: the status line must say `known 1`.
-
-## From a finding to a test
-
-1. Replay it alone on a fresh build to see that it is still there.
-2. Take its file under `<out>/as-tests/` and reduce it by hand until every line is needed. `bun test/aot/run-parallel.ts --root=<out>/as-tests <file>` runs it the way CI will.
-3. Fix the compiler.
-4. Commit the small program with the fix, as `test/aot/parallel/<topic>/<what-it-tests>.<ext>` or as a folder with `main.<ext>`. Flags go in its first lines: `// Flags: --aot-huge-heap`,
-   `// Env: TZ=America/New_York`, `// Entry points: ./child.cjs` (`../run-parallel.ts` lists them all). A bug in one stage is better pinned by a text test of that stage: `test/aot/ir/` for the front
-   end, `Source/JavaScriptCore/aot/tests/<stage>/` in WebKit for the engine (`test/aot/engine/` runs those).
-5. Commit nothing else: no seeds, no lists of programs that once failed, no generator output. The generator can produce them again.
-
-## Adding a source
-
-Write `<subject>.ts` with `export function generate(random: Random, typed: boolean): string` and add its name to one of the three lists of names in `sources.ts`: TypeScript, JavaScript, or both (odd
-seeds are TypeScript). Start the file with a comment that says what its programs test. Every program must print what it computes, print the same in every run, and exit by itself within a second or two.
+Write `<subject>.ts` with `export function generate(random: Random, typed: boolean): string`, and add its name to the matching list in `sources.ts`. Start the file with a comment that says what its programs test. Every program must print what it computes, print the same in every run, and exit by itself within a second or two.
 
 ## Layout
 
-| Path                       | What it is                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| `run.ts`, `burst.ts`       | the command line: one run, and many runs side by side                          |
-| `run-as-tests.ts`          | the same programs as test files, under `bun test` and `bun test --aot`         |
-| `fuzzer.ts`                | the main loop: generate, build, compare, confirm, reduce, store                |
-| `runners.ts`               | how a program is built and run, the build modes, and how two runs are compared |
-| `sources.ts`, `family.ts`  | the registry of sources, and helpers for sources that are lists                |
-| `reduce.ts`                | the reducer                                                                    |
-| `mutate.ts`, `tokens.ts`   | mutation of stored programs                                                    |
-| `grammar.ts`               | the general-purpose random program generator                                   |
-| `type-check.ts`            | TypeScript's own checker over generated programs                               |
-| `accepted-differences.tsv` | differences that are not findings                                              |
-| `*.ts`, `generators/`      | generators, one subject each                                                   |
-| `sources/`                 | sources that are lists                                                         |
-| `case-scripts/`            | Python scripts that write tables of small cases                                |
-| `fuzzilli/`                | a Fuzzilli profile and driver for the compiler                                 |
+| Path | What it is |
+| --- | --- |
+| `run.ts`, `burst.ts`, `run-as-tests.ts` | the command lines |
+| `fuzzer.ts`, `runners.ts`, `reduce.ts` | the main loop, how a program is built and compared, the reducer |
+| `sources.ts`, `family.ts`, `sources/` | the registry of sources, and sources that are lists |
+| `grammar.ts` | the general-purpose generator |
+| `mutate.ts`, `tokens.ts` | mutation of the programs in `../parallel` |
+| the other `*.ts`, `generators/`, `case-scripts/` | generators, one subject each |
+| `fuzzilli/` | a Fuzzilli profile and driver. See `fuzzilli/README.md` |

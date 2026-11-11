@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven of the object is asked again at run time
-// Under: --aot-testing=FailGuesses: every guess fails
+// Under: --aot-testing=FailSpeculations: every guess fails
 function Plain() {}
 function read(o, by) { return o.x + by; }
 function isOne(o) { return o instanceof Plain; }

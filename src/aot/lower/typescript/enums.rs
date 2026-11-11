@@ -52,7 +52,7 @@ impl FileLowering<'_, '_, '_, '_> {
     ) -> Option<()> {
         let (hir, bound) = (self.hir, self.bound);
         let data = hir[declaration];
-        if !self.inputs.options.embeds_function_text || members.len() != data.members.len() {
+        if !self.inputs.options.embeds_function_source || members.len() != data.members.len() {
             return None;
         }
         let atoms = &self.queries.files().atoms;

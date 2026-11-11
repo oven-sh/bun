@@ -10,8 +10,8 @@
 # every call, and all twenty turns ran in the closed copy, which is dearer than the one loop that stood before the purchase. The failing way now leads to the loop bought once more without the
 # question: it buys nothing there and is the plain walk, whose reads test their places one by one.
 # f1 = add
-# RUN(COUNT): compile LoopsBoughtOnceMoreWithoutQuestionsOfEveryTurn mechanisms=all
-# COUNT-NOT: statistic LoopsBoughtOnceMoreWithoutQuestionsOfEveryTurn 0
+# RUN(COUNT): compile LoopsReversionedWithoutHoistedGuards mechanisms=all
+# COUNT-NOT: statistic LoopsReversionedWithoutHoistedGuards 0
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: isInLoop=true isLoopHead=true

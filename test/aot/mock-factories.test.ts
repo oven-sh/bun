@@ -151,18 +151,18 @@ afterAll(() => dir[Symbol.dispose]());
 test("what each case prints", async () => {
   const [plain, compiled] = [await said(String(dir), "./t"), await said(String(dir), "--aot", "./t")];
   expect(plain.size).toBe(numberOfCases);
-  const differing = () => [...plain].filter(([name, expected]) => compiled.get(name) !== expected);
-  // Where the two runs part, `bun test` is asked again about those cases alone, as in harness/test-runs-in-folders.ts.
-  for (let asked = 0; asked < 2 && differing().length > 0; asked++) {
-    const again = await said(String(dir), ...differing().map(([name]) => `./t/${name}.test.js`));
-    for (const [name, first] of differing()) {
-      if (!compiled.has(name) || again.get(name) !== compiled.get(name)) continue;
+  const mismatches = () => [...plain].filter(([name, expected]) => compiled.get(name) !== expected);
+  // Cases that differ are run again under plain `bun test`, on their own, as harness/test-runs-in-folders.ts does.
+  for (let attempt = 0; attempt < 2 && mismatches().length > 0; attempt++) {
+    const rerun = await said(String(dir), ...mismatches().map(([name]) => `./t/${name}.test.js`));
+    for (const [name, first] of mismatches()) {
+      if (!compiled.has(name) || rerun.get(name) !== compiled.get(name)) continue;
       console.error(
         `THE REFERENCE WAVERED: ${name}: plain Bun said ${first} at first, and asked again what the compiled run said`,
       );
       plain.set(name, compiled.get(name)!);
     }
   }
-  const told = differing().map(([name, expected]) => `${name}: ${expected} > ${compiled.get(name) ?? "nothing"}`);
-  expect(told).toEqual([]);
+  const report = mismatches().map(([name, expected]) => `${name}: ${expected} > ${compiled.get(name) ?? "nothing"}`);
+  expect(report).toEqual([]);
 }, 600_000);

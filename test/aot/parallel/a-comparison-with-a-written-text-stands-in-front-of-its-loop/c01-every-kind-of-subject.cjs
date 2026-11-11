@@ -1,4 +1,4 @@
-// STATISTIC: ComparisonsWithTextsThatStandInFrontOfLoops >= 1
+// STATISTIC: StringLiteralComparisonsHoisted >= 1
 "use strict";
 const turns = +process.argv[2] || 7;
 function chain(n) { let at; for (let i = 0; i < n; i++) at = { weight: i + 1, above: at }; return at; }

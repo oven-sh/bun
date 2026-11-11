@@ -9,8 +9,8 @@
 # function total(t) { const it = kept.values(); let s = 0, r = it.next(); while (!r.done) { s += r.value; r = it.next(); } return s + t; }
 # publish(total);
 # -- end of source
-# RUN: compile SumsAskedForNumbersInFrontOfLoops mechanisms=all
-# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 1
+# RUN: compile SumsGuardedAsNumbers mechanisms=all
+# CHECK: statistic SumsGuardedAsNumbers 1
 # RUN(LOOP): walk f1 mechanisms=all
 # LOOP: code f1:Body
 # LOOP-NOT: : number @Double, v{{*}}: L(IteratorResult) @Cell) isInLoop=true isLoopHead=true

@@ -9,7 +9,7 @@
 # RUN(ASKED): walk f1 mechanisms=all testing=CheckProofsAtRunTime
 # ASKED-LABEL: code f1:Body
 # ASKED: [[asked]]: boolean @Boolean = IsPristine {{*}}builtinClass=DataView
-# ASKED: CheckProof [[asked]] checkedType=true {{*}}source=WhatIsRemembered
+# ASKED: CheckProof [[asked]] checkedType=true {{*}}source=RememberedFact
 # RUN: run-in-shell mechanisms=all
 # CHECK: RangeError|4
 # CHECK-NEXT: exited with 0

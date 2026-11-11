@@ -1,12 +1,15 @@
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the walk tells that `at` is no less than nought.
-# The piece of the text is only parsed, so it is never made: the digits are read out of the text itself, from a start whose clamp has left its lower half out on that word: 4,294,967,295 code units behind the first.
-# Under TestsEveryPosition (which --aot-harden=ignore-told-ranges stands for) the reader asks `start <= end <= length` where it stands, and stops by name. The clamp goes on believing what it is told: a clamp that believed nothing would answer and nobody would hear of the false range.
-# CheckProofsAtRunTime is not in the runs: it holds the range where the test lets the number pass. The lie is not run without the word: it reads memory that is not the program's.
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`. So -1 passes `-1 < at`, after which the walk has proven that `at` is at least zero.
+# The substring is only parsed, so it is never allocated. The digits are read out of the string itself.
+# The clamp of the start index omits its lower bound because of that proof, so the read starts 4,294,967,295 code units after the first.
+# With CheckBoundsAtRunTime (which --aot-harden=ignore-told-ranges enables), the reader itself checks `start <= end <= length`, and a failure crashes the process with a named error.
+# The clamp still relies on the proven range. A clamp that relied on nothing would return a result, and the false range would go unnoticed.
+# CheckProofsAtRunTime is not in the runs, because it checks the range where the test lets the number pass.
+# The fault is not run without the switch, because it reads memory that does not belong to the program.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: 12
 # RIGHT-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=TestsEveryPosition,EqualIntegersAreTakenToBeLess
-# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: redundancy elimination check failed at {{*}} (parsed)
 # STOPPED: crashed with
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

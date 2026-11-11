@@ -1,6 +1,6 @@
 // A class below Error with a method under a name that the built-in lays on its instances outside the structure: no look is laid.
-// COUNT: counter:StructuresOfHeirsRemembered = 0
-// COUNT: counter:StructuresOfHeirsRefused = 0
+// COUNT: counter:BuiltinSubclassStructuresAccepted = 0
+// COUNT: counter:BuiltinSubclassStructuresRejected = 0
 "use strict";
 class E extends Error { constructor() { super("first"); this.message = "second"; this.n = 1; } stack() { return this.n + 5; } two() { return this.n + this.message.length; } }
 const one = new E();

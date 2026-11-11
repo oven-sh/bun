@@ -1,11 +1,11 @@
-# The read by key off a filled record stands in the body of a generator, which is walked in its consumer, the body of the file. Under CheckProofsAtRunTime with ReadsByKeyOffFilledRecordsAreListed what Link says
+# The read by key off a filled record stands in the body of a generator, which is walked in its consumer, the body of the file. Under CheckProofsAtRunTime with CheckDictionaryReadProofs what Link says
 # of it is asked there too.
 # f0 = the file, f2 = each
 # RUN(PLAIN): walk f0 mechanisms=all
 # PLAIN-LABEL: code f0:Body
 # PLAIN: ElemGet
 # PLAIN-NOT: source=Contents
-# RUN(LISTED): walk f0 mechanisms=all testing=CheckProofsAtRunTime,ReadsByKeyOffFilledRecordsAreListed
+# RUN(LISTED): walk f0 mechanisms=all testing=CheckProofsAtRunTime,CheckDictionaryReadProofs
 # LISTED-LABEL: code f0:Body
 # LISTED: ElemGet
 # LISTED: CheckProof {{*}}source=Contents

@@ -1,5 +1,5 @@
 // The first question leaves the object known as one of the kin that stands where it was made. Between the two questions a function that the build does not see lays that very object below the second class.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 const sizes = JSON.parse("[1,2,3,4,5,6,7,8,9]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

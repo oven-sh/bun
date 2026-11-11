@@ -8,8 +8,8 @@
 # console.log(changes("let"), notEveryTurnAsks("const", 5), readInTurn(ring, 5));
 # -- end of source
 # The other side: the comparison stays in the turn where its subject changes in the turn, where not every turn asks it, and where the subject is read in the turn off what changes.
-# RUN: compile ComparisonsWithTextsThatStandInFrontOfLoops mechanisms=all
-# CHECK: statistic ComparisonsWithTextsThatStandInFrontOfLoops 0
+# RUN: compile StringLiteralComparisonsHoisted mechanisms=all
+# CHECK: statistic StringLiteralComparisonsHoisted 0
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

@@ -1,5 +1,5 @@
 // The very first subject is no text, and the last. What is printed is what plain Bun prints.
-// STATISTIC: OperandsAskedForTextInQuietTurns >= 1
+// STATISTIC: StringOperandsGuardedInIterations >= 1
 const unseen = (x: any): any => [x][JSON.parse("0")];
 const told: string[] = [];
 const lines: string[] = unseen([{ toString() { told.push("first"); return "aa=1"; } }, "b=2", "c=3", { toString() { told.push("last"); return "dddd=4"; } }]);

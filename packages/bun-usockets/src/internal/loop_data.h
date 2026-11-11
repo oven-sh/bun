@@ -79,6 +79,8 @@ struct us_internal_loop_data_t {
 #endif
     struct us_socket_group_t *iterator;
     char *recv_buf;
+    /* Kept from the last nested tick for the next one. NULL until there was one. */
+    char *spare_recv_buf;
     char *send_buf;
     void *ssl_data;
     void (*pre_cb)(struct us_loop_t *);

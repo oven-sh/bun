@@ -64,8 +64,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifndef LIKELY
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
+#define LIKELY(cond) __builtin_expect(!!(cond), 1)
+#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
 #endif
 
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
@@ -235,6 +235,21 @@ void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
 
+/* The receive buffers that a dispatch below a nested tick still reads. */
+struct us_internal_outer_recv_bufs {
+    char *recv_buf;
+    char *ssl_read_output;
+};
+void us_internal_loop_replace_recv_bufs(us_loop_r loop, struct us_internal_outer_recv_bufs *outer);
+void us_internal_loop_restore_recv_bufs(us_loop_r loop, struct us_internal_outer_recv_bufs *outer);
+static inline void us_internal_loop_enter_tick(us_loop_r loop, struct us_internal_outer_recv_bufs *outer) {
+    if (UNLIKELY(++loop->data.tick_depth > 1)) us_internal_loop_replace_recv_bufs(loop, outer);
+}
+static inline void us_internal_loop_leave_tick(us_loop_r loop, struct us_internal_outer_recv_bufs *outer) {
+    if (UNLIKELY(loop->data.tick_depth > 1)) us_internal_loop_restore_recv_bufs(loop, outer);
+    loop->data.tick_depth--;
+}
+
 /* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
 struct us_nq_driver_s;
 void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
@@ -262,6 +277,9 @@ void us_internal_poll_close_fd(struct us_poll_t *p);
 
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
+/* Both return NULL, and the second does nothing, for a loop that had no TLS yet. */
+char *us_internal_ssl_replace_read_output(us_loop_r loop);
+void us_internal_ssl_restore_read_output(us_loop_r loop, char *outer);
 void us_internal_free_loop_ssl_data(us_loop_r loop);
 
 /* Socket context related */

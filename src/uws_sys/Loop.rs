@@ -283,8 +283,8 @@ impl PosixLoop {
     /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: `self` is this thread's live loop, and `jsc_vm` is null or its live VM. A handler
-        // may tick (`tick_depth`), but that refills the receive buffer and can dispatch the same
-        // socket again: such a handler is done with what the dispatch lent it.
+        // may tick (`tick_depth`): that tick reads into buffers of its own, but can dispatch the same
+        // socket again.
         unsafe { c::us_loop_run_bun_tick(self, timespec, now_ns) };
     }
 
@@ -445,7 +445,7 @@ impl WindowsLoop {
     pub fn run(&self) {
         // SAFETY: `self` is this thread's live loop, and `jsc_vm` is null or its live VM. A handler
         // may tick (`tick_depth`, `poll_cb_depth`), though libuv does not provide for `uv_run` in a
-        // callback: such a handler is done with what the dispatch lent it, its handle included.
+        // callback: that tick reads into buffers of its own, but can close the dispatch's handle.
         unsafe { c::us_loop_run(self) };
     }
 

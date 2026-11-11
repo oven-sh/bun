@@ -896,6 +896,119 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
   });
 });
 
+// An async plugin setup() makes Bun.build() run the event loop until it settles, under the handler that calls it. What
+// the outer dispatch still reads of its socket has to survive the reads of the nested ticks.
+describe("a handler that runs the event loop", () => {
+  function runEventLoop(until: () => Promise<unknown>) {
+    const built = Bun.build({
+      entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
+      throw: false,
+      plugins: [{ name: "wait", setup: async () => void (await until()) }],
+    });
+    built.catch(() => {});
+  }
+
+  async function open(port: number, secure: boolean) {
+    const socket = secure
+      ? nodeTls.connect({ port, host: "127.0.0.1", ca: tls.cert, servername: "localhost" })
+      : net.connect(port, "127.0.0.1");
+    const opened = Promise.withResolvers<void>();
+    let received = "";
+    let check = () => {};
+    let fail: (error: Error) => void = opened.reject;
+    socket.on("error", error => fail(error));
+    socket.on("close", () => fail(new Error("closed after " + JSON.stringify(received))));
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      check();
+    });
+    socket.once(secure ? "secureConnect" : "connect", () => opened.resolve());
+    await opened.promise;
+    return {
+      write: (data: string | Uint8Array) => void socket.write(data),
+      // What arrived, once it has `text` this many times.
+      has(text: string, times = 1) {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        fail = reject;
+        check = () => {
+          if (received.split(text).length > times) resolve(received);
+        };
+        check();
+        return promise;
+      },
+      [Symbol.dispose]: () => void socket.destroy(),
+    };
+  }
+
+  const upgrade =
+    "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+  const request = (path: string, owner: string) =>
+    `GET ${path} HTTP/1.1\r\nHost: localhost\r\nX-Owner: ${owner}\r\n\r\n`;
+
+  const frame = (text: string) =>
+    Buffer.concat([Buffer.from([0x81, 0x80 | text.length, 0, 0, 0, 0]), Buffer.from(text)]);
+
+  it.each([
+    ["http", false],
+    ["https", true],
+  ])("keeps its own request and the requests behind it (%s)", async (_scheme, secure) => {
+    let runOnce = true;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req) {
+        if (runOnce && req.headers.has("x-owner")) {
+          runOnce = false;
+          runEventLoop(() => {
+            other.write(request("/other-1", "other") + request("/other-2", "other"));
+            return other.has("<GET other-2 other>");
+          });
+        }
+        return new Response(`<${req.method} ${req.url.split("/").at(-1)} ${req.headers.get("x-owner")}>`);
+      },
+    });
+    using other = await open(server.port!, secure);
+    using socket = await open(server.port!, secure);
+    socket.write(request("/first", "socket") + request("/second", "socket"));
+    const received = await socket.has("<GET second ");
+    expect(received.match(/<.*?>/g)).toEqual(["<GET first socket>", "<GET second socket>"]);
+  });
+
+  it("keeps the WebSocket frames that came with the one it is for", async () => {
+    let runOnce = true;
+    const messages: string[] = [];
+    const done = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("<other>")),
+      websocket: {
+        message(_ws, message) {
+          messages.push(message as string);
+          if (runOnce) {
+            runOnce = false;
+            runEventLoop(() => {
+              other.write(request("/other", Buffer.alloc(64, "x").toString()));
+              return other.has("<other>");
+            });
+          }
+          if (messages.length === 3) done.resolve();
+        },
+        close: () => done.reject(new Error("closed after " + JSON.stringify(messages))),
+      },
+    });
+    using other = await open(server.port!, false);
+    using socket = await open(server.port!, false);
+    socket.write(upgrade);
+    await socket.has("101 Switching Protocols");
+    socket.write(Buffer.concat(["first", "second", "third"].map(frame)));
+    await done.promise;
+    expect(messages).toEqual(["first", "second", "third"]);
+  });
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     // The body source fails before any byte is written. The Response's status

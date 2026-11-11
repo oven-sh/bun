@@ -121,6 +121,14 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
+static char *us_internal_alloc_recv_buf(void) {
+    char *recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    /* Every read on this loop writes into recv_buf; a NULL here makes each one
+     * fail with EFAULT for the life of the process. */
+    if (!recv_buf) Bun__outOfMemory();
+    return recv_buf;
+}
+
 /* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
 int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
@@ -131,11 +139,9 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     loop->data.sweep_next_tick_ns = -1;
 #endif
     loop->data.sweep_timer_count = 0;
-    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.recv_buf = us_internal_alloc_recv_buf();
     loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
-    /* Every read on this loop writes into recv_buf; a NULL here makes each one
-     * fail with EFAULT for the life of the process. */
-    if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
+    if (!loop->data.send_buf) Bun__outOfMemory();
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
@@ -162,6 +168,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 #endif
 
     us_free(loop->data.recv_buf);
+    us_free(loop->data.spare_recv_buf);
     us_free(loop->data.send_buf);
     us_free(loop->data.unresumable_sockets);
 
@@ -170,6 +177,24 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
 #endif
     us_internal_async_close(loop->data.wakeup_async);
+}
+
+void us_internal_loop_replace_recv_bufs(struct us_loop_t *loop, struct us_internal_outer_recv_bufs *outer) {
+    outer->recv_buf = loop->data.recv_buf;
+    loop->data.recv_buf = loop->data.spare_recv_buf ? loop->data.spare_recv_buf : us_internal_alloc_recv_buf();
+    loop->data.spare_recv_buf = NULL;
+#ifndef LIBUS_NO_SSL
+    outer->ssl_read_output = us_internal_ssl_replace_read_output(loop);
+#endif
+}
+
+void us_internal_loop_restore_recv_bufs(struct us_loop_t *loop, struct us_internal_outer_recv_bufs *outer) {
+    if (!loop->data.spare_recv_buf) loop->data.spare_recv_buf = loop->data.recv_buf;
+    else us_free(loop->data.recv_buf);
+    loop->data.recv_buf = outer->recv_buf;
+#ifndef LIBUS_NO_SSL
+    us_internal_ssl_restore_read_output(loop, outer->ssl_read_output);
+#endif
 }
 
 __attribute__((always_inline)) void us_wakeup_loop(struct us_loop_t *loop) {

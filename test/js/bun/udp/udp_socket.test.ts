@@ -836,6 +836,56 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
   }
 });
 
+// On Windows, a nested tick delivers the reads of other UDP sockets only when the outer dispatch has returned.
+test.skipIf(isWindows)("the rest of a batch survives a data handler that runs the event loop", async () => {
+  const collect = (count: number, onPacket = () => {}) => {
+    const packets: string[] = [];
+    const { promise: received, resolve } = Promise.withResolvers<void>();
+    const data = (_socket: unknown, packet: Buffer) => {
+      packets.push(packet.toString());
+      onPacket();
+      if (packets.length === count) resolve();
+    };
+    return { packets, received, socket: { data } };
+  };
+  const other = collect(2);
+  let runOnce = true;
+  const batch = collect(2, () => {
+    if (!runOnce) return;
+    runOnce = false;
+    // Bun.build() runs the event loop until the plugin's setup() settles.
+    const built = Bun.build({
+      entrypoints: [path.join(import.meta.dir, "does-not-exist.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "wait",
+          async setup() {
+            sender.sendMany(["other 1", otherReceiver.port, "127.0.0.1", "other 2", otherReceiver.port, "127.0.0.1"]);
+            await other.received;
+          },
+        },
+      ],
+    });
+    built.catch(() => {});
+  });
+  const sender = await udpSocket({ hostname: "127.0.0.1" });
+  const receiver = await udpSocket({ hostname: "127.0.0.1", socket: batch.socket });
+  const otherReceiver = await udpSocket({ hostname: "127.0.0.1", socket: other.socket });
+  try {
+    sender.sendMany(["batch 1", receiver.port, "127.0.0.1", "batch 2", receiver.port, "127.0.0.1"]);
+    await batch.received;
+    expect({ batch: batch.packets, other: other.packets }).toEqual({
+      batch: ["batch 1", "batch 2"],
+      other: ["other 1", "other 2"],
+    });
+  } finally {
+    sender.close();
+    receiver.close();
+    otherReceiver.close();
+  }
+});
+
 test("udpSocket({ hostname }) does not leak the hostname", async () => {
   const code = /* js */ `
     const base = Buffer.alloc(200 * 1024, "a").toString();

@@ -3,8 +3,9 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// What a run does once --bail has stopped it. It starts no other test or file. What already runs ends as it would,
-// the scopes that were entered are torn down, and the run ends the way every run ends: with the summary and the reports.
+// What a run does once --bail has stopped it. It starts no other test or file. The tests whose setup or body still
+// runs end there with no result and go to their teardown, the blocks that were entered are torn down, and the run ends
+// the way every run ends: with the summary and the reports.
 // bun-test.test.ts has the tests of the flag's values, coverage.test.ts of --coverage.
 
 async function run(files: Record<string, string>, flags: string[], env: Record<string, string> = {}) {
@@ -29,7 +30,7 @@ async function run(files: Record<string, string>, flags: string[], env: Record<s
       .split(/\r?\n/)
       .filter(line => line.startsWith("ran: "))
       .map(line => line.slice("ran: ".length)),
-    results: lines.filter(line => /^\((pass|fail)\)/.test(line)),
+    results: lines.filter(line => /^\((pass|fail|skip)\)/.test(line)),
     // --dots doesn't indent the summary.
     seeds: [...stderr.matchAll(/^ ?--seed=(\d+)$/gm)].map(match => match[1]),
     // The lines after the last empty one, which is the summary when the run ended like any other.
@@ -308,87 +309,544 @@ describe.concurrent("a run that --bail stops", () => {
   });
 
   describe("with tests that run at once", () => {
-    // "fails" lets the test that is in flight go on, and then it fails.
-    const siblings = (inFlight: string, options = "") => `
-      import { expect, test } from "bun:test";
-      const failed = Promise.withResolvers();
-      test.concurrent("in flight", ${options} async () => {
-        console.log("ran: in flight");
-        await failed.promise;
-        ${inFlight}
-      });
-      test.concurrent("fails", async () => {
+    // No test has a time limit, so a test that the run does not end at once shows as one that never settled.
+    const flags = ["--bail", "--timeout=0"];
+
+    // The tests in flight wait for what never comes, or for the afterAll that the stopped run still owes.
+    const siblings = (options = "") => `
+      import { afterAll, afterEach, expect, test } from "vitest";
+      const never = new Promise(() => {});
+      const stopped = Promise.withResolvers();
+      afterAll(async () => {
+        console.log("ran: afterAll");
+        stopped.resolve();
         await 1;
-        failed.resolve();
-        expect(1).toBe(2);
+        await 1;
       });
+      afterEach(({ task }) => console.log("ran: afterEach of " + task.name));
+      test.concurrent("in flight", ${options} async ({ signal }) => {
+        console.log("ran: in flight");
+        signal.addEventListener("abort", () => console.log("ran: abort with " + signal.reason.name));
+        await never;
+      });
+      test.concurrent("reads its signal late", async context => {
+        await stopped.promise;
+        console.log("ran: late reader sees " + context.signal.reason?.name);
+      });
+      test.concurrent("fails", async () => { await 1; expect(1).toBe(2); });
       test.concurrent("not started", () => { console.log("ran: not started"); });
       test("behind the group", () => { console.log("ran: behind the group"); });
     `;
-    const flags = ["--bail", "--max-concurrency=2"];
 
-    test("lets a test that is in flight end, and starts no other", async () => {
-      const file = siblings(`console.log("ran: in flight ends");`);
+    // With retries or repeats the test in flight would have more attempts. It gets none of them.
+    test.each(["", "{ retry: 2 },", "{ repeats: 2 },"])(
+      "ends the tests that are in flight with their afterEach and no result, and starts no other: %s",
+      async options => {
+        const files = { "a.test.ts": siblings(options) };
+        const { ran, results, summary, exitCode } = await run(files, [...flags, "--max-concurrency=3"]);
+        expect({ ran, results, summary, exitCode }).toEqual({
+          ran: [
+            "in flight",
+            "afterEach of fails",
+            "abort with AbortError",
+            "afterEach of in flight",
+            "afterEach of reads its signal late",
+            "afterAll",
+            "late reader sees AbortError",
+          ],
+          results: ["(fail) fails", "(skip) in flight", "(skip) reads its signal late"],
+          summary: [
+            " 0 pass",
+            " 2 skip",
+            " 1 fail",
+            " 1 expect() calls",
+            "Ran 3 tests across 1 file.",
+            "Bailed out after 1 failure",
+          ],
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("sends a test that is in a hook before its body or in its body to its teardown", async () => {
+      const file = `
+        import { afterEach, aroundEach, beforeEach, describe, expect, test } from "bun:test";
+        const never = new Promise(() => {});
+        afterEach(() => console.log("ran: afterEach"));
+        describe("in its beforeEach", () => {
+          beforeEach(async () => { await never; });
+          test.concurrent("test", () => console.log("ran: body of in its beforeEach"));
+        });
+        describe("in its aroundEach", () => {
+          aroundEach(async runTest => { await never; await runTest(); });
+          test.concurrent("test", () => console.log("ran: body of in its aroundEach"));
+        });
+        describe("in its body", () => {
+          aroundEach(async runTest => { await runTest(); console.log("ran: rest of the aroundEach"); });
+          test.concurrent("test", async () => { await never; });
+        });
+        test.concurrent("fails", async () => { await 1; expect(1).toBe(2); });
+      `;
       const { ran, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
       expect({ ran, results, summary, exitCode }).toEqual({
-        ran: ["in flight", "in flight ends"],
-        results: ["(fail) fails", "(pass) in flight"],
-        summary: [
-          " 1 pass",
-          " 1 fail",
-          " 1 expect() calls",
-          "Ran 2 tests across 1 file.",
-          "Bailed out after 1 failure",
+        // The afterEach of the test that fails, of the first test and of the third. Nothing inside the aroundEach of the second has started.
+        ran: ["afterEach", "afterEach", "afterEach", "rest of the aroundEach"],
+        results: [
+          "(fail) fails",
+          "(skip) in its beforeEach > test",
+          "(skip) in its aroundEach > test",
+          "(skip) in its body > test",
         ],
-        exitCode: 1,
-      });
-    });
-
-    test("does not repeat a test that is in flight", async () => {
-      const file = siblings(`console.log("ran: in flight ends");`, "{ repeats: 2 },");
-      const { ran, results, exitCode } = await run({ "a.test.ts": file }, flags);
-      expect({ ran, results, exitCode }).toEqual({
-        ran: ["in flight", "in flight ends"],
-        results: ["(fail) fails", "(pass) in flight"],
-        exitCode: 1,
-      });
-    });
-
-    // A test that had started has its retries, as without --bail. Only its last attempt is its result.
-    const attempts = `globalThis.attempts = (globalThis.attempts ?? 0) + 1;`;
-    test("tries a test that is in flight again, and counts it as passed when it then passes", async () => {
-      const file = siblings(
-        `${attempts} if (globalThis.attempts === 1) throw new Error("in flight");`,
-        "{ retry: 2 },",
-      );
-      const { ran, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
-      expect({ ran, results, summary, exitCode }).toEqual({
-        ran: ["in flight", "in flight"],
-        results: ["(fail) fails", "(pass) in flight (attempt 2)"],
-        summary: [
-          " 1 pass",
-          " 1 fail",
-          " 1 expect() calls",
-          "Ran 2 tests across 1 file.",
-          "Bailed out after 1 failure",
-        ],
-        exitCode: 1,
-      });
-    });
-
-    test("counts a test that is in flight once when each of its attempts fails", async () => {
-      const file = siblings(`throw new Error("in flight");`, "{ retry: 2 },");
-      const { ran, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
-      expect({ ran, results, summary, exitCode }).toEqual({
-        ran: ["in flight", "in flight", "in flight"],
-        results: ["(fail) fails", "(fail) in flight (attempt 3)"],
         summary: [
           " 0 pass",
+          " 3 skip",
+          " 1 fail",
+          " 1 expect() calls",
+          "Ran 4 tests across 1 file.",
+          "Bailed out after 1 failure",
+        ],
+        exitCode: 1,
+      });
+    });
+
+    test("tears down the fixture of a test that it ends, and calls back what the test registered", async () => {
+      const file = `
+        import { afterAll, expect, test as base } from "vitest";
+        const never = new Promise(() => {});
+        const test = base.extend({
+          server: async ({}, use) => {
+            console.log("ran: set up the fixture");
+            await use("server");
+            console.log("ran: tear down the fixture");
+          },
+        });
+        const inBody = Promise.withResolvers();
+        afterAll(() => console.log("ran: afterAll"));
+        test.concurrent("in flight", async ({ server, onTestFinished, onTestFailed }) => {
+          onTestFinished(() => console.log("ran: onTestFinished"));
+          onTestFailed(() => console.log("ran: onTestFailed"));
+          inBody.resolve();
+          await never;
+        });
+        test.concurrent("fails", async ({}) => { await inBody.promise; expect(1).toBe(2); });
+      `;
+      const { ran, results, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ ran, results, exitCode }).toEqual({
+        ran: ["set up the fixture", "tear down the fixture", "onTestFinished", "afterAll"],
+        results: ["(fail) fails", "(skip) in flight"],
+        exitCode: 1,
+      });
+    });
+
+    test("starts no other hook before the body and no body of a test whose setup ends when the run stops", async () => {
+      // The three tests wait in their first beforeEach for the same promise, so all three go on in the same turn.
+      const file = `
+        import { afterEach, beforeEach, describe, test } from "bun:test";
+        const ready = Promise.withResolvers();
+        describe("waits", () => {
+          beforeEach(async () => { await ready.promise; });
+          beforeEach(() => console.log("ran: second beforeEach"));
+          afterEach(() => console.log("ran: afterEach"));
+          test.concurrent("first", () => { throw new Error("first fails"); });
+          test.concurrent("second", () => console.log("ran: body of second"));
+          test.concurrent("third", () => console.log("ran: body of third"));
+        });
+        test.concurrent("lets them go on", () => { ready.resolve(); });
+      `;
+      const { ran, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ ran, results, summary, exitCode }).toEqual({
+        ran: ["second beforeEach", "afterEach", "afterEach", "afterEach"],
+        results: ["(pass) lets them go on", "(fail) waits > first", "(skip) waits > second", "(skip) waits > third"],
+        summary: [" 1 pass", " 2 skip", " 1 fail", "Ran 4 tests across 1 file.", "Bailed out after 1 failure"],
+        exitCode: 1,
+      });
+    });
+
+    // The callback of the test has settled, and a step of the whole group comes before the step of that result.
+    const settled: [how: string, file: string, ran: string[], results: string[]][] = [
+      [
+        "a matcher that its group held was released",
+        `import { afterEach, expect, test } from "bun:test";
+        const ready = Promise.withResolvers();
+        afterEach(() => console.log("ran: afterEach"));
+        test.concurrent("passes", async () => {
+          await 1;
+          await expect(ready.promise).resolves.toBe("ok");
+          console.log("ran: body of passes ends");
+        });
+        test.concurrent("fails", async () => { ready.resolve("ok"); await 1; throw new Error("fails"); });`,
+        ["body of passes ends", "afterEach", "afterEach"],
+        ["(fail) fails", "(pass) passes"],
+      ],
+      [
+        "the failure is a test before it that ran out of time",
+        `import { afterEach, test } from "bun:test";
+        const never = new Promise(() => {});
+        const timedOut = Promise.withResolvers();
+        afterEach(() => { console.log("ran: afterEach"); timedOut.resolve(); });
+        test.concurrent("fails", async () => { await never; }, 20);
+        test.concurrent("passes", async () => { await timedOut.promise; console.log("ran: body of passes ends"); });`,
+        ["afterEach", "body of passes ends", "afterEach"],
+        ["(fail) fails", "(pass) passes"],
+      ],
+      [
+        "its time limit has run out too, and the runner has not looked at it yet",
+        `import { afterEach, test } from "bun:test";
+        const never = new Promise(() => {});
+        const timedOut = Promise.withResolvers();
+        let ended = 0;
+        // The second afterEach is the one of the test that fails.
+        afterEach(() => { console.log("ran: afterEach"); if (++ended === 2) timedOut.resolve(); });
+        test.concurrent("fails", async () => { await never; }, 20);
+        test.concurrent("passes", async () => { await timedOut.promise; console.log("ran: body of passes ends"); }, 20);
+        // Both time limits run out while this test keeps the thread.
+        test.concurrent("blocks", () => { const end = performance.now() + 60; while (performance.now() < end); });`,
+        ["afterEach", "afterEach", "body of passes ends", "afterEach"],
+        ["(pass) blocks", "(fail) fails", "(pass) passes"],
+      ],
+    ];
+    test.each(settled)(
+      "gives a test whose body has ended its result and its afterEach: %s",
+      async (_, file, ran, results) => {
+        const stopped = await run({ "a.test.ts": file }, flags);
+        expect({ ran: stopped.ran, results: stopped.results, exitCode: stopped.exitCode }).toEqual({
+          ran,
+          results,
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("does not fail a test in flight that must fail, counts assertions or rejects when its signal aborts", async () => {
+      const file = `
+        import { drainMicrotasks } from "bun:jsc";
+        import { expect, test } from "vitest";
+        const never = new Promise(() => {});
+        test.fails.concurrent("must fail", async () => { await never; });
+        test.concurrent("counts assertions", async ({ expect }) => { expect.assertions(2); await never; });
+        test.concurrent("rejects when its signal aborts", ({ signal }) =>
+          new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason))));
+        // The reaction to the rejection runs before the listener returns.
+        test.concurrent("has rejected when its signal has aborted", ({ signal }) =>
+          new Promise((resolve, reject) =>
+            signal.addEventListener("abort", () => { reject(signal.reason); drainMicrotasks(); })));
+        test.concurrent("fails", async () => { await 1; expect(1).toBe(2); });
+      `;
+      const { results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ results, summary, exitCode }).toEqual({
+        results: [
+          "(fail) fails",
+          "(skip) must fail",
+          "(skip) counts assertions",
+          "(skip) rejects when its signal aborts",
+          "(skip) has rejected when its signal has aborted",
+        ],
+        summary: [
+          " 0 pass",
+          " 4 skip",
+          " 1 fail",
+          " 1 expect() calls",
+          "Ran 5 tests across 1 file.",
+          "Bailed out after 1 failure",
+        ],
+        exitCode: 1,
+      });
+    });
+
+    test("reports a test in flight as failed only if an assertion of it has failed and no retry is left", async () => {
+      const file = `
+        import { expect, test } from "vitest";
+        const never = new Promise(() => {});
+        test.concurrent("has failed", async ({ expect }) => { expect.soft(1).toBe(2); await never; });
+        test.concurrent("has failed, with a retry left", { retry: 1 }, async ({ expect }) => { expect.soft(1).toBe(2); await never; });
+        test.fails.concurrent("must fail and has failed", async ({ expect }) => { expect.soft(1).toBe(2); await never; });
+        test.concurrent("fails", async () => { await 1; expect(1).toBe(2); });
+      `;
+      const { results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ results, summary, exitCode }).toEqual({
+        results: [
+          "(fail) fails",
+          "(fail) has failed",
+          "(skip) has failed, with a retry left",
+          "(pass) must fail and has failed",
+        ],
+        summary: [
+          " 1 pass",
+          " 1 skip",
           " 2 fail",
+          " 4 expect() calls",
+          "Ran 4 tests across 1 file.",
+          "Bailed out after 1 failure",
+        ],
+        exitCode: 1,
+      });
+    });
+
+    // What a test that it ended left pending is not an error of the run, and the run does not wait for it.
+    // A new expect() that its body makes later belongs to what runs then, as after a timeout.
+    const preloadThatCloses = `
+      import { afterAll } from "bun:test";
+      afterAll(() => { console.log("ran: afterAll of the preload"); globalThis.closeResource(); });
+    `;
+    const leftBehind: [what: string, files: Record<string, string>, ran: string[]][] = [
+      [
+        "a matcher that the test did not await",
+        {
+          "a.test.ts": `import { afterAll, expect, test } from "bun:test";
+          const never = new Promise(() => {});
+          afterAll(() => console.log("ran: afterAll"));
+          test.concurrent("in flight", async () => { await 1; expect(never).resolves.toBe(1); await never; });
+          test.concurrent("fails", async () => { await 1; await 1; await 1; throw new Error("fails"); });`,
+        },
+        ["afterAll"],
+      ],
+      [
+        "a matcher that the test did not await, and that alone keeps the test open",
+        {
+          "a.test.ts": `import { afterAll, expect, test } from "bun:test";
+          afterAll(() => console.log("ran: afterAll"));
+          test.concurrent("in flight", async () => { expect(new Promise(() => {})).resolves.toBe(1); });
+          test.concurrent("fails", async () => { await 1; throw new Error("fails"); });`,
+        },
+        ["afterAll"],
+      ],
+      [
+        "a matcher that the test awaits",
+        {
+          "a.test.ts": `import { afterAll, expect, test } from "bun:test";
+          const never = new Promise(() => {});
+          afterAll(() => console.log("ran: afterAll"));
+          test.concurrent("in flight", async () => { await 1; await expect(never).resolves.toBe(1); });
+          test.concurrent("fails", async () => { await 1; await 1; await 1; throw new Error("fails"); });`,
+        },
+        ["afterAll"],
+      ],
+      [
+        "a matcher of the test that the file holds",
+        {
+          "a.test.ts": `import { afterAll, expect, test } from "bun:test";
+          const never = new Promise(() => {});
+          const stopped = Promise.withResolvers();
+          afterAll(async () => {
+            stopped.resolve();
+            await 1;
+            await 1;
+            console.log("ran: afterAll");
+          });
+          test.concurrent("in flight", async () => {
+            const made = expect(never);
+            await stopped.promise;
+            console.log("ran: matcher");
+            made.resolves.toBe(1);
+          });
+          test.concurrent("fails", async () => { await 1; throw new Error("fails"); });`,
+        },
+        ["matcher", "afterAll"],
+      ],
+      [
+        "an error that the test passes to done()",
+        {
+          "a.test.ts": `import { afterAll, test } from "bun:test";
+          const stopped = Promise.withResolvers();
+          afterAll(async () => {
+            stopped.resolve();
+            await 1;
+            await 1;
+            console.log("ran: afterAll");
+          });
+          test.concurrent("in flight", done => {
+            stopped.promise.then(() => { console.log("ran: done(error)"); done(new Error("late")); });
+          });
+          test.concurrent("fails", async () => { await 1; throw new Error("fails"); });`,
+        },
+        ["done(error)", "afterAll"],
+      ],
+      [
+        "an error that the test passes to done() when its signal aborts",
+        {
+          "a.test.ts": `import { test } from "bun:test";
+          import { TestRunner } from "vitest";
+          test.concurrent("in flight", done => {
+            const { signal } = TestRunner.getCurrentTest().context;
+            signal.addEventListener("abort", () => { console.log("ran: done(error)"); done(signal.reason); });
+          });
+          test.concurrent("fails", async () => { await 1; throw new Error("fails"); });`,
+        },
+        ["done(error)"],
+      ],
+      [
+        "an error that the test passes to done() while a preload tears down after another file would have run",
+        {
+          "preload.ts": preloadThatCloses,
+          "a.test.ts": `import { test } from "bun:test";
+          test.concurrent("in flight", done => {
+            globalThis.closeResource = () => { console.log("ran: done(error)"); done(new Error("late")); };
+          });
+          test.concurrent("fails", async () => { await 1; throw new Error("fails"); });`,
+          "b.test.ts": otherFile,
+        },
+        ["afterAll of the preload", "done(error)"],
+      ],
+    ];
+    test.each(leftBehind)("does not wait for or report %s", async (_, files, expected) => {
+      const preload = "preload.ts" in files ? ["--preload=./preload.ts"] : [];
+      const { ran, results, summary, exitCode } = await run(files, [...flags, ...preload]);
+      expect({ ran, results, summary: summary.filter(line => !line.endsWith("expect() calls")), exitCode }).toEqual({
+        ran: expected,
+        results: ["(fail) fails", "(skip) in flight"],
+        summary: [" 0 pass", " 1 skip", " 1 fail", "Ran 2 tests across 1 file.", "Bailed out after 1 failure"],
+        exitCode: 1,
+      });
+    });
+
+    test("ends a test that waits for a matcher when its body ends while the run ends another test", async () => {
+      const file = `
+        import { afterAll, afterEach, expect, test } from "bun:test";
+        const never = new Promise(() => {});
+        const released = Promise.withResolvers();
+        let teardowns = 0;
+        afterAll(() => console.log("ran: afterAll"));
+        // The afterEach of the test that fails runs first, that of the first test that the run ends runs second.
+        afterEach(() => { if (++teardowns === 2) released.resolve(); });
+        test.concurrent("in flight", async () => { await never; });
+        test.concurrent("waits for a matcher", async () => { expect(never).resolves.toBe(1); await released.promise; });
+        test.concurrent("fails", async () => { await 1; throw new Error("fails"); });
+      `;
+      const { ran, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ ran, results, summary: summary.filter(line => !line.endsWith("expect() calls")), exitCode }).toEqual({
+        ran: ["afterAll"],
+        results: ["(fail) fails", "(skip) in flight", "(skip) waits for a matcher"],
+        summary: [" 0 pass", " 2 skip", " 1 fail", "Ran 3 tests across 1 file.", "Bailed out after 1 failure"],
+        exitCode: 1,
+      });
+    });
+
+    test("does not wait for or report a matcher that was called outside a test", async () => {
+      const file = `
+        import { expect, test } from "bun:test";
+        expect(new Promise(() => {})).resolves.toBe(1);
+        test("fails", async () => { await 1; throw new Error("fails"); });
+      `;
+      const { summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ summary, exitCode }).toEqual({
+        summary: [" 0 pass", " 1 fail", "Ran 1 test across 1 file.", "Bailed out after 1 failure"],
+        exitCode: 1,
+      });
+    });
+
+    // The stop gives such a test no result, like skip() of Vitest. An error from its teardown does not change that.
+    const throws = `() => { throw new Error("afterEach fails"); }`;
+    test.each([
+      ["bun:test", throws, []],
+      ["vitest", throws, []],
+      // The hook of the test that fails gives its error to the run, as it does without --bail.
+      ["bun:test", `done => { done(new Error("afterEach fails")); }`, [" 1 error"]],
+    ])("reports no error from the teardown of a test that it ended: %s, %s", async (from, hook, errors) => {
+      const file = `
+        import { afterEach, expect, test } from "${from}";
+        afterEach(${hook});
+        test.concurrent("in flight", async () => { await new Promise(() => {}); });
+        test.concurrent("fails", async () => { await 1; expect(1).toBe(2); });
+      `;
+      const { stderr, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ printed: stderr.match(/^error: afterEach fails$/gm), results, summary, exitCode }).toEqual({
+        // The one of the test that fails.
+        printed: ["error: afterEach fails"],
+        results: ["(fail) fails", "(skip) in flight"],
+        summary: [
+          " 0 pass",
+          " 1 skip",
+          " 1 fail",
+          ...errors,
           " 1 expect() calls",
           "Ran 2 tests across 1 file.",
           "Bailed out after 1 failure",
         ],
+        exitCode: 1,
+      });
+    });
+
+    // The test has run its body and is in its afterEach when the run stops. The afterEach runs to its end.
+    const inTeardown = (options: string, body: string) => `
+      import { afterEach, test } from "bun:test";
+      const stopped = Promise.withResolvers();
+      let waits = false;
+      afterEach(async () => {
+        if (!waits) return;
+        waits = false;
+        await stopped.promise;
+        console.log("ran: afterEach ends");
+      });
+      test.concurrent("in its afterEach", ${options} () => {
+        console.log("ran: attempt");
+        waits = true;
+        ${body}
+      });
+      test.concurrent("fails", async () => { await 1; setImmediate(stopped.resolve); throw new Error("fails"); });
+    `;
+    test.each([
+      ["", "", "(pass) in its afterEach", " 1 pass"],
+      // The attempts that decide the result do not run, so the test has none.
+      ["{ retry: 1 },", `throw new Error("first attempt");`, "(skip) in its afterEach", " 1 skip"],
+      ["{ repeats: 1 },", "", "(skip) in its afterEach", " 1 skip"],
+    ])(
+      "lets a test that is in its afterEach end, and starts no other attempt of it: %s",
+      async (options, body, result, count) => {
+        const { ran, results, summary, exitCode } = await run({ "a.test.ts": inTeardown(options, body) }, flags);
+        expect({ ran, results, summary: summary.filter(line => line !== " 0 pass"), exitCode }).toEqual({
+          ran: ["attempt", "afterEach ends"],
+          results: ["(fail) fails", result],
+          summary: [count, " 1 fail", "Ran 2 tests across 1 file.", "Bailed out after 1 failure"],
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("reports an error that the afterEach of such a test passes to done()", async () => {
+      const file = `
+        import { afterEach, test } from "bun:test";
+        const stopped = Promise.withResolvers();
+        let waits = false;
+        afterEach(done => {
+          if (!waits) return done();
+          waits = false;
+          stopped.promise.then(() => done(new Error("afterEach failed")));
+        });
+        test.concurrent("in its afterEach", () => { waits = true; });
+        test.concurrent("fails", async () => { await 1; setImmediate(stopped.resolve); throw new Error("fails"); });
+      `;
+      const { stderr, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ errors: stderr.match(/^error: afterEach failed$/gm), summary, exitCode }).toEqual({
+        errors: ["error: afterEach failed"],
+        summary: [" 1 pass", " 1 fail", " 1 error", "Ran 2 tests across 1 file.", "Bailed out after 1 failure"],
+        exitCode: 1,
+      });
+    });
+
+    test("reaches every test in flight when the tests that still run are as many as --max-concurrency allows", async () => {
+      // The limit goes down while the group runs. Then the test that is in its afterEach fills it alone.
+      const file = `
+        import { afterEach, test, vi } from "vitest";
+        const never = new Promise(() => {});
+        const aborted = Promise.withResolvers();
+        let waits = false;
+        afterEach(async () => {
+          if (!waits) return;
+          waits = false;
+          await aborted.promise;
+          console.log("ran: afterEach ends");
+        });
+        test.concurrent("in its afterEach", () => { waits = true; });
+        test.concurrent("in flight", async ({ signal }) => {
+          signal.addEventListener("abort", () => { console.log("ran: abort"); aborted.resolve(); });
+          await never;
+        });
+        test.concurrent("fails", async () => { vi.setConfig({ maxConcurrency: 1 }); await 1; throw new Error("fails"); });
+      `;
+      const { ran, results, exitCode } = await run({ "a.test.ts": file }, flags);
+      expect({ ran, results, exitCode }).toEqual({
+        ran: ["abort", "afterEach ends"],
+        results: ["(fail) fails", "(skip) in flight", "(pass) in its afterEach"],
         exitCode: 1,
       });
     });
@@ -411,7 +869,7 @@ describe.concurrent("a run that --bail stops", () => {
           });
         });
       `;
-      const { ran, exitCode } = await run({ "a.test.ts": file }, flags);
+      const { ran, exitCode } = await run({ "a.test.ts": file }, [...flags, "--max-concurrency=2"]);
       expect({ ran, exitCode }).toEqual({ ran: ["in flight", "afterAll of b"], exitCode: 1 });
     });
   });
@@ -421,11 +879,20 @@ describe.concurrent("a run that --bail stops", () => {
   describe("fails and reports when the script exits with code 0", () => {
     const exits: [name: string, file: string][] = [
       [
-        "from a test that was in flight",
-        `import { test } from "bun:test";
-        const failed = Promise.withResolvers();
-        test.concurrent("exits", async () => { await failed.promise; console.log("ran: exits"); process.exit(0); });
-        test.concurrent("fails", async () => { await 1; setImmediate(failed.resolve); throw new Error("fails"); });`,
+        // The test has run its body. It has no result yet, so the report does not count it.
+        "from the afterEach of a test that is in it when the run stops",
+        `import { afterEach, test } from "bun:test";
+        const stopped = Promise.withResolvers();
+        let exits = false;
+        afterEach(async () => {
+          if (!exits) return;
+          exits = false;
+          await stopped.promise;
+          console.log("ran: exits");
+          process.exit(0);
+        });
+        test.concurrent("in its afterEach", () => { exits = true; });
+        test.concurrent("fails", async () => { await 1; setImmediate(stopped.resolve); throw new Error("fails"); });`,
       ],
       [
         "from a callback that is due with the failure",
@@ -496,45 +963,59 @@ describe.concurrent("a run that --bail stops", () => {
       });
     });
 
-    test("keeps another exit code", async () => {
-      const file = `
-        import { afterAll, test } from "bun:test";
-        afterAll(() => process.exit(3));
-        test("fails", () => { throw new Error("fails"); });
-      `;
-      const { summary, exitCode } = await run({ "a.test.ts": file }, ["--bail"]);
-      expect({ summary, exitCode }).toEqual({
+    test.each([
+      [
+        "of process.exit()",
+        `import { afterAll, test } from "bun:test";
+        afterAll(() => { console.log("ran: exits"); process.exit(3); });
+        test("fails", () => { throw new Error("fails"); });`,
+      ],
+      [
+        "that an 'exit' listener stores",
+        `import { test } from "node:test";
+        process.on("exit", () => { console.log("ran: exits"); process.exitCode = 3; });
+        test("fails", () => { throw new Error("fails"); });`,
+      ],
+    ])("keeps another exit code %s", async (_, file) => {
+      const { ran, summary, exitCode } = await run({ "a.test.ts": file }, ["--bail"]);
+      expect({ ran, summary, exitCode }).toEqual({
+        ran: ["exits"],
         summary: [" 0 pass", " 1 fail", "Ran 1 test across 1 file.", "Bailed out after 1 failure"],
         exitCode: 3,
       });
     });
 
-    test("counts no test that the exit keeps from its end, even one that has failed", async () => {
-      // "fails later" has thrown, and the exit comes from its afterEach.
+    test("from the body of a test that it ended", async () => {
       const file = `
-        import { afterEach, test } from "bun:test";
-        const failed = Promise.withResolvers();
-        let failedLater = false;
-        afterEach(() => {
-          if (!failedLater) return;
-          console.log("ran: exits");
-          process.exit(0);
-        });
-        test.concurrent("fails later", async () => {
-          await failed.promise;
-          failedLater = true;
-          throw new Error("fails later");
-        });
-        test.concurrent("fails", async () => { await 1; setImmediate(failed.resolve); throw new Error("fails"); });
+        import { afterAll, test } from "bun:test";
+        const stopped = Promise.withResolvers();
+        afterAll(async () => { stopped.resolve(); await new Promise(() => {}); });
+        test.concurrent("in flight", async () => { await stopped.promise; console.log("ran: exits"); process.exit(0); });
+        test.concurrent("fails", async () => { await 1; throw new Error("fails"); });
       `;
-      const { ran, stderr, results, summary, exitCode } = await run({ "a.test.ts": file }, ["--bail"]);
-      expect(stderr).toContain("error: fails later");
-      expect({ ran, results, summary, exitCode }).toEqual({
+      const { ran, summary, exitCode } = await run({ "a.test.ts": file }, ["--bail", "--timeout=0"]);
+      expect({ ran, summary, exitCode }).toEqual({
         ran: ["exits"],
-        results: ["(fail) fails"],
-        summary: [" 0 pass", " 1 fail", "Ran 1 test across 1 file.", "Bailed out after 1 failure"],
+        summary: [" 0 pass", " 1 skip", " 1 fail", "Ran 2 tests across 1 file.", "Bailed out after 1 failure"],
         exitCode: 1,
       });
+    });
+
+    test.each([
+      ["process.exit(0)", `process.exit(0);`],
+      [
+        "process.reallyExit(0) of another realm",
+        `process.exitCode = 0; new ShadowRealm().evaluate("process.reallyExit(0)");`,
+      ],
+    ])("tells 'exit' listeners and process.exitCode the code that the process ends with: %s", async (_, exits) => {
+      const file = `
+        import { afterAll, test } from "bun:test";
+        process.on("exit", code => console.log("ran: listener told " + code + ", exitCode is " + process.exitCode));
+        afterAll(() => { ${exits} });
+        test("fails", () => { throw new Error("fails"); });
+      `;
+      const { ran, exitCode } = await run({ "a.test.ts": file }, ["--bail"]);
+      expect({ ran, exitCode }).toEqual({ ran: ["listener told 1, exitCode is 1"], exitCode: 1 });
     });
   });
 
@@ -626,8 +1107,9 @@ test.skipIf(isWindows)("a run that --bail stops keeps watching under --watch", a
     }
   }
   await waitFor("Bailed out after 1 failure");
-  expect(output).toContain("ran: afterAll");
-  expect(output).toContain(" 1 fail");
+  // Whole lines: the source line of the hook is in the error of the test, and the banner has the count in it.
+  expect(output).toMatch(/^ran: afterAll$/m);
+  expect(output).toMatch(/^ 1 fail$/m);
   expect(output).not.toContain("(pass)");
 
   // The run never loaded b.test.ts, and a change to it starts the next run all the same.

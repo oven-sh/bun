@@ -241,6 +241,20 @@ impl TestContext {
         }
     }
 
+    /// `--bail` ended the test. A test that reads its signal only afterwards gets this aborted one.
+    #[cold]
+    pub(crate) fn abort_signal_at_stop(this_value: JSValue, global: &JSGlobalObject) {
+        let signal = js::signal_get_cached(this_value).unwrap_or_else(|| {
+            let signal = AbortSignal::create(global);
+            js::signal_set_cached(this_value, global, signal);
+            signal
+        });
+        if let Some(signal) = AbortSignal::from_js(signal) {
+            // SAFETY: the wrapper in the cached slot keeps the signal alive.
+            unsafe { &*signal }.signal(global, CommonAbortReason::UserAbort);
+        }
+    }
+
     pub(crate) fn get_task(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let (this_value, global) = (this_value.to_js(), cx.global());
         let Some((buntest, sequence)) = self.sequence() else {

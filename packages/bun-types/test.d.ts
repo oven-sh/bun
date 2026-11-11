@@ -1247,7 +1247,7 @@ declare module "bun:test" {
      * belong to this test even when other tests run concurrently.
      */
     readonly expect: Expect;
-    /** Aborted when the test times out. */
+    /** Aborted when the test times out, or when `--bail` ends the test. */
     readonly signal: AbortSignal;
     /** Stops the test and reports it as skipped. */
     skip(note?: string): never;

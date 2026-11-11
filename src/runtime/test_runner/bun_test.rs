@@ -984,11 +984,17 @@ impl BunTest {
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            let is_running_test = this
+            let running = this
                 .execution
                 .get_current_and_valid_execution_sequence(entry)
-                .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
-            if is_running_test {
+                .map(|(sequence, _)| (sequence.active_entry == sequence.test_entry, sequence.result));
+            // Once `--bail` has stopped the run, this is an error of the run only if a sequence still runs the callback, for a test that the stop did not end.
+            if !matches!(running, Some((_, result)) if result != Execution::Result::Skip)
+                && Jest::runner().is_some_and(|runner| runner.stopped.is_some())
+            {
+                return;
+            }
+            if let Some((true, _)) = running {
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
                 // As for any other uncaught exception: the test is over whatever its callback returns,
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
@@ -1123,6 +1129,16 @@ impl BunTest {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
     }
 
+    /// Whether a result of `entry` waits in the queue: its callback has settled, and the step of that result has not run yet.
+    pub(crate) fn has_result_of(&self, group_index: usize, entry: EntryData) -> bool {
+        (0..self.result_queue.readable_length()).any(|at| {
+            matches!(
+                self.result_queue.peek_item(at),
+                RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry
+            )
+        })
+    }
+
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
         // `Collection::step` / `Execution::step` re-enter and call `.get()` on
@@ -1216,6 +1232,8 @@ impl BunTest {
     #[cold]
     pub(crate) fn stop(&mut self) {
         self.execution.stopped_in = Some(self.execution.group_index);
+        // A step of the whole group ends the tests of it that are not in their teardown and have no result in the queue.
+        self.add_result(RefDataValue::Start);
     }
 
     fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {

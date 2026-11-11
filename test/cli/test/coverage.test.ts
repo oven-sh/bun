@@ -1503,52 +1503,91 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(exitCode).toBe(1);
 });
 
-// The report comes from the end of the run, or from the process.exit() of a hook that the stopped run still owes.
-test.each([
-  ["", ""],
-  [", and a hook then ends the process", `afterAll(() => process.exit(0));`],
-])("reports what ran when --bail stops the run%s", async (_, hook) => {
-  using dir = tempDir("coverage-bail", {
-    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
-    "lib.ts": `export function run(late: boolean) {
+describe.concurrent("when --bail stops the run", () => {
+  const lib = `export function run(late: boolean) {
   if (late) {
     console.log("only the test behind the failure");
     console.log("gets here");
   }
   return 1;
 }
-`,
-    "lib.test.ts": `
-      import { afterAll, test, expect } from "bun:test";
-      import { run } from "./lib";
-      ${hook}
-      test("runs", () => { expect(run(false)).toBe(1); });
-      test("fails", () => { expect(run(false)).toBe(2); });
-      test("behind the failure", () => { expect(run(true)).toBe(1); });
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--bail", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+`;
+  const tests = (hook = "") => `
+    import { afterAll, test, expect } from "bun:test";
+    import { run } from "./lib";
+    ${hook}
+    test("runs", () => { expect(run(false)).toBe(1); });
+    test("fails", () => { expect(run(false)).toBe(2); });
+    test("behind the failure", () => { expect(run(true)).toBe(1); });
+  `;
 
-  // The table comes before the counts, as in every run.
-  const lines = stderr.split(/\r?\n/).map(line => line.trimEnd());
-  const row = lines.indexOf(" lib.ts    |  100.00 |   60.00 | 3-4");
-  expect(row).toBeGreaterThan(lines.findIndex(line => line.startsWith("(fail) fails")));
-  expect(lines.indexOf(" 1 pass")).toBeGreaterThan(row);
-  expect(lines.at(-2)).toBe("Bailed out after 1 failure");
+  async function bail(files: Record<string, string>, ...flags: string[]) {
+    using dir = tempDir("coverage-bail", {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      "lib.ts": lib,
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--bail", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...flags],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const read = (name: string) => {
+      try {
+        return readFileSync(path.join(String(dir), name), "utf8");
+      } catch {
+        return null;
+      }
+    };
+    return {
+      stderr,
+      lines: stderr.split(/\r?\n/).map(line => line.trimEnd()),
+      // The lines of lib.ts, with "hit" for every count that is not 0.
+      lcov: read("coverage/lcov.info")
+        ?.split(/\r?\n/)
+        .filter(line => line.startsWith("DA:"))
+        .map(line => line.replace(/,[1-9]\d*$/, ",hit")),
+      junit: read("junit.xml"),
+      exitCode,
+    };
+  }
+  const row = " lib.ts    |  100.00 |   60.00 | 3-4";
+  const covered = ["DA:1,hit", "DA:2,hit", "DA:3,0", "DA:4,0", "DA:6,hit"];
 
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
-  expect(
-    lcov
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("DA:"))
-      .map(line => line.replace(/,[1-9]\d*$/, ",hit")),
-  ).toEqual(["DA:1,hit", "DA:2,hit", "DA:3,0", "DA:4,0", "DA:6,hit"]);
-  expect(exitCode).toBe(1);
+  // The report comes from the end of the run, or from the process.exit() of a hook that the stopped run still owes.
+  test.each([
+    ["", ""],
+    [", and a hook then ends the process", `afterAll(() => process.exit(0));`],
+  ])("reports what ran%s", async (_, hook) => {
+    const { lines, lcov, exitCode } = await bail({ "lib.test.ts": tests(hook) });
+    // The table comes before the counts, as in every run.
+    expect(lines.indexOf(row)).toBeGreaterThan(lines.findIndex(line => line.startsWith("(fail) fails")));
+    expect(lines.indexOf(" 1 pass")).toBeGreaterThan(lines.indexOf(row));
+    expect(lines.at(-2)).toBe("Bailed out after 1 failure");
+    expect(lcov).toEqual(covered);
+    expect(exitCode).toBe(1);
+  });
+
+  test("reports what ran when the failure is a file that does not load", async () => {
+    const file = `import { run } from "./lib";\nrun(false);\nthrow new Error("does not load");\n`;
+    const { lines, lcov, exitCode } = await bail({ "lib.test.ts": file });
+    expect(lines).toContain(row);
+    expect(lines.at(-2)).toBe("Bailed out after 1 failure");
+    expect(lcov).toEqual(covered);
+    expect(exitCode).toBe(1);
+  });
+
+  test("writes the other reports when it can't write lcov.info", async () => {
+    // A file where the coverage directory has to be.
+    const files = { "lib.test.ts": tests(), "coverage": "not a directory" };
+    const { stderr, lines, junit, exitCode } = await bail(files, "--reporter=junit", "--reporter-outfile=junit.xml");
+    expect(stderr).toContain("Failed to write lcov.info");
+    expect(lines).toContain(row);
+    expect(lines.at(-2)).toBe("Bailed out after 1 failure");
+    expect(junit).toContain('<testcase name="fails"');
+    expect(exitCode).toBe(1);
+  });
 });

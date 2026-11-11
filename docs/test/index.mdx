@@ -303,8 +303,9 @@ bun test --bail=10
 When the run reaches that number of failures, Bun stops it:
 
 - Bun starts no more tests and no more test files.
-- Tests that run [concurrently](#concurrent-test-execution) with the last failure finish. They keep their hooks, timeouts and retries. They can fail too, so the summary can count more failures than the number you set.
-- Bun runs the `afterEach` and `afterAll` hooks of the tests and `describe` blocks that started.
+- Bun ends the [concurrent](#concurrent-test-execution) tests whose `beforeEach` hooks or body still run, or that still wait for a matcher that they did not `await`. It aborts their [`signal`](/test/writing-tests#test-context) and goes on to their teardown, as after a timeout: the `afterEach` hooks, the teardown of their fixtures, and the `onTestFinished` callbacks run.
+- Bun reports a test that it ended as skipped, unless an assertion of that test had already failed. Bun also reports a test as skipped if the test still has a retry or a repeat to run.
+- Bun runs the `afterAll` hooks of the file and of the `describe` blocks that started.
 - Bun prints the summary. The summary has the `--seed` if `--randomize` or `describe.shuffle` set the order.
 - Bun writes the coverage and JUnit reports. It can leave new and updated snapshots unwritten.
 - Bun exits with a failure code. With `--watch`, Bun keeps watching for changes.

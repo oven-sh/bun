@@ -370,7 +370,7 @@ beforeAll(async () => {
 });
 ```
 
-When `--bail` stops a run, Bun still runs the `afterEach` and `afterAll` hooks of the tests and `describe` blocks that started, and the `afterAll` hooks of a preload script. Use those hooks to release what `beforeAll` set up.
+When `--bail` stops a run, Bun still runs the `afterAll` hooks of the file, of the `describe` blocks that started, and of a preload script. Use those hooks to release what `beforeAll` set up. A concurrent test that still runs at that moment ends there, and Bun runs its `afterEach` hooks.
 
 ## Best Practices
 

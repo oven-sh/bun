@@ -1,9 +1,11 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
-import { noInline } from "bun:jsc";
+import { drainMicrotasks, noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
-import { createContext, runInContext } from "node:vm";
+import { getCallSites } from "node:util";
+import vm, { createContext, runInContext, runInNewContext } from "node:vm";
+import { Worker } from "node:worker_threads";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -901,6 +903,498 @@ test("Error.prepareStackTrace inside a node:vm works", () => {
   expect(Error.prepareStackTrace).toBeNull();
 });
 
+test("Error.captureStackTrace inside a node:vm formats the stack like the main context does", () => {
+  const code = `
+    function inner() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    }
+    inner();
+  `;
+  // `reference` shares the line of the runInNewContext call. This file's frame
+  // in the vm stack must name that source line, not a line of the transpiled file.
+  const [reference, stack] = [new Error(), runInNewContext(code, {}, { filename: "in-vm.js" })];
+
+  const lines = stack.split("\n");
+  expect(lines.slice(0, 3)).toEqual([
+    "Error",
+    expect.stringMatching(/^    at inner \(in-vm\.js:4:\d+\)$/),
+    expect.stringMatching(/^    at in-vm\.js:7:\d+$/),
+  ]);
+
+  const thisFileFrame = /^    at .*capture-stack-trace\.test\.js:(\d+):\d+\)?$/;
+  const lineOfThisFile = stackLines => thisFileFrame.exec(stackLines.find(line => thisFileFrame.test(line)))?.[1];
+  expect(lineOfThisFile(lines)).toBeDefined();
+  expect(lineOfThisFile(lines)).toBe(lineOfThisFile(reference.stack.split("\n")));
+
+  expect(runInNewContext("Error.captureStackTrace.length")).toBe(2);
+});
+
+test("Error.captureStackTrace inside a node:vm calls the Error.prepareStackTrace of that context", () => {
+  Error.prepareStackTrace = null;
+  const result = runInNewContext(`
+    Error.prepareStackTrace = (target, sites) => "custom: " + sites[0].getFunctionName();
+    function inner() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    }
+    inner();
+  `);
+  expect(result).toBe("custom: inner");
+  expect(Error.prepareStackTrace).toBeNull();
+});
+
+test("Error.captureStackTrace onto an Error inside a node:vm calls the Error.prepareStackTrace of that context at the first read", () => {
+  const result = runInNewContext(`
+    Error.prepareStackTrace = (error, sites) => error.message + ": " + sites[0].getFunctionName();
+    function inner() {
+      const error = new RangeError("early");
+      Error.captureStackTrace(error);
+      error.message = "late";
+      return error.stack;
+    }
+    inner();
+  `);
+  expect(result).toBe("late: inner");
+});
+
+test("Error.captureStackTrace inside a node:vm takes an Error target and a caller argument", () => {
+  const stack = runInNewContext(
+    `
+    function inner() {
+      const error = new RangeError("boom");
+      Error.captureStackTrace(error, inner);
+      return error.stack;
+    }
+    function outer() {
+      return inner();
+    }
+    outer();
+    `,
+    {},
+    { filename: "in-vm.js" },
+  );
+  expect(stack.split("\n").slice(0, 3)).toEqual([
+    "RangeError: boom",
+    expect.stringMatching(/^    at outer \(in-vm\.js:8:\d+\)$/),
+    expect.stringMatching(/^    at in-vm\.js:10:\d+$/),
+  ]);
+});
+
+// Each entry runs `code` as the body of a fresh node:vm realm and returns its value.
+const vmRealmEntryPoints = [
+  ["vm.runInNewContext", code => vm.runInNewContext(code, {}, { filename: "in-vm.js" })],
+  ["vm.runInContext", code => vm.runInContext(code, vm.createContext({}), { filename: "in-vm.js" })],
+  ["vm.Script#runInContext", code => new vm.Script(code, { filename: "in-vm.js" }).runInContext(vm.createContext({}))],
+  ["vm.Script#runInNewContext", code => new vm.Script(code, { filename: "in-vm.js" }).runInNewContext({})],
+  [
+    "vm.compileFunction with a parsingContext",
+    code =>
+      vm.compileFunction(`return (${code});`, [], { filename: "in-vm.js", parsingContext: vm.createContext({}) })(),
+  ],
+  [
+    "a DONT_CONTEXTIFY context",
+    code => vm.runInContext(code, vm.createContext(vm.constants.DONT_CONTEXTIFY), { filename: "in-vm.js" }),
+  ],
+];
+
+test.each(vmRealmEntryPoints)("Error.captureStackTrace in a realm made by %s is Bun's function", (_, run) => {
+  const result = run(`(function () {
+    function inner() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    }
+    const lines = inner().split("\\n").slice(0, 2);
+    Error.prepareStackTrace = (target, sites) => sites[0].getFunctionName();
+    const prepared = (function hooked() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    })();
+    let thrown;
+    try {
+      Error.captureStackTrace(1);
+    } catch (e) {
+      thrown = [e instanceof TypeError, e.message];
+    }
+    return JSON.stringify({ lines, prepared, length: Error.captureStackTrace.length, thrown });
+  })()`);
+  expect(JSON.parse(result)).toEqual({
+    lines: ["Error", expect.stringMatching(/^    at inner \(in-vm\.js:\d+:\d+\)$/)],
+    prepared: "hooked",
+    length: 2,
+    thrown: [true, "invalid_argument"],
+  });
+});
+
+test("Error.captureStackTrace of a node:vm context, called from the main context, is Bun's function", () => {
+  const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+  function host() {
+    const target = {};
+    context.Error.captureStackTrace(target);
+    return target.stack;
+  }
+  expect(host().split("\n").slice(0, 2)).toEqual([
+    "Error",
+    expect.stringMatching(/^    at host \(.*capture-stack-trace\.test\.js:\d+:\d+\)$/),
+  ]);
+});
+
+test("Error.captureStackTrace in a node:vm context records no frames when Error.stackTraceLimit is 0, negative or not a number", () => {
+  const result = vm.runInNewContext(`
+    const limits = {
+      zero: () => (Error.stackTraceLimit = 0),
+      negative: () => (Error.stackTraceLimit = -1),
+      NaN: () => (Error.stackTraceLimit = NaN),
+      string: () => (Error.stackTraceLimit = "foo"),
+      undefined: () => (Error.stackTraceLimit = undefined),
+      deleted: () => delete Error.stackTraceLimit,
+    };
+    const stacks = {};
+    for (const [name, setLimit] of Object.entries(limits)) {
+      setLimit();
+      const target = {};
+      Error.captureStackTrace(target);
+      const error = new RangeError("boom");
+      Error.captureStackTrace(error);
+      stacks[name] = [target.stack, error.stack];
+    }
+    JSON.stringify(stacks);
+  `);
+  const headerOnly = ["Error", "RangeError: boom"];
+  expect(JSON.parse(result)).toEqual({
+    zero: headerOnly,
+    negative: headerOnly,
+    NaN: headerOnly,
+    string: headerOnly,
+    undefined: headerOnly,
+    deleted: headerOnly,
+  });
+});
+
+test.each([
+  ["a contextified", () => vm.createContext({})],
+  ["a DONT_CONTEXTIFY", () => vm.createContext(vm.constants.DONT_CONTEXTIFY)],
+])(
+  "Error.captureStackTrace on the global of %s node:vm context runs no Error.prepareStackTrace and no getter",
+  (_, createContext) => {
+    const context = createContext();
+    const run = code => vm.runInContext(code, context);
+    run(`
+      var events = [];
+      Object.defineProperty(globalThis, "name", { get: () => (events.push("get name"), "N"), configurable: true });
+      Object.defineProperty(globalThis, "message", { get: () => (events.push("get message"), "M"), configurable: true });
+      Error.prepareStackTrace = () => (events.push("prepareStackTrace"), "from-hook");
+      Error.captureStackTrace(globalThis);
+    `);
+    const inContext = run("JSON.stringify(events)");
+    Error.captureStackTrace(run("globalThis"));
+    const afterHostCall = run("JSON.stringify(events)");
+    expect({ inContext, afterHostCall }).toEqual({ inContext: "[]", afterHostCall: "[]" });
+  },
+);
+
+test("Error.captureStackTrace in a node:vm context of a Worker is Bun's function", async () => {
+  using dir = tempDir("capture-stack-trace-vm-in-worker", {
+    "worker.mjs": `
+      import { parentPort } from "node:worker_threads";
+      import vm from "node:vm";
+      const context = vm.createContext({});
+      const error = vm.runInContext(\`
+        function inner() { const error = new RangeError("boom"); Error.captureStackTrace(error, inner); return error; }
+        (function outer() { return inner(); })();
+      \`, context, { filename: "in-vm.js" });
+      Bun.gc(true);
+      const lazy = error.stack.split("\\n").slice(0, 2).map(line => line.trim().split(" (")[0]);
+      const prepared = vm.runInContext(\`
+        Error.prepareStackTrace = (target, sites) => sites[0].getFunctionName();
+        (function hooked() { const target = {}; Error.captureStackTrace(target); return target.stack; })();
+      \`, context);
+      parentPort.postMessage({ lazy, prepared });
+    `,
+  });
+  const worker = new Worker(join(String(dir), "worker.mjs"));
+  try {
+    const message = await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", code =>
+        reject(new Error("the worker exited with code " + code + " before it posted a message")),
+      );
+    });
+    expect(message).toEqual({ lazy: ["RangeError: boom", "at outer"], prepared: "hooked" });
+  } finally {
+    await worker.terminate();
+  }
+});
+
+// V8 searches the stack for the caller argument only when it is a function.
+const callerArgumentRows = `
+  const firstFrame = target => String(target.stack.split("\\n")[1]).trim().replace(/ \\(.*$/, "");
+  function withCaller(caller) {
+    const target = {};
+    Error.captureStackTrace(target, caller);
+    return firstFrame(target);
+  }
+  function SelfCaller() {
+    Error.captureStackTrace(this, this);
+  }
+  const calledBound = function boundTarget() {
+    return withCaller(calledBound);
+  }.bind(null);
+  const calledWrapped = new ShadowRealm().evaluate("(function wrappedTarget(callback) { return callback(); })");
+  const rows = {
+    object: withCaller({}),
+    number: withCaller(1),
+    string: withCaller("withCaller"),
+    self: firstFrame(new SelfCaller()),
+    boundFunction: withCaller(withCaller.bind(null)),
+    boundFunctionNotOnStack: withCaller(function other() {}.bind(null)),
+    boundFunctionAfterCall: (calledBound.name, calledBound()),
+    callableProxy: withCaller(new Proxy(withCaller, {})),
+    wrappedFunctionNotOnStack: withCaller(new ShadowRealm().evaluate("(function other() {})")),
+    wrappedFunctionAfterCall: (calledWrapped.name, calledWrapped(() => withCaller(calledWrapped))),
+    functionNotOnStack: withCaller(function other() {}),
+  };
+`;
+const callerArgumentFirstFrames = {
+  object: "at withCaller",
+  number: "at withCaller",
+  string: "at withCaller",
+  self: "at new SelfCaller",
+  boundFunction: "at withCaller",
+  boundFunctionNotOnStack: "at withCaller",
+  boundFunctionAfterCall: "at withCaller",
+  callableProxy: "at withCaller",
+  wrappedFunctionNotOnStack: "at withCaller",
+  wrappedFunctionAfterCall: "at withCaller",
+  functionNotOnStack: "undefined",
+};
+
+test.each([
+  ["the main context", code => new Function(`${code}; return rows;`)()],
+  [
+    "a node:vm context",
+    code => JSON.parse(vm.runInNewContext(`(function () { ${code}; return JSON.stringify(rows); })()`)),
+  ],
+])("Error.captureStackTrace searches the stack only for a caller argument that is a function, in %s", (_, run) => {
+  expect(run(callerArgumentRows)).toEqual(callerArgumentFirstFrames);
+});
+
+// `a` awaits `b` through Promise.race and `b` awaits `a`, so the await chain above `c` is a cycle. JSC follows a
+// Promise.race one time only, so a trace has `a` and `b` one time.
+const capturesUnderAwaitCycle = `
+  const functionsOf = stack => stack.split("\\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ \\(.*$/, "")).join(", ");
+  class ErrorWithStack extends Error {
+    constructor(callsite) {
+      super("x");
+      Error.captureStackTrace(this, callsite);
+    }
+  }
+  function matcher() {
+    return new ErrorWithStack(matcher);
+  }
+  let pa, pb;
+  async function c() {
+    await null;
+    const noCaller = {};
+    Error.captureStackTrace(noCaller);
+    const callerOnStack = {};
+    (function inner() {
+      Error.captureStackTrace(callerOnStack, inner);
+    })();
+    const callerResumed = {};
+    Error.captureStackTrace(callerResumed, c);
+    const callerNotOnStack = {};
+    Error.captureStackTrace(callerNotOnStack, function other() {});
+    print({
+      noCaller: functionsOf(noCaller.stack),
+      callerOnStack: functionsOf(callerOnStack.stack),
+      errorSubclass: functionsOf(matcher().stack),
+      callerResumed: functionsOf(callerResumed.stack),
+      callerNotOnStack: functionsOf(callerNotOnStack.stack),
+    });
+  }
+  async function a() {
+    await null;
+    await Promise.race([pb, c()]);
+  }
+  async function b() {
+    await null;
+    await pa;
+  }
+  start(() => {
+    pa = a();
+    pb = b();
+  });
+`;
+const inVmContext = `require("node:vm").runInNewContext(code, { print, start })`;
+const inMainContext = `(0, eval)(code)`;
+const startAtOnce = `run => run()`;
+// Two entries into the VM then resumed an async function: the one of `outer`, and the one of `c` inside its drain.
+const startInADrain = `run => void (async function outer() { await null; run(); require("bun:jsc").drainMicrotasks(); })()`;
+
+// An await chain with no end keeps a child in the capture. Its timeout ends it before the test's timeout.
+test.each([
+  ["a node:vm context", inVmContext, startAtOnce, ""],
+  ["the main context", inMainContext, startAtOnce, ""],
+  [
+    "a node:vm context, in a drain of microtasks that an async function runs",
+    inVmContext,
+    startInADrain,
+    ", drainMicrotasks, outer",
+  ],
+  [
+    "the main context, in a drain of microtasks that an async function runs",
+    inMainContext,
+    startInADrain,
+    ", drainMicrotasks, outer",
+  ],
+])(
+  "Error.captureStackTrace returns under async functions that await each other, in %s",
+  async (_, run, start, behind) => {
+    const script = `
+      globalThis.print = value => console.log(JSON.stringify(value));
+      globalThis.start = ${start};
+      const code = ${JSON.stringify(capturesUnderAwaitCycle)};
+      ${run};
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
+
+    // `c` runs from a microtask, so the await chain comes directly behind its frame.
+    const fromC = "c, async a, async b" + behind;
+    expect(JSON.parse(stdout)).toEqual({
+      noCaller: fromC,
+      callerOnStack: fromC,
+      errorSubclass: fromC,
+      callerResumed: "async a, async b" + behind,
+      callerNotOnStack: "",
+    });
+  },
+);
+
+// The getter of the context collects and then compiles functions, so the cells that the collection freed are in use
+// again before the trace is formatted. A collection drops the code of a function that did not run for 15 s. The JSC
+// option stands in for that wait: with it, a collection drops the code of `mid` and `top` at once.
+const collectingGetterInVm = `import vm from "node:vm";
+     const context = vm.createContext({ collect: () => Bun.gc(true), print: console.log });
+     vm.runInContext(\`
+       function compileMany() { for (let i = 0; i < 150; i++) new Function("a", "return a + " + i)(i); }
+       var collections = 0;
+       Object.defineProperty(Error, "prepareStackTrace", { get() { collections++; collect(); compileMany(); } });
+       var printFrames = target => {
+         const frames = target.stack.split("\\\\n").map(line => line.trim().split(" (")[0]).join(" | ");
+         print("collections: " + collections + ", frames: " + frames);
+       };
+     \`, context);`;
+const capturedUnderAwaitChain = (target, printFrames) => `
+       async function leaf() {
+         await null;
+         const target = ${target};
+         Error.captureStackTrace(target);
+         ${printFrames}(target);
+       }
+       async function mid() { await leaf(); }
+       async function top() { await mid(); }
+       top();`;
+test.concurrent.each([
+  [
+    "Error.captureStackTrace(object) in that context",
+    `${collectingGetterInVm}
+     vm.runInContext(\`${capturedUnderAwaitChain("{}", "printFrames")}\`, context);`,
+    "collections: 1, frames: Error | at leaf | at async mid | at async top",
+  ],
+  [
+    "Error.captureStackTrace(error already read) in that context",
+    `${collectingGetterInVm}
+     vm.runInContext(\`${capturedUnderAwaitChain(`(error => (error.stack, error))(new RangeError("boom"))`, "printFrames")}\`, context);`,
+    "collections: 2, frames: RangeError: boom | at leaf | at async mid | at async top",
+  ],
+  [
+    "Error.captureStackTrace(object of that context) in the main context",
+    `${collectingGetterInVm}
+     const objectOfContext = vm.runInContext("({})", context);
+     ${capturedUnderAwaitChain("objectOfContext", `vm.runInContext("printFrames", context)`)}`,
+    "collections: 1, frames: Error | at leaf | at async mid | at async top",
+  ],
+  [
+    "Error.captureStackTrace(error of that context, already read) in the main context",
+    `${collectingGetterInVm}
+     const errorOfContext = vm.runInContext('(error => (error.stack, error))(new RangeError("boom"))', context);
+     ${capturedUnderAwaitChain("errorOfContext", `vm.runInContext("printFrames", context)`)}`,
+    "collections: 2, frames: RangeError: boom | at leaf | at async mid | at async top",
+  ],
+])(
+  "a node:vm Error.prepareStackTrace getter that collects cannot invalidate the trace of %s",
+  async (_, source, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: { ...bunEnv, BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// No JS of the program runs between the capture and the last call site. With these options a collection starts at
+// every 13th slow allocation, drops the code of the suspended callers and overwrites each cell that it frees.
+test.concurrent(
+  "Error.captureStackTrace keeps the code of suspended async callers while it makes their call sites",
+  async () => {
+    const source = `
+      Error.prepareStackTrace = (_, sites) => sites.map(site => site.getFunctionName()).join();
+      function capture() {
+        const target = {};
+        Error.captureStackTrace(target);
+        return target.stack;
+      }
+      async function leaf() {
+        await null;
+        return capture();
+      }
+      let top = leaf;
+      for (let i = 0; i < 8; i++) {
+        top = (0, eval)("(next => async function awaits" + i + "() { return await next(); })")(top);
+      }
+      const seen = new Set();
+      for (let i = 0; i < 20; i++) seen.add(await top());
+      console.log([...seen].join(" | "));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: {
+        ...bunEnv,
+        BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1",
+        BUN_JSC_useZombieMode: "1",
+        BUN_JSC_slowPathAllocsBetweenGCs: "13",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+      stdout: "capture,leaf,awaits0,awaits1,awaits2,awaits3,awaits4,awaits5,awaits6,awaits7",
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("Error.captureStackTrace inside error constructor works", () => {
   class ExtendedError extends Error {
     constructor() {
@@ -1371,6 +1865,198 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
     expect(err.stack).toContain("at recurse");
   } finally {
     Error.stackTraceLimit = origLimit;
+  }
+});
+
+// `resumed` continues inside drainMicrotasks(), so JSC puts its two awaiters in front of `behindTheAwaitChain`.
+// `behindTheAwaitChain` has more callers than the limit, so the trace is as long as the limit.
+const capturesBehindAwaitChain = `
+  let stack;
+  async function resumed() {
+    await null;
+    const target = {};
+    Error.captureStackTrace(target, behindTheAwaitChain);
+    stack = target.stack;
+  }
+  async function awaiter() {
+    await resumed();
+  }
+  async function outerAwaiter() {
+    await awaiter();
+  }
+  function behindTheAwaitChain() {
+    outerAwaiter();
+    drainMicrotasks();
+  }
+  function callerOfBehind() {
+    behindTheAwaitChain();
+    return stack;
+  }
+  function below(depth) {
+    return depth === 0 ? callerOfBehind() : below(depth - 1) + "";
+  }
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 10;
+  try {
+    below(12);
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+`;
+test.each([
+  ["the main context", code => new Function("drainMicrotasks", `${code}; return stack;`)(drainMicrotasks)],
+  ["a node:vm context", code => vm.runInNewContext(`${code}; stack;`, { drainMicrotasks })],
+])("Error.captureStackTrace finds a caller argument that is on the stack behind the await chain, in %s", (_, run) => {
+  const lines = run(capturesBehindAwaitChain).split("\n");
+  expect(lines.map(line => line.trim().replace(/ \(.*$/, ""))).toEqual([
+    "Error",
+    "at callerOfBehind",
+    ...Array(9).fill("at below"),
+  ]);
+});
+
+// Each row takes two captures from one call site: one with a limit and one with no limit.
+test("Error.captureStackTrace with a limit records the first frames of the trace that it records with no limit", () => {
+  function makeCapturePair(drainMicrotasks) {
+    function recurse(depth, leaf) {
+      // Not a tail call, so each frame stays on the stack.
+      return (depth === 0 ? leaf() : recurse(depth - 1, leaf)) || null;
+    }
+    function framesAt(limit, callerArgument) {
+      Error.stackTraceLimit = limit;
+      const target = {};
+      Error.captureStackTrace(target, callerArgument);
+      return target.stack.split("\n").slice(1);
+    }
+    function other() {}
+    async function awaitedBy(promise, depth) {
+      await (depth === 0 ? promise : awaitedBy(promise, depth - 1));
+    }
+    return function capturePair({ above, below, chain, entries, limit, callerKind }) {
+      const caller = leaf => recurse(above, leaf) || null;
+      const callerArgument = { none: undefined, onStack: caller, notOnStack: other }[callerKind];
+      let pair;
+      const leaf = () => {
+        pair = [];
+        for (const each of [limit, Infinity]) pair.push(framesAt(each, callerArgument));
+        return true;
+      };
+      // An entry continues in a microtask. The entries after the first continue inside drainMicrotasks() of the one before.
+      async function entry(index) {
+        await null;
+        if (index === 0) return void recurse(below, () => caller(leaf) || null);
+        if (chain > 0) awaitedBy(entry(index - 1), chain + index - 1);
+        else entry(index - 1);
+        recurse(2, () => drainMicrotasks() || true);
+      }
+      const saved = Error.stackTraceLimit;
+      try {
+        if (chain > 0) awaitedBy(entry(entries - 1), chain + entries - 1);
+        else entry(entries - 1);
+        drainMicrotasks();
+      } finally {
+        Error.stackTraceLimit = saved;
+      }
+      return pair;
+    };
+  }
+  const capturePair = {
+    main: makeCapturePair(drainMicrotasks),
+    vm: vm.runInContext(`(${makeCapturePair})`, vm.createContext({}), { filename: "in-vm.js" })(drainMicrotasks),
+  };
+
+  function* product(dimensions, row = {}) {
+    const [name, ...rest] = Object.keys(dimensions);
+    if (name === undefined) return yield row;
+    const { [name]: values, ...others } = dimensions;
+    for (const value of values) yield* product(others, { ...row, [name]: value });
+  }
+  const upTo20 = Array.from({ length: 21 }, (_, index) => index);
+  const rows = [
+    ...product({
+      realm: ["main"],
+      entries: [1],
+      above: upTo20,
+      below: [30],
+      chain: [0, 3],
+      limit: [1, 5, 10],
+      callerKind: ["onStack"],
+    }),
+    ...product({
+      realm: ["main"],
+      entries: [1],
+      above: [0, 20],
+      below: [30],
+      chain: [0, 3],
+      limit: [1, 5, 10],
+      callerKind: ["none"],
+    }),
+    ...product({
+      realm: ["main", "vm"],
+      entries: [1],
+      above: [1100],
+      below: [30],
+      chain: [0, 3],
+      limit: [5],
+      callerKind: ["onStack"],
+    }),
+    ...product({
+      realm: ["vm"],
+      entries: [1],
+      above: [8],
+      below: [30],
+      chain: [0, 3],
+      limit: [5],
+      callerKind: ["none", "onStack", "notOnStack"],
+    }),
+    ...product({
+      realm: ["main"],
+      entries: [1],
+      above: [8, 1100],
+      below: [30],
+      chain: [3],
+      limit: [5],
+      callerKind: ["notOnStack"],
+    }),
+    // Several entries into the VM continued an async function: the await chain of one of them is in the trace.
+    ...product({
+      realm: ["main"],
+      entries: [2, 3],
+      above: [0, 2],
+      below: [0, 2, 12],
+      chain: [0, 1, 3],
+      limit: [3, 10],
+      callerKind: ["none", "onStack"],
+    }),
+    ...product({
+      realm: ["vm"],
+      entries: [3],
+      above: [0],
+      below: [2],
+      chain: [2],
+      limit: [10],
+      callerKind: ["none", "onStack"],
+    }),
+  ];
+
+  const different = [];
+  const withoutFrames = [];
+  for (const row of rows) {
+    const [limited, unlimited] = capturePair[row.realm](row);
+    if (JSON.stringify(limited) !== JSON.stringify(unlimited.slice(0, row.limit))) different.push(row);
+    if (unlimited.length === 0 && row.callerKind !== "notOnStack") withoutFrames.push(row);
+  }
+  expect({ rows: rows.length, different, withoutFrames }).toEqual({ rows: 296, different: [], withoutFrames: [] });
+});
+
+// util.getCallSites() captures through Error.stackTraceLimit, which it cannot set here.
+test("util.getCallSites() returns call sites when Error.stackTraceLimit is a non-writable 0", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  try {
+    Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false, configurable: true });
+    expect(getCallSites(5)[0]?.scriptName).toEndWith("capture-stack-trace.test.js");
+  } finally {
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
   }
 });
 

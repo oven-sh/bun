@@ -109,7 +109,7 @@ describe("emitPostLink ninja ordering", () => {
   });
 
   describe.each([
-    ["plain", {}, { type: "EXEC", relro: false, bindNow: false }],
+    ["plain", {}, { type: "EXEC", relro: true, bindNow: true }],
     ["--hardened=on", { hardened: true, webkit: "local" }, { type: "DYN", relro: true, bindNow: true }],
   ] as [string, PartialConfig, object][])("the stripped executable of a %s Linux build", (_name, partial, layout) => {
     test.each([

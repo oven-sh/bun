@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import { binaryExpectations } from "../../scripts/build/binary-expectations.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { mimalloc } from "../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
@@ -134,7 +135,9 @@ const rustFlags = [
   "-Coverflow-checks=on",
   "-Zub-checks=yes",
 ];
-const linkFlags = ["-pie", "-Wl,-z,now", "-Wl,-z,relro", "-Wl,-z,separate-code", "-Wl,-z,noexecstack"];
+const linkFlags = ["-pie", "-Wl,-z,separate-code", "-Wl,-z,noexecstack"];
+// Full RELRO and eager binding are every Linux link's, hardened or not (flags.ts "Linux linker tuning").
+const relroFlags = ["-Wl,-z,now", "-Wl,-z,relro"];
 
 test("--hardened=on gives every C and C++ source, every crate and the link its mitigations", () => {
   using dir = tempDir("build-hardened-flags", {});
@@ -147,9 +150,23 @@ test("--hardened=on gives every C and C++ source, every crate and the link its m
     for (const flag of ["-fno-stack-protector", "-fno-pic", "-fno-pie"]) expect(list).not.toContain(flag);
   }
   expect(flags.rust).toEqual(expect.arrayContaining(rustFlags));
-  expect(flags.link).toEqual(expect.arrayContaining(linkFlags));
+  expect(flags.link).toEqual(expect.arrayContaining([...linkFlags, ...relroFlags]));
   expect(flags.allocator).toContain("MI_SECURE=1");
   expect(namesAllocatorReads(cfg)).toEqual(namesOfSizesAndPace);
+});
+
+test("every Linux link has full RELRO and eager binding, and the scan of the executable expects them", () => {
+  using dir = tempDir("build-hardened-flags-relro", {});
+  for (const partial of [{}, { hardened: true }, { arch: "aarch64" }, { buildType: "Debug" }] as PartialConfig[]) {
+    const cfg = linuxConfig(partial, String(dir));
+    const flags = computeFlags(cfg);
+    expect(flags.ldflags).toEqual(expect.arrayContaining(relroFlags));
+    for (const flag of ["-Wl,-z,lazy", "-Wl,-z,norelro"]) expect(flags.ldflags).not.toContain(flag);
+    // GNU strip writes the program headers anew, without PT_GNU_RELRO, when it removes a mapped section.
+    expect(flags.stripflags.filter(flag => flag === "-R" || flag.startsWith("--remove-section"))).toEqual([]);
+    const { elf } = binaryExpectations(cfg);
+    expect(elf).toMatchObject({ type: partial.hardened ? "DYN" : "EXEC", relro: true, bindNow: true });
+  }
 });
 
 test("a build without --hardened has none of them", () => {

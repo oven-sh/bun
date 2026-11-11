@@ -1240,6 +1240,27 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     return JSValue::encode(array);
 }
 
+bool Bun::requireESModuleInFlight(Zig::GlobalObject* globalObject, Bun::JSCommonJSModule* standIn)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* id = standIn->m_id.get();
+    auto key = id->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, standIn->moduleGraph());
+    RETURN_IF_EXCEPTION(scope, false);
+    auto* entry = loader->registryEntry(key);
+    if (!entry || !(isModuleEvaluated(entry->record()) || isModuleEvaluating(entry->record())))
+        return true;
+    // CommonJS.ts: `$requireESM` answers from the registry, and that becomes `standIn.exports`.
+    JSC::JSFunction* fill = globalObject->requireESMFromHijackedExtension();
+    JSC::MarkedArgumentBuffer args;
+    args.append(id);
+    JSC::profiledCall(globalObject, JSC::ProfilingReason::API, fill, JSC::getCallData(fill), standIn, args);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1276,7 +1297,17 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
     }
 
+    // What overridableRequire put in the require map for this key before it knew that the file is an ES module.
+    // JSCommonJSModule::load() answers a require() that finds it while this load is on the stack.
+    JSValue inRequireMap = Bun::requireMapOf(globalObject, requirer ? requirer->moduleGraph() : nullptr)->get(globalObject, keyValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* standIn = dynamicDowncast<Bun::JSCommonJSModule>(inRequireMap);
+    if (standIn && (standIn->hasEvaluated || !standIn->sourceCode.isNull()))
+        standIn = nullptr;
+    bool wasInFlight = standIn && std::exchange(standIn->esmLoadInFlight, true);
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
+    if (standIn)
+        standIn->esmLoadInFlight = wasInFlight;
     RETURN_IF_EXCEPTION(scope, {});
 
     switch (promise->status()) {

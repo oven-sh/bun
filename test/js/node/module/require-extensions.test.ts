@@ -201,6 +201,50 @@ test.concurrent("default loader throws when module._compile was replaced with a 
   });
   expect(exitCode).toBe(0);
 });
+// The module object that the handler is given is in require.cache while the ES module runs.
+// A require() of the file from inside that run gets the live namespace, as it does without a handler.
+test.concurrent("wrapping an existing extension: a require() cycle through the ES module that it loads", async () => {
+  using dir = tempDir("extensions-esm-cycle", {
+    "a.mjs": `
+      import { createRequire } from "node:module";
+      export const early = 1;
+      export const got = createRequire(import.meta.url)("./b.cjs").saw;
+      export const later = 2;
+    `,
+    "b.cjs": `
+      const a = (globalThis.held = require("./a.mjs"));
+      exports.saw = { tag: Object.prototype.toString.call(a), early: a.early, esModule: a.__esModule };
+    `,
+    "run.cjs": `
+      const Module = require("module");
+      const original = Module._extensions[".mjs"];
+      let calls = 0;
+      Module._extensions[".mjs"] = function (module, filename) {
+        calls++;
+        return original.call(this, module, filename);
+      };
+      const a = require("./a.mjs");
+      console.log(JSON.stringify({ inner: a.got, held: globalThis.held === a, later: globalThis.held.later, calls }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    inner: { tag: "[object Module]", early: 1, esModule: true },
+    held: true,
+    later: 2,
+    calls: 1,
+  });
+  expect(exitCode).toBe(0);
+});
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

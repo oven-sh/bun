@@ -380,7 +380,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (this->hasEvaluated || this->sourceCode.isNull()) {
+    if (this->hasEvaluated)
+        return true;
+    if (this->sourceCode.isNull()) {
+        if (this->esmLoadInFlight) [[unlikely]]
+            RELEASE_AND_RETURN(scope, requireESModuleInFlight(globalObject, this));
         return true;
     }
 

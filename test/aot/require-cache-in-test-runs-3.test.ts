@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test as oneAtATime } from "./supported";
+import { eachRow, gap, test as oneAtATime } from "./supported";
 
 // supported.ts sets the limit for the first file of a process alone.
 raiseDefaultTimeout(120_000);
@@ -35,7 +35,7 @@ const moduleThatLooksAtItself = (name: string) => `
   export const seen = look(require.resolve("./${name}"));
   export const later = () => [look(require.resolve("./${name}")), whileItRan === undefined || whileItRan === require.cache[require.resolve("./${name}")]].join(" ");`;
 
-async function expectCompiledToRunAsPlain(files: Record<string, string>) {
+async function expectCompiledToRunAsPlain(files: Record<string, string>, owesTheCompiledRunAlone = false) {
   using dir = tempDir("require-cache-in-test-runs", files);
   const seen = async (words?: string, ...flags: string[]) => {
     const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
@@ -44,6 +44,8 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>) {
     return { stdout, exitCode };
   };
   const plain = await seen();
+  // Only the compiled run is owed: a row of gap() whose plain run fails ends well here, which is red.
+  if (owesTheCompiledRunAlone && plain.exitCode !== 0) return;
   expect(plain.exitCode).toBe(0);
   for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
 }
@@ -131,11 +133,6 @@ test("files that require each other are all listed while the innermost runs", as
     "src/inner.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./outer")), look(require.resolve("./inner"))].join(" | ");`,
     "src/outer.cjs": `exports.before = 1;\nexports.seen = require("./inner.cjs").seen;`,
     "src/inner.cjs": `const { look } = require("./look.cjs");\nexports.seen = [look(require.resolve("./outer.cjs")), look(__filename)].join(" | ");`,
-    "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
-    "src/ring-second.ts": `
-      import { look } from "./look.cjs";
-      const first = require("./ring-first");
-      export const seen = [Object.keys(first).join("+"), require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
     "src/ring-first.cjs": `exports.first = 1;\nexports.seen = require("./ring-second.cjs").seen;`,
     "src/ring-second.cjs": `
       const { look } = require("./look.cjs");
@@ -148,10 +145,32 @@ test("files that require each other are all listed while the innermost runs", as
         console.log(require("./src/outer.cjs").seen);
       });
       test("in a ring", () => {
-        console.log(require("./src/ring-first").seen);
         console.log(require("./src/ring-first.cjs").seen);
       });`,
   });
+});
+
+// The file that is required again hands out its namespace, and the names that are not there yet throw where they are read.
+eachRow([
+  gap("compiled, the file that is required again gets the empty object that stands in for it while it runs", [
+    {
+      ...looksAtFiles,
+      "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
+      "src/ring-second.ts": `
+        import { look } from "./look.cjs";
+        const first = require("./ring-first");
+        let names;
+        try { names = Object.keys(first).join("+"); } catch (error) { names = error.name; }
+        export const seen = [names, require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
+      "one.test.ts": `
+        import { test } from "bun:test";
+        test("in a ring", () => {
+          console.log(require("./src/ring-first").seen);
+        });`,
+    },
+  ] as const),
+])("ES modules that require each other in a ring are listed while the second runs", async files => {
+  await expectCompiledToRunAsPlain(files, true);
 });
 
 test("an ES module that an import has begun is listed from the first require() of it", async () => {

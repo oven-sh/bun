@@ -520,6 +520,8 @@ describe("property matchers", () => {
     expect({ samples: live.length, stderr: live.length === 5 ? "" : stderr }).toEqual({ samples: 5, stderr: "" });
     // Rows that the collector does not count leave 8, 16, 24, 32 and 40 cells, less what one collection frees.
     expect(live.filter(cells => cells >= 10)).toEqual([]);
+    // The cell of a call stays until the next collection. If no sample has one, no rows were made and the counts say nothing.
+    expect(live.some(cells => cells >= 1)).toBe(true);
     expect(exitCode).toBe(0);
   });
 

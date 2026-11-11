@@ -1554,7 +1554,7 @@ describe.concurrent("bun test --isolate=modules", () => {
   });
 
   test("what a file defines without \`configurable\` is undone too", async () => {
-    const state = `JSON.stringify(["fixed" in Array.prototype, "fixedGlobal" in globalThis, typeof Math.min, Object.getOwnPropertyDescriptor(Math, "min").configurable, "after" in Array.prototype])`;
+    const state = `JSON.stringify(["fixed" in Array.prototype, "fixedGlobal" in globalThis, typeof Math.min, Object.getOwnPropertyDescriptor(Math, "min").configurable, "after" in Array.prototype, Response.json.name, Object.getOwnPropertyDescriptor(Response, "json").writable])`;
     const files = {
       "a.test.js": `test("a", () => {
         console.log(${state});
@@ -1562,11 +1562,13 @@ describe.concurrent("bun test --isolate=modules", () => {
         Array.prototype.after = 1;
         Object.defineProperty(globalThis, "fixedGlobal", { value: 1 });
         Object.defineProperty(Math, "min", { value: 1, writable: false, configurable: false });
+        // It was never configurable: only a delete makes it writable again.
+        Object.defineProperty(Response, "json", { value() {}, writable: false });
       });`,
       "b.test.js": `test("b", () => { console.log(${state}); });`,
     };
     const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
-    expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false])));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false, "json", true])));
   });
 
   test("restores a global that a file redefined as writable but not configurable, and the properties after it", async () => {
@@ -1640,6 +1642,15 @@ describe.concurrent("bun test --isolate=modules", () => {
     const typesOf = `names => names.flatMap(name => [typeof expect(1)[name], typeof expect[name], typeof expect.not[name]])`;
     // A second wrapper around the first, from the preload's second run, would count every call twice.
     const callsOfWrapper = `(globalThis.callsOfWrapper = 0, expect([1]).toHaveLength(1), globalThis.callsOfWrapper)`;
+    // The testers and the serializers that the preload registered, and whether a.test.js left its state. A worker resets them between files too.
+    const registered = `(() => {
+      let testers, serializers;
+      expect.extend({ toCountTesters() { testers = this.customTesters.length; return { pass: true, message: () => "" }; } });
+      expect(1).toCountTesters();
+      expect.addSnapshotSerializer({ test: value => value === "counts", serialize: (value, config) => ((serializers = config.plugins.length - 1), "counted") });
+      expect("counts").toMatchInlineSnapshot("counted");
+      return [testers, serializers, "left" in expect.getState()];
+    })()`;
     const files = {
       // Every module that has an `expect` adds to the same three objects.
       "preload.js": `
@@ -1650,6 +1661,8 @@ describe.concurrent("bun test --isolate=modules", () => {
           expect.isSetUp = true;
           expect.extend({ toBeOfGuard${matcher("preload")} });
         }
+        expect.addEqualityTesters([() => undefined]);
+        expect.addSnapshotSerializer({ test: () => false, serialize: () => "" });
         const { toHaveLength } = expect.prototype;
         expect.prototype.toHaveLength = function (...args) {
           globalThis.callsOfWrapper++;
@@ -1667,6 +1680,8 @@ describe.concurrent("bun test --isolate=modules", () => {
           expect((${typesOf})(["toBeOfFile", "toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(12).fill("function"));
           expect(() => expect(1).toBeOfPreload()).toThrow("from a");
           expect(${callsOfWrapper}).toBe(1);
+          expect.setState({ left: 1 });
+          expect(${registered}).toStrictEqual([1, 1, true]);
         });
       `,
       // A file that adds the name itself runs its own matcher.
@@ -1679,6 +1694,7 @@ describe.concurrent("bun test --isolate=modules", () => {
           expect(1).toBeOfGuard();
           expect((${typesOf})(["toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(9).fill("undefined"));
           expect(${callsOfWrapper}).toBe(1);
+          expect(${registered}).toStrictEqual([1, 1, false]);
         });
       `,
       "c.test.js": `
@@ -1688,6 +1704,7 @@ describe.concurrent("bun test --isolate=modules", () => {
           expect(1).toBeOfGuard();
           expect((${typesOf})(["toBeOfFile", "toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(12).fill("undefined"));
           expect(${callsOfWrapper}).toBe(1);
+          expect(${registered}).toStrictEqual([1, 1, false]);
         });
       `,
     };
@@ -1713,17 +1730,19 @@ describe.concurrent("bun test --isolate=modules", () => {
   });
 
   test("every file finds expect as the first one did, whatever the files before it did to it", async () => {
-    // The address tells one function from another that has the same name. Sorted: a property that had to be deleted is put back as the last one.
+    // The address tells one function from another that has the same name. Its digits are those of the C library's %p: upper case on Windows.
     const state = `JSON.stringify([
       ...[expect, expect.prototype, Object.getPrototypeOf(expect.not)].map(holder =>
         Reflect.ownKeys(holder).map(key => {
           const { value, get, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(holder, key);
-          const shown = typeof value === "function" ? /0x[0-9a-f]+/.exec(jscDescribe(value))[0] : typeof value === "object" ? "object" : String(value);
+          const shown = typeof value === "function" ? /0x[0-9a-f]+/i.exec(jscDescribe(value))[0] : typeof value === "object" ? "object" : String(value);
           return [String(key), shown, typeof get, writable, enumerable, configurable].join();
         }).sort(),
       ),
       Object.keys(expect.getState()),
     ])`;
+    // Sorted above, because a property that had to be deleted is put back as the last one. A plain write is put back in place.
+    const order = `"order " + [expect, expect.prototype, Object.getPrototypeOf(expect.not)].map(holder => Reflect.ownKeys(holder).map(String).join()).join("|")`;
     // The restore compares a dictionary key by key after every file, so it makes the three objects plain ones first.
     const dictionaries = `
       const dictionary = {};
@@ -1749,17 +1768,45 @@ describe.concurrent("bun test --isolate=modules", () => {
     const files = Object.fromEntries(
       change.map((code, i) => [
         `${i}.test.js`,
-        `import { jscDescribe } from "bun:jsc"; test("${i}", () => { ${i === 0 ? dictionaries : ""} console.log(${state}); ${code} });`,
+        `import { jscDescribe } from "bun:jsc"; test("${i}", () => { ${i === 0 ? dictionaries : ""} console.log(${state}); console.log(${order}); ${code} });`,
       ]),
     );
     const stdout = await passes(files, change.length);
     const lines = stdout.split("\n").filter(line => line.startsWith("["));
     expect(lines).toEqual(Array(change.length).fill(lines[0]));
+    const orders = stdout.split("\n").filter(line => line.startsWith("order "));
+    const untilDeleted = change.findIndex(code => code.includes("writable: false")) + 1;
+    expect(orders.slice(0, untilDeleted)).toEqual(Array(untilDeleted).fill(orders[0]));
     const [ownOfExpect, , , stateKeys] = JSON.parse(lines[0]);
-    expect(ownOfExpect).toContainEqual(expect.stringMatching(/^extend,0x[0-9a-f]+,undefined,true,true,false$/));
+    expect(ownOfExpect).toContainEqual(expect.stringMatching(/^extend,0x[0-9a-f]+,undefined,true,true,false$/i));
     expect(ownOfExpect).toContain("name,Expect,undefined,false,false,true");
     expect(stateKeys).toEqual(expect.arrayContaining(["assertionCalls", "testPath"]));
     expect(stdout).toContain("dictionaries false,false,false,true\n");
+  });
+
+  test("no built-in matcher is lost on an object that a file froze, and expect.extend() is still undone there", async () => {
+    const names = `JSON.stringify([expect, expect.prototype, Object.getPrototypeOf(expect.not)].map(holder => Reflect.ownKeys(holder).map(String).sort()))`;
+    const files = {
+      // The restore can't define a property again on an object that is not extensible, so it must not delete one there.
+      "a.test.js": `test("a", () => {
+        console.log(${names});
+        expect.prototype.toEqual = function ${matcher("a")};
+        for (const holder of [expect, expect.prototype, Object.getPrototypeOf(expect.not)]) Object.freeze(holder);
+      });`,
+      "b.test.js": `test("b", () => {
+        console.log(${names});
+        console.log(JSON.stringify([typeof expect(1).toEqual]));
+        expect.extend({ toEqual${matcher("b")}, toBeLeft${matcher("b")} });
+      });`,
+      "c.test.js": `test("c", () => {
+        console.log(${names});
+        expect(() => expect(1).toEqual(2)).toThrow("Expected: 2");
+        console.log(JSON.stringify([typeof expect(1).toEqual]));
+      });`,
+    };
+    const lines = (await passes(files, 3)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual([lines[0], lines[0], `["function"]`, lines[0], `["function"]`]);
+    expect(lines[0]).toContain(`"toEqual"`);
   });
 
   test("Module._cache is the running file's require.cache", async () => {

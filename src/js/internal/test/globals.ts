@@ -140,8 +140,8 @@ function restoreProperties(object: object, properties: Properties, size: number)
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
     if (!$getByIdDirect(current, "configurable")) {
-      if (isMatcherHolder(object)) {
-        // A test file can make a matcher read-only. A delete lets it be defined again, unless the file froze the object.
+      if (saved.writable) {
+        // A test file can make it read-only. Once deleted it can be defined again, if the object is still extensible.
         if (!tryDefineProperty(object, key, saved) && isExtensible(object) && deleteOwnProperty(object, key))
           defineProperty(object, key, saved);
         continue;

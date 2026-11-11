@@ -113,8 +113,8 @@ Bun also restores the properties of `expect`, of `expect.prototype` and of the p
 
 Some changes to `bun:test` carry over to the next file:
 
-- A property on another export, such as `jest.isSetUp = true`, or on a built-in matcher function, such as `expect.prototype.toBe.calls = []`. If a module skips `expect.extend()` when it finds such a flag, the files after the first get no matchers. Keep the flag on `globalThis` or on `expect`, where Bun removes it with the matchers.
-- `Object.freeze()`, `Object.seal()`, `Object.preventExtensions()` and `Object.setPrototypeOf()` on one of the three objects, and a change of an attribute alone, such as `writable`. After `Object.freeze()`, Bun can't put back a matcher that the file replaced.
+- A property on another export, such as `jest.isSetUp = true`, or on a built-in matcher function, such as `expect.prototype.toBe.calls = []`. If a module skips `expect.extend()` when it finds such a flag, the files after the first get no matchers. It is the same for a flag on an export of another built-in module, and for one in a property of a built-in whose name starts with an underscore, such as `process._isSetUp`. Keep the flag on `globalThis` or on `expect`, where Bun removes it with the matchers.
+- `Object.freeze()`, `Object.seal()`, `Object.preventExtensions()` and `Object.setPrototypeOf()` on one of the three objects, and a change of an attribute alone, such as `writable`. If a file replaces a matcher and then freezes the object, the replacement stays.
 
 ## Concurrent tests within a file
 

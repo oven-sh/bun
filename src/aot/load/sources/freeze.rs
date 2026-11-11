@@ -306,7 +306,9 @@ fn find_entry_points_found_by_computed_names(input: &FreezeInput<'_, '_>) -> Vec
                 | FoundBecause::WrittenInArm
         )
     });
-    found.map(|(&file, _)| file).collect()
+    let mut found: Vec<FileId> = found.map(|(&file, _)| file).collect();
+    found.shared_sort_unstable();
+    found
 }
 
 fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) -> Vec<EntryPoint> {

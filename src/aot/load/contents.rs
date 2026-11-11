@@ -121,7 +121,7 @@ impl ProgramContents {
     }
 
     pub(crate) fn is_followed_worker(&self, file: FileId, at: ExprId) -> bool {
-        self.followed_workers.contains(&(file, at))
+        self.followed_workers.binary_search(&(file, at)).is_ok()
     }
 }
 

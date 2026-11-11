@@ -4,7 +4,8 @@ use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
-    Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
+    Diagnostic, DiagnosticBuffer, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages,
+    ProgramView, Span,
 };
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
@@ -50,8 +51,11 @@ use bun_sema_driver::{
     load_program,
 };
 use bun_threading::Guarded;
+use hashbrown::HashTable;
+use rustc_hash::FxHasher;
 use std::cell::Cell;
-use std::mem::take;
+use std::hash::Hasher;
+use std::mem::{replace, take};
 use std::thread::Scope;
 
 const MAX_ASSET_READERS: usize = 64;
@@ -441,6 +445,19 @@ fn is_path_of_module(module_path: &[u8], alias: &[u8]) -> bool {
     module_path.len() == alias.len() && module_path.iter().zip(alias).all(is_same_byte)
 }
 
+/// Two paths that `is_path_of_module` takes for one have one hash: a backslash is hashed as a slash.
+fn hash_of_path_with_slashes(path: &[u8]) -> u64 {
+    let mut hasher = FxHasher::default();
+    for part in path.chunks(64) {
+        let mut with_slashes = [0; 64];
+        for (to, &from) in with_slashes.iter_mut().zip(part) {
+            *to = if from == b'\\' { b'/' } else { from };
+        }
+        hasher.write(&with_slashes[..part.len()]);
+    }
+    hasher.finish()
+}
+
 fn collect_entry_point_aliases(
     files: &Files<'_>,
     sources: &Sources,
@@ -463,10 +480,29 @@ fn collect_entry_point_aliases(
         .map(|&file| (source_path_of(files.module(file).file_name()), file))
         .collect();
 
+    let hash_of_file = |file: &FileId| hash_of_path_with_slashes(sources.public_path(*file));
+    let mut has_held_a_name_against_every_file = false;
+    let mut files_by_path: Option<HashTable<FileId>> = None;
     names_written.retain(|alias| {
         let name = &alias.public_path[..];
         let is_named = |file: &FileId| is_path_of_module(sources.public_path(*file), name);
-        !files.compiled_files().iter().any(is_named)
+        let own_file = begun_at.get(&alias.source_path);
+        if own_file.is_some_and(|file| files.is_compiled(*file) && is_named(file)) {
+            return false;
+        }
+        if !replace(&mut has_held_a_name_against_every_file, true) {
+            return !files.compiled_files().iter().any(is_named);
+        }
+        let files_by_path = files_by_path.get_or_insert_with(|| {
+            let compiled = files.compiled_files();
+            let mut files_by_path = HashTable::with_capacity(compiled.len());
+            for &file in compiled {
+                files_by_path.insert_unique(hash_of_file(&file), file, hash_of_file);
+            }
+            files_by_path
+        });
+        let found = files_by_path.find(hash_of_path_with_slashes(name), is_named);
+        found.is_none()
     });
     let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
     let (unambiguous, shared): (Vec<_>, Vec<_>) = (names_written.chunk_by(same_name))
@@ -874,9 +910,11 @@ impl<'a> Build<'a> {
             sources: &sources.application,
         };
         if !options.load.runs_tests {
+            let mut said = DiagnosticBuffer::default();
             for diagnostic in find_unknown_node_workers(files, &contents) {
-                self.diagnostics.add(Some(view), diagnostic);
+                said.push(diagnostic);
             }
+            self.diagnostics.add_buffer(view, said);
             if !options.aot.checks_only {
                 self.missing_node_workers = find_missing_node_workers(files, &contents);
             }
@@ -1625,5 +1663,88 @@ mod tests {
             b"B:/~BUN/root/a.js"
         ));
         assert!(!is_path_of_module(b"/$bunfs/root/a.js", b"/$bunfs/root/a"));
+    }
+
+    #[test]
+    fn alias_is_held_against_its_own_file_and_then_against_every_file() {
+        let files = [("main.ts", "import './other';"), ("other.ts", "export {};")];
+        let (own, other) = ("/$bunfs/root/main.ts", "/$bunfs/root/other.ts");
+        let (first, worker) = ("/$bunfs/root/a", "/$bunfs/root/worker");
+        let with_backslash = "/$bunfs/root\\other.ts";
+        // The names that main.ts is written by, and those of them that stay.
+        let rows: [(&[&str], &[&str]); 5] = [
+            // The path of its own file.
+            (&[own], &[]),
+            // The first name that its own file does not settle is held against every file: the path of another module, then the path of none.
+            (&[other], &[]),
+            (&[worker], &[worker]),
+            // The names behind it are looked up: the path of a module, the path of none, and one that has the hash of a module.
+            (&[first, other], &[first]),
+            (
+                &[first, worker, with_backslash],
+                &[first, worker, with_backslash],
+            ),
+        ];
+        let wrong = with_loaded_build(&files, &default_settings(), |_, loaded| {
+            let application = loaded.project(ProjectId::Application);
+            let (files, sources) = (application.loaded.files(), &application.sources);
+            let mut wrong = Vec::new();
+            for (written, stay) in rows {
+                let names = written.iter().map(|name| EntryPointPaths {
+                    public_path: name.as_bytes().to_vec(),
+                    source_path: source_path_of(b"/project/main.ts"),
+                });
+                let (aliases, _) = collect_entry_point_aliases(files, sources, 1, names.collect());
+                let kept: Vec<&[u8]> = aliases.iter().map(|it| &it.public_path[..]).collect();
+                let stays: Vec<&[u8]> = stay.iter().map(|name| name.as_bytes()).collect();
+                if kept != stays {
+                    wrong.push((written, stay));
+                }
+            }
+            wrong
+        });
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn alias_is_not_the_path_of_an_entry_point_that_is_not_compiled() {
+        let declarations = ("types.d.ts", "export declare const x: number;");
+        let files = [("main.ts", "export {};"), declarations];
+        let project = TestProject::with_entry_points(&files, 2, &default_settings());
+        let kept = run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+            build.with_loaded_projects(|_, loaded| {
+                let application = loaded.project(ProjectId::Application);
+                let (files, sources) = (application.loaded.files(), &application.sources);
+                let file = files.by_path.get(&b"/project/types.d.ts"[..]).unwrap();
+                assert!(files.entry_points().contains(&file) && !files.is_compiled(file));
+                let name = EntryPointPaths {
+                    public_path: sources.public_path(file).to_vec(),
+                    source_path: source_path_of(b"/project/types.d.ts"),
+                };
+                let (aliases, _) =
+                    collect_entry_point_aliases(files, sources, 1, vec![name.clone()]);
+                Ok(aliases == [name])
+            })
+        });
+        assert!(kept);
+    }
+
+    #[test]
+    fn hash_of_a_path_reads_a_backslash_as_a_slash() {
+        // The second path is longer than one part of the hash.
+        for path in [
+            &b"B:\\~BUN\\root\\a.js"[..],
+            &[b"B:\\".repeat(30), b"a.js".to_vec()].concat(),
+        ] {
+            let with_slashes: Vec<u8> = (path.iter())
+                .map(|&byte| if byte == b'\\' { b'/' } else { byte })
+                .collect();
+            assert!(is_path_of_module(path, &with_slashes));
+            assert!(!is_path_of_module(&with_slashes, path));
+            assert_eq!(
+                hash_of_path_with_slashes(path),
+                hash_of_path_with_slashes(&with_slashes)
+            );
+        }
     }
 }

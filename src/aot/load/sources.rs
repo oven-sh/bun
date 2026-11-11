@@ -303,7 +303,8 @@ impl Sources {
     }
 
     pub fn is_entry_point_found_by_computed_name(&self, file: FileId) -> bool {
-        self.entry_points_found_by_computed_names.contains(&file)
+        let found = &self.entry_points_found_by_computed_names;
+        found.binary_search(&file).is_ok()
     }
 
     pub fn runtime_module_file(&self, module: RuntimeModule) -> Option<FileId> {

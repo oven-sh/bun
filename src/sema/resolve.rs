@@ -2686,7 +2686,7 @@ impl<'h> Resolver<'h> {
             known_symlinks.process_resolution(&join(b"/", link), real);
         }
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
-        let mut seen: Vec<&[u8]> = Vec::new();
+        let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
         // The directories handled so far. Thousands of files share hundreds of directories.
         let mut visited_directories: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
@@ -2697,10 +2697,9 @@ impl<'h> Resolver<'h> {
             let Some((directory, package)) = self.package_scope(file_directory) else {
                 continue;
             };
-            if seen.contains(&directory) {
+            if !seen.insert(directory) {
                 continue;
             }
-            seen.push(directory);
             let node_modules = inside(directory, b"node_modules");
             // `GetRuntimeDependencyNames`
             for field in [

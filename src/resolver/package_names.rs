@@ -1,8 +1,10 @@
 //! What a build asks so that an executable finds its entry points by the names of their packages.
 
+use core::cell::OnceCell;
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, Log};
+use bun_collections::index_sort;
 use bun_core::strings;
 use bun_paths::is_sep_native;
 
@@ -18,6 +20,36 @@ use crate::resolver::{Resolver, TSConfigRef, rewritten_file_extensions};
 pub struct BuildPaths<'a> {
     pub source_path: &'a [u8],
     pub public_path: &'a [u8],
+}
+
+/// Entry points in the order of their source paths, as `CompiledProgram::entry_point_by_source_path` has them. The first question makes the order.
+struct BySourcePath<'a, 'p> {
+    entry_points: &'a [BuildPaths<'p>],
+    order: OnceCell<Vec<u32>>,
+}
+
+impl<'a, 'p> BySourcePath<'a, 'p> {
+    fn new(entry_points: &'a [BuildPaths<'p>]) -> Self {
+        Self {
+            entry_points,
+            order: OnceCell::new(),
+        }
+    }
+
+    /// The position of the first entry point whose source path is `path`.
+    fn find(&self, path: &[u8]) -> Option<u32> {
+        let source_path = |index: u32| self.entry_points[index as usize].source_path;
+        let order = self.order.get_or_init(|| {
+            let mut order = index_sort::identity(self.entry_points.len());
+            index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
+                compare_source_paths(source_path(a), source_path(b)).then(a.cmp(&b))
+            });
+            order
+        });
+        let is_before = |&index: &u32| compare_source_paths(source_path(index), path).is_lt();
+        let &first = order.get(order.partition_point(is_before))?;
+        (compare_source_paths(source_path(first), path).is_eq()).then_some(first)
+    }
 }
 
 /// `compiled_program::CompiledPackageName`, with positions in the list of entry points that was asked about.
@@ -153,18 +185,16 @@ pub fn add_written_names(
     written: &[BuildPaths<'_>],
     entry_points: &[BuildPaths<'_>],
 ) -> Vec<PackageName> {
+    let entry_points = BySourcePath::new(entry_points);
     for name in written {
-        let is_named = |entry_point: &BuildPaths<'_>| {
-            compare_source_paths(entry_point.source_path, name.source_path).is_eq()
-        };
-        let Some(position) = entry_points.iter().position(is_named) else {
+        let Some(position) = entry_points.find(name.source_path) else {
             continue;
         };
         let public_path = name.public_path.iter().copied();
         names.push(PackageName {
             public_path: public_path.map(normalize_separator).collect(),
-            required: Some(position as u32),
-            imported: Some(position as u32),
+            required: Some(position),
+            imported: Some(position),
             hides_other_paths: false,
             is_hidden_from_require: false,
             is_hidden_from_import: false,
@@ -214,14 +244,10 @@ impl Resolver<'_> {
         folder: &[u8],
         specifier: &'static [u8],
         kind: ImportKind,
-        entry_points: &[BuildPaths<'_>],
+        entry_points: &BySourcePath<'_, '_>,
     ) -> Option<u32> {
         let found = self.resolve(folder, specifier, kind).ok()?;
-        let path = found.path_pair.primary.text();
-        let position = entry_points
-            .iter()
-            .position(|entry_point| compare_source_paths(entry_point.source_path, path).is_eq());
-        position.map(|index| index as u32)
+        entry_points.find(found.path_pair.primary.text())
     }
 
     /// What code from disk finds by the name of a package of the program, and by the name of the program itself, wherever that code lies: names below the root directory.
@@ -704,7 +730,8 @@ impl Resolver<'_> {
             .collect();
         packages.sort_unstable();
         packages.dedup();
-        let places = list_places(folders);
+        let mut places = list_places(folders);
+        let by_source_path = BySourcePath::new(entry_points);
 
         // A name that leads nowhere is no error of the build.
         let mut unread_log = Log::default();
@@ -744,17 +771,24 @@ impl Resolver<'_> {
                     folder,
                     b"./",
                     ImportKind::Require,
-                    entry_points,
+                    &by_source_path,
                 ),
                 imported: self.find_entry_point_named(
                     folder,
                     b"./",
                     ImportKind::Dynamic,
-                    entry_points,
+                    &by_source_path,
                 ),
                 hides_other_paths: false,
                 is_hidden_from_require: false,
                 is_hidden_from_import: false,
+            });
+        }
+        // A folder without `node_modules` holds no package.
+        if !packages.is_empty() {
+            places.retain(|place| {
+                self.read_dir_info_ignore_error(place.source_path)
+                    .is_some_and(|directory| directory.has_node_modules())
             });
         }
         for (place, package) in places
@@ -811,13 +845,13 @@ impl Resolver<'_> {
                     folder,
                     specifier,
                     ImportKind::Require,
-                    entry_points,
+                    &by_source_path,
                 );
                 let imported = self.find_entry_point_named(
                     folder,
                     specifier,
                     ImportKind::Dynamic,
-                    entry_points,
+                    &by_source_path,
                 );
                 let hides_other_paths = subpath.is_empty() && exports.is_some();
                 if required.is_some() || imported.is_some() || hides_other_paths {
@@ -897,6 +931,8 @@ impl Resolver<'_> {
 
 #[cfg(all(test, not(windows)))]
 mod tests {
+    use bstr::BStr;
+
     use super::*;
 
     #[test]
@@ -935,6 +971,44 @@ mod tests {
                 String::from_utf8_lossy(file)
             );
         }
+    }
+
+    #[test]
+    fn written_name_leads_to_the_first_entry_point_of_its_source_path() {
+        let paths = |source_path, public_path| BuildPaths {
+            source_path,
+            public_path,
+        };
+        // Two entry points to a source path, in no order.
+        let source_paths: Vec<Vec<u8>> = (0..64)
+            .map(|index| format!("/app/w{:02}.js", index * 37 % 64 / 2).into_bytes())
+            .collect();
+        let entry_points: Vec<BuildPaths<'_>> = source_paths
+            .iter()
+            .map(|path| paths(&path[..], &b"/$bunfs/root/w.js"[..]))
+            .collect();
+        let written_paths: Vec<Vec<u8>> = (0..33)
+            .map(|index| format!("/app/w{index:02}.js").into_bytes())
+            .collect();
+        let written: Vec<BuildPaths<'_>> = written_paths
+            .iter()
+            .map(|path| paths(&path[..], &path[b"/app/".len()..]))
+            .collect();
+        let names = add_written_names(Vec::new(), &written, &entry_points);
+        let found: Vec<(&BStr, Option<u32>)> = names
+            .iter()
+            .map(|it| (BStr::new(&it.public_path), it.required))
+            .collect();
+        let expected: Vec<(&BStr, Option<u32>)> = written
+            .iter()
+            .filter_map(|name| {
+                let first = source_paths.iter().position(|it| it == name.source_path)?;
+                Some((BStr::new(name.public_path), Some(first as u32)))
+            })
+            .collect();
+        assert_eq!(found, expected);
+        assert_eq!(found.len(), 32);
+        assert!(names.iter().all(|it| it.imported == it.required));
     }
 
     #[test]

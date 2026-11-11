@@ -7,7 +7,9 @@ use super::summary::{collect_names_followed, collect_program_file_paths};
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
 use crate::builtins::{BuiltinValuePaths, RuntimeModule, builtin_type_paths, table};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_node};
+use crate::diagnostics::{
+    Diagnostic, DiagnosticBuffer, Diagnostics, ProgramView, Span, range_of_node,
+};
 use crate::ir::generated::ModuleRequestKind;
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
@@ -913,12 +915,14 @@ impl Build<'_> {
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
                 let without_file = std::mem::take(&mut self.missing_node_workers);
                 let resolves = std::mem::take(&mut self.resolves_that_miss);
+                let mut said = DiagnosticBuffer::default();
                 for warning in without_file.into_iter().chain(resolves) {
                     let is_unreached = |span| lies_in_left_out_code(view.files(), &left_out, span);
                     if !warning.span.is_some_and(is_unreached) {
-                        self.diagnostics.add(Some(view), warning);
+                        said.push(warning);
                     }
                 }
+                self.diagnostics.add_buffer(view, said);
                 self.diagnostics.forgive_unasked_comments(|span| {
                     lies_in_left_out_code(view.files(), &left_out, span)
                         || lies_in_dead_code(view.files(), span)
@@ -956,13 +960,16 @@ impl Build<'_> {
                 );
                 steps.end_with(|| format!("{project_name}: warnings"));
                 graph.leave_out_files(&left_out.files, &in_parallel);
-                for &(_, _, entry_point) in &starts_of_workers {
-                    if left_out.files.binary_search(&entry_point).is_ok() {
-                        let path = source_path_of(view.files().module(entry_point).file_name());
-                        let names = &mut self.started_workers.names;
-                        names.retain(|name| name.source_path != path);
-                    }
-                }
+                let names = &mut self.started_workers.names;
+                let left_out_starts = (starts_of_workers.iter())
+                    .filter(|start| left_out.files.binary_search(&start.2).is_ok());
+                let left_out_paths: FxHashSet<Vec<u8>> = match names.is_empty() {
+                    true => FxHashSet::default(),
+                    false => left_out_starts
+                        .map(|start| source_path_of(view.files().module(start.2).file_name()))
+                        .collect(),
+                };
+                names.retain(|name| !left_out_paths.contains(&name.source_path));
                 steps.end_with(|| format!("{project_name}: leave out files"));
                 graph.limit_exports(&in_parallel, &|file, export| {
                     left_out.find_export_use(file, export)

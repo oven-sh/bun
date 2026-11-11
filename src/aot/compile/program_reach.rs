@@ -2703,11 +2703,12 @@ impl<'a, 's> Walk<'a, 's> {
                 false => reacher.reach_every_export(ModuleRef::File(entry_point)),
             }
         }
+        waits_for_start.sort_unstable();
         for entry_point in input.sources.entry_points() {
             if seeded_last.contains(&entry_point.file) {
                 continue;
             }
-            if !waits_for_start.contains(&entry_point.file) {
+            if waits_for_start.binary_search(&entry_point.file).is_err() {
                 reacher.reach_every_export(ModuleRef::File(entry_point.file));
             }
             if is_read_by_code_from_disk || is_read_by_evaluated_text {

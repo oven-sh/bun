@@ -143,8 +143,8 @@ export function join(first: string, second: string): string {
 });
 
 // A program that loads an .aot.ts file always has the types of Bun: the @types/bun of its project, or else the copy that Bun
-// carries. It reads every file as a module. The .aot.ts files are type checked without those types first. Where that check
-// finds an error, a check in a program that has them decides.
+// carries. It reads a file that has code as a module. The .aot.ts files are type checked without those types first. Where
+// that check finds an error, a check in a program that has them decides.
 describe.concurrent("bun build --dts: an error in the .aot.ts files is checked again with the types of Bun", () => {
   // What `bun init` writes.
   const bunInit = (lib: string[] = ["ESNext"]) =>
@@ -240,6 +240,12 @@ export function one(): number {
   };
   const leftOutForTheTwoCopies =
     /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors, the first at index\.aot\.ts:\d+:\d+: TS2345: Argument of type 'Token' is not assignable to parameter of type 'Token'\.\n$/;
+  const leftOutForTheTwoCopiesWithBunTypes = new RegExp(
+    leftOutForTheTwoCopies.source.replace(
+      "type errors,",
+      "type errors with Bun's types, which every program that loads them has,",
+    ),
+  );
 
   test.each(["browser", "bun", "node"])(
     "a library that reads import.meta, under the tsconfig.json that bun init writes, for --target=%s",
@@ -378,14 +384,14 @@ ${more}`,
   // The check without the types of Bun has an error at `emit`, which they clear. With them fetch has a member more, so
   // they have an error at `get`, where the check without them has none. A program that installs the package would have it.
   // TODO: on Windows the build says nothing, as in compile-library.test.ts.
-  test.todoIf(isWindows)("an error that only the types of Bun report is the one named", async () => {
+  test.todoIf(isWindows)("an error that only the types of Bun report is named as theirs", async () => {
     using dir = nodeProject(
       "build-dts-node-types-fetch",
       "export const get: typeof fetch = async input => new Response(String(input));\n",
     );
     const built = await build(dir, "--target=node");
     expect(built.stderr).toMatch(
-      /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors, the first at index\.aot\.ts:\d+:\d+: TS2741: Property 'preconnect' is missing in type /,
+      /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors with Bun's types, which every program that loads them has, the first at index\.aot\.ts:\d+:\d+: TS2741: Property 'preconnect' is missing in type /,
     );
     expect(built.exitCode).toBe(0);
     expect(written(dir)).toEqual(["index.d.ts", "index.js"]);
@@ -469,6 +475,52 @@ export function isMac(): boolean {
     },
   );
 
+  // The types of Bun have an error at `timer`, before the two copies. The check without them has none there, so a build
+  // with only that line writes the files. The error to repair is the one that both checks have.
+  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  test.todoIf(isWindows)("an error of both checks is named, not one of the types of Bun before it", async () => {
+    using dir = tempDir("build-dts-error-of-both", {
+      "tsconfig.json": withoutTypes(["esnext", "dom"]),
+      "package.json": manifest({ strict: true, lib: ["esnext", "dom"] }),
+      ...twoCopiesOfAClass,
+      "src/index.ts": twoCopiesOfAClass["src/index.ts"].replace(
+        "export function read",
+        `export function later(run: () => void): number {
+  const timer: number = setTimeout(run, 1);
+  return timer;
+}
+export function read`,
+      ),
+    });
+    const built = await build(dir, "./src/make.ts", "--splitting");
+    expect(built.stderr).toMatch(leftOutForTheTwoCopies);
+    expect(built.exitCode).toBe(0);
+    expect(written(dir).filter(name => name.endsWith(".aot.ts"))).toEqual([]);
+  });
+
+  // A program that loads the file reads it as a script, because it only declares: there `declare global` is an error. The
+  // check with the types of Bun would read a module, so it does not decide.
+  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  test.todoIf(isWindows)("a file that only declares is left out as before", async () => {
+    using dir = tempDir("build-dts-only-declares", {
+      "tsconfig.json": withoutTypes(["esnext"]),
+      "package.json": manifest({ strict: true, lib: ["esnext"] }),
+      "src/index.ts": `declare global {
+  interface Thing {
+    x: number;
+  }
+}
+export {};
+`,
+    });
+    const built = await build(dir);
+    expect(built.stderr).toBe(
+      "warn: the .aot.ts files that --aot compiles a package from are left out: they have type errors, the first at index.aot.ts:1:9: TS2669: Augmentations for the global scope can only be directly nested in external modules or ambient module declarations.\n",
+    );
+    expect(built.exitCode).toBe(0);
+    expect(written(dir)).toEqual(["index.d.ts", "index.js"]);
+  });
+
   // TODO: on Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)("an @types/bun that is installed without its files clears no error", async () => {
     using dir = tempDir("build-dts-types-of-bun-without-files", {
@@ -489,7 +541,8 @@ export function isMac(): boolean {
   });
 
   // The third entry point has neither import nor export, so the check without the types of Bun reads it as a script, where
-  // `await` is a name. It stops there and judges no file. The check with them reads a module, and finds the two copies.
+  // `await` is a name. It stops there and judges no file. The check with them reads a module, and finds the two copies:
+  // only that check reports them, so the error is named as its own.
   // TODO: on Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)(
     "where the first check stops at a file that it reads as a script, the check with the types of Bun decides",
@@ -502,7 +555,7 @@ export function isMac(): boolean {
         "src/pattern.ts": `await /a/.exec("a");\n`,
       });
       const built = await build(dir, "./src/make.ts", "./src/pattern.ts", "--splitting");
-      expect(built.stderr).toMatch(leftOutForTheTwoCopies);
+      expect(built.stderr).toMatch(leftOutForTheTwoCopiesWithBunTypes);
       expect(built.exitCode).toBe(0);
       expect(written(dir).filter(name => name.endsWith(".aot.ts"))).toEqual([]);
     },

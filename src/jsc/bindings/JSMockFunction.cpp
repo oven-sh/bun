@@ -885,7 +885,7 @@ public:
         didUninstall();
     }
 
-    // What had laid the value that this spy of a namespace export calls through to has ended under the spy: the spy stands over what that one had found.
+    // The override under this namespace spy ended: call through to what that one had found.
     void setSpyOriginal(JSGlobalObject* globalObject, JSValue original)
     {
         auto& vm = this->vm();
@@ -3176,8 +3176,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
 #endif
 
-    // True if the object is a module namespace object. Its exports are replaced in the module that declares them. The spy owns what it lays there,
-    // so it and a module mock of the same export end in any order: see JSModuleNamespaceObject::layExportOverride().
+    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
     auto replaceExport = [&](JSMockFunction* spy) {
         JSValue replacement = spy;
         if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
@@ -3186,7 +3185,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
-            // The spy owns what it lays over a variable of the program. An export that is kept elsewhere is stored without an owner, and the spy puts back what it replaced.
+            // Only a variable of the program takes an owner. Any other export is stored bare, and the spy puts back what it replaced.
             bool isReplaced = JSC::AOT::layExportOverride(object, propertyKey.impl(), replacement, spy);
             RETURN_IF_EXCEPTION(scope, true);
             if (!isReplaced) {

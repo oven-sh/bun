@@ -425,6 +425,49 @@ describe("frames sent in the same write as the 101", () => {
       ws.terminate();
     });
 
+    // A frame that arrives while onopen spins the event loop may be delivered inside that spin: the
+    // socket is not paused yet. Once pause() returns, nothing may be delivered until resume(), not
+    // even bytes the transport already holds (the TLS tunnel decrypts after onopen returns).
+    it(`wait for resume() after pause() inside onopen follows a nested wait (${mode.name})`, async () => {
+      await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames("m1") });
+      using clockServer = await startClock();
+      using client = await connect(peer.url);
+      const { ws } = client;
+      const received: string[] = [];
+      const whilePaused: string[] = [];
+      const { promise: done, resolve: resolveDone, reject } = Promise.withResolvers<void>();
+      ws.onmessage = ({ data }) => {
+        received.push(data);
+        if (ws.isPaused) whilePaused.push(data);
+        if (received.length === 2) resolveDone();
+      };
+      ws.onerror = () => reject(new Error("unexpected error event"));
+      ws.onclose = ({ code }) => reject(new Error(`unexpected close ${code}`));
+      await new Promise<void>(resolve => {
+        ws.onopen = () => {
+          // `Bun.build()` ticks the event loop until the plugin's `setup()` settles. Meanwhile the
+          // peer sends "m2" and the clock does I/O roundtrips, so "m2" reaches the transport.
+          const spin = (async () => {
+            const connection = await peer.connection();
+            connection.write(textFrames("m2"));
+            await ioRoundtrips(clockServer.clock, 5);
+          })();
+          Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup: () => spin }] }).catch(() => {});
+          expect(ws.pause()).toBe(true);
+          resolve();
+        };
+      });
+
+      await ioRoundtrips(clockServer.clock, 5);
+      expect({ whilePaused, isPaused: ws.isPaused }).toEqual({ whilePaused: [], isPaused: true });
+
+      expect(ws.resume()).toBe(true);
+      await done;
+      expect(received).toEqual(["m1", "m2"]);
+      ws.onclose = null;
+      ws.terminate();
+    });
+
     it(`are delivered before the close event when a paused connection is reset (${mode.name})`, async () => {
       await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames(...WITH_101) });
       using clockServer = await startClock();

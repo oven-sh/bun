@@ -199,8 +199,9 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_len: Cell<u8>,
 
     /// Bytes not parsed yet. Either bytes that arrived with the 101, held until after `open`
-    /// (or until `resume()` if an `open` listener paused the socket), or bytes from a
-    /// re-entrant `feed`, held until the outer `feed` finishes.
+    /// (or until `resume()` if an `open` listener paused the socket), bytes the transport
+    /// handed over while paused, held until `resume()`, or bytes from a re-entrant `feed`,
+    /// held until the outer `feed` finishes.
     initial_data: Cell<Option<Box<InitialData>>>,
     /// A `feed` call is on the stack.
     parsing: Cell<bool>,
@@ -658,8 +659,29 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = RefPtr::from_this(this);
 
+        // A paused socket reads nothing, but a transport can still hand over bytes it read
+        // before `pause()`: the TLS tunnel decrypts what arrived while an `open` listener spun
+        // the event loop once that listener returns. `resume()` queues `deliver_initial_data`.
+        if this.cpp_websocket().is_some_and(|ws| ws.is_paused()) {
+            this.hold(data);
+            return;
+        }
         this.parse_initial_data();
         this.handle_data_loop(data);
+    }
+
+    /// Queue `data` behind the bytes `parse_initial_data` has not parsed yet.
+    fn hold(&self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        let mut pending = self
+            .initial_data
+            .take()
+            .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
+        bun_core::handle_oom(pending.0.try_reserve(data.len()));
+        pending.0.extend_from_slice(data);
+        self.initial_data.set(Some(pending));
     }
 
     /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
@@ -1751,12 +1773,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         let _guard = RefPtr::from_this(this);
         if this.parsing.get() {
-            let mut pending = this
-                .initial_data
-                .take()
-                .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
-            pending.0.extend_from_slice(data);
-            this.initial_data.set(Some(pending));
+            this.hold(data);
             return;
         }
 

@@ -3085,7 +3085,11 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     // so write() returns false. The stream runs the write callback and destroys
     // the socket on the next tick.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
-    failWriteWith(this, er, callback);
+    callback(er);
+    if (!this.destroyed && !this._hadError) {
+      this._hadError = true;
+      process.nextTick(destroyNT, this, er);
+    }
     return false;
   }
   const res = socket.$write(chunk, encoding);
@@ -3093,7 +3097,14 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    if (!holdRejectedWrite(this, socket, res, callback)) failWrite(this, res, callback);
+    if (!holdRejectedWrite(this, socket, res, callback)) {
+      const er = writeErrnoException(res);
+      callback(er);
+      if (!this.destroyed && !this._hadError) {
+        this._hadError = true;
+        process.nextTick(destroyNT, this, er);
+      }
+    }
     return false;
   }
   if (res) {

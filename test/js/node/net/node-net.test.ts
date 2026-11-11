@@ -3646,9 +3646,17 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
 
 // https://github.com/oven-sh/bun/issues/47834
 it("write after peer FIN emits 'error' and closes with hadError true", async () => {
+  let destroyPeer: (() => void) | null = null;
+  let resolvePeerReady!: () => void;
+  const peerReady = new Promise<void>(resolve => {
+    resolvePeerReady = resolve;
+  });
   const server = createServer(peer => {
     peer.on("error", () => {});
-    setTimeout(() => peer.destroy(), 50);
+    resolvePeerReady();
+    destroyPeer = () => {
+      peer.end();
+    };
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
 
@@ -3667,17 +3675,29 @@ it("write after peer FIN emits 'error' and closes with hadError true", async () 
       closeHadError = hadError;
     });
 
+    const errorPromise = once(socket, "error");
+    const closePromise = once(socket, "close");
+    const drainPromise = once(socket, "drain");
+
+    await peerReady;
+    destroyPeer!();
     await once(socket, "end");
 
     let callbackError: any = null;
-    const wrote = socket.write(new Uint8Array(64), err => {
-      callbackError = err;
+    const callbackPromise = new Promise<void>(resolve => {
+      const wrote = socket.write(new Uint8Array(64), err => {
+        callbackError = err;
+        resolve();
+      });
+      expect(wrote).toBe(false);
     });
 
-    expect(wrote).toBe(false);
+    await callbackPromise;
     expect(callbackError?.code).toBe("EPIPE");
 
-    await expect(once(socket, "drain")).rejects.toThrow();
+    await expect(drainPromise).rejects.toThrow();
+    await errorPromise;
+    await closePromise;
 
     expect(errorEvent).not.toBeNull();
     expect(errorEvent.code).toBe("EPIPE");

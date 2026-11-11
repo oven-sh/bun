@@ -9,9 +9,7 @@ raiseDefaultTimeout(120_000);
 
 // Each case builds and runs in a folder of its own. One after the other they take longer than CI gives a file on the lane with assertions,
 // and at once they still take about that long there: so they are dealt out over four files, by the time that they take.
-// A debug build of Bun dies now and then of a race between the threads of the engine (oven-sh/bun#48169), and a test run has no
-// switch for one thread: such a build is left out of this file.
-const test = isDebug ? oneAtATime.skip : oneAtATime.concurrent;
+const test = oneAtATime.concurrent;
 
 const looksAtFiles = {
   "src/look.cjs": `
@@ -37,7 +35,11 @@ const moduleThatLooksAtItself = (name: string) => `
   export const seen = look(require.resolve("./${name}"));
   export const later = () => [look(require.resolve("./${name}")), whileItRan === undefined || whileItRan === require.cache[require.resolve("./${name}")]].join(" ");`;
 
-async function expectCompiledToRunAsPlain(files: Record<string, string>, owesTheCompiledRunAlone = false) {
+/** `owed`, of a row of gap(): the line that the plain run prints, and the line that the compiled run prints in its place today. */
+async function expectCompiledToRunAsPlain(
+  files: Record<string, string>,
+  owed?: readonly [plain: string, compiled: string],
+) {
   using dir = tempDir("require-cache-in-test-runs", files);
   const seen = async (words?: string, ...flags: string[]) => {
     const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
@@ -45,11 +47,16 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>, owesThe
     if (exitCode !== 0) console.error(stderr);
     return { stdout, exitCode };
   };
+  const prints = (ran: { stdout: string; exitCode: number }, line: string) =>
+    ran.exitCode === 0 && ran.stdout.split("\n").includes(line);
   const plain = await seen();
-  // Only the compiled run is owed: a row of gap() whose plain run fails ends well here, which is red.
-  if (owesTheCompiledRunAlone && plain.exitCode !== 0) return;
-  expect(plain.exitCode).toBe(0);
-  for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
+  if (!owed) expect(plain.exitCode).toBe(0);
+  for (const words of ["TestRunLayers:0"]) {
+    const compiled = await seen(words, "--aot");
+    // Only that line is owed: a run that ends or prints otherwise ends well here, which is red.
+    if (owed && !(prints(plain, owed[0]) && prints(compiled, owed[1]))) return;
+    expect(compiled).toEqual(plain);
+  }
 }
 
 test("a CommonJS file finds its own module in require.cache while it runs, whoever has begun it", async () => {
@@ -171,12 +178,18 @@ const ringOfESModules = gap(
           console.log(require("./src/ring-first").seen);
         });`,
     },
+    [
+      "ReferenceError true ring-first.ts true,true exports [ReferenceError] true",
+      " true ring-first.ts true,true exports [] true",
+    ],
   ] as const,
 );
+// A debug build of Bun dies now and then of a race between the threads of the engine (oven-sh/bun#48169), and a test run has no
+// switch for one thread: such a build is left out of this row.
 eachRow(isDebug ? [] : [ringOfESModules])(
   "ES modules that require each other in a ring are listed while the second runs",
-  async files => {
-    await expectCompiledToRunAsPlain(files, true);
+  async (files, owed) => {
+    await expectCompiledToRunAsPlain(files, owed);
   },
 );
 

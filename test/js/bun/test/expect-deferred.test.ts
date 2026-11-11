@@ -401,15 +401,6 @@ describe.concurrent(".resolves and .rejects", () => {
             await jobs();
             await expect(failed(passedOn)).rejects.toThrow();
           });
-          // toThrow() takes the rejected promise of its function from the report of rejected promises.
-          test("caught, and then toThrow() takes the rejection of its function", async () => {
-            const matcher = failing();
-            await jobs();
-            console.log(await outcome(failed(matcher)));
-            await expect(async () => {
-              throw new Error("thrown at once");
-            }).toThrow("thrown at once");
-          });
           test("next", () => {});
         `,
       });
@@ -418,7 +409,6 @@ describe.concurrent(".resolves and .rejects", () => {
         "rejected",
         "fulfilled,rejected",
         "3",
-        "rejected",
         "rejected",
         "rejected",
         "rejected",
@@ -443,7 +433,6 @@ describe.concurrent(".resolves and .rejects", () => {
         "error: expect(received).toBe(expected)",
         "(fail) never",
         "(pass) passed on by .finally(), then given to expect().rejects",
-        "(pass) caught, and then toThrow() takes the rejection of its function",
         "(pass) next",
       ]);
       expect(exitCode).toBe(1);

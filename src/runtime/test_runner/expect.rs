@@ -894,20 +894,17 @@ unsafe extern "C" {
 struct EarlierRejections<'a> {
     global: &'a JSGlobalObject,
     mark: usize,
-    reported: u32,
 }
 
 impl<'a> EarlierRejections<'a> {
     fn hold(global: &'a JSGlobalObject) -> Self {
-        let reported = ExpectDeferred::reported_rejections(global);
-        Self { global, mark: Bun__holdRejectedPromises(global), reported }
+        Self { global, mark: Bun__holdRejectedPromises(global) }
     }
 }
 
 impl Drop for EarlierRejections<'_> {
     fn drop(&mut self) {
         Bun__releaseRejectedPromises(self.global, self.mark);
-        ExpectDeferred::forget_reports_since(self.global, self.reported);
     }
 }
 

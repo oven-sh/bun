@@ -488,7 +488,7 @@ socket.addEventListener("message", event => {
 });
 ```
 
-`pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Frames already decoded before `pause()` returns may still be delivered. Nothing else is delivered until `resume()`. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
+`pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Frames from the read that is being parsed when `pause()` is called may still be delivered. Nothing else is delivered until `resume()`. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
 
 A paused client doesn't read from the socket, so until `resume()` it doesn't reply to pings or notice a Close frame or a disconnect. `send()`, `ping()`, and `pong()` still work. If a pause can outlast the server's idle timeout (120 seconds by default in `Bun.serve`), send a frame on a timer.
 

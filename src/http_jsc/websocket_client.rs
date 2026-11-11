@@ -664,12 +664,21 @@ impl<const SSL: bool> WebSocket<SSL> {
             this.hold(data);
             return;
         }
-        // A listener of the held frames can pause too. Frames from the same read still dispatch.
-        if this.parse_initial_data() && paused() {
-            this.hold(data);
+        let Some(held) = this.initial_data.take() else {
+            this.handle_data_loop(data);
+            return;
+        };
+        // A listener of the held frames can tick the event loop, which reuses the buffer behind
+        // `data`, and can pause.
+        let mut read = Vec::new();
+        bun_core::handle_oom(read.try_reserve(data.len()));
+        read.extend_from_slice(data);
+        this.handle_data_loop(&held.0);
+        if paused() {
+            this.hold(&read);
             return;
         }
-        this.handle_data_loop(data);
+        this.handle_data_loop(&read);
     }
 
     /// Queue `data` behind the bytes `parse_initial_data` has not parsed yet.
@@ -694,13 +703,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// True if there were bytes to parse.
-    fn parse_initial_data(&self) -> bool {
-        let Some(initial_data) = self.initial_data.take() else {
-            return false;
-        };
-        self.handle_data_loop(&initial_data.0);
-        true
+    fn parse_initial_data(&self) {
+        if let Some(initial_data) = self.initial_data.take() {
+            self.handle_data_loop(&initial_data.0);
+        }
     }
 
     fn handle_data_loop(&self, data: &[u8]) {

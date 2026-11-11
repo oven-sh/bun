@@ -5,7 +5,7 @@ import { readdirSync } from "node:fs";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { WebSocket as WsWebSocket } from "ws";
-import { closePayload, createPeer, encodeFrame, OP, response101 } from "./raw-peer";
+import { closePayload, createPeer, encodeFrame, OP, type RawSocket, response101 } from "./raw-peer";
 
 const CHUNK = new Uint8Array(64 * 1024);
 // SO_SNDBUF for every socket that sends toward the paused client.
@@ -430,46 +430,69 @@ describe("frames sent in the same write as the 101", () => {
     // even bytes the transport already holds (the TLS tunnel decrypts after onopen returns), and not
     // the bytes that came with the frame whose listener paused. Direct ws and wss deliver both frames
     // inside the spin, before pause(). Only the tunnel reaches the hold.
-    it.each(["inside onopen", "in the first message's listener"])(
+    type PauseSite = "inside onopen" | "in the first message's listener";
+    async function pauseAfterNestedWait(
+      where: PauseSite,
+      clock: WebSocket,
+      peer: Awaited<ReturnType<typeof createPeer>>,
+      ws: WebSocket,
+    ) {
+      const received: string[] = [];
+      const whilePaused: string[] = [];
+      const events: string[] = [];
+      const pauseResults: boolean[] = [];
+      const { promise: done, resolve: resolveDone, reject } = Promise.withResolvers<void>();
+      ws.onmessage = ({ data }) => {
+        received.push(data);
+        events.push(data);
+        if (ws.isPaused) whilePaused.push(data);
+        if (where === "in the first message's listener" && received.length === 1) pauseResults.push(ws.pause());
+        if (received.length === 2) resolveDone();
+      };
+      ws.onerror = () => reject(new Error("unexpected error event"));
+      const closed = new Promise<void>(resolve => {
+        ws.onclose = ({ code }) => {
+          events.push(`close ${code}`);
+          resolve();
+        };
+      });
+      let spun = false;
+      let connection: RawSocket | undefined;
+      await new Promise<void>(resolve => {
+        ws.onopen = () => {
+          // `Bun.build()` ticks the event loop until the plugin's `setup()` settles. Meanwhile the
+          // peer sends "m2" and the clock does I/O roundtrips, so "m2" reaches the transport.
+          const spin = (async () => {
+            connection = await peer.connection();
+            connection.write(textFrames("m2"));
+            await ioRoundtrips(clock, 5);
+            spun = true;
+          })();
+          spin.catch(reject);
+          Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup: () => spin }] }).catch(() => {});
+          if (where === "inside onopen") pauseResults.push(ws.pause());
+          resolve();
+        };
+      });
+      // The spin ran inside onopen. If Bun.build() stops nesting the event loop, this fails.
+      expect(spun).toBe(true);
+      await ioRoundtrips(clock, 5);
+      expect({ pauseResults, whilePaused, isPaused: ws.isPaused }).toEqual({
+        pauseResults: [true],
+        whilePaused: [],
+        isPaused: true,
+      });
+      return { received, events, done, closed, connection: connection! };
+    }
+
+    it.each<PauseSite>(["inside onopen", "in the first message's listener"])(
       `wait for resume() after pause() %s follows a nested wait (${mode.name})`,
       async where => {
         await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames("m1") });
         using clockServer = await startClock();
         using client = await connect(peer.url);
         const { ws } = client;
-        const received: string[] = [];
-        const whilePaused: string[] = [];
-        const { promise: done, resolve: resolveDone, reject } = Promise.withResolvers<void>();
-        ws.onmessage = ({ data }) => {
-          received.push(data);
-          if (ws.isPaused) whilePaused.push(data);
-          if (where === "in the first message's listener" && received.length === 1) expect(ws.pause()).toBe(true);
-          if (received.length === 2) resolveDone();
-        };
-        ws.onerror = () => reject(new Error("unexpected error event"));
-        ws.onclose = ({ code }) => reject(new Error(`unexpected close ${code}`));
-        await new Promise<void>(resolve => {
-          ws.onopen = () => {
-            // `Bun.build()` ticks the event loop until the plugin's `setup()` settles. Meanwhile the
-            // peer sends "m2" and the clock does I/O roundtrips, so "m2" reaches the transport.
-            let spun = false;
-            const spin = (async () => {
-              const connection = await peer.connection();
-              connection.write(textFrames("m2"));
-              await ioRoundtrips(clockServer.clock, 5);
-              spun = true;
-            })();
-            spin.catch(reject);
-            Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup: () => spin }] }).catch(() => {});
-            // The spin ran inside this listener. If Bun.build() stops nesting the event loop, this fails.
-            expect(spun).toBe(true);
-            if (where === "inside onopen") expect(ws.pause()).toBe(true);
-            resolve();
-          };
-        });
-
-        await ioRoundtrips(clockServer.clock, 5);
-        expect({ whilePaused, isPaused: ws.isPaused }).toEqual({ whilePaused: [], isPaused: true });
+        const { received, done } = await pauseAfterNestedWait(where, clockServer.clock, peer, ws);
 
         expect(ws.resume()).toBe(true);
         await done;
@@ -478,6 +501,21 @@ describe("frames sent in the same write as the 101", () => {
         ws.terminate();
       },
     );
+
+    it(`are delivered before the close event when the peer resets a connection paused after a nested wait (${mode.name})`, async () => {
+      await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames("m1") });
+      using clockServer = await startClock();
+      using client = await connect(peer.url);
+      const { ws } = client;
+      const { events, closed, connection } = await pauseAfterNestedWait("inside onopen", clockServer.clock, peer, ws);
+
+      connection.reset();
+      // Some platforms don't report the reset while the socket is paused. In that case resume() surfaces it.
+      await Promise.race([closed, ioRoundtrips(clockServer.clock, 20)]);
+      ws.resume();
+      await closed;
+      expect(events).toEqual(["m1", "m2", "close 1006"]);
+    });
 
     it(`are delivered before the close event when a paused connection is reset (${mode.name})`, async () => {
       await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames(...WITH_101) });

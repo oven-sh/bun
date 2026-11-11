@@ -238,6 +238,8 @@ describe.concurrent("the debug id of a // @bun file and of the .map beside it", 
       ["crlf-external.js", () => external(), { debugId: otherId }, fileId],
       ["crlf-linked.js", name => external() + url(name), { debugId: otherId }, fileId],
       ["no-final-line-end.js", () => external().trimEnd(), { debugId: otherId }, fileId],
+      // A `#!` line can be above the `// @bun` line.
+      ["hashbang-external.js", () => external(), { debugId: otherId }, fileId],
       ["blank-before-other-id.js", () => external(" " + fileId), { debugId: otherId }, fileId],
       ["space-after-id.js", () => external(fileId + " \t"), { debugId: otherId }, fileId],
       ["space-after-id-linked.js", name => external(fileId + " \t") + url(name), { debugId: otherId }, fileId],
@@ -263,7 +265,11 @@ describe.concurrent("the debug id of a // @bun file and of the .map beside it", 
     const files: Record<string, string> = {};
     for (const [name, tail, mapFields] of rows) {
       const text = (name.endsWith(".cjs") ? cjsThrowsOnLine3 : throwsOnLine3) + tail(name);
-      files[name] = name.startsWith("crlf-") ? text.replaceAll("\n", "\r\n") : text;
+      files[name] = name.startsWith("crlf-")
+        ? text.replaceAll("\n", "\r\n")
+        : name.startsWith("hashbang-")
+          ? "#!/usr/bin/env bun\n" + text
+          : text;
       files[name + ".map"] = map(mapFields);
     }
     // Each error is printed three times: its stack, then twice with the lines of code around it. The line on stderr
@@ -283,7 +289,8 @@ describe.concurrent("the debug id of a // @bun file and of the .map beside it", 
 
     const { stdout, stderr, exitCode } = await run(files, printFrames, ["main.js", ...rows.map(([name]) => name)]);
     const expected = rows.map(([name, , mapFields, idOfFile]) => {
-      const frame = idOfFile === undefined ? mapped : `at t (<dir>/${name}:3:18)`;
+      const line = name.startsWith("hashbang-") ? 4 : 3;
+      const frame = idOfFile === undefined ? mapped : `at t (<dir>/${name}:${line}:18)`;
       const warning = idOfFile === undefined ? "" : refused(name, idOfFile, (mapFields as { debugId: string }).debugId);
       return { stdout: `${name}: ${frame} | ${frame} | ${frame}\n`, stderr: `${warning}${name}: done\n` };
     });

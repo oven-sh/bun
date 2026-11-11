@@ -171,8 +171,13 @@ error: Hello World`,
   // The bundle and its map have one debug id. Each case runs the pair as it was built, then the bundle beside a map
   // with another id.
   for (const format of ["esm", "cjs"] as const) {
-    for (const sourceMap of ["external", "linked"] as const) {
-      itBundled(`bun/TargetBunSourcemapDebugId-${format}-${sourceMap}`, () => {
+    for (const [sourceMap, publicPath] of [
+      ["external"],
+      ["linked"],
+      ["linked", "https://example.com/assets/"],
+    ] as const) {
+      const name = `bun/TargetBunSourcemapDebugId-${format}-${sourceMap}${publicPath ? "-public-path" : ""}`;
+      itBundled(name, () => {
         const ids = { bundle: "", map: "" };
         const warnings = (stderr: string) =>
           stderr.split("\n").filter(line => line.startsWith("warn: ") || line.startsWith("note: "));
@@ -181,6 +186,7 @@ error: Hello World`,
           format,
           outdir: "/out",
           sourceMap,
+          publicPath,
           files: {
             "/entry.ts": /* js */ `
               function code() {

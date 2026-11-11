@@ -1577,6 +1577,16 @@ mod safe_libc {
             len: libc::off_t,
             advice: c_int,
         ) -> c_int;
+        // `&` / `Option<&mut>` to POD `timespec`: non-null when present, valid
+        // for read/write. A bad clock, flag or time is the returned error
+        // number (`EINVAL`/`ENOTSUP`), never UB.
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        pub safe fn clock_nanosleep(
+            clock_id: libc::clockid_t,
+            flags: c_int,
+            request: &libc::timespec,
+            remain: Option<&mut libc::timespec>,
+        ) -> c_int;
         // BSD/Linux event-queue / notification syscalls — all by-value scalars;
         // bad args → errno (`EINVAL`/`EMFILE`/…), never UB.
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -5116,7 +5126,7 @@ pub mod c {
     #[cfg(unix)]
     pub use super::safe_libc::fchmod;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub use super::safe_libc::posix_fadvise;
+    pub use super::safe_libc::{clock_nanosleep, posix_fadvise};
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]

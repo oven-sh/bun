@@ -275,13 +275,18 @@ fn search(
     );
     let mut level = Vec::new();
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
-        let inherited = loader.for_directory(&search.base_path)?;
+        // A search for reading uses the working directory's configuration, as `listFilesWithNodeFs` does.
+        let configured = match walk.for_reading {
+            true => &loader.environment().cwd[..],
+            false => &search.base_path[..],
+        };
+        let inherited = loader.for_directory(configured)?;
         // From here on, a directory is only listed if it isn't ignored. ESLint always lists the starting directory,
         // because the base path can be further down.
         let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles)
             && !inherited.config.is_outside(&search.base_path);
         let name = paths::basename(&search.base_path);
-        if (!is_hidden || loader.looks_for_configurations_in(&inherited, name))
+        if (!is_hidden || !walk.for_reading && loader.looks_for_configurations_in(&inherited, name))
             && let Some(ignores) =
                 loader.ignore_files_at(&search.base_path, &inherited, are_all_in_repositories)
         {
@@ -323,7 +328,6 @@ fn search(
                     (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
                 }
             }
-            // A search for reading keeps the configuration it started with, as `listFilesWithNodeFs` does.
             let own = match directory.relative.is_empty() || walk.for_reading {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {
@@ -440,7 +444,10 @@ fn search(
                     let is_hidden = is_hidden
                         || !is_external && within.is_directory_ignored(&path, dotfiles)
                         || lacks_file && !walk.for_reading && !paths::is_at_or_inside(cwd, &path);
-                    if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
+                    if !is_hidden
+                        || !walk.for_reading
+                            && loader.looks_for_configurations_in(&own, &entry.name)
+                    {
                         // ESLint 8 keeps following the loop until the system returns ELOOP.
                         if is_loop {
                             let label = "too many symbolic links encountered";
@@ -729,7 +736,11 @@ fn find_files_with(
                 excluded_argument.get_or_insert(pattern);
             }
             Some((fs::Kind::File, size)) => {
-                let loaded = loader.for_directory(paths::dirname(&path))?;
+                let configured = match walk.for_reading {
+                    true => &cwd[..],
+                    false => paths::dirname(&path),
+                };
+                let loaded = loader.for_directory(configured)?;
                 if loader.lacks_eslint_config_file(&loaded) && !walk.for_reading {
                     return Err(config_file_missing(&path));
                 }

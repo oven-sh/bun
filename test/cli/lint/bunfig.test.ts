@@ -1100,6 +1100,11 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     expect(await lintIn(".", bunfig({ src: ["."], ignoreExports: ["**/*.nothing"] }), ["src/a"])).toMatchObject({
       found,
     });
+    // A `src` folder's own config isn't loaded either.
+    expect(await lintIn(".", bunfig({ src: ["src", "tools"] }), ["src/a"])).toMatchObject({
+      found: [...found, "src/a/lib.js:2 import/no-unused-modules"],
+      exitCode: 1,
+    });
   });
 
   test("import/no-unused-modules with an eslint.config.js lists a folder outside the config's directory", async () => {

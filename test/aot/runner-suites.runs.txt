@@ -22,6 +22,32 @@ test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported th
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from bun:test leaves a module that is already loaded as it is
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from vitest leaves a module that is already loaded as it is
+# The next 25: when a test file mocks a module, plain runs the importers again that an earlier file left and this file doesn't hold, and keeps the ones that it holds. The body of a compiled file runs once.
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > an importer of a module that the file holds is evaluated with the mock, and linked to that module
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > an importer that the file has yet to import is evaluated with the mock
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > every run of a file under --rerun-each gets the same ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > every run of a file under --rerun-each gets the same []
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > import() that is under way when the mock is made is evaluated with the mock
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the next test file gets the modules that were not mocked ["--parallel=1","--no-isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the next test file gets the modules that were not mocked []
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > vi.importActual() that is under way when the mock is made is evaluated with the mock
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > a hoisted mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks behind a static import
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks behind import()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks behind require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks in a module that the file imports first
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > a hoisted mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > a mock, then a call of a function that requires
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks behind a static import
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks behind import()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks behind require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks in a module that the file imports first
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > a hoisted mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > a mock, then a call of a function that requires
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks behind a static import
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks behind import()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks behind require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks in a module that the file imports first
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > in files that mock the same module differently []

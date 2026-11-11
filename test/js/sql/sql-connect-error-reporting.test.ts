@@ -23,7 +23,8 @@
 // Uses plain TCP servers / closed ports so the tests run without Docker.
 
 import { SQL } from "bun";
-import { expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import type net from "node:net";
 import {
   closedPort,
@@ -75,6 +76,179 @@ test.each([
   const err = await connectError(`${adapter}://user@127.0.0.1:${port}/database`);
   expect(err).toBeInstanceOf(SQL.SQLError);
   expect(Bun.inspect(err, { colors: false })).toBe(`${name}: Failed to connect\n code: "${code}"\n\n`);
+});
+
+// The first read of `stack` of a native error makes it. To JavaScript it is a data property before and after, like
+// the `stack` of every other Error.
+describe.each([
+  ["postgres", "PostgresError"],
+  ["mysql", "MySQLError"],
+])("%s: the stack of a connection refused error", (adapter, name) => {
+  const stack = `${name}: Failed to connect`;
+  // Each call gives an error whose stack nothing has read.
+  const refused = async () => connectError(`${adapter}://user@127.0.0.1:${await closedPort()}/database`);
+
+  test("is a data property before the first read", async () => {
+    expect(Object.getOwnPropertyDescriptor(await refused(), "stack")).toEqual({
+      value: stack,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("keeps the attributes that Object.defineProperty() gives it before the first read", async () => {
+    const error = await refused();
+    Object.defineProperty(error, "stack", { enumerable: true, configurable: false });
+    expect({ stack: error.stack, descriptor: Object.getOwnPropertyDescriptor(error, "stack") }).toEqual({
+      stack,
+      descriptor: { value: stack, writable: true, enumerable: true, configurable: false },
+    });
+  });
+
+  test("a frozen error stays frozen when the stack is read, printed, cloned or assigned", async () => {
+    const errors = await Promise.all([refused(), refused(), refused(), refused()]);
+    const [read, printed, cloned, assigned] = errors.map(error => Object.freeze(error));
+    const first = read.stack;
+    Bun.inspect(printed);
+    structuredClone(cloned);
+    // A module is strict code.
+    expect(() => {
+      assigned.stack = "assigned";
+    }).toThrow(TypeError);
+    expect({
+      first,
+      frozen: errors.map(error => Object.isFrozen(error)),
+      stacks: errors.map(error => error.stack),
+    }).toEqual({
+      first: stack,
+      frozen: [true, true, true, true],
+      stacks: [stack, stack, stack, stack],
+    });
+  });
+
+  test("a sealed error stays sealed when the stack is read or assigned", async () => {
+    const errors = await Promise.all([refused(), refused()]);
+    const [read, assigned] = errors.map(error => Object.seal(error));
+    const first = read.stack;
+    assigned.stack = "assigned";
+    expect({
+      first,
+      sealed: errors.map(error => Object.isSealed(error)),
+      assigned: assigned.stack,
+    }).toEqual({
+      first: stack,
+      sealed: [true, true],
+      assigned: "assigned",
+    });
+  });
+
+  test("is the same through a Proxy, through an object that inherits from the error and for another receiver", async () => {
+    const [proxied, inherited, received] = await Promise.all([refused(), refused(), refused()]);
+    expect({
+      proxy: new Proxy(proxied, {}).stack,
+      inherits: Object.create(inherited).stack,
+      receiver: Reflect.get(received, "stack", {}),
+    }).toEqual({
+      proxy: stack,
+      inherits: stack,
+      receiver: stack,
+    });
+  });
+
+  test("an assignment before the first read goes where an assignment to a data property goes", async () => {
+    const [direct, proxied, inherited, held] = await Promise.all([refused(), refused(), refused(), refused()]);
+    direct.stack = "assigned";
+    new Proxy(proxied, {}).stack = "assigned";
+    const child = Object.create(inherited);
+    child.stack = "assigned";
+    const frozenReceiver = Object.freeze({});
+    // The property of the error keeps its attributes. A new property of another object is enumerable.
+    const assigned = { value: "assigned", writable: true, enumerable: false, configurable: true };
+    expect({
+      direct: Object.getOwnPropertyDescriptor(direct, "stack"),
+      proxied: Object.getOwnPropertyDescriptor(proxied, "stack"),
+      child: Object.getOwnPropertyDescriptor(child, "stack"),
+      inherited: inherited.stack,
+      frozenReceiver: [Reflect.set(held, "stack", "assigned", frozenReceiver), Reflect.ownKeys(frozenReceiver)],
+      held: held.stack,
+    }).toEqual({
+      direct: assigned,
+      proxied: assigned,
+      child: { ...assigned, enumerable: true },
+      inherited: stack,
+      frozenReceiver: [false, []],
+      held: stack,
+    });
+  });
+
+  // Not concurrent: Error.prepareStackTrace is global.
+  test("Error.prepareStackTrace runs once for each error, with no call sites", async () => {
+    const [read, frozen] = await Promise.all([refused(), refused()]);
+    const calls: unknown[] = [];
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = (error, callSites) => {
+      calls.push([error === read ? "read" : error === frozen ? "frozen" : error, callSites.length]);
+      return "prepared";
+    };
+    let stacks: unknown[];
+    try {
+      // Object.freeze() reads each property of the error, as it does for every Error. That read makes the stack.
+      Object.freeze(frozen);
+      stacks = [read.stack, read.stack, frozen.stack, frozen.stack];
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+    expect({ calls, stacks, frozen: Object.isFrozen(frozen) }).toEqual({
+      calls: [
+        ["frozen", 0],
+        ["read", 0],
+      ],
+      stacks: ["prepared", "prepared", "prepared", "prepared"],
+      frozen: true,
+    });
+  });
+});
+
+// A store on a WebAssembly GC object aborts the process, so the fixture has a process of its own.
+test("Reflect.set() of the stack of a connection refused error returns false for a WebAssembly GC object as the receiver", async () => {
+  const fixture = /* js */ `
+    // (type $s (struct (field (mut i32))))
+    // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+    const bytes = new Uint8Array([
+      0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+      1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+      3, 2, 1, 1,
+      7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+      10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+    ]);
+    const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+    const results = [];
+    for (const adapter of ["postgres", "mysql"]) {
+      const url = adapter + "://user@127.0.0.1:" + process.env.CLOSED_PORT + "/database";
+      const sql = new Bun.SQL({ url, max: 1, connectionTimeout: 1 });
+      const error = await sql.connect().then(() => "connected", error => error);
+      results.push([Reflect.set(error, "stack", "assigned", struct), error.stack]);
+      await sql.close({ timeout: 0 });
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, CLOSED_PORT: String(await closedPort()) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is here so that a failure shows it. A sanitizer build can write to it.
+  expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: [
+      [false, "PostgresError: Failed to connect"],
+      [false, "MySQLError: Failed to connect"],
+    ],
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });
 
 test("postgres: connection closed before handshake completes is a connect failure", async () => {

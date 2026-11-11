@@ -1101,7 +1101,10 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_required_name(RequiredName::new(exporter, name));
                 UNBOUND
             }
-            Err(kind @ ModuleFailureKind::ExportAmbiguous { exporter, name }) => {
+            Err(
+                kind @ (ModuleFailureKind::ExportAmbiguous { exporter, name }
+                | ModuleFailureKind::ExportNotFound { exporter, name }),
+            ) => {
                 let (barrel, listed) = (self.context.tables).find_where_names_lead(exporter, name);
                 match self.find_name_that_a_mock_of_an_es_module_may_leave_out(barrel, listed) {
                     Some(_) => {

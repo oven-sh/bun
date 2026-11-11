@@ -2620,10 +2620,33 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isTypeSubsetOfUnion` without its enum rule. True if each member of `source` is a member of
     /// the union `target`. It runs for every condition that every reference passes, so a search per
     /// member makes n tests of a union of n members cost n^4.
-    fn is_type_subset_of_union(&self, source: TypeId, target: TypeId) -> bool {
+    fn is_type_subset_of_union(&mut self, source: TypeId, target: TypeId) -> bool {
+        let is_large = self.has_many_members(target);
+        if is_large && let Some(&known) = self.subsets_of_unions.get(&(source, target)) {
+            return known;
+        }
         // Both are in `compare_types` order, so one pass finds a subset's members.
         let mut rest = self.parts(target).iter();
-        (self.parts(source).iter()).all(|member| rest.any(|it| it == member))
+        let is_subset = (self.parts(source).iter()).all(|member| rest.any(|it| it == member));
+        if is_large {
+            self.subsets_of_unions.insert((source, target), is_subset);
+        }
+        is_subset
+    }
+
+    fn have_same_members(&mut self, union: TypeId, other: TypeId) -> bool {
+        let (TypeData::Union(members), TypeData::Union(others)) =
+            (self.data(union), self.data(other))
+        else {
+            return false;
+        };
+        if members.len() != others.len() {
+            return false;
+        }
+        if members.len() < unions::MANY_MEMBERS {
+            return members == others;
+        }
+        *(self.have_same_members.entry((union, other))).or_insert_with(|| members == others)
     }
 
     /// `isDiscriminantProperty`
@@ -4094,7 +4117,11 @@ impl<'p, 's> Checker<'p, 's> {
                 if !is_unit {
                     return ty;
                 }
+                if let Some(&left) = self.unions_without_member.get(&(ty, candidate)) {
+                    return left;
+                }
                 let left = self.filter(ty, |_, m| m != candidate);
+                self.unions_without_member.insert((ty, candidate), left);
                 if let Some(at) = self.parts(ty).iter().position(|&m| m == candidate) {
                     let (from, name) = (ty, access.name);
                     let loss = unions::Loss {
@@ -7335,12 +7362,12 @@ impl<'p, 's> Checker<'p, 's> {
             return self.union_or_evolving_with(types, Join::Literal);
         }
         let initial = self.initial_of(walk);
-        let is_subset = |t: TypeId| {
+        let are_subsets = types.iter().all(|&t| {
             t == initial
                 || t.is_never()
                 || self.is_union(initial) && self.is_type_subset_of_union(t, initial)
-        };
-        match types.iter().all(|&t| is_subset(t)) {
+        });
+        match are_subsets {
             true => self.union_or_evolving_with(types, Join::Literal),
             false => self.union_or_evolving_with(types, Join::Subtype),
         }
@@ -7367,11 +7394,7 @@ impl<'p, 's> Checker<'p, 's> {
             let union = self.recombine_unknown_type(union);
             // The union of all the members of the declared type is the declared type. A fresh
             // `true` or `false` that an assignment left isn't a member of it.
-            if union != self.walk_declared
-                && let (TypeData::Union(parts), TypeData::Union(declared)) =
-                    (self.data(union), self.data(self.walk_declared))
-                && parts == declared
-            {
+            if union != self.walk_declared && self.have_same_members(union, self.walk_declared) {
                 return self.walk_declared;
             }
             return union;

@@ -1,5 +1,6 @@
 // The turn itself stores the variable, once in front of the read through the helper and once behind it.
-// STATISTIC: CapturedVariableReadsHoisted = 0
+// None is hoisted here; one is in a function of the library that the image holds.
+// STATISTIC: CapturedVariableReadsHoisted <= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

@@ -25,6 +25,13 @@ const enum Flag {
   Destroyed = 1 << 4,
 }
 
+/** As in internal/streams/utils. */
+const enum Sides {
+  Unknown,
+  Readable,
+  Both,
+}
+
 // Object lists a member from when it is first read. The third is called only where a test may have replaced it, as `bun run` calls it.
 const {
   keys: ObjectKeys,
@@ -150,12 +157,38 @@ $toClass(Duplex, "Duplex", Readable);
 // Use the `destroy` method of `Writable`.
 Duplex.prototype.destroy = Writable.prototype.destroy;
 
-{
-  const keys = ObjectKeys(Writable.prototype);
-  // Allow the keys array to be GC'ed.
-  for (let i = 0; i < keys.length; i++) {
-    const method = keys[i];
-    Duplex.prototype[method] ||= Writable.prototype[method];
+// The AOT compiler only knows class members that are stored under literal names, so the methods of Writable are written out. If a program
+// changed the prototype of `_stream_writable` before it loaded this module, its current members are copied instead.
+const writableKeys = ObjectKeys(Writable.prototype);
+const hasWritableMethods =
+  IS_COMPILED_AHEAD_OF_TIME &&
+  Writable.prototype.write === internals.writingMethod &&
+  areWritableMethods(writableKeys) &&
+  !Duplex.prototype.write &&
+  !Duplex.prototype.end;
+if (hasWritableMethods) {
+  Duplex.prototype.write = Writable.prototype.write;
+  Duplex.prototype.cork = Writable.prototype.cork;
+  Duplex.prototype.uncork = Writable.prototype.uncork;
+  Duplex.prototype.setDefaultEncoding = Writable.prototype.setDefaultEncoding;
+  Duplex.prototype._write = Writable.prototype._write;
+  Duplex.prototype._writev = Writable.prototype._writev;
+  Duplex.prototype.end = Writable.prototype.end;
+} else copyMissingMembers(Duplex.prototype, Writable.prototype, writableKeys);
+
+function areWritableMethods(names: string[]): boolean {
+  const expected = ["pipe", "write", "cork", "uncork", "setDefaultEncoding", "_write", "_writev", "end", "destroy"];
+  if (names.length !== expected.length + 2) return false;
+  for (let i = 0; i < expected.length; i++) {
+    if (names[i] !== expected[i]) return false;
+  }
+  return true;
+}
+
+function copyMissingMembers(target: any, source: any, names: string[]) {
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    target[name] ||= source[name];
   }
 }
 
@@ -215,6 +248,35 @@ ObjectDefineProperties(Duplex.prototype, {
     },
   },
 });
+
+function plainStreamSides(stream: unknown): number {
+  if (!$isPlainHeirOf(stream, Readable)) return Sides.Unknown;
+  if (hasWritableMethods && $findsDeclaredMember(stream as $Node.Duplex, "write", Duplex)) {
+    return $findsDeclaredMember(stream as $Node.Duplex, "pipe", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "on", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "readable", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "writable", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "writableEnded", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "writableFinished", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "destroyed", Duplex) &&
+      $findsDeclaredMember(stream as $Node.Duplex, "closed", Duplex) &&
+      isReadableState((stream as $Node.Duplex)._readableState) &&
+      isWritableState((stream as $Node.Duplex)._writableState)
+      ? Sides.Both
+      : Sides.Unknown;
+  }
+  return $findsDeclaredMember(stream as $Node.Readable, "pipe", Readable) &&
+    $findsDeclaredMember(stream as $Node.Readable, "on", Readable) &&
+    $findsDeclaredMember(stream as $Node.Readable, "readable", Readable) &&
+    $findsDeclaredMember(stream as $Node.Readable, "destroyed", Readable) &&
+    $findsDeclaredMember(stream as $Node.Readable, "closed", Readable) &&
+    $findsNoMember(stream as $Node.Readable, "_writableState") &&
+    $findsNoMember(stream as $Node.Readable, "write") &&
+    isReadableState((stream as $Node.Readable)._readableState)
+    ? Sides.Readable
+    : Sides.Unknown;
+}
+if (IS_COMPILED_AHEAD_OF_TIME) internals.plainStreamSides = plainStreamSides;
 
 // Lazy to avoid circular references
 Duplex.fromWeb = function (pair, options?) {

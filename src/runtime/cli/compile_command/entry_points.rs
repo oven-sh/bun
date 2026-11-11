@@ -261,7 +261,8 @@ pub(super) fn is_script_without_extension(working_directory: &[u8], written: &[u
 /// `#!/usr/bin/env node`, `#!/usr/local/bin/bun run`
 fn has_script_shebang(path: &[u8]) -> bool {
     let mut buffer = [0u8; 256];
-    let Some(start) = read_start(path, &mut buffer).strip_prefix(b"#!") else {
+    let start = bun_core::strings::without_utf8_bom(read_start(path, &mut buffer));
+    let Some(start) = start.strip_prefix(b"#!") else {
         return false;
     };
     let line_length = bun_core::strings::index_of_char_usize(start, b'\n').unwrap_or(start.len());

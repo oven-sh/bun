@@ -4,20 +4,16 @@ use crate::bind::{
 };
 use crate::fold::Decisions;
 use crate::hir::{
-    ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, ImportEqualsId, NodeData,
-    PatId, PatKind, PropKey, StmtKind,
+    ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, NodeData, PatId, PatKind, PropKey,
+    StmtKind,
 };
 use crate::util::FxHashMap;
 use smallvec::SmallVec;
 
 pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
-    let binding = Binding::Symbol(symbol);
     let mut declarations = bound.symbol(symbol).decls.iter();
-    let mut specifiers = (0..hir.export_specs.len() as u32).map(ExportSpecId);
-    let mut entity_names = (0..hir.import_equals.len() as u32).map(ImportEqualsId);
     declarations.any(|&it| bound.modifier_flags(hir, it).contains(Flags::EXPORT))
-        || specifiers.any(|it| bound.exported_binding(it) == binding)
-        || entity_names.any(|it| bound.entity_root_binding(it) == binding)
+        || bound.is_named_by_export(symbol)
 }
 
 type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
@@ -307,6 +303,24 @@ pub(super) fn find_values_passed_for_pattern(
     may_be_exported: bool,
 ) -> Option<ValuesPassed> {
     let (function, index, path) = find_parameter_key_path(hir, bound, mention)?;
+    let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
+        let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
+        return find_values_passed_by_call(hir, bound, mention, arguments);
+    };
+    let place = (function, index);
+    let (values, is_left_out) =
+        find_values_passed_under_name(hir, bound, decisions, place, name, find_written)?;
+    Some((values, path, is_left_out))
+}
+
+pub(super) fn find_values_passed_under_name(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    (function, index): (FnId, usize),
+    name: SymbolId,
+    find_written: FindWritten<'_>,
+) -> Option<(SmallVec<[ExprId; 4]>, bool)> {
     let id = hir[function].params.iter().nth(index)?;
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
     let has_default = hir[id].default.is_some();
@@ -315,10 +329,6 @@ pub(super) fn find_values_passed_for_pattern(
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
-    let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
-        let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
-        return find_values_passed_by_call(hir, bound, mention, arguments);
-    };
     let text = bound.symbol(name).name;
     for callee in find_written(text) {
         let is_mention = bound.is_evaluated_ident(callee)
@@ -341,5 +351,5 @@ pub(super) fn find_values_passed_for_pattern(
         is_left_out |= value.is_none() && !has_default;
         values.extend(value);
     }
-    Some((values, path, is_left_out))
+    Some((values, is_left_out))
 }

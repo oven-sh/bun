@@ -1,10 +1,10 @@
-# `const mark: Mark = { n: i }; mark.seen = line; .. line += ..`: the allocation looks ahead at the store, whose value is still bound to the builder. It passes the store by, which gets a string at its turn.
+# `const mark: Mark = { n: i }; mark.seen = line; .. line += ..`: the allocation looks ahead at the store, whose value is still bound to the builder. It passes the store by, which gets a string at its turn. A text that every iteration stores is in no builder.
 # f1 = gather
 # -- source: text-that-grows-is-stored-behind-a-literal.ts
 # declare function print(text: unknown): void;
 # declare function id<T>(value: T): T;
 # type Mark = { n: number; seen?: string };
-# function gather(count: number): string { const marks: Mark[] = []; let line = ""; for (let i = 0; i < count; i++) { const mark: Mark = { n: i }; mark.seen = line; marks.push(mark); line += "k" + i; } return marks[count - 1].seen + "/" + line; }
+# function gather(count: number): string { const marks: Mark[] = []; let line = ""; for (let i = 0; i < count; i++) { if (i !== 1) { const mark: Mark = { n: i }; mark.seen = line; marks.push(mark); } line += "k" + i; } return marks[marks.length - 1].seen + "/" + line; }
 # print(gather(id(3)));
 # -- end of source
 # RUN(ANSWERS): run-in-shell mechanisms=all

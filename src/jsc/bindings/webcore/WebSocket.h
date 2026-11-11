@@ -203,6 +203,8 @@ public:
     // and also pauses the body of a non-101 response.
     bool pause();
     bool resume();
+    // Deliver buffered input from a task so listeners never run inside resume() or close().
+    void queueReceiveDataDelivery();
     bool isPaused() const { return m_paused && canPause(); }
 
     // setRef() and remoteAddress() back the `ws` module's `_socket`.
@@ -424,8 +426,6 @@ private:
     void cancelUpgradeClient();
     void cancelConnectedClient();
     bool applyPauseToConnectedClient();
-    // Bytes that arrived with the 101 stay buffered while paused. Parse them from a task so listeners never run inside resume() or close().
-    void queueInitialDataDelivery();
     bool m_rejectUnauthorized { false };
     // Kept after connect() because the connected client verifies an https: proxy again when it renegotiates.
     bool m_proxyRejectUnauthorized { false };

@@ -145,6 +145,7 @@ unsafe extern "C" {
         code: BunString,
         detail: BunString,
     );
+    safe fn WebSocket__queueReceiveDataDelivery(websocket_context: &CppWebSocket);
     safe fn WebSocket__didReceiveText(websocket_context: &CppWebSocket, text: BunString);
     safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -282,6 +283,10 @@ impl CppWebSocket {
             BunString::static_(info.code),
             detail,
         );
+    }
+
+    pub(crate) fn queue_receive_data_delivery(&self) {
+        WebSocket__queueReceiveDataDelivery(self);
     }
 
     pub(crate) fn did_receive_text(&self, text: BunString) {

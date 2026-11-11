@@ -10156,8 +10156,6 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
-/// Returns the path to use, its kind hint, and whether a trailing separator
-/// restricts the target to a directory.
 #[cfg(not(windows))]
 fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind, bool) {
     // `O_NOFOLLOW` does not stop `openat("link/")`: the separators come off first.
@@ -10377,8 +10375,7 @@ pub(crate) fn zig_delete_tree(
                 if treat_as_dir {
                     match dt_open_dir(sys::Dir::borrow(&parent_dir), name) {
                         Ok(d) => break 'handle_entry d,
-                        // The target was named with a trailing separator: a file
-                        // that took its place is not ours to unlink.
+                        // "dir/" never unlinks a file that took the directory's place.
                         Err(E::ENOTDIR) if dir_only && top.name_is_borrowed => {
                             return Err(dt_err(E::ENOTDIR));
                         }

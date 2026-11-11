@@ -133,19 +133,17 @@ describe("tsconfig 'extends' decorator options", () => {
     new A();
   `;
 
-  async function run(files: Record<string, string>) {
+  async function run(files: Record<string, string>, flags: string[] = []) {
     using dir = tempDir("tsconfig-extends-decorators", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "a.ts"],
+      cmd: [bunExe(), ...flags, "a.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
-    expect(exitCode).toBe(0);
-    return stdout.trim();
+    return { stdout: stdout.trim(), stderr, exitCode };
   }
 
   test.concurrent.each([
@@ -166,23 +164,68 @@ describe("tsconfig 'extends' decorator options", () => {
     ],
     ["neither sets it", {}, {}, "arguments: 2"],
   ])("experimentalDecorators when %s", async (_, child, base, expected) => {
-    const stdout = await run({
+    const { stdout, stderr, exitCode } = await run({
       "a.ts": legacyFieldDecorator,
       "base.json": JSON.stringify({ compilerOptions: base }),
       "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: child }),
     });
     expect(stdout).toBe(expected);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("experimentalDecorators set in the extending file survives a chain of two bases", async () => {
-    const stdout = await run({
+    const { stdout, stderr, exitCode } = await run({
       "a.ts": legacyFieldDecorator,
       "root.json": JSON.stringify({ compilerOptions: { strict: true } }),
       "base.json": JSON.stringify({ extends: "./root.json", compilerOptions: { paths: {} } }),
       "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { experimentalDecorators: true } }),
     });
     expect(stdout).toBe("arguments: 3");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
+
+  // --tsconfig-override names a file that extends the project's tsconfig.json (#30477).
+  test.concurrent("experimentalDecorators set in the file --tsconfig-override names survives its extends", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "a.ts": legacyFieldDecorator,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+        "tsconfig.bun.json": JSON.stringify({
+          extends: "./tsconfig.json",
+          compilerOptions: { experimentalDecorators: true },
+        }),
+      },
+      ["--tsconfig-override", "./tsconfig.bun.json"],
+    );
+    expect(stdout).toBe("arguments: 3");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The compiled program of --debug-aot takes its decorator options through another reader of tsconfig.json.
+  test.concurrent(
+    "experimentalDecorators set in the extending file survives for a compiled program",
+    async () => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "a.ts": legacyFieldDecorator,
+          "base.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "tsconfig.json": JSON.stringify({
+            extends: "./base.json",
+            compilerOptions: { experimentalDecorators: true },
+          }),
+        },
+        ["--debug-aot"],
+      );
+      expect(stdout).toBe("arguments: 3");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    // The compile of a debug build under ASAN takes seconds.
+    60_000,
+  );
 
   // With emitDecoratorMetadata a decorated field gets a `design:type` entry.
   const metadataProbe = `
@@ -206,11 +249,13 @@ describe("tsconfig 'extends' decorator options", () => {
       "metadata: none",
     ],
   ])("emitDecoratorMetadata when %s", async (_, child, base, expected) => {
-    const stdout = await run({
+    const { stdout, stderr, exitCode } = await run({
       "a.ts": reflectShim + metadataProbe,
       "base.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true, ...base } }),
       "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: child }),
     });
     expect(stdout).toBe(expected);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

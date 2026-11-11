@@ -251,20 +251,33 @@ impl ParsedConfig {
         }
     }
 
+    /// The pattern names every field of `parent`, so a new field cannot compile until it says how
+    /// it crosses `extends`.
     fn inherit(&mut self, parent: ParsedConfig) {
-        self.extends = parent.extends;
-        self.base_url = self.base_url.take().or(parent.base_url);
+        let ParsedConfig {
+            extends,
+            base_url,
+            paths,
+            paths_directory,
+            jsx,
+            emits_decorator_metadata,
+            experimental_decorators,
+            use_define_for_class_fields,
+            has_compiler_options,
+        } = parent;
+        self.extends = extends;
+        self.base_url = self.base_url.take().or(base_url);
         if self.paths.is_none() {
-            self.paths = parent.paths;
-            self.paths_directory = parent.paths_directory;
+            self.paths = paths;
+            self.paths_directory = paths_directory;
         }
-        self.jsx.inherit(parent.jsx);
-        let emits_metadata = parent.emits_decorator_metadata;
-        self.emits_decorator_metadata = self.emits_decorator_metadata.or(emits_metadata);
-        let experimental = parent.experimental_decorators;
-        self.experimental_decorators = self.experimental_decorators.or(experimental);
-        let use_define = parent.use_define_for_class_fields;
-        self.use_define_for_class_fields = self.use_define_for_class_fields.or(use_define);
+        self.jsx.inherit(jsx);
+        self.emits_decorator_metadata = self.emits_decorator_metadata.or(emits_decorator_metadata);
+        self.experimental_decorators = self.experimental_decorators.or(experimental_decorators);
+        self.use_define_for_class_fields = self
+            .use_define_for_class_fields
+            .or(use_define_for_class_fields);
+        self.has_compiler_options |= has_compiler_options;
     }
 }
 

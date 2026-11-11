@@ -272,12 +272,12 @@ impl TSConfigJSON {
         self.experimental_decorators.unwrap_or(false)
     }
 
-    /// Lays the options of `child`, a config that extends `self`, over the options of `self`, as
-    /// TypeScript does: an option that `child` sets replaces the one of `self`. The pattern names
-    /// every field, so a new field cannot compile until it says how it crosses `extends`.
-    pub(crate) fn apply_extended_config(&mut self, mut child: Box<Self>) {
+    /// Takes from `base`, the config this one extends, every option that this config does not set,
+    /// as TypeScript does. The pattern names every field of `base`, so a new field cannot compile
+    /// until it says how it crosses `extends`.
+    pub(crate) fn inherit(&mut self, mut base: Box<Self>) {
         let Self {
-            abs_path,
+            abs_path: _,
             base_url,
             base_url_for_paths,
             extends: _,
@@ -289,32 +289,31 @@ impl TSConfigJSON {
             experimental_decorators,
             use_define_for_class_fields,
             has_compiler_options,
-        } = &mut *child;
+        } = &mut *base;
 
-        // The merged config stands for the extending file.
-        self.abs_path = core::mem::take(abs_path);
-        if !base_url.is_empty() {
+        if self.base_url.is_empty() {
             self.base_url = core::mem::take(base_url);
         }
         // `base_url_for_paths` is set whenever the `paths` key is present in the JSON, even as `{}`.
-        // TypeScript replaces `paths` as a whole, so a child that writes `{}` clears the inherited
+        // TypeScript replaces `paths` as a whole, so a config that writes `{}` clears the inherited
         // ones.
-        if !base_url_for_paths.is_empty() {
+        if self.base_url_for_paths.is_empty() {
             self.paths = core::mem::take(paths);
             self.base_url_for_paths = core::mem::take(base_url_for_paths);
         }
-        self.jsx = merge_jsx_fields(jsx, *jsx_flags, core::mem::take(&mut self.jsx));
+        self.jsx = merge_jsx_fields(&self.jsx, self.jsx_flags, core::mem::take(jsx));
         self.jsx_flags.insert_all(*jsx_flags);
         self.preserve_imports_not_used_as_values =
-            preserve_imports_not_used_as_values.or(self.preserve_imports_not_used_as_values);
-        self.emit_decorator_metadata = emit_decorator_metadata.or(self.emit_decorator_metadata);
-        self.experimental_decorators = experimental_decorators.or(self.experimental_decorators);
-        self.use_define_for_class_fields =
-            use_define_for_class_fields.or(self.use_define_for_class_fields);
+            (self.preserve_imports_not_used_as_values).or(*preserve_imports_not_used_as_values);
+        self.emit_decorator_metadata = self.emit_decorator_metadata.or(*emit_decorator_metadata);
+        self.experimental_decorators = self.experimental_decorators.or(*experimental_decorators);
+        self.use_define_for_class_fields = self
+            .use_define_for_class_fields
+            .or(*use_define_for_class_fields);
         self.has_compiler_options |= *has_compiler_options;
 
         // `destroy` logs what tsconfig-extends-leak.test.ts counts.
-        Self::destroy(child);
+        Self::destroy(base);
     }
 
     pub(crate) fn has_base_url(&self) -> bool {
@@ -939,8 +938,18 @@ mod tests {
     }
 
     #[test]
-    fn extending_config_replaces_the_options_it_sets() {
-        let mut merged = config(|base| {
+    fn extending_config_keeps_the_options_it_sets() {
+        let mut merged = config(|child| {
+            child.abs_path = Box::from(&b"/p/tsconfig.json"[..]);
+            child.emit_decorator_metadata = Some(false);
+            child.use_define_for_class_fields = Some(false);
+            child.jsx.import_source.production = Cow::Borrowed(b"preact");
+            child.jsx_flags = JsxField::ImportSource.into();
+            child.paths = paths(b"@leaf/*", b"./leaf/*");
+            child.base_url_for_paths = Box::from(&b"/p/leaf"[..]);
+            child.has_compiler_options = true;
+        });
+        merged.inherit(config(|base| {
             base.abs_path = Box::from(&b"/p/base.json"[..]);
             base.base_url = Box::from(&b"/p"[..]);
             base.emit_decorator_metadata = Some(true);
@@ -950,16 +959,6 @@ mod tests {
             base.jsx_flags = JsxField::Runtime.into();
             base.paths = paths(b"@base/*", b"./base/*");
             base.base_url_for_paths = Box::from(&b"/p"[..]);
-        });
-        merged.apply_extended_config(config(|child| {
-            child.abs_path = Box::from(&b"/p/tsconfig.json"[..]);
-            child.emit_decorator_metadata = Some(false);
-            child.use_define_for_class_fields = Some(false);
-            child.jsx.import_source.production = Cow::Borrowed(b"preact");
-            child.jsx_flags = JsxField::ImportSource.into();
-            child.paths = paths(b"@leaf/*", b"./leaf/*");
-            child.base_url_for_paths = Box::from(&b"/p/leaf"[..]);
-            child.has_compiler_options = true;
         }));
         assert_eq!(&*merged.abs_path, b"/p/tsconfig.json");
         assert_eq!(&*merged.base_url, b"/p");
@@ -975,31 +974,33 @@ mod tests {
     }
 
     #[test]
-    fn options_the_extending_config_leaves_unset_are_inherited_through_the_chain() {
-        let mut merged = config(|base| {
+    fn options_the_extending_config_leaves_unset_come_from_the_nearest_base_that_sets_them() {
+        let mut middle = config(|middle| {
+            middle.emit_decorator_metadata = Some(false);
+        });
+        middle.inherit(config(|base| {
             base.emit_decorator_metadata = Some(true);
             base.experimental_decorators = Some(true);
             base.paths = paths(b"@base/*", b"./base/*");
             base.base_url_for_paths = Box::from(&b"/p"[..]);
-        });
-        merged.apply_extended_config(config(|middle| {
-            middle.emit_decorator_metadata = Some(false);
+            base.has_compiler_options = true;
         }));
-        merged.apply_extended_config(config(|_| {}));
+        let mut merged = config(|_| {});
+        merged.inherit(middle);
         assert_eq!(merged.emit_decorator_metadata, Some(false));
         assert_eq!(merged.experimental_decorators, Some(true));
         assert_eq!(merged.paths.keys(), [Box::from(&b"@base/*"[..])]);
-        assert!(!merged.has_compiler_options);
+        assert!(merged.has_compiler_options);
     }
 
     #[test]
     fn empty_paths_in_the_extending_config_clear_the_inherited_ones() {
-        let mut merged = config(|base| {
+        let mut merged = config(|child| {
+            child.base_url_for_paths = Box::from(&b"/p/child"[..]);
+        });
+        merged.inherit(config(|base| {
             base.paths = paths(b"@base/*", b"./base/*");
             base.base_url_for_paths = Box::from(&b"/p"[..]);
-        });
-        merged.apply_extended_config(config(|child| {
-            child.base_url_for_paths = Box::from(&b"/p/child"[..]);
         }));
         assert!(merged.paths.is_empty());
         assert_eq!(&*merged.base_url_for_paths, b"/p/child");

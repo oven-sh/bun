@@ -6839,10 +6839,11 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            let mut merged_config = current;
             // `current` is the base of the chain. Each pop is the next config that extends it.
-            while let Some(extending_config) = parent_configs.pop() {
-                merged_config.apply_extended_config(extending_config);
+            let mut merged_config = current;
+            while let Some(mut extending_config) = parent_configs.pop() {
+                extending_config.inherit(merged_config);
+                merged_config = extending_config;
             }
             return Ok(Some(merged_config));
         }

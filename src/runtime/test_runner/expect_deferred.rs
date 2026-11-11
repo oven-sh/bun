@@ -584,6 +584,22 @@ impl ExpectDeferred {
         .to_js(global)
     }
 
+    pub(crate) fn reported_rejections(global: &JSGlobalObject) -> u32 {
+        ExpectDeferred__reportedRejections(global)
+    }
+
+    /// `toThrow()` took what the tracker reported since `before` for its function, so a due verdict must not count those reports.
+    pub(crate) fn forget_reports_since(global: &JSGlobalObject, before: u32) {
+        let taken = ExpectDeferred__reportedRejections(global).wrapping_sub(before);
+        if taken == 0 {
+            return;
+        }
+        if let Some(buntest) = crate::test_runner::bun_test::clone_active_strong() {
+            let unclaimed = &mut buntest.get().unclaimed;
+            unclaimed.rejections_reported = unclaimed.rejections_reported.wrapping_add(taken);
+        }
+    }
+
     /// Captures the stack as a `JSC::Exception`, which keeps its frames alive. GC can flatten an Error's frames to text.
     pub(crate) fn capture_call_site(global: &JSGlobalObject) -> JSValue {
         ExpectDeferred__captureCallSite(global)

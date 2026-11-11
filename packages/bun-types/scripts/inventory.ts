@@ -333,6 +333,13 @@ function inventory(
     note(symbol);
     // `global.NodeJS.Dict` is what a declaration inside `declare global { }` is called.
     const full = checker.getFullyQualifiedName(symbol).replace(/^global\./, "");
+    // A declaration that only its own file can name: at the top level of a module file of
+    // bun-types, and not exported. It can have the name of a global, as every interface of
+    // web-globals.d.ts has, and TypeScript prints the two alike.
+    const file = (symbol as ts.Symbol & { parent?: ts.Symbol }).parent ? undefined : symbol.declarations?.[0]?.parent;
+    if (file && ts.isSourceFile(file) && ts.isExternalModule(file) && isPackageFile(file)) {
+      return `local("${displayFile(file.fileName)}").${full}`;
+    }
     const quoted = /^"((?:[^"\\]|\\.)*)"(?:\.(.*))?$/.exec(full);
     if (!quoted) return full;
     const [, module, rest] = quoted;
@@ -1015,7 +1022,8 @@ function inventory(
   for (let rest = unlisted(); rest.length > 0; rest = unlisted()) {
     for (const sym of rest) {
       const start = lines.length;
-      emitSymbol(sym, qualifiedName(sym), "");
+      // The header of an entry names its file already.
+      emitSymbol(sym, qualifiedName(sym).replace(/^local\("[^"]+"\)\./, ""), "");
       const block = lines.splice(start);
       if (block.length > 0) blocks.push({ name: block[0]!, lines: block });
     }

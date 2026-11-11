@@ -326,7 +326,31 @@ impl<'s> Folder<'_, 's> {
         kind == BindingKind::Const && initializer.is_some_and(|it| self.is_read_behind(read, it))
     }
 
+    fn note_constant_read(&mut self, ident: ExprId, symbol: SymbolId) {
+        let Some(init) = self.find_initializer_of_stable_binding(symbol) else {
+            return;
+        };
+        if init >= ident
+            || !self.has_static_lookup(ident)
+            || self.is_assignment_target(ident)
+            || (self.is_stored_by_mocks(symbol)
+                && !self.is_inlined_by_plain_bun(ident, symbol, init))
+        {
+            return;
+        }
+        let FoldedValue::Constant(constant) = self.folded_value(init) else {
+            return;
+        };
+        let order = self.run_order.get_or_init(|| RunOrder::new(self.hir));
+        if order.is_initialized_at(self.hir, self.bound, ident, init) {
+            self.constant_reads.push((ident, constant));
+        }
+    }
+
     fn fold_const_read(&mut self, ident: ExprId, symbol: SymbolId, kind: BindingKind) -> Folded {
+        if let BindingKind::Const | BindingKind::Let | BindingKind::Var = kind {
+            self.note_constant_read(ident, symbol);
+        }
         let init = match kind {
             BindingKind::Const | BindingKind::Let | BindingKind::Var => {
                 self.find_only_initializer(ident, symbol, kind)

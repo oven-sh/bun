@@ -363,7 +363,7 @@ static void appendCompiledFrame(StringBuilder& text, const JSC::AOT::Image& imag
     if (JSC::AOT::builtinOfFunctionInFrames(frame.function))
         return;
     auto position = JSC::AOT::positionOf(frame);
-    String place = position && position->source ? makeString(JSC::AOT::sourceURLOf(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+    String place = position && position->source ? makeString(JSC::AOT::displayPathOf(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
     if (JSC::AOT::FunctionDescription(frame.function).codeType() == JSC::ModuleCode) {
         text.append("    at "_s, place, '\n');
         return;

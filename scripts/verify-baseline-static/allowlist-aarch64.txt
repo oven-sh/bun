@@ -186,6 +186,14 @@ _ZN3bun10N_SVE2_128L12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                      [
 
 
 # ----------------------------------------------------------------------------
+# Bun's packing of words (src/jsc/bindings/highway_strings.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (2 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun10N_SVE2_12813PackWordsImplEPKjmPhS3_                                   [SVE]
+_ZN3bun10N_SVE2_12815UnpackWordsImplEPKhmS2_mPjPm                              [SVE]
+
+
+# ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (8 symbols)
 # ----------------------------------------------------------------------------

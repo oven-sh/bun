@@ -18,7 +18,7 @@ pub struct PosixStat {
     pub blocks: u64,
 
     /// Access time
-    pub(crate) atim: Timespec,
+    pub atim: Timespec,
     /// Modification time
     pub mtim: Timespec,
     /// Change time (metadata)

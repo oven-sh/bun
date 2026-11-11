@@ -144,6 +144,8 @@ pub struct NamingLoad {
     pub written_in: FileId,
     pub requires: bool,
     pub is_guess: bool,
+    /// The load does not spell the name. The build has followed it through values.
+    pub is_name_followed: bool,
     pub may_be_left_out: bool,
 }
 

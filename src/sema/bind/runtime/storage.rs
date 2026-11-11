@@ -121,6 +121,7 @@ define_tables! {
             depends_on_sloppy_mode: bool,
             file_uses_arguments: bool,
             import_meta_may_be_modified: bool,
+            writes_import_meta_path: bool,
             may_name_own_require: bool,
             may_name_own_path: bool,
             may_require_get_members: std::sync::OnceLock<bool>,

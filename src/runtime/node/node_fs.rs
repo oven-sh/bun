@@ -10156,12 +10156,9 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
-/// POSIX: a trailing separator requires the final component to be a directory,
-/// so `unlinkat(path, 0)` can never remove it. Linux reports ENOENT / EISDIR /
-/// ENOTDIR from that call; gVisor before google/gvisor@a462ffdfe8 reports
-/// ENOTDIR before it looks the path up. Open the path as a directory instead.
-/// The separators come off first: `openat("link/", O_DIRECTORY | O_NOFOLLOW)`
-/// follows the link, `openat("link", ...)` does not.
+/// A trailing separator means "must be a directory": open it as one instead of
+/// probing with `unlinkat(path, 0)`, whose errno gVisor (before a462ffdfe8)
+/// gets wrong. Strip first: `O_NOFOLLOW` does not stop `openat("link/")`.
 #[cfg(not(windows))]
 fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind) {
     let stripped = strings::trim_right(sub_path, b"/");

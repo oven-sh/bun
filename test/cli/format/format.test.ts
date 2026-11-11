@@ -2253,11 +2253,13 @@ describe.concurrent("bun fmt", () => {
         expect(byOxfmt.exitCode).toBe(0);
       });
 
-      test("starts a line that is paragraph text because it's indented", async () => {
+      test.each([
         // The indentation goes, and with three backticks the line would start a code block, so the line break before
         // it becomes a space. Prettier 3.9.9 prints one backtick, and the stray one closes it.
-        const before = "a ` and `` then\n    ````x\n    y```` more\n";
-        const after = "a ` and `` then ```x\n    y``` more\n";
+        ["a ` and `` then\n    ````x\n    y```` more\n", "a ` and `` then ```x\n    y``` more\n"],
+        // After a hard break the line keeps its indentation instead.
+        ["a ` and `` then\\\n    ````x\n    y```` more\n", "a ` and `` then\\\n    ```x\n    y``` more\n"],
+      ])("starts a line that is paragraph text because it's indented: %j", async (before, after) => {
         expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before).replace("then\n", "then "));
         const files = { "a.md": before, "b.md": after };
         const result = await format(files, [], { reads: Object.keys(files) });

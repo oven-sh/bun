@@ -1884,8 +1884,7 @@ impl<'a> Printer<'a, '_> {
             }
             code = Cow::Owned(escaped);
         }
-        // The parser counted the fence: Prettier's `getMinNotPresentContinuousCount` of the code, unless a backtick
-        // that is text comes before the span (`BacktickRuns` in `parse.rs`).
+        // The parser counted the fence: `BacktickRuns` in `parse.rs` says what Prettier prints.
         let backticks = || fence(node.number as usize);
         let is_space_or_line_break = |byte: &u8| matches!(byte, b'\n' | b' ');
         let needs_padding = code.first() == Some(&b'`')

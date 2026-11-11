@@ -537,8 +537,7 @@ struct Builder<'t> {
     guarded_break: Option<GuardedBreak>,
     /// For oxfmt: the current line is one that it prints verbatim.
     is_on_verbatim_line: bool,
-    /// The backtick runs in the open paragraph, heading or cell that are text: no code span after them may have a
-    /// fence of that length.
+    /// The runs of backticks that are text in the open paragraph, heading or cell.
     stray_backticks: BacktickRuns,
 }
 
@@ -573,10 +572,9 @@ enum Follower {
     Other,
 }
 
-/// The lengths of some runs of backticks. A code span's fence must not be the length of a run in its content, nor of a
-/// run before it in its paragraph that isn't a fence: `A stray ` backtick and then ``code``` is one code span, and
-/// `A stray ` backtick and then `code`` is another one. Prettier 3.9.9 looks at the content only and prints the
-/// second, in a heading, a table cell or a link too.
+/// The lengths of runs of backticks. A code span ends at the first run as long as its fence, so its fence is neither in
+/// its code nor a run that is text before it. Prettier 3.9.9 prints `A stray ` backtick and then ``code``` as
+/// `A stray ` backtick and then `code``, which is another span.
 #[derive(Copy, Clone, Default)]
 struct BacktickRuns {
     /// Bit `n - 1` for a run of `n` backticks. Bit 63 for a run of 64 or more.
@@ -611,8 +609,7 @@ impl BacktickRuns {
         }
     }
 
-    /// The shortest fence that is none of them: Prettier's `getMinNotPresentContinuousCount` of the content, if none
-    /// of the text before the span has that many.
+    /// The shortest length that is none of them.
     fn fence_len(self) -> usize {
         match self.lengths.trailing_ones() {
             shorter @ 0..63 => shorter as usize + 1,
@@ -621,8 +618,7 @@ impl BacktickRuns {
     }
 }
 
-/// The first `len` bytes of `rest`, a line that starts with a code span, with as many backticks in front as the span
-/// is printed with.
+/// The first `len` bytes of `rest`, a line that starts with a code span, with the fence the span is printed with.
 fn with_printed_backticks(rest: &[u8], len: usize, strays: BacktickRuns) -> Vec<u8> {
     let run_at = |at: usize| rest[at..].iter().take_while(|&&byte| byte == b'`').count();
     let source_run = run_at(0);
@@ -1638,7 +1634,7 @@ impl Builder<'_> {
             }
             self.inline_range = saved_range;
         }
-        if ends_paragraph && stays && matches!(follower, Follower::Text | Follower::Verbatim) {
+        if ends_paragraph && stays && follower != Follower::Other {
             let saved_range = self.inline_range;
             self.inline_range = (saved_range.0, saved_range.0);
             self.add_verbatim_spaces(b"    ");
@@ -2043,8 +2039,7 @@ impl RendererImpl for Builder<'_> {
         let is_white = |byte: &u8| is_space(*byte);
         let matches_source =
             self.inline_range.1.saturating_sub(self.inline_range.0) as usize == content.len();
-        // A backtick string without a closer is text, and the parser reports it on its own. One that's escaped
-        // doesn't match its source and isn't one.
+        // An unclosed backtick string is a text event of its own. An escaped backtick doesn't match its source.
         if text_type == TextType::Normal
             && matches_source
             && content.first() == Some(&b'`')

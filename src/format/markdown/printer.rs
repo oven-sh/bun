@@ -1275,6 +1275,8 @@ impl<'a> Printer<'a, '_> {
             if sentence.kind == Kind::Text {
                 // The text of a risky paragraph (see `is_inline`), which has not been split into words. Prettier 3.9.9
                 // sees no word in it, and prints `snake*case*word` as `snake_case_word`, which is not an emphasis.
+                // Next to whitespace or to punctuation as CommonMark defines it, symbols included, `_` is an
+                // emphasis, so only a letter or a digit there is a word, in either flavor.
                 let text = self.str(sentence.value);
                 let (c, _) = if is_last {
                     last_char(text)
@@ -1282,7 +1284,7 @@ impl<'a> Printer<'a, '_> {
                     first_char(text)
                 }?;
                 return (!matches!(c, '\t' | '\n' | ' '))
-                    .then_some((preprocess::is_punctuation_unit(Some(c)), c));
+                    .then_some((bun_md::helpers::is_unicode_punctuation(c as u32), c));
             }
             if sentence.number == preprocess::PLAIN {
                 let text = self.str(sentence.value);

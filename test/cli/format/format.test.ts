@@ -2036,6 +2036,8 @@ describe.concurrent("bun fmt", () => {
       ["[*a*[[]]](b)\n", "[_a_[[]]](b)\n", "[_a_\n\n[[]]](b)\n"],
       ["> *[a](b)[[]]*\n", "> _[a](b)[[]]_\n", "> _[a](b)\n>\n> [[]]_\n"],
       ["*[a](b)\n[[]]*\n", "_[a](b)\n[[]]_\n", "_[a](b)\n\n\n[[]]_\n"],
+      // Prettier prints one line break after the comment, and the empty line when it formats that output again.
+      ["*<!-- prettier-ignore -->[[]]*\n", "_<!-- prettier-ignore -->[[]]_\n", "_<!-- prettier-ignore -->\n\n[[]]_\n"],
       [
         "as [[*a*, *b*], [*c*, *d*]], for an [*x*-e](#f), it is [*a*, *c*].\n",
         "as [[_a_, _b_], [_c_, _d_]], for an [_x_-e](#f), it is [_a_, _c_].\n",
@@ -2055,6 +2057,15 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
       expect(asOxfmt.files).toEqual({ "a.md": after, "b.md": after });
       expect(asOxfmt.exitCode).toBe(0);
+    });
+
+    // In such a paragraph, where Prettier's output keeps its meaning, Bun prints it: `_` next to a symbol is an
+    // emphasis.
+    test.each([["as [[a, b], [c, d]] ©*b*\n", "as [[a, b], [c, d]] ©_b_\n"]])("%j", async (before, byPrettier) => {
+      expect(Bun.markdown.html(byPrettier)).toBe(Bun.markdown.html(before));
+      const result = await format({ "a.md": before, "b.md": byPrettier }, [], { reads: ["a.md", "b.md"] });
+      expect(result.files).toEqual({ "a.md": byPrettier, "b.md": byPrettier });
+      expect(result.exitCode).toBe(0);
     });
 
     // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output

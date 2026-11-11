@@ -103,7 +103,7 @@ function lastWordsOf(stderr: string) {
 
 /**
  * One run of a project, `bun test` or with `--aot` the compiled run: what each case printed, how the run ended, and how a run ends that printed as much.
- * It judges nothing and throws nothing: the test judges both of its runs together, once both are over.
+ * It judges nothing and throws nothing: the test judges both of its runs together, once both are over, and throws what `run()` threw.
  */
 async function ran(dir: string, cases: string[], ...flags: string[]) {
   // No test of the run has a shorter limit than the run: beside a build, a debug build of Bun takes longer for some cases than the five seconds of `bun test`.
@@ -111,8 +111,8 @@ async function ran(dir: string, cases: string[], ...flags: string[]) {
   const started = slot(() => run(command, dir, { ...bunEnv, NO_COLOR: "1" }, limit));
   // `run()` throws of a run that it ended for the memory that the runs held together. That is how this run ended then.
   const { stdout, stderr, exitCode, threw } = await started.then(
-    over => ({ ...over, threw: [] as string[] }),
-    (thrown: unknown) => ({ stdout: "", stderr: "", exitCode: -1, threw: [String(thrown)] }),
+    over => ({ ...over, threw: [] as unknown[] }),
+    (thrown: unknown) => ({ stdout: "", stderr: "", exitCode: -1, threw: [thrown] }),
   );
   const printed = [...stdout.matchAll(/^\| (\S+): (.*)$/gm)].map(([, name, words]) => [name, words] as const);
   const lines = new Map(printed);
@@ -124,9 +124,10 @@ async function ran(dir: string, cases: string[], ...flags: string[]) {
   const notOnce = printed
     .map(([name]) => name)
     .filter((name, at, all) => !cases.includes(name) || all.indexOf(name) !== at);
-  const lastWords = [...threw, ...(Bun.deepEquals(counted, follows) ? [] : lastWordsOf(stderr))];
+  const lastWords = [...threw.map(String), ...(Bun.deepEquals(counted, follows) ? [] : lastWordsOf(stderr))];
   return {
     lines,
+    threw,
     ended: { run: asked, notOnce, ...counted, lastWords },
     endsWell: { run: asked, notOnce: [], ...follows, lastWords: [] },
   };
@@ -145,13 +146,21 @@ const declare = isDebug ? testOneByOne : test.concurrent;
 // So no kind times out while it waits for a slot, and a run that hangs is ended at its own limit, where the kind says which. A minute more to lay and to remove the project.
 const limitOfAKind = Math.ceil((isDebug ? 2 : 2 * kinds.length) / slots) * limit + 60_000;
 
+// A title is short. CI's runner reads the first hundred characters of `<title> — <error>`, and tries no file again where they say that `run()` ended
+// the commands for the memory that they held together.
 declare.each(kinds)(
-  "what each case prints: %s",
+  "each case of %s",
   async kind => {
     using dir = tempDir("aot-mock-ways", projectOf(kind));
     const cases = casesOf(kind);
     // Both runs are over before either is judged and before the project is removed: a failure shows both, and leaves no run behind in a folder that is gone.
     const [plain, compiled] = await Promise.all([ran(String(dir), cases), ran(String(dir), cases, "--aot")]);
+    const threw = [...plain.threw, ...compiled.threw];
+    if (threw.length) {
+      // What `run()` threw goes on as it was thrown, for the runner to read. Both runs are shown in front of it.
+      console.error([plain.ended, compiled.ended]);
+      throw threw[0];
+    }
     expect([plain.ended, compiled.ended]).toEqual([plain.endsWell, compiled.endsWell]);
     // The specification has every case.
     expect(cases.filter(name => !plain.lines.has(name))).toEqual([]);

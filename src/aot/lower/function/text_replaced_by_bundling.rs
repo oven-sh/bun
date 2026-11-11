@@ -24,6 +24,7 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
         atoms,
         replaced: Vec::new(),
         kept_alone: FxHashMap::default(),
+        left_alone: FxHashSet::default(),
         opened: FxHashSet::default(),
         defined_at_heads: FxHashSet::default(),
         values_first_in_text,
@@ -49,6 +50,7 @@ struct Finder<'a, 's> {
     atoms: &'a Interner<'s>,
     replaced: Vec<ReplacedText>,
     kept_alone: FxHashMap<ExprId, ExprId>,
+    left_alone: FxHashSet<ExprId>,
     opened: FxHashSet<ExprId>,
     defined_at_heads: FxHashSet<ExprId>,
     values_first_in_text: Vec<(ExprId, u8)>,
@@ -234,8 +236,13 @@ impl Finder<'_, '_> {
             let Some(printed) = decisions.find_operand_alone_in_bun_run(hir, expression) else {
                 return false;
             };
-            if !matches!(hir[expression].kind, ExprKind::Binary { left, .. } if left == printed) {
-                self.kept_alone.insert(expression, printed);
+            match hir[expression].kind {
+                ExprKind::Binary { left, .. } if left == printed => {
+                    self.left_alone.insert(expression);
+                }
+                _ => {
+                    self.kept_alone.insert(expression, printed);
+                }
             }
             true
         });
@@ -244,6 +251,14 @@ impl Finder<'_, '_> {
 
     fn find_operand_kept(&self, expression: ExprId) -> Option<ExprId> {
         self.kept_alone.get(&expression).copied()
+    }
+
+    fn find_operand_printed(&self, expression: ExprId) -> Option<ExprId> {
+        let kept = self.find_operand_kept(expression);
+        kept.or_else(|| match self.hir[expression].kind {
+            ExprKind::Binary { left, .. } if self.left_alone.contains(&expression) => Some(left),
+            _ => None,
+        })
     }
 
     fn add_operator_printed_as_one_operand(&mut self, expression: ExprId) {
@@ -450,7 +465,7 @@ impl Finder<'_, '_> {
             user,
             ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == expression
         );
-        while let Some(operand) = self.find_operand_kept(kept) {
+        while let Some(operand) = self.find_operand_printed(kept) {
             kept = operand;
         }
         match (hir[kept].kind, user) {

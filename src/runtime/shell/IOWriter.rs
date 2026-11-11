@@ -302,6 +302,12 @@ impl IOWriter {
         self.state().fd
     }
 
+    /// `fstat` of the file. `None` if it fails, and once libuv owns the handle of a Windows pipe or console.
+    pub(crate) fn stat(&self) -> Option<sys::Stat> {
+        let fd = self.fd();
+        (fd != Fd::INVALID).then(|| sys::fstat(fd).ok()).flatten()
+    }
+
     #[inline]
     #[cfg(windows)]
     pub(crate) fn evtloop(&self) -> EventLoopHandle {

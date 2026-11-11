@@ -17,7 +17,7 @@ pub(crate) struct Cp {
     pub(crate) state: State,
     /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
-    /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
+    /// directly. Lives on `Cp` (not
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
     pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Cp>>>,

@@ -11,8 +11,12 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   "jsFunctionTransferToNativeReadableStream",
   1,
 );
+const EventEmitter = require("node:events");
 const { errorOrDestroy } = require("internal/streams/destroy");
 const { reportUncaughtException } = require("internal/shared");
+
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectHasOwn = Object.hasOwn;
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -21,7 +25,8 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
-const kUncaughtOnListenerThrow = Symbol("uncaughtOnListenerThrow");
+const kEmit = Symbol("emit");
+const kEmitsNothing = Symbol("emitsNothing");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -41,7 +46,8 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
-  [kUncaughtOnListenerThrow]: boolean;
+  [kEmit]: typeof EventEmitter.prototype.emit | undefined;
+  [kEmitsNothing]: boolean;
   debugId: number;
 }
 
@@ -58,7 +64,8 @@ interface NativePtr {
 
 let debugId = 0;
 
-// `uncaughtOnListenerThrow`: a 'data' listener throw is an uncaughtException, as from Node's native read callback.
+// `uncaughtOnListenerThrow`: a 'data' listener throw is an uncaughtException and the stream reads on, as with Node's
+// handle, which calls the listeners from its native read callback.
 function constructNativeReadable(
   readableStream: ReadableStream,
   options: $Node.ReadableOptions,
@@ -85,7 +92,12 @@ function constructNativeReadable(
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
-  stream[kUncaughtOnListenerThrow] = uncaughtOnListenerThrow;
+  if (uncaughtOnListenerThrow) {
+    // With captureRejections the constructor has put its own emit on the stream.
+    stream[kEmit] = ObjectHasOwn(stream, "emit") ? stream.emit : undefined;
+    stream[kEmitsNothing] = false;
+    ObjectDefineProperty(stream, "emit", { __proto__: null, value: emitOfHandle, writable: true, configurable: true });
+  }
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -222,27 +234,25 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  let wantMore: boolean;
-  try {
-    wantMore = stream.push(chunk);
-  } catch (e) {
-    // Readable.fromWeb: the throw rejects the pending pull promise, as in Node.
-    if (!stream[kUncaughtOnListenerThrow]) throw e;
-    wantMore = true;
-    reportUncaughtException(e);
-    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
-    process.nextTick(readAfterListenerThrow, stream);
-  }
-  if (!wantMore) {
+  if (!stream.push(chunk)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
 }
 
-function readAfterListenerThrow(stream: NativeReadable) {
-  // A sync pull from the uncaughtException handler can have closed the stream; its EOF push is already queued.
-  if (stream.destroyed || stream[kCloseState][0]) return;
-  stream.read(0);
+// push() and read() both emit 'data' through here, so a listener throw unwinds neither of them.
+function emitOfHandle(this: NativeReadable, event: string | symbol, chunk?: unknown) {
+  // The error below ends the process. Node runs no listener after it.
+  if (this[kEmitsNothing]) return false;
+  const emit = this[kEmit] ?? EventEmitter.prototype.emit;
+  if (event !== "data") return emit.$apply(this, arguments);
+  try {
+    // Readable emits 'data' with one argument, and that call needs no arguments object.
+    return arguments.length === 2 ? emit.$call(this, "data", chunk) : emit.$apply(this, arguments);
+  } catch (e) {
+    if (!reportUncaughtException(e)) this[kEmitsNothing] = true;
+    return true;
+  }
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {

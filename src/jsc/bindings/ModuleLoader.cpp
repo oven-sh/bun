@@ -761,31 +761,6 @@ JSValue resolveAndFetchBuiltinModule(
     return {};
 }
 
-void evaluateCommonJSCustomExtension(
-    Zig::GlobalObject* globalObject,
-    JSCommonJSModule* target,
-    String filename,
-    JSValue filenameValue,
-    JSValue extension)
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!extension) {
-        throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
-        return;
-    }
-    JSC::CallData callData = JSC::getCallData(extension.asCell());
-    if (callData.type == JSC::CallData::Type::None) {
-        throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
-        return;
-    }
-    MarkedArgumentBuffer arguments;
-    arguments.append(target);
-    arguments.append(filenameValue);
-    JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, target, arguments);
-    RETURN_IF_EXCEPTION(scope, );
-}
-
 // JSCommonJSModule::evaluate(ResolvedSource&) would cache plugin contents as the file's own source, so make and cache the provider here.
 static RefPtr<JSC::SourceProvider> commonJSProviderOfPluginContents(Zig::GlobalObject* globalObject, const String& key, const BunString* typeAttribute, const CodeString* pluginContents, ResolvedSource& source)
 {
@@ -1055,7 +1030,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
-        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
+        JSCommonJSExtensions::callHandler(globalObject, JSC::JSValue::decode(res->result.value.cjsCustomExtension), target, specifierValue);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

@@ -1481,6 +1481,20 @@ console.log("survived", require("./late.js"));`,
       });
     });
 
+    // Node calls `Module.runMain(mainEntry)`.
+    test.each([
+      ["strict", `"use strict";`],
+      ["sloppy", ""],
+    ])("to a %s function, which is called with Module as `this`", async (_, directive) => {
+      const preload = `${directive}
+        const Module = require("module");
+        Module.runMain = function () {
+          console.log(this === Module);
+        };
+      `;
+      expect(await run(preload)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    });
+
     test("to a function that throws", async () => {
       const { stdout, stderr, exitCode } = await run(
         `require("module").runMain = () => {\n  throw new RangeError("from the override");\n};`,

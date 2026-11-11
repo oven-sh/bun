@@ -5,11 +5,16 @@
 
 namespace Bun {
 
+class JSCommonJSModule;
+
 // require.extensions & Module._extensions
 class JSCommonJSExtensions : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+
+    // The handler's `this` is the extensions object: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1596
+    static void callHandler(Zig::GlobalObject*, JSC::JSValue handler, JSCommonJSModule*, JSC::JSValue filename);
 
     static JSCommonJSExtensions* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {

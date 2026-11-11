@@ -215,6 +215,22 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     return deleted;
 }
 
+void JSCommonJSExtensions::callHandler(Zig::GlobalObject* globalObject, JSC::JSValue handler, JSCommonJSModule* module, JSC::JSValue filename)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::CallData callData = handler ? JSC::getCallData(handler) : JSC::CallData();
+    if (callData.type == JSC::CallData::Type::None) {
+        throwTypeError(globalObject, scope, "require.extension is not a function"_s);
+        return;
+    }
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(module);
+    arguments.append(filename);
+    JSC::JSValue thisValue = globalObject->lazyRequireExtensionsObject();
+    JSC::profiledCall(globalObject, JSC::ProfilingReason::API, handler, callData, thisValue, arguments);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 // This implements `Module._extensions['.js']`, which
 // - Loads source code from a file
 //     - [not supported] Calls `fs.readFileSync`, which is usually not overridden.

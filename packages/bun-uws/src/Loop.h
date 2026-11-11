@@ -22,10 +22,15 @@
 /* The loop is lazily created per-thread and run with run() */
 
 #include "LoopData.h"
+#include <cerrno>
 #include <libusockets.h>
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
+extern "C" void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
+#ifndef _WIN32
+extern "C" void __attribute__((__noreturn__)) Bun__loopInitFailed(int err);
+#endif
 
 namespace uWS {
 struct Loop {
@@ -83,8 +88,19 @@ private:
     }
 
     static Loop *create(void *hint) {
-        Loop *loop = ((Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData)))->init();
-        return loop;
+        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+        if (!loop) {
+            /* The per-thread loop is not recoverable; every caller of get()
+             * dereferences it. Only Bun.spawnSync's isolated loop (created
+             * through the Rust uws::Loop::create) surfaces this as an error. */
+#ifndef _WIN32
+            Bun__loopInitFailed(errno);
+#else
+            static const char msg[] = "failed to create the event loop";
+            Bun__panic(msg, sizeof(msg) - 1);
+#endif
+        }
+        return loop->init();
     }
 
     /* What to do with loops created with existingNativeLoop? */
@@ -149,6 +165,11 @@ public:
 
     static LoopData* data(struct us_loop_t *loop) {
         return (LoopData *) us_loop_ext(loop);
+    }
+
+    /* Runs the pre handlers and drains leftover corks. For callers that won't tick the loop again. */
+    void flushPendingWrites() {
+        preCb((us_loop_t *) this);
     }
 
     void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {

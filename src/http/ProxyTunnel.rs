@@ -148,15 +148,6 @@ impl ProxyTunnel {
         unsafe { (*addr_of!((*this).wrapper)).as_ref() }
     }
 
-    /// Read-only access to `ref_count` (a `Cell<u32>`; disjoint from `wrapper`).
-    /// Used to bump the intrusive refcount from within a callback whose caller
-    /// holds `&SSLWrapper` on `(*this).wrapper`.
-    #[inline]
-    fn ref_count_of<'a>(this: NonNull<Self>) -> &'a core::cell::Cell<u32> {
-        // SAFETY: see [`Self::socket_of`].
-        unsafe { &*addr_of!((*this.as_ptr()).ref_count) }
-    }
-
     /// Bump the intrusive refcount and return a guard that releases it on Drop.
     ///
     /// INVARIANT (module): `this` is the `HTTPClient.proxy_tunnel` handle's
@@ -216,11 +207,11 @@ fn on_open(ctx: *mut HTTPClient) {
     // `&mut ProxyTunnel` — see ALIASING NOTE.
     let _guard = ProxyTunnel::ref_guard(proxy_nn);
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
-        let _hostname = this.hostname.unwrap_or(this.url.hostname);
+        let _hostname = crate::get_tls_hostname(this, false);
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
-        if bun_core::ip_address::is_ip_address(_hostname) {
+        if bun_core::ip_address::is_ip_host(_hostname) {
             // SNI is null (IP literal — no SNI).
             crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
         } else {
@@ -355,24 +346,30 @@ fn on_handshake(
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
     let _guard = ProxyTunnel::ref_guard(proxy_nn);
-    this.state.response_stage = HTTPStage::ProxyHeaders;
-    this.state.request_stage = HTTPStage::ProxyHeaders;
-    this.state.request_sent_len = 0;
+    // Not the first report: a renegotiation, with the request already on its way.
+    let first_report = this.state.request_stage == HTTPStage::ProxyHandshake;
+    if first_report {
+        this.state.response_stage = HTTPStage::ProxyHeaders;
+        this.state.request_stage = HTTPStage::ProxyHeaders;
+        this.state.request_sent_len = 0;
+    }
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");
         // handshake completed but we may have ssl errors
         this.flags.did_have_handshaking_error = handshake_error.error_no != 0;
-        if this.flags.reject_unauthorized {
-            // only reject the connection if reject_unauthorized == true
-            if this.flags.did_have_handshaking_error {
-                let err = crate::get_cert_error_from_no(handshake_error.error_no);
-                // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
-                // fresh `&mut *ctx` does not alias us.
-                ProxyTunnel::close_from_callback(proxy_nn, err);
-                return;
-            }
-
+        // only reject the connection if reject_unauthorized == true
+        if this.flags.reject_unauthorized && this.flags.did_have_handshaking_error {
+            let err = crate::get_cert_error_from_no(handshake_error.error_no);
+            // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
+            // fresh `&mut *ctx` does not alias us.
+            ProxyTunnel::close_from_callback(proxy_nn, err);
+            return;
+        }
+        if !first_report {
+            return;
+        }
+        if this.wants_server_identity_check() {
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
             // Assert the wrapper is Some, then silently return
             // (no debug_assert) on the ssl-None sub-case.
@@ -428,17 +425,23 @@ fn on_handshake(
         }
     } else {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake failed");
-        // if we are here is because server rejected us, and the error_no is the cause of this
-        // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-        if this.flags.did_have_handshaking_error && handshake_error.error_no != 0 {
-            let err = crate::get_cert_error_from_no(handshake_error.error_no);
-            // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            ProxyTunnel::close_from_callback(proxy_nn, err);
-            return;
-        }
-        // if handshake_success it self is false, this means that the connection was rejected
+        // The wrapper reports a failed handshake together with the verify
+        // result, which is `UNABLE_TO_GET_ISSUER_CERT` by default when the peer
+        // never got as far as sending a certificate. Only a certificate that
+        // was received can be what is wrong.
+        let peer_sent_certificate = ProxyTunnel::wrapper_ssl(proxy_nn).is_some_and(|ssl| {
+            // SAFETY: the live SSL handle of the tunnel's wrapper; the chain is borrowed.
+            !unsafe { bun_boringssl_sys::SSL_get_peer_cert_chain(ssl.as_ptr()) }.is_null()
+        });
+        let err = if handshake_error.error_no <= 0
+            || (this.flags.reject_unauthorized && peer_sent_certificate)
+        {
+            crate::handshake_failure(handshake_error.error_no)
+        } else {
+            crate::Error::TLSHandshakeFailed
+        };
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ConnectionRefused);
+        ProxyTunnel::close_from_callback(proxy_nn, err);
         return;
     }
 }
@@ -500,14 +503,9 @@ fn on_close(ctx: *mut HTTPClient) {
     let Some(proxy_nn) = this.proxy_tunnel_ptr() else {
         return;
     };
-    let proxy_ptr = proxy_nn.as_ptr();
-    // bump refcount via the disjoint Cell projection. No guard here — the
-    // matching deref is deferred via `schedule_proxy_deref` to avoid freeing
-    // within the callback.
-    {
-        let rc = ProxyTunnel::ref_count_of(proxy_nn);
-        rc.set(rc.get() + 1);
-    }
+    // Keeps the tunnel alive across this callback; released on the next
+    // loop tick via `schedule_proxy_deref` to avoid freeing within the callback.
+    let keepalive = ProxyTunnel::ref_guard(proxy_nn);
 
     // If a response is in progress, mirror HTTPClient.onClose semantics:
     // treat connection close as end-of-body for identity transfer when no content-length.
@@ -520,7 +518,7 @@ fn on_close(ctx: *mut HTTPClient) {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
-                crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                crate::http_thread().schedule_proxy_deref(keepalive);
                 return;
             }
             Err(e) => fail_err = Some(e),
@@ -545,8 +543,7 @@ fn on_close(ctx: *mut HTTPClient) {
         }
     }
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
-    // Deref after returning to the event loop to avoid lifetime hazards.
-    crate::http_thread().schedule_proxy_deref(proxy_ptr);
+    crate::http_thread().schedule_proxy_deref(keepalive);
 }
 
 /// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
@@ -570,19 +567,46 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
     }
 }
 
+/// The inner connection's form of `HTTPClient::server_identity`.
+fn server_identity(
+    ctx: *mut HTTPClient,
+    ssl: &mut bun_boringssl::c::SSL,
+) -> bun_boringssl::ServerIdentity {
+    // SAFETY: `ctx` is the live client that drives this tunnel's handshake.
+    let client = unsafe { &*ctx };
+    let native = client.target_verification() == PeerVerification::Native;
+    bun_boringssl::server_identity(ssl, native.then(|| crate::get_tls_hostname(client, false)))
+}
+
 // ─── ProxyTunnel methods ─────────────────────────────────────────────────────
 
 impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: &SSLConfig,
+        ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
     ) {
-        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        let custom_options = ssl_options.as_usockets_for_client_verification();
-        let wrapper = match ProxyTunnelWrapper::init_from_options(
-            &custom_options,
+        let mut err = uws::create_bun_socket_error_t::none;
+        let ssl_ctx = match ssl_options {
+            // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+            Some(ssl_options) => ssl_options
+                .as_usockets_for_client_verification()
+                .create_ssl_context(&mut err),
+            // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
+            None => Some(crate::http_thread().default_ssl_ctx()),
+        };
+        let Some(ssl_ctx) = ssl_ctx else {
+            // Invalid TLS options; the errors a direct request reports for them.
+            let error = match err {
+                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
+                _ => crate::Error::FailedToOpenSocket,
+            };
+            this.close_and_fail::<IS_SSL>(error, socket);
+            return;
+        };
+        let wrapper = match ProxyTunnelWrapper::init_with_ctx(
+            ssl_ctx,
             true,
             SSLWrapperHandlers {
                 on_open,
@@ -594,6 +618,7 @@ impl ProxyTunnel {
                 // opting out keeps its SSL off the parked queues entirely.
                 on_session: None,
                 on_keylog: None,
+                server_identity: Some(server_identity),
                 ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {
@@ -604,10 +629,14 @@ impl ProxyTunnel {
                 }
 
                 // invalid TLS Options
-                this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
+                this.close_and_fail::<IS_SSL>(crate::Error::FailedToOpenSocket, socket);
                 return;
             }
         };
+        // The inner connection's form of the `set_inline_reject` call in `HTTPClient::configure_tls`.
+        if this.flags.reject_unauthorized {
+            wrapper.set_inline_reject();
+        }
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
         // `Default`); the client holds it until `close_proxy_tunnel` or the
         // hand-off to the keep-alive pool.
@@ -765,6 +794,13 @@ impl ProxyTunnel {
         client: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
     ) {
+        raw_as_mut(tunnel.as_ptr()).socket = Socket::from_generic::<IS_SSL>(socket);
+        Self::adopt_owner(tunnel, client);
+    }
+
+    /// `adopt` without the socket, so it is compiled once for both `IS_SSL`.
+    #[inline(never)]
+    fn adopt_owner(tunnel: RefPtr<ProxyTunnel>, client: &mut HTTPClient) {
         scoped_log!(
             http_proxy_tunnel,
             "ProxyTunnel adopt (reusing pooled tunnel)"
@@ -783,7 +819,6 @@ impl ProxyTunnel {
             handlers.ctx = client.as_erased_ptr().as_ptr();
             wrapper.handlers.set(handlers);
         }
-        this.socket = Socket::from_generic::<IS_SSL>(socket);
         // Restore the cert-error flag captured in detachOwner() — no handshake
         // runs here, so the client's own flag would otherwise stay false and
         // re-pooling would erase the record.

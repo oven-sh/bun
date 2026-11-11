@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+function first() {
+  function second() {
+    this.variables = /** @type {Map<string, SomeVariable>} */ (
+      /** @type {SomeKindOfNode} */ (/** @type {unknown} */ (toplevel.node))
+        .variables
+    );
+    this.variables = /** @type {Map<string, SomeVariable>} */ (
+      /** @type {SomeKindOfNode} */ (/** @type {unknown} */ (toplevel.node))
+        .variables.ofTheScope
+    );
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function first() {
+  function second() {
+    this.variables = /** @type {Map<string, SomeVariable>} */ (
+      /** @type {SomeKindOfNode} */ (/** @type {unknown} */ (toplevel.node)).variables
+    );
+    this.variables = /** @type {Map<string, SomeVariable>} */ (
+      /** @type {SomeKindOfNode} */ (/** @type {unknown} */ (toplevel.node)).variables.ofTheScope
+    );
+  }
+}
+
+===================== End =====================

@@ -30,7 +30,9 @@ namespace uWS {
 
 /* Contiguous buffer with a moving head cursor: erase() bumps head,
  * append()/resize() compact into the drained head gap before growing, so
- * draining never memmoves or reallocates. */
+ * draining never memmoves or reallocates. Growing reserves TAIL_ROOM spare
+ * bytes, so appending framing after a buffered payload doesn't reallocate and
+ * copy that payload. */
 struct BackPressure {
     BackPressure() = default;
     BackPressure(BackPressure &&other) noexcept
@@ -65,6 +67,13 @@ struct BackPressure {
         }
     }
 
+    /* erase() that keeps the allocation when fully drained, for buffers that
+     * refill every event (HTTP/2 connection output). */
+    void consume(size_t n) {
+        head += n;
+        if (head >= tail) head = tail = 0;
+    }
+
     void clear() {
         head = tail = 0;
         release();
@@ -85,6 +94,9 @@ struct BackPressure {
             tail = head + n;
         }
     }
+
+    /* Enough for the chunk's CRLF and the next chunk-size line (HttpResponse::CHUNK_HEAD_MAX). */
+    static constexpr size_t TAIL_ROOM = 12;
 
 private:
     static constexpr size_t MIN_CAPACITY = 4096;
@@ -110,7 +122,8 @@ private:
             return;
         }
 
-        size_t newCap = std::max(std::max(cap * 2, live + n), MIN_CAPACITY);
+        if (live + n > SIZE_MAX - TAIL_ROOM) std::abort();
+        size_t newCap = std::max(std::max(cap * 2, live + n + TAIL_ROOM), MIN_CAPACITY);
         char *nb;
         if (head == 0) {
             /* mi_realloc may extend in place. */
@@ -149,10 +162,10 @@ struct AsyncSocketData {
 
     /* Or empty */
     AsyncSocketData() = default;
+    const char *peerCertVerifyErrorCode = nullptr;
     bool isIdle = false;
     bool isAuthorized = false; // per-socket TLS authorization status
     bool peerCertVerified = false;
-    const char *peerCertVerifyErrorCode = nullptr;
     /* Whether this socket has fired the context filter with +1. onClose and
      * upgrade only fire -1 for sockets that did, so the filter stays balanced
      * across every open/close path (TLS sockets that RST before the handshake,
@@ -163,6 +176,9 @@ struct AsyncSocketData {
      * same paths that balance +1. A filter that must account for every socket
      * that can still reach a handler counts these. */
     bool filteredAccept = false;
+    /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
+     * +3 undoes it, and an idle socket fires -4 in place of -2. */
+    bool filteredIdleTunnel = false;
 };
 
 }

@@ -119,7 +119,7 @@ describe.concurrent("https.request checkServerIdentity", () => {
       rejectUnauthorized: true,
       ca: agent1.ca,
       checkServerIdentity(hostname, cert) {
-        calls.push({ hostname, subjectCN: cert.subject.CN, issuerCN: cert.issuer.CN });
+        calls.push({ hostname, subjectCN: cert.subject.CN as string, issuerCN: cert.issuer.CN as string });
         return undefined;
       },
     });

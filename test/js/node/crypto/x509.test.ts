@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { X509Certificate } from "node:crypto";
+import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { connect, createServer, rootCertificates, type PeerCertificate, type TLSSocket } from "node:tls";
 
 // Self-signed, valid until 2126. Subject CN=wildcard-san.example.com,
 // subjectAltName: DNS:*.wildcard.example.com, DNS:exact.example.com
@@ -54,6 +57,241 @@ HRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIBssqQu642CLwl1dfD7WoD0D
 qGl/+1Di3abpA8YZOtoyAiAiScaiKhxu48bWQXYW5ZoQNzAfBIwL4krTuLVAKYZc
 Vg==
 -----END CERTIFICATE-----`;
+
+describe("new X509Certificate()", () => {
+  test.each([
+    ["nothing", [], "Received undefined"],
+    ["null", [null], "Received null"],
+    ["a number", [5], "Received type number (5)"],
+    ["an object", [{}], "Received an instance of Object"],
+  ])("with %s", (_, args, received) => {
+    expect(() => new (X509Certificate as any)(...args)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. ${received}`,
+      }),
+    );
+  });
+
+  test("with a PEM that starts with a byte order mark", () => {
+    const pem = readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem"), "utf8");
+    expect(new X509Certificate("\ufeff" + pem).fingerprint256).toBe(new X509Certificate(pem).fingerprint256);
+  });
+
+  test("with a detached view, which is empty", () => {
+    const view = new Uint8Array(4);
+    view.buffer.transfer();
+    expect(() => new X509Certificate(view)).toThrow(expect.objectContaining({ name: "Error" }));
+  });
+
+  test.each([
+    ["text", "nope", "NO_START_LINE"],
+    ["nothing", "", "NO_START_LINE"],
+    ["other DER", Buffer.from("3003020101", "hex"), "NO_START_LINE"],
+    ["bad base64", "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n", "BAD_BASE64_DECODE"],
+  ])("with %s, which is not a certificate", (_, input, reason) => {
+    expect(() => new X509Certificate(input)).toThrow(
+      expect.objectContaining({ name: "Error", code: `ERR_OSSL_PEM_${reason}`, library: "PEM routines", reason }),
+    );
+  });
+});
+
+describe("the arguments of", () => {
+  const cert = new X509Certificate(cnOnlyCertPem);
+  const invalidType = (message: string) =>
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  const received = [
+    [undefined, "Received undefined"],
+    [null, "Received null"],
+    [5, "Received type number (5)"],
+    [{}, "Received an instance of Object"],
+    [Buffer.from("agent1"), "Received an instance of Buffer"],
+  ] as const;
+  const checks = [
+    ["checkHost", "name", "agent1"],
+    ["checkEmail", "email", "ry@tinyclouds.org"],
+    ["checkIP", "ip", "127.0.0.1"],
+  ] as const;
+
+  test.each(checks)("%s(): a string", (method, name) => {
+    for (const [value, text] of received) {
+      expect(() => (cert as any)[method](value)).toThrow(
+        invalidType(`The "${name}" argument must be of type string. ${text}`),
+      );
+    }
+  });
+
+  test.each(checks)("%s(): options", (method, _, good) => {
+    const call = (options: unknown) => () => (cert as any)[method](good, options);
+    for (const [options, text] of [
+      [null, "Received null"],
+      [5, "Received type number (5)"],
+      ["x", "Received type string ('x')"],
+      [[], "Received an instance of Array"],
+      [function f() {}, "Received function f"],
+    ]) {
+      expect(call(options)).toThrow(invalidType(`The "options" argument must be of type object. ${text}`));
+    }
+    expect(call({ subject: 5 })).toThrow(
+      invalidType('The "options.subject" property must be of type string. Received type number (5)'),
+    );
+    expect(call({ subject: "nope" })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.subject' is invalid. Received 'nope'",
+      }),
+    );
+    for (const name of ["wildcards", "partialWildcards", "multiLabelWildcards", "singleLabelSubdomains"]) {
+      // The types are checked before the value of `subject`.
+      expect(call({ subject: "nope", [name]: 1 })).toThrow(
+        invalidType(`The "options.${name}" property must be of type boolean. Received type number (1)`),
+      );
+    }
+    for (const options of [undefined, {}, { subject: "default" }, { subject: undefined, wildcards: undefined }]) {
+      expect(call(options)).not.toThrow();
+    }
+    expect((cert as any)[method]).toHaveLength(2);
+  });
+
+  test.each(checks)("%s(): only the own enumerable properties of options", (method, _, good) => {
+    for (const options of [
+      Object.create({ subject: "nope", wildcards: 1 }),
+      Object.defineProperty({}, "subject", { value: "nope" }),
+      new (class {
+        get subject() {
+          return "nope";
+        }
+      })(),
+    ]) {
+      expect(() => (cert as any)[method](good, options)).not.toThrow();
+    }
+  });
+
+  test("checkHost(): an inherited `subject` is not an option", () => {
+    expect(cert.checkHost("agent1", { subject: "never" })).toBeUndefined();
+    expect(cert.checkHost("agent1", Object.create({ subject: "never" }))).toBe("agent1");
+  });
+
+  test("checkHost(), checkEmail() and checkIP(): a name that cannot be one", () => {
+    const invalid = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "Invalid name",
+    });
+    expect(() => cert.checkHost("a\0b")).toThrow(invalid);
+    expect(() => cert.checkEmail("a\0b")).toThrow(invalid);
+    expect(() => cert.checkIP("agent1")).toThrow(invalid);
+    expect(() => cert.checkIP("")).toThrow(invalid);
+    expect(cert.checkHost("")).toBeUndefined();
+    expect(cert.checkEmail("")).toBeUndefined();
+  });
+
+  test("checkIssued(), checkPrivateKey() and verify()", () => {
+    for (const [value, text] of received) {
+      expect(() => cert.checkIssued(value as any)).toThrow(
+        invalidType(`The "otherCert" argument must be an instance of X509Certificate. ${text}`),
+      );
+      for (const method of ["checkPrivateKey", "verify"] as const) {
+        expect(() => cert[method](value as any)).toThrow(
+          invalidType(`The "pkey" argument must be an instance of KeyObject. ${text}`),
+        );
+      }
+    }
+  });
+});
+
+describe("X509Certificate validity", () => {
+  const length = (n: number) => (n < 128 ? [n] : n < 256 ? [0x81, n] : [0x82, n >> 8, n & 255]);
+  const tlv = (tag: number, body: Buffer) => Buffer.concat([Buffer.from([tag, ...length(body.length)]), body]);
+  const element = (der: Buffer, offset: number) => {
+    let size = der[offset + 1];
+    let header = 2;
+    if (size & 0x80) {
+      header += size & 0x7f;
+      size = der.readUIntBE(offset + 2, size & 0x7f);
+    }
+    return { start: offset + header, end: offset + header + size };
+  };
+  // Swaps the validity of a DER certificate. `new X509Certificate()` does not look at the signature.
+  function withValidity(der: Buffer, from: string, to: string) {
+    const outer = element(der, 0);
+    const tbs = element(der, outer.start);
+    const fields: Buffer[] = [];
+    for (let offset = tbs.start; offset < tbs.end;) {
+      const { end } = element(der, offset);
+      fields.push(der.subarray(offset, end));
+      offset = end;
+    }
+    const time = (text: string) => tlv(text.length === 13 ? 0x17 : 0x18, Buffer.from(text));
+    fields[4] = tlv(0x30, Buffer.concat([time(from), time(to)]));
+    return tlv(0x30, Buffer.concat([tlv(0x30, Buffer.concat(fields)), der.subarray(tbs.end, outer.end)]));
+  }
+  const { raw } = new X509Certificate(cnOnlyCertPem);
+
+  test.each([
+    ["00000101000000Z", "00010101000000Z", "0000-01-01T00:00:00.000Z", "0001-01-01T00:00:00.000Z"],
+    ["00500101000000Z", "00991231235959Z", "0050-01-01T00:00:00.000Z", "0099-12-31T23:59:59.000Z"],
+    ["01000101000000Z", "99991231235959Z", "0100-01-01T00:00:00.000Z", "9999-12-31T23:59:59.000Z"],
+    ["500101000000Z", "491231235959Z", "1950-01-01T00:00:00.000Z", "2049-12-31T23:59:59.000Z"],
+    ["19691231235959Z", "20380119031408Z", "1969-12-31T23:59:59.000Z", "2038-01-19T03:14:08.000Z"],
+  ])("from %s to %s", (from, to, validFrom, validTo) => {
+    const cert = new X509Certificate(withValidity(raw, from, to));
+    expect(cert.validFromDate.toISOString()).toBe(validFrom);
+    expect(cert.validToDate.toISOString()).toBe(validTo);
+  });
+});
+
+describe("the legacy infoAccess", () => {
+  const fixture = (name: string) =>
+    new X509Certificate(readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "x509-escaping", name)));
+
+  test("holds the values, not how they were escaped", () => {
+    expect(fixture("info-0-cert.pem").toLegacyObject().infoAccess).toEqual({
+      "OCSP - URI": ["http://good.example.com/\nOCSP - URI:http://evil.example.com/"],
+    });
+    expect(fixture("info-1-cert.pem").toLegacyObject().infoAccess).toEqual({
+      "CA Issuers - URI": ["http://ca.example.com/\nOCSP - URI:http://evil.example.com"],
+      "OCSP - DNS": ["good.example.com\nOCSP - URI:http://ca.nodejs.org/ca.cert"],
+    });
+    expect(fixture("info-2-cert.pem").toLegacyObject().infoAccess).toEqual({
+      "1.3.9999.12.34 - URI": ["http://ca.example.com/"],
+    });
+  });
+
+  test("is the same in the certificates of a TLS connection", async () => {
+    const directory = path.join(import.meta.dir, "..", "test", "fixtures", "x509-escaping");
+    const cert = readFileSync(path.join(directory, "info-1-cert.pem"));
+    const server = createServer({ key: readFileSync(path.join(directory, "server-key.pem")), cert });
+    let socket: TLSSocket | undefined, serverSocket: TLSSocket | undefined;
+    try {
+      await once(server.listen(0), "listening");
+      const accepted = once(server, "secureConnection");
+      let checked: PeerCertificate | undefined;
+      socket = connect({
+        port: (server.address() as AddressInfo).port,
+        ca: cert,
+        servername: "example.com",
+        checkServerIdentity: (_, peer) => void (checked = peer),
+      });
+      await once(socket, "secureConnect");
+      [serverSocket] = await accepted;
+      const infoAccess = {
+        "CA Issuers - URI": ["http://ca.example.com/\nOCSP - URI:http://evil.example.com"],
+        "OCSP - DNS": ["good.example.com\nOCSP - URI:http://ca.nodejs.org/ca.cert"],
+      };
+      expect({
+        checkServerIdentity: checked?.infoAccess,
+        getPeerCertificate: socket.getPeerCertificate().infoAccess,
+        getCertificate: (serverSocket!.getCertificate() as PeerCertificate).infoAccess,
+      }).toEqual({ checkServerIdentity: infoAccess, getPeerCertificate: infoAccess, getCertificate: infoAccess });
+    } finally {
+      socket?.destroy();
+      serverSocket?.destroy();
+      server.close();
+    }
+  });
+});
 
 describe("X509Certificate.checkHost()", () => {
   const cert = new X509Certificate(wildcardSanCertPem);
@@ -181,5 +419,83 @@ vKS1+tUUY19gsw==
     expect(legacy.subject).toEqual({});
     expect(legacy.issuer).toEqual({});
     expect(cert.checkIssued(cert)).toBe(true);
+  });
+});
+
+// Certificate, CRL and public-key PEM bodies are base64-coded by simdutf rather
+// than BoringSSL's constant-time codec (private keys keep the latter). The bytes
+// accepted and produced must match what EVP_DecodeUpdate/EVP_EncodeUpdate did.
+describe("PEM base64 for public objects", () => {
+  // 812 bytes: the base64 ends in one '=' and the last line is 60 columns.
+  const der = new X509Certificate(wildcardSanCertPem).raw;
+  const b64 = der.toString("base64");
+  const pem64 = (label: string, buf: Buffer) =>
+    `-----BEGIN ${label}-----\n` +
+    buf
+      .toString("base64")
+      .replace(/(.{64})/g, "$1\n")
+      .replace(/\n?$/, "\n") +
+    `-----END ${label}-----\n`;
+  const canonical = pem64("CERTIFICATE", der);
+
+  test("X509Certificate#toString() is 64-column PEM with a terminated last line", () => {
+    expect(der.length % 3).toBe(2);
+    expect(canonical).toEndWith("=\n-----END CERTIFICATE-----\n");
+    expect(new X509Certificate(wildcardSanCertPem).toString()).toBe(canonical);
+    expect(new X509Certificate(der).toString()).toBe(canonical);
+  });
+
+  test("a body that is an exact multiple of 64 columns ends with exactly one newline", () => {
+    const certs = rootCertificates.map(p => new X509Certificate(p));
+    const exact = certs.find(c => c.raw.length % 48 === 0);
+    expect(exact).toBeDefined();
+    expect(exact!.toString()).toBe(pem64("CERTIFICATE", exact!.raw));
+    // And every other residue too.
+    for (const c of certs) expect(c.toString()).toBe(pem64("CERTIFICATE", c.raw));
+  });
+
+  test.each([
+    ["CRLF line endings", canonical.replaceAll("\n", "\r\n")],
+    ["no line breaks in the body", "-----BEGIN CERTIFICATE-----\n" + b64 + "\n-----END CERTIFICATE-----\n"],
+    [
+      "spaces and tabs inside the body",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/(.{10})/g, "$1 \t") + "\n-----END CERTIFICATE-----\n",
+    ],
+    [
+      "whitespace between data and padding",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/=$/, "\n =") + "\n-----END CERTIFICATE-----\n",
+    ],
+  ])("decodes with %s", (_, pem) => {
+    expect(new X509Certificate(pem).raw.equals(der)).toBe(true);
+  });
+
+  test.each([
+    [
+      "missing padding",
+      "BAD_BASE64_DECODE",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/=$/, "") + "\n-----END CERTIFICATE-----\n",
+    ],
+    ["excess padding", "BAD_BASE64_DECODE", "-----BEGIN CERTIFICATE-----\n" + b64 + "=\n-----END CERTIFICATE-----\n"],
+    ["an invalid character", "BAD_BASE64_DECODE", canonical.replace(/^(.{40})./m, "$1*")],
+    [
+      "data after padding",
+      "BAD_BASE64_DECODE",
+      "-----BEGIN CERTIFICATE-----\n" + b64 + "AAAA\n-----END CERTIFICATE-----\n",
+    ],
+    ["an empty body", "NO_DATA", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"],
+  ])("rejects a body with %s", (_, reason, pem) => {
+    expect(() => new X509Certificate(pem)).toThrow(expect.objectContaining({ code: `ERR_OSSL_PEM_${reason}` }));
+  });
+
+  test("PUBLIC KEY PEM round-trips, and PRIVATE KEY PEM (constant-time path) is unaffected", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const spkiDer = publicKey.export({ type: "spki", format: "der" });
+    const spkiPem = publicKey.export({ type: "spki", format: "pem" }) as string;
+    expect(spkiPem).toBe(pem64("PUBLIC KEY", spkiDer));
+    expect(createPublicKey(spkiPem).export({ type: "spki", format: "der" }).equals(spkiDer)).toBe(true);
+    const pkcs8Der = privateKey.export({ type: "pkcs8", format: "der" });
+    const pkcs8Pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    expect(pkcs8Pem).toBe(pem64("PRIVATE KEY", pkcs8Der));
+    expect(createPrivateKey(pkcs8Pem).export({ type: "pkcs8", format: "der" }).equals(pkcs8Der)).toBe(true);
   });
 });

@@ -1,0 +1,8 @@
+<a [x]="[1.2.3, 0.50., 1.20., 01, 00.10, 1e2e3, 1e2.50, 0_1, 1.., 5.]"></a>
+<a [x]="['\x4', '\01', '\8', '\a\b', 'it\'s']"></a>
+<a [x]="call('one
+two')"></a>
+{{ "\x4" + 'it\'s' + '"' }}
+<a [x]="{ '
+': someLongerName.property, '
+b': someLongerName.method(argument) }"></a>

@@ -45,12 +45,17 @@ namespace WebCore {
 using namespace JSC;
 
 // https://urlpattern.spec.whatwg.org/#process-a-base-url-string
-static String processBaseURLString(StringView input, BaseURLStringType type)
+static String processBaseURLString(StringView input, BaseURLStringType type, bool& outOfMemory)
 {
     if (type != BaseURLStringType::Pattern)
         return input.toString();
 
-    return URLPatternUtilities::escapePatternString(input);
+    auto escaped = URLPatternUtilities::escapePatternString(input);
+    if (escaped.hasException()) [[unlikely]] {
+        outOfMemory = true;
+        return {};
+    }
+    return escaped.releaseReturnValue();
 }
 
 // https://urlpattern.spec.whatwg.org/#hostname-pattern-is-an-ipv6-address
@@ -75,6 +80,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
     URLPatternInit result { WTF::move(protocol), WTF::move(username), WTF::move(password), WTF::move(hostname), WTF::move(port), WTF::move(pathname), WTF::move(search), WTF::move(hash), {} };
 
     URL baseURL;
+    bool outOfMemory = false;
 
     if (!init.baseURL.isNull()) {
         baseURL = URL(init.baseURL);
@@ -83,14 +89,14 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             return Exception { ExceptionCode::TypeError, "Invalid baseURL."_s };
 
         if (init.protocol.isNull())
-            result.protocol = processBaseURLString(baseURL.protocol(), type);
+            result.protocol = processBaseURLString(baseURL.protocol(), type, outOfMemory);
 
         if (type != BaseURLStringType::Pattern
             && init.protocol.isNull()
             && init.hostname.isNull()
             && init.port.isNull()
             && init.username.isNull())
-            result.username = processBaseURLString(baseURL.user(), type);
+            result.username = processBaseURLString(baseURL.user(), type, outOfMemory);
 
         if (type != BaseURLStringType::Pattern
             && init.protocol.isNull()
@@ -98,11 +104,11 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.port.isNull()
             && init.username.isNull()
             && init.password.isNull())
-            result.password = processBaseURLString(baseURL.password(), type);
+            result.password = processBaseURLString(baseURL.password(), type, outOfMemory);
 
         if (init.protocol.isNull()
             && init.hostname.isNull()) {
-            result.hostname = processBaseURLString(!baseURL.host().isNull() ? baseURL.host() : StringView { emptyString() }, type);
+            result.hostname = processBaseURLString(!baseURL.host().isNull() ? baseURL.host() : StringView { emptyString() }, type, outOfMemory);
         }
 
         if (init.protocol.isNull()
@@ -116,7 +122,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.hostname.isNull()
             && init.port.isNull()
             && init.pathname.isNull()) {
-            result.pathname = processBaseURLString(baseURL.path(), type);
+            result.pathname = processBaseURLString(baseURL.path(), type, outOfMemory);
         }
 
         if (init.protocol.isNull()
@@ -124,7 +130,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.port.isNull()
             && init.pathname.isNull()
             && init.search.isNull()) {
-            result.search = processBaseURLString(baseURL.hasQuery() ? baseURL.query() : StringView { emptyString() }, type);
+            result.search = processBaseURLString(baseURL.hasQuery() ? baseURL.query() : StringView { emptyString() }, type, outOfMemory);
         }
 
         if (init.protocol.isNull()
@@ -133,8 +139,11 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.pathname.isNull()
             && init.search.isNull()
             && init.hash.isNull()) {
-            result.hash = processBaseURLString(baseURL.hasFragmentIdentifier() ? baseURL.fragmentIdentifier() : StringView { emptyString() }, type);
+            result.hash = processBaseURLString(baseURL.hasFragmentIdentifier() ? baseURL.fragmentIdentifier() : StringView { emptyString() }, type, outOfMemory);
         }
+
+        if (outOfMemory) [[unlikely]]
+            return Exception { ExceptionCode::OutOfMemoryError };
     }
 
     if (!init.protocol.isNull()) {
@@ -174,11 +183,14 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         result.pathname = init.pathname;
 
         if (!baseURL.isNull() && !baseURL.hasOpaquePath() && !isAbsolutePathname(result.pathname, type)) {
-            auto baseURLPath = processBaseURLString(baseURL.path(), type);
+            auto baseURLPath = processBaseURLString(baseURL.path(), type, outOfMemory);
             size_t slashIndex = baseURLPath.reverseFind('/');
 
             if (slashIndex != notFound)
-                result.pathname = makeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
+                result.pathname = tryMakeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
+
+            if (outOfMemory || result.pathname.isNull()) [[unlikely]]
+                return Exception { ExceptionCode::OutOfMemoryError };
         }
         auto pathResult = processPathname(result.pathname, result.protocol, type);
 

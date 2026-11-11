@@ -1,0 +1,16 @@
+# f1 = append
+# -- source: array-push-onto-a-parameter.ts
+# function append(list: number[], value: number): number {
+#   return list.push(value);
+# }
+# declare const input: any;
+# const list: number[] = [];
+# list.push(+input);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = append(list, +input);
+# -- end of source
+# The compiler before this one: 10 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 31, patches 1, moves 0, unlikely or rare 22.
+# RUN(X64): steps most:31 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 31

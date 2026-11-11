@@ -1,0 +1,8 @@
+x = {
+  minimizer: /** @type {{ implementation: Implementation<T>, options: Options<T> }} */
+  normalize(minimizers, options),
+  implementation: /** @type {Implementation<T>} */
+  /** @type {unknown} */generate,
+  plain: /* not one */
+  value,
+};

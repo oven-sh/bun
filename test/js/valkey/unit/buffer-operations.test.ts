@@ -93,8 +93,8 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     const keyBuffer = new Uint8Array([0x62, 0x75, 0x6e, 0x21]).buffer; // "bun!"
     expect(keyBuffer).toBeInstanceOf(ArrayBuffer);
     const value = new Uint8Array([0x0a, 0x0b]);
-    await ctx.redis.set(keyBuffer, value);
-    const out = await ctx.redis.getBuffer(keyBuffer);
+    await ctx.redis.set(keyBuffer as any, value);
+    const out = await ctx.redis.getBuffer(keyBuffer as any);
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out).toStrictEqual(value);
   });

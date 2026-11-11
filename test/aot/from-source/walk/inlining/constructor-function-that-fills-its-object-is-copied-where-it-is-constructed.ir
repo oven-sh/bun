@@ -1,0 +1,23 @@
+# a function that is constructed through a variable stores ten fields into `this`: the walk makes the object and copies the body, so the stores go into an object in sight and no call is left
+# f1 = Node, f4 = getNodeConstructor, f2 = createBaseNode, f3 = callsIt
+# -- source: constructor-function-that-fills-its-object-is-copied-where-it-is-constructed.ts
+# declare function sink(...values: unknown[]): void;
+# function Node(this: any, kind: number, pos: number, end: number) { this.pos = pos; this.end = end; this.kind = kind; this.id = 0; this.flags = 0; this.modifierFlagsCache = 0; this.transformFlags = 0; this.parent = undefined; this.original = undefined; this.emitNode = undefined; }
+# const allocator = { getNodeConstructor: () => Node as any };
+# let NodeConstructor: any;
+# function createBaseNode(kind: number) { return new (NodeConstructor || (NodeConstructor = allocator.getNodeConstructor()))(kind, -1, -1); }
+# function callsIt(holder: any, kind: number) { Node.call(holder, kind, 0, 0); return holder; }
+# sink(createBaseNode, callsIt);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+# CHECK-NOT: = IsNotFrozen
+# CHECK-NOT: PutSlot
+# a plain call hands over an object that was finished long ago: it is no construction
+# RUN(CALLED): walk f3 mechanisms=all
+# CALLED-LABEL: code f3:Body
+# CALLED-NOT: = NewObject
+# RUN(WITHHELD): walk f2 mechanisms=all-Inlining
+# WITHHELD-LABEL: code f2:Body
+# WITHHELD: = CallDirect {{*}}function=f1

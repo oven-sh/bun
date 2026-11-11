@@ -25,6 +25,7 @@
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/NeverDestroyed.h>
 
 #include "BufferEncodingType.h"
@@ -46,6 +47,10 @@ std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 // RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
+// Copies bytes out of a SharedArrayBuffer. Another thread can write to it between the UTF-8 decoders'
+// two passes, so they decode the copy. Throws OutOfMemoryError if the copy fails.
+WTF::MallocSpan<uint8_t> copySharedBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes);
+
 namespace Buffer {
 
 const size_t kMaxLength = MAX_ARRAY_BUFFER_SIZE;
@@ -61,7 +66,6 @@ namespace WebCore {
 
 JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t length);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* data, size_t length);
-JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const std::span<const uint8_t> data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore);
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject);
@@ -92,6 +96,7 @@ private:
 
 JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);
+bool isInspectFunctionOfBuffer(JSC::JSValue);
 JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);
 JSC::EncodedJSValue jsBufferToStringFromBytes(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);

@@ -23,7 +23,7 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
         // store with the default allocator. The leaked extra `ref_()` below
         // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
         // the (otherwise UB) free of a static slice is unreachable.
-        let contents = file.contents.as_bytes();
+        let contents = file.utf8_contents();
         // SAFETY: `contents` is `'static` and never freed (see above);
         // the const-cast is sound because Blob consumers only read via
         // `shared_view()`.
@@ -57,9 +57,12 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
         let _ = store.clone().into_raw();
         blob.size.set(store.size());
         blob.store.set(Some(store));
-        let name = file.display_name();
+        let name = match bun_standalone_graph::Graph::get_ref() {
+            Some(graph) => graph.display_name_of(file),
+            None => file.display_name().into(),
+        };
         if !name.is_empty() {
-            let mut name = bstring::String::clone_utf8(name);
+            let mut name = bstring::String::clone_utf8(&name);
             name.make_thread_shareable();
             blob.name.set(name);
         }

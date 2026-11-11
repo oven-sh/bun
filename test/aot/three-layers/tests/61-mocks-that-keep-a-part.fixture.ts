@@ -1,0 +1,5 @@
+import { mock } from "bun:test";
+import { say } from "../src/spies/say";
+say("61", "a mock that keeps a part of the real module", async () => { const actual = await import("pkg-esm"); const kept = { ...actual }; mock.module("pkg-esm", () => ({ ...kept, add: () => 100 })); const now = await import("pkg-esm"); const { seenBySrc } = await import("../src/spies/uses"); return [now.add(1, 2), now.twice(4), now.callsAdd(1, 2), now.inner(), Object.keys(now).sort(), seenBySrc()]; });
+say("61", "the same for a file of the application, with require", async () => { const kept = { ...require("../src/spies/own") }; mock.module("../src/spies/own", () => ({ ...kept, own: () => "mocked" })); const now = await import("../src/spies/own"); return [now.own(), now.callsOwn(), now.arrow(), Object.keys(now).sort()]; });
+say("61", "a mock ahead of the first import", async () => { mock.module("pkg-cjs-object", () => ({ default: { add: () => 5 }, add: () => 6 })); const now = await import("pkg-cjs-object"); return [now.add(1, 2), now.default.add(1, 2), require("pkg-cjs-object").add(1, 2)]; });

@@ -100,7 +100,9 @@ fn find_path_inner(
     .ok())
 }
 
-pub fn stat(path: &[u8]) -> i32 {
+pub(crate) fn stat(path: &[u8]) -> i32 {
+    // Node passes the path to `uv_fs_stat` as a C string, which ends at the first NUL.
+    let path = bun_core::slice_to_nul(path);
     // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
     let zpath = bun_core::ZBox::from_bytes(path);
@@ -124,24 +126,6 @@ impl Default for CustomLoader {
     }
 }
 
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
-// params are by-value `JSValue`/scalars → `safe fn`.
-unsafe extern "C" {
-    pub safe fn JSCommonJSExtensions__appendFunction(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> u32;
-    pub safe fn JSCommonJSExtensions__setFunction(
-        global: &JSGlobalObject,
-        index: u32,
-        value: JSValue,
-    );
-    /// Returns the index of the last value, which must have it's references updated to `index`
-    pub safe fn JSCommonJSExtensions__swapRemove(global: &JSGlobalObject, index: u32) -> u32;
-}
-
-// Memory management is complicated because JSValues are stored in gc-visitable
-// WriteBarriers in C++ but the hash map for extensions is in Rust for flexibility.
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],

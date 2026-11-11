@@ -11,7 +11,7 @@ use bun_wyhash::Wyhash;
 // spec (their `parse`/`to_css` differ intentionally — `--` prefix check,
 // plain ident, CSS-wide-keyword rejection respectively) but share an
 // identical `*const [u8]` arena-slice newtype shell. This macro stamps out
-// the struct + the byte-identical `v()`/`deep_clone`/`hash`/`as_slice`
+// the struct + the byte-identical `v()`/`deep_clone`/`hash`
 // boilerplate; per-type `parse`/`to_css` live in separate inherent `impl`
 // blocks below (Rust allows multiple inherent impls). Precedent:
 // `generics.rs` `ident_eql_impl!` already macroizes the shared `CssEql`.
@@ -36,8 +36,7 @@ macro_rules! arena_slice_newtype {
             ///
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
             /// the slice with the `'static` placeholder lifetime (e.g.
-            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-            /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
+            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`)
             /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
@@ -55,13 +54,6 @@ macro_rules! arena_slice_newtype {
             pub fn hash(&self, hasher: &mut Wyhash) {
                 // Hash the arena slice bytes.
                 hasher.update(self.v());
-            }
-
-            /// Borrow the underlying arena slice.
-            /// SAFETY: caller must ensure the parser arena outlives the borrow.
-            #[inline]
-            pub unsafe fn as_slice(&self) -> &[u8] {
-                self.v()
             }
         }
     };
@@ -186,7 +178,7 @@ arena_slice_newtype! {
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if !strings::starts_with(ident, b"--") {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
@@ -334,9 +326,7 @@ impl IdentOrRef {
         if !self.ref_bit() {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
-            // SAFETY: ptr/len were packed from a valid arena slice in from_ident
-            let slice =
-                std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
+            let slice = core::ptr::slice_from_raw_parts(ptr, len);
             return Some(Ident { v: slice });
         }
         None
@@ -364,13 +354,8 @@ impl IdentOrRef {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
-            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+            // Only the bits of the `Ref`: in debug builds `__ptrbits` differs between equal refs.
+            hasher.update(&self.len_bits().to_ne_bytes());
         }
     }
 
@@ -417,6 +402,7 @@ pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
             b"default",
             b"revert",
             b"revert-layer",
+            b"revert-rule",
         ],
     )
 }
@@ -429,7 +415,7 @@ arena_slice_newtype! {
 impl CustomIdent {
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         let valid = !is_reserved_custom_ident(ident);
 
         if !valid {
@@ -465,3 +451,43 @@ impl CustomIdent {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub type CustomIdentList = SmallList<CustomIdent, 1>;
+
+/// `none | <custom-ident>+`: the `none` keyword, or a space-separated list of
+/// [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
+#[derive(Clone, crate::CssEql, crate::DeepClone)]
+pub enum NoneOrCustomIdentList {
+    /// The `none` keyword.
+    None,
+    /// A list of idents.
+    Idents(CustomIdentList),
+}
+
+impl NoneOrCustomIdentList {
+    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        let mut idents = CustomIdentList::default();
+        while let Ok(ident) = input.try_parse(CustomIdent::parse) {
+            if strings::eql_case_insensitive_ascii_check_length(ident.v(), b"none") {
+                if idents.len() == 0 {
+                    return Ok(Self::None);
+                }
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
+            idents.append(ident);
+        }
+        if idents.len() == 0 {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(Self::Idents(idents))
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            Self::None => dest.write_str(b"none"),
+            Self::Idents(idents) => dest.write_separated(
+                idents.slice(),
+                |d| d.write_char(b' '),
+                |d, ident| ident.to_css(d),
+            ),
+        }
+    }
+}

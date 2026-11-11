@@ -272,7 +272,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
       stderrPromise,
       (async () => {
         let out = "";
-        for (let line; (line = await readLine()) !== null; ) out += line + "\n";
+        for (let line; (line = await readLine()) !== null;) out += line + "\n";
         return out;
       })(),
       proc.exited,
@@ -291,7 +291,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
     const result = JSON.parse(line);
     expect(result.settled).toBe("rejected");
-    expect(result.code).toBe("FailedToOpenSocket");
+    expect(result.code).toBe("ENOSPC");
     expect(exitCode).toBe(0);
   },
 );

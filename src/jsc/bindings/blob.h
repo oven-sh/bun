@@ -2,17 +2,35 @@
 
 #include "root.h"
 #include "JSDOMGlobalObject.h"
+#include "JSDOMWrapper.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 
 namespace WebCore {
 
+// What `Blob__sharedView` found in a value. Rust: `BlobBytes` (Blob.rs).
+enum class BlobBytes : uint8_t {
+    // The value holds no Blob.
+    NotABlob = 0,
+    InMemory = 1,
+    // A file- or S3-backed Blob, which has to be read first.
+    NotInMemory = 2,
+};
+
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
-extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
-extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
+// Borrows the bytes of the Blob that `value` holds: a Blob, or a `Bun.build()` output. Writes `ptr` and `len` only for `InMemory`. `ptr` is only valid while `value` is alive.
+extern "C" BlobBytes Blob__sharedView(JSC::EncodedJSValue value, const uint8_t** ptr, size_t* len);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);
+
+// False means that `value` holds no Blob, without a call into Rust: every wrapper that holds one has this cell type.
+inline bool mayHoldBlob(JSC::JSValue value)
+{
+    return value.isCell() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
 
 // Opaque type corresponding to `bun.webcore.Blob`.
 class BlobImpl;
@@ -73,6 +91,10 @@ public:
         m_fileName = fileName;
     }
 
+    // The JS object handed out for this FormData entry, so reads keep returning the same one while script still holds it.
+    JSC::JSObject* wrapper() const { return m_wrapper.get(); }
+    void setWrapper(JSC::JSObject* wrapper) { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
+
     size_t memoryCost() const;
 
 private:
@@ -92,11 +114,10 @@ private:
 
     BlobRefPtr m_impl;
     String m_fileName;
+    JSC::Weak<JSC::JSObject> m_wrapper;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Blob* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Blob>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<Blob>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 }

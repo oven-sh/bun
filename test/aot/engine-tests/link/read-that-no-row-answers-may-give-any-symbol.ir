@@ -1,0 +1,40 @@
+# print({ [Bun.peek.custom]() { return "mine"; } });
+# The host prints an object by the method that it finds under Symbol.for("nodejs.util.inspect.custom"), and calls it with what it loads at its start. It loads that only where an object may have such a method:
+# where code may have the symbol. The table has no row for `custom` of Bun.peek and does not say that it lists all that hangs there: what the read finds may be any value that the host has, that symbol too.
+# A table is no list of all there is.
+# function plain() { print({ a: 1 }) } alone: no code has a symbol, and nothing is loaded.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunPeek
+    v1 = PropGet v0 key="custom"
+    v2 = ToPropertyKey v1
+    v3 = NewClosure function=f1
+    v4 = NewObject layout=L0
+    ElemDefine v4, v2, v3
+    v6 = FinishObject v4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="print" [isFreeName]
+    v9 = Call v8, -, v6 calleeName="print"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="mine"
+    Return v0
+}
+function f2 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

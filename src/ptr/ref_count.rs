@@ -111,41 +111,6 @@ pub trait AnyRefCounted: Sized {
 // JS-wrapper finalize → intrusive-refcount release
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Release the JS wrapper's `+1` on an intrusive-refcounted `m_ctx` payload.
-///
-/// `.classes.ts` codegen hands `finalize` the payload as `Box<Self>`; the
-/// allocation may outlive that `Box` if other refs remain, so this leaks the
-/// `Box` back to a raw pointer FIRST (a panic in `before` then leaks instead of
-/// double-freeing siblings), runs `before` against a *shared* borrow, then
-/// drops one ref.
-///
-/// `before` deliberately receives `&T`, never `&mut T`: concurrent `&T` aliases
-/// may exist (e.g. work-pool threads, uws callbacks) while the GC sweeps, so
-/// forming `&mut T` here would be UB. All teardown therefore goes through
-/// `Cell`/`JsCell`/atomic fields.
-#[inline]
-pub fn finalize_js_box<T, F>(boxed: Box<T>, before: F)
-where
-    T: AnyRefCounted,
-    F: FnOnce(&T),
-{
-    let ptr: *mut T = Box::into_raw(boxed);
-    // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1 (the JS
-    // wrapper's +1). No `&mut T` is formed — `before` sees only `&T`.
-    before(unsafe { &*ptr });
-    // SAFETY: `ptr` is still live (the +1 has not yet been released).
-    unsafe { T::rc_deref(ptr) };
-}
-
-/// [`finalize_js_box`] with no pre-release work — just hands ownership back to
-/// the intrusive refcount and drops the JS wrapper's `+1`.
-#[inline]
-pub fn finalize_js_box_noop<T: AnyRefCounted>(boxed: Box<T>) {
-    let ptr: *mut T = Box::into_raw(boxed);
-    // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1.
-    unsafe { T::rc_deref(ptr) };
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // RefCount (single-threaded, intrusive)
 // ──────────────────────────────────────────────────────────────────────────
@@ -233,10 +198,7 @@ impl<T: RefCounted> RefCount<T> {
         count.raw_count.set(count.raw_count.get() - 1);
         if count.raw_count.get() == 0 {
             #[cfg(debug_assertions)]
-            {
-                // SAFETY: `count` is not used again; we need &mut for deinit
-                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
-            }
+            count.debug.deinit();
             // SAFETY: raw_count == 0, sole owner
             unsafe { T::destructor(self_) };
         }
@@ -360,10 +322,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         debug_assert!(old_count > 0);
         if old_count == 1 {
             #[cfg(debug_assertions)]
-            {
-                // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
-            }
+            count.debug.deinit();
             // SAFETY: last ref dropped
             unsafe { T::destructor(self_) };
         }
@@ -394,10 +353,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         debug_assert!(old_count > 0);
         if old_count == 1 {
             #[cfg(debug_assertions)]
-            {
-                // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
-            }
+            count.debug.deinit();
             true
         } else {
             false
@@ -515,16 +471,6 @@ pub unsafe trait CellRefCounted: Sized {
         }
     }
 
-    /// Safe [`ref_`](Self::ref_) for a `NonNull<Self>` handle.
-    ///
-    /// The `unsafe trait` contract guarantees `this` points to a live
-    /// intrusively-refcounted `Self`; [`BackRef`](crate::BackRef) turns that
-    /// into a shared borrow without the caller spelling `unsafe`.
-    #[inline]
-    fn ref_nn(this: NonNull<Self>) {
-        crate::BackRef::from(this).ref_();
-    }
-
     /// Safe [`deref`](Self::deref) for a `NonNull<Self>` handle.
     ///
     /// The single audited `unsafe` lives here in `bun_ptr`, beside the trait
@@ -536,29 +482,6 @@ pub unsafe trait CellRefCounted: Sized {
         // heap-allocated `Self` whose allocation `destroy` knows how to free;
         // `NonNull` guarantees non-null. The caller owns one ref.
         unsafe { Self::deref(this.as_ptr()) };
-    }
-}
-
-/// Run `before(&*this)` then reclaim `this` as a `Box<T>` and drop it.
-///
-/// Intended as the body of a `#[ref_count(destroy = …)]` target, where the
-/// wrapper needs to detach/invalidate itself before field `Drop` impls run.
-/// The raw-pointer deref is audited here once so per-type `destroy` bodies in
-/// callers stay `unsafe`-free.
-///
-/// Callers must only pass a pointer that originated from
-/// `Box::into_raw` / `heap::into_raw` and is the sole remaining owner — the
-/// same precondition as [`CellRefCounted::destroy`], which is the only
-/// sanctioned call site.
-#[inline]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
-    debug_assert!(!this.is_null());
-    // SAFETY: `CellRefCounted::destroy` contract — `this` is the sole live
-    // owner of a `Box`-allocated `T`; `before` only observes it shared.
-    unsafe {
-        before(&*this);
-        drop(Box::from_raw(this));
     }
 }
 
@@ -576,7 +499,7 @@ pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
 ///
 /// Holding a `RefPtr` *is* holding one ref: `Drop` releases it (destroying `T`
 /// if it was the last), `Clone` takes another. To hand the ref to a raw-pointer
-/// consumer (C++ `m_ctx`, a uws/libuv userdata slot) use
+/// consumer (a JS wrapper, a uws/libuv userdata slot) use
 /// [`into_raw`](Self::into_raw) and reclaim it later with
 /// [`from_raw`](Self::from_raw).
 #[must_use = "dropping a RefPtr releases its ref"]
@@ -652,7 +575,13 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// (`Arc::into_raw` semantics).
     #[inline]
     pub fn into_raw(self) -> *mut T {
-        core::mem::ManuallyDrop::new(self).0.as_ptr()
+        self.into_non_null().as_ptr()
+    }
+
+    /// [`into_raw`](Self::into_raw) as a `NonNull`.
+    #[inline]
+    pub fn into_non_null(self) -> NonNull<T> {
+        core::mem::ManuallyDrop::new(self).0
     }
 
     /// A [`ThisPtr`](crate::ThisPtr) to the pointee, valid while this (or
@@ -722,25 +651,27 @@ const MAGIC_VALID: u32 = 0x2f84_e51d;
 /// pointer asserts instead of silently corrupting the count.
 #[cfg(debug_assertions)]
 struct DebugData {
-    magic: u32,
+    magic: AtomicU32,
 }
 
 #[cfg(debug_assertions)]
 impl DebugData {
     const fn empty() -> Self {
-        Self { magic: MAGIC_VALID }
+        Self {
+            magic: AtomicU32::new(MAGIC_VALID),
+        }
     }
 
     fn assert_valid(&self) {
         debug_assert!(
-            self.magic == MAGIC_VALID,
+            self.magic.load(Ordering::Relaxed) == MAGIC_VALID,
             "ref/deref on a destroyed refcount"
         );
     }
 
-    fn deinit(&mut self) {
+    fn deinit(&self) {
         self.assert_valid();
-        self.magic = 0;
+        self.magic.store(0, Ordering::Relaxed);
     }
 }
 
@@ -900,19 +831,6 @@ mod tests {
         let t = Thing::new(3);
         // SAFETY: `t` is live and we own the one ref the RefPtr will consume.
         drop(unsafe { RefPtr::from_raw(t) });
-        assert_eq!(drops(), before + 1);
-    }
-
-    #[test]
-    fn finalize_js_box_releases_one_ref() {
-        let _serial = serial();
-        let before = drops();
-        let t = Thing::new(9);
-        // SAFETY: `t` is live; simulate the codegen handing `finalize` a Box.
-        let boxed: Box<Thing> = unsafe { bun_core::heap::take(t) };
-        let seen = std::cell::Cell::new(0u32);
-        finalize_js_box(boxed, |thing: &Thing| seen.set(*thing.payload));
-        assert_eq!(seen.get(), 9);
         assert_eq!(drops(), before + 1);
     }
 

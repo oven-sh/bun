@@ -1,0 +1,22 @@
+[package]
+name = "bun_archive"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_tar.workspace = true
+scopeguard.workspace = true
+bun_core.workspace = true
+bun_alloc.workspace = true
+bun_errno.workspace = true
+bun_collections.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true
+bun_wyhash.workspace = true

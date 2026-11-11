@@ -10,11 +10,11 @@
 //
 // Capacity is always a power of 2, so modulo is replaced with bitwise AND.
 
-class RingBuffer {
-  #backing;
+class RingBuffer<T> {
+  #backing: Array<T | undefined>;
   #head = 0;
   #size = 0;
-  #mask;
+  #mask: number;
 
   constructor(initialCapacity = 16) {
     this.#mask = initialCapacity - 1;
@@ -28,7 +28,7 @@ class RingBuffer {
   /**
    * Append an item to the tail. O(1) amortized.
    */
-  push(item) {
+  push(item: T) {
     if (this.#size > this.#mask) {
       this.#grow();
     }
@@ -39,7 +39,7 @@ class RingBuffer {
   /**
    * Prepend an item to the head. O(1) amortized.
    */
-  unshift(item) {
+  unshift(item: T) {
     if (this.#size > this.#mask) {
       this.#grow();
     }
@@ -66,7 +66,7 @@ class RingBuffer {
    * Returns undefined if index is out of bounds.
    * @returns {any}
    */
-  get(index) {
+  get(index: number) {
     if (index < 0 || index >= this.#size) return undefined;
     return this.#backing[(this.#head + index) & this.#mask];
   }
@@ -75,7 +75,7 @@ class RingBuffer {
    * Remove `count` items from the head without returning them.
    * O(count) for GC cleanup.
    */
-  trimFront(count) {
+  trimFront(count: number) {
     if (count <= 0) return;
     if (count >= this.#size) {
       this.clear();
@@ -93,7 +93,7 @@ class RingBuffer {
    * Returns -1 if not found.
    * @returns {number}
    */
-  indexOf(item) {
+  indexOf(item: T) {
     for (let i = 0; i < this.#size; i++) {
       if (this.#backing[(this.#head + i) & this.#mask] === item) {
         return i;
@@ -106,7 +106,7 @@ class RingBuffer {
    * Remove the item at logical `index`, shifting later elements. O(n) worst case.
    * Used only on rare abort-signal cancellation path.
    */
-  removeAt(index) {
+  removeAt(index: number) {
     if (index < 0 || index >= this.#size) return;
     for (let i = index; i < this.#size - 1; i++) {
       const from = (this.#head + i + 1) & this.#mask;
@@ -134,7 +134,7 @@ class RingBuffer {
    */
   #grow() {
     const newCapacity = (this.#mask + 1) * 2;
-    const newBacking = new Array(newCapacity);
+    const newBacking = new Array<T | undefined>(newCapacity);
     for (let i = 0; i < this.#size; i++) {
       newBacking[i] = this.#backing[(this.#head + i) & this.#mask];
     }

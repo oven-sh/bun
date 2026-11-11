@@ -39,16 +39,8 @@
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
-// #include "HTMLBodyElement.h"
-// #include "HTMLHtmlElement.h"
-// #include "InspectorInstrumentation.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
-// #include "Logging.h"
-// #include "Quirks.h"
-// #include "ScriptController.h"
-// #include "ScriptDisallowedScope.h"
-// #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -245,6 +237,10 @@ void EventTarget::fireEventListeners(Event& event, EventInvokePhase phase)
     auto* data = eventTargetData();
     if (!data)
         return;
+    // The context the target was made in is gone (a Bun.ModuleGraph's that was collected while the
+    // host still held the target): its listeners go unheard.
+    if (!scriptExecutionContext())
+        return;
 
     SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
 
@@ -261,10 +257,8 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(!listeners.isEmpty());
     ASSERT(scriptExecutionContext());
 
-    auto& context = *scriptExecutionContext();
-    // bool contextIsDocument = is<Document>(context);
-    // if (contextIsDocument)
-    //     InspectorInstrumentation::willDispatchEvent(downcast<Document>(context), event);
+    // A Bun.ModuleGraph's context is freed with the graph, which a listener can bring about.
+    Ref<ScriptExecutionContext> context(*scriptExecutionContext());
 
     for (auto& registeredListener : listeners) {
         if (registeredListener->wasRemoved()) [[unlikely]]

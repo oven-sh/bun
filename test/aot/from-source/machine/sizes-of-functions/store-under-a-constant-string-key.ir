@@ -1,0 +1,27 @@
+# f1 = byName, f2 = byKey
+# -- source: store-under-a-constant-string-key.ts
+# type Point = { x: number; y: number };
+# function byName(point: Point, at: number): void {
+#   point.x = at;
+# }
+# function byKey(point: Point, at: number): void {
+#   point["x"] = at;
+# }
+# declare const input: any;
+# const point: Point = { x: +input, y: +input };
+# byName(point, +input);
+# byKey(point, +input);
+# (globalThis as any).answer = point.x + point.y;
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches ; 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 4, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5
+# The compiler before this one: 2 instructions, 0 of them patches ; 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 4, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64N6): steps most:5 f2 mechanisms=all-Inlining
+# REQUIRES(X64N6): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64N6-LABEL: unit f2:Body
+# X64N6-NEXT: steps: at most 5

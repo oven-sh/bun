@@ -1,0 +1,20 @@
+# -- source: main.js
+# class Quiet { name() { return "quiet"; } static kind() { return "class"; } }
+# class Quieter extends Quiet { }
+# function Old() { }
+# Old.prototype.name = function () { return "old"; };
+# function Older() { }
+# Older.prototype = Object.create(Old.prototype);
+# hand(Quiet, Quieter, Old, Older, new Quiet(), new Quieter(), new Old(), new Older());
+# report();
+# -- end of source
+# The program makes its classes and an object of each, and reads no member of any. No guard of theirs has a bit, so the run time looks at none of their holders and nothing that changes there ends anything.
+# The code that the build has not seen finds what the language says, before and behind every change.
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.hand = (Quiet, Quieter, Old, Older, quiet, quieter, old, older) => { const all = () => print(quiet.name(), quieter.name(), old.name(), older.name(), Quiet.kind(), Quieter.kind(), new Quieter().name(), new Older().name()); all(); Quiet.prototype.name = () => "loud"; Old.prototype.name = () => "new"; Quiet.kind = () => "changed"; all(); Quieter.prototype.name = () => "louder"; Quieter.kind = () => "apart"; Object.setPrototypeOf(Older.prototype, { name() { return "other"; } }); all(); delete Quieter.prototype.name; delete Quiet.prototype.name; Object.setPrototypeOf(Quiet.prototype, { name() { return "above"; } }); Object.freeze(Old.prototype); quiet.name = () => "own"; all(); print(quiet instanceof Quiet, quieter instanceof Quiet, older instanceof Old, new Older() instanceof Older, Object.keys(quiet).join()); }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# CHECK: quiet quiet old old class class quiet old
+# CHECK-NEXT: loud loud new new changed changed loud new
+# CHECK-NEXT: loud louder new other changed apart louder other
+# CHECK-NEXT: own above new other changed apart above other
+# CHECK-NEXT: true true false true name
+# CHECK-NEXT: guards ended: 0
+# CHECK-NEXT: exited with 0

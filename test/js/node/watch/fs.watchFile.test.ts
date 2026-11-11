@@ -333,7 +333,7 @@ describe("fs.watchFile", () => {
         cmd: [bunExe(), "-e", fixture],
         env: {
           ...bunEnv,
-          // detect_leaks=0: ConcurrentTask/ManagedTask nodes left in a
+          // detect_leaks=0: ConcurrentTask nodes left in a
           // terminated worker's undrained concurrent queue are a known
           // pre-existing leak (see #32071); this test asserts no crash, not
           // no leaks. symbolize=0 so a pre-fix ASAN abort exits promptly

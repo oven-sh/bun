@@ -1,0 +1,16 @@
+# f1 = scale
+# -- source: destructure-an-optional-field-with-a-default.ts
+# type Options = { factor?: number; amount: number };
+# function scale({ factor = 2, amount }: Options): number {
+#   return factor * amount;
+# }
+# declare const input: any;
+# const options: Options = input ? { factor: +input, amount: +input } : { amount: +input };
+# (globalThis as any).answer = scale(options);
+# -- end of source
+# The compiler before this one: 8 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 10, patches 0, moves 1, unlikely or rare 4.
+# RUN(X64): steps most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 11

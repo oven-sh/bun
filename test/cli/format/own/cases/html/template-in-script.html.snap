@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+<!-- The doctype of HTML5 is in lower case in a file of HTML, in a template in a script in it too. -->
+<script>
+  const page = html`<!doctype html><title>${title}</title>
+    <script>
+      a();
+    <\/script>`;
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<!-- The doctype of HTML5 is in lower case in a file of HTML, in a template in a script in it too. -->
+<script>
+  const page = html`<!doctype html><title>${title}</title>
+    <script>
+      a();
+    <\/script>`;
+</script>
+
+===================== End =====================

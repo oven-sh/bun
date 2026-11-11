@@ -1,0 +1,20 @@
+Another module requires the user of a module whose mock a test has ended, in that test and in the next.
+#### a.test.ts
+import { jest, test, vi } from "bun:test";
+import { ask } from "./asker";
+test("t", () => {
+  jest.doMock("./dep", () => ({ a: "first a", fn: () => "first fn" }));
+  console.log("| CASE mocked:", ask());
+  vi.doUnmock("./dep");
+  console.log("| CASE again:", ask());
+});
+test("the next test", () => console.log("| CASE the next test:", ask()));
+#### asker.ts
+export const ask = () => require("./user.mjs").seen();
+#### dep.ts
+console.log("| CASE dep runs");
+export const a = "real a";
+export function fn() { return "real fn"; }
+#### user.mjs
+import { a, fn } from "./dep";
+export const seen = () => a + ", " + fn();

@@ -145,7 +145,7 @@ const rewrites = !!process.env.BUN_AOT_REWRITE_MOCK_WAYS;
 const eachKind = isDebug ? testOneByOne : test.concurrent;
 // A debug build of Bun skips the kinds: about four in ten of its builds end with a crash that only a debug build has (#48169), and a kind is one build.
 // AOT_MOCK_WAYS_ON_DEBUG=1 runs them there as the tests that they are, and so does the mode that writes the list anew.
-const runsOnDebug = rewrites || !!process.env.AOT_MOCK_WAYS_ON_DEBUG;
+const runsOnDebug = rewrites || process.env.AOT_MOCK_WAYS_ON_DEBUG === "1";
 const declare = isDebug && !runsOnDebug ? eachKind.skip : eachKind;
 // The limit of a kind holds every run that may take a slot ahead of its own, each for its whole limit: all ten where the kinds run beside one another.
 // So no kind times out while it waits for a slot, and a run that hangs is ended at its own limit, where the kind says which. A minute more to lay and to remove the project.

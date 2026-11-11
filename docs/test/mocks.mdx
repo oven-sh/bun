@@ -513,6 +513,8 @@ Mocks made in a `--preload` script apply to every test file.
 
 A test file can mock a module that the preload script already mocked. With `vi.mock()` and `vi.doMock()`, only the modules the test file imports get the file's mock. Modules the preload script imported keep what they imported, as in Vitest. With `mock.module()` and `jest.mock()`, the modules the preload script imported get the file's mock too.
 
+If the preload script imported a package and then mocked it, the original of the file's mock is the package from before the preload's mock. `importOriginal`, `vi.importActual()`, `jest.requireActual()` and a mock without a factory get its real exports. So do `vi.importActual()` and `jest.requireActual()` after the file removes its mock with `vi.doUnmock()`, when the preload's mock applies again.
+
 ### Hoisting & Preloading
 
 Top-level `vi.mock()`, `vi.unmock()`, `vi.hoisted()`, `jest.mock()` and `jest.unmock()` calls are hoisted above the file's imports, as in Vitest and Jest. This way, a module is mocked before the file or anything it imports loads it.
@@ -807,6 +809,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
+- When a test file mocks a package that a `--preload` script has imported and then mocked, the original is a copy of the package's real exports (see [Module Mocks Are Removed After Each Test File](#module-mocks-are-removed-after-each-test-file)). A function of an ES module in it that uses another export of the package still gets the preload's mock of that export, and an export that the preload's factory returns through a getter keeps the preload's value. If the preload mocked the package before it imported it, as a hoisted `vi.mock()` does, or mocked a module that re-exports from it, the original can be the preload's mock. In Vitest the original is the real module.
 
 ## Implementation Details
 

@@ -17,6 +17,14 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks, plain
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, mocked again by a hook of the preload before each test
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, under --isolate
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, under --isolate=modules
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked again by a hook of the preload before each test
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked by the preload with jest.doMock(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked by the preload with mock.module(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked by the preload with vi.doMock(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > other packages, and other mocks of the preload
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

@@ -6923,6 +6923,359 @@ describe.concurrent("vi.doMock() of a module that a preload has loaded and the f
   });
 });
 
+// A preload that loads a package and then mocks it has patched the package in place. vi.mock() in a test file does not patch:
+// the package is set aside as the original with the preload's patch still on it, and vi.doUnmock() brings it back that way.
+describe("the original of a package that a preload has loaded and mocked", () => {
+  const packages = {
+    "node_modules/esm/package.json": JSON.stringify({ name: "esm", type: "module", main: "./index.js" }),
+    "node_modules/esm/index.js": `
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export function greet() { return "real"; }
+      export const kind = "real";
+      export const onlyInReal = true;
+    `,
+    "node_modules/cjs/package.json": JSON.stringify({ name: "cjs", main: "./index.js" }),
+    "node_modules/cjs/index.js": `
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      module.exports = { greet() { return "real"; }, kind: "real", onlyInReal: true };
+    `,
+  };
+  type Kind = "esm" | "cjs";
+  const load = { esm: `import * as loaded from "esm";`, cjs: `const loaded = require("cjs");` };
+  // The preload's import of an ES module sees the mock. What require() gave it is the object from before the mock.
+  const held = { esm: "preload", cjs: "real" };
+  const mocked = `({ greet: () => "preload", kind: "preload", onlyInMock: true })`;
+  const preloads = {
+    "mock.module()": (name: Kind) => `mock.module("${name}", () => ${mocked});`,
+    "jest.doMock()": (name: Kind) => `jest.doMock("${name}", () => ${mocked});`,
+    "vi.doMock()": (name: Kind) => `vi.doMock("${name}", () => ${mocked});`,
+    "mock.module() in a hook before each test": (name: Kind) =>
+      `beforeEach(() => { mock.module("${name}", () => ${mocked}); });`,
+  };
+
+  function fixture(name: Kind, how: keyof typeof preloads) {
+    const exported = "greet,kind,onlyInReal";
+    const names = `exports => Object.keys(exports).filter(name => name !== "default").sort().join()`;
+    const head = `
+      import { expect, jest, test, vi } from "bun:test";
+      const names = ${names};
+      // import(), vi.importActual(), its exports, jest.requireActual(), jest.createMockFromModule(), the preload's import, runs of the package
+      const read = async () => [
+        (await import("${name}")).greet(),
+        (await vi.importActual("${name}")).greet(),
+        names(await vi.importActual("${name}")),
+        jest.requireActual("${name}").greet(),
+        jest.createMockFromModule("${name}").kind,
+        heldByPreload(),
+        loads,
+      ];
+    `;
+    const originals = ["real", exported, "real", "real"];
+    const files: Record<string, string> = {
+      ...packages,
+      "preload.js": `
+        import { beforeEach, jest, mock, vi } from "bun:test";
+        ${load[name]}
+        ${preloads[how](name)}
+        globalThis.heldByPreload = () => loaded.greet();
+      `,
+      "a-unmock.test.js": `${head}
+        test("under vi.doMock(), then after vi.doUnmock()", async () => {
+          vi.doMock("${name}", () => ({ greet: () => "file" }));
+          expect(await read()).toEqual(${JSON.stringify(["file", ...originals, held[name], 1])});
+          vi.doUnmock("${name}");
+          expect(await read()).toEqual(${JSON.stringify(["preload", ...originals, held[name], 1])});
+          const automock = await vi.importMock("${name}");
+          expect([vi.isMockFunction(automock.greet), automock.kind, names(automock), jest.requireMock("${name}").kind]).toEqual([true, "real", "${exported}", "real"]);
+        });
+      `,
+      // The file ends with its mock registered and loaded.
+      "b-twice.test.js": `${head}
+        test.each(["first", "second"])("vi.doMock() in the %s test of a file", async () => {
+          vi.doMock("${name}", () => ({ greet: () => "file" }));
+          expect(await read()).toEqual(${JSON.stringify(["file", ...originals, held[name], 1])});
+        });
+      `,
+      // From here on the runs of the package are left out: what the end of a test file leaves loaded is not what these tests are about.
+      "c-next.test.js": `${head}
+        test("a file with no mock of its own, after one that ended with its mock", async () => {
+          expect((await read()).slice(0, 6)).toEqual(${JSON.stringify(["preload", ...originals, held[name]])});
+        });
+      `,
+    };
+    // The hook mocks again before the test of a file runs, over a mock that the file has hoisted.
+    if (how.includes("hook")) return files;
+    return {
+      ...files,
+      "d-original.test.js": `
+        import { expect, jest, test, vi } from "bun:test";
+        import * as mocked from "${name}";
+        vi.mock("${name}", async importOriginal => {
+          const original = await importOriginal();
+          return {
+            greet: () => "file+" + original.greet(),
+            names: (${names})(original),
+            inFactory: [(await vi.importActual("${name}")).greet(), jest.requireActual("${name}").greet()],
+          };
+        });
+        test("importOriginal(), and the original that the factory asks for by name", () => {
+          expect([mocked.greet(), mocked.names, ...mocked.inFactory]).toEqual(["file+real", "${exported}", "real", "real"]);
+        });
+      `,
+      "e-automock.test.js": `${head}
+        import * as mocked from "${name}";
+        vi.mock("${name}");
+        test("a mock without a factory", () => {
+          expect([vi.isMockFunction(mocked.greet), mocked.kind, names(mocked)]).toEqual([true, "real", "${exported}"]);
+        });
+      `,
+      "f-pending.test.js": `${head}
+        test("a factory that has yet to settle", () => {
+          vi.doMock("${name}", async () => (await null, { greet: () => "file" }));
+          expect([jest.createMockFromModule("${name}").kind, require("${name}").greet()]).toEqual(["real", "real"]);
+        });
+      `,
+      "g-patch.test.js": `${head}
+        test("jest.doMock() after vi.doUnmock(), which patches over the preload's mock", async () => {
+          vi.doMock("${name}", () => ({ greet: () => "file" }));
+          vi.doUnmock("${name}");
+          jest.doMock("${name}", () => ({ greet: () => "patch" }));
+          expect((await read()).slice(0, 4)).toEqual(["patch", "real", "${exported}", "real"]);
+          jest.dontMock("${name}");
+          expect((await read()).slice(1, 5)).toEqual(${JSON.stringify(originals)});
+        });
+        test("jest.doMock() without a factory after vi.doUnmock()", async () => {
+          vi.doMock("${name}", () => ({ greet: () => "file" }));
+          vi.doUnmock("${name}");
+          jest.doMock("${name}");
+          const mocked = await import("${name}");
+          expect([jest.isMockFunction(mocked.greet), mocked.kind, jest.createMockFromModule("${name}").kind]).toEqual([true, "real", "real"]);
+          jest.dontMock("${name}");
+        });
+      `,
+      "z-last.test.js": `${head}
+        test("the last file, with no mock of its own", async () => {
+          expect((await read()).slice(0, 6)).toEqual(${JSON.stringify(["preload", ...originals, held[name]])});
+        });
+      `,
+    };
+  }
+
+  const kinds: Kind[] = ["esm", "cjs"];
+  const inPlace = ["mock.module()", "jest.doMock()", "vi.doMock()"] as const;
+  test.concurrent.each(kinds.flatMap(name => inPlace.map(how => [name, how] as const)))(
+    "%s, mocked by the preload with %s: under vi.mock() of a test file and after it",
+    async (name, how) => {
+      await expectFixturesToPass(fixture(name, how), 10, ["--preload", "./preload.js"]);
+    },
+  );
+
+  test.concurrent.each(kinds)("%s, mocked again by a hook of the preload before each test", async name => {
+    const files = fixture(name, "mock.module() in a hook before each test");
+    await expectFixturesToPass(files, 4, ["--preload", "./preload.js"]);
+  });
+
+  // Under isolation every test file starts with what the preload left, so these run a few of the files.
+  async function expectIsolatedFixtureToPass(name: Kind, flag: string) {
+    const all = fixture(name, "mock.module()");
+    const files = Object.fromEntries(Object.entries(all).filter(([file]) => !/^[bcfgz]-/.test(file)));
+    await expectFixturesToPass(files, 3, ["--preload", "./preload.js", flag]);
+  }
+  test.concurrent.each(kinds)("%s, under --isolate", name => expectIsolatedFixtureToPass(name, "--isolate"));
+
+  test.concurrent("other packages, and other mocks of the preload", async () => {
+    const esm = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, type: "module", main: "./index.js" }),
+      [`node_modules/${name}/index.js`]: `
+        export function greet() { return "real"; }
+        export const kind = "real";
+        export let counter = 0;
+        export function count() { return ++counter; }
+      `,
+    });
+    const star = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, type: "module", main: "./index.js" }),
+      [`node_modules/${name}/index.js`]: `
+        export * as inner from "./inner.js";
+        export function greet() { return "real"; }
+      `,
+      [`node_modules/${name}/inner.js`]: `export function greet() { return "real"; }`,
+    });
+    const head = `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const names = exports => Object.keys(exports).filter(name => name !== "default").sort().join();
+    `;
+    // [vi.importActual(), jest.requireActual(), jest.createMockFromModule()] under the file's mock, then the same after it with jest.requireMock().
+    const underMockAndAfter = (name: string) => `${head}
+      test("${name}", async () => {
+        vi.doMock("${name}", () => ({ greet: () => "file" }));
+        expect([(await vi.importActual("${name}")).greet(), jest.requireActual("${name}").greet(), jest.createMockFromModule("${name}").kind]).toEqual(["real", "real", "real"]);
+        vi.doUnmock("${name}");
+        expect([(await vi.importActual("${name}")).greet(), jest.requireActual("${name}").greet(), jest.requireMock("${name}").kind]).toEqual(["real", "real", "real"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...esm("removed"),
+        ...esm("untouched"),
+        ...esm("required-by-preload"),
+        ...esm("required-by-file"),
+        ...esm("getter"),
+        ...esm("imported"),
+        ...star("star"),
+        ...star("star-in-file"),
+        "node_modules/shim/package.json": JSON.stringify({ name: "shim", main: "./index.cjs" }),
+        "node_modules/shim/index.cjs": `module.exports = require("./esm.mjs");`,
+        "node_modules/shim/esm.mjs": `export function greet() { return "real"; } export const kind = "real";`,
+        "node_modules/automocked/package.json": JSON.stringify({ name: "automocked", main: "./index.js" }),
+        "node_modules/automocked/index.js": `module.exports = { greet() { return "real"; }, kind: "real" };`,
+        "node_modules/barrel/package.json": JSON.stringify({ name: "barrel", type: "module", main: "./index.js" }),
+        "node_modules/barrel/index.js": `export * from "./inner.js";`,
+        "node_modules/barrel/inner.js": `export function greet() { return "real"; }`,
+        "fake.js": `export const greet = () => "preload"; export const kind = "preload";`,
+        "own.js": `export function greet() { return "real"; } export const kind = "real";`,
+        "preload.js": `
+          import { jest, mock } from "bun:test";
+          import * as removed from "removed";
+          import * as untouched from "untouched";
+          import "star";
+          import "getter";
+          import "imported";
+          import "required-by-file";
+          import "barrel";
+          require("required-by-preload");
+          require("shim");
+          require("automocked");
+          await import("automocked");
+
+          const fake = { greet: () => "preload", kind: "preload" };
+          mock.module("removed", () => fake);
+          mock.module("untouched", () => ({ notAnExport: true }));
+          mock.module("star", () => ({ ...fake, inner: { greet: () => "preload" } }));
+          mock.module("required-by-preload", () => fake);
+          mock.module("required-by-file", () => fake);
+          mock.module("shim", () => fake);
+          let getterCalls = 0;
+          mock.module("getter", () => ({ kind: "preload", get greet() { getterCalls++; return () => "preload"; } }));
+          await mock.module("imported", () => import("./fake.js"));
+          jest.doMock("automocked");
+          mock.module("barrel/inner.js", () => ({ greet: () => "preload inner" }));
+          mock.module("barrel", () => ({ greet: () => "preload barrel" }));
+
+          globalThis.loadedByPreload = { removed, untouched };
+          globalThis.getterCalls = () => getterCalls;
+        `,
+        // Nothing of the preload's mock is on the package: the original is the package itself, and stays live.
+        "removed.test.js": `${head}
+          test("the test file has removed the preload's mock", async () => {
+            vi.doUnmock("removed");
+            const removed = await import("removed");
+            removed.count();
+            vi.doMock("removed", () => ({ greet: () => "file" }));
+            const original = await vi.importActual("removed");
+            expect(original).toBe(loadedByPreload.removed);
+            expect(jest.requireActual("removed")).toBe(loadedByPreload.removed);
+            expect([original.greet(), original.counter, removed.count(), original.counter]).toEqual(["real", 1, 2, 2]);
+          });
+        `,
+        "untouched.test.js": `${head}
+          test("the preload's mock has none of the package's exports", async () => {
+            vi.doMock("untouched", () => ({ greet: () => "file" }));
+            expect(await vi.importActual("untouched")).toBe(loadedByPreload.untouched);
+            expect(jest.requireActual("untouched")).toBe(loadedByPreload.untouched);
+          });
+        `,
+        // The variable of `export * as inner` has no value until somebody reads the export.
+        "star.test.js": `${head}
+          import * as star from "star";
+          vi.mock("star", async importOriginal => ({ ...(await importOriginal()), greet: () => "file" }));
+          test("export * as", async () => {
+            const original = await vi.importActual("star");
+            expect([star.greet(), star.inner.greet(), names(original), original.inner.greet()]).toEqual(["file", "real", "greet,inner", "real"]);
+          });
+        `,
+        "star-in-file.test.js": `${head}
+          import * as star from "star-in-file";
+          test("export * as, mocked in place by the test file and restored", async () => {
+            mock.module("star-in-file", () => ({ greet: () => "file", inner: { greet: () => "file" } }));
+            const original = await vi.importActual("star-in-file");
+            expect([star.greet(), star.inner.greet(), names(original), original.inner.greet()]).toEqual(["file", "file", "greet,inner", "real"]);
+            jest.dontMock("star-in-file");
+            expect([star.greet(), star.inner.greet()]).toEqual(["real", "real"]);
+          });
+        `,
+        // require() of an ES module leaves a module object in require.cache, whose exports are the namespace object.
+        "required-by-preload.test.js": underMockAndAfter("required-by-preload"),
+        // Under the preload's mock, it leaves one whose exports are the mock's.
+        "required-by-file.test.js": `${head}
+          const required = require("required-by-file");
+          test("the test file has required the package under the preload's mock", async () => {
+            vi.doMock("required-by-file", () => ({ greet: () => "file" }));
+            expect([required.greet(), (await vi.importActual("required-by-file")).greet(), jest.requireActual("required-by-file").greet()]).toEqual(["preload", "real", "real"]);
+            vi.doUnmock("required-by-file");
+            jest.doMock("required-by-file", () => ({ greet: () => "patch" }));
+            expect([require("required-by-file").greet(), (await vi.importActual("required-by-file")).greet(), jest.requireActual("required-by-file").greet()]).toEqual(["patch", "real", "real"]);
+            jest.dontMock("required-by-file");
+            jest.doMock("required-by-file");
+            const mocked = require("required-by-file");
+            expect([jest.isMockFunction(mocked.greet), mocked.kind, jest.createMockFromModule("required-by-file").kind]).toEqual([true, "real", "real"]);
+            jest.dontMock("required-by-file");
+          });
+        `,
+        // A CommonJS package whose exports are the namespace object of another module.
+        "shim.test.js": underMockAndAfter("shim"),
+        // The exports of the preload's mock are those of a module that its factory imported.
+        "imported.test.js": underMockAndAfter("imported"),
+        // A CommonJS package that is loaded both ways, which the preload mocked without a factory.
+        "automocked.test.js": `${head}
+          test("a package that the preload mocked without a factory", async () => {
+            expect([jest.isMockFunction(require("automocked").greet), jest.isMockFunction((await import("automocked")).greet)]).toEqual([true, true]);
+            vi.doMock("automocked", () => ({ greet: () => "file" }));
+            expect([(await vi.importActual("automocked")).greet(), jest.requireActual("automocked").greet(), jest.createMockFromModule("automocked").kind]).toEqual(["real", "real", "real"]);
+            vi.doUnmock("automocked");
+            expect([(await vi.importActual("automocked")).greet(), jest.requireActual("automocked").greet()]).toEqual(["real", "real"]);
+          });
+        `,
+        // Only the getter could tell what the mock wrote there, and reading the original runs no code of the mock.
+        "getter.test.js": `${head}
+          test("an export that the preload's mock has a getter for", async () => {
+            vi.doMock("getter", () => ({ greet: () => "file" }));
+            const calls = getterCalls();
+            const original = await vi.importActual("getter");
+            expect([original.kind, jest.requireActual("getter").kind, original.greet(), getterCalls() - calls]).toEqual(["real", "real", "preload", 0]);
+          });
+        `,
+        // The preload mocked the module that declares greet() first, then the barrel. The file's vi.unmock() of the first restores greet(),
+        // so the patch of the barrel's mock is no longer on it, and what that mock saved is the other mock's function.
+        "barrel.test.js": `${head}
+          import * as barrel from "barrel";
+          vi.unmock("barrel/inner.js");
+          vi.mock("barrel", async importOriginal => ({ ...(await importOriginal()), added: "file" }));
+          test("an export that another mock's end has restored", async () => {
+            expect([barrel.greet(), barrel.added, (await vi.importActual("barrel")).greet(), jest.requireActual("barrel").greet()]).toEqual(["real", "file", "real", "real"]);
+          });
+        `,
+        // With no mock of a preload: the mock is loaded in place of the module that it had patched, and the original is still that module.
+        "own.test.js": `${head}
+          import * as own from "./own.js";
+          test("a module of the test file whose mock is loaded again after it was patched", async () => {
+            mock.module("./own.js", () => ({ greet: () => "file", added: true }));
+            delete require.cache[require.resolve("./own.js")];
+            expect(names(await import("./own.js"))).toBe("added,greet");
+            const original = await vi.importActual("./own.js");
+            expect([names(original), original.greet(), names(jest.requireActual("./own.js")), own.greet()]).toEqual(["greet,kind", "real", "greet,kind", "file"]);
+          });
+        `,
+      },
+      12,
+      ["--preload", "./preload.js"],
+    );
+  });
+
+  // One after the other: in a debug build a run in this mode takes over a second before its first test.
+  test.each(kinds)("%s, under --isolate=modules", name => expectIsolatedFixtureToPass(name, "--isolate=modules"));
+});
+
 // For a few ticks after a plain factory has returned, the module of its mock is still being fetched. It used to count as a module
 // that may wait for the running factory, and with it everything that imports it, so import() gave an empty copy that doesn't wait.
 test.concurrent.each(isolationFlags)(

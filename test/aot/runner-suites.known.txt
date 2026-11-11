@@ -122,6 +122,20 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 # The next one: vi.doMock() of a module evicts the CommonJS file that has required it, and the next require() runs the body of that file again. The body of a compiled file runs once.
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# These: a test file mocks a package over the mock of a preload that had loaded the package. A compiled module has one instance: the preload's own import follows the file's mock, and a name that only the file's factory has is no export of it. Behind vi.doUnmock() the preload's mock is registered again, and vi.importMock() and jest.requireMock() give it. A require() under a factory that has yet to settle gives the preload's mock.
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, mocked again by a hook of the preload before each test
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, mocked by the preload with jest.doMock(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, mocked by the preload with mock.module(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, mocked by the preload with vi.doMock(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, under --isolate
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > cjs, under --isolate=modules
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked again by a hook of the preload before each test
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked by the preload with jest.doMock(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked by the preload with mock.module(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, mocked by the preload with vi.doMock(): under vi.mock() of a test file and after it
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, under --isolate
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > esm, under --isolate=modules
+test/js/bun/test/mock/mock-module.test.ts: the original of a package that a preload has loaded and mocked > other packages, and other mocks of the preload
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

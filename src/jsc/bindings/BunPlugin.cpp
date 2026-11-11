@@ -1074,45 +1074,301 @@ static JSObject* esmExportsOfCommonJSExports(Zig::GlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
 }
 
-__attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+// Under `bun test` a preload's mock that the running test file has replaced or removed may have left its patch on a module of the loader.
+// A compiled run keeps what its files exported itself: see compiledExportsBeforeMock().
+static bool mayHavePatchOfDisplacedModuleMock(Zig::GlobalObject* globalObject)
+{
+    return !globalObject->onLoadPlugins.displacedPreloadModuleMocks.isEmpty() && !globalObject->vm().hasCompiledCode();
+}
+
+// The mocks that may have patched a module that is loaded: the registered one, and the preload's mocks that the running test file replaced or removed.
+// A test file's vi.mock() leaves the patch of a preload's mock on the package that it sets aside, and vi.doUnmock() brings the package back with it.
+template<typename Functor>
+static void forEachModuleMockThatMayHavePatched(Zig::GlobalObject* globalObject, const String& specifier, const Functor& functor)
+{
+    if (auto* registered = registeredModuleMock(globalObject, specifier))
+        functor(registered);
+    for (auto& displaced : globalObject->onLoadPlugins.displacedPreloadModuleMocks) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(displaced.get());
+        if (mock->specifier->tryGetValue().data == specifier)
+            functor(mock);
+    }
+}
+
+// What a mock wrote to `module.exports` of the CommonJS module that it patched in place.
+static JSValue commonJSExportsOfModuleMock(JSModuleMock* mock)
+{
+    JSObject* result = mock->state == JSModuleMock::State::Settled ? mock->result.get() : nullptr;
+    auto* holder = result ? dynamicDowncast<Bun::JSCommonJSModule>(result) : nullptr;
+    return holder ? holder->exportsObject() : JSValue(result);
+}
+
+// What a mock wrote to an export of the ES module that it patched in place. Empty where only a getter of the mock's exports could tell.
+__attribute__((minsize)) static JSValue exportWrittenByModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, const JSC::Identifier& name)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* overwritten = mock->originalExports.get();
-    if (!overwritten)
+    JSValue exports = commonJSExportsOfModuleMock(mock);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* object = exports ? exports.getObject() : nullptr;
+    if (!object)
+        return {};
+    // The factory returned the exports of a module that it imported.
+    if (auto* imported = dynamicDowncast<JSC::JSModuleNamespaceObject>(object)) {
+        ExportVariable variable = findExportVariable(globalObject, imported, name);
+        RETURN_IF_EXCEPTION(scope, {});
+        return variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
+    }
+    JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isOwn || !slot.isValue())
+        return {};
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, name));
+}
+
+// The exports of a loaded ES module from before the mocks that patched it in place, or null if it has none of their patches on it.
+// An export has a mock's patch on it for as long as it is what that mock wrote. The mock's log says what it was before, which may be what another mock wrote.
+// `asking` has a log for the module, and may have yet to patch it.
+__attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, const String& specifier, JSC::JSModuleNamespaceObject* moduleNamespace, JSModuleMock* asking = nullptr)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* logOfAsking = asking ? asking->originalExports.get() : nullptr;
+    // A module that was loaded as a mock is not what was patched. vi.mock() sets such a one aside too, over the package that it had set aside before,
+    // and the end of a test file leaves one under the key of a package that a preload's mock had patched.
+    if (moduleNamespace->moduleRecord()->hasLiveExports() && !vm.hasCompiledCode()) {
+        auto hasPatched = [](JSModuleMock* mock) { return mock->patchedNamespace && !mock->originalExportsOfEvictedModule; };
+        JSModuleMock* first = asking && hasPatched(asking) ? asking : nullptr;
+        if (!first) {
+            forEachModuleMockThatMayHavePatched(globalObject, specifier, [&](JSModuleMock* mock) {
+                if (hasPatched(mock) && (!first || mock->patchOrder < first->patchOrder))
+                    first = mock;
+            });
+        }
+        if (!first)
+            return nullptr;
+        moduleNamespace = first->patchedNamespace.get();
+    }
+    MarkedArgumentBuffer writers;
+    MarkedArgumentBuffer logs;
+    if (mayHavePatchOfDisplacedModuleMock(globalObject)) [[unlikely]] {
+        forEachModuleMockThatMayHavePatched(globalObject, specifier, [&](JSModuleMock* mock) {
+            if (mock == asking || mock->patchedNamespace.get() != moduleNamespace)
+                return;
+            JSObject* log = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
+            // A mock that was laid in place of another has taken its log over.
+            if (!log || log == logOfAsking)
+                return;
+            writers.append(mock);
+            logs.append(log);
+        });
+    }
+    if (!logOfAsking && logs.isEmpty())
         return nullptr;
 
-    // Reading a builtin's exports would force its lazy ones, and the caller can load it again for free.
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    moduleNamespace->methodTable()->getOwnPropertyNames(moduleNamespace, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    Vector<JSC::Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    Vector<bool, 4> followed;
+    bool hasPatch = !!asking;
+    for (auto& name : properties) {
+        JSObject* savedIn = logOfAsking;
+        JSValue value = logOfAsking ? logOfAsking->getIfPropertyExists(globalObject, name) : JSValue();
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!value) {
+            savedIn = nullptr;
+            value = moduleNamespace->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        if (!logs.isEmpty()) [[unlikely]]
+            followed.fill(false, logs.size());
+        // One log at a time, from the patch that was laid last: each of them saved what it found.
+        for (size_t links = logs.size(); links && value != JSValue(savedIn); --links) {
+            size_t next = 0;
+            JSValue saved;
+            for (; next < logs.size(); ++next) {
+                if (followed[next])
+                    continue;
+                JSValue written = exportWrittenByModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(writers.at(next)), name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (written != value)
+                    continue;
+                saved = asObject(logs.at(next))->getIfPropertyExists(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (saved)
+                    break;
+            }
+            if (next == logs.size())
+                break;
+            followed[next] = true;
+            hasPatch |= saved != value;
+            value = saved;
+            savedIn = asObject(logs.at(next));
+        }
+        // The export had no value when the patch was laid.
+        if (value == JSValue(savedIn))
+            continue;
+        names.append(name);
+        values.append(value);
+    }
+    if (!hasPatch)
+        return nullptr;
+    RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
+}
+
+// The same for the module that `mock` patched in place, or is about to: the one that is loaded under its key.
+static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    if (!mock->originalExports)
+        return nullptr;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     String specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    // Reading a builtin's exports would force its lazy ones, and the caller can load it again for free.
     if (builtinModuleOfOriginalKey(originalModuleKey(specifier)))
         return nullptr;
-
     LoadedModule loaded;
     findLoadedESModule(globalObject, mock->specifier.get(), loaded);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!loaded.esmNamespace)
         return nullptr;
+    RELEASE_AND_RETURN(scope, esmExportsBeforePatches(globalObject, specifier, loaded.esmNamespace, mock));
+}
 
-    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    loaded.esmNamespace->methodTable()->getOwnPropertyNames(loaded.esmNamespace, globalObject, properties, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    Vector<JSC::Identifier, 4> names;
-    MarkedArgumentBuffer values;
-    for (auto& name : properties) {
-        JSValue value = overwritten->getIfPropertyExists(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (value == overwritten)
-            continue;
-        if (!value) {
-            value = loaded.esmNamespace->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+// Follows `exports`, which a CommonJS module object holds or a mock saved of one, back to what no mock wrote.
+// Each mock that replaced `module.exports` saved what it found there, which may be what the mock before it wrote. Returns whether a mock wrote `exports`.
+// `exports` ends up empty if the module object is a mock's own, as require() makes one of the mock that it loads: such a mock replaced nothing.
+__attribute__((minsize)) static bool findCommonJSExportsBeforePatches(Zig::GlobalObject* globalObject, const String& specifier, JSValue& exports)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    MarkedArgumentBuffer mocks;
+    forEachModuleMockThatMayHavePatched(globalObject, specifier, [&](JSModuleMock* mock) {
+        mocks.append(mock);
+    });
+    Vector<bool, 4> followed;
+    followed.fill(false, mocks.size());
+    bool wasWritten = false;
+    for (size_t links = mocks.size(); links && exports; --links) {
+        size_t next = 0;
+        for (; next < mocks.size(); ++next) {
+            if (followed[next])
+                continue;
+            JSValue written = commonJSExportsOfModuleMock(uncheckedDowncast<JSModuleMock>(mocks.at(next)));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (written == exports)
+                break;
         }
-        names.append(name);
-        values.append(value);
+        if (next == mocks.size())
+            break;
+        followed[next] = true;
+        wasWritten = true;
+        exports = uncheckedDowncast<JSModuleMock>(mocks.at(next))->originalCommonJSExports.get();
     }
-    RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
+    return wasWritten;
+}
+
+// The namespace object that require() of the ES module `specifier` put in the module object that it left in require.cache.
+static JSC::JSModuleNamespaceObject* namespaceOfRequiredESModule(JSValue exports, const String& specifier)
+{
+    auto* moduleNamespace = exports ? dynamicDowncast<JSC::JSModuleNamespaceObject>(exports) : nullptr;
+    return moduleNamespace && moduleNamespace->moduleRecord()->moduleKey().string() == specifier ? moduleNamespace : nullptr;
+}
+
+struct ExportsBeforePatches {
+    JSObject* esm { nullptr };
+    JSValue commonJS;
+
+    // require() answers with `module.exports` if the module is loaded both ways.
+    JSValue forRequire() const { return commonJS ? commonJS : JSValue(esm); }
+    // import() answers with the exports of the ES module.
+    JSObject* forImport(Zig::GlobalObject* globalObject) const { return esm || !commonJS ? esm : esmExportsOfCommonJSExports(globalObject, commonJS); }
+};
+
+// What a loaded module exported before the mocks that patched it in place. Both are empty if it has none of their patches on it.
+static ExportsBeforePatches exportsBeforePatches(Zig::GlobalObject* globalObject, const String& specifier, const LoadedModule& loaded)
+{
+    if (!mayHavePatchOfDisplacedModuleMock(globalObject)) [[likely]]
+        return {};
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    ExportsBeforePatches before;
+    JSC::JSModuleNamespaceObject* moduleNamespace = loaded.esmNamespace;
+    if (loaded.commonJSModule) {
+        JSValue exports = loaded.commonJSModule->exportsObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        bool wasWritten = findCommonJSExportsBeforePatches(globalObject, specifier, exports);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto* required = namespaceOfRequiredESModule(exports, specifier)) {
+            if (!moduleNamespace)
+                moduleNamespace = required;
+        } else if (wasWritten)
+            before.commonJS = exports;
+    }
+    // A builtin is left to the caller, which loads it again for free.
+    if (moduleNamespace && !builtinModuleOfOriginalKey(originalModuleKey(specifier))) {
+        before.esm = esmExportsBeforePatches(globalObject, specifier, moduleNamespace);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return before;
+}
+
+// The same for the module that is loaded as `key`: a specifier, or a key that was made of one, as originalModuleKey() makes the key of what vi.mock() set aside.
+static ExportsBeforePatches exportsBeforePatchesOfModuleLoadedAs(Zig::GlobalObject* globalObject, const String& key, JSC::JSModuleNamespaceObject* moduleNamespace = nullptr)
+{
+    if (!mayHavePatchOfDisplacedModuleMock(globalObject)) [[likely]]
+        return {};
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSString* keyString = jsString(vm, key);
+    LoadedModule loaded;
+    if (!moduleNamespace) {
+        findLoadedESModule(globalObject, keyString, loaded);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    findLoadedCommonJSModule(globalObject, keyString, loaded);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (moduleNamespace)
+        loaded.esmNamespace = moduleNamespace;
+    RELEASE_AND_RETURN(scope, exportsBeforePatches(globalObject, withoutOriginalModuleQuery(key), loaded));
+}
+
+// What `mock` saved of the CommonJS module that it patched in place, from before the mocks that had replaced it.
+// A mock that a test file lays after its own vi.doUnmock() finds there what the preload's mock wrote. Empty if it found the module object of a mock.
+static JSValue commonJSExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    JSValue exports = mock->originalCommonJSExports.get();
+    if (!exports || !mayHavePatchOfDisplacedModuleMock(globalObject)) [[likely]]
+        return exports;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    findCommonJSExportsBeforePatches(globalObject, specifier, exports);
+    RETURN_IF_EXCEPTION(scope, {});
+    return exports;
+}
+
+// What the original of `mock` exported before the patch that a displaced mock of a preload left on it: on what vi.mock() set aside, or in what `mock` saved.
+static ExportsBeforePatches exportsOfOriginalBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    if (!mayHavePatchOfDisplacedModuleMock(globalObject)) [[likely]]
+        return {};
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    ExportsBeforePatches before = exportsBeforePatchesOfModuleLoadedAs(globalObject, originalModuleKey(specifier));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (before.esm || before.commonJS)
+        return before;
+    JSValue exports = mock->originalCommonJSExports.get();
+    bool wasWritten = exports && findCommonJSExportsBeforePatches(globalObject, specifier, exports);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (wasWritten && exports && !namespaceOfRequiredESModule(exports, specifier))
+        before.commonJS = exports;
+    return before;
 }
 
 #if ENABLE(AOT)
@@ -1404,6 +1660,13 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     if (mock->unevaluatedCompiledModule && !hasAlreadyWaited)
         addToFactoryImportChains(globalObject, JSC::AOT::ModuleID(), JSC::AOT::ModuleID(*mock->unevaluatedCompiledModule), JSC::AOT::LoadKind::Import);
 #endif
+    ExportsBeforePatches beforePatches = exportsOfOriginalBeforePatches(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (beforePatches.esm || beforePatches.commonJS) [[unlikely]] {
+        JSObject* original = beforePatches.forImport(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, JSC::JSPromise::resolvedPromise(globalObject, original));
+    }
     JSObject* exports = mock->originalNamespace.get();
     if (!exports && mayLoadDependenciesFirst && patchesModuleBeingEvaluated(globalObject, mock, specifier)) {
         JSC::JSPromise* evaluating = importModuleKey(globalObject, specifier);
@@ -1423,8 +1686,12 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     UNUSED_PARAM(hasAlreadyWaited);
 #endif
     if (!exports && mock->originalCommonJSExports && !isCompiledESModule) {
-        exports = esmExportsOfCommonJSExports(globalObject, mock->originalCommonJSExports.get());
+        JSValue commonJSExports = commonJSExportsBeforePatches(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (commonJSExports) {
+            exports = esmExportsOfCommonJSExports(globalObject, commonJSExports);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
     }
 #if ENABLE(AOT)
     // A require() cannot wait for the factory it called, so it gets the original: evaluate the file now, and install the mock over it.
@@ -1620,8 +1887,14 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue exports = mock->originalCommonJSExports.get(); exports && !exports.inherits<JSC::JSModuleNamespaceObject>())
-        return exports;
+    ExportsBeforePatches beforePatches = exportsOfOriginalBeforePatches(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (JSValue original = beforePatches.forRequire()) [[unlikely]]
+        return original;
+    JSValue commonJSExports = commonJSExportsBeforePatches(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (commonJSExports && !commonJSExports.inherits<JSC::JSModuleNamespaceObject>())
+        return commonJSExports;
     JSObject* exports = esmExportsBeforePatches(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, {});
     if (exports)
@@ -1708,6 +1981,19 @@ static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const 
 #else
     constexpr bool isCompiledCommonJSFile = false;
 #endif
+    // The module may have the patch of a preload's mock that the test file displaced. The mock is made of what it exported before.
+    ExportsBeforePatches beforePatches = exportsBeforePatchesOfModuleLoadedAs(globalObject, key, moduleNamespace ? dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleNamespace) : nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (beforePatches.commonJS) [[unlikely]] {
+        isCommonJS = true;
+        RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, beforePatches.commonJS, spy));
+    }
+    if (beforePatches.esm) [[unlikely]] {
+        // A copy of the exports of an ES module: Bun::mockObject() tells a module by its tag.
+        beforePatches.esm->setPrototypeDirect(vm, jsNull());
+        beforePatches.esm->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, beforePatches.esm, spy));
+    }
     if (commonJSModule) {
         isCommonJS = true;
         exports = commonJSModule->exportsObject();
@@ -1934,7 +2220,8 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
 #endif
 
     if (!factoryValue) {
-        JSValue commonJSExports = originalCommonJSExports.get();
+        JSValue commonJSExports = commonJSExportsBeforePatches(globalObject, this);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!commonJSExports || commonJSExports.inherits<JSC::JSModuleNamespaceObject>()) {
             JSObject* exports = esmExportsBeforePatches(globalObject, this);
             RETURN_IF_EXCEPTION(scope, {});
@@ -2999,6 +3286,11 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 if (!variable.record)
                     continue;
                 JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
+                // `export * as name` gets its value at the first read.
+                if (!original && variable.localName == vm.propertyNames->starNamespacePrivateName) {
+                    original = variable.record->getModuleNamespace(globalObject);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
                 overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
                 RETURN_IF_EXCEPTION(scope, );
             }
@@ -6157,6 +6449,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
 
     LoadedModule loaded = findLoadedModule(globalObject, specifier.keyString);
     RETURN_IF_EXCEPTION(scope, {});
+    // The test file has removed its mock, and the module is back with the patch of the preload's mock that it had displaced.
+    ExportsBeforePatches beforePatches = exportsBeforePatches(globalObject, specifier.key, loaded);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (beforePatches.esm || beforePatches.commonJS) [[unlikely]] {
+        JSObject* original = beforePatches.forImport(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, original)));
+    }
     // What a preload loads is given back to the next test file under its own key.
     if (!loaded.esmNamespace && !loaded.commonJSModule && !loaded.staleESMEntry && !loaded.staleCommonJSEntry && !JSMock__isInPreload(globalObject))
         globalObject->onLoadPlugins.loadedByImportActual.add(specifier.key);
@@ -6183,6 +6483,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     RELEASE_AND_RETURN(scope, JSValue::encode(importModuleFrom(globalObject, callerPath(vm, callframe), specifier.key)));
 }
 
+// require() of a module that no mock is registered for, as jest.requireActual() makes it. See jsFunctionImportActualModule().
+static JSValue requireModuleBeforePatches(Zig::GlobalObject* globalObject, const String& from, const ModuleMockSpecifier& specifier)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    ExportsBeforePatches beforePatches = exportsBeforePatchesOfModuleLoadedAs(globalObject, specifier.key);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (JSValue original = beforePatches.forRequire()) [[unlikely]]
+        return original;
+    RELEASE_AND_RETURN(scope, requireModuleKey(globalObject, from, specifier.key));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -6194,7 +6505,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * l
 
     if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key))
         RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, callerPath(vm, callframe), specifier.key)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleBeforePatches(globalObject, callerPath(vm, callframe), specifier)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockDidLoad, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -6277,7 +6588,7 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
         }
     }
 
-    JSValue original = mock ? requireOriginalModule(globalObject, mock) : requireModuleKey(globalObject, from, specifier.key);
+    JSValue original = mock ? requireOriginalModule(globalObject, mock) : requireModuleBeforePatches(globalObject, from, specifier);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mockObject(globalObject, original, false)));
 }

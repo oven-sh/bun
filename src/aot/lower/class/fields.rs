@@ -279,6 +279,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_define(this, PropertyName::Constant(key), undefined);
     }
 
+    pub(super) fn lower_value_of_defined_field(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        this: ValueId,
+    ) -> ValueId {
+        let function_name = match self.find_field_target(class, member) {
+            FieldTarget::Property(name) => self.name_under_member(member, name),
+            FieldTarget::Private(name) => self.name_under_private_name(class, name),
+        };
+        let initializer = FieldValue::Initializer;
+        self.lower_field_value(class, member, initializer, Some(function_name), this)
+    }
+
     fn lower_field(
         &mut self,
         class: ClassId,

@@ -59,11 +59,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         self.initialize_converted_symbol(symbol, name, value);
                     }
                     PatKind::Object(_) | PatKind::Array(_) => {
-                        self.bind_pattern(node.pat, value, None);
+                        self.bind_parameter_pattern(node.pat, value);
                     }
                     PatKind::Missing => {}
                 }
             }
+            self.destructured_position = None;
         }
         let bound = self.file.bound;
         let copies = bound.runtime.parameter_var_copies();

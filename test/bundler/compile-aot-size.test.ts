@@ -84,11 +84,13 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 // does not list, and measures 67,894,605 and 25,427,277.
 // Restated once with oven-sh/bun#48120: the second measured 25,880,776.
 // And once with oven-sh/bun#48436: it measured 25,966,728. A trimmed executable still keeps 307 KB for mocks, to be removed next.
-const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_990_000 };
+// Both restated with oven-sh/bun#48478: they measured 68,536,578 and 26,028,290.
+const mostMappedBytes: Record<string, number> = { "": 68_880_000, "--trim": 26_200_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
 // Restated once, where the compiler was merged: it measured 23,647,988.
 // And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.
-const mostBytesOfCompiler = 23_990_000;
+// And with oven-sh/bun#48478, from 24,324,717 and 1%.
+const mostBytesOfCompiler = 24_570_000;
 
 const importsItsArguments = `
   import { join } from "node:path";

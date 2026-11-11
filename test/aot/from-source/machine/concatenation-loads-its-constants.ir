@@ -1,0 +1,31 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function greet(name: string): string { return `Hello, ${name}!!`; }
+# function front(name: string): string { return "to " + name; }
+# function behind(name: string): string { return name + " units"; }
+# function path(a: string, b: string): string { return `/a/${a}/b/${b}/c`; }
+# for (const name of JSON.parse("[\"x\", \"\", \"yz\"]"))
+#     print(greet(String(name)), front(String(name)), behind(String(name)), path(String(name), "p"));
+# -- end of source
+# The stub of a concatenation loads its string constants by their numbers: the code has no calls for them.
+# RUN: bytes f1 f2 f3 f4 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NOT: CreateConstant
+# CHECK: Number32 Number StringCell "Hello, "
+# CHECK: Number32 Number StringCell "!!"
+# CHECK: Call Stub ConcatenateWithConstants.FirstAndThirdOfThree
+# CHECK: unit f2:Body
+# CHECK: Number32 Number StringCell "to "
+# CHECK: Call Stub ConcatenateWithConstants.FirstOfTwo
+# CHECK: unit f3:Body
+# CHECK: Number32 Number StringCell " units"
+# CHECK: Call Stub ConcatenateWithConstants.SecondOfTwo
+# CHECK: unit f4:Body
+# CHECK-NOT: CreateConstant
+# CHECK: Call Stub ConcatenateWithConstants.FirstAndThirdOfThree
+# CHECK: Number32 Number StringCell "/c"
+# CHECK: Call Stub ConcatenateWithConstants.ThirdOfThree
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: Hello, x!! to x x units /a/x/b/p/c
+# SHELL-NEXT: Hello, !! to   units /a//b/p/c
+# SHELL-NEXT: Hello, yz!! to yz yz units /a/yz/b/p/c

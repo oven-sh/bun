@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { getTestUrl, getVendorSource, parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { getTestUrl, getVendorSource, parseGitUrl, parseJunitFileSuites } from "../../scripts/buildkite.ts";
 import vendors from "../vendor.json";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
@@ -241,9 +241,23 @@ describe("getTestUrl", () => {
     }));
     expect(suites.length).toBeGreaterThan(0);
     for (const { directory, repository, commit } of suites) {
+      // An entry can name its repository by a clone URL. The link is on the page of the repository.
+      const page = parseGitUrl(repository);
+      expect(page).toBeDefined();
       const source = getVendorSource(`${directory}/test/a.test.ts`, suites);
-      expect(getTestUrl("test/a.test.ts", source, 12)).toBe(`${repository}/blob/${commit}/test/a.test.ts#L12`);
+      expect(getTestUrl("test/a.test.ts", source, 12)).toBe(`${page}/blob/${commit}/test/a.test.ts#L12`);
     }
+  });
+
+  test("links a suite whose entry names its repository by a clone URL", () => {
+    const source = getVendorSource("vendor/elysia/test/a.test.ts", [elysia])!;
+    expect([
+      getTestUrl("test/a.test.ts", { ...source, repository: "https://github.com/elysiajs/elysia.git" }, 12),
+      getTestUrl("test/a.test.ts", { ...source, repository: "git@github.com:elysiajs/elysia.git" }, 12),
+    ]).toEqual([
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/a.test.ts#L12`,
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/a.test.ts#L12`,
+    ]);
   });
 
   test("gives no link for a suite whose repository is not one of GitHub", () => {

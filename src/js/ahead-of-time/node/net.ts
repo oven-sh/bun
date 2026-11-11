@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 8586a4f6c778a73f751f16bc13e95b0f066e4131313f03070597d8f50e6fe40d.
+// Written against that file with the SHA-256 51ead7af41fd3198b9c6ed78042cdbed847066186ca5c94d09bf170e8cd7b734.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -34,7 +34,6 @@ const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediat
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const {
   ExceptionWithHostPort,
-  listenException,
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
@@ -3961,6 +3960,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
     }
   } catch (err) {
     const address = path ?? (fd === undefined ? hostname : null);
+    const { listenException } = require("internal/net/errors");
     process.nextTick(emitErrorNextTick, this, listenException(err, address, path != null ? -1 : port));
   }
   return this;

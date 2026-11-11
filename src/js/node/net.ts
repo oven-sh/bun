@@ -31,7 +31,6 @@ let dns: typeof import("./dns").default;
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const {
   ExceptionWithHostPort,
-  listenException,
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
@@ -3522,6 +3521,7 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
     }
   } catch (err) {
     const address = path ?? (fd === undefined ? hostname : null);
+    const { listenException } = require("internal/net/errors");
     process.nextTick(emitErrorNextTick, this, listenException(err, address, path != null ? -1 : port));
   }
   return this;

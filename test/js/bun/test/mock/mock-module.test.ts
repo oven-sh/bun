@@ -7583,62 +7583,67 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         ["--rerun-each=2"],
       );
       expect(stderr).toContain(thrown("again"));
+      expect(stderr.split(thrown("again"))).toHaveLength(2);
       expect(stderr).toContain(" 0 pass\n 1 fail\n 1 error\n");
       expect(exitCode).toBe(1);
     });
 
     // The module and its importers are evicted as behind a mock that waits, and a mock that the file made before is undone.
     test("leaves nothing of the test file that fails to the next one", async () => {
-      const { stderr, exitCode } = await run({
-        // service.ts runs while mocks.ts waits for its own import.
-        "later/node_modules/mail-e/package.json": JSON.stringify({ name: "mail-e", main: "index.js" }),
-        "later/node_modules/mail-e/index.js": `exports.send = () => "real";`,
-        "later/service.ts": `import { send } from "mail-e"; export const notify = () => send();`,
-        "later/tag.ts": `export const tag = "mock";`,
-        "later/mocks.ts": `
-          import { vi } from "bun:test";
-          import { tag } from "./tag";
-          const ofFirstFile = () => tag;
-          vi.mock("mail-e", () => ({ send: ofFirstFile }));
-        `,
-        "later/a.test.ts": `
-          import { expect, test } from "bun:test";
-          import "./mocks";
-          import { notify } from "./service";
-          test("fails to load", () => expect(notify()).toBe("mock"));
-        `,
-        "later/mocks-that-work.ts": `
-          import { vi } from "bun:test";
-          vi.mock("mail-e", () => ({ send: () => "mock of the next file" }));
-        `,
-        "later/b.test.ts": `
-          import { expect, test } from "bun:test";
-          import "./mocks-that-work";
-          import { notify } from "./service";
-          test("the next file mocks the package", () => expect(notify()).toBe("mock of the next file"));
-        `,
-        // The first mock of the helper is in place when the second one throws.
-        "two/mail.ts": mail,
-        "two/log.ts": `export const log = () => "real";`,
-        "two/service.ts": `import { send } from "./mail"; import { log } from "./log"; export const notify = () => send() + " " + log();`,
-        "two/mocks.ts": `
-          import { vi } from "bun:test";
-          vi.mock("./log", () => ({ log: () => "mock" }));
-          const ofSecondMock = () => "mock";
-          vi.mock("./mail", () => ({ send: ofSecondMock }));
-        `,
-        "two/a.test.ts": `
-          import { expect, test } from "bun:test";
-          import "./mocks";
-          import { notify } from "./service";
-          test("fails to load", () => expect(notify()).toBe("mock mock"));
-        `,
-        "two/b.test.ts": `
-          import { expect, test } from "bun:test";
-          import { notify } from "./service";
-          test("the next file mocks nothing", () => expect(notify()).toBe("real real"));
-        `,
-      });
+      const { stderr, exitCode } = await run(
+        {
+          // service.ts runs while mocks.ts waits for its own import.
+          "later/node_modules/mail-e/package.json": JSON.stringify({ name: "mail-e", main: "index.js" }),
+          "later/node_modules/mail-e/index.js": `exports.send = () => "real";`,
+          "later/service.ts": `import { send } from "mail-e"; export const notify = () => send();`,
+          "later/tag.ts": `export const tag = "mock";`,
+          "later/mocks.ts": `
+            import { vi } from "bun:test";
+            import { tag } from "./tag";
+            const ofFirstFile = () => tag;
+            vi.mock("mail-e", () => ({ send: ofFirstFile }));
+          `,
+          "later/a.test.ts": `
+            import { expect, test } from "bun:test";
+            import "./mocks";
+            import { notify } from "./service";
+            test("fails to load", () => expect(notify()).toBe("mock"));
+          `,
+          "later/mocks-that-work.ts": `
+            import { vi } from "bun:test";
+            vi.mock("mail-e", () => ({ send: () => "mock of the next file" }));
+          `,
+          "later/b.test.ts": `
+            import { expect, test } from "bun:test";
+            import "./mocks-that-work";
+            import { notify } from "./service";
+            test("the next file mocks the package", () => expect(notify()).toBe("mock of the next file"));
+          `,
+          // The first mock of the helper is in place when the second one throws.
+          "two/mail.ts": mail,
+          "two/log.ts": `export const log = () => "real";`,
+          "two/service.ts": `import { send } from "./mail"; import { log } from "./log"; export const notify = () => send() + " " + log();`,
+          "two/mocks.ts": `
+            import { vi } from "bun:test";
+            vi.mock("./log", () => ({ log: () => "mock" }));
+            const ofSecondMock = () => "mock";
+            vi.mock("./mail", () => ({ send: ofSecondMock }));
+          `,
+          "two/a.test.ts": `
+            import { expect, test } from "bun:test";
+            import "./mocks";
+            import { notify } from "./service";
+            test("fails to load", () => expect(notify()).toBe("mock mock"));
+          `,
+          "two/b.test.ts": `
+            import { expect, test } from "bun:test";
+            import { notify } from "./service";
+            test("the next file mocks nothing", () => expect(notify()).toBe("real real"));
+          `,
+        },
+        // Below the root directory, the files run in the order in which the file system lists them.
+        ["./later/a.test.ts", "./later/b.test.ts", "./two/a.test.ts", "./two/b.test.ts"],
+      );
       for (const variable of ["ofFirstFile", "ofSecondMock"]) expect(stderr).toContain(thrown(variable));
       expect(stderr).toContain(" 2 pass\n 2 fail\n 2 errors\n");
       expect(exitCode).toBe(1);

@@ -5833,11 +5833,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (thrown && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
             // No load comes from a module that is linked to the module and has yet to run, the calling module among them. The mock would never reach it, so the error of the factory is thrown.
             if (loaded.esmNamespace && isLinkedToBodyYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), mock, callerPath(vm, callframe))) {
-                // As behind a mock that waits, the module and its importers are not for the next test file.
-                ModulesToEvict evict;
-                evict.onlyImportersFromEarlierTestFiles = true;
-                evict.modules.append(specifier);
-                evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+                // As behind a mock that waits, the module goes with every importer that a test file loaded, and the next test file loads them again.
+                evictModulesAndTheirImporters(globalObject, Vector<String> { specifier });
                 RETURN_IF_EXCEPTION(scope, {});
                 scope.throwException(globalObject, thrown);
                 return {};

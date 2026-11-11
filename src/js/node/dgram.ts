@@ -523,13 +523,10 @@ function handleGetSendQueueCount(this: UDPHandle) {
 function onMessage(nread: number, handle: UDPHandle, buf: Buffer, rinfo: RemoteInfo) {
   const self = handle[kOwnerSymbol]!;
   if (nread < 0) {
-    return self.emit(
-      "error",
-      Object.assign(new Error("recvmsg"), {
-        syscall: "recvmsg",
-        errno: nread,
-      }),
-    );
+    const error: NodeJS.ErrnoException = new Error("recvmsg");
+    error.syscall = "recvmsg";
+    error.errno = nread;
+    return self.emit("error", error);
   }
   rinfo.size = buf.length; // compatibility
   self.emit("message", buf, rinfo);

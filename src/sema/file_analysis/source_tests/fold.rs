@@ -1838,6 +1838,51 @@ fn tests_of_runtime_values() {
     );
 }
 
+const VALUES_OF_PROCESS: Fold<'static> = Fold {
+    defines: &[(
+        Path::Global(&["process", "getBuiltinModule"]),
+        Defined::RuntimeValue(RuntimeValueKind::Function),
+    )],
+    ..Fold::NONE
+};
+
+// `process` and `node:process` name one module.
+const TESTS_OF_VALUES_OF_IMPORTED_PROCESS: &[DeadCalls] = &[
+    (
+        "a.mjs",
+        r#"import process from "node:process"; if (!process.getBuiltinModule) a(); else b();"#,
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        r#"import process from "process"; if (!process.getBuiltinModule) a(); else b();"#,
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        r#"import process from "./process"; if (!process.getBuiltinModule) a(); else b();"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        r#"import process from "node:path"; if (!process.getBuiltinModule) a(); else b();"#,
+        &[],
+        &["a", "b"],
+    ),
+];
+
+#[test]
+fn tests_of_runtime_values_of_imported_process() {
+    for &(path, text, dead, alive) in TESTS_OF_VALUES_OF_IMPORTED_PROCESS {
+        folded(path, text, VALUES_OF_PROCESS, |s| {
+            assert_dead_calls(s, text, dead, alive)
+        });
+    }
+}
+
 #[test]
 fn import_meta_main() {
     let text = "import.meta.main;";

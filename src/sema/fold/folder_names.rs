@@ -11,7 +11,7 @@ use crate::bind::{
 };
 use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
 use crate::hir_from_data::DataValue;
-use crate::import_sites::is_in_with_scope;
+use crate::import_sites::{LibraryModule, is_in_with_scope};
 use crate::module_format::settled_main_module_operand;
 use std::cell::Cell;
 
@@ -90,11 +90,13 @@ impl<'s> Folder<'_, 's> {
         }
         let (hir, bound) = (self.hir, self.bound);
         let imports = self.process_imports.get_or_init(|| {
-            let module = self.atoms.intern(b"node:process");
+            let process = Some(LibraryModule::Process);
             let imports = (0..).map(ImportId).zip(hir.imports.iter());
             imports
                 .filter(|(_, import)| {
-                    import.spec == module && !import.type_only && import.default != Atom::NONE
+                    LibraryModule::of_specifier(import.spec, None) == process
+                        && !import.type_only
+                        && import.default != Atom::NONE
                 })
                 .map(|(id, _)| bound.declared_symbol(Decl::ImportDefault(id)))
                 .collect()

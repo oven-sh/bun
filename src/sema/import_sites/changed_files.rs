@@ -3,6 +3,7 @@ use super::alternatives::{
     find_caller_relative_alternatives, find_known_alternatives, find_known_load_names,
 };
 use super::call_sites::is_free_name;
+use super::library_modules::LibraryModule;
 use super::made_requires::{follow_settled_bindings, is_only_read_by_member};
 use super::parameters::{find_only_name_of, find_parameter_key_path};
 use super::{
@@ -11,20 +12,15 @@ use super::{
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, Decl, Parent, PatParent, SymbolId};
 use crate::file_analysis::FileInputs;
-use crate::fold::{Constant, Decisions, FoldInputs, FoldedValue, find_members_below_module};
+use crate::fold::{
+    Constant, Decisions, FoldInputs, FoldedValue, Walk, find_members_below_library_module,
+    find_members_below_module,
+};
 use crate::hir::{
     BinOp, ExprId, ExprKind, File, IdList, ImportedFileChanger, MemberKey, PatId, PatKind, PropKey,
     PropKind, StmtKind,
 };
 use smallvec::SmallVec;
-use std::cell::Cell;
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Holder {
-    Fs,
-    FsPromises,
-    Bun,
-}
 
 #[derive(Copy, Clone)]
 enum Reach {
@@ -84,46 +80,36 @@ fn find_constant(inputs: &ScanInputs<'_, '_>, e: ExprId) -> Option<Constant> {
     }
 }
 
-fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder, Atom)> {
+fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(LibraryModule, Atom)> {
     let &ScanInputs {
         hir, bound, atoms, ..
     } = inputs;
     if let Some((object, MemberKey::Name(name))) = hir.member_key(callee) {
         let object = follow_settled_bindings(hir, bound, hir.skip_type_assertions(object));
         if is_free_name(hir, bound, object, &[atoms.intern(b"Bun")]) {
-            return Some((Holder::Bun, name));
+            return Some((LibraryModule::Bun, name));
         }
     }
     let (holder, members) = find_members_below_holder(inputs, callee)?;
-    match (holder, &members[..]) {
-        (holder, &[name]) => Some((holder, name)),
-        (Holder::Fs, &[name, promises]) if atoms.bytes(promises) == b"promises" => {
-            Some((Holder::FsPromises, name))
-        }
-        _ => None,
-    }
+    holder.export_of(&members, Some(atoms))
 }
 
 fn find_members_below_holder(
     inputs: &ScanInputs<'_, '_>,
     e: ExprId,
-) -> Option<(Holder, SmallVec<[Atom; 4]>)> {
+) -> Option<(LibraryModule, SmallVec<[Atom; 4]>)> {
     let &ScanInputs {
         hir, bound, atoms, ..
     } = inputs;
-    let holder = Cell::new(Holder::Fs);
-    let is_module = |specifier: Atom| {
-        holder.set(match atoms.bytes(specifier) {
-            b"fs" | b"node:fs" => Holder::Fs,
-            b"fs/promises" | b"node:fs/promises" => Holder::FsPromises,
-            b"bun" => Holder::Bun,
-            _ => return false,
-        });
-        true
-    };
     let find_constant = |e| find_constant(inputs, e);
-    let members = find_members_below_module(hir, bound, e, &find_constant, &is_module, true)?;
-    Some((holder.get(), members))
+    let (walk, atoms) = (Walk::OF_CHANGED_FILES, Some(atoms));
+    let found =
+        find_members_below_library_module(hir, bound, e, walk, &find_constant, atoms, None)?;
+    let is_holder = matches!(
+        found.0,
+        LibraryModule::Fs | LibraryModule::FsPromises | LibraryModule::Bun
+    );
+    is_holder.then_some(found)
 }
 
 fn find_functions_of_other_files_called<'a>(
@@ -132,21 +118,22 @@ fn find_functions_of_other_files_called<'a>(
 ) -> SmallVec<[&'a ImportedFileChanger; 2]> {
     let &ScanInputs { hir, bound, .. } = inputs;
     let known = &hir.imported_file_changers;
-    let module = Cell::new(Atom::NONE);
-    let is_module = |specifier: Atom| {
-        module.set(specifier);
-        known.iter().any(|it| it.specifier == specifier)
-    };
+    let is_module = |specifier: Atom| known.iter().any(|it| it.specifier == specifier);
     let find_constant = |e| find_constant(inputs, e);
-    let members = find_members_below_module(hir, bound, callee, &find_constant, &is_module, true);
-    let export = match members.as_deref() {
-        Some(&[]) => known::default,
-        Some(&[export]) => export,
+    let walk = Walk::OF_CHANGED_FILES;
+    let Some(read) =
+        find_members_below_module(hir, bound, callee, walk, &find_constant, &is_module)
+    else {
+        return SmallVec::new();
+    };
+    let export = match read.members[..] {
+        [] => known::default,
+        [export] => export,
         _ => return SmallVec::new(),
     };
     let named = known
         .iter()
-        .filter(|it| it.specifier == module.get() && it.export == export);
+        .filter(|it| it.specifier == read.specifier && it.export == export);
     named.collect()
 }
 
@@ -160,7 +147,9 @@ fn find_path_of_file_object(inputs: &ScanInputs<'_, '_>, file: ExprId) -> Option
     };
     let callee = hir.skip_type_assertions(hir[call].callee);
     match find_function(inputs, callee)? {
-        (Holder::Bun, name) if atoms.bytes(name) == b"file" => hir.ids(hir[call].args).next(),
+        (LibraryModule::Bun, name) if atoms.bytes(name) == b"file" => {
+            hir.ids(hir[call].args).next()
+        }
         _ => None,
     }
 }
@@ -235,7 +224,8 @@ fn has_only_flags(
                 right,
             } if find_constant(inputs, right) == Some(Constant::Number(0.0)) => parts.push(left),
             _ => match find_members_below_holder(inputs, part) {
-                Some((Holder::Fs | Holder::FsPromises, members)) => match members[..] {
+                Some((LibraryModule::Fs | LibraryModule::FsPromises, members)) => match members[..]
+                {
                     [flag, constants]
                         if atoms.bytes(constants) == b"constants"
                             && is_allowed(atoms.bytes(flag)) => {}
@@ -481,10 +471,10 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         matches!(
             (holder, self.inputs.atoms.bytes(name)),
             (
-                Holder::Fs,
+                LibraryModule::Fs,
                 b"writeFile" | b"writeFileSync" | b"appendFile" | b"appendFileSync"
-            ) | (Holder::FsPromises, b"writeFile" | b"appendFile")
-                | (Holder::Bun, b"write")
+            ) | (LibraryModule::FsPromises, b"writeFile" | b"appendFile")
+                | (LibraryModule::Bun, b"write")
         )
     }
 }
@@ -621,7 +611,7 @@ pub(super) fn find_file_path_operands<'a>(
         }
     }
     match find_function(inputs, callee) {
-        Some((Holder::Fs | Holder::FsPromises, name)) => {
+        Some((LibraryModule::Fs | LibraryModule::FsPromises, name)) => {
             let name = atoms.bytes(name);
             let places = operands_changed_by_function_of_fs(name).iter();
             let named = places.filter_map(|&(place, reach)| Some(changed(operand(place)?, reach)));
@@ -638,12 +628,12 @@ pub(super) fn find_file_path_operands<'a>(
                 found.read = operand(0);
             }
         }
-        Some((Holder::Bun, name)) if atoms.bytes(name) == b"write" => {
+        Some((LibraryModule::Bun, name)) if atoms.bytes(name) == b"write" => {
             let target = operand(0);
             let path = target.and_then(|target| find_path_of_file_object(inputs, target));
             found.changed.extend(path.or(target).map(file));
         }
-        Some((Holder::Bun, _)) => {}
+        Some(_) => {}
         None => {
             if let Some((object, MemberKey::Name(name))) = hir.member_key(callee) {
                 let name = atoms.bytes(name);

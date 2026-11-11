@@ -1,9 +1,10 @@
 use super::alternatives::{
     AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
-    find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
-    find_texts_of_key, names_own_url,
+    find_base_of_made_require, find_elements_of_list_that_nothing_changes, find_names_as_written,
+    find_path_around_parameter, find_texts_of_key, names_own_url,
 };
 use super::changed_files::{TextsOfFile, find_file_path_operands};
+use super::library_modules::LibraryModule;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, UrlsHanded, find_imported_export, find_own_require,
     follow_settled_bindings, follow_to_own_require, holds_import_meta_require, is_nothing,
@@ -12,7 +13,7 @@ use super::made_requires::{
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
     Alternatives, CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
-    ImportSpecifier, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs,
+    ImportSpecifier, OwnUrlArgument, PathGiven, ResolvedForm, ResolvedFrom, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{
@@ -20,7 +21,8 @@ use crate::bind::{
     ScopeKind, SymbolId,
 };
 use crate::fold::{
-    Constant, Decisions, FoldedValue, find_export_of_module, find_members_below_module,
+    Constant, Decisions, FoldedValue, Walk, find_export_of_library_module,
+    find_members_below_module,
 };
 use crate::hir::{
     BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, IdList,
@@ -458,7 +460,9 @@ fn is_export_of_test_runner(
         _ => None,
     };
     let find_members = |e: ExprId| {
-        find_members_below_module(hir, bound, e, &find_constant, &is_test_runner, false)
+        let walk = Walk::OF_VALUE;
+        find_members_below_module(hir, bound, e, walk, &find_constant, &is_test_runner)
+            .map(|read| read.members)
     };
     let is_holder = |members: &[Atom]| matches!(members, [export] if holders.contains(export));
     if find_members(object).is_some_and(|members| is_holder(&members)) {
@@ -593,7 +597,7 @@ pub(crate) fn is_process(
     let imported =
         settled_symbol(hir, bound, e).and_then(|symbol| find_imported_export(hir, bound, symbol));
     if let Some((specifier, None)) = imported {
-        return specifier == known::process || specifier == known::node_process;
+        return LibraryModule::of_specifier(specifier, None) == Some(LibraryModule::Process);
     }
     matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if name == known::process
@@ -709,19 +713,11 @@ fn read_path_given_to_create_require(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     given: ExprId,
-    paths_read: &mut Vec<(ExprId, Atom)>,
+    paths_given: &mut Vec<(ExprId, PathGiven)>,
 ) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let asked = AskedOfDataFiles::default();
-    let found = find_alternatives(
-        inputs,
-        written_names,
-        &asked,
-        given,
-        Folder::OfFile,
-        None,
-        None,
-    )
-    .ok_or(UnreadPath)?;
+    let found =
+        find_base_of_made_require(inputs, written_names, &asked, given).ok_or(UnreadPath)?;
     let is_url_from_own_file = matches!(
         found.resolved_form,
         Some(ResolvedForm::Url | ResolvedForm::UrlObject)
@@ -742,14 +738,14 @@ fn read_path_given_to_create_require(
     let path = &from_own_folder;
     let text = inputs.atoms.bytes(*path);
     let Some(below) = text.strip_prefix(b"./") else {
-        paths_read.push((given, *path));
+        paths_given.push((given, PathGiven::Read(*path)));
         return Ok(Some(ResolvedFrom::PathFromOwnFolder(*path)));
     };
     let last = below.rsplit(|&byte| byte == b'/').next();
     if matches!(last, Some(b"." | b"..")) {
         return Err(UnreadPath);
     }
-    paths_read.push((given, *path));
+    paths_given.push((given, PathGiven::Read(*path)));
     match last {
         Some(name) if name.len() == below.len() => Ok(None),
         _ => Ok(Some(ResolvedFrom::PathFromOwnFolder(*path))),
@@ -760,8 +756,9 @@ fn find_path_to_resolve_from(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     call: ExprId,
+    site: &ImportSite,
     starts_at_own_directory: bool,
-    paths_read: &mut Vec<(ExprId, Atom)>,
+    paths_given: &mut Vec<(ExprId, PathGiven)>,
 ) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let &ScanInputs {
         hir,
@@ -783,7 +780,20 @@ fn find_path_to_resolve_from(
                 return Ok(Some(ResolvedFrom::File(path)));
             }
             Some(OwnRequire::MadeForPath(path)) if !starts_at_own_directory => {
-                return read_path_given_to_create_require(inputs, written_names, path, paths_read);
+                let read =
+                    read_path_given_to_create_require(inputs, written_names, path, paths_given);
+                let is_followed = match read {
+                    Err(UnreadPath) => false,
+                    Ok(None) => true,
+                    Ok(Some(_)) => {
+                        !matches!(site.kind, ImportSiteKind::Require(_))
+                            || matches!(site.specifier, ImportSpecifier::Constant(_))
+                    }
+                };
+                if !is_followed {
+                    paths_given.push((path, PathGiven::CallLeftOut(site.specifier)));
+                }
+                return read;
             }
             _ => {}
         }
@@ -870,7 +880,7 @@ pub(super) struct ScannedCalls {
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, ResolvedFrom)>,
-    pub(super) paths_given_to_create_require: Vec<(ExprId, Atom)>,
+    pub(super) paths_given_to_create_require: Vec<(ExprId, PathGiven)>,
 }
 
 pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite>) -> ScannedCalls {
@@ -1009,9 +1019,17 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             let starts_at_own_directory = decisions.is_path_from_own_directory(argument)
                 || alternatives.paths_from_own_directory.last() == Some(&argument);
             let written_names = &alternatives.written_names;
-            let paths_read = &mut paths_given_to_create_require;
+            let paths_given = &mut paths_given_to_create_require;
             let is_from_own = starts_at_own_directory;
-            match find_path_to_resolve_from(inputs, written_names, call, is_from_own, paths_read) {
+            let from = find_path_to_resolve_from(
+                inputs,
+                written_names,
+                call,
+                &site,
+                is_from_own,
+                paths_given,
+            );
+            match from {
                 Ok(Some(path)) => requires_of_other_files.push((sites.len() as u32, path)),
                 Ok(None) => {}
                 Err(UnreadPath) => continue,
@@ -1049,7 +1067,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         }
     }
     module_require_objects.shared_sort_unstable();
-    paths_given_to_create_require.shared_sort_unstable_by_key(|it: &(ExprId, Atom)| it.0);
+    paths_given_to_create_require.shared_sort_unstable_by_key(|it: &(ExprId, PathGiven)| it.0);
     paths_given_to_create_require.dedup();
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
@@ -1134,9 +1152,9 @@ fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {
         }
         FoldedValue::Unknown => None,
     };
-    let is_module = |specifier: Atom| matches!(atoms.bytes(specifier), b"module" | b"node:module");
-    find_export_of_module(hir, bound, table, &find_constant, &is_module)
-        .is_some_and(|name| atoms.bytes(name) == b"_cache")
+    let walk = Walk::OF_VALUE;
+    let export = find_export_of_library_module(hir, bound, table, walk, &find_constant, None, None);
+    matches!(export, Some((LibraryModule::Module, name)) if atoms.bytes(name) == b"_cache")
 }
 
 fn find_key_stored_in_cache(
@@ -1192,10 +1210,6 @@ fn find_key_stored_in_cache(
     Some((key, text))
 }
 
-fn is_worker_threads(specifier: Atom) -> bool {
-    specifier == known::worker_threads || specifier == known::node_worker_threads
-}
-
 fn find_whether_constructor_is_worker(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -1205,8 +1219,10 @@ fn find_whether_constructor_is_worker(
         Some(ExprKind::String(text)) => Some(Constant::String(text)),
         _ => None,
     };
-    let export = find_export_of_module(hir, bound, callee, &find_constant, &is_worker_threads);
-    if let Some(export) = export {
+    let walk = Walk::OF_VALUE;
+    let export =
+        find_export_of_library_module(hir, bound, callee, walk, &find_constant, None, None);
+    if let Some((LibraryModule::WorkerThreads, export)) = export {
         return Some(export == known::Worker);
     }
     let constructor = follow_settled_bindings(hir, bound, callee);

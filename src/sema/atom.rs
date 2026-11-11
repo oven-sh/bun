@@ -516,6 +516,9 @@ known_atoms! {
     use_asm = "use asm",
     hot = "hot",
     charCodeAt = "charCodeAt",
+    path_posix = "path/posix",
+    node_path_posix = "node:path/posix",
+    posix = "posix",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

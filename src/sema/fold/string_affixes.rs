@@ -1,12 +1,13 @@
 use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
-use crate::atom::{Atom, known};
-use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, SymbolId};
+use crate::atom::{Atom, Interner, known};
+use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl, SymbolId};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
-    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_arguments, call_site_kind,
-    find_imported_export, is_process, names_own_file, settled_symbol,
+    ENCODERS, ImportSiteKind, ImportSpecifier, LONGEST_CHAIN_OF_BINDINGS, LibraryModule,
+    call_site_arguments, call_site_kind, find_imported_export, iife_return_value, is_process,
+    names_own_file, settled_symbol,
 };
 use crate::util::{FxHashMap, FxHashSet};
 use bun_core::strings;
@@ -193,8 +194,7 @@ impl<'s> Folder<'_, 's> {
 
     fn is_dirname_of_own_file(&self, call: Call) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        let function =
-            find_export_of_module(hir, bound, call.callee, &|_| None, &is_path_specifier);
+        let function = find_export_of_path(hir, bound, call.callee, &|_| None);
         matches!(call.chain, Chain::No)
             && call.args.len() == 1
             && function == Some(known::meta_dirname)
@@ -652,7 +652,7 @@ fn find_path_joining_function(
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
 ) -> Option<Atom> {
     let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
-    find_export_of_module(hir, bound, callee, find_constant, &is_path_specifier).filter(joins_paths)
+    find_export_of_path(hir, bound, callee, find_constant).filter(joins_paths)
 }
 
 pub fn find_export_of_path_module(
@@ -664,156 +664,245 @@ pub fn find_export_of_path_module(
         ExprKind::String(text) => Some(Constant::String(text)),
         _ => None,
     };
-    find_export_of_module(hir, bound, named, &find_written_text, &is_path_specifier)
+    find_export_of_path(hir, bound, named, &find_written_text)
 }
 
-pub(crate) fn find_export_of_module(
+/// `LibraryModule::Path` alone: the fold takes `dirname()`, `join()` and `resolve()` for the functions of the platform,
+/// which those of `PathPosix` are not on Windows.
+fn find_export_of_path(
     hir: &File<'_>,
     bound: &Bound<'_>,
-    callee: ExprId,
+    read: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
-    is_module: &dyn Fn(Atom) -> bool,
 ) -> Option<Atom> {
-    find_export_of_module_with(hir, bound, callee, find_constant, is_module, None)
-}
-
-pub(crate) fn find_export_of_module_with(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    callee: ExprId,
-    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
-    is_module: &dyn Fn(Atom) -> bool,
-    known: Option<&MembersBehindNames>,
-) -> Option<Atom> {
-    let members = walk_to_module(hir, bound, callee, find_constant, is_module, false, known)?;
-    match members[..] {
-        [member] => Some(member),
+    let walk = Walk::OF_VALUE;
+    match find_export_of_library_module(hir, bound, read, walk, find_constant, None, None)? {
+        (LibraryModule::Path, export) => Some(export),
         _ => None,
     }
 }
 
-#[derive(Default)]
-pub(crate) struct MembersBehindNames(RefCell<FxHashMap<SymbolId, Option<SmallVec<[Atom; 4]>>>>);
+/// The module of the library that `read` was read off, and the members that it names below it.
+pub(crate) fn find_members_below_library_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    read: ExprId,
+    walk: Walk,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    atoms: Option<&Interner<'_>>,
+    known: Option<&MembersBehindNames>,
+) -> Option<(LibraryModule, SmallVec<[Atom; 4]>)> {
+    let find_asked = |e: ExprId| find_module_that_value_asks_for(hir, bound, e, find_constant);
+    let read = walk_to_module(hir, bound, read, walk, &find_asked, known)?;
+    Some((
+        LibraryModule::of_specifier(read.specifier, atoms)?,
+        read.members,
+    ))
+}
 
+pub(crate) fn find_export_of_library_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    read: ExprId,
+    walk: Walk,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    atoms: Option<&Interner<'_>>,
+    known: Option<&MembersBehindNames>,
+) -> Option<(LibraryModule, Atom)> {
+    let (module, members) =
+        find_members_below_library_module(hir, bound, read, walk, find_constant, atoms, known)?;
+    module.export_of(&members, atoms)
+}
+
+/// For a module of the program or of the test runner. `LibraryModule` names the modules of the library.
 pub(crate) fn find_members_below_module(
     hir: &File<'_>,
     bound: &Bound<'_>,
-    callee: ExprId,
+    read: ExprId,
+    walk: Walk,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
-    follows_awaited_imports: bool,
-) -> Option<SmallVec<[Atom; 4]>> {
-    let follows = follows_awaited_imports;
-    walk_to_module(hir, bound, callee, find_constant, is_module, follows, None)
+) -> Option<ReadOffModule> {
+    let find_asked = |e: ExprId| find_module_that_value_asks_for(hir, bound, e, find_constant);
+    walk_to_module(hir, bound, read, walk, &find_asked, None).filter(|it| is_module(it.specifier))
 }
 
-fn walk_to_module(
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ModuleFace {
+    Namespace,
+    Exports,
+}
+
+/// What one reader follows on the way from an expression to the module it was read off, and another does not.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct Walk {
+    follows_later_bindings: bool,
+    follows_called_functions: bool,
+    follows_awaited_imports: bool,
+    reads_optional_members: bool,
+    reads_default_of_namespace: bool,
+    most_steps: usize,
+}
+
+impl Walk {
+    /// A value: a name holds what is written in front of the read, and nothing else is known to have run.
+    pub(crate) const OF_VALUE: Walk = Walk {
+        follows_later_bindings: false,
+        follows_called_functions: false,
+        follows_awaited_imports: false,
+        reads_optional_members: false,
+        reads_default_of_namespace: false,
+        most_steps: usize::MAX,
+    };
+
+    pub(crate) const OF_CHANGED_FILES: Walk = Walk {
+        follows_awaited_imports: true,
+        ..Walk::OF_VALUE
+    };
+
+    /// The maker of a require and the calls inside its base. A name may be bound behind the read: code that runs
+    /// before the binding throws under `bun run` too. A base that went through a call is held against the path of the
+    /// run.
+    pub(crate) const OF_MAKER: Walk = Walk {
+        follows_later_bindings: true,
+        follows_called_functions: true,
+        follows_awaited_imports: true,
+        reads_optional_members: true,
+        reads_default_of_namespace: true,
+        most_steps: LONGEST_CHAIN_OF_BINDINGS + 1,
+    };
+}
+
+/// `members` start at the one that is read last: `m.a.b` is `[b, a]` below `m`.
+pub(crate) struct ReadOffModule {
+    pub(crate) specifier: Atom,
+    pub(crate) members: SmallVec<[Atom; 4]>,
+}
+
+/// What `Walk::OF_VALUE` found behind a name: the specifier and the members below it, or that no module is there.
+#[derive(Default)]
+pub(crate) struct MembersBehindNames(
+    RefCell<FxHashMap<SymbolId, Option<(Atom, SmallVec<[Atom; 4]>)>>>,
+);
+
+/// The one loop from an expression to the module it was read off. `find_asked` answers for what is no name and no
+/// member: the module that a call or an awaited `import()` asks for.
+pub(crate) fn walk_to_module(
     hir: &File<'_>,
     bound: &Bound<'_>,
-    callee: ExprId,
-    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
-    is_module: &dyn Fn(Atom) -> bool,
-    follows_awaited_imports: bool,
+    read: ExprId,
+    walk: Walk,
+    find_asked: &dyn Fn(ExprId) -> Option<(Atom, ModuleFace)>,
     known: Option<&MembersBehindNames>,
-) -> Option<SmallVec<[Atom; 4]>> {
-    let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
+) -> Option<ReadOffModule> {
+    debug_assert!(known.is_none() || walk == Walk::OF_VALUE);
+    let mut members: SmallVec<[Atom; 4]> = SmallVec::new();
     let mut came_by: Vec<(SymbolId, usize)> = Vec::new();
-    let mut e = callee;
-    let is_export = loop {
+    let mut steps_left = walk.most_steps;
+    let mut e = read;
+    let module = loop {
         e = hir.skip_type_assertions(e);
-        match hir[e].kind {
-            ExprKind::Dot {
-                chain: Chain::No, ..
+        let Some(kind) = hir.exprs.get(e.idx()).map(|it| it.kind) else {
+            break None;
+        };
+        if let ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } = kind {
+            let Some((object, MemberKey::Name(name))) = hir.member_key(e) else {
+                break None;
+            };
+            if chain != Chain::No && !walk.reads_optional_members {
+                break None;
             }
-            | ExprKind::Index {
-                chain: Chain::No, ..
-            } => match hir.member_key(e) {
-                Some((object, MemberKey::Name(name))) => {
-                    pending_members.push(name);
-                    e = object;
+            members.push(name);
+            e = object;
+            continue;
+        }
+        let Some(left) = steps_left.checked_sub(1) else {
+            break None;
+        };
+        steps_left = left;
+        if walk.follows_called_functions
+            && let Some(returned) = iife_return_value(hir, e)
+        {
+            e = returned;
+            continue;
+        }
+        let symbol = match kind {
+            ExprKind::Ident(_) => settled_symbol(hir, bound, e),
+            ExprKind::Await(_) if !walk.follows_awaited_imports => break None,
+            _ => break find_asked(e),
+        };
+        let Some(symbol) = symbol else {
+            break None;
+        };
+        let initializer = bound.binding_initializer(hir, symbol);
+        let goes_on = matches!(
+            initializer,
+            BindingInitializer::Expression(source)
+            | BindingInitializer::PatternProperty { source, .. }
+                if walk.follows_later_bindings || source < e
+        );
+        if goes_on && let Some(known) = known {
+            match known.0.borrow().get(&symbol) {
+                Some(Some((specifier, rest))) => {
+                    members.extend(rest.iter().copied());
+                    break Some((*specifier, ModuleFace::Exports));
                 }
-                Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => {
-                    break false;
-                }
-            },
-            ExprKind::Ident(_) => {
-                let Some(symbol) = settled_symbol(hir, bound, e) else {
-                    break false;
+                Some(None) => break None,
+                None => came_by.push((symbol, members.len())),
+            }
+        }
+        match initializer {
+            BindingInitializer::Expression(source) if goes_on => e = source,
+            BindingInitializer::PatternProperty { source, path } if goes_on => {
+                members.extend(path.iter().rev().copied());
+                e = source;
+            }
+            BindingInitializer::Import => {
+                let Some((specifier, export)) = find_imported_export(hir, bound, symbol) else {
+                    break None;
                 };
-                let initializer = bound.binding_initializer(hir, symbol);
-                let goes_on = matches!(
-                    initializer,
-                    BindingInitializer::Expression(source)
-                    | BindingInitializer::PatternProperty { source, .. } if source < e
-                );
-                if goes_on && let Some(known) = known {
-                    match known.0.borrow().get(&symbol) {
-                        Some(Some(rest)) => {
-                            pending_members.extend(rest.iter().copied());
-                            break true;
-                        }
-                        Some(None) => break false,
-                        None => came_by.push((symbol, pending_members.len())),
-                    }
-                }
-                match initializer {
-                    BindingInitializer::Expression(source) if source < e => e = source,
-                    BindingInitializer::PatternProperty { source, path } if source < e => {
-                        pending_members.extend(path.iter().rev().copied());
-                        e = source;
-                    }
-                    BindingInitializer::Import => {
-                        let imported = find_imported_export(hir, bound, symbol);
-                        let Some((specifier, export)) = imported else {
-                            break false;
-                        };
-                        pending_members.extend(export);
-                        break is_module(specifier);
-                    }
-                    _ => break false,
-                }
+                members.extend(export);
+                let mut declarations = bound.symbol(symbol).decls.iter();
+                let is_namespace = export.is_some()
+                    || declarations.any(|it| matches!(it, Decl::ImportNamespace(_)));
+                break Some(match is_namespace {
+                    true => (specifier, ModuleFace::Namespace),
+                    false => (specifier, ModuleFace::Exports),
+                });
             }
-            ExprKind::Call(call) => {
-                break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
-            }
-            ExprKind::Await(awaited) if follows_awaited_imports => {
-                let awaited = hir.skip_type_assertions(awaited);
-                let specifier = match call_site_kind(hir, bound, awaited) {
-                    Some(ImportSiteKind::ImportCall(_)) => call_site_arguments(hir, bound, awaited)
-                        .and_then(|arguments| hir.ids(arguments).next())
-                        .and_then(find_constant),
-                    _ => None,
-                };
-                break matches!(specifier, Some(Constant::String(text)) if is_module(text));
-            }
-            _ => break false,
+            _ => break None,
         }
     };
+    if let Some((_, ModuleFace::Namespace)) = module
+        && walk.reads_default_of_namespace
+        && members.last() == Some(&known::default)
+    {
+        members.pop();
+    }
     if let Some(known) = known {
         let mut known = known.0.borrow_mut();
-        for (symbol, pending) in came_by {
-            let rest = is_export.then(|| pending_members[pending..].iter().copied().collect());
+        for (symbol, passed) in came_by {
+            let rest = module.map(|(specifier, _)| (specifier, members[passed..].into()));
             known.insert(symbol, rest);
         }
     }
-    is_export.then_some(pending_members)
+    let (specifier, _) = module?;
+    Some(ReadOffModule { specifier, members })
 }
 
-fn is_module_request(
+/// A call that the scan takes for `require()`, `import.meta.require()` or `process.getBuiltinModule()`, and an
+/// awaited `import()`, by what the first argument folds to.
+fn find_module_that_value_asks_for(
     hir: &File<'_>,
     bound: &Bound<'_>,
     request: ExprId,
-    call: Call,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
-    is_module: &dyn Fn(Atom) -> bool,
-) -> bool {
-    let returns_exports = match call_site_kind(hir, bound, request) {
-        Some(
+) -> Option<(Atom, ModuleFace)> {
+    let (arguments, face) = match hir[request].kind {
+        ExprKind::Call(call) => match call_site_kind(hir, bound, request)? {
             ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
-            | ImportSiteKind::GetBuiltinModule(_),
-        ) => true,
-        Some(
+            | ImportSiteKind::GetBuiltinModule(_) => (hir[call].args, ModuleFace::Exports),
             ImportSiteKind::JsxRuntime
             | ImportSiteKind::JsxPackage
             | ImportSiteKind::Import(_)
@@ -825,17 +914,24 @@ fn is_module_request(
             | ImportSiteKind::ImportMetaResolve(_)
             | ImportSiteKind::MockModule(_)
             | ImportSiteKind::ImportByTestRunner(_)
-            | ImportSiteKind::RequireByTestRunner(_),
-        )
-        | None => false,
+            | ImportSiteKind::RequireByTestRunner(_) => return None,
+        },
+        ExprKind::Await(awaited) => {
+            let awaited = hir.skip_type_assertions(awaited);
+            match call_site_kind(hir, bound, awaited)? {
+                ImportSiteKind::ImportCall(_) => (
+                    call_site_arguments(hir, bound, awaited)?,
+                    ModuleFace::Namespace,
+                ),
+                _ => return None,
+            }
+        }
+        _ => return None,
     };
-    let argument = hir.ids(call.args).next();
-    returns_exports
-        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_module(text))
-}
-
-fn is_path_specifier(specifier: Atom) -> bool {
-    specifier == known::path || specifier == known::node_path
+    match find_constant(hir.ids(arguments).next()?)? {
+        Constant::String(specifier) => Some((specifier, face)),
+        _ => None,
+    }
 }
 
 fn is_segment_boundary(byte: u8) -> bool {

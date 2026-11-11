@@ -2,6 +2,7 @@ use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
     is_free_name,
 };
+use super::library_modules::LibraryModule;
 use super::parameters::find_values_passed_for_pattern;
 use super::touched_exports::is_only_tested;
 use crate::atom::{Atom, known};
@@ -10,18 +11,13 @@ use crate::bind::{
     Decl, FnOwner, InitialState, Parent, PatParent, StoreKind, SymbolId, SymbolStore,
     has_mapped_arguments,
 };
-use crate::fold::{Decisions, outermost_cast};
+use crate::fold::{Decisions, ModuleFace, Walk, outermost_cast, walk_to_module};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
     ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, PropKey, PropKind, StmtKind, UnOp,
 };
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
-use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
-
-fn is_node_module(specifier: Atom) -> bool {
-    specifier == known::module || specifier == known::node_module
-}
 
 pub(crate) fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
     let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
@@ -122,12 +118,6 @@ impl StepsLeft {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum ModuleFace {
-    Namespace,
-    Exports,
-}
-
 #[derive(Copy, Clone)]
 pub(super) struct Text<'a, 'h, 'b, 'd> {
     pub(super) hir: &'a File<'h>,
@@ -187,87 +177,42 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         }
     }
 
-    fn find_names_read_off_module(
-        self,
-        e: ExprId,
-        left: StepsLeft,
-    ) -> Option<(Atom, ModuleFace, SmallVec<[Atom; 4]>)> {
-        let Text { hir, bound, .. } = self;
-        let mut names = SmallVec::new();
-        let mut e = e;
-        for _ in 0..=LONGEST_CHAIN_OF_BINDINGS {
-            e = hir.skip_type_assertions(e);
-            while let Some((object, key)) = hir.member_key(e) {
-                let MemberKey::Name(name) = key else {
-                    return None;
-                };
-                names.push(name);
-                e = hir.skip_type_assertions(object);
-            }
-            if let Some(returned) = iife_return_value(hir, e) {
-                e = returned;
-                continue;
-            }
-            let Some(symbol) = settled_symbol(hir, bound, e) else {
-                let (specifier, face) = self.find_requested_module(e, left)?;
-                return Some((specifier, face, names));
-            };
-            match bound.binding_initializer(hir, symbol) {
-                BindingInitializer::Import => {
-                    let (specifier, export) = find_imported_export(hir, bound, symbol)?;
-                    names.extend(export);
-                    let declarations = bound.symbol(symbol).decls;
-                    let is_namespace = |it: &Decl| matches!(it, Decl::ImportNamespace(_));
-                    let face = match export.is_some() || declarations.iter().any(is_namespace) {
-                        true => ModuleFace::Namespace,
-                        false => ModuleFace::Exports,
-                    };
-                    return Some((specifier, face, names));
-                }
-                BindingInitializer::Expression(source) => e = source,
-                BindingInitializer::PatternProperty { source, path } => {
-                    names.extend(path.iter().rev().copied());
-                    e = source;
-                }
-                _ => return None,
-            }
-        }
-        None
+    /// The function of the library that `e` names, as the maker of a require and the calls inside its base are
+    /// read.
+    fn find_function_of_library(self, e: ExprId, left: StepsLeft) -> Option<(LibraryModule, Atom)> {
+        let find_asked = |e: ExprId| self.find_requested_module(e, left);
+        let read = walk_to_module(self.hir, self.bound, e, Walk::OF_MAKER, &find_asked, None)?;
+        LibraryModule::of_specifier(read.specifier, None)?.export_of(&read.members, None)
     }
 
-    fn find_export_read_off_module(
-        self,
-        e: ExprId,
-        left: StepsLeft,
-        modules: [Atom; 2],
-    ) -> Option<Atom> {
-        let (specifier, face, names) = self.find_names_read_off_module(e, left)?;
-        let (&export, before) = names.split_first()?;
-        let is_export = match *before {
-            [] => true,
-            [first] => face == ModuleFace::Namespace && first == known::default,
-            _ => false,
-        };
-        (is_export && modules.contains(&specifier)).then_some(export)
+    fn find_function_of_url(self, e: ExprId, left: StepsLeft) -> Option<Atom> {
+        match self.find_function_of_library(e, left)? {
+            (LibraryModule::Url, function) => Some(function),
+            _ => None,
+        }
+    }
+
+    fn find_function_of_path(self, e: ExprId, left: StepsLeft) -> Option<Atom> {
+        match self.find_function_of_library(e, left)? {
+            (LibraryModule::Path | LibraryModule::PathPosix, function) => Some(function),
+            _ => None,
+        }
     }
 
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
-        let Some((specifier, face, names)) = self.find_names_read_off_module(e, left) else {
-            return false;
-        };
-        let Some((&last, before)) = names.split_first() else {
-            return false;
-        };
-        let before = match before.split_last() {
-            Some((&first, later)) if face == ModuleFace::Namespace && first == known::default => {
-                later
-            }
-            _ => before,
-        };
-        is_node_module(specifier)
-            && last == known::createRequire
-            && before.iter().all(|&name| name == known::Module)
+        let maker = (LibraryModule::Module, known::createRequire);
+        self.find_function_of_library(e, left) == Some(maker)
     }
+}
+
+/// What `find_made_require` takes a call inside a base for. The value follower asks here when it reads such a base:
+/// a function that made the require a require for a path is one that it reads.
+pub(super) fn find_function_of_library_inside_base(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+) -> Option<(LibraryModule, Atom)> {
+    Text::of(hir, bound, None).find_function_of_library(callee, StepsLeft::ALL)
 }
 
 pub fn may_be_modified(hir: &File<'_>, bound: &Bound<'_>, variable: CommonJsVariable) -> bool {
@@ -396,9 +341,8 @@ fn is_written_as_own_file(
             let makes_url = match expr_kind(hir, url) {
                 Some(ExprKind::New(_)) => true,
                 Some(ExprKind::Call(call)) => {
-                    let export =
-                        text.find_export_read_off_module(hir[call].callee, left, URL_MODULES);
-                    export == Some(known::pathToFileURL)
+                    let function = text.find_function_of_url(hir[call].callee, left);
+                    function == Some(known::pathToFileURL)
                 }
                 _ => false,
             };
@@ -420,12 +364,12 @@ fn is_written_as_own_file(
     let (call, is_conversion) = match expr_kind(hir, e) {
         Some(ExprKind::Call(call)) => {
             let call = hir[call];
-            let export = text.find_export_read_off_module(call.callee, left, URL_MODULES);
-            if export == Some(known::pathToFileURL) {
+            let function = text.find_function_of_url(call.callee, left);
+            if function == Some(known::pathToFileURL) {
                 return call.args.len() == 1
                     && settled_chain(hir, bound, hir.id_at(call.args, 0)).any(is_path);
             }
-            (call, export == Some(known::fileURLToPath))
+            (call, function == Some(known::fileURLToPath))
         }
         Some(ExprKind::New(call)) => {
             let callee = hir.skip_type_assertions(hir[call].callee);
@@ -449,17 +393,13 @@ fn is_path_of_own_file(
         if name == known::url || name == known::href);
     let is_path = match expr_kind(hir, e) {
         Some(ExprKind::Call(call)) => {
-            let export = text.find_export_read_off_module(hir[call].callee, left, URL_MODULES);
-            export == Some(known::fileURLToPath)
+            text.find_function_of_url(hir[call].callee, left) == Some(known::fileURLToPath)
         }
         Some(ExprKind::New(_) | ExprKind::Binary { .. }) => false,
         _ => !is_url,
     };
     is_path && is_written_as_own_file(text, e, conversions_left, left)
 }
-
-const URL_MODULES: [Atom; 2] = [known::url, known::node_url];
-const PATH_MODULES: [Atom; 2] = [known::path, known::node_path];
 
 fn names_own_folder(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {
     let Text { hir, bound, .. } = text;
@@ -468,10 +408,10 @@ fn names_own_folder(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> b
     }
     if let Some(ExprKind::Call(call)) = expr_kind(hir, e) {
         let call = hir[call];
-        let export = text.find_export_read_off_module(call.callee, left, PATH_MODULES);
+        let function = text.find_function_of_path(call.callee, left);
         let file = hir.ids(call.args).next();
         return call.args.len() == 1
-            && export == Some(known::meta_dirname)
+            && function == Some(known::meta_dirname)
             && file.is_some_and(|file| {
                 names_own_file_behind(text, file, LONGEST_CHAIN_OF_BINDINGS, left)
             });
@@ -500,16 +440,18 @@ fn starts_at_own_folder(
                 ..
             }) => Some(first),
             Some(ExprKind::Template { exprs }) => hir.ids(exprs).next(),
-            Some(ExprKind::Call(call)) => {
-                let callee = hir[call].callee;
-                let export = text.find_export_read_off_module(callee, left, PATH_MODULES);
-                let joins = export == Some(known::join) || export == Some(known::resolve);
-                let is_path_of_url = hir[call].args.len() == 1
-                    && text.find_export_read_off_module(callee, left, URL_MODULES)
-                        == Some(known::fileURLToPath);
-                hir.ids(hir[call].args)
-                    .next()
-                    .filter(|_| joins || is_path_of_url)
+            // The value follower reads no call behind `?.`.
+            Some(ExprKind::Call(call)) if hir[call].chain == Chain::No => {
+                let leads_on = match text.find_function_of_library(hir[call].callee, left) {
+                    Some((LibraryModule::Path | LibraryModule::PathPosix, function)) => {
+                        function == known::join || function == known::resolve
+                    }
+                    Some((LibraryModule::Url, function)) => {
+                        function == known::fileURLToPath && hir[call].args.len() == 1
+                    }
+                    _ => false,
+                };
+                hir.ids(hir[call].args).next().filter(|_| leads_on)
             }
             _ => None,
         };
@@ -908,11 +850,11 @@ pub enum OwnRequire {
     MadeInOtherFile(Atom),
 }
 
-const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
+pub(crate) const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
 const LONGEST_CHAIN_OF_PARAMETERS: usize = 3;
 const LONGEST_CHAIN_OF_REQUESTS: usize = 3;
 
-fn iife_return_value(hir: &File<'_>, e: ExprId) -> Option<ExprId> {
+pub(crate) fn iife_return_value(hir: &File<'_>, e: ExprId) -> Option<ExprId> {
     let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
         return None;
     };
@@ -1223,13 +1165,42 @@ fn find_name_that_takes(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> Opti
     }
 }
 
-fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
+/// A require made for a path is followed to a call where it is called as it was made, or by the name of a
+/// constant that takes it and that no other file gets. A call of one of two values, or a call in another file,
+/// is followed to a require made for the file's own path alone.
+fn is_followed_from_where_it_is_made(
+    text: Text<'_, '_, '_, '_>,
+    made: ExprId,
+    path: ExprId,
+    holder: Option<SymbolId>,
+) -> bool {
+    let Text { hir, bound, .. } = text;
+    let mut taken = outermost_cast(hir, bound, made);
+    while let Some(around) = find_choice_that_hands_on(hir, bound, taken) {
+        taken = around;
+    }
+    !holder.is_some_and(|holder| is_exported(bound, holder))
+        && follow_to_own_require(text, taken, StepsLeft::ALL) == Some(OwnRequire::MadeForPath(path))
+}
+
+fn is_followed_to_every_call(
+    text: Text<'_, '_, '_, '_>,
+    made: ExprId,
+    has_call_left_out: &dyn Fn(ExprId) -> bool,
+) -> bool {
     let Text { hir, bound, .. } = text;
     if goes_out_of_sight(hir, bound, made) {
         return false;
     }
-    let is_base_read = find_made_require(text, made, StepsLeft::ALL).is_some();
-    let Some(holder) = find_name_that_takes(hir, bound, made) else {
+    let found = find_made_require(text, made, StepsLeft::ALL);
+    let holder = find_name_that_takes(hir, bound, made);
+    if let Some(OwnRequire::MadeForPath(path)) = found
+        && (has_call_left_out(path) || !is_followed_from_where_it_is_made(text, made, path, holder))
+    {
+        return false;
+    }
+    let is_base_read = found.is_some();
+    let Some(holder) = holder else {
         let written = outermost_cast(hir, bound, made);
         return is_base_read
             || is_only_tested(hir, bound, written)
@@ -1251,10 +1222,13 @@ fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
     holders.binary_search_by_key(&holder, |it| it.0).is_ok()
 }
 
+/// `has_call_left_out` says of the path that a require was made for whether a call of that require names what
+/// the build doesn't follow.
 pub fn find_made_requires_that_go_out_of_sight(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
+    has_call_left_out: &dyn Fn(ExprId) -> bool,
 ) -> Vec<ExprId> {
     let text = Text::of(hir, bound, None);
     let early = StepsLeft::ALL.without_late();
@@ -1264,7 +1238,7 @@ pub fn find_made_requires_that_go_out_of_sight(
             && !decisions.is_dead_expr(e)
             && find_arguments_of_create_require(text, e, early).is_some()
     });
-    made.filter(|&made| !is_followed_to_every_call(text, made))
+    made.filter(|&made| !is_followed_to_every_call(text, made, has_call_left_out))
         .collect()
 }
 

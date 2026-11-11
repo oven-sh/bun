@@ -1,5 +1,9 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified, names_own_file, settled_symbol};
+use super::library_modules::LibraryModule;
+use super::made_requires::{
+    find_function_of_library_inside_base, find_imported_export, may_be_modified, names_own_file,
+    settled_symbol,
+};
 use super::parameters::{
     ExportedNames, find_parameter_key_path, find_values_passed_by_call,
     find_values_passed_for_pattern, is_exported,
@@ -15,8 +19,8 @@ use crate::bind::{
     FnOwner, FunctionFlags, Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
 };
 use crate::fold::{
-    Constant, FoldedValue, MembersBehindNames, PathBelowFolder, apply_binary, apply_template,
-    find_export_of_module_with, trim_lead_surrogate_at_end, trim_to_last_segment,
+    Constant, FoldedValue, MembersBehindNames, PathBelowFolder, Walk, apply_binary, apply_template,
+    find_export_of_library_module, trim_lead_surrogate_at_end, trim_to_last_segment,
     trim_trail_surrogate_at_start,
 };
 use crate::hir::{
@@ -41,8 +45,6 @@ fn most_expressions_followed(hir: &File<'_>) -> u32 {
         u32::try_from(hir.exprs.len()).map_or(u32::MAX, |all| all.saturating_mul(2));
     twice_the_file.max(EXPRESSIONS_FOLLOWED_IN_ANY_FILE)
 }
-
-const PATH_MODULES: [&[u8]; 4] = [b"path", b"node:path", b"path/posix", b"node:path/posix"];
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Text {
@@ -334,6 +336,7 @@ struct Follower<'i, 'a, 's> {
     takes_all_as_written: bool,
     keeps_known_alternatives: bool,
     skips_reassigned_bindings: bool,
+    reads_base_of_made_require: bool,
     has_read_data_file: Cell<bool>,
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
@@ -399,6 +402,7 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             takes_all_as_written: false,
             keeps_known_alternatives: false,
             skips_reassigned_bindings: false,
+            reads_base_of_made_require: false,
             has_read_data_file: Cell::new(false),
             kept_as_written: FxHashSet::default(),
             unchecked: Vec::new(),
@@ -486,6 +490,18 @@ pub(super) fn find_alternatives(
     follower.other_file_queries = other_file_queries;
     follower.own_export_queries = own_export_queries;
     find_alternatives_with(&mut follower, argument)
+}
+
+pub(super) fn find_base_of_made_require(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    data_file_queries: &AskedOfDataFiles,
+    base: ExprId,
+) -> Option<Found> {
+    let folder = Folder::OfFile;
+    let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
+    follower.reads_base_of_made_require = true;
+    find_alternatives_with(&mut follower, base)
 }
 
 #[derive(Clone, Copy)]
@@ -1020,7 +1036,8 @@ impl Follower<'_, '_, '_> {
         }
         let callee = hir.skip_type_assertions(call.callee);
         let is_cwd = |name: Atom| atoms.bytes(name) == b"cwd";
-        if (self.find_export_of(callee, &[b"process", b"node:process"])).is_some_and(is_cwd) {
+        let function = self.find_export_of_library(callee);
+        if matches!(function, Some((LibraryModule::Process, name)) if is_cwd(name)) {
             return true;
         }
         matches!(hir.member_key(callee), Some((object, MemberKey::Name(name)))
@@ -1040,8 +1057,7 @@ impl Follower<'_, '_, '_> {
         if let Some(ExprKind::Call(call)) = expr_kind(hir, e) {
             let call = hir[call];
             return call.args.len() == 1
-                && self.find_export_of(call.callee, &[b"path", b"node:path"])
-                    == Some(known::meta_dirname)
+                && self.find_function_of_path(call.callee) == Some(known::meta_dirname)
                 && names_own_file(hir, bound, hir.id_at(call.args, 0));
         }
         matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
@@ -3497,7 +3513,8 @@ impl Follower<'_, '_, '_> {
     }
 
     fn is_os_module(&self, specifier: Atom) -> bool {
-        matches!(self.inputs.atoms.bytes(specifier), b"os" | b"node:os")
+        let atoms = Some(self.inputs.atoms);
+        LibraryModule::of_specifier(specifier, atoms) == Some(LibraryModule::Os)
     }
 
     fn values_returned_by_function_of_os(&self, name: Atom) -> Option<Values> {
@@ -3514,33 +3531,35 @@ impl Follower<'_, '_, '_> {
                 || *member == known::resolve
                 || atoms.bytes(*member) == b"normalize"
         };
-        self.find_export_of_path(callee).filter(joins_paths)
+        self.find_function_of_path(callee).filter(joins_paths)
     }
 
     fn find_export_of_path(&self, e: ExprId) -> Option<Atom> {
-        let &ScanInputs { hir, atoms, .. } = self.inputs;
-        let known = Some(&self.written_names.1);
-        if let Some(name) = self.find_export_with(e, &PATH_MODULES, known) {
-            return Some(name);
+        match self.find_export_of_library(e)? {
+            (LibraryModule::Path | LibraryModule::PathPosix, export) => Some(export),
+            _ => None,
         }
-        let (object, MemberKey::Name(name)) = hir.member_key(e)? else {
-            return None;
-        };
-        let object = hir.skip_type_assertions(object);
-        let object = self.find_export_with(object, &PATH_MODULES, known)?;
-        (atoms.bytes(object) == b"posix").then_some(name)
     }
 
-    fn find_export_of(&self, callee: ExprId, names: &[&[u8]]) -> Option<Atom> {
-        self.find_export_with(callee, names, None)
+    fn find_function_of_path(&self, callee: ExprId) -> Option<Atom> {
+        match self.find_function_of_library(callee)? {
+            (LibraryModule::Path | LibraryModule::PathPosix, function) => Some(function),
+            _ => None,
+        }
     }
 
-    fn find_export_with(
-        &self,
-        callee: ExprId,
-        names: &[&[u8]],
-        known: Option<&MembersBehindNames>,
-    ) -> Option<Atom> {
+    /// The base of a made require is read when `find_made_require` has taken its calls for functions of the
+    /// library, and a base that went through a call is held against the path of the run. So a callee there is read
+    /// as `find_made_require` read it. A value such as `sep` is read as any other value.
+    fn find_function_of_library(&self, callee: ExprId) -> Option<(LibraryModule, Atom)> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        match self.reads_base_of_made_require {
+            true => find_function_of_library_inside_base(hir, bound, callee),
+            false => self.find_export_of_library(callee),
+        }
+    }
+
+    fn find_export_of_library(&self, e: ExprId) -> Option<(LibraryModule, Atom)> {
         let &ScanInputs {
             hir,
             bound,
@@ -3554,8 +3573,9 @@ impl Follower<'_, '_, '_> {
             }
             FoldedValue::Unknown => None,
         };
-        let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
-        find_export_of_module_with(hir, bound, callee, &find_constant, &is_module, known)
+        let (walk, known) = (Walk::OF_VALUE, &self.written_names.1);
+        let atoms = Some(atoms);
+        find_export_of_library_module(hir, bound, e, walk, &find_constant, atoms, Some(known))
     }
 
     fn values_of_new_url(&mut self, call: Call) -> Option<Values> {
@@ -3743,12 +3763,15 @@ impl Follower<'_, '_, '_> {
                 false => texts_of_answers(&values),
             };
         }
-        let of_url = self.find_export_of(callee, &[b"url", b"node:url"]);
-        let of_path = || self.find_export_of_path(callee);
-        let export = of_url.or_else(of_path)?;
-        let is_dirname = of_url.is_none() && export == known::meta_dirname;
+        let (module, export) = self.find_function_of_library(callee)?;
+        let is_of_url = match module {
+            LibraryModule::Url => true,
+            LibraryModule::Path | LibraryModule::PathPosix => false,
+            _ => return None,
+        };
+        let is_dirname = !is_of_url && export == known::meta_dirname;
         let function = atoms.bytes(export);
-        let convert: fn(Held) -> Option<Held> = match (of_url.is_some(), function) {
+        let convert: fn(Held) -> Option<Held> = match (is_of_url, function) {
             (true, b"fileURLToPath") => |value| match value {
                 Held::Resolved(name, Url | UrlObject) => Some(Held::Resolved(name, Path)),
                 Held::Url(name) => Some(Held::Text(name)),
@@ -4260,7 +4283,7 @@ fn some_text() -> Values {
 }
 
 fn is_process_module(specifier: Atom) -> bool {
-    specifier == known::process || specifier == known::node_process
+    LibraryModule::of_specifier(specifier, None) == Some(LibraryModule::Process)
 }
 
 fn is_loop(statement: StmtKind) -> bool {

@@ -28,9 +28,11 @@ use crate::load::sources::{
 use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
+use bun_ast::Target;
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_options_types::aot_options::DependencyTypeErrors;
 use bun_options_types::aot_options::ExplainSet;
+use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::aot::FileOrigin;
@@ -349,7 +351,18 @@ fn warn_of_made_requires_that_go_out_of_sight(
             continue;
         }
         let decisions = &analysis.decisions;
-        for made in find_made_requires_that_go_out_of_sight(hir, files.bound(file), decisions) {
+        let names_builtin_module = |name: ImportSpecifier| {
+            matches!(name, ImportSpecifier::Constant(name)
+                if Alias::get(files.atoms().bytes(name), Target::Bun, Cfg::default()).is_some())
+        };
+        let has_call_left_out = |given| {
+            let mut names = analysis.names_left_out_of_require_made_for(given);
+            names.any(|name| !names_builtin_module(name))
+        };
+        let bound = files.bound(file);
+        let made =
+            find_made_requires_that_go_out_of_sight(hir, bound, decisions, &has_call_left_out);
+        for made in made {
             let span = Span::of_node(hir, file, NodeData::Expr(made));
             let code = Code::MadeRequireGoesOutOfSight;
             diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));

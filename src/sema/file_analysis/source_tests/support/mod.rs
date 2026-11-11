@@ -15,8 +15,9 @@ pub(crate) use bun_sema::hir_from_data::{
 };
 pub(crate) use bun_sema::import_sites::{
     AutomaticJsx, ImportSite, ImportSiteKind, ImportSpecifier, JsxCallee, JsxImport, JsxImportSet,
-    JsxMode, ResolvedForm, ResolvedFrom, find_key_attribute, is_ignored_key, jsx_callee,
-    jsx_children, macro_callee,
+    JsxMode, ResolvedForm, ResolvedFrom, find_key_attribute,
+    find_made_requires_that_go_out_of_sight, is_ignored_key, jsx_callee, jsx_children,
+    macro_callee,
 };
 pub(crate) use bun_sema::module_format::{CommonJsEvidence, DeclaredModuleType, ModuleFormat};
 pub(crate) use bun_sema::session::{Arena, Session};

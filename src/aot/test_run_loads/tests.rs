@@ -215,7 +215,7 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 
 #[test]
 fn file_leaves_by_its_key() {
-    let uses: [(&str, &[&str], bool); 14] = [
+    let uses: [(&str, &[&str], bool); 15] = [
         (
             r#"delete require.cache[require.resolve("./a.cjs")];"#,
             &["a.cjs"],
@@ -243,6 +243,11 @@ fn file_leaves_by_its_key() {
         ),
         (
             r#"const Module = require("node:module"); delete Module._cache[require.resolve("./a.cjs")];"#,
+            &["a.cjs"],
+            false,
+        ),
+        (
+            r#"const { Module } = require("node:module"); delete Module._cache[require.resolve("./a.cjs")];"#,
             &["a.cjs"],
             false,
         ),

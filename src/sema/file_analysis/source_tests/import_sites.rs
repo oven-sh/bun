@@ -1746,6 +1746,403 @@ fn call_of_require_made_for_path_from_own_folder_is_resolved_from_that_path() {
     }
 }
 
+fn find_path_that_site_is_resolved_from(path: &str, text: &str) -> Vec<Option<String>> {
+    let mut found = Vec::new();
+    analyzed(path, text, |s| {
+        let sites = s.analysis.import_sites.iter().enumerate();
+        let of_a = sites.filter_map(|(index, site)| match site.specifier {
+            ImportSpecifier::Constant(name) if s.workspace.text(name) == "./a" => {
+                Some(match s.analysis.path_to_resolve_from(index) {
+                    Some(ResolvedFrom::PathFromOwnFolder(path)) => {
+                        Some(s.workspace.text(path).to_owned())
+                    }
+                    Some(ResolvedFrom::File(_)) => Some("a file".to_owned()),
+                    None => None,
+                })
+            }
+            _ => None,
+        });
+        found.extend(of_a);
+    });
+    found
+}
+
+// Each line gives the file `dirname`, `join` and `resolve` of `path.posix`, which are `path`'s own everywhere but on Windows.
+const SPELLINGS_OF_POSIX_PATH_FUNCTIONS: &[(&str, &str)] = &[
+    (
+        "a.mjs",
+        r#"import { dirname, join, resolve } from "node:path/posix";"#,
+    ),
+    (
+        "a.mjs",
+        r#"import { dirname, join, resolve } from "path/posix";"#,
+    ),
+    (
+        "a.mjs",
+        r#"import posix from "node:path/posix"; const { dirname, join, resolve } = posix;"#,
+    ),
+    (
+        "a.mjs",
+        r#"import * as posix from "path/posix"; const { dirname, join, resolve } = posix;"#,
+    ),
+    (
+        "a.mjs",
+        r#"import * as posix from "path/posix"; const { dirname, join, resolve } = posix.default;"#,
+    ),
+    (
+        "a.mjs",
+        r#"import path from "node:path"; const { dirname, join, resolve } = path.posix;"#,
+    ),
+    (
+        "a.mjs",
+        r#"import path from "path"; const dirname = path.posix.dirname, join = path.posix.join, resolve = path.posix.resolve;"#,
+    ),
+    (
+        "a.mjs",
+        r#"import { posix } from "node:path"; const { dirname, join, resolve } = posix;"#,
+    ),
+    (
+        "a.mjs",
+        r#"import * as path from "node:path"; const { dirname, join, resolve } = path.posix.posix;"#,
+    ),
+    (
+        "a.mjs",
+        r#"const { dirname, join, resolve } = await import("node:path/posix");"#,
+    ),
+    (
+        "a.mjs",
+        r#"const { dirname, join, resolve } = process.getBuiltinModule("node:path/posix");"#,
+    ),
+    (
+        "a.cjs",
+        r#"const { dirname, join, resolve } = require("node:path/posix");"#,
+    ),
+    (
+        "a.cjs",
+        r#"const { dirname, join, resolve } = require("path/posix");"#,
+    ),
+    (
+        "a.cjs",
+        r#"const { dirname, join, resolve } = require("path").posix;"#,
+    ),
+    (
+        "a.cjs",
+        r#"const { posix: { dirname, join, resolve } } = require("node:path");"#,
+    ),
+];
+
+// `{file}` is the file's own path and `{folder}` its folder, as the kind of file spells them.
+const BASES_MADE_BY_PATH_FUNCTIONS: &[(&str, &str)] = &[
+    (
+        r#"join(dirname({file}), "lib", "index.js")"#,
+        "./lib/index.js",
+    ),
+    (
+        r#"resolve(dirname({file}), "lib", "index.js")"#,
+        "./lib/index.js",
+    ),
+    (r#"dirname({file}) + "/lib/""#, "./lib/"),
+    (r#"join({folder}, "lib/")"#, "./lib/"),
+    (r#"resolve({folder}, "lib") + "/""#, "./lib/"),
+];
+
+fn write_program_with_made_require(path: &str, functions: &str, base: &str) -> String {
+    let (make, file, folder) = match path.ends_with(".cjs") {
+        true => (
+            r#"require("module").createRequire"#,
+            "__filename",
+            "__dirname",
+        ),
+        false => ("createRequire", "import.meta.path", "import.meta.dir"),
+    };
+    let import = match path.ends_with(".cjs") {
+        true => "",
+        false => r#"import { createRequire } from "node:module"; "#,
+    };
+    let base = base.replace("{file}", file).replace("{folder}", folder);
+    format!(r#"{import}{functions} {make}({base})("./a");"#)
+}
+
+#[test]
+fn base_of_made_require_is_read_through_every_spelling_of_the_posix_path_functions() {
+    for &(path, functions) in SPELLINGS_OF_POSIX_PATH_FUNCTIONS {
+        for &(base, expected) in BASES_MADE_BY_PATH_FUNCTIONS {
+            let text = write_program_with_made_require(path, functions, base);
+            let found = find_path_that_site_is_resolved_from(path, &text);
+            assert_eq!(found, [Some(expected.to_owned())], "{text}");
+        }
+    }
+}
+
+const BASES_MADE_BY_POSIX_FUNCTIONS_CALLED_AS_MEMBERS: &[(&str, &str, Option<Option<&str>>)] = &[
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import path from "node:path"; createRequire(path.posix.join(path.posix.dirname(import.meta.path), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { posix } from "path"; createRequire(posix.resolve(import.meta.dir, "lib") + "/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("path").posix.join(__dirname, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("node:path/posix").dirname(__filename) + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"const made = require("module").createRequire(require("node:path/posix").join(__dirname, "lib", "index.js")); made("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"const made = require("module").createRequire(require("node:path/posix").join(__dirname, "lib", "index.js")); made.call(null, "./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"const made = require("module").createRequire(require("node:path/posix").join(__dirname, "lib", "index.js")); made.resolve("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    // `path.win32` is `path` on Windows alone, and no reader knows where the program runs.
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("path").win32.join(__dirname, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("node:path/win32").join(__dirname, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("path").posix.win32.join(__dirname, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("./path/posix").join(__dirname, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("node:url").posix.join(__dirname, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+];
+
+#[test]
+fn base_of_made_require_is_read_where_a_posix_path_function_is_called_as_a_member() {
+    for &(path, text, expected) in BASES_MADE_BY_POSIX_FUNCTIONS_CALLED_AS_MEMBERS {
+        let expected = expected.map(|path| path.map(str::to_owned));
+        let found = find_path_that_site_is_resolved_from(path, text);
+        assert_eq!(found, Vec::from_iter(expected), "{text}");
+    }
+}
+
+// What makes a require a require for a path also reads the path: a call inside the base is taken for a function of the
+// library by one walk, whichever asks.
+const BASES_WHOSE_FUNCTIONS_ARE_REACHED_AS_THE_MAKER_IS: &[(&str, &str, Option<Option<&str>>)] = &[
+    (
+        "a.cjs",
+        r#"function load() { return require("module").createRequire(d(__filename) + "/lib/")("./a"); } const d = require("node:path").dirname; load();"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"function load() { return require("module").createRequire(d(__filename) + "/lib/")("./a"); } const d = require("node:path/posix").dirname; load();"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"const path = (() => require("node:path"))(); require("module").createRequire(path.join(__dirname, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"const path = (() => require("path/posix"))(); require("module").createRequire(path.join(__dirname, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; const { join } = await import("node:path"); createRequire(join(import.meta.dir, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import * as path from "node:path"; createRequire(path.default.join(import.meta.dir, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; const load = createRequire(import.meta.url); createRequire(load("node:path").join(import.meta.dir, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; const { join } = await import("node:path"); const url = await import("node:url"); createRequire(join(url.fileURLToPath(new URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    // Neither reads a specifier that is no text where it is written.
+    (
+        "a.cjs",
+        r#"const name = "node:path"; require("module").createRequire(require(name).join(__dirname, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    // Neither reads a call behind `?.`.
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import path from "node:path"; createRequire(path?.join(import.meta.dir, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import path from "node:path"; createRequire(path.join?.(import.meta.dir, "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import path from "node:path"; createRequire(path?.dirname(import.meta.path) + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+];
+
+#[test]
+fn base_of_made_require_is_read_by_what_took_its_calls_for_functions_of_the_library() {
+    for &(path, text, expected) in BASES_WHOSE_FUNCTIONS_ARE_REACHED_AS_THE_MAKER_IS {
+        let expected = expected.map(|path| path.map(str::to_owned));
+        let found = find_path_that_site_is_resolved_from(path, text);
+        assert_eq!(found, Vec::from_iter(expected), "{text}");
+    }
+}
+
+fn count_made_requires_that_go_out_of_sight(path: &str, text: &str) -> usize {
+    let mut count = 0;
+    analyzed(path, text, |s| {
+        let has_call_left_out = |given| {
+            let mut names = s.analysis.names_left_out_of_require_made_for(given);
+            names.next().is_some()
+        };
+        let decisions = &s.analysis.decisions;
+        let (hir, bound) = (&s.hir, &s.bound);
+        let made =
+            find_made_requires_that_go_out_of_sight(hir, bound, decisions, &has_call_left_out);
+        count = made.len();
+    });
+    count
+}
+
+// How many makers the build doesn't follow to every call. A require made for a path that starts at the file's own
+// folder is followed where the build reads the path, a call of it names a constant unless the path stays in that
+// folder, and it is called as it was made or by the name of a constant that no other file gets.
+const REQUIRES_MADE_FOR_PATHS_THAT_ARE_NOT_FOLLOWED: &[(&str, &str, usize)] = &[
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, process.argv[2], "index.js")); made("./a");"#,
+        1,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path/posix"); const made = createRequire(join(__dirname, process.argv[2], "index.js")); made("./a");"#,
+        1,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import path from "node:path"; createRequire(path.posix.join(import.meta.dir, process.argv[2], "index.js"))("./a");"#,
+        1,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { dirname } from "node:path"; let made = createRequire(dirname(import.meta.path) + "/" + process.argv[2] + "/index.js"); made("./a");"#,
+        1,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, "lib", "index.js")); made("./a");"#,
+        0,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, process.argv[2], "index.js")); module.exports = typeof made;"#,
+        0,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, process.argv[2], "index.js")); made(__dirname + "/a.cjs");"#,
+        0,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, "lib", "index.js")); function load(name) { return made(name); } load("./a");"#,
+        1,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path/posix"); const made = createRequire(join(__dirname, "lib", "index.js")); made(`./${process.argv[2]}.cjs`);"#,
+        1,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, "lib", "index.js")); made(process.argv[2] ? "./a" : "./b");"#,
+        1,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, "lib", "index.js")); const name = "./a"; made(name);"#,
+        0,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path/posix"); const made = createRequire(join(__dirname, "index.js")); function load(name) { return made(name); } load("./a"); made(`./${process.argv[2]}.cjs`);"#,
+        0,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = createRequire(join(__dirname, "lib", "index.js")); made.resolve(process.argv[2]);"#,
+        0,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = process.argv[2] ? createRequire(join(__dirname, "lib", "index.js")) : createRequire(join(__dirname, "other", "index.js")); made("./a");"#,
+        2,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path/posix"); const made = globalThis.made || createRequire(join(__dirname, "lib", "index.js")); made("./a");"#,
+        1,
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("node:module"); const { join } = require("node:path"); const made = process.argv[2] && createRequire(join(__dirname, "lib", "index.js")); made("./a");"#,
+        0,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; export const made = createRequire(join(import.meta.dir, "lib", "index.js")); made("./a");"#,
+        1,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; export const made = createRequire(import.meta.url); made("./a");"#,
+        0,
+    ),
+];
+
+#[test]
+fn require_made_for_a_path_is_not_followed_to_a_call_that_the_build_does_not_vouch_for() {
+    for &(path, text, expected) in REQUIRES_MADE_FOR_PATHS_THAT_ARE_NOT_FOLLOWED {
+        let found = count_made_requires_that_go_out_of_sight(path, text);
+        assert_eq!(found, expected, "{text}");
+    }
+}
+
 const REQUIRES_AS_ARGUMENTS: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
@@ -2479,6 +2876,86 @@ fn name_is_one_of_a_few_texts() {
     }
 }
 
+// The functions of `path.posix` are `path`'s own everywhere but on Windows. A name that one of them joins is read as
+// `path`'s own function joins it, however the function is reached.
+const NAMES_JOINED_BY_POSIX_PATH_FUNCTIONS: &[&str] = &[
+    "const { join } = require('node:path/posix');",
+    "const { join } = require('path/posix');",
+    "const join = require('path').posix.join;",
+    "const { join } = require('path').posix;",
+    "const { posix: { join } } = require('node:path');",
+    "const posix = require('path').posix; const { join } = posix;",
+    "const path = require('path'); const join = path.posix.posix.join;",
+];
+
+#[test]
+fn name_joined_by_posix_path_function_is_one_of_a_few_texts() {
+    for &functions in NAMES_JOINED_BY_POSIX_PATH_FUNCTIONS {
+        let text = format!(
+            "{functions} const name = c ? 'a' : 'b'; require(join(__dirname, 'lib', name + '.js'));"
+        );
+        with_last_site(&text, |s, site| {
+            let names = ["./lib/a.js", "./lib/b.js"];
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+    for callee in [
+        "require('path').posix.join",
+        "require('path').posix.posix.join",
+    ] {
+        let text = format!(
+            "const name = c ? 'a' : 'b'; require({callee}(__dirname, 'lib', name + '.js'));"
+        );
+        with_last_site(&text, |s, site| {
+            let names = ["./lib/a.js", "./lib/b.js"];
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+}
+
+#[test]
+fn name_joined_by_function_of_path_win32_is_not_followed() {
+    for callee in [
+        "require('path').win32.join",
+        "require('node:path/win32').join",
+        "require('path').posix.win32.join",
+        "require('path').posix?.join",
+        "require('path')?.join",
+    ] {
+        let text = format!(
+            "const name = c ? 'a' : 'b'; require({callee}(__dirname, 'lib', name + '.js'));"
+        );
+        with_last_site(&text, |_, site| {
+            assert_eq!(site.specifier, ImportSpecifier::Unknown, "{text}");
+        });
+    }
+}
+
+// `find_own_file` gives up on a file name that holds such a byte, so the folder is read as `dirname()` of the own file or not at all.
+#[test]
+fn folder_that_posix_dirname_answers_for_the_own_file_is_the_own_folder() {
+    for functions in [
+        "const { dirname, join } = require('node:path');",
+        "const { dirname, join } = require('node:path/posix');",
+        "const { dirname, join } = require('path').posix;",
+    ] {
+        let text = format!(
+            "{functions} const name = c ? 'a' : 'b'; require(join(dirname(__filename), 'lib', name + '.js'));"
+        );
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&TARGET);
+            let s = w.analyze(&Source::new("a+b.cjs", &text), &inputs);
+            let site = s
+                .analysis
+                .import_sites
+                .last()
+                .expect("the site of require()");
+            let names = ["./lib/a.js", "./lib/b.js"];
+            assert_eq!(describe_alternatives(&s, site), names, "{text}");
+        });
+    }
+}
+
 #[test]
 fn name_out_of_what_may_change_is_not_followed() {
     for &text in NAMES_THAT_ARE_NOT_FOLLOWED {
@@ -2930,6 +3407,14 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
     ),
     (
         "import { rm } from 'node:fs/promises'; await rm('/p/a.js');",
+        &["/p/a.js"],
+    ),
+    (
+        "import { rm } from 'fs/promises'; await rm('/p/a.js');",
+        &["/p/a.js"],
+    ),
+    (
+        "import { write } from 'bun'; await write('/p/a.js', text);",
         &["/p/a.js"],
     ),
     (

@@ -4,6 +4,7 @@ mod changed_files;
 mod encoders;
 mod import_uses;
 mod jsx;
+mod library_modules;
 mod macro_calls;
 mod made_requires;
 mod parameters;
@@ -35,6 +36,7 @@ pub use jsx::{
     AutomaticJsx, JsxCallee, JsxImport, JsxImportSet, JsxMode, KeyAttribute, find_key_attribute,
     has_static_children, is_ignored_key, jsx_callee, jsx_children,
 };
+pub(crate) use library_modules::LibraryModule;
 pub use macro_calls::{macro_callee, macro_import_symbols};
 pub use made_requires::{
     ExportedRequire, OwnRequire, find_base_that_a_call_made_of_own_file, find_exported_requires,
@@ -46,7 +48,10 @@ pub use made_requires::{
     may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
     may_still_be_undefined,
 };
-pub(crate) use made_requires::{OtherUse, find_imported_export, names_own_file, settled_symbol};
+pub(crate) use made_requires::{
+    LONGEST_CHAIN_OF_BINDINGS, OtherUse, find_imported_export, iife_return_value, names_own_file,
+    settled_symbol,
+};
 pub use parameters::{
     ExportedNames, find_names_exported_for, find_parameter_named, find_values_of_parameter,
     find_values_passed_for, is_exported,
@@ -204,6 +209,16 @@ pub enum ResolvedFrom {
     PathFromOwnFolder(Atom),
 }
 
+/// What one call of a require made for a path says of that path.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PathGiven {
+    /// The call is resolved from this path below the file's own folder.
+    Read(Atom),
+    /// The build doesn't know that the executable loads what the call names: it read no path, or the path
+    /// leads out of the file's own folder and the call names no constant. Holds what the call names.
+    CallLeftOut(ImportSpecifier),
+}
+
 pub(crate) struct ImportScan<'s> {
     pub sites: &'s [ImportSite],
     pub alternatives: &'s [ImportSpecifier],
@@ -231,7 +246,7 @@ pub(crate) struct ImportScan<'s> {
     pub imports_used_without_a_read: &'s [SymbolId],
     pub module_require_objects: &'s [ExprId],
     pub requires_of_other_files: &'s [(u32, ResolvedFrom)],
-    pub paths_given_to_create_require: &'s [(ExprId, Atom)],
+    pub paths_given_to_create_require: &'s [(ExprId, PathGiven)],
     pub pending_macro_calls: &'s [ExprId],
     pub first_runtime_import: Option<ImportId>,
     pub has_import_equals_require: bool,

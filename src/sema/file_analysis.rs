@@ -14,7 +14,8 @@ use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
     CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
-    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlArgument, ResolvedForm, ResolvedFrom,
+    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlArgument, PathGiven, ResolvedForm,
+    ResolvedFrom,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -65,7 +66,7 @@ pub struct FileAnalysis<'s> {
     pub asks_for_main_module: bool,
     pub imported_names: &'s [ImportedName],
     requires_of_other_files: &'s [(u32, ResolvedFrom)],
-    paths_given_to_create_require: &'s [(ExprId, Atom)],
+    paths_given_to_create_require: &'s [(ExprId, PathGiven)],
     sites_by_kind: &'s [u32],
     first_call_site: u32,
 }
@@ -142,10 +143,31 @@ impl FileAnalysis<'_> {
         Some(others[found.ok()?].1)
     }
 
-    pub fn find_path_given_to_create_require(&self, given: ExprId) -> Option<Atom> {
+    fn readings_of_path_given_to_create_require(&self, given: ExprId) -> &[(ExprId, PathGiven)] {
         let paths = self.paths_given_to_create_require;
-        let found = paths.binary_search_by_key(&given, |it| it.0);
-        Some(paths[found.ok()?].1)
+        let first = paths.partition_point(|it| it.0 < given);
+        let count = paths[first..].partition_point(|it| it.0 == given);
+        &paths[first..first + count]
+    }
+
+    pub fn find_path_given_to_create_require(&self, given: ExprId) -> Option<Atom> {
+        let mut readings = self.readings_of_path_given_to_create_require(given).iter();
+        readings.find_map(|it| match it.1 {
+            PathGiven::Read(path) => Some(path),
+            PathGiven::CallLeftOut(_) => None,
+        })
+    }
+
+    /// What the calls of a require made for `given` name that the build doesn't follow.
+    pub fn names_left_out_of_require_made_for(
+        &self,
+        given: ExprId,
+    ) -> impl Iterator<Item = ImportSpecifier> {
+        let readings = self.readings_of_path_given_to_create_require(given).iter();
+        readings.filter_map(|it| match it.1 {
+            PathGiven::CallLeftOut(name) => Some(name),
+            PathGiven::Read(_) => None,
+        })
     }
 
     pub fn import_site_of_call(&self, call: ExprId) -> Option<usize> {

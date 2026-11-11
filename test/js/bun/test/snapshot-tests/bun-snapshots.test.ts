@@ -578,7 +578,7 @@ async function runTests(cwd: string, env: Record<string, string>, ...args: strin
     cmd: [bunExe(), "test", ...args],
     env: { ...bunEnv, ...env },
     cwd,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

@@ -1946,18 +1946,18 @@ impl<'a> Resolver<'a> {
                     development: result.jsx.development,
                     ..Default::default()
                 });
-                (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata);
-                (result.flags).set_experimental_decorators(own.experimental_decorators);
+                (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata());
+                (result.flags).set_experimental_decorators(own.experimental_decorators());
                 (result.flags).set_use_define_for_class_fields(
                     own.use_define_for_class_fields != Some(false),
                 );
             } else if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
+                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata(),
                 );
                 result.flags.set_experimental_decorators(
-                    result.flags.experimental_decorators() || tsconfig.experimental_decorators,
+                    result.flags.experimental_decorators() || tsconfig.experimental_decorators(),
                 );
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
@@ -6840,46 +6840,9 @@ impl<'a> Resolver<'a> {
             }
 
             let mut merged_config = current;
-            // starting from the base config (end of the list)
-            // successively apply the inheritable attributes to the next config
-            while let Some(mut parent_config) = parent_configs.pop() {
-                let mc = &mut *merged_config;
-                mc.emit_decorator_metadata =
-                    mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
-                if let Some(v) = parent_config.use_define_for_class_fields {
-                    mc.use_define_for_class_fields = Some(v);
-                }
-                if !parent_config.base_url.is_empty() {
-                    mc.base_url = core::mem::take(&mut parent_config.base_url);
-                }
-                mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                mc.jsx_flags.insert_all(parent_config.jsx_flags);
-
-                if let Some(value) = parent_config.preserve_imports_not_used_as_values {
-                    mc.preserve_imports_not_used_as_values = Some(value);
-                }
-
-                // TypeScript replaces paths across extends (child overrides parent
-                // entirely), so when a more-specific config defines paths, replace
-                // rather than merge. base_url_for_paths is set whenever the paths
-                // key is present in the JSON (even if empty), so it discriminates
-                // "not defined" from "defined as {}" — the latter clears inherited
-                // paths per TypeScript semantics.
-                if !parent_config.base_url_for_paths.is_empty() {
-                    // The previous merged_config.paths is being replaced;
-                    // dropping the map frees the values automatically, so the
-                    // PathsMap from the deeper config doesn't leak.
-                    mc.paths = core::mem::take(&mut parent_config.paths);
-                    mc.base_url_for_paths = core::mem::take(&mut parent_config.base_url_for_paths);
-                } else {
-                    // paths were not moved to merged_config, so they're still owned
-                    // by parent_config. base_url_for_paths.len == 0 implies the map
-                    // is empty (it's only set when the `paths` key is present in the
-                    // JSON), so this is a no-op but documents the ownership.
-                    // (Drop handles parent_config.paths.)
-                }
-                // `destroy` logs what tsconfig-extends-leak.test.ts counts.
-                TSConfigJSON::destroy(parent_config);
+            // `current` is the base of the chain. Each pop is the next config that extends it.
+            while let Some(extending_config) = parent_configs.pop() {
+                merged_config.apply_extended_config(extending_config);
             }
             return Ok(Some(merged_config));
         }

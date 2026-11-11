@@ -213,8 +213,8 @@ struct ParsedConfig {
     paths: Option<Paths>,
     paths_directory: Vec<u8>,
     jsx: JsxFields,
-    emits_decorator_metadata: bool,
-    experimental_decorators: bool,
+    emits_decorator_metadata: Option<bool>,
+    experimental_decorators: Option<bool>,
     use_define_for_class_fields: Option<bool>,
     has_compiler_options: bool,
 }
@@ -244,8 +244,8 @@ impl ParsedConfig {
             paths_directory: base_url.clone().unwrap_or_else(|| config_dir.to_vec()),
             base_url,
             jsx: JsxFields::parse(options),
-            emits_decorator_metadata: bool_entry(options, b"emitDecoratorMetadata") == Some(true),
-            experimental_decorators: bool_entry(options, b"experimentalDecorators") == Some(true),
+            emits_decorator_metadata: bool_entry(options, b"emitDecoratorMetadata"),
+            experimental_decorators: bool_entry(options, b"experimentalDecorators"),
             use_define_for_class_fields: bool_entry(options, b"useDefineForClassFields"),
             has_compiler_options: true,
         }
@@ -259,8 +259,10 @@ impl ParsedConfig {
             self.paths_directory = parent.paths_directory;
         }
         self.jsx.inherit(parent.jsx);
-        self.emits_decorator_metadata |= parent.emits_decorator_metadata;
-        self.experimental_decorators = parent.experimental_decorators;
+        let emits_metadata = parent.emits_decorator_metadata;
+        self.emits_decorator_metadata = self.emits_decorator_metadata.or(emits_metadata);
+        let experimental = parent.experimental_decorators;
+        self.experimental_decorators = self.experimental_decorators.or(experimental);
         let use_define = parent.use_define_for_class_fields;
         self.use_define_for_class_fields = self.use_define_for_class_fields.or(use_define);
     }
@@ -341,8 +343,8 @@ impl<'h> Resolver<'h> {
                 is_development,
                 ..stated.jsx.apply_to(&JsxSettings::default())
             },
-            experimental_decorators: stated.experimental_decorators,
-            emits_decorator_metadata: stated.emits_decorator_metadata,
+            experimental_decorators: stated.experimental_decorators.unwrap_or(false),
+            emits_decorator_metadata: stated.emits_decorator_metadata.unwrap_or(false),
             use_define_for_class_fields: stated.use_define_for_class_fields,
             bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
         });
@@ -434,8 +436,8 @@ impl<'h> Resolver<'h> {
                 is_development: self.is_jsx_development(),
                 ..config.jsx.apply_to(&self.code_options().jsx)
             },
-            experimental_decorators: config.experimental_decorators,
-            emits_decorator_metadata: config.emits_decorator_metadata,
+            experimental_decorators: config.experimental_decorators.unwrap_or(false),
+            emits_decorator_metadata: config.emits_decorator_metadata.unwrap_or(false),
             use_define_for_class_fields: config.use_define_for_class_fields,
             bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
         })

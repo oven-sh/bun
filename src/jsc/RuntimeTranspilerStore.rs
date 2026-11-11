@@ -294,7 +294,18 @@ impl RuntimeTranspilerStore {
         let mut job = iter.next();
         let mut first = true;
         while !job.is_null() {
+            if !first {
+                // if there are more, we need to drain the microtasks from the previous run
+                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+                let drained =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                if drained.is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
+            }
             // The swap was the finished file's exit, as in `job::complete_erased`: its fetch into a retired realm or a disposed graph is released unsettled, and no macro of it runs under the next file.
+            // The microtasks above can dispose a graph that a finished file left open, so the loader is read after them.
             // A `Bun.ModuleGraph` that the running file disposed rejects its import below.
             // SAFETY: `job` is a live job popped from the intrusive queue, and its promise keeps its global object alive.
             let loader_is_gone = unsafe {
@@ -311,16 +322,6 @@ impl RuntimeTranspilerStore {
                 self.jobs_completed += 1;
                 job = iter.next();
                 continue;
-            }
-            if !first {
-                // if there are more, we need to drain the microtasks from the previous run
-                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if drained.is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
-                }
             }
             first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.

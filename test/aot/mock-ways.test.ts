@@ -103,12 +103,17 @@ function lastWordsOf(stderr: string) {
 
 /**
  * One run of a project, `bun test` or with `--aot` the compiled run: what each case printed, how the run ended, and how a run ends that printed as much.
- * It judges nothing: the test does, once both of its runs are over.
+ * It judges nothing and throws nothing: the test judges both of its runs together, once both are over.
  */
 async function ran(dir: string, cases: string[], ...flags: string[]) {
   // No test of the run has a shorter limit than the run: beside a build, a debug build of Bun takes longer for some cases than the five seconds of `bun test`.
   const command = [bunExe(), "test", ...flags, `--timeout=${limit}`, "./t"];
-  const { stdout, stderr, exitCode } = await slot(() => run(command, dir, { ...bunEnv, NO_COLOR: "1" }, limit));
+  const started = slot(() => run(command, dir, { ...bunEnv, NO_COLOR: "1" }, limit));
+  // `run()` throws of a run that it ended for the memory that the runs held together. That is how this run ended then.
+  const { stdout, stderr, exitCode, threw } = await started.then(
+    over => ({ ...over, threw: [] as string[] }),
+    (thrown: unknown) => ({ stdout: "", stderr: "", exitCode: -1, threw: [String(thrown)] }),
+  );
   const printed = [...stdout.matchAll(/^\| (\S+): (.*)$/gm)].map(([, name, words]) => [name, words] as const);
   const lines = new Map(printed);
   const count = (word: string) => Number(stderr.match(new RegExp(`^ *(\\d+) ${word}$`, "m"))?.[1]);
@@ -119,20 +124,12 @@ async function ran(dir: string, cases: string[], ...flags: string[]) {
   const notOnce = printed
     .map(([name]) => name)
     .filter((name, at, all) => !cases.includes(name) || all.indexOf(name) !== at);
+  const lastWords = [...threw, ...(Bun.deepEquals(counted, follows) ? [] : lastWordsOf(stderr))];
   return {
     lines,
-    ended: { run: asked, notOnce, ...counted, lastWords: Bun.deepEquals(counted, follows) ? [] : lastWordsOf(stderr) },
+    ended: { run: asked, notOnce, ...counted, lastWords },
     endsWell: { run: asked, notOnce: [], ...follows, lastWords: [] },
   };
-}
-
-/** What each of them comes to, once all of them are over: what one of them threw is thrown then, and not while another still runs. */
-async function allOver<Outcome>(pending: Promise<Outcome>[]) {
-  const settled = await Promise.allSettled(pending);
-  return settled.map(one => {
-    if (one.status === "rejected") throw one.reason;
-    return one.value;
-  });
 }
 
 const list = join(import.meta.dir, "mock-ways.known.txt");
@@ -154,7 +151,7 @@ declare.each(kinds)(
     using dir = tempDir("aot-mock-ways", projectOf(kind));
     const cases = casesOf(kind);
     // Both runs are over before either is judged and before the project is removed: a failure shows both, and leaves no run behind in a folder that is gone.
-    const [plain, compiled] = await allOver([ran(String(dir), cases), ran(String(dir), cases, "--aot")]);
+    const [plain, compiled] = await Promise.all([ran(String(dir), cases), ran(String(dir), cases, "--aot")]);
     expect([plain.ended, compiled.ended]).toEqual([plain.endsWell, compiled.endsWell]);
     // The specification has every case.
     expect(cases.filter(name => !plain.lines.has(name))).toEqual([]);

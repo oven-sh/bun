@@ -1,7 +1,7 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)), written as one call, reads the slots of a compiled source as they lie. Under the word that checks the walk each name is asked again of the source as a look would find it, and every name that the source has must have been read.
 // Nobody looks at the twins. Without the preparation at the head of the helper the first request stops by name under a symbol of node:http.
-// COUNTER: AnswersAskedAgain >= 100
+// COUNTER: FastPathResultsVerified >= 100
 import http from "node:http";
 class Kept { constructor() { this.own = 1; } }
 class Source { constructor(n) { this.first = n; this.second = "s" + n; this[Symbol.for("made-up")] = [n]; } get third() { return 3; } }

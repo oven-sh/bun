@@ -121,6 +121,54 @@ fn lazy_and_eager() {
 }
 
 #[test]
+fn says_the_text_that_it_wrote() {
+    let text = "const pattern = \"./pages/*.ts\";\n\
+        export const lazy = () => import.meta.glob(\"./pages/a.ts\", { import: \"name\" });\n\
+        export const refused = () => import.meta.glob<string> /* ( */ (pattern as any);";
+    let main = ("main.ts", text);
+    with_expanded(
+        "glob_says_the_text_that_it_wrote",
+        main,
+        ModuleFormat::Esm,
+        |tree, atoms, _| {
+            let texts = &tree.texts_written_by_loader;
+            let written: Vec<(&[u8], &[u8])> = texts
+                .iter()
+                .map(|it| {
+                    let replaced = &tree.text[it.start as usize..it.end as usize];
+                    (replaced, atoms.bytes(it.text))
+                })
+                .collect();
+            let expected: [(&[u8], &[u8]); 2] = [
+                (
+                    b"import.meta.glob(\"./pages/a.ts\", { import: \"name\" })",
+                    b"({ \"./pages/a.ts\": () => import(\"./pages/a.ts\").then((m) => m.name) })",
+                ),
+                (
+                    b"import.meta.glob<string> /* ( */ ",
+                    b"(() => { throw new TypeError(\"Expected a glob pattern to be a string literal, but got identifier\"); })",
+                ),
+            ];
+            assert_eq!(written, expected);
+            let functions: Vec<&[u8]> = tree
+                .functions_written_by_loader
+                .iter()
+                .map(|it| {
+                    let text = atoms.bytes(texts[it.text as usize].text);
+                    &text[it.start_in_text as usize..it.end_in_text as usize]
+                })
+                .collect();
+            let expected: [&[u8]; 3] = [
+                b"(m) => m.name",
+                b"() => import(\"./pages/a.ts\").then((m) => m.name)",
+                b"() => { throw new TypeError(\"Expected a glob pattern to be a string literal, but got identifier\"); }",
+            ];
+            assert_eq!(functions, expected);
+        },
+    );
+}
+
+#[test]
 fn commonjs() {
     let text = "const eager = import.meta.glob(\"./pages/*.ts\", { eager: true, import: \"name\" });\n\
         module.exports = eager;";

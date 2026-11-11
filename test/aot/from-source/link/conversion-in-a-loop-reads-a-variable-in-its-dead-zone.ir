@@ -14,4 +14,4 @@
 # got = got + box;
 # -- end of source
 # RUN(LINK): link variables mechanisms=all
-# LINK: variable g0 proven=i32|absent
+# LINK: variable g0 proven=int[0, 2147483647]|absent

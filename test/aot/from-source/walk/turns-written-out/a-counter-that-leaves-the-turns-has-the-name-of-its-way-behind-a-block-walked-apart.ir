@@ -16,13 +16,10 @@
 # console.log(sum, firstBad(odd, 0, 1000, two), twoLeave(odd, 0, 1000, two));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: = Integer integer=-3
 # RUN(TURNS): walk f1 mechanisms=all
-# REQUIRES(TURNS): entries-of-bun
 # TURNS-COUNT-2: = ShapeTest {{*}}layouts=[L0]
 # RUN(TWO): walk f2 mechanisms=all
-# REQUIRES(TWO): entries-of-bun
 # TWO-LABEL: code f2:Body
 # TWO-NOT: = Integer integer=-19

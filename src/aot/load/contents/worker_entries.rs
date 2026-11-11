@@ -751,7 +751,8 @@ impl ContentsScan<'_, '_> {
             Some(table::canonical_id(builtin)) == worker_builtins().constructor
         });
         let is_told_to_evaluate = options.is_some_and(|it| self.is_told_to_evaluate(it));
-        let may_be_out_of_sight = is_told_to_evaluate || self.may_be_out_of_sight(&name);
+        let is_name_in_sight = form == WorkerNameForm::OwnFile || !self.may_be_out_of_sight(&name);
+        let may_be_out_of_sight = is_told_to_evaluate || !is_name_in_sight;
         if !is_of_web && may_be_out_of_sight && !is_text_put_together {
             self.found
                 .node_workers_out_of_sight
@@ -764,7 +765,7 @@ impl ContentsScan<'_, '_> {
             self.found.starts_worker_out_of_sight = true;
             return;
         }
-        self.found.starts_worker_out_of_sight |= self.may_be_out_of_sight(&name);
+        self.found.starts_worker_out_of_sight |= !is_name_in_sight;
         self.found.worker_starts.push(WorkerStart {
             at: construction,
             name_node: argument,
@@ -856,12 +857,43 @@ impl ContentsScan<'_, '_> {
             let name = ImportSpecifier::Constant(name);
             return (name, WorkerNameForm::FromOwnFolder);
         }
+        if name == ImportSpecifier::Unknown && self.spells_own_file(argument) {
+            return (name, WorkerNameForm::OwnFile);
+        }
         let form = match analysis.find_resolved_form(argument) {
             Some(form) => WorkerNameForm::Resolved(form),
             None if analysis.is_path_from_own_directory(argument) => WorkerNameForm::FromOwnFolder,
             None => WorkerNameForm::AsWritten,
         };
         (name, form)
+    }
+
+    fn spells_own_file(&self, written: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        if bound.import_meta_may_be_modified() {
+            return false;
+        }
+        let follow = |written: ExprId| {
+            let written = hir.skip_type_assertions(written);
+            let is_stored_again = matches!(hir[written].kind, ExprKind::Ident(_))
+                && (self.find_symbol_read(written))
+                    .is_some_and(|symbol| !bound.is_stable_binding(symbol));
+            match is_stored_again {
+                true => written,
+                false => self.find_value_under_name(written),
+            }
+        };
+        let mut passed = Vec::new();
+        let mut value = follow(written);
+        while let ExprKind::Call(call) | ExprKind::New(call) = hir[value].kind
+            && self.spells_same_file(call)
+            && let Some(given) = hir.ids(hir[call].args).next()
+            && !passed.contains(&value)
+        {
+            passed.push(value);
+            value = follow(given);
+        }
+        self.names_own_url(value)
     }
 
     fn is_inline_worker_source(&self, name: &ImportSpecifier) -> bool {

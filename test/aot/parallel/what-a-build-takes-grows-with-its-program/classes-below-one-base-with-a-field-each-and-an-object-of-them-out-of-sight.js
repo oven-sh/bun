@@ -5,7 +5,7 @@
 // Sizes: 200 400 800
 // Passes: 1
 // Grows: the build, linear
-// Todo: the peak 62 | 97 | 310 MB, and at most 102 MB at the last; 1.95 times as fast as the program, and at most 1.5: 1,121 | 2,329 | 7,050 M instructions. Without the statement on the prototype it grows 1.04 times as fast
+// Todo: it grows: the peak 62 | 97 | 310 MB, and at most 102 MB at the last; 1.95 times as fast as the program, and at most 1.5: 1,121 | 2,329 | 7,050 M instructions. Without the statement on the prototype it grows 1.04 times as fast
 const size = Number(process.env.SIZE ?? 2),
   copies = Number(process.env.PASSES ?? 1);
 const out = [];

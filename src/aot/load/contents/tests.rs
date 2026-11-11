@@ -910,7 +910,15 @@ fn constructor_that_is_looked_up_at_run_time_counts_as_the_global() {
 
 #[test]
 fn written_arm_of_a_name_that_is_unknown_otherwise_is_an_entry_point() {
-    let rows: [(&str, &[&str]); 7] = [
+    let rows: [(&str, &[&str]); 9] = [
+        (
+            r#"require(require("node:path").join(process.env.CONF_FOLDER || __dirname, "conf.cjs"));"#,
+            &["conf.cjs WrittenInArm"],
+        ),
+        (
+            r#"const load = name => require(name); load(process.env.CONF || "./conf.cjs");"#,
+            &["conf.cjs WrittenInArm"],
+        ),
         (
             r#"require(process.env.CONF || "./conf.cjs");"#,
             &["conf.cjs WrittenInArm"],
@@ -1625,7 +1633,74 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
     use bun_sema::module_format::ModuleFormat::{CommonJs, Esm};
     const NO_KIND: &str = "globalThis.ran = true;";
     const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.cjs";"#);
-    let rows: [(&[(&str, &str)], &str, _); 6] = [
+    const WHOLE: (&str, &str) = ("load.cjs", "module.exports = name => require(name);");
+    let rows: [(&[(&str, &str)], &str, _); 11] = [
+        (
+            &[
+                (
+                    "main.cjs",
+                    r#"const say = require("./wrap.cjs")(require); say("./setup.cjs"); import("./setup.cjs");"#,
+                ),
+                ("wrap.cjs", "module.exports = load => text => [text, load];"),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            Esm,
+        ),
+        (
+            &[
+                (
+                    "main.cjs",
+                    r#"const tools = { load: name => require(name) }; const other = { load: text => text }; other.load("./setup.cjs"); import("./setup.cjs"); tools.load;"#,
+                ),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            Esm,
+        ),
+        (
+            &[
+                (
+                    "main.cjs",
+                    r#"const say = require("./say.cjs"); say("./setup.cjs"); import("./setup.cjs");"#,
+                ),
+                (
+                    "say.cjs",
+                    r#"const load = require("./load.cjs"); module.exports = text => [text, load];"#,
+                ),
+                WHOLE,
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            Esm,
+        ),
+        (
+            &[
+                (
+                    "main.cjs",
+                    r#"const tools = require("./tools.cjs"); tools.load("./setup.cjs"); import("./setup.cjs");"#,
+                ),
+                ("tools.cjs", "exports.load = name => require(name);"),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            CommonJs,
+        ),
+        (
+            &[
+                (
+                    "main.cjs",
+                    r#"const other = { load: text => text }; other.load("./setup.cjs"); const bring = require("./load.cjs"); bring("./setup.cjs"); import("./setup.cjs");"#,
+                ),
+                (
+                    "load.cjs",
+                    "module.exports = name => require(name); module.exports.load = name => require(name);",
+                ),
+                ("setup.cjs", NO_KIND),
+            ],
+            "setup.cjs",
+            CommonJs,
+        ),
         (
             &[
                 ("main.cjs", r#"require(require("./config.json").plugin);"#),
@@ -1698,10 +1773,104 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
 }
 
 #[test]
+fn text_passed_to_what_is_made_with_the_own_require_names_a_file() {
+    const DRIVER: &str = "node_modules/driver/index.js WrittenInArm";
+    let rows: [(&str, &[&str]); 5] = [
+        (
+            r#"const bring = require("./tools.cjs")(require); bring("driver");"#,
+            &[DRIVER],
+        ),
+        (r#"require("./tools.cjs")(require)("driver");"#, &[DRIVER]),
+        (
+            r#"const own = require; require = require("./tools.cjs")(require); require("driver", "first"); require = own;"#,
+            &[DRIVER],
+        ),
+        (
+            r#"const bring = require("./tools.cjs")(1); bring("driver");"#,
+            &[],
+        ),
+        (
+            r#"if (false) require = 1; const bring = require("./tools.cjs"); bring;"#,
+            &[],
+        ),
+    ];
+    for (main, found) in rows {
+        let project = executable(&[
+            ("main.cjs", main),
+            ("tools.cjs", "module.exports = load => name => load(name);"),
+            (
+                "node_modules/driver/package.json",
+                r#"{ "name": "driver", "version": "1.0.0", "main": "index.js" }"#,
+            ),
+            ("node_modules/driver/index.js", "exports.which = 1;"),
+        ]);
+        load(&project, |loaded| {
+            let described = describe_found(&loaded.contents.found_entry_points);
+            assert_eq!(described, found, "{main}");
+        });
+    }
+}
+
+#[test]
 fn text_passed_for_a_loaded_parameter_names_a_file() {
     const DRIVER: &str = "node_modules/driver/index.js PassedForParameter";
     const BY_REQUIRE: &str = "exports.load = name => require(name);";
-    let rows: [(&str, &str, &str, &[&str]); 10] = [
+    const WHOLE: &str = "module.exports = name => require(name);";
+    let rows: [(&str, &str, &str, &[&str]); 19] = [
+        (
+            "tools.cjs",
+            "exports.readFile = name => require(name);",
+            r#"const { readFile } = require("node:fs"); readFile("driver"); require("./tools.cjs");"#,
+            &[],
+        ),
+        (
+            "tools.cjs",
+            BY_REQUIRE,
+            r#"const { load } = require("./tools.cjs"); load("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            BY_REQUIRE,
+            r#"const bring = require("./tools.cjs").load; bring("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            WHOLE,
+            r#"const load = require("./tools.cjs"); load("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            WHOLE,
+            r#"require("./tools.cjs")("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            WHOLE,
+            r#"import load from "./tools.cjs"; load("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            "function load(name) { return require(name); }\nmodule.exports = { load };",
+            r#"require("./tools.cjs").load("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            "function load(name) { return require(name); }\nmodule.exports = load;",
+            r#"require("./tools.cjs")("driver");"#,
+            &[DRIVER],
+        ),
+        (
+            "tools.cjs",
+            "function load(name) { return require(name); }\nexports.load = load;\nload(\"driver\");",
+            r#"require("./tools.cjs");"#,
+            &["node_modules/driver/index.js WrittenInArm"],
+        ),
         (
             "tools.cjs",
             "module.exports = class Manager { load(name) { return require(name); } };",

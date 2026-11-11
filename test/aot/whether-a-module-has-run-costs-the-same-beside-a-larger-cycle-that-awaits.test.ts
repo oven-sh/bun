@@ -63,7 +63,7 @@ test.concurrent.each(sizes)("a cycle of %d modules", async ring => {
   const lines = readdirSync(cwd)
     .filter(name => name.startsWith("counts-"))
     .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-    .filter(line => line.endsWith("\tsought:ModulesForWhatHasRun"));
+    .filter(line => line.endsWith("\tsought:ModulesScannedForEvaluationStatus"));
   expect(lines.length).toBeGreaterThan(0);
   sought.set(
     ring,

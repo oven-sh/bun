@@ -1,3 +1,5 @@
+// The slot of `bins` would be held to the record that the constructor is seen to store. That record lists no name and is filled under keys, so its objects are ordinary objects:
+// the run time can tell them from no other object, and code out of a text stores something else. A slot is held to no such record: what is read out of it is asked each time.
 const poke = (0, eval)("(holder, value) => { Reflect.set(holder, \"bins\", value); }");
 class Shelf {
   constructor(names) {

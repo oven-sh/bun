@@ -1,0 +1,36 @@
+# function read(source, other) { let last; for (const key in source) { Buffer.isBuffer(key); last = source[key]; } return last; } read(JSON.parse("{}"), JSON.parse("{}"));
+# RUN: features
+# CHECK: by FunctionPrototypeApply
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="JSON" [isFreeName]
+    v2 = PropGet v1 key="parse"
+    v3 = String string="{}"
+    v4 = Call v2, v1, v3 calleeKey="parse"
+    v5 = NewClosure function=f1
+    v6 = Call v2, v1, v3 calleeKey="parse"
+    v7 = Call v5, -, v4, v6 calleeName="read"
+    Return v7
+}
+function f1 name="read" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = ForInOpen v0
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = ForInStep v3, v0
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v9 = Builtin builtin=BufferIsBuffer
+    v10 = Call v9, -, v8
+    v11 = ElemGet v0, v8
+    Jump -> next b1(v11)
+}

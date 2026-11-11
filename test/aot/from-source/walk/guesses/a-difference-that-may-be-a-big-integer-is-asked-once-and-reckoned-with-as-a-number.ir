@@ -1,0 +1,25 @@
+# `dx = b.x - a.x; sum += dx * dx + dx * b.m` over records out of a text. The fields are asked whether they are numbers; the typed difference meets the operator on values of its rare arm again, and
+# all that is known behind that meeting is "a number or a big integer". The loop reckons with it: it is asked once whether it is a number, and the products and the sum behind it go on numbers.
+# f1 = pull
+# -- source: main.js
+# const bodies = JSON.parse("[" + Array.from({ length: 6 }, (_, i) => '{"x":' + (i * i + 0.5) + ',"m":' + (i + 1) + "}").join() + "]");
+# function pull() { let sum = 0; for (let i = 0; i < bodies.length; i++) { const a = bodies[i]; for (let j = i + 1; j < bodies.length; j++) { const b = bodies[j], dx = b.x - a.x; sum += dx * dx + dx * b.m; } } return sum; }
+# print(pull());
+# bodies[2].x = "7";
+# print(pull());
+# bodies[3].x = null;
+# print(pull());
+# for (const body of bodies) { body.x = BigInt(body.m); body.m = 2n; }
+# print(String((() => { try { return pull(); } catch (error) { return error.constructor.name; } })()));
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: number|bigint @JSValue @{{*}} isInLoop=true:
+# WALK-NEXT: PropGet {{*}}key="m"
+# WALK-NEXT: TypeTest {{*}} testedType=number
+# WALK: Mul {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3780
+# ANSWERS-NEXT: 3633.75
+# ANSWERS-NEXT: 4142
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: exited with 0

@@ -19,7 +19,7 @@ pub(super) const BUG_REPORT_REQUEST: &[u8] =
     b"This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues";
 
 impl Entry {
-    fn new(code: u32, message: Msg) -> Entry {
+    pub(super) fn new(code: u32, message: Msg) -> Entry {
         let (file, line, column) = match &message.data.location {
             Some(location) => (
                 location.file.to_vec(),
@@ -45,6 +45,10 @@ impl Diagnostics {
             error_count: 0,
             missing_at_load: FxHashSet::default(),
             int32_flows: FxHashMap::default(),
+            ignore_comments: Vec::new(),
+            withheld: Vec::new(),
+            has_run_to_end: false,
+            should_list_silenced: false,
         }
     }
 
@@ -70,6 +74,12 @@ impl Diagnostics {
     pub(crate) fn add(&mut self, view: Option<ProgramView<'_, '_>>, diagnostic: Diagnostic) {
         let mut locator = view.map(SpanLocator::new);
         self.add_with_locator(locator.as_mut(), diagnostic);
+    }
+
+    pub(crate) fn render(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Msg> {
+        let mut kept = Diagnostics::new();
+        kept.add(Some(view), warning);
+        kept.entries.pop().map(|entry| entry.message)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -164,6 +174,7 @@ impl Diagnostics {
     pub(crate) fn write_to(mut self, log: &mut Log) {
         self.drop_invalid_patterns_beside_other_errors();
         self.drop_second_error_of_import();
+        self.apply_ignore_comments();
         self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);

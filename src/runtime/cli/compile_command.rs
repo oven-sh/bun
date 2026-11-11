@@ -28,7 +28,7 @@ use bun_standalone_graph::StandaloneModuleGraph::{
 use bun_sys::Fd;
 use bun_trim::TrimError;
 
-pub(crate) use self::build::compile_to_executable;
+pub(crate) use self::build::{check_entry_points_are_kept, compile_to_executable};
 pub(crate) use self::command::compile_from_context;
 pub(crate) use self::configuration::DEFAULT_LIBRARY_OUTDIR;
 pub(crate) use self::library::{
@@ -37,7 +37,7 @@ pub(crate) use self::library::{
 };
 pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
-    write_trimmed_size,
+    time_since_start, write_trimmed_size,
 };
 pub(crate) use self::stored_strings::print_stored_strings_and_exit;
 pub(crate) use self::trimming::{plan_trimming, trim_settings_of};
@@ -63,8 +63,14 @@ impl RequestOrigin {
 
 #[derive(Copy, Clone)]
 pub(crate) enum CompileProduct<'r> {
-    Executable { outfile: &'r [u8] },
+    Executable {
+        outfile: &'r [u8],
+    },
+    #[cfg_attr(all(unix, not(bun_fuzzilli), not(test)), expect(dead_code))]
     GraphBytes,
+    /// The same bytes in a file without a name, written while the image lies where the engine left it.
+    #[cfg(unix)]
+    UnnamedFile,
     ReportsOnly,
 }
 
@@ -109,17 +115,26 @@ pub(crate) struct CompileRequest<'r, 'a> {
 pub(crate) struct CompileOutcome {
     pub(crate) output_files: Vec<OutputFile>,
     pub(crate) graph_bytes: Option<Vec<u8>>,
+    #[cfg(unix)]
+    pub(crate) unnamed_file: Option<super::run_compiled::WrittenProgram>,
     pub(crate) metafile: Option<Vec<u8>>,
     pub(crate) summary: Vec<u8>,
+    /// The line of `summary` that names them, or nothing.
+    pub(crate) developer_options: Vec<u8>,
     pub(crate) report_messages: Vec<ReportMessage>,
     pub(crate) trim_log_lines: Vec<Vec<u8>>,
     pub(crate) executable: Option<ExecutableDetails>,
-    pub(crate) untyped_note: Vec<u8>,
     pub(crate) module_count: u32,
+    pub(crate) line_count: u64,
+    pub(crate) untyped_file_count: u64,
+    /// `bun check --aot`: dependency files with unlisted type errors, or that it can't check.
+    pub(crate) unverified_dependency_file_count: u64,
     /// `Compilation::names_added_to_builtins`
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
-    pub(crate) engine_time: Duration,
-    pub(crate) executable_time: Duration,
+    /// `nano_timestamp()` at the call of the compiler.
+    pub(crate) compiler_called_at: i128,
+    pub(crate) load_time: Duration,
+    pub(crate) check_time: Duration,
 }
 
 pub(crate) enum AssetError {
@@ -160,6 +175,9 @@ pub(crate) enum CompileFailure {
     Trim(TrimError),
     Executable(CompileError),
     Graph(bun_standalone_graph::Error),
+    OverwritesEntryPoint {
+        outfile: Vec<u8>,
+    },
     FileNotWritten {
         path: Vec<u8>,
         error: bun_sys::Error,

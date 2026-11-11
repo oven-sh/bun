@@ -2,10 +2,11 @@
 # -- source: no-length-is-made-in-front-of-a-read-that-tests-the-view-for-itself.ts
 # declare function sink(...values: unknown[]): void;
 # declare function note(value: unknown): void;
+# declare function size(): number;
 # type Board = { words: Int32Array; width: number };
 # function scan(board: Board, last: number) { let found = 0; for (let x = 0; x <= last; x++) { const word = board.words[x]!; if ((word & 3) !== 1) continue; const next = board.words[x + 1]!; note(next); found++; } return found; }
 # function scanAndNoteAll(board: Board, last: number) { let found = 0; for (let x = 0; x <= last; x++) { const word = board.words[x]!; note(word); found++; } return found; }
-# const board: Board = { words: new Int32Array(64), width: 8 };
+# const board: Board = { words: new Int32Array(size()), width: 8 };
 # sink(scan(board, 60), scan(board, 30), scanAndNoteAll(board, 60), scanAndNoteAll(board, 30));
 # -- end of source
 # Every turn of `scanAndNoteAll` runs other code, so the view is read off the object in every turn, and the read tests the view for itself: no length is made for it.

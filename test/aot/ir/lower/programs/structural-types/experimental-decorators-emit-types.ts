@@ -82,7 +82,7 @@ console.log("keys " + Object.keys(new Everything<number>(1, new Dog())).join("")
 
 // GENERATED: nameOf Everything method later computed
 // CHECK-LABEL: function {{*}}name="nameOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Builtin builtin=ArrayIsArray
 // CHECK-NEXT: v2 = TypeTest v0 testedType=Array
@@ -128,7 +128,7 @@ console.log("keys " + Object.keys(new Everything<number>(1, new Dog())).join("")
 // CHECK-NEXT: ReturnCall v35 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Everything"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_2]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|boolean|number|string|symbol|bigint|[[L_2]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: number, v2: undefined|null|boolean|number|string|symbol|bigint|[[L_2]], v3: undefined|null|string):
 // CHECK-NEXT: v4 = GetConstructPrototype v0 layout=[[L_3]]
 // CHECK-NEXT: v5 = NewObject v4 layout=[[L_3]]
@@ -217,20 +217,20 @@ console.log("keys " + Object.keys(new Everything<number>(1, new Dog())).join("")
 // CHECK-NEXT: Return v85
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}, {type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}, {type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[L_6]], v2: Array<number>):
 // CHECK-NEXT: v3 = Boolean boolean=true
 // CHECK-NEXT: v4 = Convert v3 declared={type=boolean}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=[[L_3]]} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=[[L_3]]} results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: [[L_3]]):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="computed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Integer integer=1
 // CHECK-NEXT: v1 = Convert v0 declared={type=number}

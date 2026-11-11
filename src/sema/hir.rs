@@ -920,6 +920,11 @@ pub struct LazyCells {
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: LazyCell<Box<[Node]>>,
     pub(crate) has_ambient_nodes: LazyCell<bool>,
+    pub(crate) ambient_ranges_hold_every_ambient_node: LazyCell<bool>,
+    pub(crate) names_that_hold_own_requires: LazyCell<Box<[(crate::bind::SymbolId, bool)]>>,
+    pub(crate) names_used_otherwise_than_called:
+        LazyCell<Box<[(crate::bind::SymbolId, crate::import_sites::OtherUse)]>>,
+    pub(crate) identifiers_by_name: LazyCell<Box<[(Atom, ExprId)]>>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -971,6 +976,10 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     class_extends_ranges: LazyCell::new(),
     keyword_identifiers: LazyCell::new(),
     has_ambient_nodes: LazyCell::new(),
+    ambient_ranges_hold_every_ambient_node: LazyCell::new(),
+    names_that_hold_own_requires: LazyCell::new(),
+    names_used_otherwise_than_called: LazyCell::new(),
+    identifiers_by_name: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
@@ -1504,7 +1513,7 @@ pub struct Call {
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
 pub const INCOMPLETE_TEMPLATE: u32 = u32::MAX - 1;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropKey {
     None,
     /// An identifier, a string, or a number formatted like `String(n)`. Also `["a"]` and `[0]`.
@@ -1715,6 +1724,9 @@ pub mod rare {
     pub const IMPORT_META: u32 = 1 << 28;
     /// `010`, `08`, `"\1"` or `"\8"`, which only sloppy code allows. Only set for text that is compiled.
     pub const LEGACY_OCTAL: u32 = 1 << 29;
+    /// The text was read in a short form, and a part of it was not parsed: the blocks of functions, or what follows the
+    /// `import` and `export` statements at its head.
+    pub const LEFT_OUT: u32 = 1 << 30;
     /// The bits that the parser only sets for oxc's dialect. In another dialect a clear bit means nothing.
     pub const ONLY_IN_OXC_DIALECT: u32 = NESTED_MODULE_SYNTAX | MAY_REDECLARE | ODD_EXPORT;
 }
@@ -2766,6 +2778,10 @@ pub struct JsDocHost {
     pub first_satisfies_tag: u32,
 }
 
+/// `// bun-ignore TS100064` silences warnings of `bun compile` on one line.
+/// Not `@bun-ignore`: a first line that begins with `// @bun` says that Bun has transpiled the file already.
+pub const IGNORE_COMMENT_MARKER: &[u8] = b"bun-ignore";
+
 /// `ast.CommentDirective`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CommentDirective {
@@ -2894,6 +2910,21 @@ pub struct TextOfDataFile {
     pub text: Atom,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextWrittenByLoader {
+    pub start: u32,
+    pub end: u32,
+    pub text: Atom,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FunctionWrittenByLoader {
+    pub function: FnId,
+    pub text: u32,
+    pub start_in_text: u32,
+    pub end_in_text: u32,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2927,8 +2958,11 @@ pub struct FileIn<S: Storage> {
     pub texts_of_data_files: S::Few<TextOfDataFile>,
     /// Set by the loader.
     pub imported_file_changers: S::Few<ImportedFileChanger>,
-    /// Among those that `FileAnalysis::asked_of_other_files` names. Set by the loader.
+    /// Among those that `FileAnalysis::other_file_queries` names. Set by the loader.
     pub texts_of_other_files: S::Few<TextOfOtherFile>,
+    pub exports_that_others_touch: S::Few<Atom>,
+    pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
+    pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -2966,6 +3000,9 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
+    /// Each comment that begins with [`IGNORE_COMMENT_MARKER`], in order: where the marker starts and where the comment
+    /// ends. They are kept where `comments` is dropped. The type checker doesn't read them.
+    pub ignore_comments: S::Few<(u32, u32)>,
     /// Every `//` and `/* */` comment, in order. Not a `#!` line. The HTML-like comments of a script (`<!--`, `-->`)
     /// are only included if the parser was asked to attach comments.
     pub comments: S::Nodes<Comment>,
@@ -3651,6 +3688,9 @@ macro_rules! file_in_storage {
             texts_of_data_files: $few!($this.texts_of_data_files),
             imported_file_changers: $few!($this.imported_file_changers),
             texts_of_other_files: $few!($this.texts_of_other_files),
+            exports_that_others_touch: $few!($this.exports_that_others_touch),
+            texts_written_by_loader: $few!($this.texts_written_by_loader),
+            functions_written_by_loader: $few!($this.functions_written_by_loader),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3667,6 +3707,7 @@ macro_rules! file_in_storage {
             body: $this.body,
             references: $few!($this.references),
             comment_directives: $few!($this.comment_directives),
+            ignore_comments: $few!($this.ignore_comments),
             comments: $long!($this.comments),
             mentioned: $long!($this.mentioned),
             with_bodies: $few!($this.with_bodies),
@@ -3801,6 +3842,9 @@ impl FileBuilder {
             texts_of_data_files,
             imported_file_changers,
             texts_of_other_files,
+            exports_that_others_touch,
+            texts_written_by_loader,
+            functions_written_by_loader,
             has_module_syntax,
             has_errors,
             ran_out_of_stack,
@@ -3817,6 +3861,7 @@ impl FileBuilder {
             body,
             references,
             comment_directives,
+            ignore_comments,
             comments,
             mentioned,
             with_bodies,
@@ -3907,6 +3952,9 @@ impl FileBuilder {
         texts_of_data_files.clear();
         imported_file_changers.clear();
         texts_of_other_files.clear();
+        exports_that_others_touch.clear();
+        texts_written_by_loader.clear();
+        functions_written_by_loader.clear();
         *has_module_syntax = Default::default();
         *has_errors = Default::default();
         *ran_out_of_stack = Default::default();
@@ -3923,6 +3971,7 @@ impl FileBuilder {
         *body = Default::default();
         references.clear();
         comment_directives.clear();
+        ignore_comments.clear();
         comments.clear();
         mentioned.clear();
         with_bodies.clear();
@@ -4175,6 +4224,10 @@ impl<'s> File<'s> {
             cells.class_extends_ranges.clear();
             cells.keyword_identifiers.clear();
             cells.has_ambient_nodes.clear();
+            cells.ambient_ranges_hold_every_ambient_node.clear();
+            cells.names_that_hold_own_requires.clear();
+            cells.names_used_otherwise_than_called.clear();
+            cells.identifiers_by_name.clear();
         }
     }
 }

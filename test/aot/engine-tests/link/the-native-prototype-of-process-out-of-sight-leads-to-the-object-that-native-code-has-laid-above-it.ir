@@ -1,0 +1,50 @@
+# One step up from the native prototype of `process` stands the object that native code has laid there. The prototype alone goes out of sight; `process` does not.
+#   function Bell() { this.rung = 0; }  Bell.prototype.on = function () { return 1; };  Bell.prototype._eventsCount = 0;  makeProcessInheritFrom(Bell.prototype);
+#   console.log(%EventEmitter%.prototype);
+# LIBRARY: own
+# RUN: link functions layouts mechanisms=all
+# CHECK-NOT: function f3 unreached
+# CHECK: layout L0 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# RUN(LOOKUPS): link lookups mechanisms=all
+# LOOKUPS-NOT: lookup let-go Process
+
+layout L0 kind=Instance name="Bell" module=m1 constructor=f2 fields=[{key="rung" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:events" displayPath="node:events" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:events"
+    v1 = Builtin builtin=EventEmitterPrototype
+    v2 = Builtin builtin=Console
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = Call v4, v2, v1 calleeKey="log" calleeName="console.log"
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="on"
+    v4 = Integer integer=0
+    PropSet v1, v4 key="_eventsCount"
+    v6 = NativeBinding builtin=NativeNewCppFunctionBunProcessCppJsFunctionMakeProcessInheritFrom
+    v7 = Call v6, -, v1 calleeName="makeProcessInheritFrom"
+    v8 = Undefined
+    Return v8
+}
+function f2 name="Bell" module=m1 role=Library flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="rung"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="on" module=m1 role=Library flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}

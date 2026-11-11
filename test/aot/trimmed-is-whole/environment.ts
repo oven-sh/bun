@@ -210,7 +210,7 @@ export class Bench {
         .replace(/^Code at (rip|pc): .*$/gm, "Code at $1: <code>")
         .replace(/\bFaults: \d+/g, "Faults: <count>")
         // Only an executable that has the interpreter lets a Worker run a text apart from the compiled program.
-        .replace(/\b(disallowNonStaticCodeOnlyBesideCompiledCode)=(true|false)/g, "$1=<whether>")
+        .replace(/\b(disallowNonStaticCodeOnlyWithCompiledCode)=(true|false)/g, "$1=<whether>")
         .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
         .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
         .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>")

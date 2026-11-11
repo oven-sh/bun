@@ -1,7 +1,8 @@
 // run-parallel.ts: `// Sizes: <n> <4n> <16n>`, `// Passes: <n>` and `// Grows: linear`: what one piece of the data of a program costs must not hang on how much data there is.
-// `// Grows: the build, linear`: the program writes programs, and what their builds take must grow as they do: that is counted, under --instructions or by a counter of the driver's own.
+// `// Grows: the build, linear`: the program writes programs, and what their builds take must grow as they do.
+// Both are counted, under --instructions or by a counter of the driver's own. Where nothing is counted a program still runs at each size, and its line says what the clock read.
 // The programs of parallel/what-grows-with-its-data and parallel/what-a-build-takes-grows-with-its-program say those lines. Here the driver itself is held:
-// it passes what is linear, it fails what is a square, and it passes over no line that it cannot read.
+// it passes what is linear, it fails what is a square where it counts, and it passes over no line that it cannot read.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { basename, join } from "node:path";
@@ -21,8 +22,7 @@ const linear =
   weighs +
   "function once() { const list = []; let sum = 0; for (let i = 0; i < size; i++) { list.push(i); sum = (sum + weigh(i)) | 0; } return sum + list.length; }\n" +
   runsItsPasses;
-// And besides, for each element, all that came before it is walked. A turn of that walk costs a third of a turn of weigh(): under 700 turns the clock read a growth of 7.02,
-// where up to 9 passes for linear. Under 100 it reads over 12.
+// And besides, for each element, all that came before it is walked. A turn of that walk costs a third of a turn of weigh(): under 700 turns the growth read 7.02, under 100 over 12.
 const square =
   takesItsSize +
   weighs.replace("700", "100") +
@@ -50,10 +50,11 @@ for (let copy = 0; copy < copies; copy++) out.push("told = (told + work" + copy 
 out.push("console.log(told);");
 console.log(out.join("\\n"));
 `;
+// With the address sanitizer nothing is asked of how a program grows.
+const isJudged = !isASAN && isLinux && !without("a counter of instructions");
 const expected = {
   "linear.js": "pass",
-  // With the address sanitizer nothing is asked of how a program grows.
-  "a-square.js": isASAN ? "pass" : "growth: what it takes grows faster than its data",
+  "a-square.js": isJudged ? "growth: what it takes grows faster than its data" : "pass",
   "sizes-that-are-not-four-times-the-one-before.js": notRead,
   "no-passes.js": notRead,
   "a-word-that-is-not-linear.js": notRead,
@@ -105,7 +106,8 @@ test("what a program takes may grow as its data grows, and no faster", async () 
   expect(verdicts).toEqual(expected);
   expect(exitCode).toBe(1);
   // The line of a program that passes says how it grew: 4 is linear.
-  if (!isASAN) expect(lines.find(({ file }) => basename(file) === "linear.js").growth).toBeWithin(2, 9.01);
+  if (isJudged) expect(lines.find(({ file }) => basename(file) === "linear.js").growth).toBeWithin(2, 6.01);
+  else if (!isASAN) expect(lines.find(({ file }) => basename(file) === "a-square.js").measured).toContain("not judged");
 }, 240_000);
 
 // Where the processor's counters may be read. In a container they often may not.

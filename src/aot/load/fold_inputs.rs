@@ -15,8 +15,13 @@ use crate::builtins::Platforms;
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
+use crate::statistics::{Architecture, LimitId};
 
-pub(crate) const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
+pub(crate) const MAX_FOLDED_STRING_BYTES: usize =
+    LimitId::MaxFoldedStringBytes.value(Architecture::ARM64) as usize;
+const _: () = assert!(
+    MAX_FOLDED_STRING_BYTES as u64 == LimitId::MaxFoldedStringBytes.value(Architecture::X86_64)
+);
 const MAX_FOLDED_PATTERN_BYTES: usize = 1 << 20;
 
 #[derive(Copy, Clone)]
@@ -25,8 +30,10 @@ pub(crate) struct ProgramFacts {
     pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
+    pub can_replace_builtin_functions: bool,
     pub process_reaches_code_on_its_prototypes: bool,
     pub warnings_load_events: bool,
+    pub can_load_node_path: bool,
     pub takes_first_texts: bool,
 }
 
@@ -131,10 +138,15 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
         define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
         define_fact(
+            b"CAN_REPLACE_BUILT_IN_FUNCTIONS",
+            facts.can_replace_builtin_functions,
+        ),
+        define_fact(
             b"PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES",
             facts.process_reaches_code_on_its_prototypes,
         ),
         define_fact(b"WARNINGS_LOAD_NODE_EVENTS", facts.warnings_load_events),
+        define_fact(b"CAN_LOAD_NODE_PATH", facts.can_load_node_path),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", !facts.takes_first_texts),
     ]);
     let held_in_every_run = collect_defines_held_in_every_run(platform, arena, atoms);
@@ -289,8 +301,10 @@ mod tests {
         can_load_addons_at_run_time: false,
         can_be_cluster_worker: false,
         can_replace_builtins: false,
+        can_replace_builtin_functions: false,
         process_reaches_code_on_its_prototypes: false,
         warnings_load_events: false,
+        can_load_node_path: false,
         takes_first_texts: false,
     };
 
@@ -495,6 +509,18 @@ mod tests {
     }
 
     #[test]
+    fn build_decides_whether_runtime_sources_make_their_calls_where_a_replaced_function_sees_them()
+    {
+        assert_fact_decides_import(
+            "if (CAN_REPLACE_BUILT_IN_FUNCTIONS) import('./calls');",
+            |can_replace_builtin_functions| ProgramFacts {
+                can_replace_builtin_functions,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
     fn build_decides_whether_runtime_sources_make_the_calls_that_only_a_replaced_builtin_sees() {
         assert_fact_decides_import(
             "if (CAN_REPLACE_BUILT_INS) import('./calls');",
@@ -522,6 +548,17 @@ mod tests {
             "if (WARNINGS_LOAD_NODE_EVENTS) import('./events');",
             |warnings_load_events| ProgramFacts {
                 warnings_load_events,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn node_path_fact_decides_import() {
+        assert_fact_decides_import(
+            "if (CAN_LOAD_NODE_PATH) import('./path');",
+            |can_load_node_path| ProgramFacts {
+                can_load_node_path,
                 ..NO_FACTS
             },
         );

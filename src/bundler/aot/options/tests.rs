@@ -608,6 +608,68 @@ fn single_entry_point_directory_is_root() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn root_does_not_lie_inside_node_modules() {
+    let cases: [(&[u8], &[u8], &[u8]); 5] = [
+        (
+            b"node_modules/kit/dist/main.mjs",
+            b"/project",
+            b"node_modules/kit/dist/main.mjs",
+        ),
+        (
+            b"node_modules/main.mjs",
+            b"/project",
+            b"node_modules/main.mjs",
+        ),
+        (
+            b"apps/x/node_modules/a/node_modules/kit/main.mjs",
+            b"/project/apps/x",
+            b"node_modules/a/node_modules/kit/main.mjs",
+        ),
+        (
+            b"not_node_modules/kit/main.mjs",
+            b"/project/not_node_modules/kit",
+            b"main.mjs",
+        ),
+        (
+            b"/node_modules/kit/main.mjs",
+            b"/node_modules/kit",
+            b"main.mjs",
+        ),
+    ];
+    for (entry_point, root_directory, name) in cases {
+        let paths = convert_paths(&[entry_point], |_| {});
+        assert_eq!(paths.root_directory, root_directory);
+        assert_eq!(paths.entry_point_names[0], name);
+    }
+}
+
+#[test]
+fn root_right_under_a_root_of_the_file_system_stays_an_absolute_path() {
+    let cases: [(&str, &str); 9] = [
+        ("/node_modules/kit", "/node_modules/kit"),
+        ("/project/node_modules/kit", "/project"),
+        (r"C:\node_modules\kit", r"C:\node_modules\kit"),
+        ("C:/node_modules/kit", "C:/node_modules/kit"),
+        (r"C:\project\node_modules\kit", r"C:\project"),
+        (
+            r"\\server\share\node_modules\kit",
+            r"\\server\share\node_modules\kit",
+        ),
+        (
+            r"\\server\share\project\node_modules\kit",
+            r"\\server\share\project",
+        ),
+        (r"\\?\C:\node_modules\kit", r"\\?\C:\node_modules\kit"),
+        (r"\\?\C:\project\node_modules\kit", r"\\?\C:\project"),
+    ];
+    for (directory, root_directory) in cases {
+        let widened = widen_out_of_packages(directory.as_bytes().to_vec());
+        assert_eq!(widened, root_directory.as_bytes(), "{directory}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
     let cases: [(&[&[u8]], &[u8]); 6] = [
         (&[b"src/a.ts", b"lib/b.ts"], b"/project"),

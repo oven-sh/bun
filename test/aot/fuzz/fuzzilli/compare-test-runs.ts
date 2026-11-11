@@ -78,6 +78,7 @@ async function run(folder: string, files: string[], isCompiled: boolean): Promis
     cmd: [
       options.bun,
       "test",
+      "--no-install",
       ...(isCompiled ? ["--aot"] : []),
       ...options.flags.split(" ").filter(Boolean),
       ...files.map(file => "./" + file),

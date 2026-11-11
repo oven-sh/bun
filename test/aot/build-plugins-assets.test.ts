@@ -158,6 +158,17 @@ export { twiceAgain };`,
     prints: "[answer 1] [answer 1] true\n",
     calls: { "once.min.js": 1, "twice.min.js": 1 },
   },
+  "a script with a byte order mark that the plugin passes on keeps its bytes": {
+    files: {
+      "main.ts": `${reads}// @ts-ignore
+import marked from "./marked.min.js" with { type: "file" };
+console.log(Array.from(await Bun.file(marked).bytes(), (byte: any) => byte.toString(16).padStart(2, "0")).join(""));`,
+      "marked.min.js": "﻿ab\n",
+      "plugin.ts": plugin(`  b.onLoad({ filter: /marked\\.min\\.js$/ }, (a: any) => answer(a, undefined));`),
+    },
+    prints: "efbbbf61620a\n",
+    calls: { "marked.min.js": 1 },
+  },
   "a plugin that returns undefined embeds the file from disk": {
     files: {
       "main.ts": `${reads}// @ts-ignore
@@ -269,37 +280,14 @@ console.log(await text(asset), seen);`,
     prints: "made true\n",
     calls: { "asset.bin": 1, "seen.tmpl": 1 },
   },
-  "a macro runs once when a plugin returns code for a file import": {
-    files: {
-      "main.ts": `import { count } from "./count" with { type: "macro" };
-// @ts-ignore
-import later from "./later.bin" with { type: "file" };
-console.log(count(), later);`,
-      "count.ts": `import { appendFileSync, readFileSync } from "fs";
-import { join } from "path";
-export function count(): number {
-  const file = join(import.meta.dir, "count-" + (process.env.PLUGIN_DELAY_MS ?? "0") + ".txt");
-  appendFileSync(file, "x");
-  return readFileSync(file, "utf8").length;
-}`,
-      "later.bin": "",
-      "plugin.ts": plugin(
-        `  b.onLoad({ filter: /later\\.bin$/ }, (a: any) => answer(a, { contents: 'export default "code";', loader: "js" }));`,
-      ),
-    },
-    prints: "1 code\n",
-    calls: { "later.bin": 1 },
-  },
 };
 
 describe.concurrent("compile/aot/assets loaded by plugins", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
   // A Worker with an unknown path and another naming are matters of the whole build. The other programs are built as one.
-  const callsMacro = (name: string) => name === "a macro runs once when a plugin returns code for a file import";
-  const isAlone = (name: string) => cases[name].naming !== undefined || name.includes("Worker") || callsMacro(name);
+  const isAlone = (name: string) => cases[name].naming !== undefined || name.includes("Worker");
   for (const name of Object.keys(cases).filter(isAlone))
-    // TODO: --aot refuses every macro at build time (TS100053: Macros are disabled).
-    (callsMacro(name) ? test.todo : test)(name, () => slot(() => expectSameExecutable(cases[name])), 600_000);
+    test(name, () => slot(() => expectSameExecutable(cases[name])), 600_000);
   // The build has decided what a file is before a plugin is asked for it: docs/compiler/compatibility.mdx, "Not supported".
   const refused: Record<string, string[]> = {
     "many assets, and a plugin module that imports a virtual asset": [`"wrapped.tmpl" with the loader "ts"`],

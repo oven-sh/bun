@@ -1,0 +1,8 @@
+# The control of a-key-of-which-nothing-is-seen-yet-is-no-symbol.ir: a symbol has been seen at the key, beside what comes by escape alone: the map goes out of sight as before. L0 = the map.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor] filled-under-computed-keys
+# -- source: a-key-that-is-a-symbol-as-far-as-is-seen-still-lets-its-object-escape.js
+# const mark = Symbol("mark");
+# function fill(source, flag) { const seen = {}; const key = flag ? mark : source.code; seen[key] = true; return Object.getOwnPropertySymbols(seen).length + ":" + Object.keys(seen).join(); }
+# console.log(fill(JSON.parse('{"code":1}'), true), fill(JSON.parse('{"code":1}'), false));
+# -- end of source

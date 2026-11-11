@@ -2,7 +2,7 @@
 # The order in which a program starts took such a call for one of unseen code that holds nothing of the program yet, which enters nothing. So nobody entered the closure in front of the store,
 # `late` lost its `absent`, and the read in the dead zone gave undefined where it throws a ReferenceError
 # RUN: link variables mechanisms=all
-# CHECK: variable g0 proven=i32|absent
+# CHECK: variable g0 proven=int[0, 2147483647]|absent
 # RUN(NONE): run-in-shell mechanisms=none
 # NONE: ReferenceError
 # NONE-NEXT: 1

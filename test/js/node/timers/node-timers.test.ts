@@ -231,7 +231,11 @@ describe("clear", () => {
     clearTimeout(immediate as any);
     clearInterval(immediate as any);
 
-    await Bun.sleep(1);
+    // Immediates run in the order of their setImmediate() calls, so this one runs after mockedCb.
+    // A timer that is due can run before an immediate that was queued earlier.
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setImmediate(resolve);
+    await promise;
     expect(mockedCb).toHaveBeenCalledTimes(1);
   });
 

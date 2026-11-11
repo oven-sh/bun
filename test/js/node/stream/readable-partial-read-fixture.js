@@ -3,10 +3,11 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L842-L858
 // A libuv stream gives Node at most 64 KiB a read, from the event loop, so that holds for every stream it feeds.
 //
-//   <runtime> readable-partial-read-fixture.js <directory for its files> <source>:<reader>...
+// readInPart(dir, source, reader) has the writer of `source` send PAYLOAD bytes and keep its end open. It resolves
+// to what `reader` had while that end was still open, and how the stream ended once the writer closed it.
+// Run as a program, it prints that as one line of JSON for each case:
 //
-// For each case the writer sends PAYLOAD bytes and keeps its end open. The fixture prints, as one line of JSON,
-// what the reader had while that end was still open, and how the stream ended once the writer closed it.
+//   <runtime> readable-partial-read-fixture.js <directory for its files> <source>:<reader>[:<size>]...
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -14,20 +15,17 @@ const path = require("node:path");
 const HEADER = 8;
 const PAYLOAD = 64 * 1024 + HEADER + 1;
 const WARM_UP = 1024 * 1024;
-const [, , dir, ...cases] = process.argv;
+
+let files = 0;
+const newFile = dir => path.join(dir, `f${process.pid}.${files++}`);
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
-// What is in the kernel reaches the stream within a few turns of the loop. A stream that stalled never delivers it.
-async function turnsUntil(done, limit = 400) {
-  for (let i = 0; i < limit && !done(); i++) await turn();
-}
+
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+// Keeps the loop from turning until the writer has made `file`, or cannot be expected to any more.
 function waitForFile(file) {
-  const deadline = Date.now() + 20_000;
-  while (!fs.existsSync(file)) {
-    if (Date.now() > deadline) throw new Error("timed out waiting for " + file);
-    Atomics.wait(sleepCell, 0, 0, 1);
-  }
+  const deadline = Date.now() + 2000;
+  while (!fs.existsSync(file) && Date.now() < deadline) Atomics.wait(sleepCell, 0, 0, 1);
 }
 
 // Records the largest push of the source, and counts the pushes that arrive inside a _read() for a stream that
@@ -122,10 +120,10 @@ readers.iterateThenListen.startsLate = true;
 
 const newCounts = () => ({ received: 0, headerCalls: 0, largestPush: 0, stackedPushes: 0 });
 
-// `written` resolves when the whole payload is in the kernel, `release` lets the writer close its end.
+// `written` resolves when the writer has sent what it can of its `size` bytes, `release` lets it close its end.
 // A reader starts in an event, where the ticks of what it does come before its own promise jobs: in the caller's
 // (`inEvent`), which must not be a promise job, or in one of its own.
-async function run(stream, reader, written, release, inEvent = false) {
+async function run(stream, reader, written, release, { inEvent = false, size = PAYLOAD } = {}) {
   const counts = newCounts();
   watchPushes(stream, counts);
   let ended = false;
@@ -143,129 +141,157 @@ async function run(stream, reader, written, release, inEvent = false) {
     );
   }
   if (inEvent || !start.startsLate) await written();
-  await turnsUntil(() => counts.received >= PAYLOAD);
+  // By the end of a turn of the loop every 'readable' that was due has been emitted, and these readers read only
+  // when they are told. So nothing more comes of a stream that then has no _read() outstanding, or that already
+  // holds all that one could bring.
+  const state = stream._readableState;
+  const allArrived = () => counts.received + state.length >= size;
+  do await turn();
+  while (counts.received < size && state.reading && !allArrived());
   const whileOpen = { ...counts, ended };
   release();
-  await turnsUntil(() => ended, 1000);
+  do await turn();
+  while (!ended && state.reading);
   return { whileOpen, received: counts.received, ended };
 }
 
-// Writes the payload to `fd`, makes the marker, and keeps `fd` open until its stdin ends.
-const writerArgs = (fd, marker) => [
-  "/bin/sh",
+// Writes `size` bytes to `fd`, makes the marker, and keeps `fd` open until its stdin ends.
+const writerArgs = (fd, marker, size) => [
+  "sh",
   "-c",
-  `head -c ${PAYLOAD} /dev/zero >&${fd}; : > "$0"; cat > /dev/null`,
+  `head -c ${size} /dev/zero >&${fd}; : > "$0"; cat > /dev/null`,
   marker,
 ];
-// Nothing is read before the payload is complete: the first read finds it all.
-const writerIsDone = marker => async () => waitForFile(marker);
+// The kernel holds PAYLOAD bytes for a reader that has not read yet: nothing is read before they are complete, and
+// the first read finds them all. The writer of more is still writing when the reader starts, as in the report.
+const writerIsDone = (marker, size) => async () => {
+  if (size <= PAYLOAD) waitForFile(marker);
+};
 
 function fromChild(fd) {
-  return (reader, marker) => {
+  return (reader, dir, size = PAYLOAD) => {
     const { spawn } = require("node:child_process");
-    const stdio = ["pipe", "inherit", "inherit"];
+    const marker = newFile(dir);
+    const stdio = ["pipe", "ignore", "ignore"];
     stdio[fd] = "pipe";
-    const [command, ...args] = writerArgs(fd, marker);
+    const [command, ...args] = writerArgs(fd, marker, size);
     const child = spawn(command, args, { stdio });
-    return run(child.stdio[fd], reader, writerIsDone(marker), () => child.stdin.end());
+    const stream = child.stdio[fd];
+    // A writer that a stalled reader left blocked sees its descriptor close.
+    return run(stream, reader, writerIsDone(marker, size), () => child.stdin.end(), { size }).finally(() =>
+      stream.destroy(),
+    );
   };
 }
 
-// Both ends in this process. The first megabyte flows, so that the kernel hands over the payload in one piece.
-function overSocket(reader, listen, listenArgs, connect) {
+const tlsOptions = dir => ({
+  cert: fs.readFileSync(path.join(dir, "cert.pem")),
+  key: fs.readFileSync(path.join(dir, "key.pem")),
+});
+const tlsConnect = (server, { cert }) =>
+  require("node:tls").connect({ port: server.address().port, host: "127.0.0.1", ca: cert, servername: "localhost" });
+const tcpConnect = server => require("node:net").connect(server.address().port, "127.0.0.1");
+
+// Both ends in this process: the reader has the socket that the server accepted, or the one that connected
+// (`readsConnected`). The first megabyte flows, so that the kernel hands over the payload in one piece.
+function overSocket(reader, listen, listenArgs, connect, readsConnected = false) {
   const { promise, resolve } = Promise.withResolvers();
-  let client;
-  const server = listen(async socket => {
+  let connected;
+  const server = listen(async accepted => {
+    const [stream, writer] = readsConnected ? [connected, accepted] : [accepted, connected];
+    writer.on("error", () => {});
+    writer.resume();
     let warm = 0;
     const warmedUp = Promise.withResolvers();
     const onWarmUp = chunk => {
       warm += chunk.length;
       if (warm < WARM_UP) return;
-      socket.off("data", onWarmUp);
-      socket.pause();
+      stream.off("data", onWarmUp);
+      stream.pause();
       warmedUp.resolve();
     };
-    socket.on("data", onWarmUp);
-    client.write(Buffer.alloc(WARM_UP, "w"));
+    stream.on("data", onWarmUp);
+    writer.write(Buffer.alloc(WARM_UP, "w"));
     await warmedUp.promise;
-    const written = () => new Promise(done => client.write(Buffer.alloc(PAYLOAD, "a"), done));
-    const result = await run(socket, reader, written, () => client.end());
-    socket.destroy();
+    const written = () => new Promise(done => writer.write(Buffer.alloc(PAYLOAD, "a"), done));
+    const result = await run(stream, reader, written, () => writer.end());
+    stream.destroy();
+    writer.destroy();
     server.close(() => resolve(result));
   });
   server.listen(...listenArgs, () => {
-    client = connect(server);
-    client.on("error", () => {});
-    client.resume();
+    connected = connect(server);
+    connected.on("error", () => {});
   });
   return promise;
 }
+
+const overTCP = readsConnected => reader =>
+  overSocket(reader, require("node:net").createServer, [0, "127.0.0.1"], tcpConnect, readsConnected);
+
+const overTLS = readsConnected => (reader, dir) => {
+  const options = tlsOptions(dir);
+  const listen = onSocket => require("node:tls").createServer(options, onSocket);
+  return overSocket(reader, listen, [0, "127.0.0.1"], server => tlsConnect(server, options), readsConnected);
+};
+
+// The second request of a connection, whose first one made the kernel's window grow. Its body stays one byte short.
+const httpRequest = secure => (reader, dir) => {
+  const options = secure ? tlsOptions(dir) : {};
+  const { promise, resolve } = Promise.withResolvers();
+  let client;
+  const server = require(secure ? "node:https" : "node:http").createServer(options, async (req, res) => {
+    if (req.url === "/warm-up") {
+      req.resume().on("end", () => res.end("ok"));
+      return;
+    }
+    // Its head and PAYLOAD bytes of its body came in one write.
+    const result = await run(
+      req,
+      reader,
+      async () => {},
+      () => client.write("z"),
+      { inEvent: true },
+    );
+    res.end("ok");
+    client.destroy();
+    server.close(() => resolve(result));
+  });
+  server.listen(0, "127.0.0.1", () => {
+    client = secure ? tlsConnect(server, options) : tcpConnect(server);
+    client.on("error", () => {});
+    client.once("data", () => {
+      const head = `POST /upload HTTP/1.1\r\nHost: a\r\nContent-Length: ${PAYLOAD + 1}\r\n\r\n`;
+      client.write(Buffer.concat([Buffer.from(head), Buffer.alloc(PAYLOAD, "a")]));
+    });
+    client.write(`POST /warm-up HTTP/1.1\r\nHost: a\r\nContent-Length: ${WARM_UP}\r\n\r\n`);
+    client.write(Buffer.alloc(WARM_UP, "w"));
+  });
+  return promise;
+};
 
 const sources = {
   "child-stdout": fromChild(1),
   "child-stderr": fromChild(2),
   "child-stdio3": fromChild(3),
-  "fromweb-spawn"(reader, marker) {
-    const proc = Bun.spawn({ cmd: writerArgs(1, marker), stdio: ["pipe", "pipe", "inherit"], lazy: true });
+  "fromweb-spawn"(reader, dir) {
+    const marker = newFile(dir);
+    const cmd = writerArgs(1, marker, PAYLOAD);
+    const proc = Bun.spawn({ cmd, stdio: ["pipe", "pipe", "ignore"], lazy: true });
     const stream = require("node:stream").Readable.fromWeb(proc.stdout);
-    return run(stream, reader, writerIsDone(marker), () => proc.stdin.end());
+    return run(stream, reader, writerIsDone(marker, PAYLOAD), () => proc.stdin.end());
   },
-  tcp(reader) {
+  "tcp-accepted": overTCP(false),
+  "tcp-connected": overTCP(true),
+  "unix-accepted"(reader, dir) {
     const net = require("node:net");
-    return overSocket(reader, net.createServer, [0, "127.0.0.1"], server =>
-      net.connect(server.address().port, "127.0.0.1"),
-    );
-  },
-  unix(reader, marker) {
-    const net = require("node:net");
-    const socketPath = marker + ".sock";
+    const socketPath = newFile(dir);
     return overSocket(reader, net.createServer, [socketPath], () => net.connect(socketPath));
   },
-  tls(reader) {
-    const tls = require("node:tls");
-    const cert = fs.readFileSync(path.join(dir, "cert.pem"));
-    const key = fs.readFileSync(path.join(dir, "key.pem"));
-    return overSocket(
-      reader,
-      onSocket => tls.createServer({ cert, key }, onSocket),
-      [0, "127.0.0.1"],
-      server => tls.connect({ port: server.address().port, host: "127.0.0.1", ca: cert, servername: "localhost" }),
-    );
-  },
-  // The second request of a connection, whose first one made the kernel's window grow. Its body stays one byte short.
-  "http-request"(reader) {
-    const http = require("node:http");
-    const net = require("node:net");
-    const { promise, resolve } = Promise.withResolvers();
-    let client;
-    const server = http.createServer(async (req, res) => {
-      if (req.url === "/warm-up") {
-        req.resume().on("end", () => res.end("ok"));
-        return;
-      }
-      // Its head and PAYLOAD bytes of its body came in one write.
-      const result = await run(
-        req,
-        reader,
-        async () => {},
-        () => client.write("z"),
-        true,
-      );
-      res.end("ok");
-      client.destroy();
-      server.close(() => resolve(result));
-    });
-    server.listen(0, "127.0.0.1", () => {
-      client = net.connect(server.address().port, "127.0.0.1");
-      client.once("data", () => {
-        const head = `POST /upload HTTP/1.1\r\nHost: a\r\nContent-Length: ${PAYLOAD + 1}\r\n\r\n`;
-        client.write(Buffer.concat([Buffer.from(head), Buffer.alloc(PAYLOAD, "a")]));
-      });
-      client.write(`POST /warm-up HTTP/1.1\r\nHost: a\r\nContent-Length: ${WARM_UP}\r\n\r\n`);
-      client.write(Buffer.alloc(WARM_UP, "w"));
-    });
-    return promise;
-  },
+  "tls-accepted": overTLS(false),
+  "tls-connected": overTLS(true),
+  "http-request": httpRequest(false),
+  "https-request": httpRequest(true),
   // The same for the second response of a connection.
   "http-response"(reader) {
     const http = require("node:http");
@@ -289,7 +315,7 @@ const sources = {
               reader,
               () => written.promise,
               () => held.end("z"),
-              true,
+              { inEvent: true },
             );
             agent.destroy();
             server.close(() => resolve(result));
@@ -311,10 +337,16 @@ const sources = {
   },
 };
 
-(async () => {
-  for (const [index, name] of cases.entries()) {
-    const [source, reader] = name.split(":");
-    const result = await sources[source](reader, path.join(dir, "written-" + index));
-    console.log(JSON.stringify({ [name]: result }));
-  }
-})();
+const readInPart = (dir, source, reader, size) => sources[source](reader, dir, size);
+
+module.exports = { PAYLOAD, readInPart };
+
+if (require.main === module) {
+  const [, , dir, ...cases] = process.argv;
+  (async () => {
+    for (const name of cases) {
+      const [source, reader, size] = name.split(":");
+      console.log(JSON.stringify({ [name]: await readInPart(dir, source, reader, size && Number(size)) }));
+    }
+  })();
+}

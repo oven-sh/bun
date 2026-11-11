@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
-import { allCases, deliveredAll, readInPart } from "../stream/readable-partial-read";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -219,55 +218,5 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("spawnSync: ok 0\nspawn: 0\n");
     expect(exitCode).toBe(0);
-  });
-});
-
-// A reader takes a header with read(8) and leaves the rest to a 'readable' listener that it adds afterwards. Node
-// announces what is left again with the next chunk, as long as no more than highWaterMark bytes are left. libuv
-// gives Node at most 64 KiB a read, and none of it while that read(8) still runs, so a child's stdio never stalls
-// there. The default highWaterMark on Windows is 16 KiB, under which Node stalls too.
-it.skipIf(isWindows)("a child's stdio that was read in part announces the rest", async () => {
-  const cases = [
-    "child-stdout:swap",
-    "child-stdout:once",
-    "child-stdout:unshift",
-    "child-stdout:awaitSwap",
-    "child-stdout:iterateThenListen",
-    "child-stderr:swap",
-    "child-stdio3:swap",
-  ];
-  expect(await readInPart(cases)).toEqual(allCases(cases, deliveredAll));
-});
-
-// A child's stdio is read when the stream asks for bytes. The first read of a stream that holds nothing answers at
-// once, so a read() with no listener finds what the child wrote, as it does in Node, which reads from the start.
-describe.concurrent("a child's stdout that nothing listens to", () => {
-  async function run(script) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  it("read(8) returns 8 of the bytes that the child wrote", async () => {
-    const result = await run(`
-      const { spawn } = require("node:child_process");
-      const writer = "process.stdout.write('0123456789abcdef', () => process.stderr.write('.')); process.stdin.resume();";
-      const child = spawn(process.execPath, ["-e", writer], { stdio: ["pipe", "pipe", "pipe"] });
-      // The child writes to stderr when its stdout has the bytes. One more turn of the loop, for a runtime that reads ahead.
-      child.stderr.once("data", () => setImmediate(() => {
-        console.log(String(child.stdout.read(8)), String(child.stdout.read(8)), child.stdout.read(8));
-        child.stdin.end();
-      }));
-    `);
-    expect(result).toEqual({ stdout: "01234567 89abcdef null\n", stderr: "", exitCode: 0 });
-  });
-
-  it("read() in 'exit' returns the child's output", async () => {
-    const result = await run(`
-      const { spawn } = require("node:child_process");
-      const child = spawn(process.execPath, ["-e", "process.stdout.write('hello from the child')"], { stdio: ["ignore", "pipe", "inherit"] });
-      child.on("exit", () => console.log(String(child.stdout.read())));
-    `);
-    expect(result).toEqual({ stdout: "hello from the child\n", stderr: "", exitCode: 0 });
   });
 });

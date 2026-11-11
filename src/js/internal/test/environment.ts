@@ -369,7 +369,8 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
     async close() {
       const { happyDOM } = win;
       // Until happy-dom 18, happyDOM.close() throws for a window that the file already closed.
-      if (isClosed(win)) return;
+      // Not isClosed(): a file may set `document` to undefined, and that is written through to the window.
+      if (win.closed) return;
       if (!happyDOM.abort) return void happyDOM.cancelAsync();
       // Aborted first, so that what a pending task does when it is aborted still has the document.
       await happyDOM.abort();
@@ -490,7 +491,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
     try {
       $Object.$defineProperty(globalThis, key, descriptor);
     } catch (error) {
-      for (let j = defined.length; j--;) putBack(defined[j], originals[j]);
+      for (let j = defined.length; j--; ) putBack(defined[j], originals[j]);
       return `cannot define "${key}" on globalThis: ${(error as Error).message}`;
     }
     $arrayPush(defined, key);

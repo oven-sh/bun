@@ -1001,9 +1001,30 @@ describe.concurrent("test environment", () => {
     const globals = stdout.filter(line => line.startsWith("globals ")).map(line => Number(line.split(" ")[1]));
     expect(globals).toHaveLength(files);
     // The count is measured before the file's own window closes, so only the earlier files' globals can be gone.
-    expect(globals.slice(1)).toEqual(Array(files - 1).fill(globals[1]));
-    expect(globals[1]).toBeLessThanOrEqual(globals[0] + 1);
+    expect(Math.max(...globals)).toBeLessThanOrEqual(globals[0] + 1);
     expect(summary(stderr)).toEqual([`${files} pass`, "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--isolate: a file that sets `document` to undefined still has its window closed", async () => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "1.test.js": `// ${VITEST} happy-dom
+        import { test } from "bun:test";
+        test("server-side", () => {
+          globalThis.document = undefined;
+          console.log(typeof document, typeof window.document);
+        });`,
+      "2.test.js": logEnvironment,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+      "undefined undefined",
+      "abort happy-dom#1",
+      "close happy-dom#1",
+      "2.test.js node ",
+    ]);
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 

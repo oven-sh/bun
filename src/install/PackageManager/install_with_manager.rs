@@ -2381,7 +2381,7 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
+    // `reresolve_rows_outside_ranges` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =
         core::mem::take(&mut before_clean.package_extensions.rules);
@@ -2466,16 +2466,29 @@ fn rows_outside_ranges(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
                     || crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
                         .is_some())
                 && (package_id as usize) < resolutions.len()
-                && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
-                    .is_some_and(|version| {
+                && {
+                    // The common row borrows its range. A rule's replaces it, and is copied.
+                    let under_rule;
+                    let range = if lockfile.overrides.has_rule_for_name(dependency.name_hash) {
+                        under_rule = crate::dedupe::effective_version(
+                            lockfile,
+                            row as DependencyID,
+                            dependency,
+                        );
+                        under_rule.as_ref()
+                    } else {
+                        Some(lockfile.catalogs.resolve_range(buf, dependency))
+                    };
+                    range.is_some_and(|range| {
                         crate::dedupe::version_outside_range(
-                            &version,
+                            range,
                             buf,
                             names[package_id as usize],
                             &resolutions[package_id as usize],
                             buf,
                         )
                     })
+                }
         })
         .map(|(row, (_, &package_id))| (row as DependencyID, package_id))
         .collect()
@@ -2570,15 +2583,15 @@ fn note_row_outside_range(lockfile: &Lockfile, lockfile_name: &str, row: Depende
     let range = crate::dedupe::effective_version(lockfile, row, dependency)
         .map_or(dependency.version.literal, |version| version.literal);
     let owner = lockfile.get_parent_pkg_of_dependency(row);
-    match owner.filter(|&owner| {
-        owner != 0 && lockfile.packages.items_resolution()[owner as usize].tag == ResolutionTag::Npm
-    }) {
+    match owner.filter(|&owner| owner != 0) {
         Some(owner) => bun_core::note!(
-            "{} resolves {} {} of {} to {}",
+            "{} resolves {} {} of {}@{} to {}",
             lockfile_name,
             bstr::BStr::new(dependency.name.slice(buf)),
             bun_core::fmt::for_terminal(range.fmt(buf)),
-            bstr::BStr::new(&crate::dedupe::label(lockfile, owner)),
+            bstr::BStr::new(lockfile.packages.items_name()[owner as usize].slice(buf)),
+            lockfile.packages.items_resolution()[owner as usize]
+                .fmt(buf, bun_core::fmt::PathSep::Posix),
             bstr::BStr::new(&crate::dedupe::label(lockfile, package_id)),
         ),
         None => bun_core::note!(

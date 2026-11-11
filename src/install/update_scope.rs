@@ -63,7 +63,7 @@ impl<'a> UpdateScope<'a> {
     }
 }
 
-/// Runs before rows are invalidated: by the differ on the loaded lockfile, like `TransitiveUpdate::plan`, and by `reresolve_rows_outside_overrides` on the cleaned one.
+/// Runs before rows are invalidated: by the differ on the loaded lockfile, like `TransitiveUpdate::plan`, and by `reresolve_rows_outside_ranges` on the cleaned one.
 pub fn plan_named(manager: &mut PackageManager) {
     let reachable = {
         let scope = UpdateScope::of(manager);

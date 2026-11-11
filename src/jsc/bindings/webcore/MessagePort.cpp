@@ -194,6 +194,9 @@ void MessagePort::flushQueuedMessagesBeforeClose()
         // per-iteration ctxId/port re-check guards the same case.
         if (m_isDetached)
             break;
+        // The last 'message' listener is gone: the port is paused as in drainAndDispatch(), the rest stays queued.
+        if (!hasMessageEventListener())
+            break;
         auto message = m_pipe->takeOne(m_side);
         if (!message)
             break;

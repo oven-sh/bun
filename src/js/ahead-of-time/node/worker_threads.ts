@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
+// Written against that file with the SHA-256 1c21569ad393cf3ccced988bc2cad42f6f16201d9f1962e03efab67ee4d4261b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -128,6 +128,13 @@ interface NodeWorkerOptions {
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+function revokeEvalWorkerURL(url: string) {
+  URL.revokeObjectURL(url);
+}
+
+function rethrowUncaught(error: unknown) {
+  throw error;
+}
 
 type Listener = (...args: any[]) => unknown;
 type EventListener = (event: any) => unknown;
@@ -369,7 +376,7 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // stdio and control ports.
 const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 
-const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
+const { makePortReadable, makePortWritable, setupPortReferencing } = require("internal/worker/stdio");
 
 // The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 // With the ports registered on the global, process.stdin/stdout/stderr's native
@@ -1016,27 +1023,15 @@ class Worker extends EventEmitter {
     // starts the port. Node's setupPortReferencing: the port counts toward the
     // parent's liveness only while this Worker has 'message' listeners (and
     // ref()/unref() also touch it, together with the handle).
-    this.#publicPort.addEventListener("message", this.#onMessage.bind(this));
+    setupPortReferencing(this.#publicPort, this, this.#onMessage.bind(this));
     this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
-    this.#publicPort.unref();
-    const publicPort = this.#publicPort;
-    this.on("newListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
-    });
-    this.on("removeListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
-    });
     // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
     // pair, which travels through the Worker object itself; surface those too.
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
 
     if (this.#urlToRevoke) {
-      if (!urlRevokeRegistry) {
-        urlRevokeRegistry = new FinalizationRegistry<string>(url => {
-          URL.revokeObjectURL(url);
-        });
-      }
+      urlRevokeRegistry ??= new FinalizationRegistry<string>(revokeEvalWorkerURL);
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
   }
@@ -1248,9 +1243,22 @@ class Worker extends EventEmitter {
       // node delivers everything the worker posted before it exited ahead of
       // 'exit' (kOnExit drains the public port), then closes the port.
       try {
-        let entry;
-        while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-          this.emit("message", entry.message);
+        for (;;) {
+          let entry;
+          try {
+            entry = _receiveMessageOnPort(this.#publicPort);
+          } catch (error) {
+            // node ends its drain here too: https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L884-L896
+            this.emit("messageerror", error);
+            break;
+          }
+          if (entry === undefined) break;
+          try {
+            this.emit("message", entry.message);
+          } catch (error) {
+            // As in node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1117-L1119
+            process.nextTick(rethrowUncaught, error);
+          }
         }
       } finally {
         this.#publicPort.close();

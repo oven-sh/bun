@@ -473,8 +473,7 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
 // Without --isolate. JSC stops caching reads of globals once several hundred names have been deleted from globalThis
 // and defined again a few times. So the last file's names stay until a file needs another environment.
 let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
-// With --isolate. No other file runs on a file's global, and what the file left pending can still run on it, so the
-// names stay. Only --rerun-each sets that global up again, for a file that closed its own window.
+// With --isolate the names stay on a file's global. Only --rerun-each sets it up again, if the file closed its window.
 let leaveBeforeNextSetup: (() => void) | undefined;
 
 function enter(name: string, environment: Environment, keep: boolean) {

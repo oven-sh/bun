@@ -122,6 +122,10 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 # The next one: vi.doMock() of a module evicts the CommonJS file that has required it, and the next require() runs the body of that file again. The body of a compiled file runs once.
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# The next two: a compiled run keeps what the mock of a file has laid by the file. A built-in module keeps its exports in a table of its own, and the end of its
+# mock puts them back under the mock of a file that exports them. A preload's mock of a file comes back over the mocks that were laid after it, not where it stood.
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is a mock of a builtin module, and its handle is disposed while the second stays
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is a mock of a preload, and the mock of a file takes its place until the file ends
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

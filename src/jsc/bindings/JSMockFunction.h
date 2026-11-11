@@ -11,6 +11,10 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace JSC {
+class JSModuleNamespaceObject;
+}
+
 namespace Bun {
 
 using namespace JSC;
@@ -20,6 +24,10 @@ class JSMockFunction;
 
 // Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
 JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
+
+// JSModuleNamespaceObject::removeExportOverride() has handed what an owner found to `ownerAbove`. A spy calls through to what it stands over.
+void didHandExportOverrideTo(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, JSC::PropertyName, JSC::JSCell* ownerAbove);
+void didHandExportOverrideTo(JSC::JSGlobalObject*, JSC::JSCell* ownerAbove, JSC::JSValue found);
 
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.

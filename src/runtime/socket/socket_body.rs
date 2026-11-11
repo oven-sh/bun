@@ -891,22 +891,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// Calls `writeComplete(socket, status)`. What it throws is an uncaught exception, as in Node.
-    fn call_write_complete(handlers: &Handlers, this_value: JSValue, status: c_int) {
-        let callback = handlers.on_write_complete();
-        if callback.is_empty() {
-            return;
-        }
-        let global = handlers.global_object;
-        global.bun_vm().event_loop_mut().run_callback(
-            handlers.context(),
-            callback,
-            &global,
-            this_value,
-            &[this_value, JSValue::js_number_from_int32(status)],
-        );
-    }
-
     /// Completes a write from the event loop, like libuv, not inside the call that closed the handle or stopped its reads.
     fn complete_write_later(&self, handlers: &Rc<Handlers>, status: Option<c_int>) {
         if self.flags.get().contains(Flags::FINALIZING) {
@@ -1008,7 +992,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if queue.completion() == Completion::Owed {
             if !this.holds_unsent_tls_records() {
                 this.buffered_data_for_node_net.with_mut(|b| b.take());
-                Self::call_write_complete(&handlers, this.get_this_value(&global), 0);
+                handlers.call_write_complete(this.get_this_value(&global), 0);
             }
             return Ok(());
         }
@@ -2247,7 +2231,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if let Some(errno) = failed_write {
             let this_value = this.get_this_value(&handlers.global_object);
-            Self::call_write_complete(&handlers, this_value, uv_status(errno));
+            handlers.call_write_complete(this_value, uv_status(errno));
         }
 
         let callback = handlers.on_close();
@@ -3438,7 +3422,8 @@ impl<const SSL: bool> DeferredWriteCompletion<SSL> {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
         if let Some(status) = self.status {
-            NewSocket::<SSL>::call_write_complete(&self.handlers, self.this_value.get(), status);
+            self.handlers
+                .call_write_complete(self.this_value.get(), status);
         } else if self.socket.lost_write_of_stopped_reader() {
             self.socket.socket.get().close(uws::CloseCode::Failure);
         }

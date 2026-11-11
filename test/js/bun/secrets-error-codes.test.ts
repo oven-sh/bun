@@ -55,9 +55,26 @@ describe("Bun.secrets argument validation", () => {
     } catch (error) {
       thrown = error;
     }
+    expect(thrown?.code).toBe("ERR_INVALID_ARG_TYPE");
+  });
+
+  test.each([
+    ['get("", name)', () => Bun.secrets.get("", "name")],
+    ['get(service, "")', () => Bun.secrets.get("service", "")],
+    ['delete("", name)', () => Bun.secrets.delete("", "name")],
+    ['delete(service, "")', () => Bun.secrets.delete("service", "")],
+    ['set("", name, value)', () => Bun.secrets.set("", "name", "value")],
+    ['set(service, "", value)', () => Bun.secrets.set("service", "", "value")],
+  ])("%s is rejected for its empty string", (_, call) => {
+    let thrown: any;
+    try {
+      call();
+    } catch (error) {
+      thrown = error;
+    }
     expect({ code: thrown?.code, message: thrown?.message }).toEqual({
       code: "ERR_INVALID_ARG_TYPE",
-      message: "Expected options to be an object",
+      message: "Expected service and name to not be empty",
     });
   });
 
@@ -146,6 +163,21 @@ describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {
     // Verify it's gone
     const afterDelete = await Bun.secrets.get({ service, name });
     expect(afterDelete).toBeNull();
+  });
+
+  test("the same operations work without an options object", async () => {
+    const service = "bun-test-positional-" + Date.now();
+    const name = "test-name";
+    const value = "test-password";
+
+    // Each call is checked against the options form, so a call that takes its strings in another order fails.
+    await Bun.secrets.set(service, name, value);
+    expect(await Bun.secrets.get({ service, name })).toBe(value);
+    expect(await Bun.secrets.get(service, name)).toBe(value);
+
+    expect(await Bun.secrets.delete(service, name)).toBe(true);
+    expect(await Bun.secrets.get({ service, name })).toBeNull();
+    expect(await Bun.secrets.delete(service, name)).toBe(false);
   });
 
   test("error messages have no null bytes", async () => {

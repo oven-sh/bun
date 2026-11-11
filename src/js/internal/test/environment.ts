@@ -368,15 +368,14 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
     ...globals,
     async close() {
       const { happyDOM } = win;
+      // Until happy-dom 18, happyDOM.close() throws for a window that the file already closed.
+      if (isClosed(win)) return;
+      if (!happyDOM.abort) return void happyDOM.cancelAsync();
+      // Aborted first, so that what a pending task does when it is aborted still has the document.
+      await happyDOM.abort();
       // Since happy-dom 18, window.close() only closes a window that another window opened.
-      if (happyDOM.close) {
-        await happyDOM.close();
-      } else if (win.close && happyDOM.abort) {
-        await happyDOM.abort();
-        win.close();
-      } else {
-        happyDOM.cancelAsync();
-      }
+      if (happyDOM.close) await happyDOM.close();
+      else win.close();
     },
   };
 }

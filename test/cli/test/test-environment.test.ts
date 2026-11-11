@@ -25,13 +25,13 @@ const fakePackages = {
             await Promise.resolve();
             console.log("abort", id);
           },
-          close: async () => {
-            await this.happyDOM.abort();
+          close: () => {
             this.closed = true;
             console.log("close", id);
+            return Promise.resolve();
           },
         };
-        // Like happy-dom 18 and later: only a window that another window opened closes itself.
+        // Like happy-dom 18 and later: window.close() only closes a window that another window opened.
         this.close = () => {};
       }
     };
@@ -2033,7 +2033,7 @@ describe.concurrent("test environment with the real", () => {
   describe("a window closed by a file", () => {
     const file = (name: string, code: string) => `// ${VITEST} ${name}
       import { test, expect } from "bun:test";
-      test("${name}", () => {
+      test("${name}", async () => {
         document.body.innerHTML = "<b>1</b>";
         expect(document.querySelector("b").textContent).toBe("1");
         ${code}
@@ -2062,6 +2062,21 @@ describe.concurrent("test environment with the real", () => {
       expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
+
+    // happy-dom finishes a close on a timer. Until happy-dom 18, closing the window again after that throws.
+    test.each(["window.close();", "await window.happyDOM.close();"])(
+      "--isolate: closing it again after `%s` is not an error",
+      async close => {
+        using dir = project({
+          "1.test.js": file("happy-dom", `${close} await new Promise(resolve => setTimeout(resolve, 20));`),
+          "2.test.js": file("happy-dom", ""),
+        });
+        const { stderr, exitCode } = await bunTest(String(dir), "--isolate");
+        expect(stderr).not.toContain("error:");
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   // Builtin modules must keep using Bun's own classes and accept typed arrays from jsdom's realm.

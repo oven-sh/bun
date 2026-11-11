@@ -3458,12 +3458,15 @@ describe("expect()", () => {
     expect(() => expect({ a: 5, b: "x" }).toContainAllValues([range(), expect.anything()])).toThrow(
       "These must be of type number!",
     );
+    // A value that is the same as a taken value is not compared again.
+    expect(callsOf(() => expect({ a: 5, b: 5 }).toContainAllValues([range(), range()]))).toEqual([5, 5]);
 
     // A regex with the g flag keeps lastIndex, so a pair that matched is not compared again.
     expect({ a: "a" }).toContainAllValues([expect.stringMatching(/a/g)]);
     expect(() => expect({ a: "a" }).not.toContainAllValues([expect.stringMatching(/a/g)])).toThrow(
       isBun ? "Expected to not contain all values" : "Expected object to not contain all values",
     );
+    expect({ a: "a", b: "a" }).toContainAllValues([expect.stringMatching(/a/g), expect.stringMatching(/a/g)]);
   });
 
   test_skipIf(!isBun)("toContainAllValues calls a pending async matcher one time", async () => {

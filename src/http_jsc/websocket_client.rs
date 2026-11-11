@@ -316,9 +316,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn cancel(this: ThisPtr<Self>) {
         log!("cancel");
         let _guard = RefPtr::from_this(this);
-        // Called from a listener: nothing read before or during that listener may be dispatched
-        // after `terminate()`, and `handle_close` below must not defer the close. Bytes that
-        // arrived with the 101 are only queued outside a parse, so `ws_mode` still parses them.
+        // From a listener: nothing read before or during it is dispatched after `terminate()`.
         if this.parsing.get() {
             this.stop_reading();
         }
@@ -685,15 +683,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.ingest(&[]);
     }
 
-    /// The one entry of the frame parser. Parses `initial_data`, then `data`, then every chunk
-    /// that arrived while they were parsed.
+    /// The one entry of the frame parser: `initial_data`, then `data`, then what arrived meanwhile.
     ///
-    /// `handle_data_loop` keeps its cursor on the stack and fires listeners from inside the
-    /// loop. A listener can run a nested event loop tick (`Bun.build()` waiting on an async
-    /// plugin), which reads the socket again, or feed the JS stream synchronously (an in-memory
-    /// duplex pair whose other end replies at once). A second loop over the same state would
-    /// dispatch from a half-updated cursor, so re-entrant bytes are queued in `initial_data` and
-    /// parsed, in order, once the outer loop returns.
+    /// `handle_data_loop` keeps its cursor on the stack and runs listeners. A listener that ticks
+    /// the event loop (or feeds the JS stream) re-enters here, so those bytes are queued and
+    /// parsed once the outer loop returns.
     fn ingest(&self, data: &[u8]) {
         if self.parsing.get() {
             if !data.is_empty() {
@@ -703,8 +697,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
                 pending.0.extend_from_slice(data);
                 self.initial_data.set(Some(pending));
-                // The queue has no bound of its own. Stop reading until it is parsed, so a
-                // listener that waits for long does not buffer the peer's stream meanwhile.
+                // The queue has no bound of its own: stop reading until it is parsed.
                 if !self.paused_for_queue.replace(true) {
                     self.pause();
                 }
@@ -724,9 +717,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             if self.receive_state.get() == ReceiveState::Closed {
                 break;
             }
-            // Bytes queued before a listener called `pause()` wait for `resume()`, which delivers
-            // them through `deliver_initial_data`. A connection that already ended parses them now:
-            // `handle_close` ignores the pause too.
+            // A listener paused the socket: `resume()` delivers the queue through
+            // `deliver_initial_data`. A connection that already ended parses it now.
             if !self.finish_after_parse.get()
                 && self.cpp_websocket().is_some_and(|ws| ws.is_paused())
             {
@@ -748,11 +740,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// The connection ended while the parser was on the stack. The `close` event must come after
-    /// the messages in the bytes already read (the rest of the current read, and anything a
-    /// nested tick queued), so the caller records the close here and `ingest` finishes the
-    /// connection once it has parsed them. Returns `false` when the caller must finish now: no
-    /// parse is on the stack, or reading already stopped (a Close frame, a failure, `terminate()`).
+    /// The connection ended while the parser is on the stack: `ingest` finishes it after the
+    /// bytes already read are parsed, so `close` follows their messages. Returns `false` when
+    /// the caller must finish now (no parse on the stack, or reading already stopped).
     fn defer_finish_until_parsed(&self) -> bool {
         if !self.parsing.get() || self.receive_state.get() == ReceiveState::Closed {
             return false;
@@ -1848,8 +1838,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             this.transport.set(Transport::Socket);
         }
         let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
-        // Not deferred: `ws` emits `close` as soon as this returns, so bytes still queued would
-        // be dispatched on a closed socket.
+        // Not deferred: `ws` emits `close` as soon as this returns.
         this.finish(Outcome::Closed);
     }
 

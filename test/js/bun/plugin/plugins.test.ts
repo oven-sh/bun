@@ -5055,3 +5055,45 @@ it.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
     });
   },
 );
+
+it.concurrent.each([
+  ["onLoad", `build.onLoad({ filter: /zzz/ }, () => {});`],
+  ["onLoad with a namespace", `build.onLoad({ filter: /zzz/, namespace: "n" }, () => {});`],
+  ["onResolve", `build.onResolve({ filter: /zzz/ }, () => {});`],
+  ["module", `build.module("virtual:x", () => ({ exports: {}, loader: "object" }));`],
+])("a plugin does not keep the ShadowRealm that registered it alive: %s", async (_, register) => {
+  const src = `
+    import { heapStats } from "bun:jsc";
+    const source = ${JSON.stringify(`Bun.plugin({ name: "p", setup(build) { ${register} } }); 1`)};
+    for (let i = 0; i < 20; i++) new ShadowRealm().evaluate(source);
+    for (let i = 0; i < 4; i++) {
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    console.log(heapStats().globalObjectCount < 10 ? "collected" : "kept");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "collected\n", stderr: "", exitCode: 0 });
+});
+
+it.concurrent("the callbacks of a plugin survive garbage collection", async () => {
+  const src = `
+    Bun.plugin({
+      name: "p",
+      setup(build) {
+        build.onResolve({ filter: /^resolved$/ }, () => ({ path: "loaded", namespace: "n" }));
+        build.onLoad({ filter: /./, namespace: "n" }, () => ({ exports: { from: "onLoad" }, loader: "object" }));
+        build.module("virtual:x", () => ({ exports: { from: "module" }, loader: "object" }));
+      },
+    });
+    for (let i = 0; i < 4; i++) {
+      Bun.gc(true);
+      Array.from({ length: 1000 }, () => function () {});
+    }
+    console.log((await import("resolved")).from, (await import("virtual:x")).from);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "onLoad module\n", stderr: "", exitCode: 0 });
+});

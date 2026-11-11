@@ -93,7 +93,7 @@ static bool throwForUnknownPlugin(JSC::JSGlobalObject* globalObject, JSC::ThrowS
     return !!error;
 }
 
-static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
+static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, Zig::GlobalObject* owner, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -150,7 +150,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
         }
     }
 
-    plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
+    plugin.append(vm, owner, filter->regExp(), func.getObject(), namespaceString);
 
     return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
@@ -210,12 +210,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
-    if (global->onLoadPlugins.virtualModules == nullptr) {
-        global->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
-    }
-    auto* virtualModules = global->onLoadPlugins.virtualModules;
-
-    virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
+    BunPlugin::OnLoad::addVirtualModule(vm, global, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue));
 #if ENABLE(AOT)
     if (global->vm().hasCompiledCode())
         JSC::AOT::didChangePlugins(global);
@@ -229,7 +224,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 
-static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
+static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, Zig::GlobalObject* owner, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -292,7 +287,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
         }
     }
 
-    plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
+    plugin.append(vm, owner, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode())
         JSC::AOT::didChangePlugins(defaultGlobalObject(globalObject));
@@ -306,7 +301,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalOb
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
     auto& plugins = global->onResolvePlugins;
-    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, plugins);
+    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, global, plugins);
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
@@ -314,7 +309,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObjec
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
     auto& plugins = global->onLoadPlugins;
-    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, target, plugins);
+    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, target, global, plugins);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnLoadPluginNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -436,21 +431,22 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-void BunPlugin::Group::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func)
+void BunPlugin::Group::append(JSC::VM& vm, JSC::JSCell* owner, JSC::RegExp* filter, JSC::JSObject* func)
 {
-    filters.append(JSC::Strong<JSC::RegExp> { vm, filter });
-    callbacks.append(JSC::Strong<JSC::JSObject> { vm, func });
+    filters.append(JSC::WriteBarrier<JSC::RegExp> { vm, owner, filter });
+    callbacks.append(JSC::WriteBarrier<JSC::JSObject> { vm, owner, func });
 }
 
-void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString)
+void BunPlugin::Base::append(JSC::VM& vm, JSC::JSCell* owner, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString)
 {
+    Locker locker { owner->cellLock() };
     if (namespaceString.isEmpty() || namespaceString == "file"_s) {
-        this->fileNamespace.append(vm, filter, func);
+        this->fileNamespace.append(vm, owner, filter, func);
     } else if (auto found = this->group(namespaceString)) {
-        found->append(vm, filter, func);
+        found->append(vm, owner, filter, func);
     } else {
         Group newGroup;
-        newGroup.append(vm, filter, func);
+        newGroup.append(vm, owner, filter, func);
         this->groups.append(WTF::move(newGroup));
         this->namespaces.append(namespaceString);
     }
@@ -481,16 +477,18 @@ static String relativeSpecifierToFileSystemPath(const URL& base, const String& s
     return path;
 }
 
+void BunPlugin::OnLoad::addVirtualModule(JSC::VM& vm, Zig::GlobalObject* globalObject, const String& path, JSC::JSObject* virtualModule)
+{
+    Locker locker { globalObject->cellLock() };
+    auto*& virtualModules = globalObject->onLoadPlugins.virtualModules;
+    if (!virtualModules)
+        virtualModules = new BunPlugin::VirtualModuleMap;
+    virtualModules->set(path, JSC::WriteBarrier<JSC::JSObject> { vm, globalObject, virtualModule });
+}
+
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
-    Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
-
-    if (globalObject->onLoadPlugins.virtualModules == nullptr) {
-        globalObject->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
-    }
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-
-    virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+    addVirtualModule(vm, defaultGlobalObject(mockObject->globalObject()), path, mockObject);
 }
 
 enum class ModuleMockFunction : uint8_t {
@@ -4065,8 +4063,10 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, );
     }
 #endif
-    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
+    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+        Locker locker { globalObject->cellLock() };
         virtualModules->remove(specifier);
+    }
 #if ENABLE(AOT)
     Vector<JSC::AOT::ModuleID, 1> pendingMockModules;
     globalObject->onLoadPlugins.pendingCompiledMocks.removeAllMatching([&](const auto& waiting) {
@@ -7147,7 +7147,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
                 waiting.second.set(vm, again);
             }
 #endif
-            value.set(vm, again);
+            value.set(vm, globalObject, again);
         }
     }
 
@@ -9115,12 +9115,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     auto runningModuleMocks = std::exchange(plugins.runningModuleMocks, {});
     auto waitingModuleMocks = std::exchange(plugins.waitingModuleMocks, {});
     auto moduleMocksWithTurn = std::exchange(plugins.moduleMocksWithTurn, {});
-    plugins.clear();
+    plugins.clear(global);
     plugins.moduleMocksBeingLoaded = WTF::move(moduleMocksBeingLoaded);
     plugins.runningModuleMocks = WTF::move(runningModuleMocks);
     plugins.waitingModuleMocks = WTF::move(waitingModuleMocks);
     plugins.moduleMocksWithTurn = WTF::move(moduleMocksWithTurn);
-    global->onResolvePlugins.clear();
+    global->onResolvePlugins.clear(global);
 #if ENABLE(AOT)
     if (global->vm().hasCompiledCode())
         JSC::AOT::didChangePlugins(global);

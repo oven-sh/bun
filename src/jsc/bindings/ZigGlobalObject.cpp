@@ -915,10 +915,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
+    // Module mocks hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
-    oldGlobal->onLoadPlugins.clear();
-    oldGlobal->onResolvePlugins.clear();
+    oldGlobal->onLoadPlugins.clear(oldGlobal);
+    oldGlobal->onResolvePlugins.clear(oldGlobal);
     // If JSC's CodeCache holds fewer entries than a file loads modules, each file evicts what the next one needs.
     // Capped because an entry keeps 20 to 100 KB of unlinked and Baseline code alive.
     size_t loadedModules = oldGlobal->moduleLoader()->moduleMap().size() + oldGlobal->requireMap()->size();
@@ -3940,6 +3940,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
         for (auto& guarded : thisObject->m_guardedObjects)
             guarded->visitAggregate(visitor);
+    }
+
+    {
+        Locker locker { thisObject->cellLock() };
+        thisObject->onLoadPlugins.visit(visitor);
+        thisObject->onResolvePlugins.visit(visitor);
     }
 
     // The LazyProperty / LazyClassStructure / WriteBarrier members (the vast

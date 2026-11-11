@@ -1,0 +1,28 @@
+# -- source: reads-behind-passed-instanceof.cjs
+# function Link(name) { this.name = name; this.ref = null; }
+# function Leaf(value) { this.value = value; }
+# function Pair(name, parts) { this.name = name; this.parts = parts; }
+# function Checker() { this.steps = 0; }
+# Checker.prototype.isSame = function (one, other) {
+#   this.steps++;
+#   if (one instanceof Leaf) return other instanceof Leaf && one.value === other.value;
+#   if (one instanceof Pair) {
+#     if (!(other instanceof Pair) || one.name !== other.name || one.parts.length !== other.parts.length) return false;
+#     for (var i = 0; i < one.parts.length; i++) if (!this.isSame(one.parts[i], other.parts[i])) return false;
+#     return true;
+#   }
+#   return one instanceof Link && other instanceof Link && one.name === other.name;
+# };
+# function Reader(text) { this.words = text.split(" "); this.links = {}; this.at = 0; }
+# Reader.prototype.next = function () {
+#   var word = this.words[this.at++];
+#   if (word >= "a") { var parts = []; while (this.words[this.at] !== ")") parts.push(this.next()); this.at++; return new Pair(word, parts); }
+#   return word === "?" ? this.links[word] || (this.links[word] = new Link(word)) : new Leaf(word);
+# };
+# var checker = new Checker(), texts = ["f 1 g 2 ) )", "f ? g 2 ) )", "f 1 ? )", "?", "3"], count = 0;
+# for (var one of texts) for (var other of texts) if (checker.isSame(new Reader(one).next(), new Reader(other).next())) count++;
+# console.log(count);
+# -- end of source
+# Behind the arms of an instanceof that meet, what it asked for is what a read expects, in a function that calls itself.
+# RUN: walk f6:Body mechanisms=all
+# CHECK: = GetSlot {{*}}key="name" receivers=[L2] level=Proven {{*}}@430

@@ -44,7 +44,9 @@
 # OTHER: = HasArrayStorage
 # OTHER: = GetArrayStorage
 # OTHER: isLoopHead=true
-# OTHER-NOT: = Put
+# `other` is asked as well, for doubles: a number stored inside it changes neither its length nor its kind, whether it is `list` or not. Past its end the turn begins again in the other copy.
+# OTHER: = PutDoubleIndex {{*}}isInBounds
+# OTHER-NOT: = PutArrayElement
 # RUN(CALLEE): walk f8 mechanisms=all
 # CALLEE-NOT: = HasArrayStorage
 # CALLEE-NOT: = GetArrayStorage

@@ -5,7 +5,7 @@
 # class Idle {}
 #
 # class Counter {
-#   bump() {}
+#   bump() { while (seen); }
 # }
 # function turn(holder: any): any {
 #   for (;;) {
@@ -19,7 +19,7 @@
 # class Plain {}
 #
 # class Stepper extends Plain {
-#   bump() {}
+#   bump() { while (seen); }
 # }
 # function pass(holder: any, more?: any): any {
 #   note(holder);

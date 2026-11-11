@@ -195,12 +195,32 @@ impl Quiet<'_, '_> {
         }
     }
 
-    pub fn is_quiet_expression(&self, expression: ExprId) -> bool {
+    pub fn is_quiet_expression(&self, mut expression: ExprId) -> bool {
         let hir = self.hir;
-        if expression.is_none() || self.decisions.is_dead_expr(expression) {
-            return true;
+        loop {
+            if expression.is_none() || self.decisions.is_dead_expr(expression) {
+                return true;
+            }
+            expression = hir.skip_type_assertions(expression);
+            expression = match hir[expression].kind {
+                ExprKind::Binary {
+                    op:
+                        BinOp::And
+                        | BinOp::Or
+                        | BinOp::Nullish
+                        | BinOp::Comma
+                        | BinOp::EqEqEq
+                        | BinOp::NotEqEq,
+                    left,
+                    right,
+                } if self.is_quiet_expression(right) => left,
+                _ => return self.is_quiet_operand(expression),
+            };
         }
-        let expression = hir.skip_type_assertions(expression);
+    }
+
+    fn is_quiet_operand(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
         match hir[expression].kind {
             ExprKind::Missing
             | ExprKind::This
@@ -220,17 +240,6 @@ impl Quiet<'_, '_> {
                 op: UnOp::Not | UnOp::Void | UnOp::Typeof,
                 operand,
             } => self.is_quiet_expression(operand),
-            ExprKind::Binary {
-                op:
-                    BinOp::And
-                    | BinOp::Or
-                    | BinOp::Nullish
-                    | BinOp::Comma
-                    | BinOp::EqEqEq
-                    | BinOp::NotEqEq,
-                left,
-                right,
-            } => self.is_quiet_expression(left) && self.is_quiet_expression(right),
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
                 self.is_quiet_expression(test)

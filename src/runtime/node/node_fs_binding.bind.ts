@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { fsOperandUses, heapsOfViews } from "../../codegen/builtins/host/fs-operands.ts";
 import { callbacksOfFsCell } from "../../codegen/builtins/host/native-cells.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
@@ -14,9 +15,6 @@ const operation = (length: number, ...returns: readonly (string | table.TableTyp
     length,
   }) as const;
 
-/** A path or data that is a view is pinned while it is read (`PinnedArrayBuffer`), which moves the bytes of a small one. `readSync` and `readvSync` fill views. */
-const heapsOfViews = ["TypedArrayStorage", "TypedArrayElements"] as const;
-
 /** `x` and `xSync` run what an argument names while they parse it, and nothing else: `NodeFS::dispatch` never enters JavaScript. */
 const parsesArguments = (length: number, returns: table.TableType) =>
   ({
@@ -27,29 +25,7 @@ const parsesArguments = (length: number, returns: table.TableType) =>
     writes: heapsOfViews,
   }) as const;
 
-/** What `x` and `xSync` do with an argument (`args::*::from_js` in node_fs.rs): they keep none and return none. */
-const uses = {
-  this: table.inspected,
-  args: [
-    ...table.optionBag([
-      "bigint",
-      "encoding",
-      "flag",
-      "flush",
-      "force",
-      "maxRetries",
-      "mode",
-      "recursive",
-      "retryDelay",
-      "signal",
-      "throwIfNoEntry",
-      "withFileTypes",
-    ]),
-    table.readsContents(),
-    table.writesContents(),
-    table.printedByFormatter("constructor"),
-  ],
-};
+const uses = { this: table.inspected, args: fsOperandUses };
 
 /** `FsCompletion::reject` (node_fs.rs) and `reject_before_schedule`: an error of the system, that of a signal that has aborted, or that of a result that cannot be made. */
 const error = table.union(table.instance("Error"), table.instance("RangeError"));
@@ -183,6 +159,17 @@ export const NodeJSFS = b.class({
 });
 
 export const binding = b.value({ returns: NodeJSFS, capability: "js" });
+
+/** `fs.xSync` for compiled code (src/js/ahead-of-time/node/fs.ts). `bun run` binds a method of the binding instead. */
+const syncFunction = (name: string) => {
+  const { uses, ...method } = parsesArguments(operations[name][1], resultOf(name));
+  return b.fn({ ...method, name: `${name}Sync`, uses: { args: uses.args } });
+};
+export const existsSync = syncFunction("exists");
+export const lstatSync = syncFunction("lstat");
+export const readdirSync = syncFunction("readdir");
+export const readFileSync = syncFunction("readFile");
+export const statSync = syncFunction("stat");
 
 /** `fs.createReadStream` / `fs.createWriteStream`'s `windowsHandle`. Windows only. */
 export const windowsHandleToFd = b.fn({ args: { handle: b.any }, returns: b.i32, capability: "js", throws: true });

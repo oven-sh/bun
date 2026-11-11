@@ -18,7 +18,8 @@ const files = {
   "node_modules/parcels/checks.js": `export async function settle(source, value) {
   let parcel = source.run({ value, faults: [] });
   if (parcel instanceof Promise) parcel = await parcel;
-  return parcel.faults.length ? undefined : parcel.value;
+  const { value: settled, faults } = parcel;
+  return faults.length ? undefined : settled;
 }
 `,
   "node_modules/parcels/checks.d.ts": `import type { Parcel } from "./shapes.js";

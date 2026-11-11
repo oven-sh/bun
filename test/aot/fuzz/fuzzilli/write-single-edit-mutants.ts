@@ -1295,6 +1295,66 @@ const flatObjectLiteralPattern = new RegExp(
   "g",
 );
 
+/** The names of the fields that a class of this file stores or declares, in order. */
+function findClassFields(source: string, className: string): string[] {
+  const head = new RegExp(`^ *(?:export (?:default )?)?class ${escapeDollar(className)}\\b[^{]*\\{`, "m").exec(source);
+  if (!head) return [];
+  const closingBrace = findClosingBrace(source, head.index + head[0].length - 1);
+  const body = source.slice(head.index + head[0].length, closingBrace < 0 ? undefined : closingBrace);
+  const stored = [...body.matchAll(new RegExp(`\\bthis\\.(${identifier}) = `, "g"))].map(match => match[1]);
+  const declared = [...body.matchAll(new RegExp(`^ *(?:readonly )?(${identifier})(?:: [^=;\\n]+)?(?: = [^;\\n]+)?;$`, "gm"))].map(match => match[1]); // prettier-ignore
+  const parameters = [...body.matchAll(new RegExp(`\\b(?:public|private|protected|readonly) (${identifier}): `, "g"))].map(match => match[1]); // prettier-ignore
+  return [...new Set([...declared, ...parameters, ...stored])];
+}
+/** The fields of what an initializer creates: an object literal of one line or an instance of a class of this file. */
+function findCreatedFields(source: string, initializer: string): string[] {
+  const created = new RegExp(`^new (${identifier})\\(`).exec(initializer);
+  if (created) return findClassFields(source, created[1]);
+  return initializer.startsWith("{")
+    ? [...initializer.matchAll(new RegExp(`[{,] ?(${identifier}): `, "g"))].map(match => match[1])
+    : [];
+}
+/** Changes an object as soon as it is created. */
+const insertAfterCreation = (
+  mutationName: string,
+  emit: (binding: ObjectBinding, fields: string[], any: string) => string | false,
+): Mutation => ({
+  name: mutationName,
+  findSites: seed =>
+    [...findObjectBindings(seed)].map(binding => () => {
+      const any = isTypeScript(binding.file) ? `(${binding.name} as any)` : binding.name;
+      const text = emit(binding, findCreatedFields(binding.source, binding.initializer), any);
+      return text
+        ? replaceRange(seed, binding.file, binding.end, binding.end, "\n" + binding.indent + text)
+        : undefined;
+    }),
+});
+/** Adds one more instance of a class to a list that names one, and changes it. */
+const addChangedInstance = (
+  mutationName: string,
+  emit: (changed: string, fields: string[]) => string | false,
+): Mutation => ({
+  name: mutationName,
+  findSites: forEachMatch(
+    new RegExp(`(?<=\\[|, |^ +)new (${identifier})\\([^()\\n]*\\)(?=,|\\])`, "gm"),
+    () => true,
+    (seed, match) => {
+      const isTyped = isTypeScript(match.file);
+      const text = emit(isTyped ? "(changed as any)" : "changed", findClassFields(match.source, match.captures[1]));
+      return text === false
+        ? undefined
+        : replaceRange(
+            seed,
+            match.file,
+            match.end,
+            match.end,
+            `, (() => { const changed = ${match.captures[0]}; ${text} return changed; })()`,
+          );
+    },
+  ),
+});
+const describeGetter = "{ get: () => 1, enumerable: true, configurable: true }";
+
 const objectMutations: Mutation[] = [
   insertAfterLastUse(
     "make-property-read-only",
@@ -1324,6 +1384,57 @@ const objectMutations: Mutation[] = [
   insertAfterLastUse("freeze-object", binding => `Object.freeze(${binding.name});`),
   insertAfterLastUse("print-object-as-json", binding => `console.log(JSON.stringify(${binding.name}));`),
   insertAfterLastUse("print-object-keys", binding => `console.log(Object.keys(${binding.name}).join());`),
+  insertAfterCreation(
+    "delete-last-property-after-creation",
+    (_, fields, any) => fields.length > 0 && `delete ${any}.${fields.at(-1)};`,
+  ),
+  insertAfterCreation("delete-read-property-after-creation", (binding, _, any) => `delete ${any}.${binding.property};`),
+  insertAfterCreation("add-property-after-creation", (_, _fields, any) => `${any}.extraProperty = 1;`),
+  insertAfterCreation("freeze-after-creation", binding => `Object.freeze(${binding.name});`),
+  insertAfterCreation(
+    "define-getter-after-creation",
+    (binding, fields) =>
+      fields.length > 0 && `Object.defineProperty(${binding.name}, "${fields.at(-1)}", ${describeGetter});`,
+  ),
+  insertAfterCreation(
+    "replace-prototype-after-creation",
+    binding => `Object.setPrototypeOf(${binding.name}, Object.create(Object.getPrototypeOf(${binding.name})));`,
+  ),
+  addChangedInstance(
+    "add-instance-without-last-field",
+    (changed, fields) => fields.length > 0 && `delete ${changed}.${fields.at(-1)};`,
+  ),
+  addChangedInstance(
+    "add-instance-without-first-field",
+    (changed, fields) => fields.length > 1 && `delete ${changed}.${fields[0]};`,
+  ),
+  addChangedInstance("add-instance-with-extra-field", changed => `${changed}.extraProperty = 1;`),
+  addChangedInstance("add-frozen-instance", changed => `Object.freeze(${changed});`),
+  addChangedInstance(
+    "add-instance-with-getter",
+    (changed, fields) =>
+      fields.length > 0 && `Object.defineProperty(${changed}, "${fields.at(-1)}", ${describeGetter});`,
+  ),
+  {
+    // The statement reads a property. Behind the test it reads it once more.
+    name: "repeat-read-behind-typeof",
+    findSites: forEachMatch(
+      new RegExp(`^( +)((?:${identifier}\\.)*${identifier} \\+= [^;\\n]*\\b(${identifier})\\.${identifier}\\b(?!\\()[^;\\n]*);$`, "gm"), // prettier-ignore
+      () => true,
+      (seed, match) =>
+        /^(?:this|super|Math|Object|Array|String|Number|JSON|process|console|import|globalThis)$/.test(
+          match.captures[3],
+        )
+          ? undefined
+          : replaceRange(
+              seed,
+              match.file,
+              match.end,
+              match.end,
+              `\n${match.captures[1]}if (typeof ${match.captures[3]} !== "number") ${match.captures[2]};`,
+            ),
+    ),
+  },
   replaceInitializer("copy-object-with-spread", binding => `{ ...${binding.initializer} }`),
   replaceInitializer("copy-object-through-json", binding => `JSON.parse(JSON.stringify(${binding.initializer}))`),
   replaceInitializer("copy-object-with-assign", binding => `Object.assign({}, ${binding.initializer})`),

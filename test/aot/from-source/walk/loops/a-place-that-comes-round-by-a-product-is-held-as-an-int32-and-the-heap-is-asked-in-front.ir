@@ -4,7 +4,7 @@
 # The other copy, which takes the place as any whole number, stands first.
 # -- source: main.js
 # function sift(heap, from, size) { let place = from; for (;;) { let greatest = place; const left = 2 * place + 1, right = left + 1; if (left < size && heap[left] > heap[greatest]) greatest = left; if (right < size && heap[right] > heap[greatest]) greatest = right; if (greatest === place) return; const moved = heap[place]; heap[place] = heap[greatest]; heap[greatest] = moved; place = greatest; } }
-# const heap = [0.5, 7.5, 3.5, 9.5, 1.5, 8.5, 2.5, 6.5, 4.5]; for (let place = heap.length >> 1; place >= 0; place--) sift(heap, place, heap.length); console.log(heap.join());
+# const heap = [0.5, 7.5, 3.5, 9.5, 1.5, 8.5, 2.5, 6.5, 4.5]; for (let place = heap.length >> 1; place >= 0; place--) sift(heap, place, Number(JSON.parse("9"))); console.log(heap.join());
 # -- end of source
 # RUN: walk f1:Body mechanisms=all
 # CHECK-LABEL: code f1:Body

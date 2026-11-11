@@ -4,16 +4,26 @@
 // A scene prints one text at its end, and nothing in it calls the host before that.
 import { combinations, conversions, predicates } from "./hand-over-built-ins.ts";
 import { randomFrom } from "./print-members-of-objects.ts";
+import { writeSceneOfAllocationsBeforeLoops } from "./write-allocations-before-loops.ts";
+import { writeSceneOfCallbacksInLoops } from "./write-callbacks-in-loops.ts";
+import { writeSceneOfCallChains } from "./write-call-chains.ts";
 import { writeSceneOfCalls } from "./write-calls.ts";
 import { writeSceneOfAChange } from "./write-changes.ts";
+import { writeSceneOfClassChains } from "./write-class-chains.ts";
+import { writeSceneOfCoroutines } from "./write-coroutines.ts";
 import { writeSceneOfDispatch } from "./write-dispatch.ts";
+import { writeSceneOfFieldLoops } from "./write-field-loops.ts";
 import { writeSceneOfAHand } from "./write-hands.ts";
 import { writeSceneOfHiddenEffects } from "./write-hidden-effects.ts";
+import { writeSceneOfLayouts } from "./write-layouts.ts";
+import { writeSceneOfLinkedObjects } from "./write-linked-objects.ts";
 import { writeSceneOfALoop } from "./write-loops.ts";
 import { writeSceneOfHeirsOfTheLibrary } from "./write-heirs-of-the-library.ts";
 import { writeSceneOfWhatIsLaidAbove } from "./write-laid-above.ts";
 import { writeSceneOfMakers } from "./write-makers.ts";
+import { writeSceneOfNumberLoops } from "./write-number-loops.ts";
 import { writeSceneOfASingleDeed } from "./write-single-deeds.ts";
+import { writeSceneOfStringWork } from "./write-string-work.ts";
 import { writeSceneOfTypedPlaces } from "./write-typed-places.ts";
 
 class Scenes {
@@ -3691,6 +3701,56 @@ class Scenes {
   /** One function with one loop, put together from tables that do not know of each other (write-loops.ts). */
   sceneOfALoop() {
     this.lines.push(...writeSceneOfALoop(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Objects of several layouts and primitives in one list, read behind tests (write-layouts.ts). */
+  sceneOfLayouts() {
+    this.lines.push(...writeSceneOfLayouts(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Array methods with callbacks in loops, and elements under any numeric key (write-callbacks-in-loops.ts). */
+  sceneOfCallbacksInLoops() {
+    this.lines.push(...writeSceneOfCallbacksInLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Objects that are allocated before loops and used after them (write-allocations-before-loops.ts). */
+  sceneOfAllocationsBeforeLoops() {
+    this.lines.push(...writeSceneOfAllocationsBeforeLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Async functions and generators that call each other (write-coroutines.ts). */
+  sceneOfCoroutines() {
+    this.lines.push(...writeSceneOfCoroutines(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Walks over linked objects while one of them changes (write-linked-objects.ts). */
+  sceneOfLinkedObjects() {
+    this.lines.push(...writeSceneOfLinkedObjects(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Classes that extend each other (write-class-chains.ts). */
+  sceneOfClassChains() {
+    this.lines.push(...writeSceneOfClassChains(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that compute with numbers in nested loops (write-number-loops.ts). */
+  sceneOfNumberLoops() {
+    this.lines.push(...writeSceneOfNumberLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that call each other in many forms (write-call-chains.ts). */
+  sceneOfCallChains() {
+    this.lines.push(...writeSceneOfCallChains(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that build, search and cut strings (write-string-work.ts). */
+  sceneOfStringWork() {
+    this.lines.push(...writeSceneOfStringWork(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Loops over fields that classes share (write-field-loops.ts). */
+  sceneOfFieldLoops() {
+    this.lines.push(...writeSceneOfFieldLoops(this.random, ++this.count, this.isTypeScript));
   }
 
   /** A few lines around one deed (write-single-deeds.ts). */
@@ -8204,14 +8264,19 @@ class Scenes {
  * `text` with one to three scenes of ordinary code. In six programs of ten they are the whole program: what the compiler knows about a function of the library depends on all its callers.
  * What is drawn depends on `text` alone.
  */
-export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: string, howMany?: number) {
+export function writeOrdinaryScenes(
+  text: string,
+  isTypeScript: boolean,
+  only?: string | readonly string[],
+  howMany?: number,
+) {
   const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
   const first = "const printValue = console.log;\n";
   if (!program.startsWith(first)) return text;
   const random = randomFrom("ordinary" + text);
   const scenes = new Scenes(random, isTypeScript);
   for (let count = howMany ?? scenes.pick([1, 1, 1, 2, 2, 3]); count > 0; count--)
-    if (only) (scenes as unknown as Record<string, () => void>)[only]();
+    if (only) (scenes as unknown as Record<string, () => void>)[typeof only === "string" ? only : scenes.pick(only)]();
     else
       scenes.pick([
         () => scenes.sceneOfParsedData(),
@@ -8447,6 +8512,16 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfASingleDeed(),
         () => scenes.sceneOfASingleDeed(),
         () => scenes.sceneOfASingleDeed(),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfLayouts()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfFieldLoops()),
+        ...Array.from({ length: 5 }, () => () => scenes.sceneOfCallbacksInLoops()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfCoroutines()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfLinkedObjects()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfNumberLoops()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfCallChains()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfStringWork()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfClassChains()),
+        ...Array.from({ length: 5 }, () => () => scenes.sceneOfAllocationsBeforeLoops()),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),

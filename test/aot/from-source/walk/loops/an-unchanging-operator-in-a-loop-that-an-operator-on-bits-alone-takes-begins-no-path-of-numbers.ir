@@ -10,8 +10,8 @@
 # other arm. Built by its proven types the product with its cut stands in front of the loop. A sum that another sum takes (t += a + b) keeps its path: there the path keeps int32s.
 # RUN: walk f7 mechanisms=all
 # CHECK: ([[x]]: undefined|int|whole @JSValue
-# CHECK: = TypeTest [[x]] testedType=int|whole @295
-# CHECK-NOT: testedType=i32 @295
+# CHECK: = TypeTest [[x]] testedType=int|whole @291
+# CHECK-NOT: testedType=i32 @291
 # RUN(ANSWER): run-in-shell mechanisms=all
 # ANSWER: 242
 # ANSWER-NEXT: exited with 0

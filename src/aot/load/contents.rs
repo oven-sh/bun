@@ -11,12 +11,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
+use bun_sema::hir::ExprId;
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::node::NodeData;
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 
-pub(crate) use self::entry_points::{EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint};
+pub(crate) use self::entry_points::{
+    EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint, find_named_workers,
+};
 pub(crate) use self::load_names::NamedLoads;
 use self::load_names::resolve_loads_through_imported_loaders;
 pub(crate) use self::scan::{ScanInput, scan_file};
@@ -49,6 +52,9 @@ pub(crate) struct FileContents {
     pub hands_worker_constructor_on: bool,
     pub starts_worker_out_of_sight: bool,
     pub node_workers_out_of_sight: Vec<NodeWorkerOutOfSight>,
+    pub named_node_workers: Vec<ExprId>,
+    pub known_code_workers: Vec<ExprId>,
+    pub stores_path_of_parameter: bool,
 }
 
 pub(crate) struct NodeWorkerOutOfSight {
@@ -84,6 +90,7 @@ impl FixedBuiltins {
 
 pub(crate) struct ProgramContents {
     pub found_entry_points: Vec<FoundEntryPoint>,
+    pub followed_workers: Vec<(FileId, ExprId)>,
     pub replaced_builtins: Arc<[u32]>,
     pub fixed_builtins: FixedBuiltins,
     pub names_added_to_builtins: Vec<(BuiltinId, Atom)>,
@@ -112,12 +119,17 @@ impl ProgramContents {
     pub(crate) fn can_replace_builtin_functions(&self) -> bool {
         !self.replaced_builtins.is_empty()
     }
+
+    pub(crate) fn is_followed_worker(&self, file: FileId, at: ExprId) -> bool {
+        self.followed_workers.contains(&(file, at))
+    }
 }
 
 pub(crate) struct ContentsInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub options: &'a Options<'a>,
     pub found_entry_points: Vec<FoundEntryPoint>,
+    pub followed_workers: Vec<(FileId, ExprId)>,
     pub any_file_may_become_main_module: bool,
     pub is_every_text_asked: bool,
     pub builtin_names: &'a BuiltinNames,
@@ -455,6 +467,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         files,
         options,
         found_entry_points,
+        followed_workers,
         any_file_may_become_main_module,
         is_every_text_asked,
         builtin_names,
@@ -578,6 +591,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     }
     ProgramContents {
         found_entry_points,
+        followed_workers,
         replaced_builtins,
         fixed_builtins,
         names_added_to_builtins: all.names_added,

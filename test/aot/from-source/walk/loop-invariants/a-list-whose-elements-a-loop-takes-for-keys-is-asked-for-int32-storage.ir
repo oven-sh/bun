@@ -29,8 +29,8 @@
 # RUN(KEYS): walk f3 mechanisms=all
 # KEYS: = HasArrayStorage {{*}}arrayStorage=Int32
 # KEYS: isLoopHead=true
-# KEYS: undefined|i32 @OptionalInt64 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
-# KEYS: = TypeTest {{*}}testedType=number
+# KEYS: = IsElementPresent {{*}}arrayStorage=Int32
+# KEYS: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
 # KEYS: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
 # RUN(NUMBERS): walk f1 mechanisms=all
 # NUMBERS-NOT: = HasArrayStorage {{*}}arrayStorage=Int32

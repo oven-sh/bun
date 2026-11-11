@@ -82,6 +82,8 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
     v2 = TypeOf v0 @0
     v3 = Integer integer=5 @7
     PutModuleVariable v0 variable=g1 @7
+    v5 = Construct v0 @7 @3
+    v6 = Construct v0 @7
     Branch v0 -> taken b1(), notTaken b2() @4294967294
   b1():
     Return v0 @9
@@ -101,6 +103,10 @@ fn positions_are_suffixes() {
         builder.set_position(Some(7));
         builder.integer(5);
         builder.put_module_variable(VariableId::new(1), value);
+        builder.set_construction_start(3);
+        builder.construct(value, None, &[], None);
+        builder.set_construction_start(7);
+        builder.construct(value, None, &[], None);
         builder.set_position(Some(ABSENT_WORD - 1));
         builder.branch(value, Edge::to(taken), Edge::to(not_taken));
         builder.seal(taken);

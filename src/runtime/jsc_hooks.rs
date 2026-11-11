@@ -982,10 +982,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         (*vm).transpiler.options.test_file_imports_vitest = false;
         if (*vm).transpiler.options.rewrite_jest_for_tests {
             (*vm).transpiler.options.own_test_globals =
-                match crate::test_runner::jest::Jest::own_globals(&*global) {
-                    Ok(own) => own,
-                    Err(err) => return rejected_load(&*global, err),
-                };
+                crate::test_runner::jest::Jest::own_globals(&*global)
+                    .map_err(|_| bun_jsc::CrateError::JSError)?;
         }
     }
 

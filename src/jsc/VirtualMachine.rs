@@ -1916,7 +1916,11 @@ impl VirtualMachine {
         let disarmed = rare
             .and_then(|rare| rare.file_polls.as_deref())
             .map_or(0, bun_io::Store::disarmed_count);
-        let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
+        // The poll that `tick_possibly_forever` holds so that the loop parks fires nothing either.
+        let fires_nothing = i32::from(timers_hold_loop_ref)
+            + i32::from(has_coordinator)
+            + disarmed
+            + i32::from(self.event_loop_shared().holds_forever_poll);
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
     }

@@ -12,6 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
+use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
@@ -435,9 +436,32 @@ unsafe impl Send for SharedWatcher {}
 struct RestartOnChange;
 
 impl WatcherContext for RestartOnChange {
-    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {
-        if events.is_empty() {
+    fn on_file_update(
+        &mut self,
+        events: &mut [WatchEvent],
+        changed_files: &[ChangedFilePath],
+        watchlist: &WatchList,
+    ) {
+        let Some(event) = events.first() else {
             return;
+        };
+        let index = event.index as usize;
+        if let Some(path) = watchlist.items_file_path().get(index) {
+            // A directory event names the changed files, where the platform reports them.
+            let name = (watchlist.items_kind()[index] == bun_watcher::WatchItemKind::Directory)
+                .then(|| event.names(changed_files).iter().flatten().next())
+                .flatten();
+            match name {
+                Some(name) => {
+                    let mut file = path.to_vec();
+                    if !file.ends_with(b"/") && !file.ends_with(b"\\") {
+                        file.push(bun_paths::SEP);
+                    }
+                    file.extend_from_slice(name.as_bytes());
+                    bun_core::set_watch_change_trigger(&file);
+                }
+                None => bun_core::set_watch_change_trigger(path),
+            }
         }
         Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {

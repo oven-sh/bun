@@ -989,9 +989,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// The command that the status lines of `bun <file> --watch` name: `script` as typed, then
-    /// `ctx.passthrough`. `None` when the run is not watched or `--silent` is set.
+    /// `ctx.passthrough`. `None` when the run is not watched.
     pub(crate) fn watch_command(ctx: &ContextData, script: &[u8]) -> Option<Box<[u8]>> {
-        if ctx.debug.hot_reload != cli::command::HotReload::Watch || ctx.debug.silent {
+        if ctx.debug.hot_reload != cli::command::HotReload::Watch {
             return None;
         }
         let mut joined = script.to_vec();
@@ -1047,11 +1047,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // Before `run_compiled::start`: the compile stage of `--aot` restarts the process too.
+        // After the bunfig load: `[run] silent` is read there.
         let watch_status = match &mut main {
-            BootMain::File { watch_command, .. } => watch_command
+            BootMain::File { watch_command, .. } if !ctx.debug.silent => watch_command
                 .take()
                 .map(|command| crate::cli::watch_status::WatchStatus::install(&command)),
-            BootMain::Bake => None,
+            _ => None,
         };
 
         if crate::cli::run_compiled::is_requested(ctx) {

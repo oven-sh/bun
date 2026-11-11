@@ -655,7 +655,10 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    | string
+    | Buffer
+    | DirectoryTree
+    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -1766,10 +1769,10 @@ export function writeShebangScript(path: string, program: string, data: string) 
 
 /**
  * A status line that `bun <file> --watch` prints to stdout between the runs of the script:
- * `Restarting 'x.ts'`, `Completed running 'x.ts'. Waiting for file changes before restarting...` or
- * `Failed running ...`.
+ * `Change detected in '/x.ts'`, `Restarting 'x.ts'`, `Completed running 'x.ts'. Waiting for file
+ * changes before restarting...` or `Failed running ...`.
  */
-export const WATCH_STATUS_LINE = /^(Restarting|Completed running|Failed running) /;
+export const WATCH_STATUS_LINE = /^(Change detected in|Restarting|Completed running|Failed running) /;
 
 /** The lines of a stdout stream of `bun <file> --watch`, without its status lines. */
 export async function* scriptLines(stream: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {

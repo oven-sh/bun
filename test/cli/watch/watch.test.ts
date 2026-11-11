@@ -1,7 +1,18 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isBroken,
+  isLinux,
+  isMacOS,
+  isWindows,
+  scriptLines,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -31,16 +42,6 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
     release: () => reader.releaseLock(),
     output: () => output,
   };
-}
-
-// The status lines `--watch` prints to stdout between the runs of the script.
-const STATUS_LINE = /^(Restarting|Completed running|Failed running) /;
-
-// The lines of `stream`, without the status lines of `--watch`.
-async function* scriptLines(stream: ReadableStream<Uint8Array>) {
-  for await (const line of forEachLine(stream)) {
-    if (!STATUS_LINE.test(line)) yield line;
-  }
 }
 
 for (const dir of ["dir", "©️"]) {
@@ -86,6 +87,11 @@ describe("--watch status lines", () => {
   const restarts = it.todoIf(isBroken && isWindows);
   const completed = (command: string) => `Completed running ${command}. Waiting for file changes before restarting...`;
   const failed = (command: string) => `Failed running ${command}. Waiting for file changes before restarting...`;
+  // Before `dir` is disposed: a live process holds the folder on Windows.
+  const stop = async () => {
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+  };
 
   // Reads the stdout lines. `next(count)` returns the next `count` lines; the test saves a file
   // only after the line that says the run ended, so the order of the lines is fixed.
@@ -118,17 +124,18 @@ describe("--watch status lines", () => {
     });
     const stderr = watchee.stderr!.text();
     const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    // The watcher names the file by the path it watches, which is the real path.
+    const changed = `Change detected in '${realpathSync(join(cwd, "dep.mjs"))}'`;
 
     expect(await next(1)).toEqual([failed("'entry.mjs'")]);
 
     await Bun.write(join(cwd, "dep.mjs"), `export const a = 2;`);
-    expect(await next(2)).toEqual(["Restarting 'entry.mjs'", failed("'entry.mjs'")]);
+    expect(await next(3)).toEqual([changed, "Restarting 'entry.mjs'", failed("'entry.mjs'")]);
 
     await Bun.write(join(cwd, "dep.mjs"), `export const a = 3; export const b = 4;`);
-    expect(await next(3)).toEqual(["Restarting 'entry.mjs'", "loaded 4", completed("'entry.mjs'")]);
+    expect(await next(4)).toEqual([changed, "Restarting 'entry.mjs'", "loaded 4", completed("'entry.mjs'")]);
 
-    watchee.kill("SIGKILL");
-    await watchee.exited;
+    await stop();
     expect((await stderr).split("SyntaxError: Export named 'b' not found").length - 1).toBe(2);
   });
 
@@ -148,6 +155,7 @@ describe("--watch status lines", () => {
       });
       const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
       expect(await next(2)).toEqual(["--flag|two words", completed(`"./src/it's.mjs --flag two words"`)]);
+      await stop();
     },
   );
 
@@ -168,6 +176,7 @@ describe("--watch status lines", () => {
     });
     const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
     expect(await next(2)).toEqual(["ran", completed(quoted)]);
+    await stop();
   });
 
   it("names the script of stdin as node does", async () => {
@@ -182,34 +191,50 @@ describe("--watch status lines", () => {
     expect(await next(2)).toEqual(["q", completed("'- q'")]);
   });
 
-  // After an uncaught error the loop fires no timer, so a pending timer does not keep the run alive.
-  it("reports a non-zero exit code and an unhandled rejection as a failed run", async () => {
-    using dir = tempDir("watch-status-failed", {
-      "code.mjs": `process.exitCode = 3;`,
-      "reject.mjs": `Promise.reject(new Error("nope"));`,
-      "timer-throw.mjs": `setInterval(() => {}, 1000); throw new Error("boom");`,
-      "timer-reject.mjs": `setInterval(() => {}, 1000); await Promise.reject(new Error("db down"));`,
+  const failedRuns = {
+    "code.mjs": `process.exitCode = 3;`,
+    "reject.mjs": `Promise.reject(new Error("nope"));`,
+    "timer-throw.mjs": `setInterval(() => {}, 1000); throw new Error("boom");`,
+    "timer-reject.mjs": `setInterval(() => {}, 1000); await Promise.reject(new Error("db down"));`,
+  };
+  async function expectFailedRun(dir: string, script: string, error: string) {
+    watchee = spawn({
+      cwd: dir,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
     });
-    for (const [script, error] of [
-      ["code.mjs", ""],
-      ["reject.mjs", "nope"],
-      ["timer-throw.mjs", "boom"],
-      ["timer-reject.mjs", "db down"],
-    ]) {
-      watchee = spawn({
-        cwd: String(dir),
-        cmd: [bunExe(), "--watch", "--no-clear-screen", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "ignore",
-      });
-      const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
-      expect(await next(1)).toEqual([failed(`'${script}'`)]);
-      watchee.kill("SIGKILL");
-      await watchee.exited;
-      if (error) expect(await watchee.stderr!.text()).toContain(error);
-    }
+    const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    expect(await next(1)).toEqual([failed(`'${script}'`)]);
+    await stop();
+    if (error) expect(await watchee.stderr!.text()).toContain(error);
+  }
+
+  it("reports a non-zero exit code and an unhandled rejection as a failed run", async () => {
+    using dir = tempDir("watch-status-failed", failedRuns);
+    await expectFailedRun(String(dir), "code.mjs", "");
+    await expectFailedRun(String(dir), "reject.mjs", "nope");
+  });
+
+  // After an uncaught error the loop fires no timer, so a pending timer does not keep the run
+  // alive. On Windows libuv still fires it, and the run goes on.
+  it.skipIf(isWindows)("reports a run that an uncaught error ended while a timer was pending", async () => {
+    using dir = tempDir("watch-status-failed-timer", failedRuns);
+    await expectFailedRun(String(dir), "timer-throw.mjs", "boom");
+    await expectFailedRun(String(dir), "timer-reject.mjs", "db down");
+  });
+
+  // A handle that nothing waits for (an unref'd child) does not keep the run alive either, once
+  // it is gone.
+  it.skipIf(isWindows)("reports a run that an uncaught error ended while an unref'd child ran", async () => {
+    using dir = tempDir("watch-status-failed-unref", {
+      "child.mjs": `const child = Bun.spawn(["sleep", "0.5"], { stdout: "pipe" });
+child.unref();
+throw new Error("boom");`,
+    });
+    await expectFailedRun(String(dir), "child.mjs", "boom");
   });
 
   // A `--watch-kill-signal` listener makes the restart go through the JS thread instead of the
@@ -239,8 +264,14 @@ setInterval(() => {}, 1000);`,
           `
 // ${i}`,
       );
-      expect(await next(3)).toEqual(["bye", "Restarting 'server.mjs'", "up"]);
+      expect(await next(4)).toEqual([
+        "bye",
+        `Change detected in '${realpathSync(join(cwd, "server.mjs"))}'`,
+        "Restarting 'server.mjs'",
+        "up",
+      ]);
     }
+    await stop();
   });
 
   it("keeps a server that survives an uncaught exception running, with no status line", async () => {
@@ -268,9 +299,10 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
     expect(stdout.output()).toBe(`${port}\n`);
+    await stop();
   });
 
-  it("prints none of the lines under --hot", async () => {
+  restarts("prints none of the lines under --hot", async () => {
     using dir = tempDir("watch-status-hot", {
       "script.mjs": `console.log("ran");`,
     });
@@ -287,6 +319,7 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
     await Bun.write(join(String(dir), "script.mjs"), `console.log("ran again");`);
     await waitFor("ran again\n");
     expect(output()).toBe("ran\nran again\n");
+    await stop();
   });
 
   // `--silent` keeps bun's own lines off stdout. Node refuses `--watch` with `--eval`: there is no
@@ -312,6 +345,7 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
     await Bun.write(join(String(dir), "dep.mjs"), `export const a = 2;`);
     await waitFor("ran\nran\n");
     expect(output()).toBe("ran\nran\n");
+    await stop();
   });
 
   // A full stdout pipe must not hold the restart: node's watcher does not wait on its stdout either.
@@ -319,13 +353,16 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
     using dir = tempDir("watch-status-full-pipe", {
       "app.mjs": `console.error("started");
 process.stdout.write("x".repeat(200_000) + "\\n");
-setInterval(() => {}, 1000);`,
+// Ends on its own: the test does not kill what the shell started.
+setTimeout(() => process.exit(0), 15_000);`,
     });
+    // `sleep` never reads, so the pipe fills and fd 1 of the watched process blocks. A pipe of
+    // `Bun.spawn` would not: its parent reads it into memory without a bound.
     watchee = spawn({
       cwd: String(dir),
-      cmd: [bunExe(), "--watch", "--no-clear-screen", "app.mjs"],
+      cmd: ["sh", "-c", `"$0" --watch --no-clear-screen app.mjs | sleep 15`, bunExe()],
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
@@ -344,6 +381,7 @@ setInterval(() => {}, 1000);`,
       (await Bun.file(join(String(dir), "app.mjs")).text()) + "\n// touched",
     );
     await started();
+    await stop();
   });
 });
 
@@ -781,8 +819,11 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(output()).toContain(clearScreen);
   const [beforeReload, afterReload] = output().split(clearScreen);
   expect(beforeReload).toContain("iter first");
-  // The green `Restarting` line follows the clear, so it stays on the screen.
-  expect(afterReload).toStartWith("\x1b[32mRestarting 'busy.js'\x1b[39m\n");
+  // The blue `Change detected` and green `Restarting` lines follow the clear, so they stay on the screen.
+  expect(afterReload).toStartWith(
+    `\x1b[34mChange detected in '${realpathSync(join(String(dir), "busy.js"))}'\x1b[39m\n` +
+      "\x1b[32mRestarting 'busy.js'\x1b[39m\n",
+  );
   expect(afterReload).toContain("iter second");
   expect(await stderr).toContain(clearScreen);
 }, 30000);

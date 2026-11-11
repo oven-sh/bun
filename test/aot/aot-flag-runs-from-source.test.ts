@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, WATCH_STATUS_LINE } from "harness";
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -573,6 +573,7 @@ describe.concurrent("--watch", () => {
     await watched.out.until((_, raw) => raw.includes("Completed running"));
     expect(watched.out.heard.raw).toBe(
       "Failed running 'main.ts'. Waiting for file changes before restarting...\n" +
+        `Change detected in '${realpathSync(join(String(dir), "value.ts"))}'\n` +
         "Restarting 'main.ts'\n" +
         "run 1 1 locked\n" +
         "Completed running 'main.ts'. Waiting for file changes before restarting...\n",

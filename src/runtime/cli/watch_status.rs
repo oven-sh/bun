@@ -12,7 +12,7 @@ pub(crate) struct WatchStatus {
 impl WatchStatus {
     /// `command`: see `RunCommand::watch_command`. `bun_core::reload_process` prints `Restarting`.
     pub(crate) fn install(command: &[u8]) -> Self {
-        let command = inspect_quote(command).into_boxed_slice();
+        let command = bun_core::node_inspect_quote(command).into_boxed_slice();
         let [c, r] = color("\x1b[32m");
         let mut banner =
             Vec::with_capacity(c.len() + "Restarting ".len() + command.len() + r.len() + 1);
@@ -47,56 +47,4 @@ fn color(start: &'static str) -> [&'static str; 2] {
     } else {
         ["", ""]
     }
-}
-
-/// Quotes `s` as `strEscape` of node's `lib/internal/util/inspect.js` does.
-fn inspect_quote(s: &[u8]) -> Vec<u8> {
-    let has_single = bun_core::strings::contains_char(s, b'\'');
-    let has_double = bun_core::strings::contains_char(s, b'"');
-    let has_backtick =
-        bun_core::strings::contains_char(s, b'`') || bun_core::strings::contains(s, b"${");
-    let quote = if !has_single {
-        b'\''
-    } else if !has_double {
-        b'"'
-    } else if !has_backtick {
-        b'`'
-    } else {
-        b'\''
-    };
-    let mut out = Vec::with_capacity(s.len() + 2);
-    out.push(quote);
-    let mut i = 0;
-    while i < s.len() {
-        let b = s[i];
-        i += 1;
-        match b {
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            0x08 => out.extend_from_slice(b"\\b"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            0x0c => out.extend_from_slice(b"\\f"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b if b == quote => {
-                out.push(b'\\');
-                out.push(b);
-            }
-            // U+0080 to U+009F are the two bytes C2 80 to C2 9F.
-            0xc2 if matches!(s.get(i), Some(0x80..=0x9f)) => {
-                push_hex_escape(&mut out, s[i]);
-                i += 1;
-            }
-            0x00..=0x1f | 0x7f => push_hex_escape(&mut out, b),
-            b => out.push(b),
-        }
-    }
-    out.push(quote);
-    out
-}
-
-fn push_hex_escape(out: &mut Vec<u8>, code: u8) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    out.extend_from_slice(b"\\x");
-    out.push(HEX[(code >> 4) as usize]);
-    out.push(HEX[(code & 0xf) as usize]);
 }

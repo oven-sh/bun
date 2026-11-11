@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 
 // These tests verify that native node:crypto wrapper objects report their
 // external memory usage to the GC via reportExtraMemoryAllocated and
@@ -108,5 +108,52 @@ describe.concurrent("node:crypto external memory is reported to the GC", () => {
     const count = 1000;
     const delta = await extraMemoryDelta(``, `crypto.createVerify("sha256")`, count);
     expect(delta).toBeGreaterThan(100 * count);
+  });
+
+  test("X509Certificate reports all of a certificate of 64 KiB or more", async () => {
+    const extensionSize = 96 * 1024;
+    const count = 50;
+    const delta = await extraMemoryDelta(
+      `const der = new crypto.X509Certificate(${JSON.stringify(tls.cert)}).raw;
+
+       // [tag, content] of each element in a sequence of DER elements.
+       function elements(bytes) {
+         const result = [];
+         for (let i = 0; i < bytes.length; ) {
+           let length = bytes[i + 1], start = i + 2;
+           if (length & 0x80) {
+             const n = length & 0x7f;
+             length = bytes.readUIntBE(start, n);
+             start += n;
+           }
+           result.push([bytes[i], bytes.subarray(start, start + length)]);
+           i = start + length;
+         }
+         return result;
+       }
+       function element(tag, content) {
+         const header = Buffer.from([tag, 0x84, 0, 0, 0, 0]);
+         header.writeUInt32BE(content.length, 2);
+         // DER wants the shortest length.
+         let n = 4;
+         while (n > 1 && header[6 - n] === 0) n--;
+         if (n === 1 && content.length < 0x80) return Buffer.concat([Buffer.from([tag, content.length]), content]);
+         return Buffer.concat([Buffer.from([tag, 0x80 | n]), header.subarray(6 - n), content]);
+       }
+
+       // The same certificate with one more extension. Nothing here checks the signature.
+       const [tbs, ...rest] = elements(elements(der)[0][1]);
+       const fields = elements(tbs[1]);
+       const extensions = fields.findIndex(([tag]) => tag === 0xa3);
+       const list = elements(fields[extensions][1])[0][1];
+       const extra = element(0x30, Buffer.concat([Buffer.from("06032a0304", "hex"), element(0x04, Buffer.alloc(${extensionSize}, 1))]));
+       fields[extensions][1] = element(0x30, Buffer.concat([list, extra]));
+       const join = list => Buffer.concat(list.map(([tag, content]) => element(tag, content)));
+       const big = element(0x30, join([[0x30, join(fields)], ...rest]));
+       if (new crypto.X509Certificate(big).raw.length < ${extensionSize}) throw new Error("the extension is missing");`,
+      `new crypto.X509Certificate(big)`,
+      count,
+    );
+    expect(delta).toBeGreaterThan(extensionSize * count * 0.75);
   });
 });

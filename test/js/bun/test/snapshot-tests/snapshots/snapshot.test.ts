@@ -1900,7 +1900,10 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       test.each(["true", "false"])(
         "still passes beside the runner's entry for the same snapshot, which does not match under Bun (CI: %s)",
         async CI => {
-          using dir = tempDir("snapshot-beside", { "a.test.js": nested() + zOld, "__snapshots__/a.test.js.snap": beside });
+          using dir = tempDir("snapshot-beside", {
+            "a.test.js": nested() + zOld,
+            "__snapshots__/a.test.js.snap": beside,
+          });
           const { pass, stderr, exitCode } = await runTests(String(dir), { CI });
           expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
           expect(stderr).toContain(" 4 snapshots, ");
@@ -1910,7 +1913,12 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       );
 
       test.each([
-        ["a second attempt", "let attempts = 0;", "if (++attempts === 1) throw new Error('once more');", ", { retry: 1 }"],
+        [
+          "a second attempt",
+          "let attempts = 0;",
+          "if (++attempts === 1) throw new Error('once more');",
+          ", { retry: 1 }",
+        ],
         ["a repeat", "", "", ", { repeats: 1 }"],
       ])(
         "still passes beside the runner's entry in %s, and in a second run of the file",
@@ -1931,7 +1939,8 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         const keyOfRunner = format === "vitest" ? "outer > in\nner 1" : "outer in\\\\nner 1";
         const file = headers[format] + entry(keyOfRunner, '"other"') + old + entry("outer in\nner 1", '"same"');
         using dir = tempDir("snapshot-beside", {
-          "a.test.js": `describe("outer", () => { test("in\\nner", () => { expect("same").toMatchSnapshot(); }); });` + zOld,
+          "a.test.js":
+            `describe("outer", () => { test("in\\nner", () => { expect("same").toMatchSnapshot(); }); });` + zOld,
           "__snapshots__/a.test.js.snap": file,
         });
         const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
@@ -1942,7 +1951,10 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
 
       test("passes by the runner's entry where that one matches, whatever Bun's entry holds", async () => {
         const besideOther = headers[format] + ofRunner(format, ofJSC) + old + ofBun("another value");
-        using dir = tempDir("snapshot-beside", { "a.test.js": nested() + zOld, "__snapshots__/a.test.js.snap": besideOther });
+        using dir = tempDir("snapshot-beside", {
+          "a.test.js": nested() + zOld,
+          "__snapshots__/a.test.js.snap": besideOther,
+        });
         const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
         expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
         expect(snap(dir)).toBe(besideOther);
@@ -1951,7 +1963,10 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
 
       test("still fails beside the runner's entry when the value is another, and shows the runner's entry", async () => {
         using dir = tempDir("snapshot-beside", {
-          "a.test.js": (nested() + zOld).replace("expect(message).toMatchSnapshot()", 'expect(message + "!").toMatchSnapshot()'),
+          "a.test.js": (nested() + zOld).replace(
+            "expect(message).toMatchSnapshot()",
+            'expect(message + "!").toMatchSnapshot()',
+          ),
           "__snapshots__/a.test.js.snap": beside,
         });
         const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
@@ -1962,7 +1977,10 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       });
 
       test("--update-snapshots keeps the runner's entry of the two, with what the test gives now", async () => {
-        using dir = tempDir("snapshot-beside", { "a.test.js": nested() + zOld, "__snapshots__/a.test.js.snap": beside });
+        using dir = tempDir("snapshot-beside", {
+          "a.test.js": nested() + zOld,
+          "__snapshots__/a.test.js.snap": beside,
+        });
         const { exitCode } = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
         expect(snap(dir)).toBe(headers[format] + ofRunner(format, ofJSC) + old);
         expect(exitCode).toBe(0);
@@ -2085,7 +2103,8 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
     ] as const)(
       "a file that Vitest wrote alone is told the same: the entry of a test that moved passes %j, and a failure shows Vitest's own",
       async (value, counts, message) => {
-        const leftBehind = headers.vitest + entry("outer > inner 1", '"current"') + entry("outer inner 1", '"obsolete"');
+        const leftBehind =
+          headers.vitest + entry("outer > inner 1", '"current"') + entry("outer inner 1", '"obsolete"');
         using dir = tempDir("snapshot-in-order", {
           "a.test.js": `
             describe("outer", () => { test("inner", () => { expect(${JSON.stringify(value)}).toMatchSnapshot(); }); });

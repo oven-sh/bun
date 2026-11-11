@@ -728,7 +728,7 @@ Call `mock.restore()` in an `afterEach` block, or in your test preload script, i
 
 ### Cleanup After Each Test File
 
-When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
+When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. If `vi.unstubAllGlobals()` or `useRealTimers()` put a restored spy back on a global, the next test file gets what the spy had replaced. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
 
 Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hooks, aren't restored or cleared. They stay the same for every test file.
 
@@ -789,7 +789,7 @@ test("lazy import", async () => {
 });
 ```
 
-- Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
+- Stubs that are still in place are undone when the test file ends. So is the value of a removed stub that `mockRestore()` or `useRealTimers()` put back on its global. Stubs made by a `--preload` script apply to every file.
 - `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
 
 ### Differences from Vitest

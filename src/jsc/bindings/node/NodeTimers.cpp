@@ -447,13 +447,6 @@ extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue o
     return JSValue::encode(fakes->get(value.asCell()));
 }
 
-// getDirect() so no getter runs. An accessor comes back as a GetterSetter, which is never a fake.
-extern "C" JSC::EncodedJSValue Bun__FakeTimers__getDirect(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name)
-{
-    auto& vm = JSC::getVM(globalObject);
-    return JSValue::encode(asObject(JSValue::decode(owner))->getDirect(vm, Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy))));
-}
-
 // Keeps the property's attributes: `Date.now` isn't enumerable.
 extern "C" void Bun__FakeTimers__putDirect(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue value)
 {

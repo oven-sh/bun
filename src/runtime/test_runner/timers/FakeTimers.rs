@@ -20,6 +20,33 @@ unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
+    /// A spy of `jest.spyOn()` or `spyOn()` that was restored after fake timers or `vi.stubGlobal()` took it off its property and kept it.
+    safe fn JSMock__staysOffFakeTimers(value: JSValue) -> bool;
+    /// Has `Api::stubbed_name_bit` of each global that `vi.stubGlobal()` stubs now.
+    safe fn JSMock__namesOfStubbedGlobals(global: &JSGlobalObject) -> u64;
+    /// Fake timers are about to replace `value` on `owner[name]` and keep it, to put it back. For a spy, or a global that may be stubbed.
+    safe fn JSMock__willKeepForFakeTimers(
+        global: &JSGlobalObject,
+        value: JSValue,
+        owner: JSValue,
+        name: &bun_core::String,
+    );
+    /// What the spy `value` replaced on `owner[name]`, or empty if that was no value.
+    safe fn JSMock__replacedBySpy(
+        value: JSValue,
+        owner: JSValue,
+        name: &bun_core::String,
+    ) -> JSValue;
+    /// What was undone and is on `owner[name]` gives way to what it had replaced there. `fakes` is `originals`.
+    safe fn JSMock__giveWay(
+        global: &JSGlobalObject,
+        fakes: JSValue,
+        owner: JSValue,
+        name: &bun_core::String,
+    );
+    /// The same for each global where `vi.stubGlobal()` was undone out of order. `fakes` can be empty.
+    safe fn JSMock__giveWayOnGlobals(global: &JSGlobalObject, fakes: JSValue);
+    safe fn JSMock__hasGlobalsToGiveWay(global: &JSGlobalObject) -> bool;
 }
 
 unsafe extern "C" {
@@ -43,11 +70,6 @@ unsafe extern "C" {
         name: &bun_core::String,
         value: JSValue,
     );
-    safe fn Bun__FakeTimers__getDirect(
-        global: &JSGlobalObject,
-        owner: JSValue,
-        name: &bun_core::String,
-    ) -> JSValue;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -130,6 +152,34 @@ impl Api {
         }
         let name = bun_core::String::static_(self.property());
         Bun__FakeTimers__putDirect(global, owner, &name, function);
+    }
+
+    /// `bitOfStubbedGlobal()` in JSMockFunction.h of each property that is one of the global object, indexed by `Api as usize`.
+    const STUBBED_NAME_BITS: [u64; 14] = {
+        let mut bits = [0; 14];
+        let mut api = 0;
+        while api < bits.len() {
+            let name = if api == Api::PerformanceObject as usize {
+                "performance"
+            } else {
+                Self::NAMES[api].0
+            }
+            .as_bytes();
+            let is_of_global = api != Api::NextTick as usize
+                && api != Api::Date as usize
+                && api != Api::Performance as usize
+                && api != Api::Hrtime as usize;
+            if is_of_global {
+                bits[api] =
+                    1 << ((name[0] as usize + name[name.len() - 1] as usize * 2 + name.len()) & 63);
+            }
+            api += 1;
+        }
+        bits
+    };
+
+    fn stubbed_name_bit(self) -> u64 {
+        Self::STUBBED_NAME_BITS[self as usize]
     }
 
     fn owner(self, global: &JSGlobalObject) -> JSValue {
@@ -878,9 +928,7 @@ impl FakeTimers {
             });
         }
         for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
-            {
+            if stays_away(api, original.get()) {
                 continue;
             }
             api.put(global, original.get());
@@ -934,6 +982,7 @@ impl FakeTimers {
         let _reading = ReadingGlobals::begin();
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
+        let stubbed_names = JSMock__namesOfStubbedGlobals(global);
         let mut fakes = Vec::new();
         for api in Api::FUNCTIONS {
             // A test can take `Date.prototype.constructor` away.
@@ -944,13 +993,27 @@ impl FakeTimers {
             let replaced_now = unsafe { &(*timer_all()).fake_timers.replaced }
                 .iter()
                 .find(|replaced| replaced.api == api)
-                .map(|replaced| replaced.original.get());
+                .map(|replaced| replaced.original.get())
+                .filter(|&original| !stays_away(api, original));
+            let owner = api.owner(global);
             let original = match replaced_now {
                 Some(original) => original,
                 None => {
-                    let installed = api.owner(global).get(global, api.property())?;
+                    let installed = owner.get(global, api.property())?;
                     let installed = installed.unwrap_or(JSValue::UNDEFINED);
-                    original_of(originals, installed).unwrap_or(installed)
+                    let original = original_of(originals, installed).unwrap_or(installed);
+                    if stays_away(api, original) {
+                        // A fake replaces a value. If the spy replaced an accessor, the next `uninstall` leaves what is there now.
+                        let name = bun_core::String::static_(api.property());
+                        let replaced = JSMock__replacedBySpy(original, owner, &name);
+                        if replaced.is_empty() {
+                            installed
+                        } else {
+                            replaced
+                        }
+                    } else {
+                        original
+                    }
                 }
             };
             // Only a DOM library defines these two.
@@ -978,6 +1041,12 @@ impl FakeTimers {
                 _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
             };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
+            if may_be_spy(original) || stubbed_names & api.stubbed_name_bit() != 0 {
+                let name = bun_core::String::static_(api.property());
+                bun_jsc::from_js_host_call_generic(global, || {
+                    JSMock__willKeepForFakeTimers(global, original, owner, &name)
+                })?;
+            }
             fakes.push(Replaced {
                 api,
                 original: Strong::create(original, global),
@@ -987,26 +1056,27 @@ impl FakeTimers {
         Ok(fakes)
     }
 
-    /// Swaps any stale fake that was put back on a global for its original. Runs no JS.
-    fn take_off_stale_fakes(global: &JSGlobalObject) {
+    /// What was undone and then put back on a global gives way to what it had replaced: a stale fake, a restored spy, the value of a removed `vi.stubGlobal()`. Runs no JS.
+    fn give_way(global: &JSGlobalObject) {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
-        let Some(originals) = (unsafe { (*timer_all()).fake_timers.originals.get() }) else {
+        let originals = unsafe { (*timer_all()).fake_timers.originals.get() };
+        if originals.is_none() && !JSMock__hasGlobalsToGiveWay(global) {
             return;
-        };
-        for api in Api::FUNCTIONS {
-            let owner = api.owner(global);
-            if !owner.is_object() {
-                continue;
-            }
-            let name = bun_core::String::static_(api.property());
-            let installed = Bun__FakeTimers__getDirect(global, owner, &name);
-            // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
-            if !unsafe { (*timer_all()).fake_timers.is_installed(installed) }
-                && let Some(original) = original_of(originals, installed)
-            {
-                api.put(global, original);
+        }
+        if let Some(originals) = originals {
+            for api in Api::FUNCTIONS {
+                let owner = api.owner(global);
+                if owner.is_object() {
+                    let name = bun_core::String::static_(api.property());
+                    crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
+                        JSMock__giveWay(global, originals, owner, &name)
+                    }));
+                }
             }
         }
+        crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
+            JSMock__giveWayOnGlobals(global, originals.unwrap_or(JSValue::ZERO))
+        }));
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
@@ -1533,6 +1603,31 @@ fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {
     (!original.is_empty()).then_some(original)
 }
 
+/// A mock function is an `InternalFunction`. No timer function is one.
+fn may_be_spy(value: JSValue) -> bool {
+    value.js_type() == bun_jsc::JSType::InternalFunction
+}
+
+/// A spy that was restored under the fake has put back what it replaced, so the fake does not put the spy back.
+fn stays_away(api: Api, original: JSValue) -> bool {
+    if !may_be_spy(original) {
+        return false;
+    }
+    // A restored spy of `vi.spyOn()` still calls through. As in Vitest it goes back, except on the two clocks.
+    if matches!(api, Api::Date | Api::Performance) {
+        JSMock__isRestoredSpy(original)
+    } else {
+        JSMock__staysOffFakeTimers(original)
+    }
+}
+
+/// The `originals` WeakMap, or empty if there were never fake timers.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__originals() -> JSValue {
+    // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+    unsafe { (*timer_all()).fake_timers.originals.get() }.unwrap_or(JSValue::ZERO)
+}
+
 fn plus(a: Timespec, b: Timespec) -> Timespec {
     const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
     let nsec = a.nsec + b.nsec;
@@ -1750,7 +1845,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
         // Dropping the drives leaves their `…Async` promises pending, like anything else still pending at file end.
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
-    FakeTimers::take_off_stale_fakes(global);
+    FakeTimers::give_way(global);
 }
 
 pub(crate) fn is_active() -> bool {

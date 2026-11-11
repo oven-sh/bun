@@ -25,6 +25,24 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
+// `vi.stubGlobal()` is about to replace `owner[name]` and keeps `saved`, the property's value, getter or setter, to put it back. True if that is a mock function.
+bool willKeepSpy(JSC::JSValue saved, JSC::JSObject* owner, const JSC::Identifier& name);
+// See JSMockModule::keptStubs. Call only while a global is stubbed.
+void willKeepOnStubbedGlobal(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue value);
+// One of 64 bits for JSMockModule::namesOfStubbedGlobals. `stubbed_name_bit` in FakeTimers.rs is the same for the names of fake timers.
+inline uint64_t bitOfStubbedGlobal(const JSC::Identifier& name)
+{
+    auto* characters = name.impl();
+    unsigned length = characters->length();
+    return 1ull << ((length ? (*characters)[0] + (*characters)[length - 1] * 2 + length : 0) & 63);
+}
+// What the spy `value` replaced on `owner[name]`, if that was a value. Empty if `value` is no spy of that property.
+JSC::JSValue replacedBySpy(JSC::JSValue value, JSC::JSObject* owner, const JSC::Identifier& name);
+// The end of the test file looks at the global `name`: see JSMock__giveWayOnGlobals().
+void noteGlobalToGiveWay(Zig::GlobalObject*, const JSC::Identifier& name);
+// What `value` gives way to on the global `name` if it is on record in JSMockModule::keptStubs: the descriptor of a property as an object, or undefined for no property.
+JSC::JSValue replacedByKeptStub(Zig::GlobalObject*, JSC::JSValue value, const JSC::Identifier& name);
+
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
 public:
@@ -60,10 +78,17 @@ public:
 
     // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use.
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
+    // Here the original value is in an InternalFieldTuple: the property's descriptor as an object (undefined if there was none), then the stub.
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
     // JSMaps from name to stub for what a preload stubbed. Reapplied when a test file ends, so the next one starts with them.
     JSC::WriteBarrier<JSC::Unknown> envsOfPreload;
     JSC::WriteBarrier<JSC::Unknown> globalsOfPreload;
+    // A JSWeakMap from a stub that a spy or fake timers replaced, and can put back, to an InternalFieldTuple: the original value of that global, then its name.
+    JSC::WriteBarrier<JSC::Unknown> keptStubs;
+    // Has bitOfStubbedGlobal() of each key of `stubbedGlobals`, so that a spy or fake timers seldom have to look a name up.
+    uint64_t namesOfStubbedGlobals { 0 };
+    // A JSMap whose keys are the names for noteGlobalToGiveWay().
+    JSC::WriteBarrier<JSC::Unknown> globalsToGiveWay;
 
     // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;

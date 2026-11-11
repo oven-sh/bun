@@ -6,9 +6,12 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #if ENABLE(AOT)
 #include "BunCompiledModules.h"
@@ -17,6 +20,8 @@
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
 extern "C" bool ViUtils__isLoadingPreload(Zig::GlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__originals();
+extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue originals, JSC::EncodedJSValue value);
 
 namespace Bun {
 
@@ -35,6 +40,11 @@ static JSMap* ensureMap(VM& vm, Zig::GlobalObject* globalObject, WriteBarrier<Un
 static NEVER_INLINE bool hasOriginal(JSGlobalObject* globalObject, JSMap* originals, JSValue key)
 {
     return originals->has(globalObject, key);
+}
+
+static NEVER_INLINE JSValue originalOf(JSGlobalObject* globalObject, JSMap* originals, JSValue key)
+{
+    return originals->get(globalObject, key);
 }
 
 static NEVER_INLINE Identifier propertyKeyOf(JSGlobalObject* globalObject, JSValue value)
@@ -102,11 +112,95 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     target->methodTable()->defineOwnProperty(target, globalObject, name, descriptor, true);
 }
 
+static bool isKey(JSValue key, const Identifier& name)
+{
+    if (key.isSymbol())
+        return &asSymbol(key)->privateName()->uid() == name.impl();
+    return key.isString() && !name.isSymbol() && WTF::equal(asString(key)->tryGetValueImpl(), name.impl());
+}
+
+JSValue replacedByKeptStub(Zig::GlobalObject* globalObject, JSValue value, const Identifier& name)
+{
+    JSValue records = globalObject->mockModule.keptStubs.get();
+    if (!records || !value || !value.isObject())
+        return {};
+    auto* record = dynamicDowncast<InternalFieldTuple>(uncheckedDowncast<JSWeakMap>(records)->get(asObject(value)));
+    // One function can be the stub of two globals, and has one record.
+    if (!record || !isKey(record->getInternalField(1), name))
+        return {};
+    return record->getInternalField(0);
+}
+
+static JSValue valueOf(VM& vm, JSValue descriptor)
+{
+    return descriptor && descriptor.isObject() ? asObject(descriptor)->getDirect(vm, vm.propertyNames->value) : JSValue();
+}
+
+// True if `value` is what the global `name` had, or would have, under `saved`: below each spy, fake timer function and kept stub that replaced something there.
+static bool isUnder(Zig::GlobalObject* globalObject, JSValue fakes, JSValue value, JSValue saved, const Identifier& name)
+{
+    auto& vm = getVM(globalObject);
+    for (unsigned hops = 0; hops < 8 && saved && saved != value; ++hops) {
+        if (JSValue replaced = replacedBySpy(saved, globalObject, name))
+            saved = replaced;
+        else if (fakes && (replaced = JSValue::decode(Bun__FakeTimers__originalOf(JSValue::encode(fakes), JSValue::encode(saved)))))
+            saved = replaced;
+        else
+            saved = valueOf(vm, replacedByKeptStub(globalObject, saved, name));
+    }
+    return saved == value;
+}
+
+// A spy or fake timers are about to replace `value` on the global `name` and keep it. They can put it back after `vi.unstubAllGlobals()`, so it goes on record with what the stub replaced.
+void willKeepOnStubbedGlobal(Zig::GlobalObject* globalObject, const Identifier& name, JSValue value)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue key = identifierToJSValue(vm, name);
+    JSValue entry = originalOf(globalObject, uncheckedDowncast<JSMap>(globalObject->mockModule.stubbedGlobals.get()), key);
+    RETURN_IF_EXCEPTION(scope, );
+    // What a test assigned to the stubbed global, or what the restore of a spy put there, is no stub.
+    auto* stub = dynamicDowncast<InternalFieldTuple>(entry);
+    if (!stub || stub->getInternalField(1) != value || !value.isObject())
+        return;
+    // A stub that is what was there before it is not undone by what was there.
+    JSValue original = stub->getInternalField(0);
+    JSValue under = valueOf(vm, original);
+    if (isUnder(globalObject, JSValue::decode(Bun__FakeTimers__originals()), value, under, name))
+        return;
+    // Not an older stub, which would keep every stub of the test file alive.
+    if (JSValue older = replacedByKeptStub(globalObject, under, name))
+        original = older;
+    if (replacedByKeptStub(globalObject, value, name) == original)
+        return;
+    auto& records = globalObject->mockModule.keptStubs;
+    if (!records)
+        records.set(vm, globalObject, JSWeakMap::create(vm, globalObject->weakMapStructure()));
+    uncheckedDowncast<JSWeakMap>(records.get())->set(vm, asObject(value), InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), original, key));
+}
+
+// `vi.unstubAllGlobals()` puts `saved` back. If it has a spy that is restored by then, or a stub on record, that gives way when the test file ends.
+static NEVER_INLINE void willKeep(Zig::GlobalObject* globalObject, const Identifier& name, const PropertyDescriptor& saved)
+{
+    bool keepsSpy = willKeepSpy(saved.isAccessorDescriptor() ? saved.getter() : saved.value(), globalObject, name);
+    if (saved.isAccessorDescriptor())
+        keepsSpy = willKeepSpy(saved.setter(), globalObject, name) || keepsSpy;
+    if (keepsSpy || replacedByKeptStub(globalObject, saved.value(), name))
+        noteGlobalToGiveWay(globalObject, name);
+}
+
+static void removeStub(JSGlobalObject* globalObject, JSObject* target, JSValue key, JSValue stub)
+{
+    restoreGlobal(globalObject, target, key, uncheckedDowncast<InternalFieldTuple>(stub)->getInternalField(0));
+}
+
 static void unstubAllGlobals(Zig::GlobalObject* globalObject)
 {
     auto& stubbedGlobals = globalObject->mockModule.stubbedGlobals;
+    globalObject->mockModule.namesOfStubbedGlobals = 0;
     if (stubbedGlobals)
-        restoreOriginals(globalObject, stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), restoreGlobal);
+        restoreOriginals(globalObject, stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), removeStub);
 }
 
 static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue value)
@@ -120,9 +214,11 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
 
     JSObject* target = globalObject->globalThis();
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
-    bool isRemembered = hasOriginal(globalObject, originals, key);
+    JSValue remembered = originalOf(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
-    if (!isRemembered) {
+    if (auto* stub = dynamicDowncast<InternalFieldTuple>(remembered)) {
+        stub->putInternalField(vm, 1, value);
+    } else {
         JSValue original = jsUndefined();
         PropertyDescriptor descriptor;
         bool exists = target->getOwnPropertyDescriptor(globalObject, name, descriptor);
@@ -132,9 +228,16 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
             RETURN_IF_EXCEPTION(scope, );
             object->setPrototypeDirect(vm, jsNull());
             original = object;
+            // A mock function is an InternalFunction.
+            bool mayKeepSpy = descriptor.isAccessorDescriptor() || (descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType);
+            if (mayKeepSpy || globalObject->mockModule.keptStubs) [[unlikely]] {
+                willKeep(globalObject, name, descriptor);
+                RETURN_IF_EXCEPTION(scope, );
+            }
         }
-        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
+        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), original, value)));
         RETURN_IF_EXCEPTION(scope, );
+        globalObject->mockModule.namesOfStubbedGlobals |= bitOfStubbedGlobal(name);
     }
 
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);

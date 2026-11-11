@@ -1,18 +1,19 @@
 import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
-import { vi as bunVi, jest, setSystemTime } from "bun:test";
+import { vi as bunVi, jest, setSystemTime, spyOn } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
+import { join } from "node:path";
 import { performance as perfHooksPerformance, PerformanceObserver } from "node:perf_hooks";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import WebSocket from "ws";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
@@ -52,10 +53,10 @@ function thrownBy(call: () => unknown) {
   }
 }
 
-async function run(cmd: string[], cwd?: string) {
+async function run(cmd: string[], cwd?: string, env?: Record<string, string>) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -1312,6 +1313,17 @@ describe.each([
     expect([Date.now, performance.now]).toEqual(builtins);
   });
 
+  test("and it stays away when the clock is faked once more before it is real", () => {
+    api.spyOn(Date, "now").mockReturnValue(1000);
+    api.spyOn(performance, "now").mockReturnValue(7);
+    api.useFakeTimers({ now: 50_000 });
+    api.restoreAllMocks();
+    api.useFakeTimers({ now: 60_000 });
+    expect([Date.now(), performance.now()]).toEqual([60_000, 0]);
+    api.useRealTimers();
+    expect([Date.now, performance.now]).toEqual(builtins);
+  });
+
   test("without any, both properties are left as they are", () => {
     api.useFakeTimers();
     expect(descriptors()).toEqual(untouched);
@@ -1774,7 +1786,7 @@ test("performance can be read for the first time while the clock is at 0", async
   expect(exitCode).toBe(0);
 });
 
-describe.concurrent("the end of a test file", () => {
+describe("the end of a test file", () => {
   const passed = (stderr: string) =>
     stderr
       .split("\n")
@@ -3153,6 +3165,570 @@ describe("a fake put back by a spy or stub after useRealTimers()", () => {
       stdout: JSON.stringify({ isReal: true, clock: false }) + "\n",
       exitCode: 0,
     });
+  });
+});
+
+// A restored spy of jest.spyOn() or spyOn() returns undefined, so fake timers that replaced the spy do not put it back.
+// A restored spy of vi.spyOn() still calls what it replaced. As in Vitest, fake timers put it back.
+describe("a spy that is restored while fake timers are on", () => {
+  const properties = [
+    ...["setTimeout", "clearTimeout", "setInterval", "clearInterval"].map(name => [name, globalThis] as const),
+    ...["setImmediate", "clearImmediate", "queueMicrotask"].map(name => [name, globalThis] as const),
+    ...["requestAnimationFrame", "cancelAnimationFrame"].map(name => [name, globalThis] as const),
+    ["nextTick", process],
+  ] as const;
+  const spyOns = [
+    ["spyOn()", spyOn, "the real function"],
+    ["jest.spyOn()", jest.spyOn, "the real function"],
+    [`vi.spyOn() of "bun:test"`, bunVi.spyOn, "the spy"],
+    [`vi.spyOn() of "vitest"`, vi.spyOn, "the spy"],
+  ] as const;
+  const restores = [
+    ["mockRestore()", (spy: { mockRestore(): void }) => spy.mockRestore()],
+    ["restoreAllMocks()", () => void jest.restoreAllMocks()],
+  ] as const;
+  const rows = properties.flatMap(([name, owner]) =>
+    spyOns.flatMap(([spyOnName, spyOn, left]) =>
+      restores.map(([restoreName, restore]) => [spyOnName, name, restoreName, left, spyOn, owner, restore] as const),
+    ),
+  );
+
+  test.each(rows)("%s of %s, then %s: useRealTimers() leaves %s", (_, name, __, left, spyOn, owner, restore) => {
+    const target = owner as unknown as Record<string, unknown>;
+    const had = Object.getOwnPropertyDescriptor(target, name);
+    // Only a DOM library defines the two frame functions.
+    if (!had) target[name] = function ofTheDom() {};
+    const real = target[name];
+    try {
+      const spy = spyOn(target, name);
+      const is = (value: unknown) =>
+        value === real ? "the real function" : value === spy ? "the spy" : "something else";
+      vi.useFakeTimers({ toFake: [name as "setTimeout"] });
+      restore(spy);
+      const underTheFake = is(target[name]);
+      vi.useRealTimers();
+      const afterwards = is(target[name]);
+      // The next fake reads the property again.
+      vi.useFakeTimers({ toFake: [name as "setTimeout"] });
+      vi.useRealTimers();
+      expect({ underTheFake, afterwards, afterTheNextFake: is(target[name]) }).toEqual({
+        underTheFake: "the real function",
+        afterwards: left,
+        afterTheNextFake: left,
+      });
+    } finally {
+      vi.useRealTimers();
+      jest.restoreAllMocks();
+      if (had) Object.defineProperty(target, name, had);
+      else delete target[name];
+    }
+  });
+
+  test.each(spyOns.slice(0, 2))("%s: fake timers that are turned on again do not keep it either", (_, spyOn) => {
+    try {
+      const spy = spyOn(globalThis, "setTimeout");
+      jest.useFakeTimers();
+      spy.mockRestore();
+      jest.useFakeTimers();
+      jest.useRealTimers();
+      expect(setTimeout).toBe(saved.setTimeout);
+    } finally {
+      globalThis.setTimeout = saved.setTimeout;
+    }
+  });
+
+  test.each(spyOns.slice(0, 2))("%s: what the test assigns afterwards stays", (_, spyOn) => {
+    try {
+      const spy = spyOn(globalThis, "setTimeout");
+      jest.useFakeTimers();
+      spy.mockRestore();
+      const assigned = (() => {}) as unknown as typeof setTimeout;
+      globalThis.setTimeout = assigned;
+      jest.useRealTimers();
+      expect(setTimeout).toBe(assigned);
+    } finally {
+      globalThis.setTimeout = saved.setTimeout;
+    }
+  });
+
+  test.concurrent(
+    "the spy of a preload, restored under the fake timers of its hook, is gone in the next test file",
+    async () => {
+      using dir = tempDir("fake-timers-restored-spy-of-preload", {
+        "preload.ts": `
+        import { beforeEach, spyOn, vi } from "bun:test";
+        globalThis.setTimeoutAtFirst = setTimeout;
+        spyOn(globalThis, "setTimeout");
+        beforeEach(() => void vi.useFakeTimers());
+      `,
+        "a.test.ts": `
+        import { afterEach, mock, test, vi } from "bun:test";
+        afterEach(() => {
+          mock.restore();
+          vi.useRealTimers();
+        });
+        test.each([1, 2])("restores the spy under the fake timers %d", () => {});
+      `,
+        "b.test.ts": `
+        import { test, vi } from "bun:test";
+        test("has a setTimeout() that sets a timer", () => {
+          vi.useRealTimers();
+          const timer = setTimeout(() => {}, 1);
+          console.log(JSON.stringify({ isReal: setTimeout === setTimeoutAtFirst, returns: typeof timer }));
+          clearTimeout(timer);
+        });
+      `,
+      });
+      const cmd = ["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"];
+      const { stdout, stderr, exitCode } = await run(cmd, String(dir));
+      expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({ isReal: true, returns: "object" }) + "\n",
+        exitCode: 0,
+      });
+    },
+  );
+
+  describe("in the hooks of a test file", () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+    });
+    afterAll(() => {
+      globalThis.setTimeout = saved.setTimeout;
+    });
+
+    test("the first test leaves a spy under the fake", () => {
+      spyOn(globalThis, "setTimeout");
+      jest.useFakeTimers();
+      expect(setTimeout).not.toBe(saved.setTimeout);
+    });
+
+    test("the second test has a setTimeout() that sets a timer", async () => {
+      expect(setTimeout).toBe(saved.setTimeout);
+      await new Promise(resolve => setTimeout(resolve, 1));
+    });
+  });
+});
+
+// Inside a test file, `vi` leaves what Vitest leaves. Every test file starts with what the one before it started with.
+describe("what was undone out of order gives way when the test file ends", () => {
+  const imports = `
+    import { afterEach, beforeEach, jest, spyOn, test, vi } from "bun:test";
+    import { vi as viOfVitest } from "vitest";
+  `;
+  const first = `
+    import { test } from "bun:test";
+    const anAccessor = { get: () => "got", set(value) {}, enumerable: true, configurable: true };
+    Object.defineProperty(globalThis, "anAccessor", anAccessor);
+    globalThis.atFirst = { setTimeout, setInterval, fetch, dateNow: Date.now, anAccessor };
+    test("first", () => {});
+  `;
+  const check = `
+    import { test } from "bun:test";
+    test("check", async () => {
+      const { atFirst } = globalThis;
+      const is = value => (typeof value === "function" ? (value.mock ? "a mock function" : "function " + value.name) : String(value));
+      const left = {};
+      for (const name of ["setTimeout", "setInterval", "fetch"]) if (globalThis[name] !== atFirst[name]) left[name] = is(globalThis[name]);
+      if (Date.now !== atFirst.dateNow) left["Date.now"] = is(Date.now);
+      if ("requestAnimationFrame" in globalThis) left.requestAnimationFrame = is(requestAnimationFrame);
+      const { get, set } = Object.getOwnPropertyDescriptor(globalThis, "anAccessor");
+      if (get !== atFirst.anAccessor.get || set !== atFirst.anAccessor.set) left.anAccessor = [is(get), is(set)];
+      const fires = await new Promise(resolve => {
+        const no = atFirst.setTimeout(resolve, 250, false);
+        setTimeout(() => (clearTimeout(no), resolve(true)), 1);
+      });
+      console.log(JSON.stringify([globalThis.caseOfFile, left, fires]));
+      // What one case leaves must not fail the cases after it.
+      Object.assign(globalThis, { setTimeout: atFirst.setTimeout, setInterval: atFirst.setInterval, fetch: atFirst.fetch });
+      Date.now = atFirst.dateNow;
+      delete globalThis.requestAnimationFrame;
+      Object.defineProperty(globalThis, "anAccessor", atFirst.anAccessor);
+    });
+  `;
+  const hooks = (before: string, after: string) => `
+    beforeEach(() => { ${before} });
+    afterEach(() => { ${after} });
+    test.each([1, 2, 3])("%d", () => {});
+  `;
+  const cases: Record<string, string> = {
+    "jest.spyOn() under fake timers, in hooks": hooks(
+      `jest.spyOn(globalThis, "setTimeout"); jest.useFakeTimers();`,
+      `jest.restoreAllMocks(); jest.useRealTimers();`,
+    ),
+    [`vi.spyOn() of "bun:test" under fake timers, in hooks`]: hooks(
+      `vi.spyOn(globalThis, "setTimeout"); vi.useFakeTimers();`,
+      `vi.restoreAllMocks(); vi.useRealTimers();`,
+    ),
+    [`vi.spyOn() of "vitest" under fake timers, in hooks`]: hooks(
+      `viOfVitest.spyOn(globalThis, "setInterval"); viOfVitest.useFakeTimers();`,
+      `viOfVitest.restoreAllMocks(); viOfVitest.useRealTimers();`,
+    ),
+    "vi.stubGlobal() under fake timers, in hooks, a new stub for each test": hooks(
+      `vi.stubGlobal("setTimeout", () => {}); vi.useFakeTimers();`,
+      `vi.unstubAllGlobals(); vi.useRealTimers();`,
+    ),
+    "vi.stubGlobal() under fake timers, in hooks, one stub for all tests":
+      `const stub = () => {};` +
+      hooks(`vi.stubGlobal("setTimeout", stub); vi.useFakeTimers();`, `vi.unstubAllGlobals(); vi.useRealTimers();`),
+    "a spy under a stub, and neither is undone": `
+      spyOn(globalThis, "fetch");
+      vi.stubGlobal("fetch", () => {});
+      test("neither is undone", () => {});
+    `,
+    "a spy restored under a stub, in hooks": hooks(
+      `jest.spyOn(globalThis, "fetch"); vi.stubGlobal("fetch", () => {});`,
+      `jest.restoreAllMocks(); vi.unstubAllGlobals();`,
+    ),
+    "a stub removed under a spy, in hooks": hooks(
+      `vi.stubGlobal("fetch", () => {}); jest.spyOn(globalThis, "fetch");`,
+      `vi.unstubAllGlobals(); jest.restoreAllMocks();`,
+    ),
+    "a stub removed after the fake timers over it, with a spy on their setTimeout": `
+      test("the spy is restored when the file ends", () => {
+        vi.stubGlobal("setTimeout", () => {});
+        vi.useFakeTimers();
+        jest.spyOn(globalThis, "setTimeout");
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      });
+    `,
+    "a spy on each half of an accessor, restored under a stub": `
+      test("the stub puts the accessor of the two spies back", () => {
+        const spies = [jest.spyOn(globalThis, "anAccessor", "get"), jest.spyOn(globalThis, "anAccessor", "set")];
+        vi.stubGlobal("anAccessor", 1);
+        for (const spy of spies) spy.mockRestore();
+        vi.unstubAllGlobals();
+      });
+    `,
+    "the stub of a global that does not exist, removed under fake timers": `
+      test("fake timers put the stub back", () => {
+        vi.stubGlobal("requestAnimationFrame", () => 0);
+        vi.useFakeTimers();
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+      });
+    `,
+    "a spy on Date.now() restored under fake timers that are turned on again": `
+      test("the fake timers are on when the file ends", () => {
+        jest.spyOn(Date, "now");
+        jest.useFakeTimers();
+        jest.restoreAllMocks();
+        jest.useFakeTimers();
+      });
+    `,
+  };
+
+  test("the next test file has what the first one had", async () => {
+    const labels = Object.keys(cases);
+    const files: Record<string, string> = { "00.test.ts": first };
+    labels.forEach((label, index) => {
+      const name = String(index + 1).padStart(2, "0");
+      files[`${name}-a.test.ts`] = `${imports}globalThis.caseOfFile = ${JSON.stringify(label)};${cases[label]}`;
+      files[`${name}-b.test.ts`] = check;
+    });
+    using dir = tempDir("fake-timers-file-end-gives-way", files);
+    const paths = Object.keys(files)
+      .sort()
+      .map(file => `./${file}`);
+    const { stdout, stderr, exitCode } = await run(["test", ...paths], String(dir));
+    expect(
+      {
+        stdout: stdout
+          .replace(/^bun test .*\n/, "")
+          .trim()
+          .split("\n"),
+        exitCode,
+      },
+      stderr,
+    ).toEqual({
+      stdout: labels.map(label => JSON.stringify([label, {}, true])),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("the stub of a preload replaces the real function again, not a fake", async () => {
+    using dir = tempDir("fake-timers-file-end-preload-stub", {
+      "preload.ts": `
+        import { vi } from "bun:test";
+        globalThis.setIntervalAtFirst = setInterval;
+        vi.stubGlobal("setInterval", function stubOfPreload() {});
+      `,
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        test("removes the stub and leaves fake timers on", () => {
+          vi.unstubAllGlobals();
+          vi.useFakeTimers();
+        });
+      `,
+      "b.test.ts": `
+        import { test, vi } from "bun:test";
+        test("has the stub over the real function", () => {
+          const stub = setInterval.name;
+          vi.unstubAllGlobals();
+          console.log(JSON.stringify({ stub, isRealUnderIt: setInterval === setIntervalAtFirst }));
+        });
+      `,
+    });
+    const cmd = ["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"];
+    const { stdout, stderr, exitCode } = await run(cmd, String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ stub: "stubOfPreload", isRealUnderIt: true }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent(
+    "a spy that lives longer than the stub it replaced puts that stub back for one test file only",
+    async () => {
+      using dir = tempDir("fake-timers-file-end-spy-of-preload", {
+        "preload.ts": `
+        import { beforeAll, vi } from "bun:test";
+        globalThis.fetchAtFirst = fetch;
+        // Runs once, after the first test file is loaded.
+        beforeAll(() => void vi.spyOn(globalThis, "fetch"));
+      `,
+        "a.test.ts": `
+        import { test, vi } from "bun:test";
+        vi.stubGlobal("fetch", function stubOfFirstFile() {});
+        test("has a stub that the spy of the preload replaces", () => {});
+      `,
+        "b.test.ts": `
+        import { test, vi } from "bun:test";
+        const what = () => (fetch === fetchAtFirst ? "real" : fetch.name);
+        test("restores the spy of the preload", () => {
+          const before = what();
+          vi.restoreAllMocks();
+          console.log(JSON.stringify({ before, after: what() }));
+        });
+      `,
+        "c.test.ts": `
+        import { test } from "bun:test";
+        test("has the real function", () => console.log(JSON.stringify({ isReal: fetch === fetchAtFirst })));
+      `,
+      });
+      const cmd = ["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts", "./c.test.ts"];
+      const { stdout, stderr, exitCode } = await run(cmd, String(dir));
+      expect(
+        {
+          stdout: stdout
+            .replace(/^bun test .*\n/, "")
+            .trim()
+            .split("\n"),
+          exitCode,
+        },
+        stderr,
+      ).toEqual({
+        // As in Vitest, the restore of a spy puts back what the spy replaced.
+        stdout: [JSON.stringify({ before: "real", after: "stubOfFirstFile" }), JSON.stringify({ isReal: true })],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // A release build loads the fixture about 4,500 times for the five rows. A debug build loads it about 40 times for the first row.
+  const fixture = join(import.meta.dir, "file-end-orders-fixture.ts");
+  const orderRows = [
+    ["setTimeout", "jest"],
+    ["setTimeout", "bun:test"],
+    ["setTimeout", "vitest"],
+    ["fetch", "jest"],
+    ["fetch", "vitest"],
+  ];
+  // Longer orders that one version or another of the records got wrong. After the first one, every later test file had a function of it.
+  const longOrders = [
+    ["spyOn", "assign", "stub", "restoreFirst", "fake"],
+    ["real"],
+    ["stub", "fake", "spyOn", "real", "unstub"],
+    ["stubMock", "fake", "unstub", "real"],
+    ["spyOn", "stub", "restoreFirst", "unstub", "fake", "real"],
+    ["stubShared", "fake", "unstub", "real", "stubShared", "fake", "unstub", "real"],
+    ["stub", "fake", "unstub", "real", "stub", "fake", "unstub", "real", "stub", "fake", "unstub", "real"],
+    ["stub", "spyOn", "unstub", "restoreFirst", "stub", "spyOn", "unstub", "restoreFirst"],
+  ];
+  test.each(isDebug ? orderRows.slice(0, 1) : orderRows)(
+    "every order of calls on %s, with the spies of %s",
+    async (target, api) => {
+      const calls = ["spyOn", "stub", "unstub"];
+      if (target === "setTimeout") calls.push("fake", "real");
+      if (!isDebug) calls.push("restoreFirst", "restoreLast", "stubShared", "stubMock", "assign");
+      const depth = isDebug ? 2 : 3;
+      let orders = longOrders.length;
+      for (let length = 1; length <= depth; length++) orders += calls.length ** length;
+      const env = {
+        TARGET: target,
+        API: api,
+        DEPTH: String(depth),
+        CALLS: calls.join(),
+        ORDERS: JSON.stringify(longOrders),
+      };
+      const { stdout, stderr, exitCode } = await run(["test", `--rerun-each=${orders + 1}`, fixture], undefined, env);
+      expect({ result: stdout.match(/^\{"orders".*$/m)?.[0], exitCode }, stderr.slice(-2000)).toEqual({
+        result: JSON.stringify({ orders, bad: [] }),
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent("a removed stub keeps no stub of an earlier test alive", async () => {
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const { jest, vi } = Bun.jest();
+      const functions = () => (Bun.gc(true), heapStats().objectTypeCounts.Function);
+      const rounds = count => {
+        for (let i = 0; i < count; i++) {
+          vi.stubGlobal("setTimeout", () => {});
+          jest.useFakeTimers();
+          vi.unstubAllGlobals();
+          jest.useRealTimers();
+        }
+      };
+      rounds(100);
+      const before = functions();
+      rounds(2000);
+      console.log(JSON.stringify({ keptOf2000: functions() - before }));
+    `;
+    const { stdout, stderr, exitCode } = await run(["-e", script]);
+    const { keptOf2000 } = JSON.parse(stdout);
+    expect({ keptOf2000: keptOf2000 < 100 ? "fewer than 100" : keptOf2000, exitCode }, stderr).toEqual({
+      keptOf2000: "fewer than 100",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("runs no getter and no trap of a Proxy", async () => {
+    using dir = tempDir("fake-timers-file-end-no-js", {
+      "a.test.ts": `
+        import { jest, test } from "bun:test";
+        globalThis.ran = [];
+        globalThis.atFirst = { clearTimeout, constructor: Date.prototype.constructor };
+        test("leaves a getter and a Proxy where fake timers were", () => {
+          const spy = jest.spyOn(Date, "now");
+          jest.useFakeTimers();
+          spy.mockRestore();
+          jest.useRealTimers();
+          const says = name => (...args) => (ran.push(name), Reflect[name](...args));
+          const traps = ["get", "set", "has", "defineProperty", "deleteProperty", "getOwnPropertyDescriptor"];
+          Date.prototype.constructor = new Proxy(Date, Object.fromEntries(traps.map(name => [name, says(name)])));
+          Object.defineProperty(globalThis, "clearTimeout", {
+            configurable: true,
+            get: () => (ran.push("getter"), atFirst.clearTimeout),
+            set: () => void ran.push("setter"),
+          });
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("nothing ran", () => {
+          console.log(JSON.stringify(ran));
+          Date.prototype.constructor = atFirst.constructor;
+          Object.defineProperty(globalThis, "clearTimeout", { value: atFirst.clearTimeout, writable: true, configurable: true });
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], String(dir));
+    expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }, stderr).toEqual({ stdout: "[]\n", exitCode: 0 });
+  });
+});
+
+// `vi` of "vitest" leaves what Vitest 5.1.0 leaves, and so do the spies of "bun:test" where a restored one was not under fake timers.
+describe("out of order inside a test file, a later undo puts back what it had saved", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    jest.restoreAllMocks();
+    Object.assign(globalThis, { setTimeout: saved.setTimeout, fetch: realFetch });
+  });
+  const realFetch = fetch;
+  const stub = (() => {}) as unknown as typeof setTimeout & typeof fetch;
+
+  test.each([
+    ["spyOn()", spyOn, "the real function"],
+    ["jest.spyOn()", jest.spyOn, "the real function"],
+    [`vi.spyOn() of "bun:test"`, bunVi.spyOn, "the restored spy"],
+    [`vi.spyOn() of "vitest"`, vi.spyOn, "the restored spy"],
+  ] as const)("%s", (_, spyOn, underFakeTimers) => {
+    const left: Record<string, string> = {};
+    const is = (value: unknown, spy: unknown) =>
+      value === saved.setTimeout || value === realFetch
+        ? "the real function"
+        : value === spy
+          ? "the restored spy"
+          : value === stub
+            ? "the removed stub"
+            : "something else";
+
+    let spy = spyOn(globalThis, "setTimeout");
+    vi.useFakeTimers();
+    spy.mockRestore();
+    vi.useRealTimers();
+    left["spy, fake timers, restore, real timers"] = is(setTimeout, spy);
+    globalThis.setTimeout = saved.setTimeout;
+
+    vi.stubGlobal("setTimeout", stub);
+    vi.useFakeTimers();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    left["stub, fake timers, unstub, real timers"] = is(setTimeout, spy);
+    globalThis.setTimeout = saved.setTimeout;
+
+    spy = spyOn(globalThis, "fetch");
+    vi.stubGlobal("fetch", stub);
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+    left["spy, stub, restore, unstub"] = is(fetch, spy);
+    globalThis.fetch = realFetch;
+
+    vi.stubGlobal("fetch", stub);
+    spy = spyOn(globalThis, "fetch");
+    vi.unstubAllGlobals();
+    spy.mockRestore();
+    left["stub, spy, unstub, restore"] = is(fetch, spy);
+
+    expect(left).toEqual({
+      "spy, fake timers, restore, real timers": underFakeTimers,
+      "stub, fake timers, unstub, real timers": "the removed stub",
+      "spy, stub, restore, unstub": "the restored spy",
+      "stub, spy, unstub, restore": "the removed stub",
+    });
+  });
+
+  // Two suites that pass on Vitest 5.1.0. Inside each test, fake timers put back the stub of that test.
+  test.concurrent("a stubbed requestAnimationFrame under fake timers, with real timers inside a test", async () => {
+    const tests = `
+      test("a frame runs under the fake clock", () => {
+        let frames = 0;
+        requestAnimationFrame(() => frames++);
+        vi.advanceTimersByTime(16);
+        expect(frames).toBe(1);
+      });
+      test("with real timers inside the test, a frame runs on the real clock", async () => {
+        vi.useRealTimers();
+        expect(await new Promise(resolve => requestAnimationFrame(resolve))).toBe(16);
+      });
+    `;
+    const beforeEachTest = `
+      beforeEach(() => {
+        vi.stubGlobal("requestAnimationFrame", callback => setTimeout(() => callback(16), 16));
+        vi.useFakeTimers();
+      });
+    `;
+    using dir = tempDir("fake-timers-stubbed-frame", {
+      "hooks.test.ts": `
+        import { afterEach, beforeEach, expect, test, vi } from "vitest";
+        ${beforeEachTest}
+        afterEach(() => void vi.unstubAllGlobals());
+        ${tests}
+      `,
+      "config.test.ts": `
+        import { beforeEach, expect, test, vi } from "bun:test";
+        vi.setConfig({ unstubGlobals: true });
+        ${beforeEachTest}
+        ${tests}
+      `,
+    });
+    const { stderr, exitCode } = await run(["test", "./hooks.test.ts", "./config.test.ts"], String(dir));
+    expect({ passed: stderr.match(/^ \d+ pass$/m)?.[0], exitCode }, stderr).toEqual({ passed: " 4 pass", exitCode: 0 });
   });
 });
 

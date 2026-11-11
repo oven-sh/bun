@@ -134,7 +134,7 @@ isTrusted  jsEvent_isTrusted  DontDelete|ReadOnly|CustomAccessor|DOMAttribute
 #include "JSEvent.lut.h"
 #undef JSEventTable
 
-static const HashTable JSEventTable = { 1, 1, true, JSEvent::info(), JSEventTableValues, JSEventTableIndex };
+static const JSC::HashTable JSEventTable = { 1, 1, true, JSEvent::info(), JSEventTableValues, JSEventTableIndex };
 /* Hash table for constructor */
 
 static const HashTableValue JSEventConstructorTableValues[] = {

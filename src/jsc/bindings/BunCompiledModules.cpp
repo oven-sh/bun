@@ -1793,9 +1793,11 @@ static JSValue resolveSpecifier(JSGlobalObject* realm, JSObject* holder, JSValue
     case AOT::ResolvedSpecifierForm::Path:
         function = uncheckedDowncast<Zig::GlobalObject>(realm)->requireResolveFunctionUnbound();
         break;
-    case AOT::ResolvedSpecifierForm::URL:
-        function = JSFunction::create(getVM(realm), realm, 1, "resolve"_s, Zig::functionImportMeta__resolve, ImplementationVisibility::Public);
-        break;
+    case AOT::ResolvedSpecifierForm::URL: {
+        // The engine hands over the import.meta of the module that asks: createRequirer() takes it the same way.
+        auto* meta = uncheckedDowncast<Zig::ImportMetaObject>(holder);
+        return JSValue::decode(Zig::ImportMetaObject::resolve(uncheckedDowncast<Zig::GlobalObject>(realm), meta->pathProperty.getInitializedOnMainThread(meta), specifier, jsUndefined()));
+    }
     }
     MarkedArgumentBuffer arguments;
     arguments.append(specifier);

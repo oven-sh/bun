@@ -305,8 +305,9 @@ describe.concurrent("import.meta.glob", () => {
        console.log(JSON.stringify([typeof import.meta.glob, Object.keys(import.meta), other]));`,
       { "proj/src/other.ts": `export default [typeof import.meta.glob, Object.keys(import.meta)];` },
     );
+    // `resolve` and `resolveSync` are the other enumerable own properties of every import.meta.
     expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: ["function", ["glob"], ["undefined", []]],
+      stdout: ["function", ["resolve", "resolveSync", "glob"], ["undefined", ["resolve", "resolveSync"]]],
       stderr: "",
       exitCode: 0,
     });

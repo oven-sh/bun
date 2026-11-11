@@ -3379,6 +3379,79 @@ test("node:vm SourceTextModule link() with other modules after a link() that fai
   expect(exitCode).toBe(0);
 });
 
+describe("node:vm SourceTextModule import.meta", () => {
+  // What a module finds on its own import.meta.
+  const seen = `
+    export default JSON.stringify({
+      ownKeys: Reflect.ownKeys(import.meta),
+      hasNoPrototype: Object.getPrototypeOf(import.meta) === null,
+      found: ['url', 'dirname', 'filename', 'path', 'main', 'resolve', 'resolveSync', 'require', 'env'].filter(name => name in import.meta),
+      filled: import.meta.filled,
+    });
+  `;
+  const empty = { ownKeys: [], hasNoPrototype: true, found: [] };
+
+  describe.each([
+    ["without a context", () => undefined],
+    ["with a context", () => createContext({})],
+  ])("of a module made %s", (_, context) => {
+    test("is an empty object", async () => {
+      const module = new SourceTextModule(seen, { context: context() });
+      await module.link(() => {});
+      await module.evaluate();
+      expect(JSON.parse((module.namespace as any).default)).toEqual(empty);
+    });
+
+    test("has what initializeImportMeta stores, and nothing else", async () => {
+      const calls: boolean[] = [];
+      const module = new SourceTextModule(seen, {
+        context: context(),
+        initializeImportMeta(meta, self) {
+          calls.push(self === module);
+          meta.url = "made:up";
+          meta.filled = "by the callback";
+        },
+      });
+      await module.link(() => {});
+      await module.evaluate();
+      expect({ calls, meta: JSON.parse((module.namespace as any).default) }).toEqual({
+        calls: [true],
+        meta: { ownKeys: ["url", "filled"], hasNoPrototype: true, found: ["url"], filled: "by the callback" },
+      });
+    });
+
+    test("is an empty object in every module of a graph with a cycle", async () => {
+      const options = { context: context() };
+      const modules: Record<string, SourceTextModule> = {
+        root: new SourceTextModule(`import * as left from "left"; import * as right from "right"; ${seen}`, options),
+        left: new SourceTextModule(`import * as right from "right"; ${seen}`, options),
+        right: new SourceTextModule(`import * as left from "left"; ${seen}`, options),
+      };
+      await modules.root.link(specifier => modules[specifier]);
+      await modules.root.evaluate();
+      expect(
+        Object.entries(modules).map(([name, module]) => [name, JSON.parse((module.namespace as any).default)]),
+      ).toEqual([
+        ["root", empty],
+        ["left", empty],
+        ["right", empty],
+      ]);
+    });
+  });
+
+  test("a file that a module imports with import() keeps the import.meta of a file", async () => {
+    using dir = tempDir("vm-import-meta", {
+      "file.mjs": `export default [typeof import.meta.url, typeof import.meta.resolve];`,
+    });
+    const module = new SourceTextModule(`export default (await import("file")).default;`, {
+      importModuleDynamically: () => import(join(String(dir), "file.mjs")),
+    });
+    await module.link(() => {});
+    await module.evaluate();
+    expect((module.namespace as any).default).toEqual(["string", "function"]);
+  });
+});
+
 test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {
   // Regression: NodeVMGlobalObject::defineOwnProperty used a single PropertySlot
   // for both the global-object lookup and the sandbox lookup. When the first

@@ -8,7 +8,6 @@
 
 #include "JSDOMWrapperCache.h"
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len);
@@ -23,13 +22,11 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
-
 class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype | HasStaticPropertyTable | OverridesGetOwnPropertyNames;
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -61,6 +58,9 @@ public:
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
+    /// `import.meta.resolve(specifier, parent)` of the module at `modulePath`.
+    static JSC::EncodedJSValue resolve(Zig::GlobalObject*, JSC::JSString* modulePath, JSC::JSValue specifier, JSC::JSValue parent);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
@@ -75,6 +75,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
+    static void getOwnPropertyNames(JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
 
     WTF::String url;
     LazyProperty<JSObject, JSCell> requireProperty;

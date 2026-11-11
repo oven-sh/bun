@@ -5008,6 +5008,16 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
+    // Node gives a vm.SourceTextModule an empty import.meta, which options.initializeImportMeta fills. One made with a
+    // context gets it from its own global object. One made without a context links here.
+    if (record) {
+        if (auto* provider = record->sourceCode().provider()) {
+            auto* fetcher = provider->sourceOrigin().fetcher();
+            if (fetcher && fetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM) [[unlikely]]
+                return JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
+        }
+    }
+
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     // A module that the loader holds has a record. Only the engine asks without one, for a module of the executable.

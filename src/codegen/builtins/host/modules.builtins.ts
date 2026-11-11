@@ -46,12 +46,11 @@ const resolvesFromReceiver = {
 
 const resolvesFromImportMeta = (specifier: b.TableType) =>
   ({
-    this: b.any,
     args: { specifier, parent: b.any.optional, isESM: b.any.optional },
     returns: b.string,
     capability: "js",
     throws: true,
-    uses: { this: [b.runs(b.named("path"))], parent: [pathListRead], isESM: b.inspected },
+    uses: { parent: [pathListRead], isESM: b.inspected },
     implementation: b.generic,
   }) satisfies b.FunctionField;
 
@@ -363,8 +362,12 @@ export default b.declarations(
       resolveSync: resolvesFromImportMeta(b.string.loose.refusing(b.null)),
       "@@toStringTag": b.property(b.string),
     },
-    // ImportMetaObjectPrototypeValues in ImportMetaObject.cpp.
-    { scope: "Module", listsAllMembers: true },
+    // ImportMetaObjectPrototypeValues in ImportMetaObject.cpp. `resolve` and `resolveSync` are of importMetaObjectTable: each import.meta makes its own at the first read.
+    {
+      scope: "Module",
+      listsAllMembers: true,
+      table: b.staticTable("src/jsc/bindings/ImportMetaObject.cpp", "importMetaObjectTable"),
+    },
   ),
   // A lookup goes on there. Object.getPrototypeOf() answers null.
   b.inherits("%ImportMeta%", "Object.prototype"),

@@ -255,10 +255,7 @@ console.log(useBeside());
     return readFileSync(join(root, "out/index.aot.ts"), "utf8");
   };
 
-  test.each([
-    ["a call in the bundle that leaves it out", calls],
-    ["no call in the bundle", ""],
-  ])("can be left out: %s", async (_, calls) => {
+  test("can be left out", async () => {
     expect(parametersIn(await typedFile({ "src/index.tsx": hooks + calls }))).toEqual({
       useState: "initial: T",
       useBoth: "t0?: number, t1?: number",

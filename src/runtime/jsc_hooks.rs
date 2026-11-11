@@ -711,9 +711,15 @@ unsafe fn configure_debugger(
 ///
 /// # Safety
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
-/// this thread (or null), and must not be used again after this call.
-unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
+/// this thread (or null), and must not be used again after this call. `vm` is
+/// the live VM of this thread.
+unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
     RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
+    // SAFETY: per fn contract.
+    if let Some(node_fs) = unsafe { (*vm).node_fs.take() } {
+        // SAFETY: `create_node_fs` boxed it for this VM, and the field that held it was just cleared.
+        drop(unsafe { bun_core::heap::take(node_fs.cast::<crate::node::fs::NodeFS>()) });
+    }
     // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
     // copy in `Bun__transpileFile` / `Bun__transpileVirtualModule`; without this
     // each worker thread strands a `Box<BufferPrinter>` (mirrors the
@@ -1407,7 +1413,7 @@ fn timers_left() -> TimersLeft {
 
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-/// The returned box is reclaimed (if at all) only by VM teardown.
+/// A worker's [`deinit_runtime_state`] frees the returned box.
 fn create_node_fs(vm: &mut VirtualMachine) -> *mut c_void {
     use crate::node::fs::NodeFS;
     // `.vm` is set only when standalone-module-graph is active
@@ -4496,7 +4502,16 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
+    unsafe extern "C" {
+        safe fn Bun__compiledProgramWillRunTextOfFile(
+            global: &JSGlobalObject,
+            path: &bun_core::String,
+        );
+    }
     bun_jsc::mark_binding();
+    if bun_jsc::compiled_program::compiled_program().is_some() {
+        Bun__compiledProgramWillRunTextOfFile(global, specifier);
+    }
     // SAFETY: the caller's contract is `transpile_file`'s.
     unsafe {
         bun_removable_features::call_removable_or!(
@@ -4932,12 +4947,65 @@ pub(crate) fn transpile_as_loaded(
     transpile_source_code_inner::<false>(jsc_vm, &args).ok()
 }
 
+/// BunCompiledModules.cpp. An error of the class that `bun run` throws at the import of a file of data that its parser refuses, with the place that the parser named at the build. Empty where the build kept nothing under the path.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramErrorOfRefusedData(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> JSValue {
+    let path = path.to_utf8();
+    let graph = bun_standalone_graph::Graph::get_ref();
+    let Some(refused) = graph.and_then(|graph| graph.find_refused_data(path.slice())) else {
+        return JSValue::ZERO;
+    };
+    if refused.is_syntax_error {
+        let message = bstr::BStr::new(refused.message);
+        return global.create_syntax_error_instance(format_args!("{message}"));
+    }
+    let file = match bun_core::strings::last_index_of_char(path.slice(), b'?') {
+        Some(mark) => &path.slice()[..mark],
+        None => path.slice(),
+    };
+    let location = bun_ast::Location {
+        file: Box::from(file),
+        line_text: Some(Box::default()),
+        length: refused.length as usize,
+        offset: refused.offset as usize,
+        line: refused.line,
+        column: refused.column,
+        ..Default::default()
+    };
+    let message = bun_ast::Msg {
+        data: bun_ast::Data {
+            text: std::borrow::Cow::Owned(refused.message.to_vec()),
+            location: Some(location),
+        },
+        ..Default::default()
+    };
+    bun_jsc::BuildMessage::create(global, message)
+        .unwrap_or_else(|error| global.take_exception(error))
+}
+
 /// BunCompiledModules.cpp. The executable of a compiled program holds the file as it is, so the loader of its kind can read it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__compiledProgramHoldsFileAsItIs(path: &bun_core::String) -> bool {
     let path = path.to_utf8();
     bun_standalone_graph::Graph::get_ref()
         .is_some_and(|graph| graph.find_asset_under_root(path.slice()).is_some())
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__compiledProgramDataFileIsPrintedAsJavaScript(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let path = path.to_utf8();
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
+    let loaders = unsafe { &(*global.bun_vm_ptr()).transpiler.options.loaders };
+    matches!(
+        loader_for_path(&Fs::Path::init(path.slice()), loaders),
+        Some(Loader::Text | Loader::Md)
+    )
 }
 
 /// Transpiles plugin-provided source through the per-thread

@@ -3,9 +3,12 @@ use super::answers::{
     ClassShape, FunctionRef, GaveUp, MemberForm, MemberName, ObjectMemberKind, PositionTypes,
     QueryLimit,
 };
-use super::prototype_links::{LinkEnd, PrototypeLink, PrototypeLinks, list_in};
+use super::prototype_links::{
+    EndsOfArguments, FunctionCall, LinkEnd, PrototypeLink, PrototypeLinks, list_in,
+};
 use super::queries::Queries;
 use super::type_identity::ObjectOrigin;
+use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, SymFlags};
 use crate::hir::{
@@ -18,7 +21,6 @@ use crate::session::Arena;
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
-use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct FunctionLink {
@@ -80,9 +82,84 @@ impl<'s> LinkedFunctions<'s> {
 }
 
 #[derive(Default)]
-struct FollowedCalls {
-    links_of_parameters: FxHashMap<FunctionRef, Rc<[PrototypeLink]>>,
-    in_progress: Vec<FunctionRef>,
+struct ParentsOfParameter {
+    declared: Option<LinkEnd>,
+    parameter: Option<LinkEnd>,
+    is_unknown: bool,
+}
+
+#[derive(Default)]
+struct LinksOfParameters {
+    links: Vec<PrototypeLink>,
+    parents: FxHashMap<LinkEnd, ParentsOfParameter>,
+}
+
+impl LinksOfParameters {
+    fn add(&mut self, link: PrototypeLink) -> bool {
+        let parents = self.parents.entry(link.child).or_default();
+        if parents.is_unknown {
+            return false;
+        }
+        let kept = match link.parent {
+            Some(LinkEnd::Parameter { .. }) => &mut parents.parameter,
+            _ => &mut parents.declared,
+        };
+        if link.parent.is_some() && *kept == link.parent {
+            return false;
+        }
+        let is_first_of_its_kind = link.parent.is_some() && kept.is_none();
+        *kept = link.parent;
+        parents.is_unknown = !is_first_of_its_kind;
+        self.links.push(PrototypeLink {
+            child: link.child,
+            parent: link.parent.filter(|_| is_first_of_its_kind),
+        });
+        true
+    }
+
+    fn list(&self) -> Vec<PrototypeLink> {
+        let is_parent_known = |link: &&PrototypeLink| !self.parents[&link.child].is_unknown;
+        let links = self.links.iter();
+        let links = links.filter(|link| link.parent.is_none() || is_parent_known(link));
+        links.copied().collect()
+    }
+}
+
+struct CallOfHelperClosedWithIt {
+    caller: usize,
+    call: FunctionCall,
+    arguments: Option<EndsOfArguments>,
+    links_taken: usize,
+}
+
+fn add_links_applied_to(
+    arguments: &EndsOfArguments,
+    caller: FunctionRef,
+    of_callee: &[PrototypeLink],
+    links: &mut LinksOfParameters,
+) -> bool {
+    let mut says_more = false;
+    for &link in of_callee {
+        let Some(link) = arguments.apply_to(link) else {
+            continue;
+        };
+        let is_of_function = matches!(
+            link.child,
+            LinkEnd::Parameter { function: owner, .. } if owner == caller.function
+        );
+        if is_of_function {
+            says_more |= links.add(link);
+        }
+    }
+    says_more
+}
+
+struct HelperOnTheWay<'s> {
+    function: FunctionRef,
+    calls: &'s [(FnId, FunctionCall)],
+    next_call: usize,
+    number: u32,
+    lowest_number_led_back_to: u32,
 }
 
 fn can_be_constructor_function(function: &hir::Func) -> bool {
@@ -161,6 +238,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let heritage = self.c.hir(class.file)[class.class].extends.some()?;
         let parent = self.end_finder(class.file).find_parent(heritage)?;
         (parent != ClassParent::Declared(ClassDeclaration::Class(class))).then_some(parent)
+    }
+
+    pub fn nearest_class_joined_in(&mut self, ty: TypeId) -> Option<ClassRef> {
+        let TypeData::Intersection(parts) = self.c.data(ty) else {
+            return None;
+        };
+        let first = *parts.first()?;
+        match self.type_shape(first).ok()?.kind {
+            ShapeKind::ClassConstructor(class) => Some(class),
+            _ => None,
+        }
     }
 
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
@@ -247,69 +335,169 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         of_file: &'s PrototypeLinks<'s>,
     ) -> LinkedFunctions<'s> {
         let ends = self.end_finder(file);
-        let mut followed = FollowedCalls::default();
         let mut links = of_file.links_of_declarations().to_vec();
         for &call in of_file.calls() {
-            let Some(of_parameters) = self.find_links_of_parameters(call.callee, &mut followed)
-            else {
+            let Some(of_parameters) = self.find_links_of_parameters(call.callee) else {
                 continue;
             };
+            if of_parameters.is_empty() {
+                continue;
+            }
+            let arguments = ends.find_ends_of_arguments(call);
             let of_arguments = of_parameters.iter();
-            let of_arguments = of_arguments.filter_map(|&link| ends.apply_to_arguments(link, call));
+            let of_arguments = of_arguments.filter_map(|&link| arguments.apply_to(link));
             links.extend(of_arguments.filter(|link| matches!(link.child, LinkEnd::Declaration(_))));
         }
         LinkedFunctions::new(self.c.arena, file, &links)
     }
 
-    fn find_links_of_parameters(
-        &mut self,
-        function: FunctionRef,
-        followed: &mut FollowedCalls,
-    ) -> Option<Rc<[PrototypeLink]>> {
+    fn links_or_hands_on_its_parameters(&mut self, function: FunctionRef) -> bool {
         let of_file = self.prototype_links(function.file);
-        let written = of_file.links_of_parameters_of(function.function);
-        let calls = of_file.calls_passing_parameters_of(function.function);
-        if written.is_empty() && calls.is_empty() {
+        !of_file.links_of_parameters_of(function.function).is_empty()
+            || !of_file
+                .calls_passing_parameters_of(function.function)
+                .is_empty()
+    }
+
+    fn links_of_parameters_found(&mut self, function: FunctionRef) -> Option<&'s [PrototypeLink]> {
+        let of_file = self.prototype_links(function.file);
+        of_file.links_of_parameters_followed_of(function.function)
+    }
+
+    fn find_links_of_parameters(&mut self, asked: FunctionRef) -> Option<&'s [PrototypeLink]> {
+        if !self.links_or_hands_on_its_parameters(asked) {
             return None;
         }
-        if let Some(known) = followed.links_of_parameters.get(&function) {
-            return Some(Rc::clone(known));
+        if let Some(found) = self.links_of_parameters_found(asked) {
+            return Some(found);
         }
-        if followed.in_progress.contains(&function) {
-            return None;
-        }
-        if followed.in_progress.len() as u64
-            >= self.limit(QueryLimit::HelpersFollowedToPrototypeLink)
-        {
-            self.note_walk_ended_by(QueryLimit::HelpersFollowedToPrototypeLink);
-            return None;
-        }
-        followed.in_progress.push(function);
-        let ends = self.end_finder(function.file);
-        let mut links: Vec<PrototypeLink> = written.iter().map(|&(_, link)| link).collect();
-        for &(_, call) in calls {
-            let Some(of_callee) = self.find_links_of_parameters(call.callee, followed) else {
-                continue;
+        let mut numbers: FxHashMap<FunctionRef, u32> = FxHashMap::default();
+        let mut open: Vec<FunctionRef> = Vec::new();
+        let mut way: Vec<HelperOnTheWay<'s>> = Vec::new();
+        let mut entered = Some(asked);
+        loop {
+            if let Some(function) = entered.take() {
+                let number = numbers.len() as u32;
+                numbers.insert(function, number);
+                open.push(function);
+                let of_file = self.prototype_links(function.file);
+                way.push(HelperOnTheWay {
+                    function,
+                    calls: of_file.calls_passing_parameters_of(function.function),
+                    next_call: 0,
+                    number,
+                    lowest_number_led_back_to: number,
+                });
+            }
+            let Some(helper) = way.last_mut() else {
+                break;
             };
-            for &link in of_callee.iter() {
-                let Some(link) = ends.apply_to_arguments(link, call) else {
-                    continue;
-                };
-                let is_of_function = matches!(
-                    link.child,
-                    LinkEnd::Parameter { function: owner, .. } if owner == function.function
-                );
-                if is_of_function && !links.contains(&link) {
-                    links.push(link);
+            if let Some(&(_, call)) = helper.calls.get(helper.next_call) {
+                helper.next_call += 1;
+                if let Some(&number) = numbers.get(&call.callee) {
+                    if self.links_of_parameters_found(call.callee).is_none()
+                        && let Some(helper) = way.last_mut()
+                    {
+                        helper.lowest_number_led_back_to =
+                            helper.lowest_number_led_back_to.min(number);
+                    }
+                } else if self.links_or_hands_on_its_parameters(call.callee)
+                    && self.links_of_parameters_found(call.callee).is_none()
+                {
+                    entered = Some(call.callee);
+                }
+                continue;
+            }
+            let Some(left) = way.pop() else {
+                break;
+            };
+            if let Some(caller) = way.last_mut() {
+                caller.lowest_number_led_back_to =
+                    (caller.lowest_number_led_back_to).min(left.lowest_number_led_back_to);
+            }
+            if left.lowest_number_led_back_to == left.number {
+                let first = open.iter().rposition(|&function| function == left.function);
+                let together = open.split_off(first.expect("the helper is open"));
+                self.close_helpers_that_lead_back_to_one_another(&together);
+            }
+        }
+        self.links_of_parameters_found(asked)
+    }
+
+    fn add_links_of_callee(
+        &self,
+        caller: FunctionRef,
+        call: FunctionCall,
+        of_callee: &[PrototypeLink],
+        links: &mut LinksOfParameters,
+    ) {
+        if !of_callee.is_empty() {
+            let arguments = self.end_finder(caller.file).find_ends_of_arguments(call);
+            add_links_applied_to(&arguments, caller, of_callee, links);
+        }
+    }
+
+    fn close_helpers_that_lead_back_to_one_another(&mut self, together: &[FunctionRef]) {
+        let places: FxHashMap<FunctionRef, usize> = match together {
+            [_] => FxHashMap::default(),
+            _ => together.iter().copied().zip(0..).collect(),
+        };
+        let find_place = |function: FunctionRef| match together {
+            &[only] => (only == function).then_some(0),
+            _ => places.get(&function).copied(),
+        };
+        let mut links_of: Vec<LinksOfParameters> = Vec::new();
+        links_of.resize_with(together.len(), LinksOfParameters::default);
+        let mut callers_of: Vec<Vec<CallOfHelperClosedWithIt>> = Vec::new();
+        callers_of.resize_with(together.len(), Vec::new);
+        let mut waiting: Vec<usize> = Vec::new();
+        for (place, &function) in together.iter().enumerate() {
+            let of_file = self.prototype_links(function.file);
+            for &(_, link) in of_file.links_of_parameters_of(function.function) {
+                links_of[place].add(link);
+            }
+            for &(_, call) in of_file.calls_passing_parameters_of(function.function) {
+                if let Some(callee) = find_place(call.callee) {
+                    callers_of[callee].push(CallOfHelperClosedWithIt {
+                        caller: place,
+                        call,
+                        arguments: None,
+                        links_taken: 0,
+                    });
+                } else if let Some(of_callee) = self.links_of_parameters_found(call.callee) {
+                    self.add_links_of_callee(function, call, of_callee, &mut links_of[place]);
                 }
             }
         }
-        followed.in_progress.pop();
-        let links: Rc<[PrototypeLink]> = links.into();
-        followed
-            .links_of_parameters
-            .insert(function, Rc::clone(&links));
-        Some(links)
+        let has_callers: Vec<bool> = callers_of.iter().map(|calls| !calls.is_empty()).collect();
+        let mut is_waiting = has_callers.clone();
+        waiting.extend((0..together.len()).filter(|&place| has_callers[place]));
+        while let Some(callee) = waiting.pop() {
+            is_waiting[callee] = false;
+            for inside in &mut callers_of[callee] {
+                let new_links = links_of[callee].links[inside.links_taken..].to_vec();
+                if new_links.is_empty() {
+                    continue;
+                }
+                inside.links_taken += new_links.len();
+                let caller = together[inside.caller];
+                let arguments = inside.arguments.get_or_insert_with(|| {
+                    self.end_finder(caller.file)
+                        .find_ends_of_arguments(inside.call)
+                });
+                let links = &mut links_of[inside.caller];
+                let says_more = add_links_applied_to(arguments, caller, &new_links, links);
+                if says_more && has_callers[inside.caller] && !is_waiting[inside.caller] {
+                    is_waiting[inside.caller] = true;
+                    waiting.push(inside.caller);
+                }
+            }
+        }
+        for (&function, links) in together.iter().zip(&links_of) {
+            let links = list_in(self.c.arena, &links.list());
+            let of_file = self.prototype_links(function.file);
+            of_file.keep_links_of_parameters_followed(function.function, links);
+        }
     }
 
     pub(super) fn passes_this_on_in_front_of(
@@ -402,7 +590,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype,
             has_computed_instance_name: own.is_some_and(|own| own.has_computed_instance_name),
-            has_computed_static_name: own.is_some_and(|own| own.has_computed_static_name),
         });
         Some(shape)
     }
@@ -533,6 +720,87 @@ mod tests {
 
     fn link(child: LinkEnd, parent: Option<LinkEnd>) -> PrototypeLink {
         PrototypeLink { child, parent }
+    }
+
+    fn parameter(index: u32) -> LinkEnd {
+        LinkEnd::Parameter {
+            function: FnId(9),
+            index,
+        }
+    }
+
+    #[test]
+    fn two_declared_parents_of_a_parameter_are_an_unknown_parent() {
+        let mut links = LinksOfParameters::default();
+        assert!(links.add(link(parameter(0), Some(function(1)))));
+        assert!(!links.add(link(parameter(0), Some(function(1)))));
+        assert!(links.add(link(parameter(3), Some(function(2)))));
+        assert!(links.add(link(parameter(0), Some(function(2)))));
+        let kept = [
+            link(parameter(3), Some(function(2))),
+            link(parameter(0), None),
+        ];
+        assert_eq!(links.list(), kept);
+        for parent in [
+            Some(function(1)),
+            Some(function(5)),
+            Some(parameter(2)),
+            None,
+        ] {
+            assert!(!links.add(link(parameter(0), parent)));
+        }
+        assert_eq!(links.list(), kept);
+    }
+
+    #[test]
+    fn a_parent_that_is_a_parameter_stands_beside_a_declared_one_until_the_call() {
+        let mut links = LinksOfParameters::default();
+        assert!(links.add(link(parameter(0), Some(parameter(1)))));
+        assert!(links.add(link(parameter(0), Some(function(1)))));
+        assert!(!links.add(link(parameter(0), Some(parameter(1)))));
+        assert!(!links.add(link(parameter(0), Some(function(1)))));
+        assert_eq!(
+            links.list(),
+            [
+                link(parameter(0), Some(parameter(1))),
+                link(parameter(0), Some(function(1))),
+            ]
+        );
+        assert!(links.add(link(parameter(0), None)));
+        assert_eq!(links.list(), [link(parameter(0), None)]);
+    }
+
+    #[test]
+    fn two_parents_of_a_parameter_that_are_parameters_are_an_unknown_parent() {
+        let mut links = LinksOfParameters::default();
+        assert!(links.add(link(parameter(0), Some(parameter(1)))));
+        assert!(links.add(link(parameter(1), Some(parameter(2)))));
+        assert!(links.add(link(parameter(0), Some(parameter(2)))));
+        let kept = [
+            link(parameter(1), Some(parameter(2))),
+            link(parameter(0), None),
+        ];
+        assert_eq!(links.list(), kept);
+        assert!(!links.add(link(parameter(0), Some(parameter(1)))));
+        assert_eq!(links.list(), kept);
+    }
+
+    #[test]
+    fn what_is_kept_of_a_parameter_does_not_depend_on_the_order_of_its_links() {
+        let parents = [
+            Some(function(1)),
+            Some(parameter(1)),
+            Some(function(2)),
+            Some(parameter(2)),
+            Some(function(1)),
+        ];
+        for first in 0..parents.len() {
+            let mut links = LinksOfParameters::default();
+            for step in 0..parents.len() {
+                links.add(link(parameter(0), parents[(first + step) % parents.len()]));
+            }
+            assert_eq!(links.list(), [link(parameter(0), None)], "{first}");
+        }
     }
 
     #[test]

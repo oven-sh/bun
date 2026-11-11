@@ -1,5 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// DIAGNOSTIC: TS100093 8
 // STATISTIC: SourceFilesChecked = 2
 // STATISTIC: SourceFilesInferred = 1
 // STATISTIC: SourceFilesData = 1

@@ -96,6 +96,17 @@ macro_rules! removable_body {
     };
 }
 
+/// A body that is reached only with a value that the feature's own code makes: an arm of a `match` on such a value.
+/// Its own definition writes the record, so the code around it does not need the feature.
+#[macro_export]
+macro_rules! removable_body_behind_value {
+    ($feature:ident, $body:block) => {
+        $crate::entry_point::removable_body_definition::<{ $crate::Feature::$feature.index() }, _, _>(
+            || $body,
+        )
+    };
+}
+
 #[macro_export]
 macro_rules! removable_body_of_either {
     ($first:ident, $second:ident, $body:block) => {
@@ -208,6 +219,19 @@ pub fn run_body_of_either<const FIRST: u16, const SECOND: u16, R, B: FnOnce() ->
 
 #[doc(hidden)]
 #[inline(never)]
+pub fn removable_body_definition<const FEATURE: u16, R, B: FnOnce() -> R>(body: B) -> R {
+    const { assert!((FEATURE as usize) < Feature::INDEX_LIMIT) };
+    crate::record_removable_entry_point!(
+        FEATURE,
+        crate::StubKind::Abort as u8,
+        removable_body_definition::<FEATURE, R, B>,
+        crate::GuardOrigin::Definition
+    );
+    body()
+}
+
+#[doc(hidden)]
+#[inline(never)]
 pub fn removable_body_entry_point<R, B: FnOnce() -> R>(body: B) -> R {
     // The optimizer removes a call of a function that has no effect, also of one that it may not inline, and the link
     // expects a call behind every guard.
@@ -300,6 +324,21 @@ mod tests {
     #[test]
     fn body_of_either_feature_runs() {
         assert_eq!(doubled(21), 42);
+    }
+
+    fn tripled_unless_zero(value: u32) -> u32 {
+        removable_body_behind_value!(Tools, {
+            if value == 0 {
+                return 7;
+            }
+            value * 3
+        })
+    }
+
+    #[test]
+    fn body_behind_value_runs() {
+        assert_eq!(tripled_unless_zero(14), 42);
+        assert_eq!(tripled_unless_zero(0), 7);
     }
 
     fn successor_unless_zero(value: u32) -> u32 {

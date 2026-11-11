@@ -10,7 +10,7 @@ use crate::builtins::{
     find_symbol_key,
 };
 use crate::ir::generated::NameClass;
-use crate::ir::{PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, ValueId};
+use crate::ir::{PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, ValueId, WellKnownSymbol};
 use crate::lower::{FileLowering, FunctionLowering, expression};
 use crate::modules::ModuleRef;
 
@@ -59,11 +59,21 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(self.fragment.property_keys.intern(key))
     }
 
-    pub(in crate::lower) fn find_name_that_key_spells(
-        &mut self,
-        member: MemberId,
-    ) -> Option<StringId> {
-        let PropKey::Computed(key) = self.hir.runtime_member_key(member) else {
+    pub(in crate::lower) fn symbol_key_of_member(&mut self, name: Atom) -> Option<PropertyKeyId> {
+        if let Some(created) = self.created_symbol_key(name) {
+            return Some(created);
+        }
+        let member = self.queries.member_of_symbol_constructor(name)?;
+        let (&head, tail) = self.queries.atom_bytes(member).split_first()?;
+        let symbol = WellKnownSymbol::ALL.into_iter().find(|symbol| {
+            let (first, rest) = symbol.name().split_at(1);
+            first.as_bytes() == [head.to_ascii_uppercase()] && rest.as_bytes() == tail
+        })?;
+        Some(self.symbol_key(symbol))
+    }
+
+    pub(in crate::lower) fn find_name_that_key_spells(&mut self, key: PropKey) -> Option<StringId> {
+        let PropKey::Computed(key) = key else {
             return None;
         };
         let symbol = self.queries.symbol_member_name(self.file, key)?;
@@ -100,7 +110,7 @@ impl FileLowering<'_, '_, '_, '_> {
         constant.or_else(|| self.find_signed_enum_member(key))
     }
 
-    fn find_constant_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
+    pub(in crate::lower) fn find_constant_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
         match self.find_constant_in_brackets(key) {
             Some(constant) => self.find_key_of_constant(constant),
             None => self.find_locked_symbol_key(key),
@@ -141,7 +151,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_locked_symbol_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
+    pub(in crate::lower) fn find_locked_symbol_key(
+        &mut self,
+        key: ExprId,
+    ) -> Option<PropertyKeyId> {
         let path = match self.builtins.of_pure_expr(self.skip_type_syntax(key)) {
             Some(Resolved::Builtin(path)) => path,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => return None,
@@ -206,7 +219,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(found) = self.file.find_constant_key(computed) {
             return (PropertyName::Constant(found), None);
         }
+        let position = self.position();
         let value = self.lower_expression(computed);
+        if self.builder.is_constant(value) {
+            let constant = expression::find_constant_outside_dead_zone(self.file, computed);
+            if let Some(found) =
+                constant.and_then(|constant| self.file.find_key_of_constant(constant))
+            {
+                self.set_position(position);
+                return (PropertyName::Constant(found), Some(value));
+            }
+        }
         let key = self.builder.to_property_key(value);
         (PropertyName::Computed(key), Some(value))
     }

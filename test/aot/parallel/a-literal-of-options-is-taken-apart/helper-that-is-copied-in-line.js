@@ -1,4 +1,4 @@
-// STATISTIC: LiteralArgumentsTakenApart >= 1
+// STATISTIC: LiteralArgumentsScalarized >= 1
 const createResponse = (body, init) => new Response(body, init);
 class Context {
   #status = 200;

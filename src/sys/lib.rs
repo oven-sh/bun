@@ -1221,6 +1221,7 @@ pub mod O {
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod file;
+pub mod private_copy;
 pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
@@ -2198,6 +2199,17 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
+    /// Like `SUPPORTS_STATX_ON_LINUX`, but false once the `fstat()` of some descriptor is overridden.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub static IS_FSTATX_DIRECT: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(true);
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn stop_using_statx() {
+        use core::sync::atomic::Ordering;
+        SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+        IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
+    }
 
     /// `STATX_*` request mask covering every field `node:fs Stats` consumes
     /// (all field bits OR'd — the only mask callers ever pass).
@@ -2249,7 +2261,6 @@ mod posix_impl {
         mask: u32,
         syscall: Tag,
     ) -> Maybe<PosixStat> {
-        use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
             Some(p) => p.as_ptr(),
@@ -2264,7 +2275,7 @@ mod posix_impl {
             // success (0) nor a kernel -errno. Treat as "not implemented".
             // See nodejs/node#27275 and libuv/libuv src/unix/fs.c.
             if rc > 0 {
-                SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                stop_using_statx();
                 return statx_fallback(fd, path, flags);
             }
             if rc < 0 {
@@ -2284,7 +2295,7 @@ mod posix_impl {
                     errno,
                     Some(E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL)
                 ) {
-                    SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                    stop_using_statx();
                     return statx_fallback(fd, path, flags);
                 }
                 return Err(Error {

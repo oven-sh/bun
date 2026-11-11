@@ -1,15 +1,16 @@
-use super::answers::{MemberForm, ObjectMemberKind};
+use super::answers::{FunctionRef, MemberForm, ObjectMemberKind};
 use super::prototype_links::{NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent, SymbolId};
-use crate::check::Program;
+use crate::check::{Checker, Program};
 use crate::hir::{
     self, BinOp, CallId, ClassId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, MemberKey,
     PatKind, PropKey, PropKind, StmtId, StmtKind,
 };
 use crate::program::FileId;
-use crate::util::{FxHashMap, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use smallvec::SmallVec;
 use std::sync::OnceLock;
 
 #[derive(Copy, Clone)]
@@ -18,12 +19,28 @@ pub(in crate::check) struct StoreIndex<'s> {
     binding_stores: &'s [BindingStore],
 }
 
+#[derive(Copy, Clone)]
+pub(in crate::check) struct WrittenStores<'s> {
+    names_stored_into_this: &'s [(FnId, Atom)],
+    binding_stores: &'s [BindingStore],
+    prototype_functions: &'s [(FnId, SymbolId)],
+}
+
 impl<'s> Program<'s> {
     fn aot_store_index(&self, file: FileId) -> &'s OnceLock<StoreIndex<'s>> {
         let of_files: &'s [OnceLock<StoreIndex<'s>>] = *self.aot_store_indexes.get_or_init(|| {
             let arena = self.session.arena();
             &*arena.alloc_slice_fill_default(self.files.modules.len())
         });
+        &of_files[file.idx()]
+    }
+
+    fn aot_written_stores_of(&self, file: FileId) -> &'s OnceLock<WrittenStores<'s>> {
+        let of_files: &'s [OnceLock<WrittenStores<'s>>] =
+            *self.aot_written_stores.get_or_init(|| {
+                let arena = self.session.arena();
+                &*arena.alloc_slice_fill_default(self.files.modules.len())
+            });
         &of_files[file.idx()]
     }
 }
@@ -80,14 +97,141 @@ impl<'c> StoreIndex<'c> {
     }
 
     pub(super) fn binding_stores_of(&self, symbol: SymbolId) -> &'c [BindingStore] {
-        let stores = self.binding_stores;
-        let start = stores.partition_point(|store| store.symbol < symbol);
-        let len = stores[start..].partition_point(|store| store.symbol == symbol);
-        &stores[start..start + len]
+        find_stores_of_binding(self.binding_stores, symbol)
+    }
+}
+
+impl<'s> WrittenStores<'s> {
+    pub(super) fn names_stored_into_this_of(&self, function: FnId) -> &'s [(FnId, Atom)] {
+        let names = self.names_stored_into_this;
+        let start = names.partition_point(|stored| stored.0 < function);
+        let len = names[start..].partition_point(|stored| stored.0 == function);
+        &names[start..start + len]
+    }
+
+    pub(super) fn binding_stores_of(&self, symbol: SymbolId) -> &'s [BindingStore] {
+        find_stores_of_binding(self.binding_stores, symbol)
+    }
+
+    fn find_only_constructor_of(&self, function: FnId) -> Option<SymbolId> {
+        let functions = self.prototype_functions;
+        let start = functions.partition_point(|held| held.0 < function);
+        let len = functions[start..].partition_point(|held| held.0 == function);
+        match functions[start..start + len] {
+            [(_, constructor)] => Some(constructor),
+            _ => None,
+        }
+    }
+}
+
+fn find_stores_of_binding(stores: &[BindingStore], symbol: SymbolId) -> &[BindingStore] {
+    let start = stores.partition_point(|store| store.symbol < symbol);
+    let len = stores[start..].partition_point(|store| store.symbol == symbol);
+    &stores[start..start + len]
+}
+
+impl<'s> Checker<'_, 's> {
+    pub(super) fn written_stores(&mut self, file: FileId) -> WrittenStores<'s> {
+        if let Some(&stores) = self.p.aot_written_stores_of(file).get() {
+            return stores;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let expressions = self.exprs_by_kind(file);
+        let mut stored_into_this = Vec::new();
+        let mut binding_stores = Vec::new();
+        for &assign in expressions.of(ExprTag::Assign) {
+            let ExprKind::Assign { op, target, value } = hir[assign].kind else {
+                continue;
+            };
+            let is_unreached = bound.parent_of_expr(assign) == Parent::None;
+            if is_unreached || self.is_dead_expression(file, assign) {
+                continue;
+            }
+            let Some((object, MemberKey::Name(name))) = hir.member_key(target) else {
+                continue;
+            };
+            if name == known::__proto__ {
+                continue;
+            }
+            let form = classify_store_form(op);
+            let object = hir.skip_type_assertions(object);
+            let object = find_prototype_object_held_by(hir, bound, object).unwrap_or(object);
+            if let Some(this) = find_this_held_by(hir, bound, object) {
+                if let Some(Ok(function)) = self.this_container(file, this)
+                    && !matches!(bound.fns[function.idx()].owner, FnOwner::Member(_))
+                {
+                    stored_into_this.push((function, hir[assign].pos, name));
+                }
+            } else if let Some(symbol) = bound_symbol(hir, bound, object) {
+                if name != known::prototype {
+                    binding_stores.push(BindingStore {
+                        symbol,
+                        kind: BindingStoreKind::Static,
+                        name,
+                        source: assign,
+                        value,
+                        form,
+                    });
+                } else if form == StoreForm::Plain {
+                    add_prototype_literal_stores(hir, symbol, value, &mut binding_stores);
+                }
+            } else if let Some(symbol) = prototype_object_symbol(hir, bound, object) {
+                let member_kind = match form {
+                    StoreForm::Plain | StoreForm::Logical => stored_value_kind(hir, value),
+                    StoreForm::Compound => ObjectMemberKind::Field,
+                };
+                binding_stores.push(BindingStore {
+                    symbol,
+                    kind: BindingStoreKind::Prototype(member_kind),
+                    name,
+                    source: assign,
+                    value,
+                    form,
+                });
+            }
+        }
+        stored_into_this
+            .shared_sort_unstable_by_key(|&(function, position, _)| (function, position));
+        let mut listed = FxHashSet::default();
+        let names_stored_into_this: Vec<(FnId, Atom)> = stored_into_this
+            .into_iter()
+            .map(|(function, _, name)| (function, name))
+            .filter(|&stored| listed.insert(stored))
+            .collect();
+        binding_stores.shared_sort_unstable_by_key(|store| {
+            (store.symbol, hir[store.source].pos, store.source)
+        });
+        let mut prototype_functions: Vec<(FnId, SymbolId)> = binding_stores
+            .iter()
+            .filter(|store| matches!(store.kind, BindingStoreKind::Prototype(_)))
+            .filter_map(|store| {
+                Some((find_stored_function(hir, bound, store.value)?, store.symbol))
+            })
+            .collect();
+        prototype_functions.shared_sort_unstable_by_key(|&held| held);
+        prototype_functions.dedup();
+        *self
+            .p
+            .aot_written_stores_of(file)
+            .get_or_init(|| WrittenStores {
+                names_stored_into_this: list_in(self.arena, &names_stored_into_this),
+                binding_stores: list_in(self.arena, &binding_stores),
+                prototype_functions: list_in(self.arena, &prototype_functions),
+            })
     }
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    pub fn find_constructor_of_prototype_function(
+        &mut self,
+        function: FunctionRef,
+    ) -> Option<SymbolId> {
+        let FunctionRef { file, function } = function;
+        self.c
+            .written_stores(file)
+            .find_only_constructor_of(function)
+    }
+
     pub(super) fn class_and_side_of_member_fn(
         &self,
         file: FileId,
@@ -118,7 +262,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let assigns = self.c.exprs_by_kind(file);
         let mut this_stores = Vec::new();
-        let mut binding_stores = Vec::new();
         let mut first_exits = FxHashMap::default();
         let mut first_returns = FxHashMap::default();
         let mut has_asked_checker = false;
@@ -132,46 +275,57 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             if is_unreached || self.c.is_dead_expression(file, assign) {
                 continue;
             }
-            let (object, name) = match hir.member_key(target) {
-                Some((object, MemberKey::Name(name))) if name != known::__proto__ => (object, name),
-                Some((object, MemberKey::Computed(key)))
-                    if matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::This) =>
-                {
-                    has_asked_checker = true;
-                    match self.symbol_member_name(file, key) {
-                        Some(name) => (object, name),
-                        None => continue,
+            let (object, names) = match hir.member_key(target) {
+                Some((object, MemberKey::Name(name))) if name != known::__proto__ => {
+                    (object, SmallVec::from_slice(&[name]))
+                }
+                Some((object, MemberKey::Computed(key))) => {
+                    let is_this =
+                        matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::This);
+                    let name = match self.find_constant_name(file, key) {
+                        None if is_this => {
+                            has_asked_checker = true;
+                            self.symbol_member_name(file, key)
+                        }
+                        name => name,
+                    };
+                    match name {
+                        Some(name) => (object, SmallVec::from_slice(&[name])),
+                        None => {
+                            let mentions = assigns.of(ExprTag::Ident);
+                            (object, self.find_listed_names(file, assign, key, mentions))
+                        }
                     }
                 }
-                Some((
-                    _,
-                    MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_),
-                ))
-                | None => continue,
+                Some((_, MemberKey::Name(_) | MemberKey::PrivateName(_))) | None => continue,
             };
             let object = hir.skip_type_assertions(object);
             let object = find_prototype_object_held_by(hir, bound, object).unwrap_or(object);
-            let handing = owners_handing_this_to(&handed_this, bound_symbol(hir, bound, object));
-            for (owner, birth, helper) in handing {
-                let birth =
-                    match self.is_always_evaluated_in(file, helper, assign, &mut first_returns) {
-                        true => birth,
-                        false => u32::MAX,
-                    };
-                this_stores.push(ThisStore {
-                    owner,
-                    name,
-                    assign,
-                    value,
-                    form,
-                    is_in_every_construction: false,
-                    defined: MemberForm::default(),
-                    is_stored_by_callee: true,
-                    birth,
-                });
-            }
-            if let Some(this) = find_this_held_by(hir, bound, object) {
-                if let Some(owner) = self.this_owner(file, this) {
+            for name in names {
+                let handing =
+                    owners_handing_this_to(&handed_this, bound_symbol(hir, bound, object));
+                for (owner, birth, helper) in handing {
+                    let birth =
+                        match self.is_always_evaluated_in(file, helper, assign, &mut first_returns)
+                        {
+                            true => birth,
+                            false => u32::MAX,
+                        };
+                    this_stores.push(ThisStore {
+                        owner,
+                        name,
+                        assign,
+                        value,
+                        form,
+                        is_in_every_construction: false,
+                        defined: MemberForm::default(),
+                        is_stored_by_callee: true,
+                        birth,
+                    });
+                }
+                if let Some(this) = find_this_held_by(hir, bound, object)
+                    && let Some(owner) = self.this_owner(file, this)
+                {
                     let is_in_every_construction = form == StoreForm::Plain
                         && self.is_in_every_construction(file, owner, assign, &mut first_exits);
                     this_stores.push(ThisStore {
@@ -189,32 +343,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                         },
                     });
                 }
-            } else if let Some(symbol) = bound_symbol(hir, bound, object) {
-                if name != known::prototype {
-                    binding_stores.push(BindingStore {
-                        symbol,
-                        kind: BindingStoreKind::Static,
-                        name,
-                        source: assign,
-                        value,
-                        form,
-                    });
-                } else if form == StoreForm::Plain {
-                    add_prototype_literal_stores(hir, symbol, value, &mut binding_stores);
-                }
-            } else if let Some(symbol) = prototype_object_symbol(hir, bound, object) {
-                let member_kind = match form {
-                    StoreForm::Plain | StoreForm::Logical => stored_value_kind(hir, value),
-                    StoreForm::Compound => ObjectMemberKind::Field,
-                };
-                binding_stores.push(BindingStore {
-                    symbol,
-                    kind: BindingStoreKind::Prototype(member_kind),
-                    name,
-                    source: assign,
-                    value,
-                    form,
-                });
             }
         }
         self.add_definitions_on_this(
@@ -227,21 +355,72 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         this_stores.shared_sort_unstable_by_key(|store| {
             (store.owner, hir[store.assign].pos, store.assign)
         });
-        binding_stores.shared_sort_unstable_by_key(|store| {
-            (store.symbol, hir[store.source].pos, store.source)
-        });
+        let binding_stores = self.c.written_stores(file).binding_stores;
         if has_asked_checker {
             let index = StoreIndex {
                 this_stores: list_in(self.arena, &this_stores),
-                binding_stores: list_in(self.arena, &binding_stores),
+                binding_stores,
             };
             self.kept.store_indexes.insert(file, index);
             return index;
         }
         *self.c.p.aot_store_index(file).get_or_init(|| StoreIndex {
             this_stores: list_in(self.c.arena, &this_stores),
-            binding_stores: list_in(self.c.arena, &binding_stores),
+            binding_stores,
         })
+    }
+
+    fn find_constant_name(&self, file: FileId, key: ExprId) -> Option<Atom> {
+        if !matches!(self.c.hir(file)[key].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let name = self.c.constant_string(file, key)?;
+        let text = self.atom_bytes(name);
+        let may_be_index = text.first().is_some_and(u8::is_ascii_digit);
+        (name != known::__proto__ && !may_be_index).then_some(name)
+    }
+
+    fn find_listed_names(
+        &self,
+        file: FileId,
+        assign: ExprId,
+        key: ExprId,
+        mentions: &[ExprId],
+    ) -> SmallVec<[Atom; 4]> {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let ExprKind::Index { obj: list, .. } = hir[key].kind else {
+            return SmallVec::new();
+        };
+        match self.find_written_names(hir, bound, list) {
+            Some(names)
+                if is_in_loop_of_function_body(hir, bound, assign)
+                    && is_only_read_by_index(hir, bound, list, mentions) =>
+            {
+                names
+            }
+            _ => SmallVec::new(),
+        }
+    }
+
+    fn find_written_names(
+        &self,
+        hir: &hir::File<'_>,
+        bound: &Bound<'_>,
+        list: ExprId,
+    ) -> Option<SmallVec<[Atom; 4]>> {
+        let written = find_stable_initializer(hir, bound, list)?;
+        let ExprKind::Array(elements) = hir[hir.skip_type_assertions(written)].kind else {
+            return None;
+        };
+        hir.ids(elements)
+            .map(|element| match hir[element].kind {
+                ExprKind::String(name) if name != known::__proto__ => {
+                    let first = self.atom_bytes(name).first();
+                    first.is_some_and(|it| !it.is_ascii_digit()).then_some(name)
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn find_parameters_handed_this(
@@ -570,6 +749,93 @@ fn returns_created_object(hir: &hir::File<'_>, statement: StmtId) -> bool {
             | ExprKind::Class(_)
             | ExprKind::New(_)
     )
+}
+
+fn find_stored_function(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> Option<FnId> {
+    let value = hir.skip_type_assertions(value);
+    let function = match hir[value].kind {
+        ExprKind::Fn(function) => function,
+        ExprKind::Ident(_) => {
+            let symbol = bound_symbol(hir, bound, value)?;
+            if !bound.is_stable_binding(symbol) {
+                return None;
+            }
+            match bound.binding_initializer(hir, symbol) {
+                BindingInitializer::Function(function) => function,
+                BindingInitializer::Expression(initializer) => {
+                    match hir[hir.skip_type_assertions(initializer)].kind {
+                        ExprKind::Fn(function) => function,
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    (hir[function].kind != FnKind::Arrow).then_some(function)
+}
+
+fn is_in_loop_of_function_body(hir: &hir::File<'_>, bound: &Bound<'_>, expression: ExprId) -> bool {
+    let Some(mut body) = find_statement_always_evaluating(hir, bound, expression) else {
+        return false;
+    };
+    if let Parent::Stmt(block) = bound.parent_of_stmt(body)
+        && block.is_some()
+        && matches!(hir[block].kind, StmtKind::Block(_))
+    {
+        body = block;
+    }
+    let Parent::Stmt(around) = bound.parent_of_stmt(body) else {
+        return false;
+    };
+    around.is_some()
+        && matches!(hir[around].kind, StmtKind::For { .. })
+        && matches!(bound.parent_of_stmt(around), Parent::FnBody(_))
+}
+
+fn is_only_read_by_index(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    list: ExprId,
+    mentions: &[ExprId],
+) -> bool {
+    let binding = bound.binding(list);
+    let is_read = |&mention: &ExprId| {
+        let Parent::Expr(access) = bound.parent_of_expr(mention) else {
+            return false;
+        };
+        let is_access = match hir[access].kind {
+            ExprKind::Index { obj, .. } => obj == mention,
+            ExprKind::Dot { obj, name, .. } => obj == mention && name == known::length,
+            _ => false,
+        };
+        is_access && is_read_as_value(hir, bound, access)
+    };
+    mentions
+        .iter()
+        .filter(|&&mention| bound.binding(mention) == binding)
+        .all(is_read)
+}
+
+fn is_read_as_value(hir: &hir::File<'_>, bound: &Bound<'_>, access: ExprId) -> bool {
+    match bound.parent_of_expr(access) {
+        Parent::Expr(parent) => match hir[parent].kind {
+            ExprKind::Index { .. }
+            | ExprKind::Dot { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Template { .. }
+            | ExprKind::Cond { .. } => true,
+            ExprKind::Assign { target, .. } => target != access,
+            ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee != access,
+            _ => false,
+        },
+        Parent::VarInit(_) => true,
+        Parent::Stmt(statement) => {
+            statement.is_some() && !matches!(hir[statement].kind, StmtKind::Expr(_))
+        }
+        _ => false,
+    }
 }
 
 fn stored_value_kind(hir: &hir::File<'_>, value: ExprId) -> ObjectMemberKind {

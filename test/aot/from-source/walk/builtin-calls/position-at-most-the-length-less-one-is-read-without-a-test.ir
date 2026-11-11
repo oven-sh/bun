@@ -5,12 +5,10 @@
 # console.log(codes("abc"), codes(""));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = LessEq
 # CHECK: : int[0, 65535] {{*}}= GetStringCodeUnit
 # RUN(NEVER): walk f1 mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: = Less v
 # NEVER-NOT: = CallInline
 # NEVER-NOT: |whole

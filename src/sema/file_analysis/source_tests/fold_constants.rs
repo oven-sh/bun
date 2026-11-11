@@ -1221,6 +1221,124 @@ fn const_reads_check_the_dead_zone() {
     }
 }
 
+const INITIALIZED_READS: &[(&str, &str, bool)] = &[
+    ("a.mjs", "let X = 1; v(X);", true),
+    ("a.cjs", "var X = 1; v(X);", true),
+    ("a.mjs", "f(); const X = 1; v(X);", true),
+    ("a.cjs", "f(); var X = 1; function g() { v(X); }", true),
+    (
+        "a.cjs",
+        "var f = () => 1, X = 1; function g() { v(X); }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "class A { m() { v(X); } } var X = 1; new A();",
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; function g() { v(X); }"#,
+        true,
+    ),
+    ("a.cjs", "v(X); var X = 1;", false),
+    ("a.cjs", "var X = 1; X = 2; v(X);", false),
+    ("a.cjs", "{ var X = 1; } v(X);", false),
+    ("a.mjs", "function g() { let X = 1; v(X); }", false),
+    ("a.cjs", "g(); var X = 1; function g() { v(X); }", false),
+    ("a.cjs", "f(g); var X = 1; function g() { v(X); }", false),
+    (
+        "a.cjs",
+        "f(() => 1); var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "var h = () => g(), y = h(); var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A { static x = 1; } var X = 1; function g() { v(X); }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "class A { static x = f(); } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A { static { f(); } } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A { [k] = 1; } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A extends B {} var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.jsx",
+        "f(<a />); var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.ts",
+        "enum E { A = 1 } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.ts",
+        "namespace N { f(); } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        r#"import("./b"); var X = 1; function g() { v(X); }"#,
+        false,
+    ),
+    (
+        "a.cjs",
+        "{ let X; eval(s); } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; export function g() { v(X); }"#,
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; export class A { x = v(X); }"#,
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; function g() { v(X); } export { g };"#,
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; export default () => v(X);"#,
+        false,
+    ),
+];
+
+#[test]
+fn initialized_reads() {
+    for &(path, text, is_initialized) in INITIALIZED_READS {
+        analyzed(path, text, |s| {
+            let read = s.analysis.decisions.constant_read(probe(s));
+            assert_eq!(read.is_some(), is_initialized, "{text}");
+        });
+    }
+}
+
 #[test]
 fn reads_that_bun_run_replaces_check_nothing() {
     for &(path, text, expected) in REPLACED_READS {
@@ -1409,6 +1527,30 @@ const WRITTEN_WITHOUT_WHAT_NOBODY_TAKES: &[(&str, &str, bool, bool)] = &[
         false,
         true,
     ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = ([], Kind.User); v(KEY);"#,
+        false,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = [...[1]] ? Kind.User : "z"; v(KEY);"#,
+        false,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = 1 + 1 === 2 ? Kind.User : "z"; v(KEY);"#,
+        false,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = "abc".length && Kind.User; v(KEY);"#,
+        false,
+        false,
+    ),
     ("a.mjs", r#"v([f()] ? "a" : "b");"#, false, false),
     ("a.mjs", r#"v([free] ? "a" : "b");"#, false, false),
     ("a.mjs", r#"v([...[]] ? "a" : "b");"#, false, false),
@@ -1473,6 +1615,8 @@ fn bun_build_writes_nothing_for_what_nobody_takes() {
                 let decisions = &s.analysis.decisions;
                 let is_found = decisions.is_string_or_number_in_bun_run(&s.hir, probe(s));
                 assert_eq!(is_found, is_expected, "{text}");
+                let is_found = decisions.is_string_or_number_under_minify_syntax(&s.hir, probe(s));
+                assert_eq!(is_found, is_written_under_minify_syntax, "{text}");
             });
         }
     }

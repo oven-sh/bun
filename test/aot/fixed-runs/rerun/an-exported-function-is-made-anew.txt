@@ -1,0 +1,20 @@
+A function that a test file declares and exports is another object in each run. `bun test --rerun-each=3` loads a test file three times in one realm: each load is a new module of the file, so what an earlier run stored on the function, on its prototype object, or kept of it elsewhere is not what this run finds. In a compiled run what a file exports is a variable of the program, and a declared function without captures was that variable's first value: one object for all runs.
+#### made.test.js
+import { test } from "bun:test";
+import { kept } from "./kept.js";
+export function tally() { tally.calls = (tally.calls ?? 0) + 1; return tally.calls; }
+export async function later() { return 1; }
+export function* steps() { yield 1; }
+function listed() {}
+export { listed as underAnotherName };
+export default function Maker() { this.n = 1; }
+console.log("| CASE at the top", tally(), "marked", "marked" in Maker.prototype);
+test("made anew", () => {
+  Maker.prototype.marked = true;
+  const now = [tally, later, steps, listed, Maker];
+  console.log("| CASE in the test", tally(), tally(), "as in the first run", (kept.first ??= now).map((each, index) => each === now[index]).join());
+});
+#### kept.js
+export const kept = {};
+#### package.json
+{ "type": "module" }

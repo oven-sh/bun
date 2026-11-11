@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function products(a: number[], b: number[]): number[] { const row = new Array(4).fill(0); for (let j = 0; j < 4; j++) for (let k = 0; k < a.length; k++) row[j] += a[k]! * b[(k + j) & 3]!; return row; }
+# function joined(a: number[], words: string[]): unknown[] { const row: unknown[] = new Array(4).fill(0); for (let j = 0; j < 4; j++) for (let k = 0; k < a.length; k++) row[j] = (row[j] as number) + (words[k] as unknown as number); return row; }
+# print(products([1.5, 2, 3.25, 4], [1, 0.5, 2, 3]).join(), joined([1, 2], ["a", "b"]).join());
+# -- end of source
+# `row[j] += a * b`: the contents of row are proven numbers. Its read was held boxed, since the sum's other operand is still to come when the read is built and only a read out of a list of numbers counted
+# as bringing no text. What an operator that makes numbers makes is no text either: the read is held as a number or nothing, and the sum takes it as it is.
+# Beside a value that may be a text the read stays boxed.
+# f1 = products, f2 = joined
+# RUN(PRODUCT): walk f1 mechanisms=all
+# PRODUCT-LABEL: code f1:Body
+# PRODUCT-NOT: @JSValue = GetArrayElement
+# PRODUCT: @OptionalDouble = GetArrayElement {{*}}level=Expected
+# PRODUCT-NOT: @JSValue = GetArrayElement
+# RUN(TEXT): walk f2 mechanisms=all
+# TEXT-LABEL: code f2:Body
+# TEXT-NOT: @OptionalDouble = GetArrayElement
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 21,18.5,14.25,16.125 0ab,0ab,0ab,0ab

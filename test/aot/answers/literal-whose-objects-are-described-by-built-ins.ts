@@ -13,6 +13,10 @@
 // # RUN(ALSO1): run-in-shell mechanisms=-Arrivals $SHELL
 // # ALSO1: 13 of 13 of 13
 // # ALSO1-NEXT: exited with 0
+// # Where no function goes by what its callers leave, the judge of calls holds no call against what was left. Seen where proofs are checked at run time: there the entry by value of describe() hands its parameter on as it came.
+// # RUN(PROOFS): run-in-shell mechanisms=-Arrivals testing=CheckProofsAtRunTime $SHELL
+// # PROOFS: 13 of 13 of 13
+// # PROOFS-NEXT: exited with 0
 declare function report(value: unknown): void;
 function row(a: number | undefined) { return { id: 1, tag: a, more: 2, last: "z" }; }
 function two(a: number | undefined, b: number | undefined) { return { first: a, id: 1, second: b, more: 2 }; }

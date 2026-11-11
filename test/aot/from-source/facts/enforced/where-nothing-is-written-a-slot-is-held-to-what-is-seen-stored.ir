@@ -10,12 +10,10 @@
 # console.log(String(first.tag) + first.name + String(first.open) + String(first.up === second) + String(second.any));
 # -- end of source
 # RUN: facts enforced mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: field {{*}} "name" source=seen type=undefined|null|string slot=OptionalCell32
 # CHECK-NEXT: field {{*}} "up" source=seen type=undefined|null|L{{*}} slot=OptionalCell32
 # CHECK: counts fields {{*}} | seen 2
 # RUN(BOXED): facts enforced mechanisms=all
-# REQUIRES(BOXED): entries-of-bun
 # BOXED-NOT: "any"
 # BOXED-NOT: "tag"
 # BOXED-NOT: "open"

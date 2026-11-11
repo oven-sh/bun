@@ -13,12 +13,14 @@
 # print(Object.keys(holder.inner!).length);
 # print("went on");
 # -- end of source
-# testing=CheckProofsAtRunTime: where two ways meet, the state lets go of a fresh cell that the other way lacks, so such a cell comes to no return as a fresh one: its life is ended at the jump that leaves the last value that names it.
-# The lie, testing=NoCalleeKeepsWhatItIsHanded: whatever a function entered is handed is taken to be kept by nobody.
-# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# testing=CheckProofsAtRunTime: where two paths join, the state drops a fresh cell that the other path lacks, so such a cell reaches no return as a fresh cell.
+# Its life is ended at the jump after which the last value that names it is dead.
+# Fault injection, testing=AssumeCalleesRetainNothing: the compiler assumes that nothing retains what is passed to a function that is called directly.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL: 5
 # CALL: 8
-# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
 # CALL-NOT: went on
 # CALL: crashed with

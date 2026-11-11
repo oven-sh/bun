@@ -1,0 +1,16 @@
+# f1 = dashes
+# -- source: append-a-character-in-a-loop.ts
+# function dashes(count: number): string {
+#   let out = "";
+#   for (let i = 0; i < count; i++) out += "-";
+#   return out;
+# }
+# declare const input: any;
+# (globalThis as any).answer = dashes(input);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches ; 26 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 10, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:10 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 10

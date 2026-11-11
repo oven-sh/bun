@@ -1,0 +1,28 @@
+# -- source: an-element-is-followed-to-its-operator-over-a-join-where-it-meets-a-written-number.cjs
+# "use strict";
+# const base = JSON.parse("[1,2,3,4,5,6]");
+# const whole = base.map((p) => p / 4), holed = base.map((p) => p / 4), mixed = base.map((p) => p / 4);
+# delete holed[1]; mixed[1] = "9"; mixed[3] = undefined; mixed[4] = NaN;
+# function sumWhole(k) { let total = k & 3; for (let i = 0; i < whole.length; i++) total += whole[i] ?? 0; return total; }
+# function sumHoled(k) { let total = k & 3; for (let i = 0; i < holed.length; i++) total += holed[i] ?? 0.5; return total; }
+# function sumMixed(k) { let total = k & 3; for (let i = 0; i < mixed.length; i++) total += mixed[i] || 7; return total; }
+# function sumEven(k) { let total = k & 3; for (let i = 0; i < holed.length; i++) total += i & 1 ? 0 : holed[i]; return total; }
+# const shelf = { sumWhole, sumHoled, sumMixed, sumEven }, words = JSON.parse('["sumWhole","sumHoled","sumMixed","sumEven"]');
+# for (const word of words) print(word, shelf[word](1), shelf[word](2));
+# -- end of source
+# Nothing is written of what the lists hold. Where an element under an index goes through an operator the holder is asked in front of the loop for a list of numbers; the element was
+# followed to its operator over casts alone. It is followed also over a join of two ways where the other way brings a written number: behind the test that `??` and `||` ask
+# (f1 = sumWhole) and out of an arm that a turn may skip (f4 = sumEven). The read gives a raw number or undefined: a hole is no NaN here.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
+# CHECK: : undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# RUN(EVEN): walk f4 mechanisms=all
+# EVEN: = TypeTest {{*}} testedType=Array<number>
+# EVEN: : undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double level=Proven
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: sumWhole 6.25 7.25
+# ANSWER-NEXT: sumHoled 6.25 7.25
+# ANSWER-NEXT: sumMixed 1.2590.75771.5 2.2590.75771.5
+# ANSWER-NEXT: sumEven 3.25 4.25
+# ANSWER-NEXT: exited with 0

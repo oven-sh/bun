@@ -339,6 +339,39 @@ fn other_values_export_default_and_marker() {
 }
 
 #[test]
+fn path_of_file_stays_export_default_beside_the_marker() {
+    with_workspace(|w| {
+        let path = w.atom("/x.bin");
+        let on_disk = DataValue::String(path);
+        let modules = [
+            (DataModule::EmbeddedFile { path }, true),
+            (DataModule::FileInPlace(&on_disk), false),
+        ];
+        for (data, is_resolved_at_runtime) in &modules {
+            let tree = module(w, data);
+            let host_value_count = usize::from(!is_resolved_at_runtime);
+            assert_eq!(tree.host_values.len(), host_value_count, "{data:?}");
+            let s = analyze(w, tree);
+            assert_eq!(exports(&s), ["__esModule", "default"], "{data:?}");
+            let default = export_default_value(&s.hir);
+            let kind = s.hir[default].kind;
+            assert!(
+                matches!(kind, ExprKind::String(text) if text == path),
+                "{kind:?}"
+            );
+            let flagged = exprs_resolved_at_runtime(&s.hir);
+            match is_resolved_at_runtime {
+                true => assert_eq!(flagged, [default], "{data:?}"),
+                false => assert!(flagged.is_empty(), "{data:?}"),
+            }
+            assert_eq!(export_pairs(&s), [("_0", "__esModule")], "{data:?}");
+            let marker = s.hir[s.hir.var_decls[0].init].kind;
+            assert!(matches!(marker, ExprKind::True), "marker: {marker:?}");
+        }
+    });
+}
+
+#[test]
 fn empty_object_exports_default() {
     with_workspace(|w| {
         for value in [Data::Object(&[]), Data::Object(&[("default", Data::Null)])] {
@@ -571,7 +604,10 @@ fn database_names_the_modules_that_open_it() {
     with_workspace(|w| {
         for (place, modules) in [
             (DatabasePlace::Disk, &["bun:sqlite"][..]),
-            (DatabasePlace::WorkingDirectory, &["bun:sqlite"]),
+            (
+                DatabasePlace::WorkingDirectory,
+                &["bun-folder-of-database:/x.db", "bun:sqlite"],
+            ),
             (DatabasePlace::Executable, &["node:fs", "bun:sqlite"]),
         ] {
             let data = DataModule::Database {

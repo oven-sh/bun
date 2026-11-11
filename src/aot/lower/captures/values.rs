@@ -1,4 +1,5 @@
 use bun_sema::bind::Binding;
+use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use super::{Capture, CaptureList};
@@ -126,6 +127,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn get_copied_value(&mut self, key: FunctionKey, binding: BindingRef) -> ValueId {
+        let is_this = matches!(binding, BindingRef::Slot(_, ScopeSlot::This));
+        assert!(
+            self.birth.is_none() || !is_this,
+            "a closure takes the object while its fields are not yet defined"
+        );
         let local = self.scopes.find_local(binding);
         debug_assert!(
             is_left_out(self.file, key)
@@ -168,7 +174,14 @@ impl FileLowering<'_, '_, '_, '_> {
             Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped().into(),
             Capture::Value(binding) => {
                 let name = self.written_name(binding);
-                DeclaredCapture::new(self.stored_position(binding), name)
+                let mut declared = self.stored_position(binding);
+                if let BindingRef::Symbol(id) = binding
+                    && declared.ty == TypeTable::ANYTHING
+                {
+                    let file = self.file;
+                    declared = self.compute_literal_position(Sym { file, id });
+                }
+                DeclaredCapture::new(self.mark_variable_of_module(binding, declared), name)
             }
         });
         positions.collect()

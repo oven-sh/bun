@@ -596,8 +596,24 @@ fn find_module_name(text: &ModuleText<'_, '_>, access: ExprId) -> Option<ExprId>
     names_exports_object(text, access).then(|| text.hir.skip_type_assertions(object))
 }
 
+fn find_first_statement_that_runs(text: &ModuleText<'_, '_>, mut statement: StmtId) -> StmtId {
+    let (hir, decisions) = (text.hir, text.decisions);
+    loop {
+        statement = match hir[statement].kind {
+            StmtKind::Block(statements) => match hir.ids(statements).next() {
+                Some(first) => first,
+                None => return statement,
+            },
+            StmtKind::If { yes, no, .. } if no.is_some() && decisions.is_dead_stmt(no) => yes,
+            StmtKind::If { yes, no, .. } if no.is_some() && decisions.is_dead_stmt(yes) => no,
+            _ => return statement,
+        };
+    }
+}
+
 fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Replacement> {
     let hir = text.hir;
+    let statement = find_first_statement_that_runs(text, statement);
     let mut expression = match hir[statement].kind {
         StmtKind::Expr(expression) => expression,
         StmtKind::Var(declarations) => {

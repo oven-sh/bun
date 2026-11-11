@@ -707,6 +707,31 @@ describe.each([
   });
 });
 
+// A 'data' listener that pauses, asks for more with read(0) and gives the chunk back with unshift() fills the buffer
+// past highWaterMark while a pull is pending. That pull must not pause the native reader: nothing else would resume it,
+// and the stream would never end.
+it("Readable.fromWeb(Bun.file().stream()): pause(), read(0) and unshift() inside 'data', then resume(), reads to the end", async () => {
+  const r = Readable.fromWeb(Bun.file(join(String(readExactlyDir), "big.bin")).stream(), { highWaterMark: 16384 });
+  let bytes = 0;
+  let first = true;
+  const ended = new Promise((resolve, reject) => {
+    r.on("end", resolve);
+    r.on("error", reject);
+  });
+  r.on("data", chunk => {
+    bytes += chunk.length;
+    if (!first) return;
+    first = false;
+    r.pause();
+    r.read(0);
+    bytes -= chunk.length;
+    r.unshift(chunk);
+    process.nextTick(() => r.resume());
+  });
+  await ended;
+  expect(bytes).toBe(1024 * 1024);
+});
+
 // A native-backed Readable pushed its pull results synchronously, so while it flowed Readable had the next chunk
 // buffered when a 'data' listener ran, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
 // emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so

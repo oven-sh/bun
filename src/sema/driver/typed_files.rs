@@ -217,7 +217,9 @@ impl<'a, 's> Syntax<'a, 's> {
         let file = self.file;
         let mut annotations = FxHashMap::default();
         for parameter in file.params.iter().filter(|it| it.default.is_some()) {
-            let Some(annotation) = parameter.ty.some() else {
+            let (PatKind::Ident(_), Some(annotation)) =
+                (file[parameter.pat].kind, parameter.ty.some())
+            else {
                 continue;
             };
             let is_parenthesized_in_a_union = matches!(

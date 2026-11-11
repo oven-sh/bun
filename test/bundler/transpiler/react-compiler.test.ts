@@ -4199,6 +4199,8 @@ test("length", () => {
   // parameter in the source goes to the parameter that the bundle has for it. The parameter
   // with `= undefined` takes `undefined` beside what the source says of it. Where the source
   // says nothing of it, the default is `undefined as any`: a callback keeps its contextual type.
+  // A pattern takes that default too. Its own default is in the body now, with no contextual
+  // type: `{ mode: "x" }` is a `{ mode: string }` there, and not what the annotation says.
   // No source has that default, which tells it from one that is written: the last two rows
   // have no compiler.
   const typedDefaults = [
@@ -4209,7 +4211,7 @@ test("length", () => {
     "function useCalled(t0: (() => void) | undefined = undefined): number {",
     "function useIsString(value: unknown, t0: string | undefined = undefined): value is string {",
     'function useKind(t0: (string extends string ? "s" : "n") | undefined = undefined): string {',
-    "function useLabel(t0: { label?: string } | undefined = undefined): string {",
+    'function useMode(t0 = undefined as any): "x" | "y" {',
   ];
   const writtenDefaults = [
     "function pick(index: number = undefined as any): number {",
@@ -4221,7 +4223,7 @@ test("length", () => {
       "--react-compiler for a server",
       ["./src/index.tsx", "--react-compiler", "--target=bun"],
       typedDefaults,
-      '[1,3,6,1,4]\n["s","none",2,2]\n0 1 0 1 0 0 0 0\n',
+      '[1,3,6,1,4]\n["s","x","y",2,2]\n0 1 0 1 0 0 0 0\n',
     ],
     [
       "--react-compiler for a client, minified",
@@ -4301,14 +4303,14 @@ export function useKind(kind: string extends string ? "s" : "n" = "s"): string {
   const [value] = useState(kind);
   return value;
 }
-export function useLabel({ label }: { label?: string } = {}): string {
-  const [value] = useState(label ?? "none");
+export function useMode({ mode }: { mode: "x" | "y" } = { mode: "x" }): "x" | "y" {
+  const [value] = useState(mode);
   return value;
 }
 const read: unknown = "read";
 console.log(JSON.stringify([useStep(), useStep(3), useScaled(2, 3, nothing), useCalled(), useIsString(read) ? read.length : -1]));
-console.log(JSON.stringify([useKind(), useLabel(), useJs(2), useUnchecked(2)]));
-console.log(useStep.length, useScaled.length, useCalled.length, useIsString.length, useKind.length, useLabel.length, useJs.length, useUnchecked.length);
+console.log(JSON.stringify([useKind(), useMode(), useMode({ mode: "y" }), useJs(2), useUnchecked(2)]));
+console.log(useStep.length, useScaled.length, useCalled.length, useIsString.length, useKind.length, useMode.length, useJs.length, useUnchecked.length);
 `,
         // `by` is a number by the type of `step`. As `any` it takes the other overload of `pad`.
         "src/contextual.tsx": `import { useState } from "./state";

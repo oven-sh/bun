@@ -32,6 +32,7 @@ fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
     options.features.commonjs_at_runtime = true;
     options.features.lower_using = false;
     options.features.ascii_only = true;
+    options.features.standard_decorators = true;
     let source = Source::init_path_string(PATH, text.as_bytes());
     let mut log = Log::init();
     let parser = Parser::init(options, &mut log, &source, define, &arena).ok()?;
@@ -162,6 +163,25 @@ const EXPRESSIONS: &[&str] = &[
     "import.meta.hot.unknown", "import.meta.hot[\"accept\"]", "import.meta.hot[\"data\"]", "import.meta.hot?.accept()", "import.meta.hot.accept?.()",
     "import.meta.hot.on(\"x\", unknown)", "import.meta.hot[\"dispose\"]", "import.meta.hot[\"on\"]", "import.meta[\"hot\"]", "import.meta[\"hot\"].data",
     "import.meta[\"hot\"][\"data\"]", "import.meta.hot?.[\"data\"]", "import.meta.hot?.[\"accept\"]", "import.meta.hot[`data`]", "import.meta.hot[\"da\" + \"ta\"]",
+    "({ b: class Named {} }).b", "({ b: /a/ }).b", "({ b: [] }).b", "({ b: {} }).b", "({ b: unknown }).b", "({ b: 1n }).b", "({ b: 0x1n }).b",
+    "({ b: function named() {} })[\"b\"]", "({ \"b\": /a/ }).b", "[class Named {}][0]", "[function named() {}][0]", "[void unknown][0]", "[!unknown][0]",
+    "[unknown][0]", "[0x1n][0]", "[1n][0]", "[unknown ? () => 1 : /a/][0]", "[`a${unknown}`][0]", "[[() => 1][0]][0]", "[[1]][0][0]", "[[[]]][0][0]",
+    "[{ b: {} }][0].b", "[unknown, () => 1][1]", "[unknown(), () => 1][1]", "[typeof unknown, 0][1]", "[/a/, 0][1]", "[() => 1, 0][1]", "[[], 0][1]",
+    "[new Object(), 0][1]", "[module, 0][1]", "[() => 1]?.[0]", "[[0]][0]?.[0]", "[{ b: function named() {} }][0]?.b", "[,][0]", "[, 1][0]", "[, 1][1]", "[1, ,][1]",
+    "({ k: 0 })[\"\" + \"k\"]", "({ \"a-b\": 0 })[\"a-b\"]", "[0][0 + 0]", "[0][[0][0]]", "[0][true ? 0 : 1]", "[1, 0][2 - 1]", "[0][-0]", "[0][\"0\"]",
+    "({ 0: 1 })[0]", "({ b: 0 }).c", "[0][1]", "[0][0.5]", "({ é: 0 }).é", "({ \"é\": () => 1 }).é", "({ é: () => 1 })[\"é\"]",
+    "([(unknown(), () => 1)][0] && 1) === 1", "[unknown()][0]", "[@unknown class {}][0]", "({ b: @unknown class Named {} }).b", "({ b() {} }).b",
+    "({ b: unknown }).b()", "({ b: function named() {} }).b()", "({ b: () => 1, c: 1 }).b", "({ __proto__: () => 1 }).__proto__", "({ [\"b\"]: () => 1 }).b",
+    "({ get b() { return 0; } }).b", "[...unknown][0]", "[...[], () => 1][0]", "({ ...unknown }).b", "[() => 1][0]()", "[() => 1][0]`a`", "delete [() => 1][0]",
+    "delete ({ b: () => 1 }).b", "[0][0]++", "([0][0] = 1)", "typeof [[]][0] === \"object\"", "typeof [class {}][0] === \"function\"", "[0x1n][0] === 1n",
+    "([[]][0] && 1) === 1", "(1, [() => 1][0])", "([() => 1][0], 1)", "[function () {}][0] == null", "[function () {}][0] === null",
+    "({ b: function named() {} }).b !== undefined", "[function () {}][0].name", "[function () {}][0] instanceof Function", "[typeof unknown][0] == 1", "[[]][0] ?? 1",
+    "[() => 1][0] ?? 0", "[,][0] ?? 1", "[null][0] ?? 1", "[void 0][0] ?? 0", "(unknown(), [0])[0]", "(unknown ? [0] : [0])[0]", "(true ? () => 1 : 0) ?? 0",
+    "(true ? [] : 0) ?? 0", "(true ? class {} : 0) ?? 0", "(new Object() ?? 1) ?? 0", "(0, () => 1) ?? 0", "(0 || (() => 1)) ?? 0", "(1 && (() => 1)) ?? 0",
+    "(null ?? (() => 1)) ?? 0", "((() => 1) || 1) ?? 0", "((() => 1) ?? 1) ?? 0", "([] ?? 1) ?? 0", "(/a/ || 1) ?? 0", "!(true ? () => 1 : 0)",
+    "(unknown(), 1) ? () => 1 : 0", "typeof ((unknown(), 1) ? () => 1 : 0) === \"function\"", "[class { static m() {} a = unknown(); }][0]",
+    "({ b: class Named { m() {} } }).b", "([![[]][0]][0] || 1) === 1", "([!({ a: {} }).a][0] || 1) === 1", "[class { static a = unknown(); }][0]",
+    "[class { @unknown m() {} }][0]", "[class { accessor a = 1; }][0]", "([[class {}][0] ? 1 : 2][0] && 1) === 1", "([[class {}][0] && 0][0] || 1) === 1",
 ];
 
 #[rustfmt::skip]
@@ -299,6 +319,18 @@ const STATEMENTS: &[&str] = &[
     "var module; { var module; typeof module; }", "var module; { var module; module = 1; }", "{ var module; module = 1; }",
     "if (false) { var module; } { var module; module = 1; }", "function f(Object) { if (new Object()) {} else module.exports = 1; } f(unknown);",
     "const Set = unknown; new Set(), module;", "class Array {} new Array(1, 2), module;", "let Math = unknown; Math.PI, module;",
+    "[class {}][0], module;", "[unknown][0], module;", "[1][0], module;", "[module, 1 + 1];", "[[1][0], module];", "[exports, 0][1], 1;", "[this, 0][1];",
+    "typeof [qq][0], module;", "[Math][0].PI, module;", "(true ? () => 1 : 0), module;", "(0 || (() => 1)), module;", "(null ?? /a/), module;", "(0, () => 1), module;",
+    "let i = 0; if ([0][i]) module.exports = 1;", "let i = 0; if ({ a: [0] }.a[i]) module.exports = 1;", "const i = 0; if ([() => 1][i]) {} else module.exports = 1;",
+    "const f = [() => 1][0]; if (f) {} else module.exports = 1;", "function g() {} if (([(g(), () => 1)][0] && 1) === 1) {} else module.exports = 1;",
+    "var v = { a: function named() {} }.a ?? module.exports;", "var v = [() => 1][0] ?? module.exports;", "var v = [[]][0] ?? module.exports;",
+    "var v = { a: {} }.a ?? module.exports;", "var v = [class {}][0] ?? module.exports;", "var v = [() => 1][0] || module.exports;",
+    "var v = [() => 1][0] && module.exports;", "var v = [@unknown class {}][0] ?? module.exports;", "var v = [class {}][0] || module.exports;",
+    "[function () {}][0] || (module.exports = 1);", "[class {}][0] || (module.exports = 1);", "[[]][0] || (module.exports = 1);",
+    "[function () {}][0] ? 1 : (module.exports = 1);", "[class {}][0] ? 1 : (module.exports = 1);", "switch ([() => 1][0]) { case 1: module.exports = 1; }",
+    "while (![() => 1][0]) module.exports = 1;", "for (; ![/a/][0]; ) module.exports = 1;", "do {} while (![() => 1][0] && module);",
+    "import \"./y.js\"; if ([() => 1][0]) {} else module.exports = 1;", "import \"./y.js\"; var v = { a: function named() {} }.a ?? module.exports;",
+    "var v = [class { @unknown m() {} }][0] ?? module.exports;", "var v = [class { static { unknown(); } }][0] ?? module.exports;",
 ];
 
 fn write_cells() -> Vec<String> {

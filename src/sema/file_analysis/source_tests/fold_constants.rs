@@ -562,6 +562,21 @@ const SPECIFIERS: &[SpecifierRow] = &[
             &Specifier::Unknown,
         ),
     ),
+    (
+        "a.cjs",
+        r#"require([() => 1][0] ? "./a" : "./b");"#,
+        Specifier::Constant("./a"),
+    ),
+    (
+        "a.cjs",
+        r#"require(![/x/][0] ? "./a" : "./b");"#,
+        Specifier::Constant("./b"),
+    ),
+    (
+        "a.cjs",
+        r#"require([() => 1][0] || "./a");"#,
+        Specifier::Unknown,
+    ),
     ("a.cjs", "require(`${a}${b}`);", Specifier::Unknown),
     ("a.cjs", "require(1);", Specifier::Unknown),
     (
@@ -1410,6 +1425,59 @@ fn bun_build_computes_less_without_minify_syntax() {
                 s.analysis
                     .decisions
                     .is_constant_in_bun_run(&s.hir, probe(s)),
+                "{text}"
+            );
+        });
+    }
+}
+
+const READS_OF_MEMBERS_WITHOUT_A_VALUE: &[&str] = &[
+    "if ([() => 1][0]) {} else other();",
+    "if ({ b: function named() {} }.b) {} else other();",
+    "if ([/a/][0]) {} else other();",
+    "if ([class {}][0]) {} else other();",
+    "[() => 1][0] ?? other();",
+    "[() => 1][0] || other();",
+];
+
+#[test]
+fn member_without_a_value_stands_in_place_of_its_read_under_minify_syntax_alone() {
+    for &text in READS_OF_MEMBERS_WITHOUT_A_VALUE {
+        analyzed("a.mjs", text, |s| {
+            let [other] = calls_of(s, "other")[..] else {
+                panic!("calls of other");
+            };
+            let decisions = &s.analysis.decisions;
+            assert!(decisions.is_dead_expr(other), "{text}");
+            assert!(
+                !decisions.as_folded_by_bun_run().is_dead_expr(other),
+                "{text}"
+            );
+            let under_minify_syntax = decisions.as_folded_under_minify_syntax();
+            assert!(under_minify_syntax.is_dead_expr(other), "{text}");
+        });
+        folded("a.mjs", text, Fold::MINIFIED, |s| {
+            let [other] = calls_of(s, "other")[..] else {
+                panic!("calls of other");
+            };
+            let decisions = &s.analysis.decisions;
+            assert!(
+                decisions.as_folded_by_bun_run().is_dead_expr(other),
+                "{text}"
+            );
+        });
+    }
+    for text in [
+        "v([() => 1][0]);",
+        "v([/a/][0] || 1);",
+        "v(true ? [class {}][0] : 1);",
+    ] {
+        analyzed("a.mjs", text, |s| {
+            let e = probe(s);
+            assert_eq!(constant(s, e), FoldedValue::Unknown, "{text}");
+            let decisions = &s.analysis.decisions;
+            assert!(
+                !decisions.is_constant_under_minify_syntax(&s.hir, e),
                 "{text}"
             );
         });

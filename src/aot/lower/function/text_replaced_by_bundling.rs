@@ -24,6 +24,7 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
         atoms,
         replaced: Vec::new(),
         kept_alone: FxHashMap::default(),
+        left_alone: FxHashSet::default(),
         opened: FxHashSet::default(),
         defined_at_heads: FxHashSet::default(),
         values_first_in_text,
@@ -49,6 +50,7 @@ struct Finder<'a, 's> {
     atoms: &'a Interner<'s>,
     replaced: Vec<ReplacedText>,
     kept_alone: FxHashMap<ExprId, ExprId>,
+    left_alone: FxHashSet<ExprId>,
     opened: FxHashSet<ExprId>,
     defined_at_heads: FxHashSet<ExprId>,
     values_first_in_text: Vec<(ExprId, u8)>,
@@ -234,8 +236,13 @@ impl Finder<'_, '_> {
             let Some(printed) = decisions.find_operand_alone_in_bun_run(hir, expression) else {
                 return false;
             };
-            if !matches!(hir[expression].kind, ExprKind::Binary { left, .. } if left == printed) {
-                self.kept_alone.insert(expression, printed);
+            match hir[expression].kind {
+                ExprKind::Binary { left, .. } if left == printed => {
+                    self.left_alone.insert(expression);
+                }
+                _ => {
+                    self.kept_alone.insert(expression, printed);
+                }
             }
             true
         });
@@ -246,10 +253,22 @@ impl Finder<'_, '_> {
         self.kept_alone.get(&expression).copied()
     }
 
+    fn find_operand_printed(&self, expression: ExprId) -> Option<ExprId> {
+        let kept = self.find_operand_kept(expression);
+        kept.or_else(|| match self.hir[expression].kind {
+            ExprKind::Binary { left, .. } if self.left_alone.contains(&expression) => Some(left),
+            _ => None,
+        })
+    }
+
     fn add_operator_printed_as_one_operand(&mut self, expression: ExprId) {
         let hir = self.hir;
         let Some(kept) = self.find_operand_kept(expression) else {
             if let ExprKind::Binary { left, right, .. } = hir[expression].kind {
+                if self.would_be_reference(expression, left) {
+                    let start = start_inside_parentheses(hir, expression);
+                    self.replace(start, start, Box::new(*b"0, "));
+                }
                 self.leave_out(end_of_expr(hir, left), end_of_expr(hir, right));
             }
             return;
@@ -436,18 +455,35 @@ impl Finder<'_, '_> {
         }
     }
 
-    fn would_be_reference(&self, expression: ExprId, mut kept: ExprId) -> bool {
+    fn would_be_reference(&self, expression: ExprId, kept: ExprId) -> bool {
         let hir = self.hir;
-        let Parent::Expr(parent) = self.bound.parent_of_expr(expression) else {
-            return false;
+        let mut asserted = expression;
+        let user = loop {
+            let Parent::Expr(parent) = self.bound.parent_of_expr(asserted) else {
+                return false;
+            };
+            if hir.type_assertion_operand(parent).is_none() {
+                break hir[parent].kind;
+            }
+            asserted = parent;
         };
-        let user = hir[parent].kind;
         let is_callee = matches!(
             user,
-            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == expression
+            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == asserted
         );
-        while let Some(operand) = self.find_operand_kept(kept) {
-            kept = operand;
+        let is_operand_of_delete_or_typeof = matches!(
+            user,
+            ExprKind::Unary {
+                op: UnOp::Delete | UnOp::Typeof,
+                ..
+            }
+        );
+        if !is_callee && !is_operand_of_delete_or_typeof {
+            return false;
+        }
+        let mut kept = hir.skip_type_assertions(kept);
+        while let Some(operand) = self.find_operand_printed(kept) {
+            kept = hir.skip_type_assertions(operand);
         }
         match (hir[kept].kind, user) {
             (ExprKind::Dot { .. } | ExprKind::Index { .. }, ExprKind::Unary { op, .. }) => {

@@ -5,9 +5,10 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, compileFixture, isLinux, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -483,4 +484,275 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
     ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
   });
   expect(exitCode).toBe(0);
+});
+
+// rm reports an entry it cannot remove and goes on with every other entry:
+// the other operands, and the rest of the same tree. A directory that still
+// holds such an entry stays, without a line of its own.
+describe.concurrent("rm goes on after an entry it cannot remove", () => {
+  const lines = (output: string | Buffer) => sortedShellOutput(output.toString().replaceAll("\\", "/"));
+  const listing = (dir: string) =>
+    readdirSync(dir, { recursive: true, encoding: "utf8" })
+      .map(entry => entry.replaceAll("\\", "/"))
+      .sort();
+
+  async function rm(how: "Bun.$" | "bun exec", cwd: string, args: string[]) {
+    if (how === "Bun.$") {
+      const { stdout, stderr, exitCode } = await $`rm ${args}`.cwd(cwd).quiet();
+      return { stdout: lines(stdout), stderr: lines(stderr), exitCode };
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", `rm ${args.join(" ")}`],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: lines(stdout), stderr: lines(stderr), exitCode };
+  }
+
+  // Each operand is removed on its own, so an operand that fails says nothing
+  // about the directory next to it. The failing operands come first and last
+  // because they finish long before the walk of the directory does.
+  describe.each(["Bun.$", "bun exec"] as const)("operands, through %s", how => {
+    const tooLong = (fill: string) => Buffer.alloc(300, fill).toString();
+    const cases = [
+      { flags: "-r", failing: ["m1", "m2", "m3", "m4"], message: "No such file or directory" },
+      { flags: "-rv", failing: ["m1", "m2", "m3", "m4"], message: "No such file or directory" },
+      // -f ignores a missing operand, so these fail in another way. Windows has other limits and another message.
+      ...(isWindows
+        ? []
+        : [{ flags: "-rf", failing: ["a", "b", "c", "d"].map(tooLong), message: "File name too long" }]),
+    ];
+    test.each(cases)(
+      "rm $flags removes a directory between operands that fail",
+      async ({ flags, failing, message }) => {
+        const files: Record<string, string> = {};
+        for (let d = 0; d < 6; d++) {
+          for (let f = 0; f < 6; f++) files[`tree/d${d}/f${f}`] = "";
+        }
+        using dir = tempDir("rm-operands", files);
+        const removed = listing(String(dir));
+
+        const result = await rm(how, String(dir), [flags, failing[0], failing[1], "tree", failing[2], failing[3]]);
+        expect({ ...result, left: listing(String(dir)) }).toEqual({
+          stdout: flags === "-rv" ? removed : [],
+          stderr: failing.map(operand => `rm: ${operand}: ${message}`),
+          exitCode: 1,
+          left: [],
+        });
+      },
+    );
+  });
+
+  // One tree with every way an entry stays, and a second operand next to it.
+  // The child runs without privileges so that the mode bits apply.
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  describe.serial.skipIf(isWindows)("a tree with entries that stay", () => {
+    test.each(["-r", "-rv", "-rf", "-rfv"])(
+      "rm %s removes what it can and reports each entry that stays",
+      async flags => {
+        using dir = tempDir("rm-read-only", {
+          // Files in a directory without write permission.
+          "tree/ro/f0": "",
+          "tree/ro/f1": "",
+          "tree/ro/f2": "",
+          // An empty directory in it: the rmdir of that directory is what fails.
+          "tree/ro/empty": {},
+          // A second such directory in it. Its file stays, so it gets no rmdir, which would fail as well.
+          "tree/ro/sub/g": "",
+          // Two directories that rm empties and then cannot remove from their parent.
+          "tree/ro2/a/inner/file": "",
+          "tree/ro2/b/inner/file": "",
+          // A directory that rm cannot open.
+          "tree/locked/inside": "",
+          "tree/good/y": "",
+          "tree/good/sub/z": "",
+          "tree/x": "",
+          "other/p/q": "",
+        });
+        const tree = path.join(String(dir), "tree");
+        // Before the modes change: it lists the whole tree.
+        using unprivileged = unprivilegedSpawnOptions(String(dir));
+        const modes = { "ro/sub": 0o555, "ro": 0o555, "ro2": 0o555, "locked": 0o000 };
+        try {
+          for (const [name, mode] of Object.entries(modes)) chmodSync(path.join(tree, name), mode);
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "exec", `rm ${flags} tree other`],
+            cwd: String(dir),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            ...unprivileged,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          chmodSync(path.join(tree, "locked"), 0o755);
+          expect({ stdout: lines(stdout), stderr: lines(stderr), exitCode, left: listing(String(dir)) }).toEqual({
+            stdout: flags.includes("v")
+              ? [
+                  "other",
+                  "other/p",
+                  "other/p/q",
+                  "tree/good",
+                  "tree/good/sub",
+                  "tree/good/sub/z",
+                  "tree/good/y",
+                  "tree/ro2/a/inner",
+                  "tree/ro2/a/inner/file",
+                  "tree/ro2/b/inner",
+                  "tree/ro2/b/inner/file",
+                  "tree/x",
+                ]
+              : [],
+            // One line for each entry, and none for a directory that holds one.
+            stderr: [
+              "rm: tree/locked: Permission denied",
+              "rm: tree/ro/empty: Permission denied",
+              "rm: tree/ro/f0: Permission denied",
+              "rm: tree/ro/f1: Permission denied",
+              "rm: tree/ro/f2: Permission denied",
+              "rm: tree/ro/sub/g: Permission denied",
+              "rm: tree/ro2/a: Permission denied",
+              "rm: tree/ro2/b: Permission denied",
+            ],
+            exitCode: 1,
+            left: [
+              "tree",
+              "tree/locked",
+              "tree/locked/inside",
+              "tree/ro",
+              "tree/ro/empty",
+              "tree/ro/f0",
+              "tree/ro/f1",
+              "tree/ro/f2",
+              "tree/ro/sub",
+              "tree/ro/sub/g",
+              "tree/ro2",
+              "tree/ro2/a",
+              "tree/ro2/b",
+            ],
+          });
+        } finally {
+          for (const name of Object.keys(modes).reverse()) chmodSync(path.join(tree, name), 0o755);
+        }
+      },
+    );
+  });
+
+  // A directory that rm can open and cannot list stays, with what is in it.
+  // An LD_PRELOAD library fails the read: bun issues getdents64 through the
+  // syscall() of libc, which is the symbol that the library takes over.
+  test.skipIf(!isLinux || !(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc")))(
+    "reports a directory that it cannot list and removes the entries next to it",
+    async () => {
+      using shimDir = tempDir("rm-list-error-shim", {
+        "shim.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// Every read of a directory that is named "unlistable" fails with EIO.
+long syscall(long nr, ...) {
+  static long (*next)(long, ...);
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next) next = dlsym(RTLD_NEXT, "syscall");
+  if (nr == SYS_getdents64) {
+    char link[64], path[PATH_MAX];
+    snprintf(link, sizeof link, "/proc/self/fd/%d", (int)a1);
+    ssize_t length = readlink(link, path, sizeof path - 1);
+    if (length > 0) {
+      path[length] = 0;
+      const char *name = strrchr(path, '/');
+      if (name && strcmp(name, "/unlistable") == 0) {
+        errno = EIO;
+        return -1;
+      }
+    }
+  }
+  return next(nr, a1, a2, a3, a4, a5, a6);
+}
+`,
+      });
+      const shim = compileFixture(path.join(String(shimDir), "shim.c"), { flags: ["-ldl"] });
+      using dir = tempDir("rm-list-error", {
+        "tree/unlistable/inside": "",
+        "tree/good/y": "",
+        "tree/good/sub/z": "",
+        "tree/x": "",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "exec", "rm -rf tree"],
+        cwd: String(dir),
+        env: { ...bunEnv, LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: lines(stderr), exitCode, left: listing(String(dir)) }).toEqual({
+        stdout: "",
+        stderr: ["rm: tree/unlistable: Input/output error"],
+        exitCode: 1,
+        left: ["tree", "tree/unlistable", "tree/unlistable/inside"],
+      });
+    },
+  );
+
+  // On Windows the usual entry that stays is a file or a directory that a
+  // program has open without FILE_SHARE_DELETE, as an executable that runs.
+  test.skipIf(!isWindows)("removes the entries next to a file and a directory that are open elsewhere", async () => {
+    using dir = tempDir("rm-held", {
+      "tree/busy/held.txt": "",
+      "tree/busy/other.txt": "",
+      "tree/held": {},
+      "tree/good/y": "",
+      "tree/good/sub/z": "",
+      "tree/x": "",
+    });
+    const { symbols, close } = dlopen("kernel32.dll", {
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+      CloseHandle: { args: ["u64"], returns: "i32" },
+    });
+    const [GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING] = [0x80000000, 1, 2, 3];
+    // Needed to open a directory.
+    const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    const handles = [
+      ["tree", "busy", "held.txt"],
+      ["tree", "held"],
+    ].map(entry =>
+      symbols.CreateFileW(
+        Buffer.from(`${path.join(String(dir), ...entry)}\0`, "utf16le"),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        null,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        null,
+      ),
+    );
+    try {
+      // `INVALID_HANDLE_VALUE`: without the handles, the test would say nothing.
+      expect(handles).not.toContain(0xffffffffffffffffn);
+      const { stdout, stderr, exitCode } = await $`rm -rf tree`.cwd(String(dir)).quiet();
+      expect({ stdout: lines(stdout), stderr: lines(stderr), exitCode, left: listing(String(dir)) }).toEqual({
+        stdout: [],
+        stderr: [expect.stringMatching(/^rm: tree\/busy\/held\.txt: /), expect.stringMatching(/^rm: tree\/held: /)],
+        exitCode: 1,
+        left: ["tree", "tree/busy", "tree/busy/held.txt", "tree/held"],
+      });
+    } finally {
+      for (const handle of handles) symbols.CloseHandle(handle);
+      close();
+    }
+  });
 });

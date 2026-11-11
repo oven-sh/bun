@@ -677,7 +677,7 @@ pub fn install_with_manager(
 
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
     // A row that a frozen install refuses because the lockfile binds it outside its range.
-    let mut row_frozen_refuses: Option<DependencyID> = None;
+    let mut frozen_refused_row: Option<DependencyID> = None;
     let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
         count_requests_removed_from_lockfile(manager, &lockfile_before_clean)
     } else {
@@ -711,7 +711,7 @@ pub fn install_with_manager(
         if is_frozen {
             // A frozen install takes the versions that the lockfile has for the rows that a rule
             // names. One that the lockfile binds outside the range it declares fails below.
-            row_frozen_refuses = frozen_refuses(&manager.lockfile, &outside);
+            frozen_refused_row = first_row_frozen_refuses(&manager.lockfile, &outside);
         } else if !outside.is_empty() {
             moved_outside_ranges = reresolve_rows_outside_ranges(
                 manager,
@@ -800,7 +800,7 @@ pub fn install_with_manager(
     {
         'frozen_lockfile: {
             let mut changed_section = frozen_changed_section(manager, root_package_json_path);
-            if changed_section.is_none() && row_frozen_refuses.is_none() {
+            if changed_section.is_none() && frozen_refused_row.is_none() {
                 // Only an install stores a hash in bun.lockb. The hash covers lifecycle scripts
                 // too.
                 let same_packages = if load_result.loaded_from_text_lockfile()
@@ -853,7 +853,7 @@ pub fn install_with_manager(
                             );
                         }
                     }
-                } else if let Some(row) = row_frozen_refuses {
+                } else if let Some(row) = frozen_refused_row {
                     note_row_outside_range(
                         &manager.lockfile,
                         loaded_lockfile_name(&load_result),
@@ -2559,8 +2559,10 @@ fn retain_rows_to_resolve_again(
 }
 
 /// The first row of `outside` that a frozen install refuses: one that no `overrides` rule names.
-/// Bun 1.4 wrote lockfiles whose rows disobey a rule, and a frozen install still accepts those.
-fn frozen_refuses(
+/// Bun 1.4 wrote lockfiles whose rows disobey a rule, or follow a rule that the resolver now reads
+/// differently, and a frozen install still accepts those. The name is enough: the frozen install
+/// never looked at a row of such a name before.
+fn first_row_frozen_refuses(
     lockfile: &Lockfile,
     outside: &[(DependencyID, PackageID)],
 ) -> Option<DependencyID> {

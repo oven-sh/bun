@@ -1845,14 +1845,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
     }
 
     if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
-        auto& key = cryptoKey->wrapped();
-        checkCryptoKey(key, keyValue);
+        Ref key = cryptoKey->wrapped();
+        checkCryptoKey(key.get(), keyValue);
         RETURN_IF_EXCEPTION(scope, {});
 
         emitCryptoKeyDeprecationWarning(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto keyObject = create(key);
+        auto keyObject = create(key.get());
         if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
             RELEASE_AND_RETURN(scope, {});
@@ -1916,14 +1916,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
 
         if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(dataValue)) {
-            auto& key = cryptoKey->wrapped();
-            checkCryptoKey(key, dataValue);
+            Ref key = cryptoKey->wrapped();
+            checkCryptoKey(key.get(), dataValue);
             RETURN_IF_EXCEPTION(scope, {});
 
             emitCryptoKeyDeprecationWarning(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto keyObject = create(key);
+            auto keyObject = create(key.get());
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
                 RELEASE_AND_RETURN(scope, {});
@@ -2098,14 +2098,14 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
             }
             return handle;
         } else if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
-            auto& key = cryptoKey->wrapped();
-            if (key.type() != CryptoKeyType::Secret) {
-                ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key.type(), "secret"_s);
+            Ref key = cryptoKey->wrapped();
+            if (key->type() != CryptoKeyType::Secret) {
+                ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key->type(), "secret"_s);
                 return {};
             }
             emitCryptoKeyDeprecationWarning(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            auto keyObject = create(key);
+            auto keyObject = create(key.get());
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(globalObject, scope, keyObject.releaseException());
                 return {};

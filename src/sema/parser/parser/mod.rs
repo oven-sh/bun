@@ -387,6 +387,7 @@ pub(crate) fn run<'a>(
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_compiled_javascript = options.compiles && is_ecmascript;
     lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
+    lx.accepts_legacy_octal = options.accepts_legacy_octal;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
 
@@ -879,7 +880,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             };
             let arguments = [argument.as_slice()];
             let arguments = &arguments[..usize::from(!argument.is_empty())];
-            match self.lx.compiles() {
+            match self.lx.compiles() || self.lx.accepts_legacy_octal {
                 true => self.flag_early_error(code, (start, end), arguments),
                 false => self.flag(DiagnosticKind::Grammar, code, (start, end), arguments),
             }

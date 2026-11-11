@@ -8,6 +8,7 @@ use crate::module_format::{
     EsmSyntax, FormatDecision, ModuleFormat, decide_module_format, file_esm_syntax,
 };
 use crate::session::Arena;
+use bun_core::file_steps::{self, FileStep};
 
 pub(super) fn bind<'s>(
     hir: &mut File<'s>,
@@ -19,6 +20,7 @@ pub(super) fn bind<'s>(
     debug_assert!(options.runtime.is_some());
     debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
     hir.reset_strict();
+    let _step = file_steps::count(FileStep::Bind);
     bind_below_defines(hir, options, inputs.names_in_place(), atoms, arena)
 }
 
@@ -42,7 +44,9 @@ pub(super) fn run<'s>(
         hir.set_strict();
         if bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
+            let step = file_steps::count(FileStep::Bind);
             bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
+            drop(step);
             if bound.ran_out_of_stack {
                 return (bound, FileAnalysis::default());
             }
@@ -65,7 +69,10 @@ pub(super) fn run_again<'s>(
     arena: &'s Arena,
 ) -> Option<AnalyzedAgain<'s>> {
     let folded = match from {
-        AnalyzedAgainFrom::Folding => fold_file(hir, bound, inputs, file, atoms, arena),
+        AnalyzedAgainFrom::Folding => {
+            let _step = file_steps::count(FileStep::Fold);
+            fold_file(hir, bound, inputs, file, atoms, arena)
+        }
         AnalyzedAgainFrom::ImportScan => FoldResult {
             decisions: previous.decisions,
             errors: previous
@@ -179,7 +186,9 @@ fn fold_bound_file<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
 ) -> (FoldResult<'s>, ImportScan<'s>) {
+    let step = file_steps::count(FileStep::Fold);
     let folded = fold_file(hir, bound, inputs, file, atoms, arena);
+    drop(step);
     let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
     (folded, scan)
 }
@@ -202,6 +211,7 @@ fn scan_folded_file<'s>(
         file,
         atoms,
     };
+    let _step = file_steps::count(FileStep::FindImportSites);
     collect_import_sites(&scan_inputs, arena)
 }
 

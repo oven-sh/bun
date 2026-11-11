@@ -4,7 +4,7 @@
 // # f1 = tell, f2 = show, f3 = compare, f4 = row
 // # RUN(ROW): walk f4 mechanisms=all-Inlining
 // # ROW-LABEL: code f4:Body
-// # ROW: isInLoop=true isLoopHead=true:
+// # ROW: frequency=Rare isLoopHead=true:
 // # ROW: [[typed]]({{*}}) isInLoop=true isLoopHead=true:
 // # ROW: [[unit]]: int[0, 65535] @Int32 = GetStringCodeUnit
 // # ROW-NEXT: StrictEq [[unit]], [[other]] form=Integers

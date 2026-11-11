@@ -19,7 +19,7 @@ use bun_sema::program::{FileId, Files};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{OnceCell, RefCell};
 
-use super::commonjs::CommonJsState;
+use super::commonjs::{CommonJsState, PathComparison};
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
 use super::scope::NamesOfFileForEvals;
@@ -41,6 +41,7 @@ pub use throwing::lower_file_that_throws;
 pub(crate) struct ModuleState {
     pub(in crate::lower) data: DataState,
     pub(in crate::lower) commonjs: CommonJsState,
+    pub(in crate::lower) path_comparisons: Vec<PathComparison>,
     pub(in crate::lower) known_member_values: KnownMemberValues,
     pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
     pub(in crate::lower) names_of_file_for_evals: Option<NamesOfFileForEvals>,

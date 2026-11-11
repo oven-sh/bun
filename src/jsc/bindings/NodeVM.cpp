@@ -1566,7 +1566,9 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    bool deleted = Bun::hasCompiledModules() ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    // Objects and functions of compiled code have properties that only their own method table finds. All other objects, including Proxies, take the same path as in bun run.
+    bool isCompiled = sandbox->type() == CompiledObjectType || sandbox->type() == SlimClosureType;
+    bool deleted = isCompiled ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;

@@ -7,6 +7,8 @@ mod statements;
 mod tests;
 mod walker;
 
+use std::cell::OnceCell;
+
 use bun_sema::bind::{Binding, Bound, ScopeId, SymbolId};
 use bun_sema::fold::{Decisions, TreeNode};
 use bun_sema::hir::{self, ClassId, ExprId, FnId, MemberId, StmtId};
@@ -202,6 +204,7 @@ struct Walker<'x, 's> {
     pending_stores: Vec<SymbolId>,
     unconditional_calls_of_super: FxHashSet<ExprId>,
     fields_evaluated_in_constructors: FxHashSet<MemberId>,
+    places_of_this_super_and_return: OnceCell<Vec<u32>>,
     clock: u32,
     number_walked: u32,
     is_only_called_or_tested: Vec<bool>,

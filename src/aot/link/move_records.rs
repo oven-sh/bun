@@ -14,7 +14,7 @@ use crate::ir::generated::{
 use crate::ir::parallel::{extend_from_lists, map_each};
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, Id, InParallel, LayoutId, ModuleId,
-    StringTable, VariableId, for_each_mut,
+    PackScratch, StringTable, VariableId, for_each_mut,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_sema::atom::{Atom, Interner};
@@ -123,8 +123,9 @@ impl RecordMover<'_> {
     fn move_functions(&self, index: u32, unit: &mut LinkUnit, output: &mut UnitOutput) {
         let local_to_merged = &self.merged_functions[unit.tables as usize];
         let definitions = &mut unit.function_definitions;
+        let mut scratch = PackScratch::default();
         output.functions.reserve(definitions.len());
-        for (merged, site, mut function) in take_definitions(index, definitions, local_to_merged) {
+        for (merged, site, function) in take_definitions(index, definitions, local_to_merged) {
             if self.definitions.functions[merged as usize] != Some(site) {
                 continue;
             }
@@ -134,6 +135,7 @@ impl RecordMover<'_> {
                 id.index() == first.index() + output.functions.len(),
                 "program ids follow the order of the unit"
             );
+            let mut function = function.unpack(&mut scratch);
             let record = Arc::make_mut(&mut function);
             record.function_types = program_ids_above(
                 &self.definitions.function_types,
@@ -150,12 +152,14 @@ impl RecordMover<'_> {
         let map = ids.as_map();
         let local_to_merged = &self.merged_layouts[unit.tables as usize];
         let definitions = &mut unit.layout_definitions;
-        for (merged, site, mut layout) in take_definitions(index, definitions, local_to_merged) {
+        let mut scratch = PackScratch::default();
+        for (merged, site, layout) in take_definitions(index, definitions, local_to_merged) {
             let is_chosen = self.definitions.layouts[merged as usize] == Some(site);
             if !is_chosen && !self.definitions.is_other_definition(merged, site) {
                 continue;
             }
             let id = program_id(&self.numbering.layouts, merged);
+            let mut layout = layout.unpack(&mut scratch);
             forget_module_without_record(&mut layout, &ids.modules);
             if layout.module.is_some() && layout.place.is_none() {
                 layout.place = Some(layout.position);

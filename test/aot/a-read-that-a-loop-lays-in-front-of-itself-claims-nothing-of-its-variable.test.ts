@@ -1,6 +1,6 @@
 // A loop that calls one of a few functions out of a variable asks in front of its turns which of them the variable holds. That read is none of the reads of the text: what holds of those, that a store
 // stands in front of each, does not hold of it. Where the first store stands in the turn the variable still holds undefined there, so the read takes the word as it lies and claims nothing.
-// `--aot-testing=AssumeVariablesInitialized` takes the read to hold what is proven of the variable. Under `--aot-harden=proof-checks` every such claim is asked at run time:
+// `--aot-testing=AssumeVariablesInitialized` takes the read to hold what is proven of the variable. Under the run-time words of `--aot-harden=proof-checks` every such claim is asked at run time:
 // with both the program stops by name, in front of its first turn. `fuzz/fuzzilli/write-variable-that-a-loop-uses-sweep.ts` writes these programs and their neighbors.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -12,6 +12,9 @@ import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const CHECKED = "--aot-harden=proof-checks";
+// What the name lays into the program. The name also runs the compiler's verifier, which refuses the build with the fault.
+const RUN_TIME_CHECKS =
+  "--aot-testing=CheckProofsAtRunTime,DisableFrameCells,CheckHoistedCallsAtRunTime,CheckResultFreshnessAtRunTime";
 const WORD = "--aot-testing=AssumeVariablesInitialized";
 const peek = `function peek() {
   return held;
@@ -76,9 +79,12 @@ describe.skipIf(!!unsupported)("the read that a loop lays in front of itself", (
         expect(counted.stderr).toMatch(/^\s*RawVariableReadsHoisted\s+[1-9]/m);
         const right = await spawned([executable("right")], folder, env);
         expect({ stdout: right.stdout, exitCode: right.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-        const built = await build("held", CHECKED, WORD);
         const diagnostic =
           "is typed by a proof that leaves out the word that its variable is born with, and nothing vouches for it";
+        const refused = await build("refused", CHECKED, WORD);
+        expect(refused.stderr).toContain(diagnostic);
+        expect(refused.exitCode).toBe(1);
+        const built = await build("held", RUN_TIME_CHECKS, WORD);
         if (!expectFaultyBuild(built, diagnostic)) return;
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
         expect(held.stderr).toContain("found undefined in a local variable");

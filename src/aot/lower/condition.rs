@@ -403,6 +403,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let right_value = self.lower_expression(right);
         let left_field = left_field.filter(|&field| self.is_holder_unchanged(field));
         let right_field = self.find_compared_field(op, right, left);
+        self.set_position(self.file.hir[left].pos);
         let (test, is_negated) = operator::emit_comparison(self, op, left_value, right_value);
         let (on_taken, on_not_taken) = order_targets(is_negated, if_true, if_false);
         let fields = [left_field, right_field];

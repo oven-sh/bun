@@ -2586,6 +2586,12 @@ describe.concurrent("bun fmt", () => {
       ],
       ["  a: |1\n    x\n   y\n", "a: |1\n  x\n y\n", "a: |1\n    x\n   y\n"],
       ["-   - |1\n       x\n      y\n", "- - |1\n     x\n    y\n", "- - |1\n       x\n      y\n"],
+      // An escaped space or tab at the end of a line in double quotes is part of the string. Prettier trims it, so
+      // that the `\` ends the line, which is an escaped line break.
+      ['a:   "ab\\ \n  cd"\n', 'a: "ab\\ \n  cd"\n', 'a: "ab\\\n  cd"\n'],
+      ['a:   "ab\\\t\n  cd"\n', 'a: "ab\\\t\n  cd"\n', 'a: "ab\\\n  cd"\n'],
+      ['a:   "ab\\\\\\  \n  cd"\n', 'a: "ab\\\\\\ \n  cd"\n', 'a: "ab\\\\\\\n  cd"\n'],
+      ['a:   "ab\n  \\ \n  cd"\n', 'a: "ab\n  \\ \n  cd"\n', 'a: "ab\n  \\\n  cd"\n'],
     ])("%j", async (before, after, byPrettier) => {
       expect(after).not.toBe(byPrettier);
       expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
@@ -2595,6 +2601,35 @@ describe.concurrent("bun fmt", () => {
       const checked = await format({ "a.yaml": before }, ["--debug-check"]);
       expect(checked.stderr).toBe("");
       expect(checked.exitCode).toBe(0);
+    });
+
+    describe("an escaped space in double quotes", () => {
+      // Each row is the prose wrap, the width, the text, Bun's output and Prettier 3.9.9's output, or null where
+      // they're the same. `\ ` is one escape, so it isn't a place to break the line: a `\` at the end of a line is an
+      // escaped line break, and the space is lost.
+      const x75 = Buffer.alloc(75, "x").toString();
+      test.each([
+        ["always", 1, 'a: "ab\\ cd"\n', 'a:\n  "ab\\ cd"\n', 'a:\n  "ab\\\n  cd"\n'],
+        ["always", 1, 'a: "ab\\\\\\ cd"\n', 'a:\n  "ab\\\\\\ cd"\n', 'a:\n  "ab\\\\\\\n  cd"\n'],
+        ["always", 1, 'a: "ab\\ cd ef"\n', 'a:\n  "ab\\ cd\n  ef"\n', 'a:\n  "ab\\\n  cd\n  ef"\n'],
+        ["always", 1, 'a: "ab\\ \n  cd"\n', 'a:\n  "ab\\ \n  cd"\n', 'a:\n  "ab\\\n  cd"\n'],
+        ["always", 80, 'a: "ab\\ \n  cd"\n', 'a: "ab\\  cd"\n', 'a: "ab\\\n  cd"\n'],
+        ["always", 80, `note: "${x75}\\ yyyy"\n`, `note:\n  "${x75}\\ yyyy"\n`, `note:\n  "${x75}\\\n  yyyy"\n`],
+        ["never", 1, 'a: "ab\\ \n  cd"\n', 'a: "ab\\  cd"\n', 'a: "ab\\\ncd"\n'],
+        // `\\` is an escaped backslash, so the space after it is a place to break the line.
+        ["always", 1, 'a: "ab\\\\ cd"\n', 'a:\n  "ab\\\\\n  cd"\n', null],
+        ["never", 1, 'a: "ab\\ cd"\n', 'a: "ab\\ cd"\n', null],
+      ] as const)("with --prose-wrap=%s at %d columns: %j", async (proseWrap, width, before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
+        const args = [`--prose-wrap=${proseWrap}`, `--print-width=${width}`];
+        const result = await format({ "a.yaml": before, "b.yaml": after }, args, { reads: ["a.yaml", "b.yaml"] });
+        expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
+        expect(result.exitCode).toBe(0);
+        const checked = await format({ "a.yaml": before }, ["--debug-check", ...args]);
+        expect(checked.stderr).toBe("");
+        expect(checked.exitCode).toBe(0);
+      });
     });
 
     test.each(["always", "never"])(

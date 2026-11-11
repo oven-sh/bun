@@ -311,6 +311,18 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
     return jsUndefined();
 }
 
+// Nobody is left to open the segment, and its unlink is this side's job.
+static void unlinkScreenshot(Reader r)
+{
+    uint32_t nameLen = r.u32();
+    if (nameLen > r.remaining())
+        return;
+    WTF::Vector<char, 64> name;
+    name.append(std::span<const char>(reinterpret_cast<const char*>(r.bytes(nameLen)), nameLen));
+    name.append('\0');
+    shm_unlink(name.span().data());
+}
+
 void HostClient::handleReply(const Frame& h, Reader r)
 {
     auto* g = global;
@@ -318,9 +330,11 @@ void HostClient::handleReply(const Frame& h, Reader r)
     auto reply = static_cast<Reply>(h.op);
 
     auto it = viewsById.find(h.viewId);
-    if (it == viewsById.end()) return;
-    JSWebView* view = it->second.get();
-    if (!view) return; // collected — user dropped both view and promise
+    JSWebView* view = it == viewsById.end() ? nullptr : it->second.get();
+    if (!view) { // closed, or collected — user dropped both view and promise
+        if (reply == Reply::ScreenshotDone) unlinkScreenshot(r);
+        return;
+    }
 
     switch (reply) {
     // Events fire the callback; they arrive BEFORE the matching Done/Failed

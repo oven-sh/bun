@@ -174,6 +174,8 @@ public:
     }
 
     bool hasEvaluated = false;
+    // Under `bun test`: BunPlugin::OnLoad::testFile at the last require() that returned this object. The test file that runs then holds the object.
+    uint32_t testFileOfLastRequire { 0 };
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

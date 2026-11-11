@@ -148,9 +148,17 @@ public:
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
         // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
         unsigned testFile = 1;
+        // `testFile` from the load of a test file until its end. Another number between two files.
+        unsigned runningTestFile = 0;
+        // A test file runs, and earlier ones may have left modules that it is linked to.
+        bool isLaterTestFileRunning() const { return testFile > 1 && runningTestFile == testFile; }
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
+        // The test file that fetched each module. A later file that imports the module is linked to the same record, and isn't named here.
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        // The records of ES modules that the running test file holds and didn't fetch, with no link in the registry to show it: import() and the like handed them to it.
+        // A CommonJS module has JSCommonJSModule::testFileOfLastRequire for that. Weak: a record that nothing uses holds nothing.
+        WTF::UncheckedKeyHashMap<JSC::JSCell*, JSC::Weak<JSC::JSCell>> modulesHandedToTestFile = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
@@ -358,5 +366,7 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
+// The running test file holds the module that an import() was fulfilled with from here on: OnLoad::modulesHandedToTestFile.
+void didHandImportToTestFile(Zig::GlobalObject*, JSC::JSValue moduleNamespace);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

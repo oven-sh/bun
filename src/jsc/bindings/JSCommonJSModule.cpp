@@ -422,6 +422,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     if (!moduleObject) [[unlikely]] {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
+    if (isBunTest) [[unlikely]]
+        moduleObject->testFileOfLastRequire = globalObject->onLoadPlugins.testFile;
 
     JSValue returnValue = jsNull();
     // See requireCompiledModule().
@@ -1095,6 +1097,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
 
     auto* module = JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent);
     RETURN_IF_EXCEPTION(scope, {});
+    // require() made it for a module that is yet to load. If that is an ES module, the call returns the namespace and never comes to jsFunctionEvaluateCommonJSModule() with this object.
+    if (isBunTest && !hasEvaluated.isTrue()) [[unlikely]]
+        module->testFileOfLastRequire = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins.testFile;
     // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
     if (parent != requirer)
         module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);

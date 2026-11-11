@@ -279,18 +279,21 @@ static JSPromise* pendingDynamicImport(Zig::GlobalObject* globalObject)
             break;
         auto* promise = uncheckedDowncast<JSPromise>(import);
         if (promise->status() != JSPromise::Status::Pending) {
+            // Nothing else remembers that the running test file holds the module from here on.
+            if (promise->status() == JSPromise::Status::Fulfilled)
+                didHandImportToTestFile(globalObject, promise->result());
             JSC__JSMap__remove(imports, globalObject, JSValue::encode(import));
             RETURN_IF_EXCEPTION(scope, nullptr);
             continue;
         }
-        // Vitest only waits for modules, and a factory isn't one.
-        if (!pending && !(value.isString() && isModuleMockWaitingForFactory(globalObject, asString(value)->tryGetValue())))
+        // Vitest only waits for modules, and a factory isn't one. Null: not an import() of a script.
+        if (!pending && !value.isNull() && !(value.isString() && isModuleMockWaitingForFactory(globalObject, asString(value)->tryGetValue())))
             pending = promise;
     }
     return pending;
 }
 
-void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import, const String& key)
+static void listImport(Zig::GlobalObject* globalObject, JSPromise* import, JSValue key)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -301,7 +304,33 @@ void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import, c
         pendingDynamicImport(globalObject);
         RETURN_IF_EXCEPTION(scope, );
     }
-    RELEASE_AND_RETURN(scope, JSC__JSMap__set(imports, globalObject, JSValue::encode(import), JSValue::encode(key.isNull() ? jsUndefined() : jsString(vm, key))));
+    RELEASE_AND_RETURN(scope, JSC__JSMap__set(imports, globalObject, JSValue::encode(import), JSValue::encode(key)));
+}
+
+void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import, const String& key)
+{
+    listImport(globalObject, import, key.isNull() ? jsUndefined() : jsString(getVM(globalObject), key));
+}
+
+void didStartImportOfActualModule(Zig::GlobalObject* globalObject, JSPromise* import)
+{
+    listImport(globalObject, import, jsNull());
+}
+
+void forEachImportHandedToTestFile(Zig::GlobalObject* globalObject, const WTF::Function<void(JSValue)>& functor)
+{
+    auto& vm = getVM(globalObject);
+    JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
+    if (!dynamicImports)
+        return;
+    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(dynamicImports), IterationKind::Entries);
+    while (true) {
+        auto [import, key] = iterator->nextWithAdvance(vm);
+        if (!import)
+            break;
+        if (auto* promise = uncheckedDowncast<JSPromise>(import); promise->status() == JSPromise::Status::Fulfilled)
+            functor(promise->result());
+    }
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsViFulfillUnlessImporting);

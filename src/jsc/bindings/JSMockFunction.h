@@ -3,6 +3,7 @@
 #include "root.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/Function.h>
 
 namespace WebCore {
 }
@@ -24,6 +25,10 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
+// The same for a load that vi.importActual() or vi.importMock() starts. `vi.dynamicImportSettled()` doesn't wait for it.
+void didStartImportOfActualModule(Zig::GlobalObject*, JSC::JSPromise* import);
+// Calls `functor` with what each of those imports was fulfilled with, while it is still listed. The others went to didHandImportToTestFile().
+void forEachImportHandedToTestFile(Zig::GlobalObject*, const WTF::Function<void(JSC::JSValue)>& functor);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
@@ -65,7 +70,8 @@ public:
     JSC::WriteBarrier<JSC::Unknown> envsOfPreload;
     JSC::WriteBarrier<JSC::Unknown> globalsOfPreload;
 
-    // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
+    // A JSMap from the promises given to didStartDynamicImport() to their keys, and from those of didStartImportOfActualModule() to null.
+    // Settled ones get swept. Until then a fulfilled one says that the running test file holds its module: see didHandImportToTestFile().
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.

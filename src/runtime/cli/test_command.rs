@@ -4018,14 +4018,10 @@ impl TestCommand {
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
-            // `--isolate` swaps the global after the last repeat.
-            let next_load_shares_global = !vm.test_isolation_enabled
-                || vm.test_isolation_state.shares_global
-                || repeat_index + 1 < repeat_count;
-            let _entered_file = EnteredFile {
+            let mut entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
                 global,
-                next_load_shares_global,
+                next_load: NextLoad::after(vm, repeat_index + 1 == repeat_count),
             };
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
@@ -4080,6 +4076,8 @@ impl TestCommand {
             let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
                 == jsc::js_promise::Status::Rejected;
             if failed_to_load {
+                // The file doesn't run again.
+                entered_file.next_load = NextLoad::after(vm, true);
                 // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
                 // `unhandled_rejection(&mut self, ...)` can reborrow.
                 let global = vm.global();
@@ -4202,11 +4200,12 @@ impl TestCommand {
                 }
             }
 
-            crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
-            if next_load_shares_global {
+            let next_load = entered_file.next_load;
+            crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load.shares_global());
+            if next_load.shares_global() {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
-            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
+            Self::undo_module_mocks(vm, global, file_path, next_load.shares_global());
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
@@ -4231,6 +4230,13 @@ impl TestCommand {
             // Tear down before `EnteredFile` drops, so an error it throws is reported in this file.
             if repeat_index == repeat_count {
                 environment.teardown(vm);
+                if next_load == NextLoad::NewModuleGraph {
+                    // What the window queued as it closed still finds what the preloads made.
+                    vm.drain_microtasks();
+                    crate::test_runner::vi_utils::on_module_graph_leave(vm.global());
+                    crate::test_runner::timers::fake_timers::on_module_graph_leave(vm.global());
+                    let _ = vm.global().handle_rejected_promises();
+                }
             }
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
@@ -4274,10 +4280,38 @@ impl Drop for RestoreOnlyAfterFile<'_> {
     }
 }
 
+/// What the next load of a test file shares with the run that just ended.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NextLoad {
+    /// `--isolate`, after the last run of a file: nothing. The global object is thrown away.
+    NewGlobal,
+    /// `--isolate=modules`, after the last run of a file: the global object. The module graph of the file is left, and
+    /// the preloads run again.
+    NewModuleGraph,
+    /// No isolation, or another `--rerun-each` run of the file: the global object and the module graph.
+    SameModuleGraph,
+}
+
+impl NextLoad {
+    fn after(vm: &VirtualMachine, is_last_run: bool) -> Self {
+        if !vm.test_isolation_enabled || !is_last_run {
+            Self::SameModuleGraph
+        } else if vm.test_isolation_state.shares_global {
+            Self::NewModuleGraph
+        } else {
+            Self::NewGlobal
+        }
+    }
+
+    fn shares_global(self) -> bool {
+        self != Self::NewGlobal
+    }
+}
+
 struct EnteredFile<'a> {
     bun_test_root: *mut bun_test::BunTestRoot,
     global: &'a jsc::JSGlobalObject,
-    next_load_shares_global: bool,
+    next_load: NextLoad,
 }
 
 impl Drop for EnteredFile<'_> {
@@ -4286,7 +4320,10 @@ impl Drop for EnteredFile<'_> {
         unsafe { (*self.bun_test_root).exit_file() };
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
-        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(
+            self.global,
+            self.next_load.shares_global(),
+        );
     }
 }
 

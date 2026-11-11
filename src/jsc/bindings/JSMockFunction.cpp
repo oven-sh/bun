@@ -448,7 +448,8 @@ public:
     bool isSpy { false };
     // `prototype` is still the CustomValue shared by all mocks, which creates the object on first read.
     bool hasLazyPrototype { true };
-    // Preloads and their beforeAll() hooks run once for all test files, so the end of a test file leaves it alone.
+    // A preload or its beforeAll() made it. The end of a test file leaves it alone, unless the preloads run again
+    // for the next file.
     bool isMadeByPreload { false };
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
@@ -888,7 +889,7 @@ public:
     static void clearAll(Zig::GlobalObject*);
     static void resetAll(Zig::GlobalObject*);
     static void restoreAll(Zig::GlobalObject*);
-    static void didFinishTestFile(Zig::GlobalObject*);
+    static void didFinishTestFile(Zig::GlobalObject*, bool endsMocksOfPreloads);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -1215,7 +1216,8 @@ void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
 
 // The next test file shares the global object, so this file's spies and recorded calls have to go.
 // Configured mocks stay registered, because a module shared with the next file may own them.
-__attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
+// With `endsMocksOfPreloads` the preloads run again for the next file, so what they made goes as well.
+__attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject, bool endsMocksOfPreloads)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1224,7 +1226,7 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     // Loop, because a Proxy trap hit while restoring one spy may install another.
     while (globalObject->mockModule.activeSpies) {
         forEachIn(globalObject, List::Spies, [&](JSMockFunction* spy) {
-            if (spy->isMadeByPreload) {
+            if (spy->isMadeByPreload && !endsMocksOfPreloads) {
                 spiesOfPreload.append(spy);
                 return;
             }
@@ -1248,8 +1250,8 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     }
 
     // Must run after restoring spies, since a Proxy trap may call a mock.
-    forEachIn(globalObject, List::Called, [](JSMockFunction* mock) {
-        if (mock->isMadeByPreload)
+    forEachIn(globalObject, List::Called, [endsMocksOfPreloads](JSMockFunction* mock) {
+        if (mock->isMadeByPreload && !endsMocksOfPreloads)
             mock->enter(List::Called);
         else
             mock->clear();
@@ -1276,7 +1278,12 @@ extern "C" void JSMock__resetAllMocks(Zig::GlobalObject* globalObject)
 
 extern "C" void JSMock__didFinishTestFile(Zig::GlobalObject* globalObject)
 {
-    JSMockFunction::didFinishTestFile(globalObject);
+    JSMockFunction::didFinishTestFile(globalObject, false);
+}
+
+extern "C" void JSMock__didLeaveModuleGraph(Zig::GlobalObject* globalObject)
+{
+    JSMockFunction::didFinishTestFile(globalObject, true);
 }
 
 JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
@@ -1495,6 +1502,11 @@ static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* global
 extern "C" void JSMock__willRunTest(Zig::GlobalObject* globalObject)
 {
     globalObject->mockModule.preloadMayBeRunning = false;
+}
+
+extern "C" void JSMock__willRunPreloads(Zig::GlobalObject* globalObject)
+{
+    globalObject->mockModule.preloadMayBeRunning = true;
 }
 
 static ALWAYS_INLINE JSC::JSArray* createArgumentsArray(JSC::VM& vm, Zig::GlobalObject* globalObject, const JSC::ArgList& args)

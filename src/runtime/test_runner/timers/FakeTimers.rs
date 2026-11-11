@@ -475,7 +475,7 @@ pub(crate) struct FakeTimers {
     /// Empty while inactive.
     faked: ApiSet,
     fakes_abort_signal_timeout: bool,
-    /// A preload script set up the current mock, so `on_test_file_end` keeps it.
+    /// A preload script set up the current mock, so `on_test_file_end` keeps it. It lasts until the preloads run again.
     from_preload: bool,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
@@ -1751,6 +1751,20 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
+}
+
+/// `--isolate=modules` leaves the module graph of a test file, and the preloads run again for the next file. A system
+/// time that was set with no fake timers ends here: a preload's, or one the file set after `on_test_file_end`. Fake
+/// timers end in `forget_realm`.
+pub(crate) fn on_module_graph_leave(global: &JSGlobalObject) {
+    // SAFETY: per-thread `timer::All`; a field read only.
+    let active = unsafe { (*timer_all()).fake_timers.active };
+    if !active && !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan() {
+        // SAFETY: the live event loop of the per-thread VM.
+        let _entered =
+            unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
+    }
 }
 
 pub(crate) fn is_active() -> bool {

@@ -15,7 +15,9 @@ unsafe extern "C" {
     safe fn JSMock__resetAllMocks(global: &JSGlobalObject);
     safe fn JSMock__clearAllMocks(global: &JSGlobalObject);
     safe fn JSMock__didFinishTestFile(global: &JSGlobalObject);
+    safe fn JSMock__didLeaveModuleGraph(global: &JSGlobalObject);
     safe fn JSMock__willRunTest(global: &JSGlobalObject);
+    safe fn JSMock__willRunPreloads(global: &JSGlobalObject);
 }
 
 type Reset = extern "C" fn(&JSGlobalObject);
@@ -66,7 +68,8 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
-/// If `next_load_shares_global` is false, `global` is thrown away and the preloads run again, so there's nothing to undo.
+/// Ends what the test file made, and keeps what a preload made. If `next_load_shares_global` is false, `global` is
+/// thrown away, so nothing is undone.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
     if let Some(runner) = Jest::runner() {
         if !next_load_shares_global {
@@ -82,6 +85,22 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, ViUtils__unstubAllGlobals);
     run(global, ViUtils__stubWhatPreloadStubbed);
     ViUtils__forgetDynamicImports(global);
+}
+
+/// `--isolate=modules` leaves the module graph of a test file after its last run, and the preloads run again for the
+/// next file. This ends what a preload made, and what the file made after `on_test_file_end`.
+pub(crate) fn on_module_graph_leave(global: &JSGlobalObject) {
+    if let Some(runner) = Jest::runner() {
+        runner.vi_config_of_preload = Config::default();
+        runner.vi_config = Config::default();
+    }
+    run(global, JSMock__didLeaveModuleGraph);
+    run(global, ViUtils__unstubAllEnvs);
+    run(global, ViUtils__unstubAllGlobals);
+    ViUtils__forgetDynamicImports(global);
+    if !global.bun_vm().preload.is_empty() {
+        JSMock__willRunPreloads(global);
+    }
 }
 
 /// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.

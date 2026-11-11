@@ -1545,6 +1545,57 @@ impl<'a> Printer<'a, '_> {
             })
     }
 
+    /// True if CommonMark's rule of 3 refuses the delimiters of `node`, an emphasis or a strong emphasis, as they are
+    /// written: the runs they are in add up to a multiple of 3, neither is one, and one of the two could do both.
+    /// micromark goes by what is left of a run after the pairs before it. So to Prettier `**a*(*) x` is an emphasis in
+    /// an emphasis, and it prints `_*a*(_) x`, which is that to CommonMark too, whereas the text is one emphasis and two
+    /// literal stars to it. With the marker kept, the runs stay as they are written.
+    fn is_refused_as_written(&self, node: &Node) -> bool {
+        let (start, end) = (node.start as usize, node.end as usize);
+        let marker = match self.original.get(start) {
+            Some(&marker @ (b'*' | b'_')) if !self.is_mdx && end > start => marker,
+            _ => return false,
+        };
+        let run_around = |at: usize| -> (usize, usize) {
+            let is_marker = |byte: &&u8| **byte == marker;
+            let (before, after) = self.original.split_at_checked(at).unwrap_or_default();
+            let run_start = at - before.iter().rev().take_while(is_marker).count();
+            (run_start, at + after.iter().take_while(is_marker).count())
+        };
+        let (open_start, open_end) = run_around(start);
+        let (close_start, close_end) = run_around(end - 1);
+        let (open_len, close_len) = (open_end - open_start, close_end - close_start);
+        if open_end > close_start
+            || open_len.is_multiple_of(3)
+            || close_len.is_multiple_of(3)
+            || !(open_len + close_len).is_multiple_of(3)
+        {
+            return false;
+        }
+        // What CommonMark lets a run do, by the characters around it: (can open, can close).
+        let can_open_and_close = |run_start: usize, run_end: usize| -> (bool, bool) {
+            let before = last_char(self.original.get(..run_start).unwrap_or_default());
+            let after = first_char(self.original.get(run_end..).unwrap_or_default());
+            let is_whitespace =
+                |it: Option<(char, usize)>| it.is_none_or(|it| is_commonmark_whitespace(it.0));
+            let is_punctuation = |it: Option<(char, usize)>| {
+                it.is_some_and(|it| bun_md::helpers::is_unicode_punctuation(it.0 as u32))
+            };
+            let is_left = !is_whitespace(after)
+                && (!is_punctuation(after) || is_whitespace(before) || is_punctuation(before));
+            let is_right = !is_whitespace(before)
+                && (!is_punctuation(before) || is_whitespace(after) || is_punctuation(after));
+            match marker {
+                b'*' => (is_left, is_right),
+                _ => (
+                    is_left && (!is_right || is_punctuation(before)),
+                    is_right && (!is_left || is_punctuation(after)),
+                ),
+            }
+        };
+        can_open_and_close(open_start, open_end).1 || can_open_and_close(close_start, close_end).0
+    }
+
     /// Prettier's `printMdast`
     fn print_mdast(&mut self, id: NodeId, node: &'a Node) -> Doc<'a> {
         if self.is_in_label {
@@ -1574,6 +1625,7 @@ impl<'a> Printer<'a, '_> {
                 let style: &'a [u8] = if self.is_autolink(node.first_child)
                     || self.keeps_marker(node)
                     || self.is_cut_from_longer_run(node)
+                    || self.is_refused_as_written(node)
                 {
                     self.source(node).get(..1).unwrap_or(b"_")
                 } else {
@@ -1588,10 +1640,11 @@ impl<'a> Printer<'a, '_> {
                 docs![style, self.print_children(id), style]
             }
             Kind::Strong => {
-                let style: &'a [u8] = match self.keeps_marker(node) {
-                    true => self.source(node).get(..2).unwrap_or(b"**"),
-                    false => b"**",
-                };
+                let style: &'a [u8] =
+                    match self.keeps_marker(node) || self.is_refused_as_written(node) {
+                        true => self.source(node).get(..2).unwrap_or(b"**"),
+                        false => b"**",
+                    };
                 docs![style, self.print_children(id), style]
             }
             Kind::Delete => docs!["~~", self.print_children(id), "~~"],

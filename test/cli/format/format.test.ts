@@ -2015,11 +2015,28 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // An opener and a closer of which one can do both do not pair if their runs add up to a multiple of 3 (CommonMark's
+    // rule of 3). CommonMark goes by the runs as written. micromark, Prettier's parser, goes by what is left of them
+    // after the pairs before. Each row is the text and what both Bun and Prettier 3.9.9 print, which a second run keeps.
+    test.each([
+      ["_*a *b** c_\n", "_*a *b** c_\n"],
+      ["**a *b** c*\n", "_*a *b** c_\n"],
+      ["_*a *b** c_ and **a *b** c*\n", "_*a *b** c_ and _*a *b** c_\n"],
+    ])("the rule of 3 counts what is left of a run: %j", async (before, after) => {
+      expect(rendered(after)).toBe(rendered(before));
+      const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
+      expect(result.files).toEqual({ "a.md": after, "b.md": after });
+      expect(result.exitCode).toBe(0);
+    });
+
     // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output
     // differently. All are emphasis nested three deep, or runs of `*` and `_` that are text inside an emphasis. Telling
     // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.
     test.each([
       ["**a****a**\n", "**a\\****a**\n"],
+      // To micromark the `**` after `d` pairs with what is left of `****` once the `*` after `c` has taken one star,
+      // although the `**` after `b` found nothing there.
+      ["x****a b** c* d**\n", "x***_a b\\** c_ d**\n"],
       ["*b **a*b*** c*\n", "*b \\**a*b*** c*\n"],
       ["*b _a_*b* c*\n", "*b *a**b* c*\n"],
       ["*b _*a*_ c*\n", "*b _*a*\\_ c*\n"],

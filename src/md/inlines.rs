@@ -1142,6 +1142,14 @@ impl Parser<'_> {
             return;
         }
 
+        // The length that the rule of three goes by: the run as written, or what is left of it.
+        let counts_what_is_left = compat::rule_of_three_counts_what_is_left(&self.flags);
+        let run_length = |d: &EmphDelim| -> usize {
+            match counts_what_is_left {
+                true => d.remaining,
+                false => d.count,
+            }
+        };
         let opener_bottom_key = |d: &EmphDelim| -> usize {
             let char_idx = match d.emph_char {
                 b'*' => 0,
@@ -1149,7 +1157,7 @@ impl Parser<'_> {
                 b'~' => 2,
                 _ => 0,
             };
-            ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
+            ((char_idx * 3) + (run_length(d) % 3)) * 2 + (d.can_open as usize)
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
         let mut prev_candidate = core::mem::take(&mut self.prev_candidate);
@@ -1199,12 +1207,13 @@ impl Parser<'_> {
 
                     // Rule of three: if closer can also open OR opener can also close,
                     // and the sum is a multiple of 3, and neither is individually a multiple of 3, skip
+                    let opener_len = run_length(&self.emph_delims[oi]);
+                    let closer_len = run_length(&self.emph_delims[closer_idx]);
                     if self.emph_delims[oi].emph_char != b'~'
                         && (self.emph_delims[oi].can_close || self.emph_delims[closer_idx].can_open)
-                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count)
-                            .is_multiple_of(3)
-                        && !self.emph_delims[oi].count.is_multiple_of(3)
-                        && !self.emph_delims[closer_idx].count.is_multiple_of(3)
+                        && (opener_len + closer_len).is_multiple_of(3)
+                        && !opener_len.is_multiple_of(3)
+                        && !closer_len.is_multiple_of(3)
                     {
                         from = oi;
                         oi = prev_candidate[oi];
@@ -1226,6 +1235,13 @@ impl Parser<'_> {
                     let opener = &mut self.emph_delims[oi];
                     opener.remaining -= use_;
                     opener.open_count += use_;
+                    // A closer that failed against this opener did so at its old length. Let the
+                    // closers of that class that come after look at it again.
+                    if counts_what_is_left && opener.remaining > 0 {
+                        for bottom in &mut openers_bottom {
+                            *bottom = (*bottom).min(oi);
+                        }
+                    }
                     match opener.has_room(true) {
                         true => opener.push_match(true, size),
                         false => self.room_for_more_matches(oi, true).push_match(true, size),

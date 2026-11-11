@@ -566,8 +566,7 @@ impl BunTestRoot {
         }
     }
 
-    /// Drop what the preloads registered: their hooks and their `vi.setConfig()`. The next
-    /// file's `loadPreloads()` registers both again, under `--isolate=modules` in the same global.
+    /// Drop the preloads' hooks and their `vi.setConfig()`. The next file's `loadPreloads()` registers both again.
     pub(crate) fn reset_hook_scope_for_test_isolation(&mut self) {
         debug_assert!(self.hook_scope.entries.is_empty());
         self.vi_config_of_preload = Default::default();

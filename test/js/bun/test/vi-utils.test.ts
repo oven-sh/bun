@@ -778,14 +778,16 @@ describe.concurrent("vi.setConfig", () => {
           import { beforeEach, describe, test, vi } from "bun:test";
           vi.setConfig({ hookTimeout: 10 });
           test("a", () => {
-            // Runs on every turn of the event loop until no test file is active. The worker exits after its
-            // last file, so the poll ends with the run at the latest.
+            // Polls until no test file is active. The worker exits after its last file, so the poll ends with the run.
             const poll = () => {
               try {
                 describe.skip("probe", () => {});
               } catch (error) {
                 if (String(error).includes("outside of a test file")) {
-                  beforeEach(() => Bun.sleep(40));
+                  beforeEach(async () => {
+                    await Bun.sleep(40);
+                    console.log("the hook ran");
+                  });
                   console.log("registered between two files");
                   return;
                 }
@@ -800,12 +802,13 @@ describe.concurrent("vi.setConfig", () => {
       oneWorker,
     );
     expect({
-      // In this order: the hook is registered before the test of b.test.ts runs.
-      seen: (stdout + stderr).split("\n").filter(line => /^(registered between two files|b runs)$/.test(line)),
+      seen: (stdout + stderr)
+        .split("\n")
+        .filter(line => /^(registered between two files|the hook ran|b runs)$/.test(line)),
       results: results(stderr),
       exitCode,
     }).toEqual({
-      seen: ["registered between two files", "b runs"],
+      seen: ["registered between two files", "the hook ran", "b runs"],
       results: ["(pass) a", "(pass) b"],
       exitCode: 0,
     });

@@ -66,9 +66,6 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
-/// Back to what the preloads set. Runs when a test file is left, because a hook registered between two test files
-/// belongs to the preloads. Runs again before each load: in between, test isolation drops the preloads' config and
-/// runs handlers of the file that was left.
 pub(crate) fn restore_config_of_preload(runner: &mut TestRunner<'_>) {
     runner.vi_config = runner.bun_test_root.vi_config_of_preload;
 }

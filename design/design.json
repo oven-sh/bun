@@ -1,0 +1,306 @@
+{
+ "premise": {
+  "verdict": "bug",
+  "votes": "3/3",
+  "confidence": 0.93,
+  "contract": {
+   "kind": "safety",
+   "text": "A synchronous throw from a child.stdout or child.stderr 'data' listener unwinds NativeReadable's pull reaction. The throw is reported as 'unhandledRejection', so with only an 'uncaughtException' handler installed the handler is never called and the process exits 1 (re-run here: 'error: boom1', 'exit\u2026[+646c]",
+   "source": "/tmp/wt-main/src/js/internal/streams/native-readable.ts:169-176 (the fulfilled reaction of ptr.pull().then), through pus\u2026[+237c]"
+  },
+  "reason": "Clause (i) decides it: a throwing 'data' listener on child.stdout or child.stderr, with default stdio 'pipe' and a process-level handler, is ordinary input {reach:who-hits-this}, and through the pull reaction at native-readable.ts:169-176 (emit at readable.ts:500 before the re-arm at :516) it gets a hang on main, silent loss of the remaining output, 'end', 'close' and exec callbacks on released 1.\u2026[+309c]",
+  "narrower_claim": "Three separate defects the facts point at, each re-run here on /tmp/pr/bun-base and each needing its own verdict.",
+  "question_for_maintainer": ""
+ },
+ "pick": "filereader-onread-arm",
+ "pick_title": "child_process: deliver stdout/stderr chunks from FileReader's read completion (a read-callback arm), not from a pull promise",
+ "pick_layer": "Frames 9-10: FileReader's read completion (/workspace/bun/src/runtime/webcore/FileReader.rs on_read_chunk, on_reader_done, on_reader_error), with NativeReadable\u2026[+175c]",
+ "confidence": 0.6,
+ "pick_reason": "No audit dispute: the audit marks this the only design that prevents the unwanted operation (child stdio gets no pull reaction and no push inside _read(), so the listener always runs on a frame entered from the event loop, as in Node) {layers:a-fix-at-every-frame} {reference:how-others-solve-it}, and the only one whose per-chunk bill is below main's (projected 9 GC cells to 1, 1 microtask to 0, 3 recvfrom + 2 epoll_ctl to 2 + 1 per parked-pull chunk) {filereader-onread-arm:common-path-cost}. Both simulated reviews of all five other candidates point here, and its own reviews say merge after changes. The runner-up E keeps the reaction, adds one JS frame per emitted event, and has two inherent regressions where main equals Node today (manual emit('data') and a user read() stop throwing to their caller) plus a read-on in 5 of 16 flow()-site rows where Node stops {emit-catch-handled-flag:comm\u2026[+744c]",
+ "tell_reporter": "",
+ "why_not_minimal": "What the extra size buys, in facts. Per parked-pull chunk it removes 2 promises, 2 closures, 2 lexical environments, 1 reaction, 1 microtask, 1 recvfrom and 1 epoll_ctl, where E adds a frame {filereader-onread-arm:common-path-cost}. There is no JS catch and no own emit, so a manual emit('data') still throws to its caller, AOT keeps inlined 'data' dispatch, and the inspector still sees an uncaught throw. The flow() site keeps Node's own result (4 of 8 on paused-then-throw). Node's data, tick, job order and the spawn-time AsyncLocalStorage store come with it. One on_read_chunk serves POSIX and W\u2026[+111c]",
+ "runner_up": "emit-catch-handled-flag",
+ "why_not_runner_up": "E compensates instead of preventing: the pull reaction still runs the listener and an own emit hides the throw. It charges one non-inlinable frame per emitted event on child stdout/stderr forever (+14 instructions per 'data' at FTL, +152 in DFG) and removes nothing. Its catch cannot tell Bun's delivery from the user's, so emit('data'), push(), unshift() and read() no longer throw to their caller, \u2026[+513c]",
+ "plan": [
+  {
+   "step": "Start from main. Take the 9 tests and fixtures of origin/robobun/f00c9907/rework-clean (720c2ab711c) as the acceptance suite, without its emit guard or JS-visib\u2026[+198c]"
+  },
+  {
+   "step": "Native arm: one JS callback registered per source through a new method on FileInternalReadableStreamSource (closeAdapter slot as template). on_read_chunk, on_re\u2026[+283c]"
+  },
+  {
+   "step": "Handle mode never reads inline. on_start must not read inside ptr.start() (FileReader.rs:474-485). Read start must arm a fresh, lazily paused source (set_flowin\u2026[+422c]"
+  },
+  {
+   "step": "Chunk buffer without a copy: hand JS a Buffer that owns the bytes read (as drain() does at ReadableStream.rs:1317-1330) or read into a pooled JS buffer. Require\u2026[+129c]"
+  },
+  {
+   "step": "Fatal path (R1) in native: when the callback throws, report through uncaught_exception. If nothing handled it and the report ends the run, stop the reader and d\u2026[+261c]"
+  },
+  {
+   "step": "JS handle mode, chosen once at construction by an explicit opt-in that only child_process.ts:1308 passes when the source has the new method. _read is read start\u2026[+403c]"
+  },
+  {
+   "step": "Residue, stdio built from pre-read bytes: build stdout/stderr at spawn for every 'pipe' slot (drop the stdioCount >= 3 gate at child_process.ts:1446 and :1536-1\u2026[+174c]"
+  },
+  {
+   "step": "Test matrix with no sleeps, paced through stdin or marker files: stdout and stderr, parked and writer-ahead chunk, handler, no handler and both handlers, throw \u2026[+478c]"
+  },
+  {
+   "step": "Platforms: bun run rust:check-all, then the matrix on Windows and macOS CI. Note the rebase exposure to open PR #47776."
+  },
+  {
+   "step": "PR body: every measurement below with its number, the stated divergences (first chunk one loop turn later, AsyncLocalStorage store at spawn), the siblings left,\u2026[+155c]"
+  }
+ ],
+ "measurements": [
+  {
+   "what": "GC cells per parked-pull chunk",
+   "how": "Paced 4 KiB fixture with every chunk a waiting read. Take bun:jsc heapStats().objectTypeCounts at N=100 and N=400 with BUN_JSC_useGC=0 and divide the difference by 300. Release main vs PR, stdout and \u2026[+7c]",
+   "tool": "bun:jsc heapStats",
+   "report_as": "parked chunk: __ GC cells (main 9), __ Promise (main 2), __ Function (main 2)"
+  },
+  {
+   "what": "Queue entries per chunk",
+   "how": "Wrap process.nextTick and Promise.prototype.then and divide by the 'data' count. Three fixtures: paced, writer-ahead (child asleep in write before each read start), gapless 256 MiB.",
+   "tool": "JS counters",
+   "report_as": "per 'data': nextTick __ paced (main 1.00), __ writer-ahead (main 0); .then __ (main 1.00)"
+  },
+  {
+   "what": "Syscalls per chunk",
+   "how": "Count recvfrom, epoll_ctl and epoll_pwait2 of the parent over a 200-chunk window. Paced, writer-ahead, and a for-await consumer. Main vs PR.",
+   "tool": "strace -fc on CI, or a ptrace syscall co\u2026[+5c]",
+   "report_as": "per chunk: recvfrom __ (main 3), epoll_ctl __ (main 2), epoll_pwait2 __ (main 1); for-await: __ vs main __"
+  },
+  {
+   "what": "Host calls per chunk",
+   "how": "BUN_DEBUG_FileReader=1 on a debug build: count setFlowing and onPull lines per 'data'. Handle mode must print no onPull line.",
+   "tool": "BUN_DEBUG_FileReader=1",
+   "report_as": "host calls per 'data': __ (main 2), onPull lines __ (main 1)"
+  },
+  {
+   "what": "Buffer allocations and copies per chunk",
+   "how": "Count Buffer.alloc and subarray calls and the ArrayBuffer delta in heapStats per 'data'. Divide bytes allocated and bytes copied by bytes delivered. Paced and gapless.",
+   "tool": "JS counters, bun:jsc heapStats",
+   "report_as": "backing stores per chunk __ (main 0.065 of 65536 B); bytes copied per delivered byte __ (main 0)"
+  },
+  {
+   "what": "Instructions per chunk on child stdout",
+   "how": "Two release builds from one build directory. 1 GiB gapless and 4 KiB paced through child.stdout with a counting listener, 10 runs each.",
+   "tool": "perf stat -e instructions:u -r 10",
+   "report_as": "instructions per 'data': paced __ vs main __; gapless __ vs main __"
+  },
+  {
+   "what": "Cost to other FileReader consumers",
+   "how": "Same two builds: Bun.file().stream() over 1 GiB, Bun.spawn().stdout.text() over 1 GiB, and bench/fetch/streaming-backpressure.mjs. Count instructions, and recv calls with the LD_PRELOAD shim of spawn-\u2026[+28c]",
+   "tool": "perf stat, LD_PRELOAD recv counter",
+   "report_as": "Bun.file().stream() 1 GiB: __ instructions vs main __ (__%); recv calls __ vs __"
+  },
+  {
+   "what": "Binary size, host functions, wrapper cell size",
+   "how": "Two release builds from one build directory. Diff .text, count new host functions, and read the cell size of the generated FileInternalReadableStreamSource wrapper.",
+   "tool": "bloaty or size",
+   "report_as": "release binary: +__ KB (bloaty, main vs PR); host functions +__; source wrapper +__ bytes"
+  }
+ ],
+ "siblings_in_scope": [
+  "child.stdout, child.stderr, stdio[1], stdio[2] of spawn, exec, execFile and fork, on POSIX and Windo\u2026[+2c]",
+  "both 'data' emit sites and the EOF tick after the last chunk",
+  "exec/execFile callbacks and child 'close' withheld by a stalled pipe",
+  "kept-chunk overwrite on child stdio (the #48553 case)",
+  "data, tick, job order and 'end' after the last listener's promise jobs on child stdio",
+  "child stdio built from pre-read bytes (short stdio arrays), through the build-at-spawn step"
+ ],
+ "siblings_noted": [
+  "Readable.fromWeb(Bun.spawn().stdout) hangs like x.mjs (third-door.mjs); it could opt in to the same \u2026[+64c]",
+  "process.stdin's catch and re-arm (builtins/ProcessObjectInternals.ts:238-278) could move onto the ar\u2026[+1c]",
+  "fs/streams.ts write reactions (child.stdin, process.stdout/stderr, tty.WriteStream) need a twin arm \u2026[+13c]",
+  "dgram.ts reaction site",
+  "net.Socket path: child 'close' does not wait for stdio[3+] (late-eof-fd3.cjs), a 'drain' listener th\u2026[+61c]",
+  "R1 process-wide: ticks, promise jobs and immediates still run after a fatal report, so other streams\u2026[+31c]"
+ ],
+ "revive": "",
+ "ranking": [
+  {
+   "id": "filereader-onread-arm",
+   "rank": 1,
+   "fixes_it": "yes",
+   "common_path_cost": "removes-cost",
+   "class_removed": "a user listener running under NativeReadable's pull reaction or flow() on child stdout/stderr: both emit sites, the skip\u2026[+84c]",
+   "review_cost": "L",
+   "one_line": "Only preventing design and only one below main per chunk (audit -14); unbuilt, so the plan carries six named repairs and every number must be measured."
+  },
+  {
+   "id": "emit-catch-handled-flag",
+   "rank": 2,
+   "fixes_it": "partly",
+   "common_path_cost": "small",
+   "class_removed": "instance only: child stdout/stderr 'data' at both emit sites; the reaction stays",
+   "review_cost": "M",
+   "one_line": "Built and Node-equal on the symptom rows on a real build, but it compensates with an own emit, costs a frame per event, and breaks manual emit/read() and the flow()-site order where main equals Node."
+  },
+  {
+   "id": "pushandcheck-catch-rearm",
+   "rank": 3,
+   "fixes_it": "partly",
+   "common_path_cost": "zero",
+   "class_removed": "instance only: the parked-pull emit site",
+   "review_cost": "S",
+   "one_line": "As written it guards 1 of 2 emit sites (three-throws stalls 14 of 14) and exits 0 after a fatal throw; the working push-site variant is a +164 to +250 line redesign."
+  },
+  {
+   "id": "no-change",
+   "rank": 4,
+   "fixes_it": "no",
+   "common_path_cost": "zero",
+   "class_removed": "none",
+   "review_cost": "none",
+   "one_line": "Keeps a shipped deadlock and a handler that is never called, but beats the two designs that bill every chunk or every spawn for a rare throw."
+  },
+  {
+   "id": "deferred-delivery",
+   "rank": 5,
+   "fixes_it": "partly",
+   "common_path_cost": "real",
+   "class_removed": "instance only",
+   "review_cost": "L",
+   "one_line": "Ends the hang but adds a queue entry per chunk (declined in #43739), and the built variants lose chunks and reorder 'end' for programs that never throw."
+  },
+  {
+   "id": "fd-socket-with-guard-residue",
+   "rank": 6,
+   "fixes_it": "partly",
+   "common_path_cost": "real",
+   "class_removed": "POSIX child stdout/stderr leave NativeReadable; Windows keeps a guard",
+   "review_cost": "L",
+   "one_line": "Two mechanisms for one bug: every piped spawn pays +18 syscalls and a node:net load, it is POSIX only, and it contains E whole; it is a separate project (#36316), not this fix."
+  }
+ ],
+ "panel": [
+  {
+   "pick": "filereader-onread-arm",
+   "confidence": 0.6
+  },
+  {
+   "pick": "filereader-onread-arm",
+   "confidence": 0.6
+  }
+ ],
+ "audit": [
+  {
+   "id": "no-change",
+   "work": "n/a",
+   "per_call_total": 0,
+   "per_call": {
+    "file_reads": 0,
+    "syscalls": 0,
+    "allocations": 0,
+    "queue_entries": 0,
+    "passes_over_input": 0,
+    "js_calls": 0
+   },
+   "rare_path_total": 0,
+   "per_process": {
+    "host_functions": 0,
+    "binary_kb_est": 0
+   },
+   "unknown": false
+  },
+  {
+   "id": "pushandcheck-catch-rearm",
+   "work": "compensated",
+   "per_call_total": 0,
+   "per_call": {
+    "file_reads": 0,
+    "syscalls": 0,
+    "allocations": 0,
+    "queue_entries": 0,
+    "passes_over_input": 0,
+    "js_calls": 0
+   },
+   "rare_path_total": 4,
+   "per_process": {
+    "host_functions": 0,
+    "binary_kb_est": 0.5
+   },
+   "unknown": false
+  },
+  {
+   "id": "emit-catch-handled-flag",
+   "work": "compensated",
+   "per_call_total": 1,
+   "per_call": {
+    "file_reads": 0,
+    "syscalls": 0,
+    "allocations": 0,
+    "queue_entries": 0,
+    "passes_over_input": 0,
+    "js_calls": 1
+   },
+   "rare_path_total": 2,
+   "per_process": {
+    "host_functions": 0,
+    "binary_kb_est": 1
+   },
+   "unknown": false
+  },
+  {
+   "id": "deferred-delivery",
+   "work": "compensated",
+   "per_call_total": 16,
+   "per_call": {
+    "file_reads": 0,
+    "syscalls": 0,
+    "allocations": 1,
+    "queue_entries": 1,
+    "passes_over_input": 0,
+    "js_calls": 14
+   },
+   "rare_path_total": 9,
+   "per_process": {
+    "host_functions": 0,
+    "binary_kb_est": 3
+   },
+   "unknown": false
+  },
+  {
+   "id": "fd-socket-with-guard-residue",
+   "work": "compensated",
+   "per_call_total": 213,
+   "per_call": {
+    "file_reads": 0,
+    "syscalls": 12,
+    "allocations": 48,
+    "queue_entries": 8,
+    "passes_over_input": 0,
+    "js_calls": 145
+   },
+   "rare_path_total": 0,
+   "per_process": {
+    "host_functions": 0,
+    "binary_kb_est": 3
+   },
+   "unknown": false
+  },
+  {
+   "id": "filereader-onread-arm",
+   "work": "prevented",
+   "per_call_total": -14,
+   "per_call": {
+    "file_reads": 0,
+    "syscalls": -2,
+    "allocations": -7,
+    "queue_entries": -1,
+    "passes_over_input": 0,
+    "js_calls": -4
+   },
+   "rare_path_total": 0,
+   "per_process": {
+    "host_functions": 1,
+    "binary_kb_est": 5
+   },
+   "unknown": false
+  }
+ ],
+ "note": "Verdict of design review run 1efc7e4ef1da (resumed 2026-11-11 20:41Z, completed 22:4xZ). Several strings are cut by the workflow ('\u2026[+Nc]'); the full result is /tmp/design/result.json (also /tmp/robobun-workflow-results/toolu_012fZpxUXvKbWDfFPjNRKBSR.txt). The runner-up E is built and tested at origin/robobun/f00c9907/rework-clean (3baa320d4fb) and stays unmerged as the fallback."
+}

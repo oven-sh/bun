@@ -234,6 +234,189 @@ describe.skipIf(isWindows).concurrent("locale variables in the environment", () 
 });
 
 // ---------------------------------------------------------------------------
+// Locale#getCollations / #getNumberingSystems — ECMA-402 CollationsOfLocale and
+// NumberingSystemsOfLocale: the answer of the locale that Intl.Collator and
+// Intl.NumberFormat match for the tag, and ["emoji", "eor"] and ["latn"] when
+// they match none. ICU answers for a tag it has no data for from the data of the
+// host's locale. Node gives ICU the tag as written, so Node follows LANG here.
+// ---------------------------------------------------------------------------
+
+describe("Intl.Locale.prototype.getCollations and getNumberingSystems", () => {
+  const info = (tag: string | Intl.Locale, options?: Intl.LocaleOptions) => {
+    const locale = new Intl.Locale(tag, options);
+    return { collations: locale.getCollations(), numberingSystems: locale.getNumberingSystems() };
+  };
+  const infos = (tags: string[]) => Object.fromEntries(tags.map(tag => [tag, info(tag)]));
+  const every = (tags: string[], expected: ReturnType<typeof info>) =>
+    Object.fromEntries(tags.map(tag => [tag, expected]));
+  const withLikelySubtags = (tags: string[]) => [
+    ...new Set(tags.flatMap(tag => [tag, new Intl.Locale(tag).maximize().toString()])),
+  ];
+
+  // What the two services match with the lookup matcher, which is ECMA-402's
+  // LookupMatchingLocaleByPrefix. No assumption about the data of the ICU in use.
+  const match = (service: typeof Intl.Collator | typeof Intl.NumberFormat, tag: string) =>
+    service.supportedLocalesOf(tag, { localeMatcher: "lookup" }).length
+      ? new Intl.Locale(new service(tag, { localeMatcher: "lookup" }).resolvedOptions().locale).baseName
+      : undefined;
+  const fromServices = (tag: string) => {
+    const baseName = new Intl.Locale(tag).baseName;
+    const collator = match(Intl.Collator, baseName);
+    const numberFormat = match(Intl.NumberFormat, baseName);
+    return {
+      collations: collator === undefined ? ["emoji", "eor"] : new Intl.Locale(collator).getCollations(),
+      numberingSystems: [
+        numberFormat === undefined ? "latn" : new Intl.NumberFormat(numberFormat).resolvedOptions().numberingSystem,
+      ],
+    };
+  };
+
+  const noLocale = ["xx", "xx-XX", "tlh", "qfz", "qga-DE", "abcdefgh", "abcdefgh-Arab-EG", "und", "und-US", "und-SA"];
+  const prefixHasLocale = ["de-Cyrl", "es-Arab", "fa-Latn", "bn-Latn", "ar-Latn-EG", "en-Arab", "zh-Latn", "en-JP"];
+  // ICU has data for these as an alias (ars, yue) or under the tag without its
+  // script (ar-Arab-EG). The two services do not have them as locales.
+  const knownToICUOnly = ["ars", "yue", "yue-HK", "ar-Arab-EG", "ur-Arab-IN", "mni-Mtei"];
+  const ownLocale = ["en", "de-DE", "de-AT", "es-419", "ar", "ar-EG", "ar-SA", "fa-AF", "ja-JP", "zh-Hant-TW"];
+  // Which of the two services has a locale for these depends on the ICU.
+  const others = ["eu", "la", "cnr", "sr-Latn-BA"];
+  const all = [...noLocale, ...prefixHasLocale, ...knownToICUOnly, ...ownLocale, ...others];
+
+  test("a tag without a locale in the services has the answer that ECMA-402 writes out", () => {
+    expect(Intl.Collator.supportedLocalesOf(noLocale)).toEqual([]);
+    expect(Intl.NumberFormat.supportedLocalesOf(noLocale)).toEqual([]);
+    expect(infos(noLocale)).toEqual(every(noLocale, { collations: ["emoji", "eor"], numberingSystems: ["latn"] }));
+  });
+
+  test("a tag has the answer of the locale that the services match for it", () => {
+    const tags = withLikelySubtags(all);
+    expect(infos(tags)).toEqual(Object.fromEntries(tags.map(tag => [tag, fromServices(tag)])));
+    for (const tag of tags) {
+      if (!Intl.Collator.supportedLocalesOf(tag).length) continue;
+      const accepted = info(tag).collations.map(
+        collation => new Intl.Collator(tag, { collation }).resolvedOptions().collation,
+      );
+      expect({ tag, accepted }).toEqual({ tag, accepted: info(tag).collations });
+    }
+  });
+
+  snapshotIf("values of CLDR 49", () => {
+    expect(infos([...prefixHasLocale, ...knownToICUOnly])).toEqual({
+      "de-Cyrl": { collations: ["emoji", "eor", "phonebk"], numberingSystems: ["latn"] },
+      "es-Arab": { collations: ["emoji", "eor", "trad"], numberingSystems: ["latn"] },
+      "fa-Latn": { collations: ["emoji", "eor"], numberingSystems: ["arabext"] },
+      "bn-Latn": { collations: ["emoji", "eor", "trad"], numberingSystems: ["beng"] },
+      "ar-Latn-EG": { collations: ["compat", "emoji", "eor"], numberingSystems: ["latn"] },
+      "en-Arab": { collations: ["emoji", "eor"], numberingSystems: ["latn"] },
+      "zh-Latn": { collations: ["emoji", "eor", "pinyin", "stroke", "unihan", "zhuyin"], numberingSystems: ["latn"] },
+      "en-JP": { collations: ["emoji", "eor"], numberingSystems: ["latn"] },
+      "ars": { collations: ["emoji", "eor"], numberingSystems: ["latn"] },
+      "yue": { collations: ["emoji", "eor"], numberingSystems: ["latn"] },
+      "yue-HK": { collations: ["emoji", "eor"], numberingSystems: ["latn"] },
+      "ar-Arab-EG": { collations: ["compat", "emoji", "eor"], numberingSystems: ["latn"] },
+      "ur-Arab-IN": { collations: ["emoji", "eor"], numberingSystems: ["latn"] },
+      "mni-Mtei": { collations: ["emoji", "eor"], numberingSystems: ["beng"] },
+    });
+  });
+
+  test("-u-co and -u-nu are the answer, and the value true is the empty string", () => {
+    expect({
+      "xx-u-co-phonebk": info("xx-u-co-phonebk").collations,
+      "de-u-co-phonebk": info("de-u-co-phonebk").collations,
+      "xx-u-nu-thai": info("xx-u-nu-thai").numberingSystems,
+      "ar-EG-u-nu-latn": info("ar-EG-u-nu-latn").numberingSystems,
+      "xx with options": info("xx", { collation: "trad", numberingSystem: "arab" }),
+      "xx-u-co-true": info("xx-u-co-true"),
+      "en-u-co-true": info("en-u-co-true"),
+      "xx-u-nu-true": info("xx-u-nu-true"),
+      "ar-EG-u-nu-true": info("ar-EG-u-nu-true"),
+    }).toEqual({
+      "xx-u-co-phonebk": ["phonebk"],
+      "de-u-co-phonebk": ["phonebk"],
+      "xx-u-nu-thai": ["thai"],
+      "ar-EG-u-nu-latn": ["latn"],
+      "xx with options": { collations: ["trad"], numberingSystems: ["arab"] },
+      "xx-u-co-true": { collations: [""], numberingSystems: ["latn"] },
+      "en-u-co-true": { collations: [""], numberingSystems: ["latn"] },
+      "xx-u-nu-true": { collations: ["emoji", "eor"], numberingSystems: [""] },
+      "ar-EG-u-nu-true": { collations: info("ar-EG").collations, numberingSystems: [""] },
+    });
+  });
+
+  // ICU keeps a language or a region that has a replacement as it was written
+  // ("iw", "YD"), and the tag of the locale has the replacement ("he", "YE").
+  test("the tag of the locale decides, not how the locale was written", () => {
+    const replaced = ["iw", "iw-IL", "in-ID", "ji", "mo-MD", "de-DD", "fr-FX", "my-BU", "ar-YD"];
+    expect(replaced.map(tag => new Intl.Locale(tag).toString())).toEqual(
+      ["he", "he-IL", "id-ID", "yi", "ro-MD", "de-DE", "fr-FR", "my-MM", "ar-YE"], // prettier-ignore
+    );
+    expect(infos(replaced)).toEqual(Object.fromEntries(replaced.map(tag => [tag, fromServices(tag)])));
+    // Every region, so that a replacement this list does not have is found too.
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const written = [...replaced];
+    for (const first of letters) for (const second of letters) written.push(`ar-${first}${second}`);
+    expect(infos(written)).toEqual(
+      Object.fromEntries(written.map(tag => [tag, info(new Intl.Locale(tag).toString())])),
+    );
+  });
+
+  // ICU takes its default locale from these variables. On Windows it takes the
+  // locale of the system.
+  test.skipIf(isWindows)("the host's locale changes nothing", async () => {
+    // Every locale that ICU has data for. The file has ICU's legacy names too, which are not tags.
+    const localesOfICU = readFileSync(new URL("./icu-locales.txt", import.meta.url), "utf8")
+      .split("\n")
+      .filter(tag => {
+        try {
+          return Intl.getCanonicalLocales(tag).length === 1;
+        } catch {
+          return false;
+        }
+      });
+    const tags = withLikelySubtags([...all, ...localesOfICU]);
+    const script = `const out = {};
+      for (const tag of ${JSON.stringify(tags)}) {
+        try {
+          const locale = new Intl.Locale(tag);
+          out[tag] = locale.getCollations() + " | " + locale.getNumberingSystems();
+        } catch (e) {
+          out[tag] = e.name;
+        }
+      }
+      console.log(JSON.stringify(out));`;
+    const hosts = [
+      { LANG: "C" },
+      { LANG: "ar_EG.UTF-8" },
+      { LANG: "de_DE.UTF-8" },
+      { LC_ALL: "ja_JP.UTF-8" },
+      { LC_MESSAGES: "fa_IR.UTF-8" },
+    ];
+    const [reference, ...others] = await Promise.all(
+      hosts.map(async vars => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ vars, stderr, exitCode }).toEqual({ vars, stderr: "", exitCode: 0 });
+        return JSON.parse(stdout) as Record<string, string>;
+      }),
+    );
+    expect(Object.keys(reference)).toEqual(tags);
+    expect(reference.xx).toBe("emoji,eor | latn");
+    // Only the tags that differ, so that a failure names them.
+    const changed = others.map((answers, index) => ({
+      host: hosts[index + 1],
+      changed: Object.fromEntries(
+        tags.filter(tag => answers[tag] !== reference[tag]).map(tag => [tag, [reference[tag], answers[tag]]]),
+      ),
+    }));
+    expect(changed).toEqual(hosts.slice(1).map(host => ({ host, changed: {} })));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Segmenter — brkitr/* raw (incl. cjdict)
 // ---------------------------------------------------------------------------
 

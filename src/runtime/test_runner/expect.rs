@@ -21,7 +21,7 @@ use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::pretty_format::JestPrettyFormat;
-use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
+use super::snapshot::{Format as SnapshotFormat, OfOlderBun, Outcome as SnapshotOutcome};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
@@ -1350,8 +1350,13 @@ impl Expect {
 
         match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
-            Ok(SnapshotOutcome::Mismatch { saved }) => {
-                if runner.snapshots.may_hold_entries_of_bun()
+            Ok(SnapshotOutcome::Mismatch { saved, of_older_bun }) => {
+                let of_older_bun = match &of_older_bun {
+                    Some(OfOlderBun::Saved) => Some(&saved),
+                    Some(OfOlderBun::Beside(entry)) => Some(entry),
+                    None => None,
+                };
+                if let Some(of_older_bun) = of_older_bun
                     && Self::was_written_by_another(
                         &[],
                         !same_as_older_bun || property_matchers.is_some(),
@@ -1359,7 +1364,7 @@ impl Expect {
                         received,
                         shown,
                         property_matchers,
-                        &saved,
+                        of_older_bun,
                     )?
                 {
                     runner.snapshots.passed += 1;

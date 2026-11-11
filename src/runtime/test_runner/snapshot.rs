@@ -89,7 +89,23 @@ pub(crate) enum Outcome {
     Passed,
     Written,
     /// Not counted yet: the caller bumps `passed` or `failed`.
-    Mismatch { saved: Box<[u8]> },
+    Mismatch { saved: Box<[u8]>, of_older_bun: Option<OfOlderBun> },
+}
+
+/// The text that an older Bun may have written for a snapshot. The snapshot passes if an older Bun printed it.
+pub(crate) enum OfOlderBun {
+    /// `saved`: its key is also Bun's key for the snapshot.
+    Saved,
+    /// The entry under Bun's key, beside `saved` under the file's key.
+    Beside(Box<[u8]>),
+}
+
+/// Where an older Bun may have left its entry for a snapshot.
+enum KeyOfOlderBun {
+    None,
+    /// The key that the file's format has for the snapshot.
+    TheSame,
+    Other(Vec<u8>),
 }
 
 pub(crate) enum FileOutcome {
@@ -225,9 +241,12 @@ pub(crate) struct File {
     format: Format,
     file: Option<bun_sys::File>,
     dirty: bool,
-    /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
-    /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
+    /// Older versions of Bun appended entries in their own format, under their own keys, to Jest's and Vitest's files.
     may_hold_entries_of_bun: bool,
+    /// Jest and Vitest keep their files sorted, so keys out of order are an older Bun's. `write_sorted` keeps that order.
+    keys_were_out_of_order: bool,
+    /// What `format` calls the tests of the file. `key_of_older_bun` asks for them once.
+    names_of_tests: Option<StringArrayHashMap<()>>,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -383,8 +402,19 @@ impl Snapshots {
         if format != Format::Bun {
             self.file_buf = Vec::new();
         }
-        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
+        let keys_were_out_of_order = format != Format::Bun && !self.keys_are_sorted();
+        let may_hold_entries_of_bun = format == Format::Bun
+            || keys_were_out_of_order
+            || (format == Format::Vitest && self.holds_a_key_in_both_spellings());
+        self._current_file = Some(File {
+            id: file_id,
+            format,
+            file: None,
+            dirty: false,
+            may_hold_entries_of_bun,
+            keys_were_out_of_order,
+            names_of_tests: None,
+        });
         Ok(format)
     }
 
@@ -392,8 +422,110 @@ impl Snapshots {
         self.values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
     }
 
-    pub(crate) fn may_hold_entries_of_bun(&self) -> bool {
+    /// Whether a Vitest file holds a snapshot under Vitest's key and under the key that an older Bun had for it.
+    fn holds_a_key_in_both_spellings(&self) -> bool {
+        let keys = self.values.keys();
+        let separator = Format::Vitest.name_separator();
+        // An older Bun's key has no " > ", unless a name has one.
+        if keys.iter().all(|key| strings::contains(key, separator)) {
+            return false;
+        }
+        let mut key_of_bun: Vec<u8> = Vec::new();
+        keys.iter().any(|key| {
+            let Some(last) = strings::last_index_of(key, separator) else { return false };
+            let (names, rest) = (&key[..last], &key[last + separator.len()..]);
+            key_of_bun.clear();
+            for (i, name) in strings::split(names, separator).enumerate() {
+                if i > 0 {
+                    key_of_bun.extend_from_slice(Format::Bun.name_separator());
+                }
+                key_of_bun.extend_from_slice(name);
+            }
+            let names = key_of_bun.len();
+            // What follows the last " > " is the name of the test, or a hint.
+            [Format::Bun.name_separator(), Format::Bun.hint_separator()].iter().any(|before_rest| {
+                key_of_bun.truncate(names);
+                key_of_bun.extend_from_slice(before_rest);
+                key_of_bun.extend_from_slice(rest);
+                self.values.contains(&key_of_bun)
+            })
+        })
+    }
+
+    fn may_hold_entries_of_bun(&self) -> bool {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
+    }
+
+    /// Bun's key for the snapshot that `format` calls `key`, if an older Bun may have left an entry in the file.
+    #[cold]
+    #[inline(never)]
+    fn key_of_older_bun(&mut self, expect: &Expect, format: Format, hint: &[u8], key: &[u8]) -> Result<KeyOfOlderBun, Error> {
+        // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
+        if format == Format::Bun || self.update_snapshots || !self.may_hold_entries_of_bun() {
+            return Ok(KeyOfOlderBun::None);
+        }
+        let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
+        // The count of a key comes after its last space.
+        key_of_bun.extend_from_slice(&key[strings::last_index_of_char(key, b' ').unwrap_or(0)..]);
+        if key_of_bun == key {
+            return Ok(KeyOfOlderBun::TheSame);
+        }
+        // An entry that this run wrote is not an older Bun's. Nor is one under a key that `format` has for a test: it is that test's.
+        if !self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) || self.is_key_of_a_test(expect, format, &key_of_bun) {
+            return Ok(KeyOfOlderBun::None);
+        }
+        if let Some(entry) = self.values.get_mut(&key_of_bun) {
+            entry.found_under_key_of_bun = true;
+        }
+        Ok(KeyOfOlderBun::Other(key_of_bun))
+    }
+
+    fn is_key_of_a_test(&mut self, expect: &Expect, format: Format, key: &[u8]) -> bool {
+        let (Some(file), Some(buntest)) = (self._current_file.as_mut(), expect.bun_test()) else { return false };
+        let names = file
+            .names_of_tests
+            .get_or_insert_with(|| Self::names_of_tests(format, &buntest.get().collection.root_scope, |_| true));
+        Self::is_key_of(names, format, key)
+    }
+
+    /// What `format` calls the tests under `root` that `is_wanted` picks.
+    fn names_of_tests(
+        format: Format,
+        root: &DescribeScope,
+        mut is_wanted: impl FnMut(&ExecutionEntry) -> bool,
+    ) -> StringArrayHashMap<()> {
+        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut scopes = vec![root];
+        while let Some(scope) = scopes.pop() {
+            for entry in &scope.entries {
+                match entry {
+                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
+                    TestScheduleEntry::TestCallback(test) => {
+                        if is_wanted(test) {
+                            let name = full_test_name(test, format.name_separator(), format == Format::Jest);
+                            names.insert(&Self::escape_line_breaks(format, name), ());
+                        }
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// Whether `key` is `<name>[<separator><hint>] <count>` for one of `names`, as `format` writes it.
+    fn is_key_of(names: &StringArrayHashMap<()>, format: Format, key: &[u8]) -> bool {
+        let Some(end) = strings::last_index_of_char(key, b' ') else { return false };
+        if end + 1 == key.len() || !key[end + 1..].iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        let name = &key[..end];
+        let mut is_of_a_test = names.contains_key(name);
+        let mut from = 0;
+        while let Some(at) = strings::index_of(&name[from..], format.hint_separator()).filter(|_| !is_of_a_test) {
+            is_of_a_test = names.contains_key(&name[..from + at]);
+            from += at + 1;
+        }
+        is_of_a_test
     }
 
     pub(crate) fn match_or_write(
@@ -419,16 +551,8 @@ impl Snapshots {
         let mut key_in_file = None;
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
-        } else if format != Format::Bun && !self.update_snapshots && self.may_hold_entries_of_bun() {
-            // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
-            let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
-            key_of_bun.push(b' ');
-            key_of_bun.extend_from_slice(counter);
-            // An entry that this run wrote is not an older Bun's.
-            if let Some(entry) = self.values.get_mut(&key_of_bun).filter(|entry| !entry.written) {
-                entry.found_under_key_of_bun = true;
-                key_in_file = Some(key_of_bun);
-            }
+        } else if let KeyOfOlderBun::Other(key_of_bun) = self.key_of_older_bun(expect, format, hint, &key)? {
+            key_in_file = Some(key_of_bun);
         }
 
         if let Some(key_in_file) = key_in_file
@@ -441,7 +565,24 @@ impl Snapshots {
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
-                return Ok(Outcome::Mismatch { saved: entry.value.clone() });
+                let saved = entry.value.clone();
+                // An older Bun read its own key only: what it left there passed, whatever the file's key holds.
+                let of_older_bun = if format == Format::Bun || key_in_file != key {
+                    Some(OfOlderBun::Saved)
+                } else {
+                    match self.key_of_older_bun(expect, format, hint, &key)? {
+                        KeyOfOlderBun::None => None,
+                        KeyOfOlderBun::TheSame => Some(OfOlderBun::Saved),
+                        KeyOfOlderBun::Other(key_of_bun) => match self.values.get(&key_of_bun) {
+                            Some(beside) if format.matches(&beside.value, received) => {
+                                self.passed += 1;
+                                return Ok(Outcome::Passed);
+                            }
+                            beside => beside.map(|beside| OfOlderBun::Beside(beside.value.clone())),
+                        },
+                    }
+                };
+                return Ok(Outcome::Mismatch { saved, of_older_bun });
             }
             if format == Format::Bun {
                 written_by_earlier_attempt = Some(entry.value.clone());
@@ -575,52 +716,29 @@ impl Snapshots {
             .filter(|sequence| matches!(sequence.result, TestResult::Pass | TestResult::Todo))
             .filter_map(|sequence| sequence.test_entry.map(|entry| entry.as_ptr().cast_const()))
             .collect();
-        Self::keep_entries_of_tests(&mut self.values, file.format, &buntest.collection.root_scope, &done);
+        // An older Bun's entry of a test that did not run to the end is under Bun's name for it.
+        let formats = [file.format, Format::Bun];
+        let formats = &formats[..if file.may_hold_entries_of_bun { 2 } else { 1 }];
+        Self::keep_entries_of_tests(&mut self.values, formats, &buntest.collection.root_scope, &done);
         file.dirty = true;
         self.values.retain(|_, entry| entry.checked || entry.stays);
     }
 
-    /// Sets `stays` on the entries of every test under `root` that isn't in `except`.
+    /// Sets `stays` on the entries of every test under `root` that isn't in `except`, as each of `formats` spells them.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
-        format: Format,
+        formats: &[Format],
         root: &DescribeScope,
         except: &[*const ExecutionEntry],
     ) {
         let mut except = except.to_vec();
         index_sort::sort_slice_unstable_by(&mut except, |a, b| a.cmp(b));
-        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
-        let mut scopes = vec![root];
-        while let Some(scope) = scopes.pop() {
-            for entry in &scope.entries {
-                match entry {
-                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
-                    TestScheduleEntry::TestCallback(test) => {
-                        if except.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
-                            let name = full_test_name(test, format.name_separator(), format == Format::Jest);
-                            names.insert(&Self::escape_line_breaks(format, name), ());
-                        }
-                    }
-                }
-            }
-        }
-
-        let separator = format.hint_separator();
+        let is_left = |test: &ExecutionEntry| except.binary_search(&core::ptr::from_ref(test)).is_err();
+        let names: Vec<_> = formats.iter().map(|format| Self::names_of_tests(*format, root, is_left)).collect();
         for i in 0..values.len() {
-            // Keys look like `<test name>[<separator><hint>] <count>`.
             let key = &values.keys()[i];
-            let Some(end) = strings::last_index_of_char(key, b' ') else { continue };
-            if end + 1 == key.len() || !key[end + 1..].iter().all(u8::is_ascii_digit) {
-                continue;
-            }
-            let name = &key[..end];
-            let mut is_of_a_test = names.contains_key(name);
-            let mut from = 0;
-            while let Some(at) = strings::index_of(&name[from..], separator).filter(|_| !is_of_a_test) {
-                is_of_a_test = names.contains_key(&name[..from + at]);
-                from += at + 1;
-            }
-            values.values_mut()[i].stays = is_of_a_test;
+            let stays = formats.iter().zip(&names).any(|(format, names)| Self::is_key_of(names, *format, key));
+            values.values_mut()[i].stays = stays;
         }
     }
 
@@ -733,7 +851,8 @@ impl Snapshots {
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
         // An entry with no test, under Bun's key, or that differs may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
         let may_be_of_bun = |entry: &Entry| !entry.checked || entry.found_under_key_of_bun || entry.differs;
-        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(may_be_of_bun);
+        // Keys that were in order stay in order: such a file is known for an older Bun's only by its keys.
+        let stays_as_it_is = file.keys_were_out_of_order && self.values.values().iter().any(may_be_of_bun);
         for (i, key) in keys.iter().enumerate() {
             let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
             order.insert(at, i);

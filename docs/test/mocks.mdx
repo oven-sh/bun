@@ -730,7 +730,7 @@ Call `mock.restore()` in an `afterEach` block, or in your test preload script, i
 
 When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
 
-Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hooks, aren't restored or cleared. They stay the same for every test file.
+Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hooks, aren't restored or cleared. They stay the same for every test file. With [`--isolate=modules`](/test/parallel#--isolate), the preload runs again for each file, so Bun restores its spies and clears the calls of its mocks when a file ends, as it does for the file's own.
 
 ## Vitest Compatibility
 

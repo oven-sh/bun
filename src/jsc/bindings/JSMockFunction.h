@@ -68,8 +68,17 @@ public:
     // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
-    // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
+    // A preload, or the first run of a beforeAll() of one, can only run while this is true. The first test clears it.
     bool preloadMayBeRunning { true };
+
+    // Forgets what was stubbed, and leaves a stub that is still in place where it is.
+    void forgetStubs()
+    {
+        stubbedEnvs.clear();
+        stubbedGlobals.clear();
+        envsOfPreload.clear();
+        globalsOfPreload.clear();
+    }
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

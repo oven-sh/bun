@@ -74,6 +74,15 @@ test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the co
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
+# The same stands behind these, which ask for the end of a file as a shared global object needs it. --isolate throws the global object away: it restores no spy of the file before its window closes, reports no spy or stub that can't be undone, and doesn't wait for a module that still loads.
+# With --isolate a spy on a class that a DOM package shares between its windows reaches the next file.
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > ends a spy of a preload on a class that every window shares
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > keeps what a preload made, and the window, for a module of the file that still loads
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > reports a spy of a preload that can't be restored once, under each file
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > reports a stub that can't be undone once, under its file ["--preload","./empty.ts"]
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > reports a stub that can't be undone once, under its file []
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > restores the spies of the file before its window closes ["--preload","./empty.ts"]
+test/cli/test/isolation.test.ts: mocks and spies do not outlive their test file > bun test --isolate=modules: the end of a file > restores the spies of the file before its window closes []
 # With --isolate a test file can't require() another test file that imports from "vitest" and from two more files.
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it

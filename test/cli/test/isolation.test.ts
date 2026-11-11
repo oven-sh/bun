@@ -2969,7 +2969,17 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
 });
 
 describe.concurrent("mocks and spies do not outlive their test file", () => {
-  const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
+  const modes = [
+    "--no-isolate",
+    "--isolate",
+    "--rerun-each=2",
+    "--parallel=1 --no-isolate",
+    "--isolate=modules",
+    "--isolate=modules --rerun-each=2",
+    // The end of a file also ends what a preload made.
+    "--isolate=modules --preload ./preload.ts",
+    "--isolate=modules --preload ./preload.ts --rerun-each=2",
+  ];
   const results = (stderr: string) => [
     ...new Set(
       stderr
@@ -2995,6 +3005,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     };
   `;
   const files = {
+    "preload.ts": "",
     "shared.ts": `
       export class Shared { inherited() { return "original"; } shadowed() { return "original"; } }
       export const shared = Object.assign(new Shared(), { method: () => "original" });
@@ -3292,6 +3303,910 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }).toEqual({
       results: ["(pass) describe > a", "(pass) b"],
       exitCode: 0,
+    });
+  });
+
+  // Split in two because `bun test` scans a test file's whole text for this name, this file's included.
+  const environment = "// @vitest" + "-environment";
+  // Stand in for the DOM packages. Every window shares one class, uses its own document as it closes, and then calls
+  // a listener of the test file. happy-dom is awaited. jsdom calls the listener again in a microtask.
+  const windows = {
+    "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+    "node_modules/happy-dom/index.js": `
+      class Element {
+        getAttribute() {
+          return "of the package";
+        }
+      }
+      exports.Window = class Window {
+        constructor() {
+          this.Element = Element;
+          this.document = { defaultView: this, createElement: () => new Element() };
+          this.onWindowClose = undefined;
+          this.happyDOM = { abort: async () => {} };
+          this.close = () => {
+            this.document.createElement("div").getAttribute("id");
+            this.onWindowClose?.("in the call");
+          };
+        }
+      };
+    `,
+    "node_modules/jsdom/package.json": JSON.stringify({ name: "jsdom", main: "index.js" }),
+    "node_modules/jsdom/index.js": `
+      class EventTarget {
+        addEventListener() {}
+        removeEventListener() {}
+      }
+      class Window extends EventTarget {
+        EventTarget = EventTarget;
+        AbortController = class {};
+        AbortSignal = class {};
+        Blob = class {};
+        FormData = class {};
+      }
+      exports.JSDOM = class JSDOM {
+        constructor() {
+          this.window = new Window();
+          this.window.document = { defaultView: this.window };
+          this.window.onWindowClose = undefined;
+          this.window.close = () => {
+            const listener = this.window.onWindowClose;
+            listener?.("in the call");
+            Promise.resolve().then(() => listener?.("in a microtask"));
+          };
+        }
+      };
+    `,
+  };
+  const withWindows = { ...bunEnv, NODE_PATH: undefined };
+  const emptyPreload = [[[]], [["--preload", "./empty.ts"]]] as const;
+
+  // With isolation a preload runs again for every file. `--isolate=modules` keeps the global object and the builtin
+  // modules, so each case leaves something where the next file finds it.
+  describe.each(isolateFlags)("bun test %s: what a preload makes lasts for one file", isolate => {
+    const spiesOnBuiltinModules = (where: (make: string) => string) => ({
+      "preload.ts": `
+        import { beforeAll, jest, spyOn, vi } from "bun:test";
+        import fs from "node:fs";
+        import os from "node:os";
+        import path from "node:path";
+        ${where(`spyOn(path, "basename"); jest.spyOn(os, "homedir"); vi.spyOn(fs, "existsSync");`)}
+      `,
+      ...Object.fromEntries(
+        ["a", "b", "c"].map(name => [
+          `${name}.test.ts`,
+          `
+            import { expect, jest, test } from "bun:test";
+            import fs from "node:fs";
+            import os from "node:os";
+            import path from "node:path";
+            test("${name}", () => {
+              const spies = [path.basename, os.homedir, fs.existsSync];
+              expect(spies.map(jest.isMockFunction)).toEqual([true, true, true]);
+              expect(spies.map(spy => spy.mock.calls.length)).toEqual([0, 0, 0]);
+              expect(path.basename("/dir/file")).toBe("file");
+              for (const spy of spies) spy.mockReturnValue("stubbed by ${name}");
+              expect(spies.map(spy => spy("/dir/file"))).toEqual(Array(3).fill("stubbed by ${name}"));
+            });
+          `,
+        ]),
+      ),
+    });
+    const inBeforeAll = (make: string) => `beforeAll(() => { ${make} });`;
+
+    describe.each([
+      ["while it loads", (make: string) => make],
+      ["in its beforeAll()", inBeforeAll],
+      [
+        "in its beforeAll(), after an await",
+        (make: string) => `beforeAll(async () => { await Bun.sleep(0); ${make} });`,
+      ],
+    ])("made %s", (_, where) => {
+      test("a spy on a builtin module has no calls and no stub of the file before", async () => {
+        using dir = tempDir("spies-of-a-preload", spiesOnBuiltinModules(where));
+        const { stderr, exitCode } = await runTests(
+          String(dir),
+          [isolate, "--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        );
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) b", "(pass) c"],
+          exitCode: 0,
+        });
+      });
+
+      test("a mock that it leaves on a builtin module has no calls of the file before", async () => {
+        const file = (name: string) => `
+          import { expect, test } from "bun:test";
+          import fs from "node:fs";
+          import os from "node:os";
+          test("${name}", () => {
+            expect([fs.existsSync.mock.calls, os.homedir.mock.calls]).toEqual([[], []]);
+            expect([fs.existsSync("/"), typeof os.homedir()]).toEqual([true, "string"]);
+          });
+        `;
+        using dir = tempDir("mocks-of-a-preload", {
+          "preload.ts": `
+            import { beforeAll, jest, vi } from "bun:test";
+            import fs from "node:fs";
+            import os from "node:os";
+            ${where(`
+              if (!jest.isMockFunction(fs.existsSync)) fs.existsSync = jest.fn(fs.existsSync);
+              if (!vi.isMockFunction(os.homedir)) os.homedir = vi.fn(os.homedir);
+            `)}
+          `,
+          "a.test.ts": file("a"),
+          "b.test.ts": file("b"),
+        });
+        const { stderr, exitCode } = await runTests(
+          String(dir),
+          [isolate, "--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts"],
+        );
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) b"],
+          exitCode: 0,
+        });
+      });
+
+      test("a spy holds for every --rerun-each run of every file", async () => {
+        const file = (name: string) => `
+          import { expect, test } from "bun:test";
+          test("${name}", () => {
+            expect([Math.max(1, 2), Math.min(1, 2)]).toEqual(["spied", "spied"]);
+          });
+        `;
+        using dir = tempDir("spies-of-a-preload", {
+          "preload.ts": `
+            import { beforeAll, jest, vi } from "bun:test";
+            ${where(`jest.spyOn(Math, "max").mockReturnValue("spied"); vi.spyOn(Math, "min").mockReturnValue("spied");`)}
+          `,
+          "a.test.ts": file("a"),
+          // No test of this file starts.
+          "b.test.ts": `import { test } from "bun:test"; test.skip("b", () => {});`,
+          "c.test.ts": file("c"),
+        });
+        const { stderr, exitCode } = await runTests(
+          String(dir),
+          [isolate, "--rerun-each=2", "--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        );
+        expect(stderr).toContain(" 4 pass\n 2 skip\n 0 fail\n");
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) c"],
+          exitCode: 0,
+        });
+      });
+    });
+
+    // One worker runs every file, because the others would only start after ten minutes.
+    test("a spy on a builtin module has no calls and no stub of the file before, in a --parallel worker", async () => {
+      using dir = tempDir("spies-of-a-preload", spiesOnBuiltinModules(inBeforeAll));
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--parallel=2", "--parallel-delay=600000", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      );
+      expect({ results: results(stderr).sort(), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b", "(pass) c"],
+        exitCode: 0,
+      });
+    });
+
+    test("a mock that a preload leaves on a builtin module keeps its calls between --rerun-each runs, in every file alike", async () => {
+      const file = (name: string, call: string) => `
+        import { test } from "bun:test";
+        import fs from "node:fs";
+        test("${name}", () => {
+          console.log("${name} finds", fs.existsSync.mock.calls.length);
+          ${call}
+        });
+      `;
+      using dir = tempDir("mocks-of-a-preload", {
+        "preload.ts": `
+          import { jest } from "bun:test";
+          import fs from "node:fs";
+          if (!jest.isMockFunction(fs.existsSync)) fs.existsSync = jest.fn(fs.existsSync);
+        `,
+        "a.test.ts": file("a", ""),
+        "b.test.ts": file("b", `fs.existsSync("/");`),
+        "c.test.ts": file("c", `fs.existsSync("/");`),
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--rerun-each=2", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      );
+      expect({ found: stdout.split("\n").filter(line => / finds /.test(line)), exitCode }, stderr).toEqual({
+        found: ["a finds 0", "a finds 0", "b finds 0", "b finds 1", "c finds 0", "c finds 1"],
+        exitCode: 0,
+      });
+    });
+
+    // The spies wrap what the first file put on Math. Where one of them outlives that file, mock.restore() puts
+    // the function back with a chance of one half for each key, unless a collection ran first.
+    test("mock.restore() in a later file does not put back what an earlier file left on a builtin", async () => {
+      const keys = `["abs", "acos", "asin", "atan", "cbrt", "ceil", "cos", "exp", "floor", "log", "round", "sign", "sin", "sqrt", "tan", "trunc"]`;
+      using dir = tempDir("spies-of-a-preload", {
+        "preload.ts": `
+          import { beforeAll, spyOn } from "bun:test";
+          beforeAll(() => {
+            for (const key of ${keys}) spyOn(Math, key);
+          });
+        `,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          for (const key of ${keys}) Math[key] = () => "of a";
+          test("a", () => expect(Math.abs(-1)).toBe("of a"));
+        `,
+        "b.test.ts": `
+          import { afterEach, expect, mock, test } from "bun:test";
+          afterEach(() => mock.restore());
+          test("b", () => {});
+          test("b, after mock.restore()", () => {
+            expect(${keys}.filter(key => Math[key](0) === "of a")).toEqual([]);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b", "(pass) b, after mock.restore()"],
+        exitCode: 0,
+      });
+    });
+
+    test("a spy of a preload and a spy of the file on one function both end with the file", async () => {
+      using dir = tempDir("spies-of-a-preload", {
+        "preload.ts": `
+          import { spyOn } from "bun:test";
+          import path from "node:path";
+          spyOn(path, "basename");
+        `,
+        "a.test.ts": `
+          import { expect, spyOn, test } from "bun:test";
+          import path from "node:path";
+          test("a", () => {
+            path.basename = () => "of a";
+            spyOn(path, "basename");
+            expect(path.basename("/dir/file")).toBe("of a");
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          import path from "node:path";
+          test("b", () => {
+            const { basename } = path;
+            expect([jest.isMockFunction(basename), basename.mock.calls.length, basename("/dir/file")]).toEqual([true, 0, "file"]);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // The preload acts for a.test.ts only, so nothing makes these again for b.test.ts.
+    const setsForOneFile = {
+      "preload.ts": `
+        import { setSystemTime, vi } from "bun:test";
+        if (Bun.main.endsWith("a.test.ts")) {
+          vi.stubEnv("SET_FOR_A", "stub");
+          vi.stubGlobal("setForA", "stub");
+          vi.setConfig({ clearMocks: true });
+          setSystemTime(new Date(2001, 0, 1));
+        }
+      `,
+    };
+    const state = (name: string) => `
+      import { expect, jest, test, vi } from "bun:test";
+      const called = jest.fn();
+      test("${name} calls a mock", () => void called());
+      test("${name}", () => {
+        console.log(JSON.stringify({
+          file: "${name}",
+          env: process.env.SET_FOR_A ?? null,
+          global: globalThis.setForA ?? null,
+          year: new Date().getFullYear() === 2001 ? 2001 : "now",
+          callsBeforeThisTest: called.mock.calls.length,
+        }));
+      });
+    `;
+    const stateOf = (stdout: string) =>
+      stdout
+        .split("\n")
+        .filter(line => line.startsWith("{"))
+        .map(line => JSON.parse(line));
+    const setForA = { file: "a", env: "stub", global: "stub", year: 2001, callsBeforeThisTest: 0 };
+    const notSetForB = { file: "b", env: null, global: null, year: "now", callsBeforeThisTest: 1 };
+
+    test.each([
+      [[], [setForA, notSetForB]],
+      [["--rerun-each=2"], [setForA, setForA, notSetForB, notSetForB]],
+    ])("a stub, a vi.setConfig() and a system time of a preload end with the file %j", async (flags, expected) => {
+      using dir = tempDir("state-of-a-preload", {
+        ...setsForOneFile,
+        "a.test.ts": state("a"),
+        "b.test.ts": state("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, ...flags, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: expected, exitCode: 0 });
+    });
+
+    test("vi.unstubAllEnvs() and vi.unstubAllGlobals() of a file put back nothing of the file before", async () => {
+      using dir = tempDir("state-of-a-preload", {
+        ...setsForOneFile,
+        "a.test.ts": `import { test } from "bun:test"; test("a", () => {});`,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("b", () => {
+            process.env.SET_FOR_A = "set by b";
+            globalThis.setForA = "set by b";
+            vi.unstubAllEnvs();
+            vi.unstubAllGlobals();
+            expect([process.env.SET_FOR_A, globalThis.setForA]).toEqual(["set by b", "set by b"]);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    test("a vi.setConfig() of a preload ends with a file that fails to load, with --rerun-each", async () => {
+      using dir = tempDir("state-of-a-preload", {
+        ...setsForOneFile,
+        "a.test.ts": `throw new Error("thrown while loading");`,
+        "b.test.ts": state("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--rerun-each=2", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect(stderr).toContain("error: thrown while loading");
+      expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: [notSetForB, notSetForB], exitCode: 1 });
+    });
+
+    // The end of the file restores the spy, and the trap of its target runs then.
+    test("a vi.setConfig() that runs while a spy of a preload is restored ends with the file", async () => {
+      using dir = tempDir("state-of-a-preload", {
+        "preload.ts": `
+          import { spyOn, vi } from "bun:test";
+          if (Bun.main.endsWith("a.test.ts")) {
+            let isOver = false;
+            globalThis.target = new Proxy({ method() {} }, {
+              defineProperty(...args) {
+                if (isOver) vi.setConfig({ clearMocks: true });
+                return Reflect.defineProperty(...args);
+              },
+            });
+            spyOn(target, "method");
+            isOver = true;
+          }
+        `,
+        "a.test.ts": `import { test } from "bun:test"; test("a", () => Bun.gc(true));`,
+        "b.test.ts": state("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: [notSetForB], exitCode: 0 });
+    });
+
+    test("fake timers of a preload end with the file", async () => {
+      using dir = tempDir("state-of-a-preload", {
+        "preload.ts": `
+          import { vi } from "bun:test";
+          if (Bun.main.endsWith("a.test.ts")) vi.useFakeTimers({ now: new Date(2001, 0, 1) });
+        `,
+        "a.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("a", () => {
+            expect([vi.isFakeTimers(), new Date().getFullYear(), typeof setTimeout.clock]).toEqual([true, 2001, "boolean"]);
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import timers from "node:timers";
+          test("b", async () => {
+            expect({
+              isFakeTimers: vi.isFakeTimers(),
+              year: new Date().getFullYear() === 2001 ? 2001 : "now",
+              clock: typeof setTimeout.clock,
+              isSameInNodeTimers: timers.setTimeout === setTimeout,
+            }).toEqual({ isFakeTimers: false, year: "now", clock: "undefined", isSameInNodeTimers: true });
+            await new Promise(resolve => setTimeout(resolve, 1));
+            vi.useFakeTimers();
+            const fired = Promise.withResolvers();
+            setTimeout(fired.resolve, 1000);
+            vi.advanceTimersByTime(1000);
+            await fired.promise;
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    test.each([[[]], [["--rerun-each=2"]]])(
+      "a preload that does the same for every file finds nothing that it did for the file before %j",
+      async flags => {
+        const file = (name: string) => `
+          import { expect, test } from "bun:test";
+          test("${name}", () => expect(new Date().getFullYear()).toBe(2001));
+        `;
+        using dir = tempDir("state-of-a-preload", {
+          "preload.ts": `
+            import { beforeAll, setSystemTime, vi } from "bun:test";
+            console.log("the preload finds the year", new Date().getFullYear() === 2001 ? 2001 : "as it is");
+            // The hook keeps the timeout that is set where it is registered.
+            beforeAll(() => Bun.sleep(40));
+            vi.setConfig({ hookTimeout: 10 });
+            setSystemTime(new Date(2001, 0, 1));
+          `,
+          "a.test.ts": file("a"),
+          "b.test.ts": file("b"),
+          "c.test.ts": file("c"),
+        });
+        const { stdout, stderr, exitCode } = await runTests(
+          String(dir),
+          [isolate, ...flags, "--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        );
+        expect(
+          {
+            found: stdout.split("\n").filter(line => line.startsWith("the preload finds")),
+            results: results(stderr),
+            exitCode,
+          },
+          stderr,
+        ).toEqual({
+          found: Array(3).fill("the preload finds the year as it is"),
+          results: ["(pass) a", "(pass) b", "(pass) c"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.each([[[]], [["--rerun-each=2"]]])(
+      "a stub of a preload is there for every run of every file, whatever a run before did to it %j",
+      async flags => {
+        const seen = `[typeof stubbedByPreload, typeof fetch, process.env.STUBBED_BY_PRELOAD, process.env.DELETED_BY_PRELOAD]`;
+        const stubbed = `["function", "string", "stub", undefined]`;
+        const undoes = (name: string) => `
+          import { expect, test, vi } from "bun:test";
+          test("${name}", () => {
+            expect(${seen}).toEqual(${stubbed});
+            vi.unstubAllGlobals();
+            vi.unstubAllEnvs();
+            expect(${seen}).toEqual(["undefined", "function", undefined, "original"]);
+          });
+        `;
+        using dir = tempDir("stubs-of-a-preload", {
+          "preload.ts": `
+            import { vi } from "bun:test";
+            vi.stubGlobal("stubbedByPreload", class {});
+            vi.stubGlobal("fetch", "stub");
+            vi.stubEnv("STUBBED_BY_PRELOAD", "stub");
+            vi.stubEnv("DELETED_BY_PRELOAD", undefined);
+          `,
+          "a.test.ts": undoes("a"),
+          "b.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            test("b", () => {
+              expect(${seen}).toEqual(${stubbed});
+              vi.stubGlobal("stubbedByPreload", 1);
+              vi.stubGlobal("fetch", 1);
+              vi.stubEnv("STUBBED_BY_PRELOAD", "b");
+              vi.stubEnv("DELETED_BY_PRELOAD", "b");
+            });
+          `,
+          "c.test.ts": undoes("c"),
+        });
+        const { stderr, exitCode } = await runTests(
+          String(dir),
+          [isolate, ...flags, "--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+          { ...bunEnv, DELETED_BY_PRELOAD: "original" },
+        );
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) b", "(pass) c"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("a stub of a preload on a name of a window is undone for a file with no window", async () => {
+      using dir = tempDir("stubs-of-a-preload", {
+        ...windows,
+        "preload.ts": `import { vi } from "bun:test"; vi.stubGlobal("fetch", "stub");`,
+        "a.test.ts": `
+          ${environment} happy-dom
+          import { expect, test } from "bun:test";
+          test("a", () => expect(fetch).toBe("stub"));
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("b", () => {
+            expect(fetch).toBe("stub");
+            vi.unstubAllGlobals();
+            expect(typeof fetch).toBe("function");
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+        withWindows,
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    test.each(["happy-dom", "jsdom"])(
+      "what runs as a window of %s closes finds what the preload made, and what it makes ends with the file",
+      async name => {
+        using dir = tempDir("window-of-a-file", {
+          ...windows,
+          "preload.ts": `
+            import { setSystemTime, spyOn, vi } from "bun:test";
+            import fs from "node:fs";
+            spyOn(fs, "existsSync").mockReturnValue("spied by the preload");
+            vi.stubEnv("STUBBED", "stubbed by the preload");
+            vi.stubGlobal("stubbed", "stubbed by the preload");
+            setSystemTime(new Date(2001, 0, 1));
+          `,
+          "a.test.ts": `
+            ${environment} ${name}
+            import { spyOn, test } from "bun:test";
+            import fs from "node:fs";
+            import path from "node:path";
+            test("a", () => {
+              onWindowClose = when => {
+                console.log(when, JSON.stringify([fs.existsSync("/"), process.env.STUBBED, stubbed, new Date().getFullYear()]));
+                spyOn(path, "basename").mockReturnValue("spied as the window closed");
+              };
+            });
+          `,
+          "b.test.ts": `
+            import { expect, test } from "bun:test";
+            import path from "node:path";
+            test("b", () => expect(path.basename("/dir/file")).toBe("file"));
+          `,
+        });
+        const { stdout, stderr, exitCode } = await runTests(
+          String(dir),
+          [isolate, "--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts"],
+          withWindows,
+        );
+        const found = JSON.stringify([
+          "spied by the preload",
+          "stubbed by the preload",
+          "stubbed by the preload",
+          2001,
+        ]);
+        expect(
+          { closing: stdout.split("\n").filter(line => line.startsWith("in ")), results: results(stderr), exitCode },
+          stderr,
+        ).toEqual({
+          closing: name === "jsdom" ? [`in the call ${found}`, `in a microtask ${found}`] : [`in the call ${found}`],
+          results: ["(pass) a", "(pass) b"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.each(emptyPreload)("ends what the file makes as its window closes %j", async preload => {
+      using dir = tempDir("window-of-a-file", {
+        ...windows,
+        "empty.ts": "",
+        "a.test.ts": `
+          ${environment} jsdom
+          import { setSystemTime, spyOn, test, vi } from "bun:test";
+          import path from "node:path";
+          test("a", () => {
+            onWindowClose = when => {
+              if (when === "in the call") return;
+              spyOn(path, "basename").mockReturnValue("spied as the window closed");
+              vi.setConfig({ clearMocks: true });
+              vi.stubGlobal("stubbedAtClose", "stub");
+              vi.stubEnv("STUBBED_AT_CLOSE", "stub");
+              setSystemTime(new Date(2001, 0, 1));
+            };
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import path from "node:path";
+          const called = jest.fn();
+          test("b calls a mock", () => void called());
+          test("b", () => {
+            expect({
+              basename: path.basename("/dir/file"),
+              year: new Date().getFullYear() === 2001 ? 2001 : "now",
+              callsBeforeThisTest: called.mock.calls.length,
+              stubs: [globalThis.stubbedAtClose, process.env.STUBBED_AT_CLOSE],
+            }).toEqual({ basename: "file", year: "now", callsBeforeThisTest: 1, stubs: [undefined, undefined] });
+            globalThis.stubbedAtClose = "set by b";
+            process.env.STUBBED_AT_CLOSE = "set by b";
+            vi.unstubAllGlobals();
+            vi.unstubAllEnvs();
+            expect([globalThis.stubbedAtClose, process.env.STUBBED_AT_CLOSE]).toEqual(["set by b", "set by b"]);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, ...preload],
+        ["./a.test.ts", "./b.test.ts"],
+        withWindows,
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b calls a mock", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // `--isolate` closes the socket when it swaps the global object. `--isolate=modules` doesn't call the handler.
+    test("a vi.setConfig() in the close handler of a socket that the file left open ends with the file", async () => {
+      using dir = tempDir("socket-of-a-file", {
+        "a.test.ts": `
+          import { test, vi } from "bun:test";
+          test("a", async () => {
+            const listener = Bun.listen({
+              hostname: "127.0.0.1",
+              port: 0,
+              socket: { data() {}, close: () => vi.setConfig({ clearMocks: true }) },
+            });
+            const opened = Promise.withResolvers();
+            await Bun.connect({
+              hostname: "127.0.0.1",
+              port: listener.port,
+              socket: { open: opened.resolve, data() {} },
+            });
+            await opened.promise;
+          });
+        `,
+        "b.test.ts": state("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(String(dir), [isolate], ["./a.test.ts", "./b.test.ts"]);
+      expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: [notSetForB], exitCode: 0 });
+    });
+  });
+
+  // `--isolate` throws the global object away, so it undoes nothing and reports nothing.
+  describe("bun test --isolate=modules: the end of a file", () => {
+    test("reports a spy of a preload that can't be restored once, under each file", async () => {
+      using dir = tempDir("spies-of-a-preload", {
+        "preload.ts": `
+          import { spyOn } from "bun:test";
+          let isOver = false;
+          globalThis.target = new Proxy({ method() {} }, {
+            defineProperty(...args) {
+              if (isOver) throw new Error("the trap refuses");
+              return Reflect.defineProperty(...args);
+            },
+          });
+          spyOn(target, "method");
+          isOver = true;
+        `,
+        "a.test.ts": `import { test } from "bun:test"; test("a", () => Bun.gc(true));`,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => Bun.gc(true));`,
+        "c.test.ts": `import { test } from "bun:test"; test("c", () => Bun.gc(true));`,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      );
+      const lines = stderr.split("\n").filter(line => /^(error: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+      expect(
+        lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+        stderr,
+      ).toEqual([
+        "a.test.ts:",
+        "(pass) a",
+        "error: the trap refuses",
+        "b.test.ts:",
+        "(pass) b",
+        "error: the trap refuses",
+        "c.test.ts:",
+        "(pass) c",
+        "error: the trap refuses",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each(emptyPreload)("restores the spies of the file before its window closes %j", async preload => {
+      using dir = tempDir("window-of-a-file", {
+        ...windows,
+        "empty.ts": "",
+        "a.test.ts": `
+          ${environment} happy-dom
+          import { spyOn, test } from "bun:test";
+          test("a", () => void spyOn(document, "createElement").mockReturnValue("stubbed by a"));
+        `,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", ...preload],
+        ["./a.test.ts", "./b.test.ts"],
+        withWindows,
+      );
+      expect(stderr).not.toContain("error:");
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    test.each(emptyPreload)("reports a stub that can't be undone once, under its file %j", async preload => {
+      using dir = tempDir("stubs-of-a-file", {
+        "empty.ts": "",
+        "a.test.ts": `
+          import { test, vi } from "bun:test";
+          test("a", () => {
+            vi.stubGlobal("fetch", "stub");
+            Object.defineProperty(globalThis, "fetch", { value: "kept", configurable: false, writable: false });
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          test("b", () => expect(typeof fetch).toBe("function"));
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", ...preload],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      const lines = stderr.split("\n").filter(line => /^(TypeError: |[ab]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+      expect(
+        lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+        stderr,
+      ).toEqual([
+        "a.test.ts:",
+        "(pass) a",
+        "TypeError: Attempting to change configurable attribute of unconfigurable property.",
+        "b.test.ts:",
+        "(pass) b",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("ends a spy of a preload on a class that every window shares", async () => {
+      const file = (name: string) => `
+        ${environment} happy-dom
+        import { expect, test } from "bun:test";
+        test("${name}", () => {
+          expect(Element.prototype.getAttribute.mock.calls.length).toBe(0);
+          expect(document.createElement("div").getAttribute("id")).toBe("of the package");
+          Element.prototype.getAttribute.mockReturnValue("stubbed by ${name}");
+        });
+      `;
+      using dir = tempDir("window-of-a-file", {
+        ...windows,
+        "preload.ts": `import { spyOn } from "bun:test"; spyOn(Element.prototype, "getAttribute");`,
+        "a.test.ts": file("a"),
+        "b.test.ts": file("b"),
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+        withWindows,
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // The load goes on when the end of the file's run has restored the spy of the file.
+    test("keeps what a preload made, and the window, for a module of the file that still loads", async () => {
+      const file = (name: string) => `
+        ${environment} happy-dom
+        import { spyOn, test, vi } from "bun:test";
+        const restored = Promise.withResolvers();
+        let isOver = false;
+        const target = new Proxy({ method() {} }, {
+          defineProperty(...args) {
+            if (isOver) restored.resolve();
+            return Reflect.defineProperty(...args);
+          },
+        });
+        test("${name}", async () => {
+          const called = Promise.withResolvers();
+          spyOn(target, "method");
+          isOver = true;
+          Bun.plugin({
+            name: "slow",
+            setup(build) {
+              build.onLoad({ filter: /slow\\.js$/ }, async () => {
+                called.resolve();
+                await restored.promise;
+                await new Promise(resolve => setImmediate(resolve));
+              });
+            },
+          });
+          vi.doMock("./mocked.js", () => ({ mocked: true }));
+          await import("./mocked.js");
+          void import("./late.js");
+          await called.promise;
+        });
+      `;
+      using dir = tempDir("late-module-of-a-file", {
+        ...windows,
+        "preload.ts": `
+          import { setSystemTime, spyOn, vi } from "bun:test";
+          import fs from "node:fs";
+          spyOn(fs, "existsSync").mockReturnValue("spied by the preload");
+          vi.stubEnv("STUBBED", "stubbed by the preload");
+          vi.stubGlobal("stubbed", "stubbed by the preload");
+          setSystemTime(new Date(2001, 0, 1));
+        `,
+        "mocked.js": `export const mocked = false;`,
+        "slow.js": `export const slow = true;`,
+        "late.js": `
+          import fs from "node:fs";
+          import "./mocked.js";
+          import "./slow.js";
+          console.log("late", JSON.stringify([fs.existsSync("/"), process.env.STUBBED, stubbed, new Date().getFullYear(), typeof document]));
+        `,
+        "a.test.ts": file("a"),
+        "b.test.ts": file("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+        withWindows,
+      );
+      const found = JSON.stringify([
+        "spied by the preload",
+        "stubbed by the preload",
+        "stubbed by the preload",
+        2001,
+        "object",
+      ]);
+      expect(
+        { late: stdout.split("\n").filter(line => line.startsWith("late ")), results: results(stderr), exitCode },
+        stderr,
+      ).toEqual({ late: Array(2).fill(`late ${found}`), results: ["(pass) a", "(pass) b"], exitCode: 0 });
     });
   });
 

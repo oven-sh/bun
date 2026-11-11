@@ -4554,6 +4554,27 @@ describe.concurrent("a module that got a mock from import() is evaluated again w
     );
   });
 
+  test("each --rerun-each run calls the spy that its test put on the mock", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "app.ts": `let kept; export const run = async () => (await (kept ??= import("./dep"))).who();`,
+        "rerun.test.ts": `
+          import { afterEach, expect, mock, spyOn, test, vi } from "bun:test";
+          import { run } from "./app";
+          vi.mock("./dep", () => ({ who: () => "fake" }));
+          afterEach(() => mock.restore());
+          test("gets the spy of this run", async () => {
+            const spy = spyOn(await import("./dep"), "who").mockReturnValue("spy");
+            expect([await run(), spy.mock.calls.length]).toEqual(["spy", 1]);
+          });
+        `,
+      },
+      2,
+      ["--rerun-each=2"],
+    );
+  });
+
   test("a module that keeps import() of a module nothing mocks stays loaded", async () => {
     const other = `
       import { other } from "./other";

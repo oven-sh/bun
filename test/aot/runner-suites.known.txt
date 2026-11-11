@@ -122,6 +122,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import(
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file loaded it with no mock, and this file calls vi.doMock(): by a module it imports
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file loaded it with no mock, and this file calls vi.doMock(): itself
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > another key of its file stays loaded
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > each --rerun-each run calls the spy that its test put on the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > each --rerun-each run gets its own mock
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it caught the failure of an import() that a mock caused: a module that imports the mock threw
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it caught the failure of an import() that a mock caused: its factory threw

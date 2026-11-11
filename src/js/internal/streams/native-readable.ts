@@ -126,8 +126,7 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   return chunk;
 }
 
-// `_read()` is readStart, as on net.Socket: the pull and its push run on a
-// later tick, never inside `_read()`. Readable expects that of a native source.
+// readStart, as on net.Socket. The pull and its push run on a later tick.
 function read(this: NativeReadable) {
   $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
   const ptr = this.$bunNativePtr;
@@ -141,8 +140,7 @@ function read(this: NativeReadable) {
   process.nextTick(pump, this);
 }
 
-// One pull. `kPendingRead` is cleared before the push, so a listener that
-// throws leaves the stream able to pull again.
+// One pull. `kPendingRead` is cleared before the push.
 function pump(stream: NativeReadable) {
   const ptr = stream.$bunNativePtr;
   if (stream.destroyed) {

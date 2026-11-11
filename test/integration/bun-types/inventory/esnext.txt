@@ -2731,17 +2731,35 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
     formData(): Promise<import("undici-types/formdata").FormData>
     json(): Promise<unknown>
     text(): Promise<string>
+  interface __internal.FallbackFormData (bun-types/globals.d.ts)
+    append(name: string, value: Blob | string): void
+    append(name: string, value: string): void
+    append(name: string, blobValue: Blob, filename?: string | undefined): void
+    delete(name: string): void
+    forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void
+    get(name: string): Bun.FormDataEntryValue | null
+    getAll(name: string): Array<Bun.FormDataEntryValue>
+    has(name: string): boolean
+    set(name: string, value: Blob | string): void
+    set(name: string, value: string): void
+    set(name: string, blobValue: Blob, filename?: string | undefined): void
+  interface __internal.FallbackFormDataIterable (bun-types/globals.d.ts)
+    [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>
+    entries(): IterableIterator<[string, Bun.FormDataEntryValue]>
+    keys(): IterableIterator<string>
+    values(): IterableIterator<Bun.FormDataEntryValue>
   interface __internal.FallbackHeaders (bun-types/fetch.d.ts)
-    [Symbol.iterator](): import("undici-types/fetch").SpecIterableIterator<[string, string]>
     append(name: string, value: string): void
     delete(name: string): void
-    entries(): import("undici-types/fetch").SpecIterableIterator<[string, string]>
     forEach(callbackfn: (value: string, key: string, iterable: import("undici-types/fetch").Headers) => void, thisArg?: unknown): void
     get(name: string): null | string
     getSetCookie(): Array<string>
     has(name: string): boolean
-    keys(): import("undici-types/fetch").SpecIterableIterator<string>
     set(name: string, value: string): void
+  interface __internal.FallbackHeadersIterable (bun-types/fetch.d.ts)
+    [Symbol.iterator](): import("undici-types/fetch").SpecIterableIterator<[string, string]>
+    entries(): import("undici-types/fetch").SpecIterableIterator<[string, string]>
+    keys(): import("undici-types/fetch").SpecIterableIterator<string>
     values(): import("undici-types/fetch").SpecIterableIterator<string>
   interface __internal.FallbackRequest (bun-types/fetch.d.ts)
     arrayBuffer(): Promise<ArrayBuffer>
@@ -2789,6 +2807,7 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
     glob<TModule = unknown>(pattern: Array<string> | string, options: Bun.ImportMetaGlobOptions & { eager: true; }): Record<string, TModule>
   type __internal.KeysInBoth<A, B> (bun-types/bun.d.ts) = keyof A extends keyof B ? keyof B & keyof A : never
   type __internal.LibDomIsLoaded (bun-types/bun.d.ts) = false [written: typeof globalThis extends { onabort: any; } ? true : false]
+  type __internal.LibDomIterableIsLoaded (bun-types/globals.d.ts) = false [written: typeof globalThis extends { MediaKeyStatusMap: { prototype: { entries: any; }; }; } ? true : false]
   type __internal.LibEmptyOrBroadcastChannel (bun-types/globals.d.ts) = import("node:worker_threads").BroadcastChannel [written: LibDomIsLoaded extends true ? {} : import("node:worker_threads").BroadcastChannel]
   type __internal.LibEmptyOrBunEvent (bun-types/globals.d.ts) = Bun.__internal.BunEvent [written: LibDomIsLoaded extends true ? {} : BunEvent]
   type __internal.LibEmptyOrBunEventTarget (bun-types/globals.d.ts) = Bun.__internal.BunEventTarget [written: LibDomIsLoaded extends true ? {} : BunEventTarget]
@@ -2813,6 +2832,8 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
   type __internal.LibEmptyOrReadableByteStreamController (bun-types/globals.d.ts) = import("node:stream/web").ReadableByteStreamController [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableByteStreamController]
   type __internal.LibEmptyOrReadableStreamBYOBReader (bun-types/globals.d.ts) = import("node:stream/web").ReadableStreamBYOBReader [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStreamBYOBReader]
   type __internal.LibEmptyOrReadableStreamBYOBRequest (bun-types/globals.d.ts) = import("node:stream/web").ReadableStreamBYOBRequest [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStreamBYOBRequest]
+  type __internal.LibIterableOrFallback<Fallback> (bun-types/globals.d.ts) = Fallback [written: LibDomIsLoaded extends true ? LibDomIterableIsLoaded extends true ? {} : Fallback : Fallback]
+  type __internal.LibOrFallback<Fallback> (bun-types/globals.d.ts) = Fallback [written: LibDomIsLoaded extends true ? {} : Fallback]
   type __internal.LibOrFallbackHeaders (bun-types/fetch.d.ts) = Bun.__internal.FallbackHeaders [written: LibDomIsLoaded extends true ? {} : FallbackHeaders]
   type __internal.LibOrFallbackRequest (bun-types/fetch.d.ts) = Bun.__internal.FallbackRequest [written: LibDomIsLoaded extends true ? {} : FallbackRequest]
   type __internal.LibOrFallbackRequestInit (bun-types/fetch.d.ts) = Omit<import("undici-types/fetch").RequestInit, "body" | "headers"> & { body?: Bun.BodyInit | null | undefined; headers?: Bun.HeadersInit | undefined; } [written: LibDomIsLoaded extends true ? {} : Omit<import("undici-types").RequestInit, "body" | "headers"> & { body?: Bun.BodyInit | null | undefined; headers?: Bun.HeadersInit | undefined; }]
@@ -4984,11 +5005,12 @@ var File (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts)
   construct new (parts: Array<Bun.BlobPart>, name: string, options?: (BlobPropertyBag & { lastModified?: Date | number | undefined; }) | undefined): File
   prototype: File
 interface FormData (@types/node/web-globals/fetch.d.ts, bun-types/globals.d.ts)
+  [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>
   append(name: string, value: Blob | string): void
   append(name: string, value: string): void
   append(name: string, blobValue: Blob, filename?: string | undefined): void
   delete(name: string): void
-  entries(): IterableIterator<[string, string]>
+  entries(): IterableIterator<[string, Bun.FormDataEntryValue]>
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void
   get(name: string): Bun.FormDataEntryValue | null
   getAll(name: string): Array<Bun.FormDataEntryValue>
@@ -4997,7 +5019,7 @@ interface FormData (@types/node/web-globals/fetch.d.ts, bun-types/globals.d.ts)
   set(name: string, value: Blob | string): void
   set(name: string, value: string): void
   set(name: string, blobValue: Blob, filename?: string | undefined): void
-  values(): IterableIterator<string>
+  values(): IterableIterator<Bun.FormDataEntryValue>
 var FormData (@types/node/web-globals/fetch.d.ts, bun-types/globals.d.ts)
   construct new (): FormData
   prototype: FormData

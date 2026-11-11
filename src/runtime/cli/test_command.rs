@@ -4069,7 +4069,7 @@ impl TestCommand {
                     .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
                 if patched == Err(TopLevelWaitError::NothingLeft) {
                     // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
-                    bun_jsc::cpp::JSMock__forgetPendingModulePatchesOfVitest(global);
+                    bun_jsc::cpp::JSMock__clearPendingVitestPatches(global);
                     if bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
                         promise = Self::never_settled(global, "A mock.module() factory", file_path);
                     }
@@ -4156,11 +4156,11 @@ impl TestCommand {
 
                 // Under --aot a call of import() that asks for a mocked file waits in the run time for its text, by a task that would be lost here.
                 // `bun test` has a read under way in its place. A plain run holds no such call, so it does nothing here.
-                if bun_jsc::cpp::JSMock__hasImportsHeldForMockedFiles(global) {
-                    bun_jsc::cpp::JSMock__letImportsHeldGetFilesThemselves(global);
-                    let _ = vm.event_loop_ref().wait_at_top_level(|| {
-                        !bun_jsc::cpp::JSMock__hasImportsHeldForMockedFiles(global)
-                    });
+                if bun_jsc::cpp::JSMock__hasHeldImports(global) {
+                    bun_jsc::cpp::JSMock__releaseHeldImports(global);
+                    let _ = vm
+                        .event_loop_ref()
+                        .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasHeldImports(global));
                     while prev_unhandled_count < vm.unhandled_error_counter {
                         let _ = vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;

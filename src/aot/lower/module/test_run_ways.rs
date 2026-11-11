@@ -18,7 +18,7 @@ pub(crate) enum BoundBy {
     Call,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum AskedBy {
     Statement,
     Name,
@@ -43,6 +43,7 @@ pub(super) enum Step {
     FileItself {
         file: FileId,
         name: Atom,
+        ends_way: bool,
     },
     Declaration,
 }
@@ -192,6 +193,26 @@ impl KeptBetweenWays {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct Request {
+    file: FileId,
+    name: Atom,
+    asked_by: AskedBy,
+    importer: Option<FileId>,
+}
+
+#[derive(Copy, Clone)]
+struct Answer {
+    is_found: bool,
+    enclosing_station: Option<usize>,
+}
+
+#[derive(Copy, Clone)]
+struct EmittedFile {
+    has_inner_station: bool,
+    is_found: bool,
+}
+
 struct WayToDeclaration<'a> {
     modules: &'a ModuleGraph,
     kept: Option<&'a mut KeptBetweenWays>,
@@ -203,10 +224,10 @@ struct WayToDeclaration<'a> {
     steps: Vec<Step>,
     path: Vec<FileId>,
     names_on_path: FxHashSet<(FileId, Atom)>,
-    answers_to_stars: FxHashMap<(FileId, Atom), (bool, Option<usize>)>,
+    answers: FxHashMap<Request, Answer>,
     rings_met: usize,
     stations_on_path: Vec<usize>,
-    stations_written_out: FxHashMap<(FileId, Atom), bool>,
+    emitted_files: FxHashMap<(FileId, Atom), EmittedFile>,
     count_of_stations: usize,
 }
 
@@ -228,10 +249,10 @@ impl<'a> WayToDeclaration<'a> {
             steps: Vec::new(),
             path: Vec::new(),
             names_on_path: FxHashSet::default(),
-            answers_to_stars: FxHashMap::default(),
+            answers: FxHashMap::default(),
             rings_met: 0,
             stations_on_path: Vec::new(),
-            stations_written_out: FxHashMap::default(),
+            emitted_files: FxHashMap::default(),
             count_of_stations: 0,
         }
     }
@@ -270,29 +291,55 @@ impl<'a> WayToDeclaration<'a> {
                 return true;
             }
         }
-        let is_kept = asked_by == AskedBy::Star && !is_station;
-        if is_kept
-            && let Some(&(answer, below)) = self.answers_to_stars.get(&(file, name))
-            && below.is_none_or(|station| self.stations_on_path.binary_search(&station).is_ok())
-        {
-            return answer;
-        }
-        let below = self.stations_on_path.last().copied();
         let stays = |&&on_path: &&FileId| !self.modules.is_left_out(ModuleRef::File(on_path));
         let asked_from = self.path.iter().rev().find(stays).copied();
-        let holds_station_behind = self.stations_written_out.get(&(file, name));
-        if is_station && asked_by == AskedBy::Star && holds_station_behind == Some(&true) {
-            let behind = self.steps.len() + 2;
-            self.count_of_stations += 1;
-            self.steps.push(Step::Station {
+        let is_left_out = self.modules.is_left_out(ModuleRef::File(file));
+        let request = Request {
+            file,
+            name,
+            asked_by,
+            importer: asked_from.filter(|_| asked_by == AskedBy::Name && is_left_out),
+        };
+        let is_answer_reused = asked_by == AskedBy::Name || !is_station;
+        if is_answer_reused && let Some(is_found) = self.find_answer(request) {
+            if is_station && !is_found {
+                let behind = self.steps.len() + 1;
+                self.count_of_stations += 1;
+                self.steps.push(Step::Station {
+                    file,
+                    name,
+                    asked_by,
+                    asked_from,
+                    behind,
+                });
+            }
+            return is_found;
+        }
+        let enclosing_station = self.stations_on_path.last().copied();
+        let may_use_namespace =
+            asked_by == AskedBy::Name && !is_left_out || asked_by == AskedBy::Star && is_station;
+        if may_use_namespace
+            && let Some(&emitted) = self.emitted_files.get(&(file, name))
+            && emitted.has_inner_station
+        {
+            if is_station {
+                let behind = self.steps.len() + 2;
+                self.count_of_stations += 1;
+                self.steps.push(Step::Station {
+                    file,
+                    name,
+                    asked_by,
+                    asked_from,
+                    behind,
+                });
+            }
+            let ends_way = asked_by == AskedBy::Name && emitted.is_found;
+            self.steps.push(Step::FileItself {
                 file,
                 name,
-                asked_by,
-                asked_from,
-                behind,
+                ends_way,
             });
-            self.steps.push(Step::FileItself { file, name });
-            return false;
+            return ends_way;
         }
         self.path.push(file);
         self.names_of_path.push(name);
@@ -326,21 +373,32 @@ impl<'a> WayToDeclaration<'a> {
         let end = self.steps.len();
         if is_station {
             self.stations_on_path.pop();
-            let holds_station_behind = self.count_of_stations > count_of_stations + 1;
-            self.stations_written_out
-                .insert((file, name), holds_station_behind);
         }
+        let emitted = EmittedFile {
+            has_inner_station: self.count_of_stations > count_of_stations + usize::from(is_station),
+            is_found,
+        };
+        self.emitted_files.insert((file, name), emitted);
         if is_station && let Some(Step::Station { behind, .. }) = self.steps.get_mut(station) {
             *behind = end;
         }
         self.path.pop();
         self.names_of_path.pop();
         self.names_on_path.remove(&(file, name));
-        if is_kept {
-            self.answers_to_stars
-                .insert((file, name), (is_found, below));
+        if is_answer_reused {
+            let answer = Answer {
+                is_found,
+                enclosing_station,
+            };
+            self.answers.insert(request, answer);
         }
         is_found && !(is_station && asked_by == AskedBy::Star)
+    }
+
+    fn find_answer(&self, request: Request) -> Option<bool> {
+        let answer = self.answers.get(&request)?;
+        let is_on_path = |station| self.stations_on_path.binary_search(&station).is_ok();
+        (answer.enclosing_station.is_none_or(is_on_path)).then_some(answer.is_found)
     }
 
     fn find_listed(&mut self, file: FileId, name: Atom) -> Option<ModuleExport> {
@@ -877,7 +935,7 @@ pub(super) fn emit_behind_stations(
             } if is_way_left || !is_behind_its_mock => {
                 Some((module, name, is_behind_its_mock, holder_of_star_to_built_in))
             }
-            Step::FileItself { file, name } => Some((ModuleRef::File(file), name, true, None)),
+            Step::FileItself { file, name, .. } => Some((ModuleRef::File(file), name, true, None)),
             _ => None,
         };
         if let Some((module, name, is_behind_its_mock, holder_of_star_to_built_in)) = asked_of_run {
@@ -898,8 +956,12 @@ pub(super) fn emit_behind_stations(
             let has = lowering.emit_has(object, PropertyName::Constant(key));
             let has = lowering.split_on_truthiness(has);
             lowering.builder.switch_to(has.not_taken);
-            let next = block_at(lowering, &mut blocks, index + 1);
-            lowering.jump(next);
+            let lacking = match step {
+                Step::FileItself { ends_way: true, .. } => nothing,
+                _ => index + 1,
+            };
+            let lacking = block_at(lowering, &mut blocks, lacking);
+            lowering.jump(lacking);
             lowering.builder.switch_to(has.taken);
             if let Some(end_of_question) = question {
                 let end = lowering.builder.read_variable(end_of_question);

@@ -232,6 +232,24 @@ const pairCount = {
 
 const newTextDecoder = b.instance("TextDecoder").fresh;
 
+const encodedBytes = takingStrings([], ["input"], {
+  returns: b.instance("Uint8Array").exactly.fresh,
+  throws: true,
+  uses: { this: b.inspected },
+});
+
+// Accepts any receiver and arguments, and calls the prototype's function for those it does not handle itself.
+const callFrameEntry = (symbol: string) =>
+  ({
+    symbol,
+    declaration: `JSC_DECLARE_HOST_FUNCTION(${symbol});`,
+    headers: [],
+    parameters: [
+      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
+      { value: "FrameOfValues", cppType: "JSC::CallFrame*" },
+    ],
+  }) satisfies b.DirectEntrySpec;
+
 const decodedText = {
   returns: b.string,
   throws: true,
@@ -623,6 +641,7 @@ export default b.declarations(
         args: { input: byteSource.optional, options: b.null.optional },
         capability: "heap",
         uses: { this: changesState, input: readsState },
+        directEntry: callFrameEntry("AOT__TextDecoder__decode"),
       },
       {
         ...decodedText,
@@ -653,11 +672,9 @@ export default b.declarations(
         uses: { this: b.inspected },
         implementation: b.hostCall,
       },
-      encode: takingStrings([], ["input"], {
-        returns: b.instance("Uint8Array").exactly.fresh,
-        throws: true,
-        uses: { this: b.inspected },
-      }),
+      encode: encodedBytes.map((field, index) =>
+        index === 0 ? { ...field, directEntry: callFrameEntry("AOT__TextEncoder__encode") } : field,
+      ),
       // Any view is taken as the destination, and its kind is tested after the source is converted.
       encodeInto: [
         {

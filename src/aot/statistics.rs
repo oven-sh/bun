@@ -7,6 +7,7 @@ use std::time::Instant;
 #[cfg(not(test))]
 use bun_aot_interface::statistics::limit_values;
 use bun_core::current_work::{self, set_step_of_build};
+use bun_core::file_steps;
 use bun_threading::Guarded;
 
 pub use self::limit_values::{HOST_ARCHITECTURE, LimitValues, limit_of_queries};
@@ -258,6 +259,7 @@ impl StageClock {
         }
         self.running = Some((stage, Instant::now()));
         if logs_stages() {
+            file_steps::begin_counting();
             let info = process_info();
             self.cpu_at_start = info.cpu;
             self.kernel_time_at_start = info.in_kernel;
@@ -279,6 +281,7 @@ impl StageClock {
             self.times[stage as usize] += wall;
             set_step_of_build(None);
             if logs_stages() {
+                log_file_steps(stage);
                 let info = process_info();
                 let cpu = info.cpu.saturating_sub(self.cpu_at_start);
                 let in_kernel = info.in_kernel.saturating_sub(self.kernel_time_at_start);
@@ -307,6 +310,18 @@ impl StageClock {
         for stage in Stage::ALL {
             statistics.add_time(stage, self.time_of(stage));
         }
+    }
+}
+
+fn log_file_steps(stage: Stage) {
+    for (step, instructions, times) in file_steps::take_counts() {
+        bun_core::print_errorln!(
+            "AOT steps of files: {} | {} | {} times | instructions {:.6} M",
+            stage.name(),
+            step,
+            times,
+            instructions as f64 / 1e6,
+        );
     }
 }
 

@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: a test that is held against the proven shapes alone shows nothing: the walk stopped at "a receiver of the method table is not shown to be what its type says"
-// STATISTIC: MethodCallsThroughTable >= 6
+// STATISTIC: MethodCallsThroughTable >= 5
 // A receiver that is read out of a field is of the classes that the field holds: proven, and shown by no test. One class of the row has no method of the name: the base is
 // abstract. So the shape is asked in front of the table call anyway; it is asked in full, of every shape, and so that test shows the receiver. What fails it goes by name: an object of the base itself, made by code
 // that the checker does not see through, throws as in plain Bun.

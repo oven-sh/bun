@@ -26,11 +26,11 @@ bun compile ./repo.ts && ./repo
 
 ```txt
 RangeError: bad id -1
-      at find (/$bunfs/root/repo.ts:3:27)
-      at /$bunfs/root/repo.ts:7:12
+      at find (./repo.ts:3:27)
+      at ./repo.ts:7:12
 ```
 
-Stack traces have the file, line and column of your source code. You don't need a source map. The part after `/$bunfs/root/` is the path of the source file, relative to the folder of the entry point. An executable prints no source excerpt above the message.
+Stack traces have the file, line and column of your source code. You don't need a source map. A path in a stack trace is relative to the folder you ran the build in, as with [`--sourcemap`](/compiler/executables) without `--aot`. A package is at `./node_modules/pkg/index.js`, and a file above that folder at `../shared/log.ts`. An executable prints no source excerpt above the message.
 
 ### Minified executables and external source maps
 
@@ -40,8 +40,8 @@ bun compile --minify --sourcemap=external ./repo.ts && ./repo
 
 ```txt
 RangeError: bad id -1
-      at <anonymous> (/$bunfs/root/compiled.js:4:2)
-      at /$bunfs/root/compiled.js:1:4
+      at <anonymous> (./compiled.js:4:2)
+      at ./compiled.js:1:4
 ```
 
 `--sourcemap=external` moves function names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines. Keep the map of every build you deploy, and don't ship it.
@@ -118,6 +118,8 @@ A package may catch an error and carry on. So the run ends with a list of every 
 
 The build reads your tests to find out which built-in methods and which exports they replace, and compiled code checks for a replacement of those. Your tests are the test files, the preloads and the files that only they import. A file that your program imports too can't replace a built-in. It throws the `TypeError` of the executable.
 
+A file is your program's if `package.json` names it as an entry point, if another file of your program in the run loads it, or if a file that the run doesn't load imports it by a relative path that's written as one string. A file that only re-exports it counts if something imports that file. Where the build can't tell, the file counts as your tests', and code in it runs as under `bun test`.
+
 If the build can't see what a test replaces, as in `Object.prototype[name] = 1` with a name that's put together while the test runs, the write, the spy or the mock throws a `TypeError` that shows what to write instead.
 
 What the language looks up by itself can't be replaced at all.
@@ -192,7 +194,7 @@ bun check --aot --explain=guards ./total.ts
 ```txt
 note: 3 type guards can fail at run time. When one fails, the result is the same and at most the rest of that call runs slower.
 note: 1. the type of this value isn't proven, so it is checked here
-   at total.ts:3:3
+   at total.ts:3:14
 note: fix: nothing to fix unless it fails in hot code. Then trace the value back from here to where its type is lost
 ```
 

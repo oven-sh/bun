@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { limitOfARun, limitWithASAN, slot } from "./harness/commands";
+import { limitOfARun, limitWithASAN, slot, slots } from "./harness/commands";
 import { run } from "./harness/run";
 import { test, testOneByOne } from "./supported";
 
@@ -101,24 +101,38 @@ function lastWordsOf(stderr: string) {
   return lines.length > 16 ? [...lines.slice(0, 8), "...", ...lines.slice(-8)] : lines;
 }
 
-/** What each case of a project printed in one run of it: `bun test`, or with `--aot` the compiled run. */
-async function said(dir: string, cases: string[], ...flags: string[]) {
+/**
+ * One run of a project, `bun test` or with `--aot` the compiled run: what each case printed, how the run ended, and how a run ends that printed as much.
+ * It judges nothing: the test does, once both of its runs are over.
+ */
+async function ran(dir: string, cases: string[], ...flags: string[]) {
   // No test of the run has a shorter limit than the run: beside a build, a debug build of Bun takes longer for some cases than the five seconds of `bun test`.
   const command = [bunExe(), "test", ...flags, `--timeout=${limit}`, "./t"];
   const { stdout, stderr, exitCode } = await slot(() => run(command, dir, { ...bunEnv, NO_COLOR: "1" }, limit));
   const printed = [...stdout.matchAll(/^\| (\S+): (.*)$/gm)].map(([, name, words]) => [name, words] as const);
   const lines = new Map(printed);
   const count = (word: string) => Number(stderr.match(new RegExp(`^ *(\\d+) ${word}$`, "m"))?.[1]);
-  const ended = { pass: count("pass"), fail: count("fail"), exitCode };
+  const counted = { pass: count("pass"), fail: count("fail"), exitCode };
   // A test that comes to its end has printed its line, and passes. So what the run counts and how it ends follow from what it printed.
-  const endsWell = { pass: lines.size, fail: cases.length - lines.size, exitCode: lines.size === cases.length ? 0 : 1 };
-  expect({
-    run: command.slice(1).join(" "),
-    notOnce: printed.map(([name]) => name).filter((name, at, all) => !cases.includes(name) || all.indexOf(name) !== at),
-    ...ended,
-    lastWords: Bun.deepEquals(ended, endsWell) ? [] : lastWordsOf(stderr),
-  }).toEqual({ run: command.slice(1).join(" "), notOnce: [], ...endsWell, lastWords: [] });
-  return lines;
+  const follows = { pass: lines.size, fail: cases.length - lines.size, exitCode: lines.size === cases.length ? 0 : 1 };
+  const asked = command.slice(1).join(" ");
+  const notOnce = printed
+    .map(([name]) => name)
+    .filter((name, at, all) => !cases.includes(name) || all.indexOf(name) !== at);
+  return {
+    lines,
+    ended: { run: asked, notOnce, ...counted, lastWords: Bun.deepEquals(counted, follows) ? [] : lastWordsOf(stderr) },
+    endsWell: { run: asked, notOnce: [], ...follows, lastWords: [] },
+  };
+}
+
+/** What each of them comes to, once all of them are over: what one of them threw is thrown then, and not while another still runs. */
+async function allOver<Outcome>(pending: Promise<Outcome>[]) {
+  const settled = await Promise.allSettled(pending);
+  return settled.map(one => {
+    if (one.status === "rejected") throw one.reason;
+    return one.value;
+  });
 }
 
 const list = join(import.meta.dir, "mock-ways.known.txt");
@@ -130,19 +144,24 @@ const rewrites = !!process.env.BUN_AOT_REWRITE_MOCK_WAYS;
 // The kinds run beside one another, and each run takes a slot: no more of them run at once than the machine has processors.
 // A run of a debug build of Bun holds a gigabyte: there the kinds run one by one.
 const declare = isDebug ? testOneByOne : test.concurrent;
+// The limit of a kind holds every run that may take a slot ahead of its own, each for its whole limit: all ten where the kinds run beside one another.
+// So no kind times out while it waits for a slot, and a run that hangs is ended at its own limit, where the kind says which. A minute more to lay and to remove the project.
+const limitOfAKind = Math.ceil((isDebug ? 2 : 2 * kinds.length) / slots) * limit + 60_000;
 
 declare.each(kinds)(
   "what each case prints: %s",
   async kind => {
     using dir = tempDir("aot-mock-ways", projectOf(kind));
     const cases = casesOf(kind);
-    const [plain, compiled] = await Promise.all([said(String(dir), cases), said(String(dir), cases, "--aot")]);
+    // Both runs are over before either is judged and before the project is removed: a failure shows both, and leaves no run behind in a folder that is gone.
+    const [plain, compiled] = await allOver([ran(String(dir), cases), ran(String(dir), cases, "--aot")]);
+    expect([plain.ended, compiled.ended]).toEqual([plain.endsWell, compiled.endsWell]);
     // The specification has every case.
-    expect(cases.filter(name => !plain.has(name))).toEqual([]);
+    expect(cases.filter(name => !plain.lines.has(name))).toEqual([]);
     const found = chains.map(chain => {
       const marks = marked.map(which => {
-        const got = compiled.get(nameOf(chain, kind, which))?.split(" . ") ?? [];
-        const expected = plain.get(nameOf(chain, kind, which))!.split(" . ");
+        const got = compiled.lines.get(nameOf(chain, kind, which))?.split(" . ") ?? [];
+        const expected = plain.lines.get(nameOf(chain, kind, which))!.split(" . ");
         return expected
           .map((words, at) => (got[at] === words ? "." : got[at] && !/Error/.test(got[at]) ? "S" : "L"))
           .join("");
@@ -159,13 +178,12 @@ declare.each(kinds)(
     }
     expect(found).toEqual(marksIn(listed()).filter(line => headOf(line).endsWith(` ${kind}`)));
   },
-  600_000,
+  limitOfAKind,
 );
 
 // Each kind reads its own lines of the list. A line of no case would be read by none of them.
-test.skipIf(rewrites)(
-  "mock-ways.known.txt holds a line for each chain and each kind of mocked file, and no other",
-  () => {
-    expect(marksIn(listed()).map(headOf)).toEqual(chains.flatMap(chain => kinds.map(kind => `${chain} ${kind}`)));
-  },
-);
+test("mock-ways.known.txt holds a line for each chain and each kind of mocked file, and no other", () => {
+  // The kinds are writing the list anew, and a line of no case goes out with that.
+  if (rewrites) return;
+  expect(marksIn(listed()).map(headOf)).toEqual(chains.flatMap(chain => kinds.map(kind => `${chain} ${kind}`)));
+});

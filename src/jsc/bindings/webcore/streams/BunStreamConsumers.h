@@ -20,5 +20,10 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToFormData);
 // body: dynamicDowncast<JSReadableStream>(arg0)->{m_transferred = true, m_disturbed = true}.
 // Referenced by src/js/internal/streams/native-readable.ts via $newCppFunction.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream);
+// The read side of node:stream's Readable.fromWeb() and Duplex.fromWeb()
+// (src/js/internal/webstreams_adapters.ts, via $newCppFunction): the first makes the
+// JSNodeStreamReadOperation of an adapter, the second issues one read through it.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateNodeStreamReadOperation);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeStreamReadOperationRead);
 
 } // namespace WebCore

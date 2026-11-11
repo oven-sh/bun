@@ -91,8 +91,9 @@ public:
     // The converted user source (this + pull/cancel/close). Cleared once no hook can run.
     JSC::WriteBarrier<JSDirectStreamSource> m_source;
     // _pendingRead — the in-flight read()/readMany()'s own promise (see onPull). Only
-    // promise-backed reads register here; pipeTo / tee / for-await reads wait in the
-    // reader's [[readRequests]] instead. handleError rejects AND CLEARS it.
+    // promise-backed reads register here; pipeTo / tee / for-await reads and the reads of
+    // node:stream's Readable.fromWeb() / Duplex.fromWeb() wait in the reader's
+    // [[readRequests]] instead. handleError rejects AND CLEARS it.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingRead;
     // _deferCloseReason
     JSC::WriteBarrier<JSC::Unknown> m_deferCloseReason;

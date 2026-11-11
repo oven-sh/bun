@@ -22,6 +22,7 @@ public:
         // Promise kind: the JSPromise reader.read() returned.
         // PipeTo: the JSStreamPipeToOperation. DefaultTee/ByteTee: the JSStreamTeeState.
         // AsyncIterator: the JSReadableStreamAsyncIterator.
+        // NodeStream: the JSNodeStreamReadOperation.
         Context = 0,
     };
 
@@ -45,7 +46,8 @@ public:
 
     // Every body is `switch (m_kind)` over ALL arms — no default. Every dispatch through
     // these is userJS: YES (transitive): the Promise kind resolves its promise with a USER
-    // chunk; the other kinds re-enter controller ops.
+    // chunk; the NodeStream kind runs node:stream code and listeners in its close and error
+    // steps; the other kinds re-enter controller ops.
     // "chunk steps, given chunk"
     void chunkSteps(JSC::JSGlobalObject*, JSC::JSValue chunk);
     // "close steps"

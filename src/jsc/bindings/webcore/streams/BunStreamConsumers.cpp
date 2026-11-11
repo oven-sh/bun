@@ -15,6 +15,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamController.h"
 #include "JSDirectStreamSource.h"
+#include "JSNodeStreamReadOperation.h"
 #include "JSOneShotDirectSink.h"
 #include "JSReadableStreamIntoArrayOperation.h"
 #include "JSReadRequest.h"
@@ -37,6 +38,7 @@
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
@@ -218,6 +220,67 @@ void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer&
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Result), "result"_s);
 }
 
+// JSNodeStreamReadOperation — a node:stream adapter's read side.
+
+const ClassInfo JSNodeStreamReadOperation::s_info = { "NodeStreamReadOperation"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeStreamReadOperation) };
+
+JSNodeStreamReadOperation::JSNodeStreamReadOperation(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+void JSNodeStreamReadOperation::finishCreation(VM& vm, JSReadableStreamDefaultReader* reader, JSObject* nodeStream, JSValue chunkStep, JSValue closeStep, JSValue errorStep)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+    internalField(Field::Reader).set(vm, this, reader);
+    internalField(Field::NodeStream).set(vm, this, nodeStream);
+    internalField(Field::ChunkStep).set(vm, this, chunkStep);
+    internalField(Field::CloseStep).set(vm, this, closeStep);
+    internalField(Field::ErrorStep).set(vm, this, errorStep);
+}
+
+JSNodeStreamReadOperation* JSNodeStreamReadOperation::create(VM& vm, Structure* structure, JSReadableStreamDefaultReader* reader, JSObject* nodeStream, JSValue chunkStep, JSValue closeStep, JSValue errorStep)
+{
+    auto* cell = new (NotNull, allocateCell<JSNodeStreamReadOperation>(vm)) JSNodeStreamReadOperation(vm, structure);
+    cell->finishCreation(vm, reader, nodeStream, chunkStep, closeStep, errorStep);
+    return cell;
+}
+
+Structure* JSNodeStreamReadOperation::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
+}
+
+GCClient::IsoSubspace* JSNodeStreamReadOperation::subspaceForImpl(VM& vm)
+{
+    return WebCore::subspaceForImpl<JSNodeStreamReadOperation, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeStreamReadOperation, m_subspaceForNodeStreamReadOperation));
+}
+
+DEFINE_VISIT_CHILDREN(JSNodeStreamReadOperation);
+
+template<typename Visitor>
+void JSNodeStreamReadOperation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSNodeStreamReadOperation>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitInternalFieldsHidden(thisObject, visitor);
+}
+
+void JSNodeStreamReadOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSNodeStreamReadOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Reader), "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::NodeStream), "nodeStream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ChunkStep), "chunkStep"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CloseStep), "closeStep"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ErrorStep), "errorStep"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Request), "request"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::AsyncContext), "asyncContext"_s);
+}
+
 } // namespace WebCore
 
 namespace Bun {
@@ -226,6 +289,7 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSBunStandaloneTextSink;
 using WebCore::JSDirectStreamController;
+using WebCore::JSNodeStreamReadOperation;
 using WebCore::JSOneShotDirectSink;
 using WebCore::JSReadableStreamIntoArrayOperation;
 using WebCore::JSReadRequest;
@@ -1357,6 +1421,64 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
     return derived;
 }
 
+// The NodeStream read request's steps (JSReadRequest.cpp dispatches its NodeStream arm here):
+// the read side of node:stream's Readable.fromWeb() and Duplex.fromWeb().
+
+// step(value, nodeStream). The step is node:stream code and runs the listeners of the program.
+static void callNodeStreamReadStep(JSGlobalObject* globalObject, JSNodeStreamReadOperation* op, JSValue step, JSValue value)
+{
+    MarkedArgumentBuffer args;
+    args.append(value);
+    args.append(op->nodeStream());
+    JSC::call(globalObject, step, JSC::getCallData(step), jsUndefined(), args);
+}
+
+// What a step throws was the rejection of the promise that the reaction of reader.read() made,
+// so it stays an unhandled rejection.
+static void reportNodeStreamReadStepThrow(JSGlobalObject* globalObject, JSValue error)
+{
+    promiseRejectedWith(globalObject, error);
+}
+
+// The close step and the error step run inside the operation that closes or errors the stream.
+// That operation has work left (the other read requests, a tee, a pipe), and nothing on its stack
+// waits for the node stream: a throw stops here. The step runs in the async context of the read,
+// where the reaction ran, and not in that of whoever closes the stream.
+static void runNodeStreamReadStepInPlace(JSGlobalObject* globalObject, JSNodeStreamReadOperation* op, JSValue step, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    op->m_readInFlight = false;
+    JSValue asyncContext = op->takeAsyncContext();
+    atStreamsBoundary(
+        globalObject,
+        [&] {
+            AsyncContextScope asyncContextScope(globalObject, asyncContext, AsyncContextScope::EnterUndefined);
+            callNodeStreamReadStep(globalObject, op, step, value);
+        },
+        [&](JSValue error) { reportNodeStreamReadStepThrow(globalObject, error); });
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+void nodeStreamReadRequestChunkSteps(JSGlobalObject* globalObject, JSNodeStreamReadOperation* op, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    op->m_readInFlight = false;
+    // The node stream gets the chunk one microtask later, where the reaction of reader.read()
+    // ran: an error or a destroy() that follows in this turn is ahead of the chunk.
+    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, JSStreamsRuntime::from(globalObject)->onNodeStreamReadChunk(), op->takeAsyncContext(), chunk, op };
+    vm.queueMicrotask(WTF::move(task));
+}
+
+void nodeStreamReadRequestCloseSteps(JSGlobalObject* globalObject, JSNodeStreamReadOperation* op)
+{
+    runNodeStreamReadStepInPlace(globalObject, op, op->closeStep(), jsUndefined());
+}
+
+void nodeStreamReadRequestErrorSteps(JSGlobalObject* globalObject, JSNodeStreamReadOperation* op, JSValue error)
+{
+    runNodeStreamReadStepInPlace(globalObject, op, op->errorStep(), error);
+}
+
 } // namespace WebStreams
 } // namespace Bun
 
@@ -1450,6 +1572,63 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
         stream->m_transferred = true;
         stream->m_disturbed = true;
     }
+    return JSValue::encode(jsUndefined());
+}
+
+// createNodeStreamReadOperation(reader, nodeStream, chunkStep, closeStep, errorStep): the three
+// steps are functions of the adapter module, called as step(value, nodeStream).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateNodeStreamReadOperation, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue readerValue = callFrame->argument(0);
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(readerValue);
+    // A reader of the program's own making has no read requests. Node's adapter throws on one too.
+    if (!reader) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "reader"_s, "ReadableStreamDefaultReader"_s, readerValue);
+    JSValue nodeStream = callFrame->argument(1);
+    if (!nodeStream.isObject()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "nodeStream"_s, "object"_s, nodeStream);
+    JSValue chunkStep = callFrame->argument(2);
+    JSValue closeStep = callFrame->argument(3);
+    JSValue errorStep = callFrame->argument(4);
+    if (!chunkStep.isCallable()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunkStep"_s, "function"_s, chunkStep);
+    if (!closeStep.isCallable()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "closeStep"_s, "function"_s, closeStep);
+    if (!errorStep.isCallable()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "errorStep"_s, "function"_s, errorStep);
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    auto* op = JSNodeStreamReadOperation::create(vm, runtime->nodeStreamReadOperationStructure(domGlobalObject), reader, asObject(nodeStream), chunkStep, closeStep, errorStep);
+    op->setRequest(vm, JSReadRequest::create(vm, runtime->readRequestStructure(domGlobalObject), ReadRequestKind::NodeStream, op));
+    return JSValue::encode(op);
+}
+
+// One read of the node stream's _read(). The stream answers through the operation's steps.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeStreamReadOperationRead, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue operation = callFrame->argument(0);
+    auto* op = dynamicDowncast<JSNodeStreamReadOperation>(operation);
+    if (!op) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "operation"_s, "NodeStreamReadOperation"_s, operation);
+    // A Readable asks for the next chunk only after push() of the one before. A _read() that
+    // the program calls itself must not put the one request into the stream twice.
+    if (op->m_readInFlight)
+        return JSValue::encode(jsUndefined());
+    auto* reader = op->reader();
+    if (!reader->m_stream) [[unlikely]] {
+        throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s));
+        return {};
+    }
+    op->m_readInFlight = true;
+    JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (asyncContext && !asyncContext.isUndefined())
+        op->setAsyncContext(vm, asyncContext);
+    readableStreamDefaultReaderRead(globalObject, reader, op->request());
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -1792,6 +1971,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectFlush, (JSGlobalO
     if (sink->m_closed)
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsNumber(0));
+}
+
+// The chunk of a node:stream adapter's read, one microtask after the stream handed it over.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNodeStreamReadChunk, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* op = uncheckedDowncast<JSNodeStreamReadOperation>(callFrame->uncheckedArgument(1));
+    return enterStreams(
+        globalObject,
+        [&] { Bun::WebStreams::callNodeStreamReadStep(globalObject, op, op->chunkStep(), callFrame->argument(0)); },
+        [&](JSValue error) { Bun::WebStreams::reportNodeStreamReadStepThrow(globalObject, error); });
 }
 
 } // namespace WebCore

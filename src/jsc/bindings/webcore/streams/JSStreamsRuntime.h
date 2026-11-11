@@ -218,6 +218,8 @@ namespace WebCore {
 //   onConsumeDirectToArrayBufferPull*: the one-shot pull's settlement; context = the
 //     JSOneShotDirectSink cell (it roots the stream, the ArrayBufferSink, the capability
 //     promise, and the closed flag — see JSOneShotDirectSink.h).
+//   onNodeStreamReadChunk: the NodeStream read request's queued chunk job; value = the
+//     chunk, context = the JSNodeStreamReadOperation.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS(V)                                               \
     V(onBufferedFastPathRejected)                                                                            \
     V(onBufferedFastPathSettled)                                                                             \
@@ -234,7 +236,8 @@ namespace WebCore {
     V(onDirectConsumeLoopReadFulfilled)                                                                      \
     V(onDirectConsumeLoopReadRejected)                                                                       \
     V(onConsumeDirectToArrayBufferPullFulfilled)                                                             \
-    V(onConsumeDirectToArrayBufferPullRejected)
+    V(onConsumeDirectToArrayBufferPullRejected)                                                              \
+    V(onNodeStreamReadChunk)
 
 // THE closed [reaction-convention] list.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER(V)                   \
@@ -330,7 +333,8 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation)   \
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                  \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)                       \
-    V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)
+    V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)       \
+    V(nodeStreamReadOperationStructure, JSNodeStreamReadOperation)
 
 class JSStreamsRuntime final {
     WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);

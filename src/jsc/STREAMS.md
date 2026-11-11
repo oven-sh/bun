@@ -60,6 +60,18 @@ Everything Bun adds beyond the spec lives beside the spec code and is tagged, no
 Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consumers. Fully
   buffered or native-backed bodies short-circuit; only genuinely streaming JS sources pay
   for a read loop.
+- **The node:stream read request** (`JSNodeStreamReadOperation.h`, `ReadRequestKind::NodeStream`).
+  `Readable.fromWeb()` and `Duplex.fromWeb()` (`src/js/internal/webstreams_adapters.ts`) do not call
+  `reader.read()`. Each adapter has one operation cell and one read request, and the request's steps
+  call three functions of that module: the close and error steps where the stream closes or errors,
+  the chunk step from a queued job. It is the one kind whose steps run JavaScript of a builtin module
+  in place, so what a step throws stops inside the step (an unhandled rejection) and the steps run in
+  the async context of the read. The request reads every kind of stream: one with a default or a
+  byte controller, one with a direct controller (through `[[readRequests]]`, as `pipeTo()` and
+  `for await` do, and not through the promise of `reader.read()`), and one with a native source.
+  The exception is `Readable.fromWeb()` over a stream that still has its native source:
+  `internal/streams/native-readable` reads that one. `Duplex.fromWeb()`, node-fetch and undici read
+  it through the request.
 - **The extern "C" surface** (`WebStreamsExports.cpp`). Every function the Rust runtime
   calls into the streams subsystem (creating/cancelling/draining streams, attaching sinks,
   querying tags) is declared here and only here. The native sinks

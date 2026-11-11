@@ -121,6 +121,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForBunStandaloneTextSink { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForOneShotDirectSink { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadableStreamIntoArrayOperation { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForNodeStreamReadOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadableStreamAsyncIterator { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadableStreamBYOBReader { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadableStreamBYOBRequest { nullptr };

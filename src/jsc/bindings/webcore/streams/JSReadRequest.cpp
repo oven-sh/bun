@@ -5,6 +5,7 @@
 #include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
+#include "JSNodeStreamReadOperation.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamAsyncIterator.h"
@@ -96,6 +97,8 @@ static bool closeStepsCloseAnotherStream(ReadRequestKind kind)
     case ReadRequestKind::DefaultTee:
     case ReadRequestKind::ByteTee:
     case ReadRequestKind::TextDecode:
+    // It ends a node stream, whose listeners can close a web stream of their own.
+    case ReadRequestKind::NodeStream:
         return true;
     case ReadRequestKind::Promise:
     case ReadRequestKind::PipeTo:
@@ -136,6 +139,8 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
     }
     case ReadRequestKind::TextDecode:
         RELEASE_AND_RETURN(scope, textDecodeReadRequestChunkSteps(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(context()), chunk));
+    case ReadRequestKind::NodeStream:
+        return nodeStreamReadRequestChunkSteps(globalObject, uncheckedDowncast<JSNodeStreamReadOperation>(context()), chunk);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -213,6 +218,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject, MayDefer mayDefer)
     }
     case ReadRequestKind::TextDecode:
         RELEASE_AND_RETURN(scope, textDecodeReadRequestCloseSteps(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(context())));
+    case ReadRequestKind::NodeStream:
+        RELEASE_AND_RETURN(scope, nodeStreamReadRequestCloseSteps(globalObject, uncheckedDowncast<JSNodeStreamReadOperation>(context())));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -255,6 +262,10 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error, MayD
         }
         return;
     }
+    case ReadRequestKind::NodeStream:
+        if (mayDefer == MayDefer::Yes && streamLinkMustDefer(vm)) [[unlikely]]
+            return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestErrorStepsDeferred(), error, this);
+        RELEASE_AND_RETURN(scope, nodeStreamReadRequestErrorSteps(globalObject, uncheckedDowncast<JSNodeStreamReadOperation>(context()), error));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

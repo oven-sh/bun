@@ -86,6 +86,18 @@ AsyncContextScope::AsyncContextScope(JSGlobalObject* globalObject, JSValue snaps
         setCurrentAsyncContext(globalObject, snapshot);
 }
 
+AsyncContextScope::AsyncContextScope(JSGlobalObject* globalObject, JSValue snapshot, EnterUndefinedTag)
+{
+    if (!snapshot || snapshot.isNull())
+        snapshot = jsUndefined();
+    JSValue previous = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (snapshot == previous)
+        return;
+    m_globalObject = globalObject;
+    m_previous = previous;
+    setCurrentAsyncContext(globalObject, snapshot);
+}
+
 AsyncContextScope::~AsyncContextScope()
 {
     if (m_globalObject)

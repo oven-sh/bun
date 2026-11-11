@@ -82,6 +82,7 @@ class JSReadableStreamIntoArrayOperation; // the array pump's reader/chunks/resu
 class JSNativeStreamSourceAdapter;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
+class JSNodeStreamReadOperation; // a node:stream adapter's read side (JSNodeStreamReadOperation.h)
 class JSTextEncoderStream;
 class JSTextDecoderStream;
 class JSCompressionStream;
@@ -186,8 +187,8 @@ enum class ReaderType : uint8_t {
 };
 
 // JSReadRequest::m_kind — ONE concrete cell, a kind tag, no C++ virtuals. readMany() uses
-// the Promise kind; the Bun native-sink pumps each have a dedicated kind so their per-chunk
-// path allocates no Promise / iterator-result object.
+// the Promise kind; the Bun native-sink pumps and the node:stream adapters each have a
+// dedicated kind so their per-chunk path allocates no Promise / iterator-result object.
 enum class ReadRequestKind : uint8_t {
     Promise, // public reader.read(): context = the JSPromise it resolves
     PipeTo, // context = the JSStreamPipeToOperation
@@ -198,6 +199,9 @@ enum class ReadRequestKind : uint8_t {
     TextDecode, // Body.textStream()'s per-pull read: context = the output
                 // JSReadableStreamDefaultController (its algorithmContext is the
                 // source reader; decode state inline on m_algorithms.textDecodeState)
+    NodeStream, // node:stream's Readable.fromWeb() / Duplex.fromWeb() read: context = the
+                // JSNodeStreamReadOperation. Its close and error steps run node:stream code
+                // where the stream closes or errors; the chunk step queues it one microtask later.
 };
 
 // JSReadIntoRequest::m_kind (the BYOB parallel of ReadRequestKind).

@@ -106,6 +106,7 @@ public:
     IsoSubspace* m_subspaceForBunStandaloneTextSink { nullptr };
     IsoSubspace* m_subspaceForOneShotDirectSink { nullptr };
     IsoSubspace* m_subspaceForReadableStreamIntoArrayOperation { nullptr };
+    IsoSubspace* m_subspaceForNodeStreamReadOperation { nullptr };
     IsoSubspace* m_subspaceForReadableStreamAsyncIterator { nullptr };
     IsoSubspace* m_subspaceForReadableStreamBYOBReader { nullptr };
     IsoSubspace* m_subspaceForReadableStreamBYOBRequest { nullptr };

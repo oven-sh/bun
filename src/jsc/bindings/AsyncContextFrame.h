@@ -60,6 +60,9 @@ class AsyncContextScope {
 
 public:
     AsyncContextScope(JSC::JSGlobalObject*, JSC::JSValue snapshot);
+    // An empty, undefined or null `snapshot` is entered too: what runs inside sees no context of its caller.
+    enum EnterUndefinedTag { EnterUndefined };
+    AsyncContextScope(JSC::JSGlobalObject*, JSC::JSValue snapshot, EnterUndefinedTag);
     ~AsyncContextScope();
 
 private:

@@ -18,6 +18,7 @@ const { validateBoolean, validateObject, validateOneOf } = require("internal/val
 const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
+const AsyncContextFrame = require("internal/async_context_frame");
 
 const normalizeEncoding: (encoding: unknown) => string | undefined = $bindgen(
   "node_util_binding.bind.ts",
@@ -46,9 +47,66 @@ function tryTransferToNativeReadable(stream: ReadableStream, options: StreamRead
 
 type DefaultReader = ReturnType<ReadableStream["getReader"]>;
 
+// The read side of Readable.fromWeb() and Duplex.fromWeb() is a read request of the web stream, not a reader.read()
+// promise, as in Node.js since v26.9.0 and v24.22.0 (nodejs/node#65548):
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L676-L696
+// The stream calls the close step and the error step where it closes or errors: inside _read(), controller.close(),
+// controller.error() or reader.cancel(). It calls the chunk step one microtask after it hands a chunk over, so an
+// error or a destroy() of that turn is ahead of the chunk. Each step is called as step(value, nodeStream).
+// Two things are not Node's. What a step throws is an unhandled rejection, as it was in the reaction of reader.read():
+// Node throws it into controller.close(). And the steps run in the async context of the read that asked, as that
+// reaction did: in Node the listeners see the AsyncLocalStorage store of whoever closes the stream.
+interface NodeStreamReadOperation {
+  readonly $nodeStreamReadOperation: never;
+}
+type NodeStreamReadStep = (value: any, nodeStream: any) => void;
+const createReadOperation: (
+  reader: DefaultReader,
+  nodeStream: object,
+  chunkStep: NodeStreamReadStep,
+  closeStep: NodeStreamReadStep,
+  errorStep: NodeStreamReadStep,
+) => NodeStreamReadOperation = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionCreateNodeStreamReadOperation",
+  5,
+);
+const readNextChunk: (operation: NodeStreamReadOperation) => void = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionNodeStreamReadOperationRead",
+  1,
+);
+
+// Node's `closed` flag of the adapter: the reaction of reader.closed raises it one promise job after the web stream
+// closes or errors, and a destroy() ahead of it still cancels. The web stream holds that reaction for as long as
+// it is open. So the reaction holds this object and not the node stream, and it is made outside every async
+// context: an open web stream keeps alive neither an idle node stream nor the stores of the read that opened it.
+interface WebStreamEnd {
+  closed: Promise<void>;
+  seen: boolean;
+}
+
+function watchWebStreamEnd(reader: DefaultReader): WebStreamEnd {
+  const closed = reader.closed;
+  const end: WebStreamEnd = { closed, seen: false };
+  // A reader of a subclass can answer `closed` with anything.
+  if (!$isPromise(closed)) return end;
+  if (!$isPromisePending(closed)) {
+    // Node takes the reader inside fromWeb(), so for a stream that ended ahead of the first read its flag is up.
+    end.seen = true;
+  } else {
+    const see = () => {
+      end.seen = true;
+    };
+    AsyncContextFrame.run(undefined, PromisePrototypeThen, closed, see, see);
+  }
+  return end;
+}
+
 class ReadableFromWeb extends Readable {
   #reader: DefaultReader | undefined;
-  #closed: boolean;
+  #operation: NodeStreamReadOperation | undefined;
+  #end: WebStreamEnd | undefined;
   #stream: ReadableStream | undefined;
   // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
   #responseBody: boolean;
@@ -62,8 +120,9 @@ class ReadableFromWeb extends Readable {
       signal,
     });
     this.#reader = undefined;
+    this.#operation = undefined;
+    this.#end = undefined;
     this.#stream = stream;
-    this.#closed = false;
     this.#responseBody = responseBody;
   }
 
@@ -72,71 +131,77 @@ class ReadableFromWeb extends Readable {
     return this.#responseBody && stream.locked;
   }
 
-  #handleDone(reader: DefaultReader) {
-    reader.releaseLock();
-    this.#reader = undefined;
-    this.#closed = true;
-    this.push(null);
+  static #chunkStep(chunk: any, self: ReadableFromWeb) {
+    self.push(chunk);
   }
 
-  #handleError(reader: DefaultReader | undefined, error: Error) {
-    if (reader) {
-      this.#reader = undefined;
-      try {
-        reader.releaseLock();
-      } catch {}
+  static #closeStep(_: undefined, self: ReadableFromWeb) {
+    // A body of node-fetch or of undici is no Readable.fromWeb() in Node: after destroy() its end stays a premature close.
+    if (self.#responseBody && self.destroyed) return;
+    self.push(null);
+  }
+
+  static #errorStep(error: any, self: ReadableFromWeb) {
+    destroyer(self, error);
+  }
+
+  // The read operation of the reader that the adapter has, or of the one that it takes from the stream now.
+  #open() {
+    let reader = this.#reader;
+    if (reader === undefined) {
+      const stream = this.#stream;
+      if (stream === undefined) return undefined;
+      this.#stream = undefined;
+      if (this.#takenByResponse(stream)) {
+        this.push(null);
+        return undefined;
+      }
+      // From here on _destroy() cancels the source through the reader, also a reader that the read operation refuses.
+      reader = this.#reader = stream.getReader();
     }
-    this.#closed = true;
-    this.destroy(error);
+    const operation = createReadOperation(
+      reader,
+      this,
+      ReadableFromWeb.#chunkStep,
+      ReadableFromWeb.#closeStep,
+      ReadableFromWeb.#errorStep,
+    );
+    this.#end = watchWebStreamEnd(reader);
+    return (this.#operation = operation);
   }
 
-  // One reader.read() per _read(). readMany() would drain a start()-enqueued
-  // source to "closed" before the consumer can abort, and cancel() on a closed
-  // stream is a spec no-op, so the source's cancel hook would never run.
+  // One read per _read(). readMany() would drain a start()-enqueued source to "closed" before the consumer can abort,
+  // and cancel() on a closed stream is a spec no-op, so the source's cancel hook would never run.
   _read() {
     $debug("ReadableFromWeb _read()");
-    if (this.#closed) return;
-    var reader = this.#reader;
-    var stream = this.#stream;
-    if (stream) {
-      if (this.#takenByResponse(stream)) {
-        this.#stream = undefined;
-        this.#closed = true;
-        this.push(null);
-        return;
-      }
-      reader = this.#reader = stream.getReader();
-      this.#stream = undefined;
-    }
-    PromisePrototypeThen.$call(
-      reader!.read(),
-      chunk => {
-        if (this.#closed) return;
-        if (chunk.done) {
-          this.#handleDone(reader!);
-        } else {
-          this.push(chunk.value);
-        }
-      },
-      error => this.#handleError(reader, error),
-    );
+    const operation = this.#operation ?? this.#open();
+    if (operation !== undefined) readNextChunk(operation);
   }
 
   _destroy(error: Error | null, callback: $Node.ErrorCallback) {
-    if (!this.#closed) {
-      this.#closed = true;
-      // As in Node, a cancel() that rejects doesn't error the Readable.
-      const done = () => callback(error);
-      var reader = this.#reader;
-      if (reader) {
-        this.#reader = undefined;
+    const reader = this.#reader;
+    if (reader !== undefined) {
+      const end = this.#end;
+      this.#reader = undefined;
+      this.#operation = undefined;
+      this.#end = undefined;
+      // A web stream that closed or errored by itself gets its lock back, as it did when the adapter read through
+      // reader.read(). One that this call cancels stays locked. Node never gives the lock back.
+      const ended = end !== undefined && $isPromise(end.closed) && !$isPromisePending(end.closed);
+      if (end === undefined || !end.seen) {
+        // As in Node, a cancel() that rejects doesn't error the Readable.
+        const done = () => callback(error);
         PromisePrototypeThen.$call(reader.cancel(error), done, done);
+        if (ended) reader.releaseLock();
         return;
       }
-      var stream = this.#stream;
-      if (stream) {
+      reader.releaseLock();
+    } else {
+      const stream = this.#stream;
+      if (stream !== undefined) {
         this.#stream = undefined;
         if (!this.#takenByResponse(stream)) {
+          const done = () => callback(error);
           PromisePrototypeThen.$call(stream.cancel(error), done, done);
           return;
         }
@@ -692,6 +757,21 @@ function newReadableWritablePairFromDuplex(
   return { writable, readable };
 }
 
+function duplexChunkStep(chunk: any, duplex: $Node.Duplex) {
+  duplex.push(chunk);
+}
+
+function duplexCloseStep(_: undefined, duplex: $Node.Duplex) {
+  duplex.push(null);
+}
+
+// Node's error step destroys the duplex in place, which aborts the sink:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L926-L942
+// Node's write() also hands its chunk to the sink in place. Here write() does that one promise job later (the write
+// half of nodejs/node#65548 is not ported), so a destroy in place would abort a write of the same turn that Node
+// delivers. The reaction of reader.closed destroys the duplex instead, one promise job after the stream errors.
+function duplexErrorStep() {}
+
 interface StreamDuplexFromPairOptions extends StreamWritableFromWritableStreamOptions {
   allowHalfOpen?: boolean;
   encoding?: string;
@@ -722,6 +802,7 @@ function newStreamDuplexFromReadableWritablePair(
   const reader = readableStream.getReader();
   let writableClosed = false;
   let readableClosed = false;
+  let readOperation: NodeStreamReadOperation | undefined;
 
   const duplex = new Duplex({
     allowHalfOpen,
@@ -811,17 +892,8 @@ function newStreamDuplexFromReadableWritablePair(
     },
 
     read() {
-      PromisePrototypeThen.$call(
-        reader.read(),
-        chunk => {
-          if (chunk.done) {
-            duplex.push(null);
-          } else {
-            duplex.push(chunk.value);
-          }
-        },
-        error => destroyer(duplex, error),
-      );
+      readOperation ??= createReadOperation(reader, duplex, duplexChunkStep, duplexCloseStep, duplexErrorStep);
+      readNextChunk(readOperation);
     },
 
     destroy(error, callback) {

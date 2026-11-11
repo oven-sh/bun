@@ -51,6 +51,7 @@ using WebCore::JSCrossRealmTransformState;
 using WebCore::JSDirectStreamController;
 using WebCore::JSDirectStreamSource;
 using WebCore::JSNativeStreamSourceAdapter;
+using WebCore::JSNodeStreamReadOperation;
 using WebCore::JSPullIntoDescriptor;
 using WebCore::JSReadableByteStreamController;
 using WebCore::JSReadableSinkController;
@@ -166,7 +167,7 @@ JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // user
 // ─── Exception boundaries ─────────────────────────────────────────────────────────────────────
 // Every function in this subsystem propagates: DECLARE_THROW_SCOPE + RETURN_IF_EXCEPTION and
 // nothing else — no helper looks at, takes, or is handed a pending exception. An exception stops in
-// exactly two kinds of frame, and these templates are those frames:
+// exactly three kinds of frame. These templates are the first two:
 //
 //   enterStreams(globalObject, step, deliver) — the body of a host function that JSC enters from a
 //     promise reaction, a queued microtask, or the event loop (atStreamsBoundary: the same for the
@@ -181,7 +182,14 @@ JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // user
 //     callback declared to return Promise<T>): whatever `step` threw is the rejection of the
 //     promise it returns.
 //
-// A VM termination is never converted; both return at once and leave it pending.
+// The third is the close step and the error step of the NodeStream read request
+// (runNodeStreamReadStepInPlace, BunStreamConsumers.cpp). They run node:stream code and the
+// program's listeners in the middle of the operation that closes or errors the stream, and that
+// operation is not theirs: it has the other read requests, a tee or a pipe left to serve. What
+// such a step throws is handed to a rejected promise that nothing handles, which is what the
+// reaction of reader.read() made of it before the adapters had a request kind.
+//
+// A VM termination is never converted; all three return at once and leave it pending.
 template<typename Step, typename Deliver>
 ALWAYS_INLINE void atStreamsBoundary(JSC::JSGlobalObject* globalObject, Step&& step, Deliver&& deliver)
 {
@@ -595,6 +603,12 @@ void startPipeToOperation(JSC::JSGlobalObject*, JSStreamPipeToOperation*); // us
 void pipeToReadRequestChunkSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*, JSC::JSValue chunk); // userJS: yes — JSStreamPipeToOperation.cpp
 void pipeToReadRequestCloseSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*); // userJS: yes — JSStreamPipeToOperation.cpp
 void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*, JSC::JSValue error); // userJS: yes — JSStreamPipeToOperation.cpp
+// The NodeStream read request's steps (node:stream's Readable.fromWeb() / Duplex.fromWeb()). The
+// close and error steps run node:stream code and the program's listeners in place. What those
+// throw stops inside the step and is reported as an unhandled rejection.
+void nodeStreamReadRequestChunkSteps(JSC::JSGlobalObject*, JSNodeStreamReadOperation*, JSC::JSValue chunk); // userJS: no (queues the chunk) — BunStreamConsumers.cpp
+void nodeStreamReadRequestCloseSteps(JSC::JSGlobalObject*, JSNodeStreamReadOperation*); // userJS: yes — BunStreamConsumers.cpp
+void nodeStreamReadRequestErrorSteps(JSC::JSGlobalObject*, JSNodeStreamReadOperation*, JSC::JSValue error); // userJS: yes — BunStreamConsumers.cpp
 
 // JSReadableStreamAsyncIterator.cpp — its methods are on the cell; nothing is cross-file.
 

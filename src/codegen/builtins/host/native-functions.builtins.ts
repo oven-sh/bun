@@ -349,6 +349,67 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // src/js/internal/webstreams_adapters.ts: the read side of Readable.fromWeb() and Duplex.fromWeb(). It keeps the reader, the node stream and the three steps in the cell that it answers.
+  // The stream of the reader calls the steps from then on: the chunk step in a job of its own for each chunk, the other two where it closes or errors.
+  b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionCreateNodeStreamReadOperation"), {
+    // It refuses a reader that is no ReadableStreamDefaultReader, a node stream that is no object and a step that is no function.
+    args: {
+      reader: b.object,
+      nodeStream: b.object,
+      chunkStep: b.callable,
+      closeStep: b.callable,
+      errorStep: b.callable,
+    },
+    returns: b.object,
+    capability: "heap",
+    throws: true,
+    uses: {
+      reader: [b.retained],
+      nodeStream: [b.retained],
+      chunkStep: [
+        b.retained,
+        b.called({
+          afterwards: "WritesIntoWhatItFinds",
+          times: "PerEvent",
+          this: b.undefined,
+          args: [b.any, b.operand("nodeStream")],
+          result: "Ignored",
+        }),
+      ],
+      closeStep: [
+        b.retained,
+        b.called({
+          afterwards: "WritesIntoWhatItFinds",
+          times: "Later",
+          this: b.undefined,
+          args: [b.undefined, b.operand("nodeStream")],
+          result: "Ignored",
+        }),
+      ],
+      errorStep: [
+        b.retained,
+        b.called({
+          afterwards: "WritesIntoWhatItFinds",
+          times: "Later",
+          this: b.undefined,
+          args: [b.any, b.operand("nodeStream")],
+          result: "Ignored",
+        }),
+      ],
+    },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
+  // One read. The stream may call `pull` of its source, and where it is closed or errored already it calls the step that the cell keeps before it answers.
+  // It refuses what is not the cell that the function above answers.
+  b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionNodeStreamReadOperationRead"), {
+    args: { operation: b.object },
+    returns: b.undefined,
+    capability: "js",
+    throws: true,
+    uses: { operation: [b.retained] },
+    implementation: b.hostCall,
+  }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
   // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and

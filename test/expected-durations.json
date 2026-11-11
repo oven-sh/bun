@@ -3652,9 +3652,9 @@
     "default": 60000,
     "asan": 240000
   },
-  "aot/a-spy-on-the-length-or-name-of-a-function-stays-and-is-what-bind-reads.test.ts": {
-    "default": 5000,
-    "asan": 20000
+  "aot/a-spy-on-what-a-compiled-function-answers-for-but-does-not-store.test.ts": {
+    "default": 40000,
+    "asan": 160000
   },
   "aot/the-tests-that-run-as-users-build-are-listed.test.ts": {
     "default": 60000,

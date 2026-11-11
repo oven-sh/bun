@@ -2333,6 +2333,25 @@ describe("spyOn", () => {
         },
       );
 
+      // Only a function is asked to record the spy. The traps of a sandbox are JavaScript, and none may run where the spy is stored.
+      test.each(keys)("a spy on `%s` asks the sandbox of a node:vm context what a spy on any other key asks", key => {
+        const asked = [key, "other"].map(key => {
+          const traps = [];
+          const handler = {};
+          for (const trap of Object.getOwnPropertyNames(Reflect)) {
+            handler[trap] = (...args) => {
+              if (args[1] === key) traps.push(trap);
+              return Reflect[trap](...args);
+            };
+          }
+          const global = vm.runInContext("this", vm.createContext(new Proxy({}, handler)));
+          traps.length = 0;
+          spyOn(global, key).mockRestore();
+          return traps;
+        });
+        expect(asked[0]).toEqual(asked[1]);
+      });
+
       // Both of a pair: the length of `counted` and the name of `named`.
       function pair() {
         const counted = function counted(a, b) {};
@@ -2408,29 +2427,55 @@ describe("spyOn", () => {
         }
       });
 
+      // A program of its own for each row, so that a row finds code that no other row has optimized. The compiler runs on the
+      // program's thread there, so a number of turns says when it is done.
       test.each([
         ["under the spies", true],
         ["before the spies", false],
-      ])("bind() in code that was optimized %s", (_, isSpiedFirst) => {
-        const { noInline, numberOfDFGCompiles } = require("bun:jsc");
-        const { counted, named, spy } = pair();
-        const bindOne = fn => fn.bind(null, 1);
-        // Inlined into its caller, it would never be compiled on its own.
-        noInline(bindOne);
-        const bindBoth = () => [bindOne(counted).length, bindOne(named).name];
-        let spies = isSpiedFirst ? spy() : [];
-        let turns = 0;
-        // Without a JIT the number is above 0 as soon as the function has run.
-        for (; turns < 50_000 && !numberOfDFGCompiles(bindOne); turns++) bindBoth();
-        expect(numberOfDFGCompiles(bindOne)).toBeGreaterThan(0);
-        if (!isSpiedFirst) {
-          spies = spy();
-          turns = 0;
-        }
-        const read = new Set();
-        for (let i = 0; i < 100; i++, turns++) read.add(JSON.stringify(bindBoth()));
-        expect([...read]).toEqual(['[8,"bound spied"]']);
-        expect(spies.map(spy => spy.mock.calls.length)).toEqual([turns, turns]);
+      ])("bind() in code that was optimized %s", async (_, isSpiedFirst) => {
+        const { bunEnv, bunExe } = require("harness");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            import { noInline, numberOfDFGCompiles, reoptimizationRetryCount } from "bun:jsc";
+            const { spyOn } = Bun.jest(import.meta.path);
+            const counted = function counted(a, b) {};
+            const named = function named() {};
+            const spy = () => [
+              spyOn(counted, "length", "get").mockReturnValue(9),
+              spyOn(named, "name", "get").mockReturnValue("spied"),
+            ];
+            const bindOne = fn => fn.bind(null, 1);
+            // Inlined into its caller, it would never be compiled on its own.
+            noInline(bindOne);
+            const bindBoth = () => [bindOne(counted).length, bindOne(named).name];
+            let spies = ${isSpiedFirst} ? spy() : [];
+            let turns = 0;
+            // Without a JIT the number is above 0 as soon as the function has run.
+            for (; turns < 10_000 && !numberOfDFGCompiles(bindOne); turns++) bindBoth();
+            // Optimized code that has not been thrown away.
+            const isOptimized = numberOfDFGCompiles(bindOne) > reoptimizationRetryCount(bindOne);
+            if (!${isSpiedFirst}) {
+              spies = spy();
+              turns = 0;
+            }
+            const read = new Set();
+            for (let i = 0; i < 100; i++, turns++) read.add(JSON.stringify(bindBoth()));
+            const callsPerBind = spies.map(spy => spy.mock.calls.length / turns);
+            console.log(JSON.stringify({ isOptimized, read: [...read].map(JSON.parse), callsPerBind }));
+            `,
+          ],
+          env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `{"isOptimized":true,"read":[[8,"bound spied"]],"callsPerBind":[1,1]}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   }

@@ -36,10 +36,8 @@ const texts: string[] = ["", "a", "b", "c", "z", "A", "aa", "ab", "abc", "abd", 
 const others: unknown[] = [true, false, null, undefined, 1n, 0n, 10n, mark, Symbol("mark"), thing, { name: "thing" }, [], [1], () => 1, new Number(1), new String("a"), { valueOf: () => 1 }, { toString: () => "a" }];
 `;
 
-/** The specified result where plain Bun differs: a line that starts with the key ends with the value. */
-export const specified = { "a function that a later clause declares is ": "there" };
-
-export function generate(random: Random, hasSpecifiedLines = false): string {
+/** `hasLaterClauseFunction`: the program ends with switches whose earlier clause uses a function that a later clause declares. */
+export function generate(random: Random, hasLaterClauseFunction = false): string {
   let count = 0;
   const rows: string[] = [];
   for (let id = 0, scenes = random.between(3, 6); id < scenes; id++) {
@@ -215,7 +213,7 @@ export function generate(random: Random, hasSpecifiedLines = false): string {
       `for (const given of ${type === "number" ? "numbers" : type === "string" ? "texts" : "[...numbers, ...texts, ...others]"}) {\ntry {\nnote("choose${id}", given, "=", choose${id}(given${type === "any" || type === "unknown" ? "" : ""}));\n} catch (error) {\nnote("choose${id}", given, "THROWS", (error as Error).constructor.name);\n}\n}`,
     );
   }
-  if (hasSpecifiedLines)
+  if (hasLaterClauseFunction)
     for (let left = random.between(1, 3); left > 0; left--)
       rows.push(
         `try {\nswitch (${random.pick(["1", '"a"', "ONE"])} as any) {\n${random.pick(["", "default:\n", "case 0:\n"])}case ${random.pick(["1", "ONE"])}:\ncase "a":\nnote("a function that a later clause declares is", ${random.pick(['typeof helper === "function"', 'helper() === "called"'])} ? "there" : "not there");\nbreak;\ncase 2:\nfunction helper() {\nreturn "called";\n}\n}\n} catch (error) {\nnote("a function that a later clause declares is", "missing:", (error as Error).constructor.name);\n}`,

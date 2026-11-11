@@ -1,6 +1,6 @@
 // Programs of ../switch-over-any-value.ts, one per seed. That file describes them.
 import { Random } from "../random";
-import { generate, specified } from "../switch-over-any-value";
+import { generate } from "../switch-over-any-value";
 import { endless } from "../family";
 
 const tsconfig = JSON.stringify({
@@ -15,15 +15,13 @@ const tsconfig = JSON.stringify({
 });
 
 export default endless("switch over any value", index => {
-  // Every tenth program ends with cases where plain Bun deviates from the specification; their expected output is
-  // Node.js's.
-  const hasSpecifiedLines = index % 10 === 9;
+  // Every tenth program ends with an earlier clause that uses a function of a later clause.
+  const hasLaterClauseFunction = index % 10 === 9;
   return {
     name: `seed ${index + 1}.`,
-    specified: hasSpecifiedLines ? specified : undefined,
     make: () => ({
       file: "main.ts",
-      text: generate(new Random(index + 1), hasSpecifiedLines),
+      text: generate(new Random(index + 1), hasLaterClauseFunction),
       files: { "tsconfig.json": tsconfig },
     }),
   };

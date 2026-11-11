@@ -37,6 +37,28 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
+/// What `visit_stmts` lowered the block-level functions of a statement list to.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LoweredBlockFns {
+    /// The statements that it put at the head: `let f = function(){}`, then `var f2 = f` in sloppy code.
+    pub(crate) len: u8,
+    /// Whether statements that the visit generated follow them (React Fast Refresh).
+    pub(crate) has_generated: bool,
+}
+
+/// The functions that one case body declares, with the plain ones lowered at the head of that body.
+pub(crate) struct CaseBodyFns<'a> {
+    clause: usize,
+    /// Every function that the clause declares: the engine creates an async or generator function where the switch is entered.
+    fns: ListManaged<'a, Ref>,
+    /// Whether a case test or an earlier clause uses one of them.
+    used_before: bool,
+    /// The uses of `fns` when the clause ends.
+    uses: u32,
+    /// Whether `var f2 = f` follows the `let`.
+    has_twin: bool,
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
@@ -1499,12 +1521,183 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    /// Whether a clause of the switch declares a plain function. The block of the switch is the current scope.
+    pub(crate) fn case_block_declares_fn(&self) -> bool {
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        (self.current_scope().members.values()).any(|member| {
+            self.symbols[member.ref_.inner_index() as usize].kind == SymbolKind::HoistedFunction
+        })
+    }
+
+    /// The functions that the body of a clause declares, before `visit_stmts` visits that body.
+    pub(crate) fn case_body_fns(&self, clause: usize, body: &[Stmt]) -> CaseBodyFns<'a> {
+        let mut fns = ListManaged::new_in(self.arena);
+        for stmt in body {
+            if let StmtData::SFunction(declared) = stmt.data
+                && let Some(name) = declared.func.name
+            {
+                fns.push(name.ref_);
+            }
+        }
+        // A use in a case test or in an earlier clause is a use outside the clause.
+        let used_before = self.uses_of(&fns) != 0;
+        CaseBodyFns {
+            clause,
+            fns,
+            used_before,
+            uses: 0,
+            has_twin: false,
+        }
+    }
+
+    /// Whether `place_case_block_fns` decides where the `let` of the visited clause goes.
+    pub(crate) fn lowered_case_body_fns(
+        &self,
+        of_clause: &mut CaseBodyFns<'a>,
+        lowered: LoweredBlockFns,
+    ) -> bool {
+        // The Fast Refresh statements of a clause stay behind its `let`.
+        if lowered.len == 0 || (lowered.has_generated && self.options.features.react_fast_refresh) {
+            return false;
+        }
+        of_clause.uses = self.uses_of(&of_clause.fns);
+        of_clause.has_twin = lowered.len == 2;
+        true
+    }
+
+    fn uses_of(&self, fns: &[Ref]) -> u32 {
+        (fns.iter())
+            .map(|f| self.symbols[f.inner_index() as usize].use_count_estimate)
+            .sum()
+    }
+
+    /// Appends the declarations that a `let f = function(){}` of `visit_stmts` was made from.
+    fn push_lowered_fn_declarations(&mut self, lets: Stmt, out: &mut ListManaged<'a, Stmt>) {
+        let StmtData::SLocal(local) = lets.data else {
+            return;
+        };
+        for decl in local.decls.slice() {
+            let (BData::BIdentifier(name), Some(value)) = (decl.binding.data, decl.value) else {
+                continue;
+            };
+            let ExprData::EFunction(mut function) = value.data else {
+                continue;
+            };
+            let mut func = core::mem::take(&mut function.func);
+            func.name = Some(LocRef {
+                loc: decl.binding.loc,
+                ref_: name.r#ref,
+            });
+            out.push(self.s(S::Function { func }, value.loc));
+        }
+    }
+
+    /// Another clause can call a function of a case body (evanw/esbuild#4533). Then the `let` at the head of that
+    /// body moves to where the switch is entered. Returns what goes in front of the switch.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn place_case_block_fns(
+        &mut self,
+        cases: &mut [js_ast::Case],
+        bodies: &mut [ListManaged<'a, Stmt>],
+        lowered: &[CaseBodyFns<'a>],
+    ) -> Option<ListManaged<'a, Stmt>> {
+        let p = self;
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        let has_direct_eval = p.current_scope().contains_direct_eval;
+        let is_strict = p.is_strict_mode();
+        // The `let` at the head of the clause is wrong only for a use outside the clause body. Evaluated text can be one.
+        let mut used_outside = has_direct_eval
+            || (lowered.iter()).any(|fns| fns.used_before || fns.uses != p.uses_of(&fns.fns));
+        // The typed file of a library has to type check: it keeps the clause-level `let`.
+        used_outside &= !p.options.features.is_library;
+
+        let mut decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
+        let mut loc = bun_ast::Loc::EMPTY;
+        for fns in lowered {
+            let body = &mut bodies[fns.clause];
+            let Some(&lets) = body.first() else {
+                continue;
+            };
+            let StmtData::SLocal(local) = lets.data else {
+                continue;
+            };
+            if has_direct_eval && (fns.has_twin || !is_strict) {
+                // Direct "eval": the declaration stays, as in any block. Strict code has no `var` to lose.
+                for decl in local.decls.slice() {
+                    if let BData::BIdentifier(name) = decl.binding.data
+                        && let Some(twin) = p.hoisted_ref_for_sloppy_mode_block_fn.get(&name.r#ref)
+                    {
+                        p.symbols[twin.inner_index() as usize].link.set(name.r#ref);
+                    }
+                }
+                let mut declared: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
+                p.push_lowered_fn_declarations(lets, &mut declared);
+                declared.extend_from_slice(&body[1 + usize::from(fns.has_twin)..]);
+                *body = declared;
+            } else if used_outside {
+                // Sloppy code assigns the `var` in the clause of the declaration.
+                body.remove(0);
+                if decls.is_empty() {
+                    loc = lets.loc;
+                }
+                decls.extend_from_slice(local.decls.slice());
+            }
+        }
+
+        if decls.is_empty() {
+            return None;
+        }
+
+        // What else the switch block declares: a lowered function can read it.
+        let stays_in_case_block = bodies.iter().any(|body| {
+            body.iter().any(|stmt| match stmt.data {
+                StmtData::SFunction(_) | StmtData::SClass(_) => true,
+                StmtData::SLocal(local) => local.kind != LocalKind::KVar,
+                _ => false,
+            })
+        });
+        if stays_in_case_block {
+            // `{ let g; switch (v) { case (g = function(){}, <first test>): .. } }`
+            let mut assigns = Expr::EMPTY;
+            for decl in decls.iter_mut() {
+                let (BData::BIdentifier(name), Some(value)) =
+                    (decl.binding.data, decl.value.take())
+                else {
+                    continue;
+                };
+                p.record_usage(name.r#ref);
+                assigns = assigns.join_with_comma(Expr::assign(
+                    Expr::init_identifier(name.r#ref, decl.binding.loc),
+                    value,
+                ));
+            }
+            // The first case test always runs, and it runs inside the switch block.
+            if let Some(test) = cases.iter_mut().find_map(|case| case.value.as_mut()) {
+                *test = assigns.join_with_comma(*test);
+            }
+        }
+
+        // `{ let g = function(){}; switch (v) { .. } }`: the caller adds the switch.
+        let mut entry: ListManaged<'a, Stmt> = ListManaged::with_capacity_in(2, p.arena);
+        entry.push(p.s(
+            S::Local {
+                kind: LocalKind::KLet,
+                decls: G::DeclList::from_bump_vec(decls),
+                ..Default::default()
+            },
+            loc,
+        ));
+        Some(entry)
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
+    /// Returns what the block-level functions of `stmts` were lowered to. It stands at the head of a case body.
     pub(crate) fn visit_stmts(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<LoweredBlockFns, crate::Error> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -1522,6 +1715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
+        let mut lowered = LoweredBlockFns::default();
 
         {
             // Save the current control-flow liveness. This represents if we are
@@ -1740,6 +1934,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                lowered = LoweredBlockFns {
+                    len: before.len() as u8,
+                    has_generated: !non_fn_stmts.is_empty(),
+                };
                 before.extend_from_slice(&non_fn_stmts);
             }
 
@@ -1827,10 +2025,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // `s_switch` runs this once every case body has been visited.
         if kind == StmtsKind::SwitchStmt {
-            return Ok(());
+            return Ok(lowered);
         }
         p.minify_visited_stmts(stmts);
-        Ok(())
+        Ok(lowered)
     }
 
     /// `stmts` must already be visited, with `current_scope` still the list's scope.

@@ -2245,11 +2245,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test);
         let mut lowered_using = false;
+        // The `let` that `place_case_block_fns` puts in front of the switch, which then shares a block with it.
+        let mut block: Option<StmtList<'a>> = None;
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
+            // SAFETY: current_scope is a valid arena ptr for the parse.
+            let declares_fn = p.current_scope().members.len() != 0 && p.case_block_declares_fn();
+            let mut lowered_fns: BumpVec<'_, crate::visit::CaseBodyFns<'a>> =
+                BumpVec::new_in(p.arena);
             let cases = data.cases.slice_mut();
             let mut bodies: BumpVec<'_, StmtList<'a>> =
                 BumpVec::with_capacity_in(cases.len(), p.arena);
@@ -2260,10 +2266,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Check("case", *c.Value, c.Value.Loc)
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
+                let fns = declares_fn.then(|| p.case_body_fns(i, cases[i].body.slice()));
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
+                let lowered = p
+                    .visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
+                if let Some(mut fns) = fns
+                    && p.lowered_case_body_fns(&mut fns, lowered)
+                {
+                    lowered_fns.push(fns);
+                }
                 bodies.push(_stmts);
+            }
+            if !lowered_fns.is_empty() {
+                block = p.place_case_block_fns(cases, &mut bodies, &lowered_fns);
             }
             // Every case body is visited before any of them is minified: they
             // share one scope, so use counts aren't final until then.
@@ -2272,6 +2288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 case.body = list_to_stmts(body);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+            let out = block.as_mut().unwrap_or(&mut *stmts);
 
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {
@@ -2285,7 +2302,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ctx.scan_stmts(p, cases[i].body.slice_mut());
                 }
                 let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
-                stmts.extend_from_slice(&ctx.finalize(p, switch_stmt, false));
+                out.extend_from_slice(&ctx.finalize(p, switch_stmt, false));
             }
 
             p.pop_scope();
@@ -2293,9 +2310,81 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TODO: duplicate case checker
 
         if !lowered_using {
-            stmts.push(*stmt);
+            block.as_mut().unwrap_or(&mut *stmts).push(*stmt);
+        }
+        if let Some(block) = block {
+            let wrapped = p.wrap_switch_with_case_block_fns(data, block, stmt.loc);
+            stmts.push(wrapped);
         }
         Ok(())
+    }
+
+    /// Makes `block` one statement. The discriminant is outside the switch block, so it is read before the `let`.
+    fn wrap_switch_with_case_block_fns(
+        &mut self,
+        data: &mut S::Switch,
+        block: StmtList<'a>,
+        loc: bun_ast::Loc,
+    ) -> Stmt {
+        let p = self;
+        // A renamer takes the `let` for a binding of the switch block, so it can give it a name that the discriminant reads.
+        let mut captures_discriminant = !data.test.is_primitive_literal();
+        // Without a renamer only a binding of the same name captures a bare identifier.
+        if !p.will_use_renamer()
+            && let js_ast::ExprData::EIdentifier(id) = data.test.data
+        {
+            let name = p.symbols[id.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            captures_discriminant = block.iter().any(|stmt| {
+                let js_ast::StmtData::SLocal(local) = stmt.data else {
+                    return false;
+                };
+                local.decls.slice().iter().any(|decl| {
+                    matches!(decl.binding.data, js_ast::b::B::BIdentifier(b)
+                        if p.symbols[b.r#ref.inner_index() as usize].original_name.slice() == name)
+                })
+            });
+        }
+
+        // `{ const t = v; { let g = function(){}; switch (t) { .. } } }`
+        let discriminant = captures_discriminant.then(|| {
+            let loc = data.test.loc;
+            let temp = p.generate_temp_ref(Some(b"_discriminant"));
+            p.record_declared_symbol(temp);
+            let value = core::mem::replace(&mut data.test, Expr::init_identifier(temp, loc));
+            p.record_usage(temp);
+            let binding = p.b(B::Identifier { r#ref: temp }, loc);
+            p.s(
+                S::Local {
+                    kind: S::Kind::KConst,
+                    decls: G::DeclList::from_slice(&[G::Decl {
+                        binding,
+                        value: Some(value),
+                    }]),
+                    ..Default::default()
+                },
+                loc,
+            )
+        });
+
+        let wrapped = p.s(
+            S::Block {
+                stmts: list_to_stmts(block),
+                close_brace_loc: bun_ast::Loc::EMPTY,
+            },
+            loc,
+        );
+        let Some(discriminant) = discriminant else {
+            return wrapped;
+        };
+        p.s(
+            S::Block {
+                stmts: StmtNodeList::new_mut(p.arena.alloc_slice_copy(&[discriminant, wrapped])),
+                close_brace_loc: bun_ast::Loc::EMPTY,
+            },
+            loc,
+        )
     }
 
     fn s_enum(

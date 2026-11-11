@@ -1746,8 +1746,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_body(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.body_as_stream(&cx.js_thread())
+    }
+
+    /// What the `body` getter answers with: the body as a stream, or null.
+    fn body_as_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         // The stream the getter makes is the reading script's.
-        let cx = cx.js_thread();
         let global_this = cx.global();
         let body = self.get_body_value();
 
@@ -1759,7 +1763,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
-        let stream = self.get_body_value().to_readable_stream(&cx)?;
+        let stream = self.get_body_value().to_readable_stream(cx)?;
         // The wrapper's traced `m_stream` slot owns the stream from here;
         // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
         self.check_body_stream_ref(global_this);

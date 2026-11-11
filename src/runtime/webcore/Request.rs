@@ -1055,7 +1055,29 @@ impl Request {
         let values_to_try =
             &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
-        for &value in values_to_try {
+        // The body of an exact Request or Response, as its `body` getter answers with it. No property is read.
+        macro_rules! adopt_body_of {
+            ($owner:expr) => {{
+                let stream = match $owner.body_as_stream(cx) {
+                    Ok(stream) => stream,
+                    Err(e) => bail!(Err(e)),
+                };
+                match BodyValue::from_js(cx.global(), stream) {
+                    Ok(v) => {
+                        *req.body_value_mut() = v;
+                    }
+                    Err(e) => bail!(Err(e)),
+                }
+                if cx.global().has_exception() {
+                    bail!(Err(JsError::Thrown));
+                }
+                fields.insert(Fields::Body);
+            }};
+        }
+
+        for (index, &value) in values_to_try.iter().enumerate() {
+            // The Fetch standard copies the request of the input. What `init` names is read from it as from any dictionary.
+            let is_input = !is_first_argument_a_url && index == values_to_try.len() - 1;
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
                 && matches!(
@@ -1115,7 +1137,12 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null => {}
+                            BodyValue::Empty | BodyValue::Used => {
+                                if is_input {
+                                    adopt_body_of!(request);
+                                }
+                            }
                             _ => {
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
@@ -1126,6 +1153,25 @@ impl Request {
                                 fields.insert(Fields::Body);
                             }
                         }
+                    }
+
+                    if is_input {
+                        if !fields.contains(Fields::Url) {
+                            let _ = request.ensure_url();
+                            let url = request.url.get().clone();
+                            if !url.is_empty() {
+                                req.url.set(url);
+                                fields.insert(Fields::Url);
+                            }
+                        }
+
+                        if !fields.contains(Fields::Signal) {
+                            if let Some(signal) = request.abort_signal() {
+                                req.signal.set(Some(signal.clone()));
+                            }
+                            fields.insert(Fields::Signal);
+                        }
+                        break;
                     }
                 }
 
@@ -1163,7 +1209,12 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null => {}
+                            BodyValue::Empty | BodyValue::Used => {
+                                if is_input {
+                                    adopt_body_of!(response);
+                                }
+                            }
                             _ => {
                                 match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
@@ -1174,6 +1225,10 @@ impl Request {
                                 fields.insert(Fields::Body);
                             }
                         }
+                    }
+
+                    if is_input {
+                        break;
                     }
                 }
             }

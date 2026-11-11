@@ -1313,9 +1313,15 @@ void populateESMExports(
             auto* globalProxy = dynamicDowncast<JSGlobalProxy>(exports);
             auto* contextGlobal = globalProxy ? dynamicDowncast<NodeVMGlobalObject>(globalProxy->target()) : nullptr;
             const bool readsWithGet = exports->type() == ProxyObjectType || contextGlobal;
-            // The lookup of a Proxy, or of a context whose sandbox is one, can call a trap: it waits for a read that throws.
-            JSObject* sandbox = contextGlobal ? contextGlobal->contextifiedObject() : nullptr;
-            const bool looksUpAfterRead = (sandbox ? sandbox : exports)->type() == ProxyObjectType;
+            // The lookup of a context asks its sandbox, and that can be the global of another context.
+            JSObject* lookedUp = exports;
+            for (auto* global = contextGlobal; global && global->contextifiedObject();) {
+                lookedUp = global->contextifiedObject();
+                auto* inner = dynamicDowncast<JSGlobalProxy>(lookedUp);
+                global = inner ? dynamicDowncast<NodeVMGlobalObject>(inner->target()) : nullptr;
+            }
+            // The lookup of a Proxy can call a trap: it waits for a read that throws.
+            const bool looksUpAfterRead = lookedUp->type() == ProxyObjectType;
             const bool overridesGetOwnPropertySlot = TypeInfo::overridesGetOwnPropertySlot(exports->inlineTypeFlags());
 
             for (auto property : properties) {
@@ -1349,9 +1355,17 @@ void populateESMExports(
                     continue;
 
                 JSValue value;
-                if (readsWithGet) [[unlikely]]
-                    value = exports->get(globalObject, property);
-                else
+                if (readsWithGet) [[unlikely]] {
+                    // JSObject::get(), which does not say whether [[Get]] found the key. The getter of an earlier export can
+                    // delete it, and a Proxy sandbox can list a key that nothing has.
+                    PropertySlot read(exports, PropertySlot::InternalMethodType::Get);
+                    bool isFound = exports->getPropertySlot(globalObject, property, read);
+                    if (!scope.exception()) {
+                        if (!isFound)
+                            continue;
+                        value = read.getValue(globalObject, property);
+                    }
+                } else
                     value = slot.getValue(globalObject, property);
 
                 // If it throws, we keep them in the exports list, but mark it as undefined

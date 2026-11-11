@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, vi } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import * as WithTypeModuleExportEsModuleAnnotationMissingDefault from "./with-type-module/export-esModule-annotation-empty.cjs";
@@ -182,6 +182,20 @@ describe("CJS export that throws when the ESM wrapper reads it", () => {
     worker.addEventListener("close", event => resolve(event.code));
     expect(await promise).toBe(0);
   });
+
+  test("vi.importActual() of the file while it is mocked", async () => {
+    using dir = tempDir("cjs-export-throws", { "mod.cjs": throwingProxy });
+    const path = join(String(dir), "mod.cjs");
+    const proxy = require(path);
+    vi.doMock(path, () => ({ mocked: true }));
+    try {
+      const { default: actualDefault, ...actual } = await vi.importActual(path);
+      expect(actual).toStrictEqual({ before: 1, boom: undefined, after: 2 });
+      expect(actualDefault).toBe(proxy);
+    } finally {
+      vi.doUnmock(path);
+    }
+  });
 });
 
 describe("CJS exports behind a Proxy", () => {
@@ -220,13 +234,20 @@ describe("CJS exports behind a Proxy", () => {
     ]);
   });
 
-  test("the traps that run for the sandbox of a node:vm context", async () => {
+  test.each([
+    ["the sandbox of a node:vm context", `vm.runInNewContext("this", sandbox)`],
+    [
+      "the sandbox of a context whose global is the sandbox of another context",
+      `vm.runInNewContext("this", vm.runInNewContext("this", sandbox))`,
+    ],
+  ])("the traps that run for %s", async (_, exports) => {
     using dir = tempDir("cjs-proxy-sandbox-traps", {
       "log.cjs": `module.exports = [];`,
       "mod.cjs": `
+        const vm = require("node:vm");
         const log = require("./log.cjs");
         const sandbox = new Proxy({ before: 1, get boom() { throw new Error("boom"); }, after: 2 }, ${traps});
-        module.exports = require("node:vm").runInNewContext("this", sandbox);
+        module.exports = ${exports};
         log.length = 0;
       `,
     });
@@ -308,6 +329,75 @@ describe("node:vm context global as CJS exports", () => {
       hiddenValue: 4,
     });
     expect(require(join(String(dir), "log.cjs"))).toEqual(["getter g"]);
+  });
+
+  // The getter of `first` runs before the wrapper comes to `second`. The read of the global then says whether
+  // `second` is still there.
+  const deletesSecond = object => `get() { delete ${object}.second; return 1; }, enumerable: true, configurable: true`;
+  test.each([
+    [
+      "the sandbox",
+      `const sandbox = {};
+       Object.defineProperty(sandbox, "first", { ${deletesSecond("sandbox")} });
+       sandbox.second = 2;
+       module.exports = vm.runInNewContext("this", sandbox);`,
+      { first: 1, hasSecond: false, second: undefined },
+    ],
+    [
+      "the sandbox, whose prototype has the key",
+      `const sandbox = Object.create({ second: "inherited" });
+       Object.defineProperty(sandbox, "first", { ${deletesSecond("sandbox")} });
+       sandbox.second = 2;
+       module.exports = vm.runInNewContext("this", sandbox);`,
+      { first: 1, hasSecond: true, second: "inherited" },
+    ],
+    [
+      "a context that has no sandbox",
+      `const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+       Object.defineProperty(context, "first", { ${deletesSecond("context")} });
+       context.second = 2;
+       module.exports = context;`,
+      { first: 1, hasSecond: false, second: undefined },
+    ],
+    [
+      "the target of a Proxy sandbox",
+      `const target = {};
+       Object.defineProperty(target, "first", { ${deletesSecond("target")} });
+       target.second = 2;
+       module.exports = vm.runInNewContext("this", new Proxy(target, {}));`,
+      { first: 1, hasSecond: false, second: undefined },
+    ],
+  ])("a key that the getter of an earlier export deletes from %s", async (_, source, expected) => {
+    using dir = tempDir("cjs-vm-global-deleted", { "mod.cjs": `const vm = require("node:vm");\n${source}` });
+    const ns = await import(join(String(dir), "mod.cjs"));
+    expect({ first: ns.first, hasSecond: "second" in ns, second: ns.second }).toEqual(expected);
+  });
+
+  test("a default that the getter of an earlier export deletes leaves the global as the default export", async () => {
+    using dir = tempDir("cjs-vm-global-deleted-default", {
+      "mod.cjs": `
+        const sandbox = { __esModule: true, get first() { delete sandbox.default; return 1; }, default: "d" };
+        module.exports = require("node:vm").runInNewContext("this", sandbox);
+      `,
+    });
+    const ns = await import(join(String(dir), "mod.cjs"));
+    expect(ns.default).toBe(require(join(String(dir), "mod.cjs")));
+  });
+
+  test("a key that a Proxy sandbox lists is an export when the read finds it", async () => {
+    using dir = tempDir("cjs-vm-global-listed", {
+      "mod.cjs": `
+        const sandbox = new Proxy(Object.create({ inherited: "from the prototype" }), {
+          ownKeys: () => ["inherited", "missing"],
+        });
+        module.exports = require("node:vm").runInNewContext("this", sandbox);
+      `,
+    });
+    const ns = await import(join(String(dir), "mod.cjs"));
+    expect({ inherited: ns.inherited, hasMissing: "missing" in ns }).toEqual({
+      inherited: "from the prototype",
+      hasMissing: false,
+    });
   });
 });
 

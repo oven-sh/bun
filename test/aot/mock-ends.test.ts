@@ -13,7 +13,10 @@ import { test } from "./supported";
 // one all fail. BUN_AOT_REWRITE_MOCK_ENDS=1 writes the list anew.
 // Behind the first vi.resetModules() of a realm every file that has run is left to the host, for all later test files: what stood behind it would be judged on the
 // interpreter. So the sequences that reset come last.
-const ordered = [...all].sort((a, b) => Number(a.steps.includes("reset")) - Number(b.steps.includes("reset")));
+// A body that throws says in its message how often it has run, which mock-sequences.test.ts judges.
+const ordered = all
+  .filter(({ body }) => body !== "throws")
+  .sort((a, b) => Number(a.steps.includes("reset")) - Number(b.steps.includes("reset")));
 const files = Object.assign(
   { "package.json": `{ "type": "module" }` },
   ...ordered.map(sequence => filesOf(sequence, 0, true)),
@@ -24,7 +27,12 @@ const known = readFileSync(list, "utf8").split("\n");
 const ways: Record<string, string> = { "one-program": "TestRunLayers:0" };
 
 async function seenByNextFiles(dir: string, words?: string) {
-  const env = { ...bunEnv, NO_COLOR: "1", ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }) };
+  const env = {
+    ...bunEnv,
+    NO_COLOR: "1",
+    BUN_OPTIONS: "--no-install",
+    ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }),
+  };
   const { stdout, stderr } = await run(
     [bunExe(), "test", "--no-isolate", ...(words ? ["--aot"] : []), ...inOrder],
     dir,
@@ -47,7 +55,7 @@ for (const [way, words] of Object.entries(ways)) {
   test(`what the next file sees: ${way}`, async () => {
     using dir = tempDir("aot-mock-ends", files);
     const [plain, compiled] = [await seenByNextFiles(String(dir)), await seenByNextFiles(String(dir), words)];
-    expect(plain.size).toBe(all.length * 2);
+    expect(plain.size).toBe(ordered.length * 2);
     const differing = [...plain]
       .filter(([key, expected]) => compiled.get(key) !== expected)
       .map(([key]) => {

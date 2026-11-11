@@ -307,6 +307,11 @@ impl<'p, 's> Checker<'p, 's> {
         if !skips_augment && let Some(grown) = self.property_of_grown_union(containing_type, name) {
             return Some(grown);
         }
+        if !skips_augment
+            && let Some(left) = self.property_of_union_less_a_member(containing_type, name)
+        {
+            return Some(left);
+        }
         let parts = self.parts(containing_type);
         let uses_facts =
             parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips_augment && self.are_member_facts_valid();
@@ -325,6 +330,51 @@ impl<'p, 's> Checker<'p, 's> {
             self.visit_member(&mut walk, &mut builder, current);
         }
         self.finish_union_property(builder, containing_type, name)
+    }
+
+    fn property_of_union_less_a_member(&mut self, union: TypeId, name: Atom) -> Option<Prop<'s>> {
+        let loss = *self.unions_less_a_member.get(&union)?;
+        if loss.name != name {
+            return None;
+        }
+        let holder = (self.p.union_properties).get(&self.task, &(loss.from, name))??;
+        let TypeData::Synth(shape) = self.data(holder) else {
+            return None;
+        };
+        let so_far = shape.props.first()?;
+        let PropSource::Intersected(whole, parts) = &so_far.source else {
+            return None;
+        };
+        let of_some_members = PropFlags::PRIVATE
+            | PropFlags::PROTECTED
+            | PropFlags::READ_PARTIAL
+            | PropFlags::WRITE_PARTIAL
+            | PropFlags::OPTIONAL
+            | PropFlags::READONLY
+            | ACCESSOR_KIND;
+        if *whole != loss.from
+            || parts.len() != self.parts(loss.from).len()
+            || parts.len() != self.parts(union).len() + 1
+            || parts.len() < 3
+            || so_far.flags.intersects(of_some_members)
+            || (parts.iter()).any(|part| part.flags.intersects(of_some_members))
+            || Self::value_declaration(so_far).is_some()
+            || self.is_numeric_name(name)
+        {
+            return None;
+        }
+        let (before, after) = parts.split_at(loss.at);
+        let copy = |part: &Prop| part.clone_in(self.arena);
+        let all = before.iter().map(copy).chain(after[1..].iter().map(copy));
+        let mut result = Prop {
+            name,
+            flags: so_far.flags,
+            source: PropSource::Intersected(union, self.list_of(all)),
+            mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
+        };
+        self.set_modifiers_of_value_declaration(&mut result);
+        Some(result)
     }
 
     /// The property `name` of a union that has grown by a member (`Growth`), made of that property of the union it has grown

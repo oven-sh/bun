@@ -1,6 +1,6 @@
 // A getter, a method, a closure out of a list, a construction: whoever enters by value gets a boxed value, whoever enters the body directly the raw one.
 // With no callee copied into its caller every call is a call, of the smallest function too.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function told(n) { report(n); report(n + 1); report(n * 2); report(n === n); report("" + n); report(typeof n); }
 class Box { constructor(w, h) { this.w = w; this.h = h; } get area() { return this.w * this.h; } get isFlat() { return this.h === 0; } get label() { return this.h > 0 ? this.h : "flat"; } get bits() { return this.w | 0; } scaled(by) { return this.area * by; } isWiderThan(other) { return this.w > other.w; } static unit() { return 1; } }

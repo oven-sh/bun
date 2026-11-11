@@ -1,6 +1,6 @@
 # `interface Parcel { weight: number; note?: string; count?: number }`, made often, and no maker gives `note` or `count`: they lie in the Extension (plan/a-field-of-a-record-that-no-maker-gives-lies-out-of-line.ir).
 # Most objects have no Extension at all, so a read of such a field is written in line wherever it stands and asks first whether there is one. That is a state of knowledge with a name of its own in the schema, FieldLeftOutByMakers,
-# and the rows of the five reads of slots list it under openUnder. `later` is a name that Link appended: outside of loops it is read by the stub, as the rows say of FieldInExtension, and in a loop in line.
+# and the rows of the five reads of slots list it under openUnder. `later` is a name that Link appended: it is read in line too, as the rows say of FieldInExtension, but for rare blocks, where the stub reads it.
 # the emitter takes the form from the row, so nothing is listed as not named, and a whole build that writes the report and checks itself stops at nothing.
 # f1 = pack, f2 = mark, f3 = noteOf, f4 = holdsCount, f5 = laterOf, f6 = notesOf
 # -- source: parcels.ts
@@ -25,7 +25,7 @@
 # CHECK-NOT: not named:
 # CHECK: every form is named
 # RUN(ROWS): bytes-by-form mechanisms=all
-# ROWS: GetSlotOrUndefined FieldInExtension Anywhere Closed
+# ROWS: GetSlotOrUndefined FieldInExtension Anywhere Open
 # ROWS: GetSlotOrUndefined FieldLeftOutByMakers Anywhere Open
 # ROWS: GetSlotOrUndefined FieldLeftOutByMakers Loop Open
 # RUN(FILLED): bytes-by-form mechanisms=all
@@ -35,7 +35,7 @@
 # RUN(NAMED): named-forms GetSlot GetSlotOrUndefined IsSlotFilled GetSlotGetter GetSlotSetter
 # REPEAT: read = GetSlot GetSlotOrUndefined IsSlotFilled GetSlotGetter GetSlotSetter
 # NAMED: %(read) Always Open, in a loop Open by the loop
-# NAMED: %(read) FieldInExtension Closed, in a loop Open by the loop
+# NAMED: %(read) FieldInExtension Open, in a loop Open by the loop
 # NAMED: %(read) FieldLeftOutByMakers Open, in a loop Open by the loop
 # NAMED: %(read) in Loop Open
 # END REPEAT

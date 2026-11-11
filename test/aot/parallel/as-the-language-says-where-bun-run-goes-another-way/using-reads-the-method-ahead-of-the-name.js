@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". Under `bun run` the name already holds the value: "object", "body", "disposed".
+// Under `bun run` the name already holds the value: "object", "body", "disposed".
 try {
   using held = {
     get [Symbol.dispose]() {

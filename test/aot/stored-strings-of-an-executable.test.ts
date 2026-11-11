@@ -123,24 +123,25 @@ test("the text of a function and the text that an error quotes are printed too",
   const executable = join(directory, `main${isWindows ? ".exe" : ""}`);
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], directory);
   expect(built.exitCode).toBe(0);
-  const [textOfFunction, message] = linesOf((await run([executable], directory)).stdout).map(line => JSON.parse(line));
-  expect(textOfFunction).toContain("kept with its text");
+  const [functionSource, message] = linesOf((await run([executable], directory)).stdout).map(line => JSON.parse(line));
+  expect(functionSource).toContain("kept with its text");
   const quoted = /evaluating '(.+)'/.exec(message)![1];
   expect(quoted).toBe("holdsNothing.memberThatIsMissing.calledAnyway");
 
   const printed = await print(directory, executable);
   expect(printed.exitCode).toBe(0);
   const records = printed.stdout.split("\0");
-  expect(records).toContain(textOfFunction);
+  expect(records).toContain(functionSource);
   expect(records).toContain(quoted);
   const file = readFileSync(executable);
   const [onText, ...onOthers] = linesOf(printed.stderr);
   expect(onText).toMatch(lineOnText);
   expect(onOthers.map(line => lineOnOtherText.exec(line)![2])).toEqual(["quoted text", "function text"]);
-  for (const [index, text] of [quoted, textOfFunction].entries()) {
+  for (const [index, text] of [quoted, functionSource].entries()) {
     const [, , , offset, length, beside] = lineOnOtherText.exec(onOthers[index])!.map(Number);
     const at = file.indexOf(text, offset, "utf8");
-    expect({ text, isInside: at >= offset && at + Buffer.byteLength(text) <= offset + length }).toEqual({
+    // A text lies in its section as it is, or compressed, and then nowhere behind the start of the section.
+    expect({ text, isInside: at < 0 || (at >= offset && at + Buffer.byteLength(text) <= offset + length) }).toEqual({
       text,
       isInside: true,
     });

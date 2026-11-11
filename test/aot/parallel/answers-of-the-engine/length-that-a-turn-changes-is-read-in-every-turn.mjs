@@ -1,5 +1,5 @@
 // The length of a list that a turn makes longer or shorter: by push, pop, a store of length, a store behind the end, through another name, in a callee.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function grows(a, most) { let c = 0; for (let i = 0;i < a.length && c < most; i++) { a.push(i); c++; } return c; }
 function shrinks(a) { let c = 0; for (let i = 0;i < a.length; i++) { a.pop(); c++; } return c; }

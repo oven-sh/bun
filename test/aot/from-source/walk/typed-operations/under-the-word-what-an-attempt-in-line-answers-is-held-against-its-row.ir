@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function grow(n: number): number { const list: number[] = []; let last = 0; for (let i = 0; i < n; i++) last = list.push(i); return last + 1; }
+# print(grow(id(3)));
+# print("went on");
+# -- end of source
+# Fault injection: the signature of Array.prototype.push declares 0 as its only result.
+# The push is an inline attempt that may miss (TryCallInline). Its result arrives as a block parameter, so the check that runs on each operation never saw an operation for it.
+# With testing=CheckProofsAtRunTime the result is checked against the type of the parameter, at the start of the block where execution continues.
+# OPTIONS: testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Array.prototype.push/RangeOfResult
+# RUN: run-in-shell mechanisms=all globalThis.id = (x) => x;
+# CHECK: bun: internal AOT error: type check failed at {{*}} (grow)
+# CHECK-NEXT: in the result of a built-in or indirect call
+# CHECK-NOT: went on
+# CHECK: crashed with

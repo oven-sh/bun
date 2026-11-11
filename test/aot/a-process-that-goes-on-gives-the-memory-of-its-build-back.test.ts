@@ -6,7 +6,7 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const program = Array.from(
-  { length: 1500 },
+  { length: 4000 },
   (_, i) => `class Shape${i} {
   constructor(public width${i}: number, public name${i}: string) {}
   area${i}() {
@@ -49,6 +49,7 @@ test.skipIf(!isLinux || isASAN || isDebug)("a process that goes on gives the mem
   const { before, first, second } = JSON.parse(stdout);
 
   const taken = first.most - before;
+  // A build that takes little shows nothing. Where this fails, builds have come to take less: the program above gets more classes.
   expect(taken).toBeGreaterThan(128);
   reads("what a process keeps of the memory of its first build", first.left - before, (taken * 2) / 3, "MB");
   expect(first.left - before).toBeLessThan((taken * 2) / 3);

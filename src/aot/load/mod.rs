@@ -12,6 +12,7 @@ mod format_grid;
 pub(crate) mod globals_of_a_window;
 pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
+pub(crate) mod import_functions;
 pub(crate) mod import_meta_glob;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;

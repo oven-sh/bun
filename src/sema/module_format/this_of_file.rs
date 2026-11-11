@@ -1,6 +1,8 @@
+use crate::bind::decorator_metadata::is_field_moved_by_legacy_decorators;
 use crate::fold::{Decisions, TreeNode, push_children};
 use crate::hir::{
-    Expr, ExprId, ExprKind, File, FnBody, FnId, FnKind, ModifierKind, StmtId, StmtKind,
+    Expr, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, MemberId, ModifierKind, StmtId,
+    StmtKind,
 };
 use crate::util::PositionSet;
 use std::ops::ControlFlow;
@@ -61,7 +63,15 @@ fn visit_this_below(
                 skipped_exprs.insert(expr.idx());
             }
             TreeNode::Class(class) => {
-                let initializers = hir[class].members.iter().map(|member| hir[member].init);
+                let runs_around = |member: &MemberId| {
+                    parameter_decorators == ParameterDecorators::Visited
+                        && is_value_assigned_behind_class(hir, *member)
+                };
+                let members = hir[class]
+                    .members
+                    .iter()
+                    .filter(|member| !runs_around(member));
+                let initializers = members.map(|member| hir[member].init);
                 for initializer in initializers.filter(|initializer| initializer.is_some()) {
                     skipped_exprs.insert(initializer.idx());
                 }
@@ -70,6 +80,13 @@ fn visit_this_below(
         }
         push_children(hir, node, &mut stack);
     }
+}
+
+fn is_value_assigned_behind_class(hir: &File<'_>, member: MemberId) -> bool {
+    hir.has_typescript_semantics()
+        && hir.legacy_decorators
+        && hir[member].flags.contains(Flags::STATIC)
+        && is_field_moved_by_legacy_decorators(hir, member)
 }
 
 fn push_parameter_decorators(hir: &File<'_>, function: FnId, stack: &mut Vec<TreeNode>) {
@@ -140,6 +157,15 @@ pub(crate) fn collect_this_of_file(hir: &File<'_>) -> PositionSet {
     let mut found = PositionSet::new(hir.exprs.len());
     visit_this_of_file(hir, &Decisions::default(), |this| {
         found.insert(this.idx());
+        ControlFlow::Continue(())
+    });
+    found
+}
+
+pub fn list_this_of_file(hir: &File<'_>) -> Vec<ExprId> {
+    let mut found = Vec::new();
+    visit_this_of_file(hir, &Decisions::default(), |this| {
+        found.push(this);
         ControlFlow::Continue(())
     });
     found

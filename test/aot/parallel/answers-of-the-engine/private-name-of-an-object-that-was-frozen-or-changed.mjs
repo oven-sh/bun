@@ -1,5 +1,5 @@
 // Freezing, deleting, defining by a descriptor and another prototype do not touch a private name.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class A { #x = 1; y = 2; inc() { return ++this.#x; } static get(o) { return o.#x; } static has(o) { return #x in o; } static inc(o) { return ++o.#x; } }
 function attempt(f) { try { report(f()); } catch (e) { report(e instanceof TypeError ? "TypeError" : "other"); } }

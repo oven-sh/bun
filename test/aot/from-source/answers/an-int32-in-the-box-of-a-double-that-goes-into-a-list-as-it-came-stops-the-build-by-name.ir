@@ -1,0 +1,13 @@
+# A type says what the number is, never how it is boxed. `case 3` makes x an int32 by type, but its word is still a boxed double.
+# An array of int32s is read through the lower halves of its words, so 0 was read instead of 3.
+# In every build, the word of an operand is stored into an array that may hold int32s through ElementAccessEmitter::storeWordOfOperand().
+# An int32 by type that would be stored as the word that it arrived in fails the build with a named internal error.
+# Fault injection, testing=SkipInt32Reboxing: ArrayIntrinsicEmitter::putInBounds() omits its conversion.
+# -- source: main.js
+# function fillBehindCase(to, x) { switch (x) { case 3: for (let i = 0; i < to.length; i++) to[i] = x; break; } return to; }
+# function outOfFractions(at) { const list = JSON.parse("[0.5,1,2,3,4]"); list.push("x"); return list[at]; }
+# const filled = fillBehindCase([9, 9, 9, 9].slice(), outOfFractions(3));
+# print(filled.join() + " " + filled.indexOf(3) + " " + filled.includes(3) + " " + JSON.stringify(filled));
+# -- end of source
+# DIAGNOSTIC: Int32StoredWithoutReboxing
+# RUN: compile mechanisms=all testing=SkipInt32Reboxing

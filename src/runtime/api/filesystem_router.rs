@@ -1,11 +1,12 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
+use std::rc::Rc;
+
 use bun_paths::strings;
 
 use bun_ast as Log;
 use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
-use bun_jsc::ref_string::{RefString, StringTooLong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
@@ -45,41 +46,11 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     }
 }
 
-/// A ref on a string of the VM's interning cache.
-struct RefCountedString(BackRef<RefString>);
-
-impl RefCountedString {
-    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
-        let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
-        // The cache adds no ref on a hit.
-        string.ref_();
-        Ok(Self(string))
-    }
-
-    fn bytes(&self) -> &[u8] {
-        self.0.leak()
-    }
-}
-
-impl Clone for RefCountedString {
-    fn clone(&self) -> Self {
-        self.0.ref_();
-        Self(self.0)
-    }
-}
-
-impl Drop for RefCountedString {
-    fn drop(&mut self) {
-        // `get()`: a bare `deref()` is `<BackRef as Deref>::deref`.
-        self.0.get().deref();
-    }
-}
-
 pub(crate) struct FileSystemRouter {
-    origin: Option<RefCountedString>,
-    base_dir: RefCountedString,
+    origin: Option<Rc<[u8]>>,
+    base_dir: Rc<[u8]>,
     router: JsCell<Router::Router>,
-    asset_prefix: Option<RefCountedString>,
+    asset_prefix: Option<Rc<[u8]>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -273,31 +244,33 @@ impl FileSystemRouter {
             root_dir_info.abs_path
         };
 
-        let vm = global.bun_vm().as_mut();
-        let mut ref_counted = |bytes: &[u8]| {
-            RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
+        let ref_counted = |bytes: &[u8]| {
+            if bytes.len() > bun_core::String::max_length() {
+                return Err(global.throw_string_too_long());
+            }
+            Ok(Rc::<[u8]>::from(bytes))
         };
         let base_dir = ref_counted(base_dir_str)?;
-        router.config.dir = Box::from(base_dir.bytes());
+        router.config.dir = Box::from(&*base_dir);
         let not_empty = |bytes: &&[u8]| !bytes.is_empty();
         Ok(FileSystemRouter {
             origin: options
                 .origin
                 .filter(not_empty)
-                .map(&mut ref_counted)
+                .map(ref_counted)
                 .transpose()?,
             base_dir,
             asset_prefix: options
                 .asset_prefix
                 .filter(not_empty)
-                .map(&mut ref_counted)
+                .map(ref_counted)
                 .transpose()?,
             router: JsCell::new(router),
         })
     }
 
     pub(crate) fn get_asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
-        self.asset_prefix.as_ref().map(RefCountedString::bytes)
+        self.asset_prefix.as_ref().map(Rc::as_ref)
     }
 
     pub(crate) fn r#match<'a>(
@@ -375,13 +348,13 @@ impl FileSystemRouter {
             param_map: JsCell::new(None),
             origin: self.origin.clone(),
             asset_prefix: self.asset_prefix.clone(),
-            base_dir: self.base_dir.clone(),
+            base_dir: Rc::clone(&self.base_dir),
         };
         Ok(Some(matched.into_js(heap)))
     }
 
     pub(crate) fn get_origin(&self) -> Option<impl AsRef<[u8]>> {
-        self.origin.as_ref().map(RefCountedString::bytes)
+        self.origin.as_ref().map(Rc::as_ref)
     }
 
     pub(crate) fn reload<'a>(
@@ -425,9 +398,9 @@ pub(crate) struct MatchedRoute {
     params_list: route_param::List<'static>,
     /// Made by the first of `params` and `query` to need it.
     param_map: JsCell<Option<QueryStringMap>>,
-    origin: Option<RefCountedString>,
-    asset_prefix: Option<RefCountedString>,
-    base_dir: RefCountedString,
+    origin: Option<Rc<[u8]>>,
+    asset_prefix: Option<Rc<[u8]>>,
+    base_dir: Rc<[u8]>,
 }
 
 impl MatchedRoute {
@@ -529,17 +502,12 @@ impl MatchedRoute {
 
     pub(crate) fn get_src(&self) -> impl AsRef<[u8]> {
         let mut src: Vec<u8> = Vec::new();
-        let origin_url = self
-            .origin
-            .as_ref()
-            .map(|origin| URL::parse(origin.bytes()));
+        let origin_url = self.origin.as_ref().map(|origin| URL::parse(origin));
         bun_object::get_public_path_with_asset_prefix(
             self.file_path,
-            self.base_dir.bytes(),
+            &self.base_dir,
             &origin_url.unwrap_or_default(),
-            self.asset_prefix
-                .as_ref()
-                .map_or(b"", RefCountedString::bytes),
+            self.asset_prefix.as_ref().map_or(b"", Rc::as_ref),
             &mut src,
             path::Platform::Posix,
         );

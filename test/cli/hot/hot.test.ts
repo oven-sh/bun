@@ -12,7 +12,18 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  waitForFileToExist,
+  withoutAsanQuarantine,
+} from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -789,6 +800,52 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 );
 
 it(
+  "the source of a module that require() loaded is released with the module",
+  async () => {
+    using dir = tempDir("hot-require-source", {
+      "main.cjs": `
+        const { join } = require("node:path");
+        const { unlinkSync, writeFileSync } = require("node:fs");
+        const text = Buffer.alloc(4 << 20, "abcdefghij").toString();
+        // The least RSS while the last ten were loaded, because it goes up and down.
+        function load(count) {
+          let least = Infinity;
+          for (let i = 0; i < count; i++) {
+            const file = join(__dirname, "m" + globalThis.loaded++ + ".cjs");
+            writeFileSync(file, "module.exports = " + globalThis.loaded + "; const s = '" + text + "';");
+            require(file);
+            delete require.cache[file];
+            module.children.length = 0;
+            unlinkSync(file);
+            Bun.gc(true);
+            if (i >= count - 10) least = Math.min(least, process.memoryUsage.rss());
+          }
+          return least;
+        }
+        globalThis.loaded = 0;
+        const before = load(15);
+        console.log(JSON.stringify({ deltaMiB: (load(40) - before) / 1024 / 1024 }));
+        process.exit(0);
+      `,
+    });
+    // Windows warns about a file outside of the working directory, so this runs in it.
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "main.cjs"],
+      cwd: String(dir),
+      env: withoutAsanQuarantine(bunEnv),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Unfixed: 120 MiB or more, a copy of each file that was loaded in between.
+    expect(JSON.parse(stdout).deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
+    expect(exitCode).toBe(0);
+  },
+  longTimeout,
+);
+
+it(
   "should import a module again after a hot reload while its import() was still loading its dependencies",
   async () => {
     using dir = tempDir("hot-reload-import-in-flight", {
@@ -1197,7 +1254,7 @@ it.skipIf(!isASAN)("stops the file watcher thread before the VM is freed at exit
   expect(await Promise.all([run(), run(), run(), run()])).toEqual([0, 0, 0, 0]);
 });
 
-// --hot and --watch intern a module's transpiled text in the VM.
+// --hot and --watch transpile a module that require() loads on the JS thread.
 it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", async () => {
   using dir = tempDir("hot-string-limit", {
     "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,

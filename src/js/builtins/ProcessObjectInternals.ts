@@ -766,14 +766,17 @@ export function loadEnvFile(path) {
   }
   const content = require("node:fs").readFileSync(path, "utf8");
   const parsed = require("node:util").parseEnv(content);
-  // As Node, the environment and not what `process.env` is by now: https://github.com/nodejs/node/blob/v26.3.0/src/node_dotenv.cc#L69-L87
-  const env = Bun.env;
+  const env = process.env;
+  // A program can replace `process.env`. The file fills that object, which `node:child_process` gives to a child, and only the environment tells a variable from what it inherits.
+  const isEnvironment = env === Bun.env;
   for (const key of Object.keys(parsed)) {
     // Node: existing env keys win; the file only fills in missing ones.
-    // Compare against undefined rather than `in`: accessor-backed keys (TZ,
-    // HTTP_PROXY) always exist but read back undefined while unset.
-    // Own first: what the environment inherits (`toString`, `constructor`) is not a variable.
-    if ($Object.$getOwnPropertyDescriptor(env, key) === undefined || env[key] === undefined) {
+    // In the environment a variable is an own string: an unset accessor (TZ) reads undefined, `toString` is inherited, `toJSON` is a function on Windows.
+    if (
+      isEnvironment
+        ? $Object.$getOwnPropertyDescriptor(env, key) === undefined || typeof env[key] !== "string"
+        : env[key] === undefined
+    ) {
       env[key] = parsed[key];
     }
   }

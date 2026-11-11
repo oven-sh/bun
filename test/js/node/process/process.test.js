@@ -137,8 +137,9 @@ it("process.loadEnvFile can set accessor-backed keys and respects empty values",
   expect({ stdout, exitCode }).toEqual({ stdout: 'http://from-dotenv:8080\n""\nfresh\n', exitCode: 0 });
 });
 
-it("process.loadEnvFile sets a variable that is named like a member of Object.prototype", async () => {
-  const names = ["toString", "constructor", "hasOwnProperty", "valueOf", "__proto__"];
+it("process.loadEnvFile sets a variable that process.env only seems to have", async () => {
+  // Members of Object.prototype, and `toJSON`, a function that process.env has on Windows.
+  const names = ["toString", "constructor", "hasOwnProperty", "valueOf", "__proto__", "toJSON"];
   using dir = tempDir("load-env-inherited-names", {
     // Not ".env", which bun loads by itself.
     "inherited-names.env": names.map(name => `${name}=from the file\n`).join(""),
@@ -163,33 +164,37 @@ it("process.loadEnvFile sets a variable that is named like a member of Object.pr
   });
 });
 
-// As in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_dotenv.cc#L69-L87
-it("process.loadEnvFile reads and writes the environment when process.env was replaced", async () => {
+// Node fills the environment. Since v26.12.1 (nodejs/node#65325) its child with no `env` option gets the environment.
+// A child of Bun gets `process.env`, so the file fills the object that replaced it.
+it("process.loadEnvFile fills the object that replaced process.env", async () => {
   using dir = tempDir("load-env-replaced", {
-    "copy.env": "COPY_SET=file\nCOPY_NEW=file\n",
+    "copy.env": "COPY_NEW=file\n",
     "overlay.env": "OVERLAY_SET=file\nOVERLAY_NEW=file\n",
-    "empty.env": "EMPTY_SET=file\nEMPTY_NEW=file\n",
     "frozen.env": "toString=file\nFROZEN_NEW=file\n",
     "index.cjs": `
+      const { spawnSync } = require("child_process");
       const environment = process.env;
-      for (const name of ["COPY_SET", "OVERLAY_SET", "EMPTY_SET"]) environment[name] = "environment";
-      const read = (object, name) => (Object.hasOwn(object, name) ? "own " : "") + (typeof object[name] === "string" ? object[name] : typeof object[name]);
+      environment.OVERLAY_SET = "environment";
+      // What a child with no \`env\` option reads.
+      const child = name => spawnSync(process.execPath, ["-e", "console.log(process.env." + name + ")"], { encoding: "utf8" }).stdout.trim();
       const out = {};
-      const load = (row, replacement, names) => {
-        process.env = replacement;
-        try {
-          process.loadEnvFile(row + ".env");
-        } catch (e) {
-          out[row + " threw"] = e.name;
-        }
-        out[row] = names.map(name => [read(replacement, name), read(environment, name)]);
-      };
-      load("copy", { ...environment }, ["COPY_SET", "COPY_NEW"]);
-      load("overlay", Object.create(environment), ["OVERLAY_SET", "OVERLAY_NEW"]);
-      load("empty", {}, ["EMPTY_SET", "EMPTY_NEW"]);
-      const copy = { ...environment };
+
+      process.env = { ...environment };
+      process.loadEnvFile("copy.env");
+      out.copy = child("COPY_NEW");
+
+      process.env = Object.create(environment);
+      process.loadEnvFile("overlay.env");
+      out.overlay = [process.env.OVERLAY_SET, process.env.OVERLAY_NEW];
+
+      process.env = { ...environment };
       Object.freeze(Object.prototype);
-      load("frozen", copy, ["toString", "FROZEN_NEW"]);
+      try {
+        process.loadEnvFile("frozen.env");
+        out.frozen = child("FROZEN_NEW");
+      } catch (e) {
+        out.frozen = e.name;
+      }
       console.log(JSON.stringify(out));
     `,
   });
@@ -203,25 +208,7 @@ it("process.loadEnvFile reads and writes the environment when process.env was re
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-    out: {
-      // [what the replacement has, what the environment has]
-      copy: [
-        ["own environment", "own environment"],
-        ["undefined", "own file"],
-      ],
-      overlay: [
-        ["environment", "own environment"],
-        ["file", "own file"],
-      ],
-      empty: [
-        ["undefined", "own environment"],
-        ["undefined", "own file"],
-      ],
-      frozen: [
-        ["function", "own file"],
-        ["undefined", "own file"],
-      ],
-    },
+    out: { copy: "file", overlay: ["environment", "file"], frozen: "file" },
     stderr: "",
     exitCode: 0,
   });

@@ -1133,7 +1133,7 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
 }
 function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
-  const resEnv = { __proto__: null };
+  const resEnv = { __proto__: null } as unknown as Record<string, string>;
   for (const line of envPairs) {
     const [key, ...value] = line.split("=", 2);
     resEnv[key] = value.join("=");

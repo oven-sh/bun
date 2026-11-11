@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 374b8fc1a647d5f575c042ece47b1ec96518cd34a5ce51da276bd86c923b49f0.
+// Written against that file with the SHA-256 e1d368bcb6c412b257491ece7785ef209e0522028cefa7ec329bd1eded1cf06f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -803,14 +803,17 @@ export function loadEnvFile(path?: string) {
   }
   const content = require("node:fs").readFileSync(path, "utf8");
   const parsed = require("node:util").parseEnv(content);
-  // As Node, the environment and not what `process.env` is by now: https://github.com/nodejs/node/blob/v26.3.0/src/node_dotenv.cc#L69-L87
-  const env = Bun.env;
+  const env = process.env;
+  // A program can replace `process.env`. The file fills that object, which `node:child_process` gives to a child, and only the environment tells a variable from what it inherits.
+  const isEnvironment = env === Bun.env;
   for (const key of Object.keys(parsed)) {
     // Node: existing env keys win; the file only fills in missing ones.
-    // Compare against undefined rather than `in`: accessor-backed keys (TZ,
-    // HTTP_PROXY) always exist but read back undefined while unset.
-    // Own first: what the environment inherits (`toString`, `constructor`) is not a variable.
-    if (Object.$getOwnPropertyDescriptor(env, key) === undefined || env[key] === undefined) {
+    // In the environment a variable is an own string: an unset accessor (TZ) reads undefined, `toString` is inherited, `toJSON` is a function on Windows.
+    if (
+      isEnvironment
+        ? Object.$getOwnPropertyDescriptor(env, key) === undefined || typeof env[key] !== "string"
+        : env[key] === undefined
+    ) {
       env[key] = parsed[key];
     }
   }

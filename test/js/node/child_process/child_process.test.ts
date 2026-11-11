@@ -498,11 +498,14 @@ describe("spawn()", () => {
     const envPairs = Object.entries(env).flatMap(([name, value]) => (value?.includes("=") ? [] : [`${name}=${value}`]));
     // @ts-ignore
     child.spawn({ file: bunExe(), args: [bunExe(), ...print], envPairs, stdio: ["ignore", "pipe", "inherit"] });
-    const [fromEnvPairs] = await Promise.all([child.stdout!.toArray(), once(child, "close")]);
+    const [fromEnvPairs, [exitCode]] = await Promise.all([child.stdout!.toArray(), once(child, "close")]);
 
-    expect({ env: fromEnv.stdout, envPairs: Buffer.concat(fromEnvPairs).toString() }).toEqual({
-      env: "from the parent\n",
-      envPairs: "from the parent\n",
+    expect({
+      env: { stdout: fromEnv.stdout, exitCode: fromEnv.status },
+      envPairs: { stdout: Buffer.concat(fromEnvPairs).toString(), exitCode },
+    }).toEqual({
+      env: { stdout: "from the parent\n", exitCode: 0 },
+      envPairs: { stdout: "from the parent\n", exitCode: 0 },
     });
   });
 
@@ -517,10 +520,12 @@ describe("spawn()", () => {
          spawnSync(process.execPath, print);
          Object.freeze(Object.prototype);
          const stdio = ["ignore", "inherit", "inherit"];
-         spawnSync(process.execPath, print, { stdio });
+         const { status } = spawnSync(process.execPath, print, { stdio });
          // Without the values that hold a "=", which spawn() cuts short.
          const envPairs = Object.entries(process.env).flatMap(([name, value]) => (value.includes("=") ? [] : [name + "=" + value]));
-         new ChildProcess().spawn({ file: process.execPath, args: [process.execPath, ...print], envPairs, stdio });`,
+         const child = new ChildProcess();
+         child.on("exit", exitCode => console.log(JSON.stringify({ exitCodes: [status, exitCode] })));
+         child.spawn({ file: process.execPath, args: [process.execPath, ...print], envPairs, stdio });`,
       ],
       env: { ...bunEnv, toString: "from the parent" },
       stdout: "pipe",
@@ -528,7 +533,7 @@ describe("spawn()", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-      stdout: "from the parent\nfrom the parent\n",
+      stdout: 'from the parent\nfrom the parent\n{"exitCodes":[0,0]}\n',
       stderr: "",
       exitCode: 0,
     });

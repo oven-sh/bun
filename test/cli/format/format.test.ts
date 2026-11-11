@@ -986,6 +986,11 @@ describe.concurrent("bun fmt", () => {
           '// prettier-ignore\nexport declare module "x";\n{ a() }\n',
           '// prettier-ignore\nexport declare module "x";\n{\n  a()\n}\n',
         ],
+        // The ignored statement is the `if`, which ends with the function.
+        "ignored-if.ts": [
+          "// prettier-ignore\nif (x) function f(): void;\n{ a() }\n",
+          "// prettier-ignore\nif (x) function f(): void;\n{\n  a()\n}\n",
+        ],
         // Before anything else, the `;` goes, as in Prettier.
         "implementation.ts": [
           "function f(): void;\nfunction f() {}\nexport function g(): void;\nexport function g() {}\n",

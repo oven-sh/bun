@@ -7791,7 +7791,7 @@ describe.concurrent("a module whose top-level code mocks through a function of a
     );
   });
 
-  // The function of register.cjs gets the arguments that the body of a CommonJS module gets.
+  // The function of register.cjs gets the arguments that the body of a CommonJS module gets: the first three, then all five.
   test("is run again without a module whose function is handed its module object", async () => {
     await expectFixturesToPass(
       {
@@ -7806,7 +7806,9 @@ describe.concurrent("a module whose top-level code mocks through a function of a
         `,
         "setup.cjs": `
           ${count("setup")}
-          require("./register.cjs")(exports, require, module);
+          const register = require("./register.cjs");
+          register(exports, require, module);
+          register(exports, require, module, __filename, __dirname);
         `,
         ...testFiles(`import "./setup.cjs";`, { wrapper: 1, setup: 2, register: 1 }),
       },
@@ -7906,7 +7908,7 @@ describe.concurrent("a module whose top-level code mocks through a function of a
     );
   });
 
-  // The function of helper.cjs gets the module object of its own file, as the body of that file does.
+  // The function of helper.cjs gets the module object of its own file as the body of that file does, but not the filename behind it.
   test("leaves a CommonJS module loaded whose function is handed its module object for a hook of the test file", async () => {
     await expectFixturesToPass(
       {
@@ -7921,7 +7923,7 @@ describe.concurrent("a module whose top-level code mocks through a function of a
           };
         `,
         ...testFiles(
-          `import { beforeAll } from "bun:test"; import helper from "./helper.cjs"; beforeAll(() => helper.mockDep(null, null, helper.self));`,
+          `import { beforeAll } from "bun:test"; import helper from "./helper.cjs"; beforeAll(() => { helper.mockDep(null, null, helper.self); helper.mockDep(null, null, helper.self, "another name", null); });`,
           { wrapper: 1, helper: 1 },
         ),
       },

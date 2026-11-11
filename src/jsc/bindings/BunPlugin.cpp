@@ -4279,35 +4279,29 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
 }
 
 // A module whose body is on the stack makes the call again when it runs again. One that only has a function there passed the call on, and stays loaded.
-__attribute__((minsize)) static void addModulesWhoseBodyRuns(JSC::VM& vm, JSC::CallFrame* callframe, const String& file, WTF::UncheckedKeyHashSet<String>& modules)
+__attribute__((minsize)) static void addModulesWhoseBodyRuns(JSC::VM& vm, JSC::CallFrame* callframe, WTF::UncheckedKeyHashSet<String>& modules)
 {
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         JSC::CodeBlock* codeBlock = visitor->codeBlock();
-        JSC::CallFrame* frame = visitor->callFrame();
-        bool isESModule = codeBlock && codeBlock->codeType() == JSC::ModuleCode;
-        // evaluateCommonJSModuleOnce() calls the body of a CommonJS module with (exports, require, module, __filename, __dirname).
-        auto* commonJSModule = codeBlock && !isESModule && frame->argumentCount() > 4 ? dynamicDowncast<Bun::JSCommonJSModule>(frame->uncheckedArgument(2)) : nullptr;
-        if (!isESModule && !commonJSModule)
+        if (!codeBlock)
             return WTF::IterationStatus::Continue;
-        const JSC::SourceOrigin& sourceOrigin = codeBlock->ownerExecutable()->sourceOrigin();
-        const URL& url = sourceOrigin.url();
-        if (sourceOrigin.isNull() || !url.isValid() || !url.protocolIsFile())
-            return WTF::IterationStatus::Continue;
-        if (isESModule) {
+        if (codeBlock->codeType() == JSC::ModuleCode) {
+            const JSC::SourceOrigin& sourceOrigin = codeBlock->ownerExecutable()->sourceOrigin();
+            const URL& url = sourceOrigin.url();
+            if (sourceOrigin.isNull() || !url.isValid() || !url.protocolIsFile())
+                return WTF::IterationStatus::Continue;
             // The key that the loader has the module under can end in a query, which the path of its file leaves out.
             auto* callee = visitor->callee().isCell() ? dynamicDowncast<JSC::JSCallee>(visitor->callee().asCell()) : nullptr;
             auto* environment = callee ? dynamicDowncast<JSC::JSModuleEnvironment>(callee->scope()) : nullptr;
             modules.add(environment ? environment->moduleRecord()->moduleKey().string() : url.fileSystemPath());
             return WTF::IterationStatus::Continue;
         }
-        JSValue filename = commonJSModule->filename();
-        if (!filename || !filename.isString() || !frame->uncheckedArgument(3).isString())
-            return WTF::IterationStatus::Continue;
-        // Any function can be called so. The body gets the key of its module as `__filename`, and runs the file that the key names in front of its query.
-        String key = asString(filename)->tryGetValue().data;
-        String path = url.path() == file ? file : url.fileSystemPath();
-        if (asString(frame->uncheckedArgument(3))->tryGetValue().data == key && key.startsWith(path) && (key.length() == path.length() || key[path.length()] == '?'))
-            modules.add(WTF::move(key));
+        // evaluateCommonJSModuleOnce() calls the body of a CommonJS module with (exports, require, module, __filename, __dirname). `__filename` is the key of the module.
+        JSC::CallFrame* frame = visitor->callFrame();
+        auto* commonJSModule = frame->argumentCount() > 4 ? dynamicDowncast<Bun::JSCommonJSModule>(frame->uncheckedArgument(2)) : nullptr;
+        JSValue key = commonJSModule ? commonJSModule->filename() : JSValue();
+        if (key && key.isString() && frame->uncheckedArgument(3).isString() && asString(frame->uncheckedArgument(3))->tryGetValue().data == asString(key)->tryGetValue().data)
+            modules.add(asString(key)->tryGetValue().data);
         return WTF::IterationStatus::Continue;
     });
 }
@@ -5939,11 +5933,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     mock->isFromPreload = JSMock__isInPreload(globalObject);
     if (!mock->isFromPreload) {
         auto& mockingModules = globalObject->onLoadPlugins.mockingModules;
-        String file = callerPath(vm, callframe);
-        mockingModules.add(file);
+        mockingModules.add(callerPath(vm, callframe));
         // Only the test runner reads the set, on the main thread. `bun test --aot` makes the calls of a compiled body again instead: recordBodyMock().
         if (Bun::isBunTest && !vm.hasCompiledCode() && globalObject->scriptExecutionContext()->isMainThread())
-            addModulesWhoseBodyRuns(vm, callframe, file, mockingModules);
+            addModulesWhoseBodyRuns(vm, callframe, mockingModules);
     }
 #if ENABLE(AOT)
     std::optional<size_t> remembered;

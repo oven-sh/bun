@@ -1294,8 +1294,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
     }
 
-    // What overridableRequire put in the require map for this key before it knew that the file is an ES module.
-    // JSCommonJSModule::load() answers a require() that finds it while this load is on the stack.
+    // The stand-in that overridableRequire put in the require map for this key. JSCommonJSModule::load() answers a require() that finds it during this load.
     JSValue inRequireMap = Bun::requireMapOf(globalObject, requirer ? requirer->moduleGraph() : nullptr)->get(globalObject, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
     auto* standIn = dynamicDowncast<Bun::JSCommonJSModule>(inRequireMap);

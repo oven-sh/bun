@@ -10156,9 +10156,8 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
-/// A trailing separator means "must be a directory": open it as one instead of
-/// probing with `unlinkat(path, 0)`, whose errno gVisor (before a462ffdfe8)
-/// gets wrong. Strip first: `O_NOFOLLOW` does not stop `openat("link/")`.
+/// A trailing separator names a directory. Strip it before the open:
+/// `O_NOFOLLOW` does not stop `openat("link/")`.
 #[cfg(not(windows))]
 fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind) {
     let stripped = strings::trim_right(sub_path, b"/");

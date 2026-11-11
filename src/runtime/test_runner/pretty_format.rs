@@ -4950,7 +4950,9 @@ impl Formatter<'_> {
     fn print_with_serializer(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         let global = self.global_this;
         let Some(serializers) = self.serializers else { return Ok(false) };
-        let value = self.value_for_serializers(value)?;
+        // An array, a plain object or a class instance that has matched rows is offered as a plain stand-in with the rows in place.
+        let place = self.place.current();
+        let value = if place.is_none() { value } else { place.for_serializers(global)? };
         let mut iter = serializers.array_iterator(global)?;
         while let Some(plugin) = iter.next()? {
             if !plugin.is_object() {
@@ -4965,16 +4967,6 @@ impl Formatter<'_> {
             return Ok(true);
         }
         Ok(false)
-    }
-
-    /// What the serializers get for `value`: for an array, a plain object or a class instance that has matched rows, a plain stand-in with the rows in place.
-    #[cold]
-    fn value_for_serializers(&self, value: JSValue) -> JsResult<JSValue> {
-        let place = self.place.current();
-        if place.is_none() {
-            return Ok(value);
-        }
-        place.for_serializers(self.global_this)
     }
 
     #[optimize(size)]

@@ -4162,6 +4162,30 @@ static bool hasYetToBegin(JSC::CyclicModuleRecord* record)
     return sourceText && sourceText->internalField(JSC::AbstractModuleRecord::Field::State).get() == jsNumber(static_cast<int32_t>(JSC::AbstractModuleRecord::State::Init));
 }
 
+// Whether `importer`, which has yet to begin, waits for an import that stands before its import of `record`: then that one is yet to come. It never waits for an import behind `running`.
+__attribute__((minsize)) static bool waitsForImportBefore(JSC::CyclicModuleRecord* importer, JSC::AbstractModuleRecord* record, const String& running)
+{
+    for (auto& request : importer->requestedModules()) {
+        auto loaded = importer->loadedModules().find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
+        if (loaded == importer->loadedModules().end())
+            continue;
+        auto* imported = loaded->value.m_module.get();
+        if (imported == record)
+            return false;
+        if (imported->moduleKey().string() == running)
+            return true;
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(imported);
+        if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluating)
+            continue;
+        // One that imports `importer` back has run inside their import cycle, unless it has yet to begin: then it may be the one that waits for `importer`.
+        if (!anyUnevaluatedImport(cyclic, [&](JSC::CyclicModuleRecord* back) { return back == importer; }))
+            return true;
+        if (hasYetToBegin(cyclic))
+            return false;
+    }
+    return false;
+}
+
 // Whether a module that is linked to `record` has yet to come to that import, as Vitest and Jest order imports. No module had come to `record` before the call of `running` if `hadYetToRun`.
 __attribute__((minsize)) static bool isLinkedToModuleYetToImport(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, JSModuleMock* mock, const String& running, bool hadYetToRun)
 {
@@ -4174,28 +4198,15 @@ __attribute__((minsize)) static bool isLinkedToModuleYetToImport(Zig::GlobalObje
         // vi.mock() leaves what Vitest externalizes to the real module.
         if (mock->isOfVitest() && isExternalizedByVitest(globalObject, key))
             continue;
-        // A module that has yet to begin waits for the first of its imports that is being evaluated. The imports behind that one are yet to come.
         bool isLinked = false;
-        bool isLinkedBehindImportUnderWay = false;
-        bool hasImportUnderWay = false;
-        for (auto& request : importer->requestedModules()) {
-            auto loaded = importer->loadedModules().find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
-            if (loaded == importer->loadedModules().end())
-                continue;
-            auto* imported = loaded->value.m_module.get();
-            if (imported == record && !isLinked) {
-                isLinked = true;
-                isLinkedBehindImportUnderWay = hasImportUnderWay;
-            }
-            auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(imported);
-            hasImportUnderWay |= cyclic && cyclic->status() == Status::Evaluating;
-        }
+        for (auto& loaded : importer->loadedModules().values())
+            isLinked |= loaded.m_module.get() == record;
         if (!isLinked)
             continue;
         if (importer->status() == Status::Linked ? isReachedByEvaluationUnderWay(globalObject, importer) : key == running)
             return true;
-        // A body that has begun came to all its imports before the call. In an import cycle the import under way may be a module that imports this one, so there the order says nothing.
-        if (importer->status() == Status::Evaluating && hasYetToBegin(importer) && (hadYetToRun || (isLinkedBehindImportUnderWay && !anyUnevaluatedImport(importer, [&](JSC::CyclicModuleRecord* imported) { return imported == importer; }))))
+        // A body that has begun came to all its imports before the call.
+        if (importer->status() == Status::Evaluating && hasYetToBegin(importer) && (hadYetToRun || waitsForImportBefore(importer, record, running)))
             return true;
     }
     return false;

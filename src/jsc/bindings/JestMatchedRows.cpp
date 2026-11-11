@@ -289,22 +289,18 @@ MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index)
     return JestMatchedRows::toMatchedRow(uncheckedDowncast<JestMatchedRows>(rows)->find(place, index, nullptr));
 }
 
-// True if `holder` keeps `value` under the name as a data property of its own. A getter that returns it, of the holder or of its class, does not count.
-static bool keepsAsOwnData(JSC::VM& vm, JSC::JSObject* holder, JSC::PropertyName name, JSC::JSValue value)
-{
-    if (auto index = JSC::parseIndex(name))
-        return holder->canGetIndexQuickly(*index) && holder->getIndexQuickly(*index) == value;
-    if (JSC::AOT::PropertyWalk::isCompiledObject(holder))
-        return JSC::AOT::PropertyWalk::getDirect(vm, holder, name, nullptr) == value;
-    return holder->getDirect(vm, name) == value;
-}
-
-MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::JSObject* holder, JSC::PropertyName name, MatchedRowsTaken taken)
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName name, MatchedRowsTaken taken)
 {
     MatchedRow row = matchedRow(rows, place, name);
-    if (taken == MatchedRowsTaken::AsOlderBunPrinted && row.childPlace && !keepsAsOwnData(rows->vm(), holder, name, row.value))
+    if (taken == MatchedRowsTaken::AsOlderBunPrinted && row.childPlace)
         return {};
     return row;
+}
+
+uint32_t matchedPlaceOfRead(JSC::JSCell* rows, uint32_t place, JSC::PropertyName name, JSC::JSValue read)
+{
+    MatchedRow row = matchedRow(rows, place, name);
+    return row.value == read ? row.childPlace : 0;
 }
 
 void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing, MatchedRowsTaken taken)

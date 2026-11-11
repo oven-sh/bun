@@ -6371,7 +6371,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 
         if (matched) [[unlikely]] {
             // A matched row is shown in place of the property, which is not read.
-            if (auto row = Bun::matchedRow(matched->rows, matched->place, object, property, matched->taken); row.value) {
+            if (auto row = Bun::matchedRow(matched->rows, matched->place, property, matched->taken); row.value) {
                 EncodedSlice key = toEncodedSlice(property.impl());
                 JSC::EnsureStillAliveScope ensureStillAliveScope(row.value);
                 matched->callback(globalObject, arg2, &key, JSC::JSValue::encode(row.value), property.isSymbol(), false, row.childPlace);
@@ -6417,9 +6417,11 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         EncodedSlice key = toEncodedSlice(name);
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        if (matched) [[unlikely]]
-            matched->callback(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName(), 0);
-        else
+        if (matched) [[unlikely]] {
+            // Only a replay of Bun 1.4 reads a property whose row leads on to a matcher.
+            uint32_t childPlace = matched->taken == Bun::MatchedRowsTaken::AsOlderBunPrinted ? Bun::matchedPlaceOfRead(matched->rows, matched->place, property, propertyValue) : 0;
+            matched->callback(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName(), childPlace);
+        } else
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
         RETURN_IF_EXCEPTION(scope, );
     }

@@ -938,6 +938,9 @@ describe.concurrent("a snapshot with property matchers that an older Bun wrote",
       "DOM-like class": `\n{\n  "node": HTMLDivElement {\n    "attributes": [],\n    "childNodes": [],\n    "id": Any<String>,\n    "nodeType": 1,\n    "tagName": "DIV",\n  },\n}\n`,
       "property that is not enumerable": `\n{\n  "hidden": "h",\n  "id": Any<Number>,\n}\n`,
       "same object with the same matchers twice": `\n{\n  "a": {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n  "b": {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n}\n`,
+      // Neither object keeps the property named by an integer in the vector of its elements.
+      "frozen object keyed by integers": `\n{\n  "7": {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n  "8": {\n    "g": [native code],\n    "id": 2,\n  },\n}\n`,
+      "object keyed by a large integer": `\n{\n  "123456": {\n    "g": [native code],\n    "id": Any<Number>,\n  },\n}\n`,
     };
     const older =
       headers.bun +
@@ -1026,6 +1029,8 @@ describe.concurrent("a snapshot with property matchers that an older Bun wrote",
             const matchers = { id: number };
             expect({ a: shared, b: shared }).toMatchSnapshot({ a: matchers, b: matchers });
           });
+          test("frozen object keyed by integers", () => { expect(Object.freeze({ 7: andGetter({ id: 1 }), 8: andGetter({ id: 2 }) })).toMatchSnapshot({ 7: { id: number } }); });
+          test("object keyed by a large integer", () => { expect({ 123456: andGetter({ id: 1 }) }).toMatchSnapshot({ 123456: { id: number } }); });
         `,
       "__snapshots__/a.test.js.snap": older,
     });

@@ -4393,6 +4393,7 @@ describe("expect()", () => {
           children: Object.freeze([element("li", item), element("li", Object.freeze({ id: "c2" }))]),
         });
         const pattern = Object.freeze({ props: { id: string, children: [{ props: { id: string } }, {}] } });
+        // The printer writes no space before the last prop of an element, as Bun 1.4.2 does. These lines do not test that.
         expect(printed(element("ul", list), pattern)).toEqual([
           '+   "e": <ul id=Any<String>label="a1!">',
           '+     <li id=Any<String>label="c1?" />',

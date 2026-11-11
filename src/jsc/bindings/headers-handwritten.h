@@ -129,7 +129,7 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
-    // The transpile was dispatched before a jest.resetModules() or vi.resetModules() that ran since, or for a test file that is over, so IsolatedModuleCache must not cache it.
+    // IsolatedModuleCache::insert() skips this source: see `from_earlier_generation` in ResolvedSource.rs.
     bool from_earlier_generation;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
@@ -420,7 +420,6 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" bool Bun__VM__isMainModule(void* bunVM, const BunString* key);
 extern "C" bool Bun__VM__isTestEntryPoint(void* bunVM, const BunString* key);
-extern "C" void Bun__VM__didResetModules(void* bunVM);
 
 // Used in process.version
 extern "C" const char* Bun__version;

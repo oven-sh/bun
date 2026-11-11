@@ -19,7 +19,7 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
-    /// Dispatched before a `resetModules()` that ran since, or for a test file that is over: not for `IsolatedModuleCache`.
+    /// Dispatched for a test file that is over, or before `IsolatedModuleCache` was emptied: not for `IsolatedModuleCache`.
     pub from_earlier_generation: bool,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,

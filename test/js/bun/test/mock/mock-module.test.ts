@@ -2756,8 +2756,7 @@ describe.concurrent("resetModules", () => {
 
   // These answer a load from the source that an earlier load transpiled, in the same test file or in one before it.
   // One --parallel worker takes every test file of a fixture (scale-up gated), so the files share its sources.
-  const withSourceCache: [string[]][] = [[["--isolate"]], [["--isolate=modules"]], [["--parallel=2"]]];
-  const everyMode: [string[]][] = [[[]], ...withSourceCache];
+  const everyMode: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]], [["--parallel=2"]]];
   const oneWorkerEnv = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" };
   // With a second test file, --parallel starts a worker.
   const anEarlierTestFile = `import { test } from "bun:test"; test("runs first", () => {});`;
@@ -2832,55 +2831,6 @@ describe.concurrent("resetModules", () => {
     );
   });
 
-  test.each(withSourceCache)("vi.resetModules() keeps the sources of the packages that stay loaded %j", async args => {
-    await expectFixturesToPass(
-      {
-        "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
-        "node_modules/esm-pkg/index.js": `export default {};`,
-        "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
-        "node_modules/cjs-pkg/index.js": `module.exports = {};`,
-        // Node would read it as CommonJS, so Vitest inlines it.
-        "node_modules/untyped-esm-pkg/package.json": `{ "name": "untyped-esm-pkg", "main": "index.js" }`,
-        "node_modules/untyped-esm-pkg/index.js": `export default {};`,
-        "own.js": `import "esm-pkg"; import "cjs-pkg"; import "untyped-esm-pkg";`,
-        "earlier.test.js": `
-          import { test } from "bun:test";
-          import "./own.js";
-          test("loads them first", () => {});
-        `,
-        "reset.test.js": `
-          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
-          import { expect, jest, test, vi } from "bun:test";
-
-          const cached = () =>
-            ["./own.js", "esm-pkg", "cjs-pkg", "untyped-esm-pkg"].map(name => isolatedModuleCacheSourceType(require.resolve(name)));
-          const all = ["BunTranspiledModule", "BunTranspiledModule", "Program", "BunTranspiledModule"];
-          const packages = [null, "BunTranspiledModule", "Program", null];
-
-          test("the sources that an earlier test file cached", () => {
-            expect(cached()).toEqual(all);
-            vi.resetModules();
-            expect(cached()).toEqual(packages);
-            vi.resetModules();
-            expect(cached()).toEqual(packages);
-          });
-
-          test("the sources of the packages that this test file loaded", async () => {
-            await import("./own.js");
-            expect(cached()).toEqual(all);
-            vi.resetModules();
-            expect(cached()).toEqual(packages);
-            jest.resetModules();
-            expect(cached()).toEqual([null, null, null, null]);
-          });
-        `,
-      },
-      3,
-      args,
-      oneWorkerEnv,
-    );
-  });
-
   test.each(everyMode)("vi.resetModules() reads an ES module package again that failed to load %j", async args => {
     await expectFixturesToPass(
       {
@@ -2910,66 +2860,6 @@ describe.concurrent("resetModules", () => {
       2,
       args,
       oneWorkerEnv,
-    );
-  });
-
-  test.each(everyMode)("a module that was being transpiled at the reset is read again %j", async args => {
-    await expectFixturesToPass(
-      {
-        "a.ts": `export { text } from "./b.ts"; export { text as cjs } from "./b.cjs"; import "./c.ts";`,
-        "b.ts": `export const text = "v1";`,
-        "b.cjs": `exports.text = "v1";`,
-        "c.ts": `export {};`,
-        "alone.ts": `export {};`,
-        "earlier.test.ts": anEarlierTestFile,
-        "reset.test.ts": `
-          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
-          import { expect, jest, test, vi } from "bun:test";
-          import { writeFileSync } from "node:fs";
-          import { join } from "node:path";
-
-          const path = name => join(import.meta.dir, name);
-          const cached = (...names) => names.map(name => isolatedModuleCacheSourceType(path(name)));
-          // Without a source cache, nothing is ever in it.
-          const inCache = (...types) => types.map(type => (${args.length > 0} ? type : null));
-          let whileLoading;
-          let atReset;
-          // The imports of a.ts are requested in turn, so the transpiles of b.ts and b.cjs are out when c.ts is resolved.
-          Bun.plugin({ setup(build) { build.onResolve({ filter: /c\\.ts$/ }, () => void whileLoading?.()); } });
-
-          test.each([["v2", jest], ["v3", vi]])("a dependency, %s", async (text, api) => {
-            api.resetModules();
-            whileLoading = () => {
-              whileLoading = undefined;
-              atReset = cached("a.ts", "b.ts", "b.cjs");
-              api.resetModules();
-            };
-            await import("./a.ts");
-            expect(atReset).toEqual(inCache("BunTranspiledModule", null, null));
-            // c.ts was asked for after the reset.
-            expect(cached("b.ts", "b.cjs", "c.ts")).toEqual(inCache(null, null, "BunTranspiledModule"));
-            writeFileSync(path("b.ts"), 'export const text = "' + text + '";');
-            writeFileSync(path("b.cjs"), 'exports.text = "' + text + '";');
-            const again = await import("./a.ts");
-            expect([again.text, again.cjs]).toEqual([text, text]);
-            expect(cached("a.ts", "b.ts", "b.cjs")).toEqual(inCache("BunTranspiledModule", "BunTranspiledModule", "Program"));
-          });
-
-          test("the import() itself", async () => {
-            const loading = import("./alone.ts");
-            expect(cached("alone.ts")).toEqual([null]);
-            jest.resetModules();
-            const alone = await loading;
-            expect(cached("alone.ts")).toEqual([null]);
-            // The reset doesn't start that import again, so its module is the one that is loaded now.
-            expect(await import("./alone.ts")).toBe(alone);
-          });
-        `,
-      },
-      4,
-      args,
-      // Either of these transpiles on the JS thread, where no transpile is out at a reset.
-      { ...oneWorkerEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined, NODE_COMPILE_CACHE: undefined },
     );
   });
 });

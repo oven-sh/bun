@@ -6162,12 +6162,11 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
-    /// `jest.resetModules()` or `vi.resetModules()` ran. See `RuntimeTranspilerStore::generation_number`.
-    #[unsafe(export_name = "Bun__VM__didResetModules")]
-    pub extern "C" fn did_reset_modules(&self) {
-        self.transpiler_store
-            .generation_number
-            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+    /// `IsolatedModuleCache::clear()` ran. See `RuntimeTranspilerStore::source_cache_clears`.
+    #[unsafe(export_name = "Bun__VM__didClearIsolationSourceProviderCache")]
+    pub extern "C" fn did_clear_isolation_source_provider_cache(&self) {
+        let clears = &self.transpiler_store.source_cache_clears;
+        clears.set(clears.get().wrapping_add(1));
     }
 
     #[unsafe(export_name = "Bun__VM__isMainModule")]
@@ -6500,10 +6499,6 @@ impl VirtualMachine {
         self.close_test_file_sockets();
         debug_assert!(!self.has_test_file_sockets());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
-        // A transpile that the file left on the thread pool is of an earlier generation now.
-        self.transpiler_store
-            .generation_number
-            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
 
         // The outgoing file's JS timers would otherwise release their pins only
         // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a

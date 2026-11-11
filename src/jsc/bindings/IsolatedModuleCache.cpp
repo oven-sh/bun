@@ -27,6 +27,7 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
 
 extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
 extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
+extern "C" void Bun__VM__didClearIsolationSourceProviderCache(void* bunVM);
 
 static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
@@ -81,15 +82,6 @@ void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zi
         insert(vm, key, provider, pluginContents);
 }
 
-void IsolatedModuleCache::dropForReset(JSC::VM& vm, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps)
-{
-    auto* clientData = WebCore::clientData(vm);
-    clientData->isolationSourceProviderCache.removeIf([&](auto& entry) {
-        return !keeps(entry.key, *static_cast<Zig::SourceProvider*>(entry.value.get()));
-    });
-    Bun__VM__didResetModules(clientData->bunVM);
-}
-
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 {
     WebCore::clientData(vm)->isolationSourceProviderCache.remove(key);
@@ -97,7 +89,9 @@ void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 
 void IsolatedModuleCache::clear(JSC::VM& vm)
 {
-    WebCore::clientData(vm)->isolationSourceProviderCache.clear();
+    auto* clientData = WebCore::clientData(vm);
+    clientData->isolationSourceProviderCache.clear();
+    Bun__VM__didClearIsolationSourceProviderCache(clientData->bunVM);
 }
 
 // Test-only (bun:internal-for-testing). Returns the cached provider's

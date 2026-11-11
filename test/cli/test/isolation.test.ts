@@ -2303,50 +2303,59 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
   // A module that a finished file was still loading came back from the thread pool while the next file ran. Its
   // source was cached as made for that file's test globals, and under --isolate=modules the load was fulfilled
   // into the finished file's graph: "ModuleGraph has been disposed".
+  const sourceCacheModes = [
+    ...isolateFlags.map(flag => [flag, [flag], {}] as const),
+    // One worker takes both files (scale-up gated), so the second comes after the worker's own swap.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
+  ];
   // Makes a module large, so that its transpile is still out when the test file that asked for it ends.
   const large = `export const zeros = [${Buffer.alloc(100_000, "0,").toString()}];`;
-  const leftLoading = [
-    ["a first load", `void import("./helper.ts");`],
-    ["a load after vi.resetModules()", `await import("./helper.ts"); vi.resetModules(); void import("./helper.ts");`],
-  ];
-  describe.each(leftLoading)("a finished file's import() that is still loading is dropped: %s", (_, leaveLoading) => {
-    test.each([
-      ...isolateFlags.map(flag => [flag, [flag], {}] as const),
-      // One worker takes both files (scale-up gated), so the second comes after the worker's own swap.
-      ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
-    ])("%s", async (_, args, env) => {
-      using dir = tempDir("isolate-late-import", {
-        // A file that imports from "vitest" has no `jest` global.
-        "helper.ts": `export const makeSpy = () => jest.fn(); ${large}`,
-        "other.ts": large,
-        "a-import.test.ts": `
-          import { test, vi } from "vitest";
-          test("ends while helper.ts is loading", async () => {
-            ${leaveLoading}
-          });
-        `,
-        "b-import.test.ts": `
-          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
-          import { expect, test } from "bun:test";
-          import { join } from "node:path";
-          test("loads helper.ts for its own test globals", async () => {
-            // This transpile is as large as the one that the finished file left, and went out later: that one is back too.
-            await import("./other.ts");
-            expect(isolatedModuleCacheSourceType(join(import.meta.dir, "helper.ts"))).toBeNull();
-            const spy = (await import("./helper.ts")).makeSpy();
-            spy();
-            expect(spy).toHaveBeenCalledTimes(1);
-          });
-        `,
-      });
-      const files = ["./a-import.test.ts", "./b-import.test.ts"];
-      const { stderr, exitCode } = await runTests(String(dir), [...args], files, { ...bunEnv, ...env });
-      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
-      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
-      if (exitCode !== 0) expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
+  // `leaveLoading` is the body of a test that ends while helper.ts is loading.
+  const theNextFileLoadsHelperForItself = async (leaveLoading: string, args: readonly string[], env: object) => {
+    using dir = tempDir("isolate-late-import", {
+      // A file that imports from "vitest" has no `jest` global.
+      "helper.ts": `export const makeSpy = () => jest.fn(); ${large}`,
+      "other.ts": large,
+      "a-import.test.ts": `
+        import { test, vi } from "vitest";
+        test("ends while helper.ts is loading", async () => {
+          ${leaveLoading}
+        });
+      `,
+      "b-import.test.ts": `
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        import { expect, test } from "bun:test";
+        import { join } from "node:path";
+        test("loads helper.ts for its own test globals", async () => {
+          // This transpile is as large as the one that the finished file left, and went out later: that one is back too.
+          await import("./other.ts");
+          expect(isolatedModuleCacheSourceType(join(import.meta.dir, "helper.ts"))).toBeNull();
+          const spy = (await import("./helper.ts")).makeSpy();
+          spy();
+          expect(spy).toHaveBeenCalledTimes(1);
+        });
+      `,
     });
-  });
+    const files = ["./a-import.test.ts", "./b-import.test.ts"];
+    const { stderr, exitCode } = await runTests(String(dir), [...args], files, { ...bunEnv, ...env });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  };
+
+  test.each(sourceCacheModes)("%s: a finished file's import() that is still loading is dropped", (_, args, env) =>
+    theNextFileLoadsHelperForItself(`void import("./helper.ts");`, args, env),
+  );
+
+  // Without the reset, the second import() gets the source that the first one left, and no transpile is out.
+  test.each(sourceCacheModes)("%s: so is one that the file began after vi.resetModules()", (_, args, env) =>
+    theNextFileLoadsHelperForItself(
+      `await import("./helper.ts"); vi.resetModules(); void import("./helper.ts");`,
+      args,
+      env,
+    ),
+  );
 
   // The test files of --isolate=modules share the realm, and code of the global scope loads through the realm's own
   // loader. The next file waits for what a finished file started there, so that transpile is not dropped.
@@ -2388,6 +2397,50 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // Only a finished test file's transpile is dropped. The running file gets its answer for a graph that it disposed
+  // itself, whether or not it reset the modules in between.
+  test.each([["no flag", [], {}] as const, ...sourceCacheModes])(
+    "%s: an import() into a Bun.ModuleGraph that the running test file disposed is rejected",
+    async (_, args, env) => {
+      using dir = tempDir("isolate-disposed-graph-import", {
+        "first.ts": `export {};`,
+        "jest.ts": `export {};`,
+        "vi.ts": `export {};`,
+        // With a second test file, --parallel starts a worker.
+        "a-earlier.test.ts": `import { test } from "bun:test"; test("runs first", () => {});`,
+        "b-graph.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { join } from "node:path";
+
+          test.each([
+            ["first.ts", () => {}],
+            ["jest.ts", () => jest.resetModules()],
+            ["vi.ts", () => vi.resetModules()],
+          ])("%s", async (name, beforeDispose) => {
+            const graph = new Bun.ModuleGraph();
+            // The transpile of the file is out until this test waits.
+            const loading = graph.import(join(import.meta.dir, name));
+            beforeDispose();
+            graph.dispose();
+            expect(await loading.then(() => "loaded", error => error.message)).toBe("ModuleGraph has been disposed");
+          });
+        `,
+      });
+      const files = ["./a-earlier.test.ts", "./b-graph.test.ts"];
+      const { stderr, exitCode } = await runTests(String(dir), [...args], files, {
+        ...bunEnv,
+        ...env,
+        // Either of these transpiles on the JS thread, where no transpile is ever out.
+        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined,
+        NODE_COMPILE_CACHE: undefined,
+      });
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // Each of these leaked handles used to pin its test file's ENTIRE global
@@ -3021,6 +3074,197 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
     expect(stderr).toContain(" 2 pass");
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
+  });
+});
+
+// After jest.resetModules() or vi.resetModules(), a load reads its file. --isolate and --parallel keep the sources that
+// they have transpiled, in the same test file or in one before it, so a reset empties that cache.
+describe.concurrent("resetModules() empties the SourceProvider cache", () => {
+  const modes = [
+    // Without a flag no source is kept, and every load reads its file.
+    ["no flag", [], {}] as const,
+    ...isolateFlags.map(flag => [flag, [flag], {}] as const),
+    // One worker takes every test file (scale-up gated), so the files share its sources.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
+  ];
+  // With a second test file, --parallel starts a worker.
+  const anEarlierTestFile = `import { test } from "bun:test"; test("runs first", () => {});`;
+
+  // The test files run in the order of their names, which is the order a lone --parallel worker takes two files in.
+  const passes = async (files: Record<string, string>, pass: number, args: readonly string[], env: object) => {
+    using dir = tempDir("isolate-reset-source-cache", files);
+    const names = Object.keys(files)
+      .filter(name => name.includes(".test."))
+      .sort()
+      .map(name => "./" + name);
+    const { stderr, exitCode } = await runTests(String(dir), [...args], names, { ...bunEnv, ...env });
+    expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
+    expect(exitCode).toBe(0);
+  };
+
+  test.each(modes)("%s: a file that is written after the reset is read too", async (_, args, env) => {
+    await passes(
+      {
+        "esm.ts": `export const text = "v0";`,
+        "cjs.cjs": `exports.text = "v0";`,
+        "earlier.test.ts": `
+          import { expect, test } from "bun:test";
+          import { text } from "./esm.ts";
+          test("loads both first", () => expect([text, require("./cjs.cjs").text]).toEqual(["v0", "v0"]));
+        `,
+        "reset.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          // The texts are equally long, so the size of a file does not tell which one it holds.
+          test.each([["v1", jest], ["v2", vi], ["v3", jest], ["v4", vi]])("%s", async (text, api) => {
+            api.resetModules();
+            writeFileSync(join(import.meta.dir, "esm.ts"), 'export const text = "' + text + '";');
+            writeFileSync(join(import.meta.dir, "cjs.cjs"), 'exports.text = "' + text + '";');
+            expect([(await import("./esm.ts")).text, require("./cjs.cjs").text]).toEqual([text, text]);
+          });
+        `,
+      },
+      5,
+      args,
+      env,
+    );
+  });
+
+  test.each(modes)("%s: a file that was unlinked before the reset does not load", async (_, args, env) => {
+    await passes(
+      {
+        "jest-esm.ts": `export const text = "v1";`,
+        "jest-cjs.cjs": `exports.text = "v1";`,
+        "vi-esm.ts": `export const text = "v1";`,
+        "vi-cjs.cjs": `exports.text = "v1";`,
+        "earlier.test.ts": anEarlierTestFile,
+        "reset.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { rmSync } from "node:fs";
+          import { join } from "node:path";
+
+          test.each([
+            ["jest", jest],
+            ["vi", vi],
+          ])("import() and require() fail after %s.resetModules()", async (name, api) => {
+            const [esm, cjs] = ["./" + name + "-esm.ts", "./" + name + "-cjs.cjs"];
+            expect([(await import(esm)).text, require(cjs).text]).toEqual(["v1", "v1"]);
+            rmSync(join(import.meta.dir, esm));
+            rmSync(join(import.meta.dir, cjs));
+            api.resetModules();
+            const loads = await Promise.allSettled([import(esm), (async () => require(cjs))()]);
+            expect(loads.map(load => load.status)).toEqual(["rejected", "rejected"]);
+          });
+        `,
+      },
+      3,
+      args,
+      env,
+    );
+  });
+
+  // vi.resetModules() leaves a package loaded. One that threw is not loaded, in this test file or in the one before it.
+  test.each(modes)("%s: vi.resetModules() reads a package again that threw while it loaded", async (_, args, env) => {
+    await passes(
+      {
+        "node_modules/throws-cjs/package.json": `{ "name": "throws-cjs", "main": "index.js" }`,
+        "node_modules/throws-cjs/index.js": `exports.text = "v1"; throw new Error("v1");`,
+        "node_modules/threw-earlier/package.json": `{ "name": "threw-earlier", "type": "module", "main": "index.js" }`,
+        "node_modules/threw-earlier/index.js": `export const text = "v1"; throw new Error("v1");`,
+        "a-fails.test.ts": `
+          import { expect, test } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("a package throws while it loads, and is written again", async () => {
+            expect(await import("threw-earlier").then(() => "loaded", error => error.message)).toBe("v1");
+            writeFileSync(join(import.meta.dir, "node_modules/threw-earlier/index.js"), 'export const text = "v2";');
+          });
+        `,
+        "b-resets.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("an ES module package that threw in the test file before this one", async () => {
+            vi.resetModules();
+            expect((await import("threw-earlier")).text).toBe("v2");
+          });
+
+          test("a CommonJS package that threw in this one", () => {
+            expect(() => require("throws-cjs")).toThrow("v1");
+            writeFileSync(join(import.meta.dir, "node_modules/throws-cjs/index.js"), 'exports.text = "v2";');
+            vi.resetModules();
+            expect(require("throws-cjs").text).toBe("v2");
+          });
+        `,
+      },
+      3,
+      args,
+      env,
+    );
+  });
+
+  test.each(modes)("%s: a module that was being transpiled at the reset is read again", async (_, args, env) => {
+    await passes(
+      {
+        "a.ts": `export { text } from "./b.ts"; export { text as cjs } from "./b.cjs"; import "./c.ts";`,
+        "b.ts": `export const text = "v1";`,
+        "b.cjs": `exports.text = "v1";`,
+        "c.ts": `export {};`,
+        "alone.ts": `export {};`,
+        "earlier.test.ts": anEarlierTestFile,
+        "reset.test.ts": `
+          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+          import { expect, jest, test, vi } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const path = name => join(import.meta.dir, name);
+          const cached = (...names) => names.map(name => isolatedModuleCacheSourceType(path(name)));
+          // Without a source cache, nothing is ever in it.
+          const inCache = (...types) => types.map(type => (${args.length > 0} ? type : null));
+          let whileLoading;
+          let atReset;
+          // The imports of a.ts are requested in turn, so the transpiles of b.ts and b.cjs are out when c.ts is resolved.
+          Bun.plugin({ setup(build) { build.onResolve({ filter: /c\\.ts$/ }, () => void whileLoading?.()); } });
+
+          test.each([["v2", jest], ["v3", vi]])("a dependency, %s", async (text, api) => {
+            api.resetModules();
+            whileLoading = () => {
+              whileLoading = undefined;
+              atReset = cached("a.ts", "b.ts", "b.cjs");
+              api.resetModules();
+            };
+            await import("./a.ts");
+            expect(atReset).toEqual(inCache("BunTranspiledModule", null, null));
+            // c.ts was asked for after the reset.
+            expect(cached("b.ts", "b.cjs", "c.ts")).toEqual(inCache(null, null, "BunTranspiledModule"));
+            writeFileSync(path("b.ts"), 'export const text = "' + text + '";');
+            writeFileSync(path("b.cjs"), 'exports.text = "' + text + '";');
+            const again = await import("./a.ts");
+            expect([again.text, again.cjs]).toEqual([text, text]);
+            expect(cached("a.ts", "b.ts", "b.cjs")).toEqual(inCache("BunTranspiledModule", "BunTranspiledModule", "Program"));
+          });
+
+          test("the import() itself", async () => {
+            const loading = import("./alone.ts");
+            expect(cached("alone.ts")).toEqual([null]);
+            jest.resetModules();
+            const alone = await loading;
+            expect(cached("alone.ts")).toEqual([null]);
+            // The reset doesn't start that import again, so its module is the one that is loaded now.
+            expect(await import("./alone.ts")).toBe(alone);
+          });
+        `,
+      },
+      4,
+      args,
+      // Either of these transpiles on the JS thread, where no transpile is out at a reset.
+      { ...env, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined, NODE_COMPILE_CACHE: undefined },
+    );
   });
 });
 

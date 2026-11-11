@@ -4,7 +4,6 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Strong.h>
-#include <wtf/ScopedLambda.h>
 
 namespace Zig {
 class GlobalObject;
@@ -79,10 +78,8 @@ public:
     // provider that is cached for the key stays.
     static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
 
-    // For resetModules(): evicts every entry that `keeps` doesn't claim. What a transpile that is out brings back is not cached either.
-    static void dropForReset(JSC::VM&, const WTF::ScopedLambda<bool(const WTF::String& key, Zig::SourceProvider&)>& keeps);
-
     static void evict(JSC::VM&, const WTF::String& key);
+    // Evicts every entry. What a transpile that is out brings back is not cached either: it read its file before.
     static void clear(JSC::VM&);
 };
 

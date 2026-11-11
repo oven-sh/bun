@@ -17,10 +17,6 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks, plain
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
-test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--isolate"]
-test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--isolate=modules"]
-test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--parallel=2"]
-test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again []
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

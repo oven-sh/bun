@@ -53,8 +53,6 @@ public:
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
     bool m_fromEarlierGeneration { false };
-    // Set by vi.resetModules() once it has kept this source, which it asks about at every call.
-    bool m_isExternalizedByVitest { false };
     // Set by IsolatedModuleCache::insert() and compared by lookup().
     uint64_t m_madeFromHash { 0 };
 

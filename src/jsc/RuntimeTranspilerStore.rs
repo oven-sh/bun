@@ -3,7 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena;
 use bun_ast::ASTMemoryAllocator;
@@ -197,8 +197,8 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    /// Goes up between the test files of `bun test --isolate` and at a `resetModules()`. Only the JS thread uses it.
-    pub(crate) generation_number: AtomicU32,
+    /// Counts the times `IsolatedModuleCache` was emptied: a job dispatched under an earlier count read its file before.
+    pub(crate) source_cache_clears: Cell<u32>,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
@@ -212,7 +212,7 @@ pub type Queue = UnboundedQueue<TranspilerJob>;
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
-            generation_number: AtomicU32::new(0),
+            source_cache_clears: Cell::new(0),
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
@@ -291,14 +291,16 @@ impl RuntimeTranspilerStore {
         let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
+        // SAFETY: as above; a scalar field, read on the JS thread.
+        let test_isolation_generation = unsafe { (*vm.as_ptr()).test_isolation_generation };
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;
         while !job.is_null() {
-            // A loader goes with its test file, so only a job of an earlier generation can have lost its own.
+            // A finished test file's loader is gone, and nothing waits for what it fetched. A `Bun.ModuleGraph` that the running file disposed rejects its import below.
             // SAFETY: `job` is a live job popped from the intrusive queue, and its promise keeps its global object alive.
             let loader_is_gone = unsafe {
-                (*job).generation_number != self.generation_number.load(Ordering::SeqCst)
+                (*job).test_isolation_generation != test_isolation_generation
                     && Bun__isModuleLoaderGone(
                         &(*job).global_this,
                         (*job).module_loader.get().unwrap_or_default(),
@@ -307,6 +309,7 @@ impl RuntimeTranspilerStore {
             if loader_is_gone {
                 // SAFETY: as above; released exactly once, here.
                 unsafe { self.release_unrun_job(job) };
+                self.jobs_completed += 1;
                 job = iter.next();
                 continue;
             }
@@ -404,7 +407,8 @@ impl RuntimeTranspilerStore {
                 },
                 poll_ref: KeepAlive::default(),
                 resolved_source,
-                generation_number: self.generation_number.load(Ordering::SeqCst),
+                test_isolation_generation: 0,
+                source_cache_clears: self.source_cache_clears.get(),
                 has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -465,8 +469,10 @@ pub struct TranspilerJob {
     pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
-    /// The store's `generation_number` when the job was dispatched.
-    pub(crate) generation_number: u32,
+    /// `VirtualMachine::test_isolation_generation` when the job was scheduled.
+    pub(crate) test_isolation_generation: u32,
+    /// The store's `source_cache_clears` when the job was scheduled.
+    pub(crate) source_cache_clears: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
     pub(crate) log: bun_ast::Log,
@@ -592,14 +598,11 @@ impl TranspilerJob {
                     &self.path_text,
                 );
                 // SAFETY: as above; the count is a field of the store beside its job slots, so it is not in `self`.
-                let generation_number = unsafe {
-                    (*vm)
-                        .transpiler_store
-                        .generation_number
-                        .load(Ordering::SeqCst)
+                resolved_source.from_earlier_generation = unsafe {
+                    self.test_isolation_generation != (*vm).test_isolation_generation
+                        || self.source_cache_clears
+                            != (*vm).transpiler_store.source_cache_clears.get()
                 };
-                resolved_source.from_earlier_generation =
-                    self.generation_number != generation_number;
                 (out, Ok(resolved_source))
             }
         };
@@ -647,7 +650,10 @@ impl TranspilerJob {
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         // SAFETY: JS thread; the VM owns the store this slot lives in.
-        self.ticket = Some(unsafe { (*self.vm).ticket() });
+        unsafe {
+            self.ticket = Some((*self.vm).ticket());
+            self.test_isolation_generation = (*self.vm).test_isolation_generation;
+        }
         WorkPool::schedule(&raw mut self.work_task);
     }
 

@@ -2,16 +2,17 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned } from "../harness/commands";
+import { moreBuildFlags, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const exe = (name: string) => name + (isWindows ? ".exe" : "");
 const COMPILED = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 // With a sanitizer or in a debug build Bun is half a gigabyte or more, and an executable is a copy of it. No test here asks anything of the file that a build writes.
 // So there, on Linux, a build with --aot writes the program without the copy (../harness/program-alone.ts), as the builds of the stored programs do (../run-parallel.ts).
-// AOT_REAL_EXECUTABLES=1 asks for the executables.
-const BUILD =
-  isLinux && (isASAN || isDebug) && !process.env.AOT_REAL_EXECUTABLES
+// AOT_REAL_EXECUTABLES=1 asks for the executables, whatever AOT_PROGRAMS_ALONE says.
+const BUILD = process.env.AOT_REAL_EXECUTABLES
+  ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: undefined }
+  : isLinux && (isASAN || isDebug)
     ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: "1" }
     : bunEnv;
 // log() of node:util begins its line with the day, the month and the time.
@@ -20,14 +21,16 @@ const withoutTimestamps = (text: string) =>
 
 type Ended = Awaited<ReturnType<typeof spawned>>;
 
-/** A build that succeeds reports no mistake and makes no remark, and writes nothing to stderr. */
+/**
+ * A build that succeeds reports no mistake and makes no remark, and writes nothing to stderr.
+ * AOT_BUILD_FLAGS gives each build with --aot more flags. Such a build may say on stderr what it was built with, and with --explain it makes remarks.
+ */
 function expectBuilt(built: Ended) {
-  const diagnostics = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /^(error|warn|note)\b/.test(line));
-  // With AOT_BUILD_FLAGS every build takes developer options, and a build names those that it took.
-  const stderr = built.stderr.replace(/^Built with developer options: .*\r?\n/, "");
-  expect({ diagnostics, stderr, exitCode: built.exitCode, signal: built.signal }).toEqual({
+  const reported = moreBuildFlags.length ? /^(error|warn)\b/ : /^(error|warn|note)\b/;
+  const diagnostics = (built.stdout + built.stderr).split(/\r?\n/).filter(line => reported.test(line));
+  expect({ diagnostics, stderr: built.stderr, exitCode: built.exitCode, signal: built.signal }).toEqual({
     diagnostics: [],
-    stderr: "",
+    stderr: moreBuildFlags.length ? expect.any(String) : "",
     exitCode: 0,
     signal: null,
   });

@@ -353,7 +353,7 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
   it.skipIf(isWindows)("restarts when nothing reads stdout", async () => {
     using dir = tempDir("watch-status-full-pipe", {
       "app.mjs": `console.error("started", process.pid);
-process.stdout.write("x".repeat(200_000) + "\\n");`,
+process.stdout.write(Buffer.alloc(200_000, "x").toString() + "\\n");`,
     });
     // `sleep` never reads, so the pipe fills and fd 1 of the watched process blocks. A pipe of
     // `Bun.spawn` would not: its parent reads it into memory without a bound. The watched

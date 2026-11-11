@@ -4274,9 +4274,11 @@ fn push_hex_escape(out: &mut Vec<u8>, code: u8) {
     out.push(HEX[(code & 0xf) as usize]);
 }
 
-/// A stdout that nothing reads must not hold the restart: each write waits for room first and
-/// writes no more than the room `POLLOUT` promises, and after 200 ms in all the rest of the line
-/// is dropped. fd 1 can be blocking or not.
+/// A stdout that nothing reads must not hold the restart: the wait for room is bounded to 200 ms
+/// in all, and each write is no more than the room `POLLOUT` promises on a pipe, blocking or not.
+/// The rest of the line is dropped then. A write to a slow file, or after another writer took
+/// the room, can still wait on the kernel. A device that `poll` does not support is written
+/// without a wait.
 #[cfg(unix)]
 fn write_watch_status_line(mut bytes: &[u8]) {
     const BUDGET_MS: u128 = 200;
@@ -4298,7 +4300,12 @@ fn write_watch_status_line(mut bytes: &[u8]) {
         if ready < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
             continue;
         }
-        if ready <= 0 || polls[0].revents & libc::POLLOUT == 0 {
+        if ready < 0 || (ready > 0 && polls[0].revents & libc::POLLNVAL != 0) {
+            // SAFETY: `bytes` is a live slice, and `write` reads at most `bytes.len()` of it.
+            unsafe { libc::write(1, bytes.as_ptr().cast(), bytes.len()) };
+            return;
+        }
+        if ready == 0 || polls[0].revents & libc::POLLOUT == 0 {
             return;
         }
         let len = bytes.len().min(CHUNK);

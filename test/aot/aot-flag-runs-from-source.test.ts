@@ -566,6 +566,8 @@ describe.concurrent("--watch", () => {
     using dir = tempDir("aot-flag-runs-from-source", { ...files, "value.ts": value(`"one"`) });
     using watched = watch(String(dir), "--watch", "--aot", "main.ts");
     await watched.err.until(text => text.includes("TS2322"));
+    // The build says it failed after the errors. A change before that line would restart first.
+    await watched.out.until((_, raw) => raw.includes("Failed running"));
     writeFileSync(join(String(dir), "value.ts"), value("1"));
     await watched.out.until(text => text.endsWith("run 1 1 locked\n"));
     expect(watched.out.heard.text).toBe("run 1 1 locked\n");

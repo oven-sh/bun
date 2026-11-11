@@ -519,6 +519,7 @@ export class Heap {
   }
 }
 
+
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
 export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
   return {
@@ -780,11 +781,7 @@ export function tempDirWithBunTypes(
 ): string & DisposableString & AsyncDisposable {
   const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
   fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
-  fs.symlinkSync(
-    join(import.meta.dir, "..", "packages", "bun-types"),
-    join(String(dir), "node_modules", "@types", "bun"),
-    "junction",
-  );
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
   return dir;
 }
 
@@ -1773,7 +1770,16 @@ export const WATCH_STATUS_LINE = /^(Change detected in|Restarting|Completed runn
 
 /** The `Change detected in` line of `bun <file> --watch` for `path`, quoted as `util.inspect` quotes it. */
 export function watchChangeLine(path: string) {
-  return `Change detected in '${path.replaceAll("\\", "\\\\")}'`;
+  // The quote that the path does not have, as node's `strEscape` picks it. Paths have no control characters.
+  const quote = !path.includes("'")
+    ? "'"
+    : !path.includes('"')
+      ? '"'
+      : !path.includes("`") && !path.includes("${")
+        ? "`"
+        : "'";
+  const escaped = path.replaceAll("\\", "\\\\").replaceAll(quote, "\\" + quote);
+  return `Change detected in ${quote}${escaped}${quote}`;
 }
 
 /** The lines of a stdout stream of `bun <file> --watch`, without its status lines. */
@@ -2595,14 +2601,18 @@ export const rss: () => number = process.memoryUsage.rss;
  */
 export function testThatMeasuresOwnMemory(file: string): typeof test {
   if (!isASAN || process.env.ASAN_OPTIONS?.includes("quarantine_size_mb=0")) return test;
-  test("in a child without ASAN's quarantine", async () => {
-    await using child = Bun.spawn({
-      cmd: [bunExe(), "test", "--timeout=270000", file],
-      env: withoutAsanQuarantine(bunEnv),
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    expect(await child.exited).toBe(0);
-  }, 270_000);
+  test(
+    "in a child without ASAN's quarantine",
+    async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "test", "--timeout=270000", file],
+        env: withoutAsanQuarantine(bunEnv),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      expect(await child.exited).toBe(0);
+    },
+    270_000,
+  );
   return test.skip as typeof test;
 }
 

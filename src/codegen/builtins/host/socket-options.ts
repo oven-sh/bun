@@ -88,7 +88,7 @@ const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> =
   open: [socket],
   data: [socket, receivedChunk],
   close: [socket, b.thrown],
-  // A TLS socket passes a negative error number after a send has failed for good.
+  // A TLS socket passes a negative error number after a send has failed for good. So does a socket that was sent over IPC, for the write it still held.
   drain: [socket, b.union(b.f64, b.undefined)],
   error: [socket, b.thrown],
   end: [socket],

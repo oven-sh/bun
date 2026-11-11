@@ -708,6 +708,11 @@ const nativeCalls = [
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
       {
         file: "src/runtime/ipc_host.rs",
+        caller: "do_send",
+        onBehalfOf: [...channelUsers, "%Subprocess%.prototype.send"],
+      },
+      {
+        file: "src/runtime/ipc_host.rs",
         caller: "do_send_err",
         times: 2,
         onBehalfOf: [...channelUsers, "%Subprocess%.prototype.send"],

@@ -740,6 +740,77 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// `send(message, socket)` without `keepOpen`: another process reads and
+    /// writes this connection from here, and this handle only waits to be
+    /// closed. Its owner hears nothing more from it, except what becomes of a
+    /// write the handle still holds: the drain once it has flushed, or the
+    /// error that ended it as the drain's status (`on_writable`, `on_close`).
+    /// A handle that holds no write lets go of its owner now.
+    pub(crate) fn detach_for_send(&self, global: &JSGlobalObject, this_value: JSValue) {
+        self.update_flags(|f| f.insert(Flags::SENT));
+        if self.socket.get().is_established() {
+            self.pause_reads();
+        } else {
+            self.update_flags(|f| f.insert(Flags::PAUSE_ON_CONNECT));
+        }
+        if self.buffered_data_for_node_net.get().len() == 0 {
+            Self::data_set_cached(this_value, global, JSValue::UNDEFINED);
+        }
+    }
+
+    /// What became of the write a sent socket still held, for the owner that
+    /// waits for it. `status` is a negative error number on the drain
+    /// handler's second argument: node:net fails the write with it.
+    fn report_sent_write(
+        this: bun_ptr::ThisPtr<Self>,
+        handlers: &Rc<Handlers>,
+        status: c_int,
+    ) -> JsResult<()> {
+        let callback = handlers.on_writable();
+        if callback.is_empty() {
+            return Ok(());
+        }
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        let global = handlers.global_object;
+        let this_value = this.get_this_value(&global);
+        let args = [this_value, JSValue::js_number(f64::from(status))];
+        if let Err(err) = callback.call(&global, this_value, &args) {
+            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
+        }
+        Ok(())
+    }
+
+    /// The close of a sent socket: the process that took it acked, the channel
+    /// ended, the send failed, or the connection did. Its owner hears of it
+    /// through the write the handle still held. That write failed with the
+    /// error of the connection, or is cancelled by a close of ours (what libuv
+    /// reports for the requests still queued on a handle that closes).
+    fn on_sent_close(
+        this: bun_ptr::ThisPtr<Self>,
+        handlers: &Rc<Handlers>,
+        err: c_int,
+    ) -> JsResult<()> {
+        let global = handlers.global_object;
+        let this_value = this.get_this_value(&global);
+        let held_write = this.buffered_data_for_node_net.get().len() > 0;
+        this.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        // See `on_close`: no JS over a termination, and 0 to 2 are the codes of a close of ours.
+        let reported = if held_write && !global.has_exception() {
+            let status = if err > 2 { -err } else { -sys::UV_E::CANCELED };
+            Self::report_sent_write(this, handlers, status)
+        } else {
+            Ok(())
+        };
+        if this_value.is_cell() {
+            Self::data_set_cached(this_value, &global, JSValue::UNDEFINED);
+        }
+        reported
+    }
+
     /// Consumes `PAUSE_ON_CONNECT`: a TLS client dispatches another handshake after a renegotiation.
     fn pause_on_connect_once(&self) {
         if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
@@ -901,6 +972,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Windows, keep the legacy contract there (the close path still fails
         // the pending write callback when the socket is torn down).
         let fatal_send_errno = this.internal_flush();
+        // The owner of a socket that was sent over IPC waits for this write
+        // and for nothing else: the errno is the status of its drain, on
+        // Windows too. Whoever acks the socket closes it, not this dispatch.
+        if !SSL && fatal_send_errno != 0 && this.flags.get().contains(Flags::SENT) {
+            return Self::report_sent_write(this, &handlers, -fatal_send_errno);
+        }
         // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
         // only reports an errno that is either known peer-gone or persisted
         // across its bounded unclassified-errno retry window. internal_flush
@@ -985,7 +1062,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         let callback = handlers.on_timeout();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.flags.get().intersects(Flags::FINALIZING_OR_SENT) {
             return Ok(());
         }
 
@@ -1674,6 +1751,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
+        // A sent socket is paused, and an error event still reads it to the end (loop.c), FIN included.
+        if this.flags.get().contains(Flags::SENT) {
+            return Ok(());
+        }
         let handlers = this.get_handlers();
         log!(
             "onEnd {}",
@@ -2180,8 +2261,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        if this.flags.get().contains(Flags::FINALIZING) {
-            return Ok(());
+        let flags = this.flags.get();
+        if flags.intersects(Flags::FINALIZING_OR_SENT) {
+            if flags.contains(Flags::FINALIZING) {
+                return Ok(());
+            }
+            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            return Self::on_sent_close(this, &handlers, err);
         }
 
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -2263,7 +2349,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let callback = handlers.on_data();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        // A sent socket is paused, and an error event still reads it to the end (loop.c).
+        if callback.is_empty() || this.flags.get().intersects(Flags::FINALIZING_OR_SENT) {
             return Ok(());
         }
 
@@ -3812,11 +3899,13 @@ pub(crate) struct StoredVerifyError {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct Flags: u16 {
+    pub struct Flags: u32 {
         const IS_ACTIVE            = 1 << 0;
         /// Prevent onClose from calling into JavaScript while we are finalizing
         const FINALIZING           = 1 << 1;
-        const AUTHORIZED           = 1 << 2;
+        /// `send(message, socket)` gave the connection to another process (`detach_for_send`).
+        /// Beside `FINALIZING`: the dispatches that test that bit test both with one mask.
+        const SENT                 = 1 << 2;
         const HANDSHAKE_COMPLETE   = 1 << 3;
         const EMPTY_PACKET_PENDING = 1 << 4;
         const END_AFTER_FLUSH      = 1 << 5;
@@ -3842,10 +3931,13 @@ bitflags::bitflags! {
         const TLS_SERVER_ROLE      = 1 << 14;
         /// node:net's `pauseOnConnect`: paused in `on_open` (plain; free for a socket that was registered with `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
         const PAUSE_ON_CONNECT     = 1 << 15;
+        const AUTHORIZED           = 1 << 16;
     }
 }
 
 impl Flags {
+    const FINALIZING_OR_SENT: Flags = Flags::FINALIZING.union(Flags::SENT);
+
     fn initial(reject_unauthorized: bool) -> Flags {
         let mut flags = Flags::default();
         flags.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);

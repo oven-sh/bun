@@ -156,7 +156,7 @@ pub(crate) fn do_send(
     }
 
     let mut zig_handle: Option<Handle> = None;
-    let mut pause_target = JSValue::UNDEFINED;
+    let mut sent_socket = JSValue::UNDEFINED;
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
@@ -186,16 +186,22 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::None => {}
             }
         } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
+            let keep_open = !options_.is_undefined_or_null()
+                && options_
+                    .get(global_object, "keepOpen")?
+                    .is_some_and(|v| v.to_boolean());
             // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
+            // holds it alive for the call.
+            let socket = unsafe { &*socket };
+            if !keep_open {
+                // serialize() took the handle from its net.Socket, with or without a descriptor to send.
+                socket.detach_for_send(global_object, handle);
+            }
+            let fd = socket.socket.get().fd();
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
-                let keep_open = !options_.is_undefined_or_null()
-                    && options_
-                        .get(global_object, "keepOpen")?
-                        .is_some_and(|v| v.to_boolean());
                 if !keep_open {
-                    pause_target = handle;
+                    sent_socket = handle;
                 }
                 #[cfg(not(windows))]
                 match Handle::init_dup(fd, handle, !keep_open) {
@@ -227,28 +233,23 @@ pub(crate) fn do_send(
         }
     }
     // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
-    // here (node: postSend on error). The handle's `close()`/`pause()` are calls of their own: what
-    // one throws is reported (this host function is its landing frame), and the send goes on to
-    // deliver its own result.
-    let call_handle_method =
-        |global_object: &JSGlobalObject, target: JSValue, name: &'static str| -> JsResult<()> {
-            if target.is_object() {
-                if let Some(f) = target.get(global_object, name)? {
-                    if f.is_callable() {
-                        crate::dispatch::fold(f.call(global_object, target, &[]).map(drop));
-                    }
-                }
-            }
-            Ok(())
-        };
-    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
-        call_handle_method(global_object, target, "close")
+    // (node: postSend on error). On a tick, as after an ack: the close cancels a write the socket
+    // still holds, and no write callback runs inside send().
+    let close_detached = |global_object: &JSGlobalObject, target: JSValue| -> JsResult<()> {
+        if target.is_object() {
+            JSValue::call_next_tick_1(
+                crate::ipc::close_sent_handle_fn(global_object),
+                global_object,
+                target,
+            )?;
+        }
+        Ok(())
     };
 
     #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
-        close_detached(global_object, pause_target)?;
+        close_detached(global_object, sent_socket)?;
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
@@ -264,22 +265,23 @@ pub(crate) fn do_send(
     }
     if zig_handle.is_none() {
         message = original_message;
-        close_detached(global_object, pause_target)?;
-        pause_target = JSValue::UNDEFINED;
+        close_detached(global_object, sent_socket)?;
+        sent_socket = JSValue::UNDEFINED;
     }
 
     let status =
         ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
-    if status != SerializeAndSendResult::Failure {
-        call_handle_method(global_object, pause_target, "pause")?;
-    }
-
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target)?;
-        // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
-        if global_object.has_exception() {
+        if global_object.has_pending_termination_exception() {
             return Err(bun_jsc::JsError::Thrown);
+        }
+        // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
+        // Queueing the close calls process.nextTick, so the error waits until that is done.
+        let rejected = global_object.try_take_exception();
+        close_detached(global_object, sent_socket)?;
+        if let Some(rejected) = rejected {
+            return Err(global_object.throw_value(rejected));
         }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(

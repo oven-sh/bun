@@ -800,6 +800,9 @@ impl SendHandle {
 
     /// Call the callback and deinit
     pub(crate) fn complete(mut self, global: &JSGlobalObject) {
+        // Ahead of the close: it cancels a write the sent socket still holds, and in node the
+        // callbacks of that write run after the callback of the send.
+        let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
@@ -808,7 +811,6 @@ impl SendHandle {
                 }
             }
         }
-        let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
 
@@ -840,7 +842,7 @@ pub(crate) fn close_sent_handle<'a>(
     Ok(())
 }
 
-fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
         "",

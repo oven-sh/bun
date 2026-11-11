@@ -250,7 +250,7 @@ const encodedInto = {
   implementation: b.hostCall,
 } satisfies Partial<b.FunctionField>;
 
-// Listener.rs, socket_body.rs, ServerWebSocket.rs: what lies there is the `data` of the options, or what was stored last. Native code lays nothing of its own there.
+// Listener.rs, socket_body.rs, ServerWebSocket.rs: what lies there is the `data` of the options, or what was stored last. Native code lays nothing of its own there, except `undefined` on a socket that was sent over IPC (detach_for_send).
 const keepsData = (className: string, cell: string, getterImplementation: b.ImplementationSpec) =>
   b.method(`%${className}%.prototype.data`, {
     getter: b.any,

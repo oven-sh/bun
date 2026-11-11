@@ -34,10 +34,11 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
     if (!native) return null;
     if (!(options as IpcSendOptions | undefined)?.keepOpen) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
+      // Node's `handle.onread = nop` is native here (ipc_host.rs do_send, detach_for_send): the handle
+      // keeps this socket as its owner only for a write it still holds.
       const { server } = handle;
       if (server) server._connections--;
       handle.setTimeout(0);
-      (native as $Node.SocketHandle<unknown>).data = undefined;
       handle._handle = null;
     }
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];

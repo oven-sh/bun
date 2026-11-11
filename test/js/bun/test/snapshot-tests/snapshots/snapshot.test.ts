@@ -3117,31 +3117,35 @@ describe.concurrent("the arguments of a matcher that expect.extend() made, in Vi
   // fewer. A retry inside another retry, which is where the work doubles, counts as 10,000 bytes at least. Vitest
   // 5.0.3 has no limit: it calls the second toJSON() 4 times and prints the matcher. Not beside the other tests: this
   // one prints 536 MB.
-  test.serial("a value is not printed again once the attempts that were replaced have 536,870,888 bytes", async () => {
-    const { log, stderr, exitCode } = await logOf(`
-      const calls = [0, 0];
-      const throwsOnce = message => ({
-        toJSON() {
-          throw new Error(message);
-        },
-      });
-      // 255 second prints of 2,100,000 characters leave about 1,370,000 bytes.
-      const long = Buffer.alloc(2_100_000, "x").toString();
-      const first = expect.toBeFoo(expect.toBeFoo(expect.toBeFoo({ toJSON: () => (calls[0]++, long) })));
-      // 100 retries beside each other count as what their attempts printed, which is nothing.
-      const beside = Array.from({ length: 100 }, () => expect.toBeFoo(throwsOnce("not thrown")));
-      // Of these 63 retries, 57 are inside another retry: 570,000 bytes.
-      let inEachOther = "innermost";
-      for (let i = 0; i < 6; i++) inEachOther = expect.toBeFoo([inEachOther, throwsOnce("not thrown")]);
-      // A second print of 1,000,000 characters is more than what is left, so this one is printed once.
-      const shorter = Buffer.alloc(1_000_000, "x").toString();
-      const once = { toJSON: () => (calls[1]++, shorter) };
-      // The retry is not made, so what toJSON() threw is thrown.
-      const printed = print(expect.toBeFoo(first, beside, inEachOther, once, throwsOnce("thrown")));
-      console.log(JSON.stringify([...calls, printed]));
-    `);
-    expect({ log, stderr, exitCode }).toEqual({ log: [[256, 1, "thrown"]], stderr: "", exitCode: 0 });
-  });
+  test.serial(
+    "a value is not printed again once the attempts that were replaced have 536,870,888 bytes",
+    async () => {
+      const { log, stderr, exitCode } = await logOf(`
+        const calls = [0, 0];
+        const throwsOnce = message => ({
+          toJSON() {
+            throw new Error(message);
+          },
+        });
+        // 255 second prints of 2,100,000 characters leave about 1,370,000 bytes.
+        const long = Buffer.alloc(2_100_000, "x").toString();
+        const first = expect.toBeFoo(expect.toBeFoo(expect.toBeFoo({ toJSON: () => (calls[0]++, long) })));
+        // 100 retries beside each other count as what their attempts printed, which is nothing.
+        const beside = Array.from({ length: 100 }, () => expect.toBeFoo(throwsOnce("not thrown")));
+        // Of these 63 retries, 57 are inside another retry: 570,000 bytes.
+        let inEachOther = "innermost";
+        for (let i = 0; i < 6; i++) inEachOther = expect.toBeFoo([inEachOther, throwsOnce("not thrown")]);
+        // A second print of 1,000,000 characters is more than what is left, so this one is printed once.
+        const shorter = Buffer.alloc(1_000_000, "x").toString();
+        const once = { toJSON: () => (calls[1]++, shorter) };
+        // The retry is not made, so what toJSON() threw is thrown.
+        const printed = print(expect.toBeFoo(first, beside, inEachOther, once, throwsOnce("thrown")));
+        console.log(JSON.stringify([...calls, printed]));
+      `);
+      expect({ log, stderr, exitCode }).toEqual({ log: [[256, 1, "thrown"]], stderr: "", exitCode: 0 });
+    },
+    timeoutOfChild,
+  );
 
   // Vitest 5.0.3 does not finish on these. The getter counts a read only when it has made the next matcher, so the
   // count does not depend on where the stack ends: below 2 for each of the 64 retries after the deepest level. A print

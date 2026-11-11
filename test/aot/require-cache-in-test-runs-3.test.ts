@@ -167,40 +167,6 @@ test("files that require each other are all listed while the innermost runs", as
   });
 });
 
-// The file that is required again hands out its namespace, and the names that are not there yet throw where they are read.
-const ringOfESModules = gap(
-  "compiled, the file that is required again gets the empty object that stands in for it while it runs",
-  [
-    {
-      ...looksAtFiles,
-      "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
-      "src/ring-second.ts": `
-        import { look } from "./look.cjs";
-        const first = require("./ring-first");
-        let names;
-        try { names = Object.keys(first).join("+"); } catch (error) { names = error.name; }
-        export const seen = [names, require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
-      "one.test.ts": `
-        import { test } from "bun:test";
-        test("in a ring", () => {
-          console.log(require("./src/ring-first").seen);
-        });`,
-    },
-    [
-      "ReferenceError true ring-first.ts true,true exports [ReferenceError] true",
-      " true ring-first.ts true,true exports [] true",
-    ],
-  ] as const,
-);
-// A debug build of Bun dies now and then of a race between the threads of the engine (oven-sh/bun#48169), and a test run has no
-// switch for one thread: such a build is left out of this row.
-eachRow(isDebug ? [] : [ringOfESModules])(
-  "ES modules that require each other in a ring are listed while the second runs",
-  async (files, owed) => {
-    await expectCompiledToRunAsPlain(files, owed);
-  },
-);
-
 test("an ES module that an import has begun is listed from the first require() of it", async () => {
   await expectCompiledToRunAsPlain({
     ...looksAtFiles,
@@ -292,3 +258,38 @@ test("an ES module whose import fails behind a require() of it that has returned
       });`,
   });
 });
+
+// The file that is required again hands out its namespace, and the names that are not there yet throw where they are read.
+// eachRow() declares a row that runs by itself where no sanitizer is: it stands last, so the cases above run beside one another.
+const ringOfESModules = gap(
+  "compiled, the file that is required again gets the empty object that stands in for it while it runs",
+  [
+    {
+      ...looksAtFiles,
+      "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
+      "src/ring-second.ts": `
+        import { look } from "./look.cjs";
+        const first = require("./ring-first");
+        let names;
+        try { names = Object.keys(first).join("+"); } catch (error) { names = error.name; }
+        export const seen = [names, require.cache[require.resolve("./ring-first")].exports === first, look(require.resolve("./ring-first"))].join(" ");`,
+      "one.test.ts": `
+        import { test } from "bun:test";
+        test("in a ring", () => {
+          console.log(require("./src/ring-first").seen);
+        });`,
+    },
+    [
+      "ReferenceError true ring-first.ts true,true exports [ReferenceError] true",
+      " true ring-first.ts true,true exports [] true",
+    ],
+  ] as const,
+);
+// A debug build of Bun dies now and then of a race between the threads of the engine (oven-sh/bun#48169), and a test run has no
+// switch for one thread: such a build is left out of this row.
+eachRow(isDebug ? [] : [ringOfESModules])(
+  "ES modules that require each other in a ring are listed while the second runs",
+  async (files, owed) => {
+    await expectCompiledToRunAsPlain(files, owed);
+  },
+);

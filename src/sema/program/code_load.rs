@@ -292,6 +292,8 @@ pub(super) struct CodeTarget<'r> {
     pub(super) is_loaded_with_importer: bool,
     pub(super) has_shared_type: bool,
     pub(super) has_type_of_shared_kind: bool,
+    /// The load does not spell the name. The build has followed it through values.
+    pub(super) is_name_followed: bool,
 }
 
 impl<'r> CodeTarget<'r> {
@@ -305,6 +307,7 @@ impl<'r> CodeTarget<'r> {
             is_loaded_with_importer: false,
             has_shared_type: false,
             has_type_of_shared_kind: false,
+            is_name_followed: false,
         }
     }
 }

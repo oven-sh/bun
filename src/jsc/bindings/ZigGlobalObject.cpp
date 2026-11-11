@@ -667,7 +667,7 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 
 static constexpr int32_t contextOfMacros = std::numeric_limits<int32_t>::max();
 
-static const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
+const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
 {
     if (Bun__hasStandaloneModuleGraph())
         return Zig::StandaloneGlobalObject::globalObjectMethodTable();
@@ -1022,6 +1022,15 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
                 --index;
             awaiting.insert(index, std::pair { order, specifier });
         });
+        const auto& plugins = globalObject->onLoadPlugins;
+        for (const auto& factory : plugins.compiledMockFactories.span().subspan(plugins.stashedFactoryCount)) {
+            // The loader fetches nothing for an import() of the mocked module itself.
+            if (!factory.isAwaitedByImporter || factory.patched->status() != JSC::JSPromise::Status::Pending)
+                continue;
+            String path = JSC::AOT::moduleFilePath(JSC::AOT::ModuleID(factory.module));
+            if (!fetching.contains(path))
+                fetching.append(path);
+        }
     }
 #endif
     for (auto& key : unfinished)
@@ -2598,7 +2607,7 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* debugIDs = constructEmptyObject(globalObject);
-    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapFileURL(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
+    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapDisplayPath(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
     if (JSObject* holder = JSValue::decode(thisValue).getObject())
         holder->putDirect(vm, property, debugIDs, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(debugIDs);
@@ -4257,7 +4266,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             resolved = makeString(resolved, query);
     }
     if (hasModuleMocks) [[unlikely]]
-        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true);
+        resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
@@ -4268,7 +4277,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
+        if (globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
     }
     if (Bun::hasCompiledModules()) [[unlikely]] {
@@ -4549,8 +4558,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
         // JSC doesn't add a registry entry for the module passed to import() until this settles.
-        if (!entry && plugins.modulesAskedFor.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
-            plugins.fetchesOfModulesAskedFor.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
+        if (!entry && plugins.loadRoots.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
+            plugins.loadRootFetches.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
         return unlessFetchedMeanwhile(promise);
     }
     return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result));

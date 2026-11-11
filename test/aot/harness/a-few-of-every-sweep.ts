@@ -32,8 +32,11 @@ const refused = new Set([
   "37049-an-exported-constant--another-file-imports-it-at-run-time--plus-true--an-arrow--at.ts",
 ]);
 
-// One for each set of flags. The stride leaves 32 when it is divided by their number, 75, and the two have no factor in common.
-const more = new Map([["write-build-flag-sweep.ts", 75]]);
+// One for each set of flags, and every program of a short sweep. The stride has no factor in common with 75 or 158.
+const more = new Map([
+  ["write-build-flag-sweep.ts", 75],
+  ["write-package-namespace-sweep.ts", 158],
+]);
 
 // A program is one text. A first line `// @entry: ./main.ts` names the file that it is laid out as, and `// @filename: ./other.mjs` begins another file. A first line `// Flags: --minify` names flags that its
 // build takes.

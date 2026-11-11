@@ -564,7 +564,7 @@ describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished"
 });
 
 // node:child_process waits for the 'close' of the stdout and stderr streams that it made. An exit that came with an
-// error left them as they were, neither read nor destroyed, so 'close' of the child never came. With fewer than three
+// error left them as they were, not read to their end, so 'close' of the child never came. With fewer than three
 // stdio entries the streams were made at their first use, so a program that did not use them had its 'close'.
 describe.skipIf(!isLinux || !cc)("a child of node:child_process whose pidfd fails to register emits 'close'", () => {
   test.concurrent.each([
@@ -579,7 +579,8 @@ describe.skipIf(!isLinux || !cc)("a child of node:child_process whose pidfd fail
         // The exit came inside spawn(), with the error.
         running: false,
         log: ["error ENOSPC", "exit", "close"],
-        stderr: { readableEnded: false, destroyed: true },
+        // Read to its end, as after any exit: a child whose exit comes with an error can have run.
+        stderr: { readableEnded: true, destroyed: true },
       },
       stderr: "",
       exitCode: 0,

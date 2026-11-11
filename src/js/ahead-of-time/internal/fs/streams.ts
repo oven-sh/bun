@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 bbac6772ebe9d0fdb20d022f25989ad73f90ddccf99b3813d4acca7510b533a1.
+// Written against that file with the SHA-256 915cc77b264d619ed395eade6fb8aef7ac1007bd2e15449176fc24df90b59529.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -86,6 +86,7 @@ declare global {
       [kIsPerformingIO]: boolean;
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
+      [kSinkWrite]?: ErrorCallback;
     }
 
     interface ReadStream extends Readable, FileStreamFields {
@@ -113,6 +114,8 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The callback of the _write of a child's stdin that its sink has not answered yet.
+const kSinkWrite = Symbol("kSinkWrite");
 const kFs = Symbol("kFs");
 
 let FileHandle: FileHandleInternals["FileHandle"] | undefined;
@@ -939,7 +942,14 @@ function underscoreWriteToSink(this: $Node.WriteStream, data: Buffer, encoding: 
   try {
     const pending = (this[kWriteStreamFastPath] as FileSink).write(data);
     if ($isPromise(pending)) {
-      pending.then(() => cb(null), cb);
+      // destroySink answers in the place of the sink if it comes first.
+      this[kSinkWrite] = cb;
+      const answer = (err?: Error | null) => {
+        if (this[kSinkWrite] !== cb) return;
+        this[kSinkWrite] = undefined;
+        cb(err);
+      };
+      pending.then(() => answer(null), answer);
       return;
     }
   } catch (err) {
@@ -949,7 +959,14 @@ function underscoreWriteToSink(this: $Node.WriteStream, data: Buffer, encoding: 
   cb(null);
 }
 
-// _final of a child's stdin. It sends inside end() and completes on a later tick, as the shutdown of node's Socket does:
+// Calls back behind the ticks and the promise jobs that the turn queues: a tick, then a promise job, then a tick.
+// A listener that is added there still hears the event. Under node it does, because the socket completes a turn
+// of the event loop later.
+function afterQueuedJobs(cb: ErrorCallback, err: Error | null) {
+  process.nextTick(queueMicrotask, () => process.nextTick(cb, err));
+}
+
+// _final of a child's stdin. It sends inside end(), and completes later, as the shutdown of node's Socket does:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
 function finalToSink(this: $Node.WriteStream, cb: ErrorCallback) {
   try {
@@ -962,7 +979,7 @@ function finalToSink(this: $Node.WriteStream, cb: ErrorCallback) {
     process.nextTick(cb, err as Error);
     return;
   }
-  process.nextTick(cb, null);
+  afterQueuedJobs(cb, null);
 }
 
 // _destroy of a child's stdin. Before 'finish', node closes the pipe at once and reports no error of the writes that it drops:
@@ -979,7 +996,14 @@ function destroySink(this: $Node.WriteStream, err: Error | null, cb: ErrorCallba
     const end = sink.end(err!);
     if ($isPromise(end)) end.then(streamNoop, streamNoop);
   } catch {}
-  process.nextTick(cb, err);
+  // A _write that the sink has not answered is answered ahead of 'close', without an error, as node answers the write of a destroyed socket:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L95-L99
+  const write = this[kSinkWrite];
+  if (write !== undefined) {
+    this[kSinkWrite] = undefined;
+    process.nextTick(write, null);
+  }
+  afterQueuedJobs(cb, err);
 }
 
 writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.ChunkToWrite[], cb: ErrorCallback) {

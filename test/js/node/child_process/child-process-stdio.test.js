@@ -358,17 +358,18 @@ describe("the pipes of a child in the turn of spawn()", () => {
     });
   });
 
-  // The stream of a child's stdin takes no options. With an `fd` that Object.prototype carried, the input went to that fd.
-  it("child.stdin takes no stream options from Object.prototype", async () => {
+  // The streams that spawn() makes take no options. With an `fd` that Object.prototype carried, the input went
+  // to that fd, and with a `highWaterMark` of -1 spawn() threw.
+  it("the streams of a child take no stream options from Object.prototype", async () => {
     const result = await run([
       bunExe(),
       "-e",
       `const { spawn } = require("node:child_process");
-       const inherited = { fd: 2147483647, autoClose: false };
+       const inherited = { fd: 2147483647, autoClose: false, highWaterMark: -1, objectMode: true };
        let child;
        Object.assign(Object.prototype, inherited);
        try {
-         child = spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "inherit", "inherit"] });
+         child = spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "inherit"] });
          child.stdin.on("error", err => {
            console.error(err.message);
            child.kill();
@@ -378,9 +379,16 @@ describe("the pipes of a child in the turn of spawn()", () => {
          for (const name of Object.keys(inherited)) delete Object.prototype[name];
        }
        const { fd, autoClose } = child.stdin;
-       child.on("close", () => process.stdout.write(" " + JSON.stringify({ fd, autoClose })));`,
+       const { readableObjectMode } = child.stdout;
+       let read = "";
+       child.stdout.setEncoding("utf8").on("data", chunk => (read += chunk));
+       child.on("close", () => console.log(JSON.stringify({ read, fd, autoClose, readableObjectMode })));`,
     ]);
-    expect(result).toEqual({ stdout: `hello {"fd":null,"autoClose":true}`, stderr: "", exitCode: 0 });
+    expect({ ...result, stdout: result.stdout && JSON.parse(result.stdout) }).toEqual({
+      stdout: { read: "hello", fd: null, autoClose: true, readableObjectMode: false },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it.each([
@@ -424,16 +432,17 @@ describe("the pipes of a child in the turn of spawn()", () => {
     });
 
     // More than the pipe takes, to a child that lives for a second and never reads: the write is in
-    // progress when destroy() comes. Node.js closes the pipe at once and drops the write. Here
-    // destroy() waited for the child, and then reported the EPIPE of that write.
+    // progress when destroy() comes. Node.js closes the pipe at once, and the end callback gets the
+    // ECANCELED of the write that it cancels. Here destroy() waited for the child, and then reported
+    // the EPIPE of that write as 'error'.
     describe.each([
       ["in the tick of spawn()", "calls()"],
       ["one macrotask later", "setImmediate(calls)"],
     ])("%s", (_, when) => {
       it.each([
-        [`destroy()`, ["close"]],
-        [`destroy(new Error("boom"))`, ["error boom", "close"]],
-      ])("end(1 MiB); %s closes the stream at once, with no write error", async (destroy, log) => {
+        [`destroy()`, ["end cb ERR_STREAM_DESTROYED", "close"]],
+        [`destroy(new Error("boom"))`, ["end cb boom", "error boom", "close"]],
+      ])("end(1 MiB, cb); %s reports no write error, and calls back ahead of 'close'", async (destroy, log) => {
         const result = await run([
           bunExe(),
           "-e",
@@ -445,16 +454,16 @@ describe("the pipes of a child in the turn of spawn()", () => {
              stdin.on("error", err => log.push("error " + err.message));
              stdin.on("close", () => {
                log.push("close");
-               console.log(JSON.stringify({ log, childRuns: child.exitCode === null && child.signalCode === null }));
+               console.log(JSON.stringify(log));
                child.kill();
              });
-             stdin.end(Buffer.alloc(1024 * 1024, "x"));
+             stdin.end(Buffer.alloc(1024 * 1024, "x"), err => log.push("end cb " + (err ? err.code || err.message : null)));
              stdin.${destroy};
            }
            ${when};`,
         ]);
         expect({ ...result, stdout: result.stdout && JSON.parse(result.stdout) }).toEqual({
-          stdout: { log, childRuns: true },
+          stdout: log,
           stderr: "",
           exitCode: 0,
         });
@@ -468,7 +477,7 @@ describe("the pipes of a child in the turn of spawn()", () => {
       ["in the tick of spawn()", false],
       ["one macrotask later", true],
     ])(
-      "%s, to a child that reads, events and callbacks are those of Node.js, except in the rows listed",
+      "%s, to a child that reads, events and callbacks are those of Node.js, except in the row listed",
       async (_, later) => {
         const row = (bytes, ...log) => ({ bytes, log });
         const finished = ["prefinish", "end cb null", "finish", "close"];
@@ -498,10 +507,6 @@ describe("the pipes of a child in the turn of spawn()", () => {
           [`destroy(); end("hello", cb)`]: row("", "end cb ERR_STREAM_DESTROYED", "close"),
         };
         const bun = {
-          // _final completes one tick after end(), where the shutdown of node's socket takes a turn
-          // of the event loop: the stream has finished before a destroy() that comes a tick later.
-          [`end("hello", cb); nextTick(destroy)`]: row("hello", ...finished),
-          [`end("hello", cb); queueMicrotask(destroy)`]: row("hello", ...finished),
           // write() hands the chunk to the sink at once and ignores cork().
           [`cork(); write("hello", cb); destroy()`]: row("hello", "write cb null", "close"),
         };
@@ -511,6 +516,35 @@ describe("the pipes of a child in the turn of spawn()", () => {
         expect(await promise).toEqual({ ...node, ...bun });
       },
     );
+  });
+
+  // Under Node.js 'finish' and 'close' come a turn of the event loop after end() and destroy(), so a
+  // listener that is added some ticks or promise jobs later still hears them. Here they came within
+  // a few ticks of the call.
+  describe.each([
+    ["end()", stdin => stdin.end("x"), ["finish", "close"]],
+    ["destroy()", stdin => stdin.destroy(), ["close"]],
+  ])("a listener that is added behind %s", (_, call, heard) => {
+    const afterTicks = (ticks, then) => (ticks === 0 ? then() : process.nextTick(afterTicks, ticks - 1, then));
+    it.each([
+      ["three ticks later", attach => afterTicks(3, attach)],
+      ["six ticks later", attach => afterTicks(6, attach)],
+      ["a promise job later", attach => queueMicrotask(attach)],
+      ["a promise job and a tick later", attach => queueMicrotask(() => process.nextTick(attach))],
+    ])("%s hears the events", async (_, later) => {
+      const child = spawn(bunExe(), ["-e", "process.stdin.resume()"], {
+        env: bunEnv,
+        stdio: ["pipe", "ignore", "inherit"],
+      });
+      const seen = [];
+      call(child.stdin);
+      later(() => {
+        child.stdin.on("finish", () => seen.push("finish"));
+        child.stdin.on("close", () => seen.push("close"));
+      });
+      await once(child, "close");
+      expect(seen).toEqual(heard);
+    });
   });
 
   // As in Node.js, where end() schedules them. They ran in the store of spawn(), which scheduled

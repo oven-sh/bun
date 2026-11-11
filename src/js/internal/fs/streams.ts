@@ -33,6 +33,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kSinkWrite]?: (err?: any) => void;
 };
 type FD = number;
 
@@ -46,6 +47,8 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The callback of the _write of a child's stdin that its sink has not answered yet.
+const kSinkWrite = Symbol("kSinkWrite");
 const kFs = Symbol("kFs");
 
 const {
@@ -769,7 +772,14 @@ function underscoreWriteToSink(this: FSStream, data: any, encoding: any, cb: any
   try {
     const pending = (this[kWriteStreamFastPath] as FileSink).write(data);
     if ($isPromise(pending)) {
-      pending.then(() => cb(null), cb);
+      // destroySink answers in the place of the sink if it comes first.
+      this[kSinkWrite] = cb;
+      const answer = (err?: any) => {
+        if (this[kSinkWrite] !== cb) return;
+        this[kSinkWrite] = undefined;
+        cb(err);
+      };
+      pending.then(() => answer(null), answer);
       return;
     }
   } catch (err) {
@@ -779,7 +789,14 @@ function underscoreWriteToSink(this: FSStream, data: any, encoding: any, cb: any
   cb(null);
 }
 
-// _final of a child's stdin. It sends inside end() and completes on a later tick, as the shutdown of node's Socket does:
+// Calls back behind the ticks and the promise jobs that the turn queues: a tick, then a promise job, then a tick.
+// A listener that is added there still hears the event. Under node it does, because the socket completes a turn
+// of the event loop later.
+function afterQueuedJobs(cb: (err?: any) => void, err: any) {
+  process.nextTick(queueMicrotask, () => process.nextTick(cb, err));
+}
+
+// _final of a child's stdin. It sends inside end(), and completes later, as the shutdown of node's Socket does:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
 function finalToSink(this: FSStream, cb: (err?: any) => void) {
   try {
@@ -792,7 +809,7 @@ function finalToSink(this: FSStream, cb: (err?: any) => void) {
     process.nextTick(cb, err);
     return;
   }
-  process.nextTick(cb, null);
+  afterQueuedJobs(cb, null);
 }
 
 // _destroy of a child's stdin. Before 'finish', node closes the pipe at once and reports no error of the writes that it drops:
@@ -809,7 +826,14 @@ function destroySink(this: FSStream, err: Error | null, cb: (err?: Error | null)
     const end = sink.end(err as Error);
     if ($isPromise(end)) end.then(streamNoop, streamNoop);
   } catch {}
-  process.nextTick(cb, err);
+  // A _write that the sink has not answered is answered ahead of 'close', without an error, as node answers the write of a destroyed socket:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L95-L99
+  const write = this[kSinkWrite];
+  if (write !== undefined) {
+    this[kSinkWrite] = undefined;
+    process.nextTick(write, null);
+  }
+  afterQueuedJobs(cb, err);
 }
 
 writeStreamPrototype._writev = function (data, cb) {

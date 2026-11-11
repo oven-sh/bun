@@ -1183,17 +1183,15 @@ class ChildProcess extends EventEmitter {
         this.#stdioOptions[0] = "destroyed";
       }
 
-      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
-      if (err) {
-        if (this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
-        if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
-        // The streams that spawn() attached are not read either, and 'close' of the child waits for theirs.
-        this.#stdout?.destroy();
-        this.#stderr?.destroy();
-      }
-
       const stdout = this.#stdout,
         stderr = this.#stderr;
+
+      // With an error, a stream that was never made has nothing to read. One that spawn() attached is read to its
+      // end below, as after any exit: the child may have run, and 'close' of the child waits for that of the stream.
+      if (err) {
+        if (stdout === undefined && this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
+        if (stderr === undefined && this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
+      }
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1);
@@ -1477,8 +1475,11 @@ class ChildProcess extends EventEmitter {
       stderrAhead: $Node.Readable | undefined,
       socketsAhead: ($Node.Socket | undefined)[] | undefined;
     if (slots[0] === "pipe") stdinAhead = require("internal/fs/streams").writableForFileSink();
-    if (slots[1] === "pipe") stdoutAhead = require("internal/streams/native-readable").makeNativeReadable({});
-    if (slots[2] === "pipe") stderrAhead = require("internal/streams/native-readable").makeNativeReadable({});
+    // No options, inherited ones included, as for stdin.
+    if (slots[1] === "pipe")
+      stdoutAhead = require("internal/streams/native-readable").makeNativeReadable({ __proto__: null });
+    if (slots[2] === "pipe")
+      stderrAhead = require("internal/streams/native-readable").makeNativeReadable({ __proto__: null });
     for (let i = 3; i < slots.length; i++) {
       const io = slots[i];
       if (io === "pipe" || io === "socket-fd") (socketsAhead ??= [])[i] = new (require("node:net").Socket)();

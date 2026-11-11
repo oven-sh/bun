@@ -146,8 +146,8 @@ const declare = isDebug ? testOneByOne : test.concurrent;
 // So no kind times out while it waits for a slot, and a run that hangs is ended at its own limit, where the kind says which. A minute more to lay and to remove the project.
 const limitOfAKind = Math.ceil((isDebug ? 2 : 2 * kinds.length) / slots) * limit + 60_000;
 
-// A title is short. CI's runner reads the first hundred characters of `<title> — <error>`, and tries no file again where they say that `run()` ended
-// the commands for the memory that they held together.
+// A title is short. CI's runner reads the first hundred characters of the title and the error together, and tries no file again where they say that
+// `run()` ended the commands for the memory that they held together.
 declare.each(kinds)(
   "each case of %s",
   async kind => {

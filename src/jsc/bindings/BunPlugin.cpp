@@ -34,6 +34,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
@@ -4278,6 +4279,33 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
 
+// evaluateCommonJSModuleOnce() hands the body its module object as `module`. A frame that the DFG inlined shows the arguments of the frame it is inlined into.
+static bool isBodyOfCommonJSModule(JSC::StackVisitor& visitor)
+{
+    if (visitor->isInlinedDFGFrame())
+        return false;
+    JSC::CallFrame* frame = visitor->callFrame();
+    JSValue module = frame->argumentCount() > 2 ? frame->uncheckedArgument(2) : JSValue();
+    return module && dynamicDowncast<Bun::JSCommonJSModule>(module);
+}
+
+// A function of another module may make a call of mock.module(), vi.mock() and the like for the module that calls it. A module whose body is on the stack makes
+// the call again when it runs again. One that only has a function there passed the call on, and need not run again.
+__attribute__((minsize)) static void addModulesWhoseBodyRuns(JSC::VM& vm, JSC::CallFrame* callframe, const String& file, WTF::UncheckedKeyHashSet<String>& modules)
+{
+    JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || (codeBlock->codeType() != JSC::ModuleCode && !isBodyOfCommonJSModule(visitor)))
+            return WTF::IterationStatus::Continue;
+        const JSC::SourceOrigin& sourceOrigin = codeBlock->ownerExecutable()->sourceOrigin();
+        const URL& url = sourceOrigin.url();
+        // Most calls are made by a body itself, and `file` is in the set already.
+        if (!sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() && url.path() != file)
+            modules.add(url.fileSystemPath());
+        return WTF::IterationStatus::Continue;
+    });
+}
+
 #if ENABLE(AOT)
 static StringView withoutFileExtension(StringView path)
 {
@@ -5909,8 +5937,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), factory, specifierString, writtenString, function);
     mock->spy = spy;
     mock->isFromPreload = JSMock__isInPreload(globalObject);
-    if (!mock->isFromPreload)
-        globalObject->onLoadPlugins.mockingModules.add(callerPath(vm, callframe));
+    if (!mock->isFromPreload) {
+        auto& mockingModules = globalObject->onLoadPlugins.mockingModules;
+        String file = callerPath(vm, callframe);
+        mockingModules.add(file);
+        // Only the test runner reads the set, on the main thread. `bun test --aot` makes the calls of a compiled body again instead: recordBodyMock().
+        if (Bun::isBunTest && !vm.hasCompiledCode() && globalObject->scriptExecutionContext()->isMainThread())
+            addModulesWhoseBodyRuns(vm, callframe, file, mockingModules);
+    }
 #if ENABLE(AOT)
     std::optional<size_t> remembered;
     if (vm.hasCompiledCode() && !mock->isFromPreload)

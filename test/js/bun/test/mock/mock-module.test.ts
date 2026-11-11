@@ -612,12 +612,12 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
-async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
+async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = [], env = bunEnv) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -7467,6 +7467,402 @@ test.concurrent("a mock evicts the importers of a required original, also after 
     },
     2,
   );
+});
+
+describe.concurrent("a module whose top-level code mocks through a function of another module", () => {
+  const count = (name: string) => `globalThis.loads ??= {}; loads.${name} = (loads.${name} ?? 0) + 1;`;
+  const factory = `() => ({ who: () => "mock" })`;
+  const dep = { "dep.ts": `export function who() { return "real"; }` };
+  // A preload makes the function a global.
+  const preloaded = (api = "mock.module") => ({
+    "wrapper.ts": `
+      import { jest, mock, vi } from "bun:test";
+      ${count("wrapper")}
+      export const mockModule = (path, factory) => {
+        ${api}(path, factory);
+      };
+    `,
+    "preload.ts": `
+      import { mockModule } from "./wrapper";
+      globalThis.mockModule = mockModule;
+    `,
+  });
+  const viaPreload = ["--preload", "./preload.ts"];
+  const setup = `
+    import { join } from "node:path";
+    ${count("setup")}
+    globalThis.mockModule(join(import.meta.dir, "dep.ts"), ${factory});
+  `;
+  const setupInCommonJS = `
+    const { join } = require("node:path");
+    ${count("setup")}
+    globalThis.mockModule(join(__dirname, "dep.ts"), ${factory});
+  `;
+  // The test file loads the module of this function itself.
+  const globalOfTestFile = `
+    import { mock } from "bun:test";
+    ${count("wrapper")}
+    globalThis.mockModule = (path, factory) => {
+      mock.module(path, factory);
+    };
+  `;
+  // `loads` is how often each module has run by the time the third file runs.
+  const testFiles = (head: string, loads?: Record<string, number>) => ({
+    "1.test.ts": `
+      ${head}
+      import { expect, test } from "bun:test";
+      test("the first file that imports the module gets the mock", async () => {
+        expect((await import("./dep")).who()).toBe("mock");
+      });
+    `,
+    "2.test.ts": `
+      import { expect, test } from "bun:test";
+      test("a file that does not import the module gets the original", async () => {
+        expect((await import("./dep")).who()).toBe("real");
+      });
+    `,
+    "3.test.ts": `
+      ${head}
+      import { expect, test } from "bun:test";
+      test("the next file that imports the module gets the mock", async () => {
+        expect((await import("./dep")).who()).toBe("mock");
+        ${loads ? `expect(globalThis.loads).toEqual(${JSON.stringify(loads)});` : ""}
+      });
+    `,
+  });
+
+  type Shape = { files: Record<string, string>; loads: Record<string, number>; head?: string; args?: string[] };
+  test.each<[string, Shape]>([
+    [
+      "a function of a preload",
+      { files: { ...preloaded(), "setup.ts": setup }, loads: { wrapper: 1, setup: 2 }, args: viaPreload },
+    ],
+    [
+      "a function that it imports, of a module that a preload has loaded",
+      {
+        files: {
+          ...preloaded(),
+          "preload.ts": `import "./wrapper";`,
+          "setup.ts": `
+            import { join } from "node:path";
+            import { mockModule } from "./wrapper";
+            ${count("setup")}
+            mockModule(join(import.meta.dir, "dep.ts"), ${factory});
+          `,
+        },
+        loads: { wrapper: 1, setup: 2 },
+        args: viaPreload,
+      },
+    ],
+    [
+      "a function of a preload, from a CommonJS module",
+      {
+        files: { ...preloaded(), "setup.cjs": setupInCommonJS },
+        loads: { wrapper: 1, setup: 2 },
+        head: `import "./setup.cjs";`,
+        args: viaPreload,
+      },
+    ],
+    [
+      "a function of a preload, from a CommonJS module that the body of another module requires",
+      {
+        files: {
+          ...preloaded(),
+          // No statement imports mocks.cjs, and createRequire() makes setup.ts no parent of it. Only the call tells that setup.ts has to run again too.
+          "setup.ts": `
+            import { createRequire } from "node:module";
+            ${count("setup")}
+            createRequire(import.meta.dir + "/")("./mocks.cjs");
+          `,
+          "mocks.cjs": `
+            const { join } = require("node:path");
+            ${count("mocks")}
+            globalThis.mockModule(join(__dirname, "dep.ts"), ${factory});
+          `,
+        },
+        loads: { wrapper: 1, setup: 2, mocks: 2 },
+        args: viaPreload,
+      },
+    ],
+    [
+      "a function of a preload, below a constructor that has yet to return from super()",
+      {
+        files: {
+          ...preloaded(),
+          // The constructor of Mocks has no "this" yet while the call runs.
+          "setup.ts": `
+            import { join } from "node:path";
+            ${count("setup")}
+            class Base {
+              constructor(mocked) {}
+            }
+            class Mocks extends Base {
+              constructor() {
+                super(globalThis.mockModule(join(import.meta.dir, "dep.ts"), ${factory}));
+              }
+            }
+            new Mocks();
+          `,
+        },
+        loads: { wrapper: 1, setup: 2 },
+        args: viaPreload,
+      },
+    ],
+    [
+      "a function that another module of the test file made a global",
+      {
+        files: { "wrapper.ts": globalOfTestFile, "setup.ts": setup },
+        // wrapper.ts holds the call, so it runs again as well.
+        loads: { wrapper: 2, setup: 2 },
+        head: `import "./wrapper"; import "./setup";`,
+      },
+    ],
+    [
+      "a function that another module of the test file made a global, from a CommonJS module",
+      {
+        files: { "wrapper.ts": globalOfTestFile, "setup.cjs": setupInCommonJS },
+        loads: { wrapper: 2, setup: 2 },
+        // A CommonJS module that a statement imports runs before wrapper.ts does.
+        head: `import "./wrapper"; require("./setup.cjs");`,
+      },
+    ],
+    [
+      "a function of a module that it imported with import()",
+      {
+        files: {
+          "wrapper.ts": preloaded()["wrapper.ts"],
+          "setup.ts": `
+            import { join } from "node:path";
+            ${count("setup")}
+            const { mockModule } = await import("./wrapper");
+            mockModule(join(import.meta.dir, "dep.ts"), ${factory});
+          `,
+        },
+        loads: { wrapper: 2, setup: 2 },
+      },
+    ],
+    [
+      "a listener of its own that node:events calls",
+      {
+        files: {
+          // The listener ends in the call, so its frame is gone by then. The caller that mock.module() finds is the function of node:events.
+          "setup.ts": `
+            import { mock } from "bun:test";
+            import { EventEmitter } from "node:events";
+            import { join } from "node:path";
+            ${count("setup")}
+            const bus = new EventEmitter();
+            bus.on("mock", () => mock.module(join(import.meta.dir, "dep.ts"), ${factory}));
+            bus.emit("mock");
+          `,
+        },
+        loads: { setup: 2 },
+      },
+    ],
+    [
+      "a function of a preload that ends in the call",
+      {
+        files: {
+          // The frame of the function is gone at the call, so the caller that mock.module() finds is setup.ts.
+          "wrapper.ts": `
+            import { mock } from "bun:test";
+            ${count("wrapper")}
+            export const mockDep = factory => mock.module("./dep.ts", factory);
+          `,
+          "preload.ts": `
+            import { mockDep } from "./wrapper";
+            globalThis.mockDep = mockDep;
+          `,
+          "setup.ts": `
+            ${count("setup")}
+            globalThis.mockDep(${factory});
+          `,
+        },
+        loads: { wrapper: 1, setup: 2 },
+        args: viaPreload,
+      },
+    ],
+  ])(
+    "mocks for every test file that imports it: %s",
+    async (_, { files, loads, head = `import "./setup";`, args = [] }) => {
+      await expectFixturesToPass({ ...dep, ...files, ...testFiles(head, loads) }, 3, args);
+    },
+  );
+
+  test.each(["vi.mock", "vi.doMock", "jest.mock", "jest.doMock"])(
+    "mocks for every test file that imports it with %s()",
+    async api => {
+      await expectFixturesToPass(
+        { ...dep, ...preloaded(api), "setup.ts": setup, ...testFiles(`import "./setup";`, { wrapper: 1, setup: 2 }) },
+        3,
+        viaPreload,
+      );
+    },
+  );
+
+  test.each<[string, number]>([
+    ["--rerun-each=2", 6],
+    ["--isolate --rerun-each=2", 6],
+    ["--isolate=modules --rerun-each=2", 6],
+    ["--parallel=1 --rerun-each=2", 6],
+    ["--parallel=1 --no-isolate", 3],
+  ])("mocks for every test file that imports it, and for every run of one, with %s", async (flags, pass) => {
+    await expectFixturesToPass({ ...dep, ...preloaded(), "setup.ts": setup, ...testFiles(`import "./setup";`) }, pass, [
+      ...viaPreload,
+      ...flags.split(" "),
+    ]);
+  });
+
+  test("two such modules each mock for the test files that import them", async () => {
+    const mocks = (name: string) => `
+      import { join } from "node:path";
+      ${count(name)}
+      globalThis.mockModule(join(import.meta.dir, "dep-of-${name}.ts"), ${factory});
+    `;
+    const file = (imports: string[], loads?: Record<string, number>) => `
+      ${imports.map(name => `import "./${name}";`).join(" ")}
+      import { expect, test } from "bun:test";
+      test("the mocks of the modules that it imports", async () => {
+        expect([(await import("./dep-of-a")).who(), (await import("./dep-of-b")).who()]).toEqual(${JSON.stringify(["a", "b"].map(name => (imports.includes(name) ? "mock" : "real")))});
+        ${loads ? `expect(globalThis.loads).toEqual(${JSON.stringify(loads)});` : ""}
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...preloaded(),
+        "dep-of-a.ts": dep["dep.ts"],
+        "dep-of-b.ts": dep["dep.ts"],
+        "a.ts": mocks("a"),
+        "b.ts": mocks("b"),
+        "1.test.ts": file(["a"]),
+        "2.test.ts": file(["b"]),
+        "3.test.ts": file(["a", "b"], { wrapper: 1, a: 2, b: 2 }),
+        "4.test.ts": file([]),
+      },
+      4,
+      viaPreload,
+    );
+  });
+
+  test("is run again without the modules whose functions only pass the call on", async () => {
+    const files: Record<string, string> = {
+      ...dep,
+      ...preloaded(),
+      "pass.ts": `
+        ${count("pass")}
+        export const pass = (fn, ...args) => {
+          fn(...args);
+        };
+      `,
+      "setup.ts": `
+        import { join } from "node:path";
+        import { pass } from "./pass";
+        ${count("setup")}
+        pass(globalThis.mockModule, join(import.meta.dir, "dep.ts"), ${factory});
+      `,
+    };
+    let head = `import "./setup";`;
+    for (let i = 0; i < 10; i++) {
+      files[`user${i}.ts`] = `import "./pass"; ${count("users")}`;
+      head += ` import "./user${i}";`;
+    }
+    await expectFixturesToPass(
+      { ...files, ...testFiles(head, { wrapper: 1, setup: 2, pass: 1, users: 10 }) },
+      3,
+      viaPreload,
+    );
+  });
+
+  // A frame that the DFG has inlined into the body of a CommonJS module shows the arguments of that body.
+  test("is run again without a module whose function the JIT inlines into its body", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        ...preloaded(),
+        "pass.cjs": `
+          ${count("pass")}
+          exports.pass = (fn, path, factory) => {
+            fn(path, factory);
+          };
+        `,
+        "setup.cjs": `
+          const { join } = require("node:path");
+          const { pass } = require("./pass.cjs");
+          ${count("setup")}
+          const path = join(__dirname, "dep.ts");
+          const factory = ${factory};
+          for (let i = 0; i < 300; i++) pass(globalThis.mockModule, path, factory);
+        `,
+        ...testFiles(`import "./setup.cjs";`, { wrapper: 1, setup: 2, pass: 1 }),
+      },
+      3,
+      viaPreload,
+      { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.05" },
+    );
+  });
+
+  test("mocks for the first test file only where a hook of it, or a function of it behind an await, makes the call", async () => {
+    const file = (expected: string, loads?: Record<string, number>) => `
+      import "./in-hook";
+      import { mocked } from "./after-await";
+      import { expect, test } from "bun:test";
+      test("the modules", async () => {
+        await mocked;
+        expect([(await import("./dep-of-hook")).who(), (await import("./dep-of-await")).who()]).toEqual(["${expected}", "${expected}"]);
+        ${loads ? `expect(globalThis.loads).toEqual(${JSON.stringify(loads)});` : ""}
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...preloaded(),
+        "dep-of-hook.ts": dep["dep.ts"],
+        "dep-of-await.ts": dep["dep.ts"],
+        "in-hook.ts": `
+          import { beforeAll } from "bun:test";
+          import { join } from "node:path";
+          ${count("inHook")}
+          beforeAll(() => {
+            globalThis.mockModule(join(import.meta.dir, "dep-of-hook.ts"), ${factory});
+          });
+        `,
+        "after-await.ts": `
+          import { join } from "node:path";
+          ${count("afterAwait")}
+          export const mocked = (async () => {
+            await null;
+            globalThis.mockModule(join(import.meta.dir, "dep-of-await.ts"), ${factory});
+          })();
+        `,
+        "1.test.ts": file("mock"),
+        // No top-level code of the two modules was running at the calls, so neither runs again.
+        "2.test.ts": file("real", { wrapper: 1, inHook: 1, afterAwait: 1 }),
+      },
+      2,
+      viaPreload,
+    );
+  });
+
+  test("leaves a module loaded whose function makes the call for a hook of the test file", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        ...preloaded(),
+        "helper.ts": `
+          import { join } from "node:path";
+          ${count("helper")}
+          export const mockDep = () => {
+            globalThis.mockModule(join(import.meta.dir, "dep.ts"), ${factory});
+          };
+        `,
+        ...testFiles(`import { beforeAll } from "bun:test"; import { mockDep } from "./helper"; beforeAll(mockDep);`, {
+          wrapper: 1,
+          helper: 1,
+        }),
+      },
+      3,
+      viaPreload,
+    );
+  });
 });
 
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.

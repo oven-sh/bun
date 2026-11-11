@@ -1,7 +1,16 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isCanary,
+  isWindows,
+  spawnWithNonBlockingStdin,
+  tempDir,
+  tmpdirSync,
+  untilBunWaitsForInput,
+} from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -302,6 +311,27 @@ describe("echo | bun run -", () => {
   }
 
   group(run);
+});
+
+// A read of a stdin in non-blocking mode fails with EAGAIN while there is no input. That is not the end of the input.
+test.skipIf(isWindows).each([
+  ["run -", "console.log('from ' + 'stdin');", "from stdin\n", 0],
+  ["fmt --stdin-filepath x.ts", "const   a  =  1\n", "const a = 1;\n", 0],
+  // A release build has no `bun lint`.
+  ...(isCanary ? [["lint --stdin", "debugger;\n", "no-debugger", 1]] : []),
+])("bun %s waits for its input on a non-blocking stdin", async (args, input, output, exitCode) => {
+  using dir = tempDir("non-blocking-stdin", {});
+  await using child = spawnWithNonBlockingStdin(["sh", "-c", `exec "$0" ${args} <&3`, bunExe()], { cwd: String(dir) });
+  await untilBunWaitsForInput(child.proc);
+  child.write(input);
+  child.end();
+  await child.waitFor(output);
+  const [stderr, code] = await Promise.all([child.proc.stderr.text(), child.proc.exited]);
+  expect({ stderr, exitCode: code, signalCode: child.proc.signalCode }).toEqual({
+    stderr: "",
+    exitCode,
+    signalCode: null,
+  });
 });
 
 test("process._eval (undefined for normal run)", async () => {

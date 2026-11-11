@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, spawnWithNonBlockingStdin, tempDir, untilBunWaitsForInput } from "harness";
 import { join } from "path";
 import { installEnv, TestRegistry } from "registry";
 
@@ -13,7 +13,8 @@ afterAll(() => {
 });
 
 // Installs `no-deps@<range>`, types `keys` into `bun update --interactive` and returns what package.json and node_modules hold.
-async function updateNoDeps(range: string, keys: string) {
+// With `nonBlockingStdin`, the keys come once the menu waits for them, on a stdin in non-blocking mode.
+async function updateNoDeps(range: string, keys: string, nonBlockingStdin = false) {
   using dir = tempDir("update-interactive-install", {
     "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\n`,
     "package.json": JSON.stringify({ name: "test-project", version: "1.0.0", dependencies: { "no-deps": range } }),
@@ -24,17 +25,28 @@ async function updateNoDeps(range: string, keys: string) {
   expect({ stderr: await install.stderr.text(), exitCode: await install.exited }).toMatchObject({ exitCode: 0 });
   const before = (await installed()).version;
 
-  await using update = Bun.spawn({
-    cmd: [bunExe(), "update", "--interactive"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  update.stdin.write(keys);
-  update.stdin.end();
-  const [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited, update.stdout.text()]);
+  let stderr: string, exitCode: number;
+  if (nonBlockingStdin) {
+    await using update = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" update --interactive <&3', bunExe()], {
+      cwd: String(dir),
+    });
+    await update.waitFor("Select packages to update");
+    await untilBunWaitsForInput(update.proc);
+    update.write(keys);
+    [stderr, exitCode] = await Promise.all([update.proc.stderr.text(), update.proc.exited]);
+  } else {
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    update.stdin.write(keys);
+    update.stdin.end();
+    [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited, update.stdout.text()]);
+  }
   expect(stderr).not.toContain("error:");
   return {
     before,
@@ -61,6 +73,16 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     expect(await updateNoDeps("^1.0.0", "l\r")).toEqual({
       before: "1.1.0",
       declared: "^2.0.0",
+      installed: "2.0.0",
+      exitCode: 0,
+    });
+  });
+
+  // A read of a stdin in non-blocking mode fails with EAGAIN while there is no key. That is not Enter.
+  test.skipIf(isWindows)("waits for keys on a non-blocking stdin", async () => {
+    expect(await updateNoDeps("1.0.0", " \r", true)).toEqual({
+      before: "1.0.0",
+      declared: "2.0.0",
       installed: "2.0.0",
       exitCode: 0,
     });

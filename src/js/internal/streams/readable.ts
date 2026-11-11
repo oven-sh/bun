@@ -1047,6 +1047,10 @@ Readable.prototype.unpipe = function (dest) {
     this.pause();
 
     for (let i = 0; i < dests.length; i++) dests[i].emit("unpipe", this, { hasUnpiped: false });
+    // The release in cleanup() resumes the source while the destinations behind that one still listen for data. Node
+    // leaves it flowing with no consumer and drops what follows. Its documentation has paused mode here:
+    // https://github.com/nodejs/node/blob/v26.12.1/doc/api/stream.md?plain=1#L1124-L1130
+    if ((state[kState] & (kFlowing | kDataListening)) === kFlowing) this.pause();
     return this;
   }
 

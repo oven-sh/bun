@@ -2258,6 +2258,16 @@ describe("pipe() goes on for the other consumers once a destination that failed 
       ["good got a", "bad error: fail", ...theRest, "finished settled"],
     ],
     [
+      "an 'unpipe' listener that reads a chunk, so that nobody is on record as waited for",
+      (readable, events) => {
+        const bad = failing(events);
+        bad.on("unpipe", () => readable.read());
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "good got b", "bad error: fail", "good got c", "end", "good finish"],
+    ],
+    [
       "unpipe() in the failing sink's 'error' handler",
       (readable, events) => {
         const bad = failing(events);
@@ -2352,17 +2362,17 @@ describe("pipe() goes on for the other consumers once a destination that failed 
     });
   });
 
+  const drainedOnce = () =>
+    new Writable({
+      highWaterMark: 1,
+      write(chunk, encoding, callback) {
+        process.nextTick(callback);
+      },
+    });
+
   // With two or more pipes the record of who waits for a drain is a Set, and an empty Set is truthy: the release
   // also runs for a destination that waits for nothing. These are the outputs of Node v26.12.1, not of v26.3.0.
   describe("what the release also does, as in Node v26.12.1", () => {
-    const drainedOnce = () =>
-      new Writable({
-        highWaterMark: 1,
-        write(chunk, encoding, callback) {
-          process.nextTick(callback);
-        },
-      });
-
     it("unpipe() of a destination that waited once resumes a source that the program paused", async () => {
       const events = [];
       const readable = new Readable({ read() {} });
@@ -2403,22 +2413,44 @@ describe("pipe() goes on for the other consumers once a destination that failed 
       });
     });
 
-    it("unpipe() of every destination leaves the source flowing when the first one waited once", async () => {
+    it("unpipe() of every destination leaves the source flowing for a 'data' listener", async () => {
       const events = [];
       const readable = new Readable({ read() {} });
+      readable.on("data", chunk => events.push(`data ${chunk}`));
       readable.pipe(drainedOnce());
       readable.pipe(sink(events));
       readable.push("a");
       await atRest();
       readable.unpipe();
-      const flowing = readable.readableFlowing;
       readable.push("b");
       await atRest();
-      expect({ flowing, events, buffered: readable.readableLength }).toEqual({
+      expect({ flowing: readable.readableFlowing, events }).toEqual({
         flowing: true,
-        events: ["good got a"],
-        buffered: 0,
+        events: ["data a", "good got a", "data b"],
       });
+    });
+  });
+
+  // Not as in Node: there the release leaves the source flowing with nobody to read it, and "b" is dropped. Node's
+  // documentation says that the removal of all pipe destinations switches the source back to paused mode.
+  it.each([
+    ["waited once", drainedOnce],
+    ["is in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
+  ])("unpipe() of every destination leaves the source paused when the first one %s", async (name, first) => {
+    const events = [];
+    const readable = new Readable({ read() {} });
+    readable.pipe(first());
+    readable.pipe(sink(events));
+    readable.push("a");
+    await atRest();
+    readable.unpipe();
+    const flowing = readable.readableFlowing;
+    readable.push("b");
+    await atRest();
+    expect({ flowing, events, buffered: readable.readableLength }).toEqual({
+      flowing: false,
+      events: ["good got a"],
+      buffered: 1,
     });
   });
 

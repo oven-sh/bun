@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0b3464880cfc67c8da009f95518b37d419e9bc3565a9afe21da4fbd658ddde84.
+// Written against that file with the SHA-256 b8493c6128b42e69f0d0bb518d7ea6596391dd01c36d23cca359cb339821a37f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -1386,6 +1386,10 @@ Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStre
     this.pause();
 
     for (let i = 0; i < dests.length; i++) dests[i].emit("unpipe", this, { hasUnpiped: false });
+    // The release in cleanup() resumes the source while the destinations behind that one still listen for data. Node
+    // leaves it flowing with no consumer and drops what follows. Its documentation has paused mode here:
+    // https://github.com/nodejs/node/blob/v26.12.1/doc/api/stream.md?plain=1#L1124-L1130
+    if ((state[kState] & (Flag.Flowing | Flag.DataListening)) === Flag.Flowing) this.pause();
     return this;
   }
 

@@ -98,16 +98,31 @@ console.log("a source that the program paused");
   await turn();
   say(source);
 }
-console.log("every destination at once");
-{
+for (const [title, first, listens] of [
+  ["every destination at once, the first one waited once", waitedOnce, false],
+  ["every destination at once, the first one is in backpressure", () => new Writable({ highWaterMark: 1, write() {} }), false],
+  ["every destination at once, beside a listener of data", waitedOnce, true],
+]) {
+  console.log(title);
   const source = pushed();
-  source.pipe(waitedOnce());
+  if (listens) source.on("data", chunk => console.log("  data", String(chunk)));
+  source.pipe(first());
   source.pipe(sink());
   source.push("a");
   await turn();
   source.unpipe();
   say(source);
   source.push("b");
+  await turn();
+  say(source);
+}
+console.log("a listener of unpipe that reads, so that nobody is on record as waited for");
+{
+  const source = reading();
+  const bad = failing();
+  bad.on("unpipe", () => source.read());
+  source.pipe(bad);
+  source.pipe(sink());
   await turn();
   say(source);
 }

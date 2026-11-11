@@ -2299,6 +2299,128 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
       expect(exitCode).toBe(0);
     },
   );
+
+  // A module that a finished file was still loading came back from the thread pool while the next file ran. Its
+  // source was cached as made for that file's test globals, and under --isolate=modules the load was fulfilled
+  // into the finished file's graph: "ModuleGraph has been disposed".
+  const sourceCacheModes = [
+    ...isolateFlags.map(flag => [flag, [flag], {}] as const),
+    // One worker takes both files (scale-up gated), so the second comes after the worker's own swap.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
+  ];
+  // Makes a module large, so that its transpile is still out when the test file that asked for it ends.
+  const large = `export const zeros = [${Buffer.alloc(100_000, "0,").toString()}];`;
+
+  test.each(sourceCacheModes)(
+    "%s: a finished file's import() that is still loading is dropped",
+    async (_, args, env) => {
+      using dir = tempDir("isolate-late-import", {
+        // A file that imports from "vitest" has no `jest` global.
+        "helper.ts": `export const makeSpy = () => jest.fn(); ${large}`,
+        "other.ts": large,
+        "a-import.test.ts": `
+          import { test } from "vitest";
+          test("ends while helper.ts is loading", () => void import("./helper.ts"));
+        `,
+        "b-import.test.ts": `
+          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+          import { expect, test } from "bun:test";
+          import { join } from "node:path";
+          test("loads helper.ts for its own test globals", async () => {
+            // This transpile is as large as the one that the finished file left, and went out later: that one is back too.
+            await import("./other.ts");
+            expect(isolatedModuleCacheSourceType(join(import.meta.dir, "helper.ts"))).toBeNull();
+            const spy = (await import("./helper.ts")).makeSpy();
+            spy();
+            expect(spy).toHaveBeenCalledTimes(1);
+          });
+        `,
+      });
+      const files = ["./a-import.test.ts", "./b-import.test.ts"];
+      const { stderr, exitCode } = await runTests(String(dir), [...args], files, { ...bunEnv, ...env });
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The test files of --isolate=modules share the realm, and code of the global scope loads through the realm's own
+  // loader. The next file waits for what a finished file started there, so that transpile is not dropped.
+  test("--isolate=modules: a load through the realm's own loader outlives its test file", async () => {
+    using dir = tempDir("isolate-late-realm-import", {
+      "m.ts": `import "./d.ts"; export const text = "m";`,
+      "d.ts": large,
+      "a-realm.test.ts": `
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        import { test } from "vitest";
+        import { join } from "node:path";
+        test("ends while d.ts is loading", async () => {
+          const m = join(import.meta.dir, "m.ts");
+          void new Function("path", "return import(path)")(m);
+          // m.ts comes back, and then its import of d.ts goes out.
+          const deadline = Date.now() + 4000;
+          while (isolatedModuleCacheSourceType(m) === null) {
+            if (Date.now() > deadline) throw new Error("m.ts did not come back");
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        });
+      `,
+      "b-realm.test.ts": `
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        import { expect, test } from "bun:test";
+        import { join } from "node:path";
+        test("gets the module that the finished file started to load", async () => {
+          const { text } = await new Function("path", "return import(path)")(join(import.meta.dir, "m.ts"));
+          expect(text).toBe("m");
+          // d.ts was transpiled for the finished file, so it is not cached as made for this one.
+          expect(isolatedModuleCacheSourceType(join(import.meta.dir, "d.ts"))).toBeNull();
+        });
+      `,
+    });
+    const files = ["./a-realm.test.ts", "./b-realm.test.ts"];
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], files);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Only a finished test file's transpile is dropped. The running file gets its answer for a graph that it disposed itself.
+  test.each([["no flag", [], {}] as const, ...sourceCacheModes])(
+    "%s: an import() into a Bun.ModuleGraph that the running test file disposed is rejected",
+    async (_, args, env) => {
+      using dir = tempDir("isolate-disposed-graph-import", {
+        "helper.ts": `export {};`,
+        // With a second test file, --parallel starts a worker.
+        "a-earlier.test.ts": `import { test } from "bun:test"; test("runs first", () => {});`,
+        "b-graph.test.ts": `
+          import { expect, test } from "bun:test";
+          import { join } from "node:path";
+
+          test("the import is rejected", async () => {
+            const graph = new Bun.ModuleGraph();
+            // The transpile of the file is out until this test waits.
+            const loading = graph.import(join(import.meta.dir, "helper.ts"));
+            graph.dispose();
+            expect(await loading.then(() => "loaded", error => error.message)).toBe("ModuleGraph has been disposed");
+          });
+        `,
+      });
+      const files = ["./a-earlier.test.ts", "./b-graph.test.ts"];
+      const { stderr, exitCode } = await runTests(String(dir), [...args], files, {
+        ...bunEnv,
+        ...env,
+        // Either of these transpiles on the JS thread, where no transpile is ever out.
+        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined,
+        NODE_COMPILE_CACHE: undefined,
+      });
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // Each of these leaked handles used to pin its test file's ENTIRE global

@@ -74,6 +74,8 @@ test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the co
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
+# And one awaits that a test file gets the module that the file before it began to load through the loader of the global object that they share.
+test/cli/test/isolation.test.ts: --isolate: a finished file's late completions do not run in the next file > --isolate=modules: a load through the realm's own loader outlives its test file
 # With --isolate a test file can't require() another test file that imports from "vitest" and from two more files.
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it

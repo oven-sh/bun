@@ -2095,7 +2095,7 @@ describe("pipe() goes on for the other consumers once a destination that failed 
 
   const theRest = ["good got b", "good got c", "end", "good finish"];
 
-  // Each row is what Node v26.12.1 prints. Node v26.3.0 stops behind "bad error: fail" in all but the two controls.
+  // Each row is what Node v26.12.1 prints. Node v26.3.0 stops where the failing sink leaves, in all but the two controls.
   it.each([
     [
       "the failing sink is piped first",

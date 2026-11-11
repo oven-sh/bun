@@ -10156,10 +10156,9 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
-/// A trailing separator names a directory. Strip it before the open:
-/// `O_NOFOLLOW` does not stop `openat("link/")`.
 #[cfg(not(windows))]
 fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind) {
+    // `O_NOFOLLOW` does not stop `openat("link/")`: the separators come off first.
     let stripped = strings::trim_right(sub_path, b"/");
     if stripped.len() == sub_path.len() {
         return (sub_path, kind_hint);

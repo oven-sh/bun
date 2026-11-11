@@ -1188,7 +1188,7 @@ test("a name that throws: the default Error.prepareStackTrace throws, error.stac
 test("error.stack starts with the name and the message that Error.prototype.toString() reads", () => {
   class BelowTypeError extends TypeError {}
   class TwoBelowTypeError extends BelowTypeError {}
-  class FourBelowTypeError extends (class extends TwoBelowTypeError {}) {}
+  class FourBelowTypeError extends class extends TwoBelowTypeError {} {}
   class BelowNamed extends Error {}
   BelowNamed.prototype.name = "Named";
   class TwoBelowNamed extends BelowNamed {}
@@ -1298,7 +1298,13 @@ test("error.stack reads the name and then the message, once, when it is first re
   const header = error.stack.split("\n")[0];
   const atTheFirstRead = [...calls];
   void error.stack;
-  expect({ atConstruction, atCapture, header, atTheFirstRead, atTheSecondRead: calls.length - atTheFirstRead.length }).toEqual({
+  expect({
+    atConstruction,
+    atCapture,
+    header,
+    atTheFirstRead,
+    atTheSecondRead: calls.length - atTheFirstRead.length,
+  }).toEqual({
     atConstruction: 0,
     atCapture: 0,
     header: "Counted: boom",
@@ -1318,10 +1324,10 @@ test("error.stack reads the name and then the message, once, when it is first re
       },
     }),
   );
-  expect([new BelowAProxy("boom").stack.split("\n")[0], gets.filter(key => key === "name" || key === "message")]).toEqual([
-    "TypeError: boom",
-    ["name"],
-  ]);
+  expect([
+    new BelowAProxy("boom").stack.split("\n")[0],
+    gets.filter(key => key === "name" || key === "message"),
+  ]).toEqual(["TypeError: boom", ["name"]]);
 });
 
 test("a name getter that captures or reads the stack of its error does not run again", () => {

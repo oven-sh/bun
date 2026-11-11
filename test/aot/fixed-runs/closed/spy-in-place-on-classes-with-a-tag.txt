@@ -1,0 +1,21 @@
+vi.mockObject(classes, { spy: true }) over compiled classes whose prototype has a Symbol.toStringTag, of its own or from Map: their methods are watched and still run.
+So are the methods of a prototype that is an object literal and names its function. A prototype that is borrowed from Bun, here Math, is left as it is.
+#### classes.test.mjs
+import { test, vi } from "bun:test";
+import { Tagged, Store, Shape, make } from "./lib.mjs";
+function Borrows() {}
+Borrows.prototype = Math;
+vi.mockObject({ Tagged, Store, Shape, Borrows }, { spy: true });
+test("classes with a Symbol.toStringTag", () => {
+  const { tagged, store, shape } = make();
+  console.log("| CASE tagged", tagged.hello(), Tagged.prototype.hello.mock.calls.length);
+  console.log("| CASE store", store.hello(), Store.prototype.hello.mock.calls.length, store.get("key"), Store.prototype.get.mock.calls.length);
+  console.log("| CASE shape", shape.hello(), Shape.prototype.hello.mock.calls.length);
+  console.log("| CASE borrowed", vi.isMockFunction(Math.max));
+});
+#### lib.mjs
+export class Tagged { get [Symbol.toStringTag]() { return "Tagged"; } hello() { return "real hello"; } }
+export class Store extends Map { hello() { return "real hello"; } }
+export function Shape() {}
+Shape.prototype = { constructor: Shape, get [Symbol.toStringTag]() { return "Shape"; }, hello() { return "real hello"; } };
+export const make = () => ({ tagged: new Tagged(), store: new Store([["key", 1]]), shape: new Shape() });

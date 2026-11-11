@@ -12,6 +12,9 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/AsyncFunctionPrototype.h>
+#include <JavaScriptCore/AsyncGeneratorFunctionPrototype.h>
+#include <JavaScriptCore/GeneratorFunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBufferPrototype.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -2565,17 +2568,6 @@ __attribute__((minsize)) NEVER_INLINE JSString* objectPrototypeToStringOutOfLine
     return JSC::objectPrototypeToString(globalObject, value);
 }
 
-// Whether the object is, or inherits from, the `prototype` of one of these built-in classes. Calls no Proxy trap.
-template<typename... Prototypes>
-static bool inheritsFromPrototype(JSObject* object)
-{
-    for (; object; object = object->getPrototypeDirect().getObject()) {
-        if ((object->inherits<Prototypes>() || ...))
-            return true;
-    }
-    return false;
-}
-
 AutomockKind Automocker::kindOf(JSValue value, AutomockRole role)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -2586,8 +2578,9 @@ AutomockKind Automocker::kindOf(JSValue value, AutomockRole role)
     if (asObject(value)->isGlobalObject() || asObject(value)->type() == JSC::GlobalProxyType)
         return AutomockKind::Keep;
     if (role == AutomockRole::ClassPrototype) {
-        // A function, and the `prototype` of a class of functions such as AsyncFunction, go by their tag like any other value.
-        bool isOfFunctions = value.isCallable() || inheritsFromPrototype<JSC::FunctionPrototype>(asObject(value));
+        // A function, and the `prototype` of AsyncFunction, GeneratorFunction or AsyncGeneratorFunction, go by their tag like any other value.
+        auto* object = asObject(value);
+        bool isOfFunctions = value.isCallable() || object->inherits<JSC::AsyncFunctionPrototype>() || object->inherits<JSC::GeneratorFunctionPrototype>() || object->inherits<JSC::AsyncGeneratorFunctionPrototype>();
         // Any other `prototype` of a class holds the methods of the instances, whatever it is itself: an array, an Error, an object with the tag of Map.
         if (!isOfFunctions)
             return AutomockKind::Object;
@@ -2737,24 +2730,58 @@ static bool isUserFunction(JSObject* object)
     auto* function = dynamicDowncast<JSC::JSFunction>(object);
     if (!function || function->isHostOrBuiltinFunction())
         return false;
-    // The engine makes the constructor of a class that declares none, and never marks that one as builtin.
+    // The engine never marks the constructor that it makes for a class as builtin. The class source tells for a built-in module, not for a builtin function.
     auto* classSource = function->jsExecutable()->classSource().provider();
     return !classSource || !classSource->sourceOrigin().url().protocolIs("builtin"_s);
+}
+
+// The prototype of a compiled class gets its members when somebody first looks at them, and is a plain object from then on.
+static void materializeCompiledMembers(JSC::VM& vm, JSObject* object)
+{
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]]
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(object);
+#endif
 }
 
 // Whether a class's `prototype` is a plain object of the tested code, not one that the whole process shares such as Math or Map.prototype.
 static bool ownsPrototype(JSC::VM& vm, JSObject* constructor, JSValue prototype)
 {
     auto* object = prototype.getObject();
-    if (!object || (object->type() != JSC::FinalObjectType && object->type() != JSC::CompiledObjectType))
+    if (!object)
         return false;
-    // A prototype belongs to the class that it names: after `factory.prototype = Class.prototype`, to Class.
+    materializeCompiledMembers(vm, object);
+    if (object->type() != JSC::FinalObjectType && object->type() != JSC::CompiledObjectType)
+        return false;
+    // A prototype belongs to the function that a read of `constructor` finds: after `factory.prototype = Class.prototype`, to Class.
     JSValue named = object->getDirect(vm, vm.propertyNames->constructor);
+    bool isOwn = !!named;
+    for (auto* holder = object->getPrototypeDirect().getObject(); holder && !named; holder = holder->getPrototypeDirect().getObject()) {
+        materializeCompiledMembers(vm, holder);
+        named = holder->getDirect(vm, vm.propertyNames->constructor);
+    }
     auto* owner = named ? named.getObject() : nullptr;
+    // An own `constructor` that is no object names nobody. Then the function that has the prototype decides.
+    if (isOwn && !owner)
+        owner = constructor;
     // An earlier spy in place has left its mock of the class there.
     if (auto* mock = owner ? dynamicDowncast<JSMockFunction>(owner) : nullptr)
         owner = mock->initialImplementation();
-    return isUserFunction(owner ? owner : constructor);
+    return owner && isUserFunction(owner);
+}
+
+// Whether the object is, or inherits from, the `prototype` of one of these built-in classes. Calls no Proxy trap.
+template<typename... Prototypes>
+static bool inheritsFromPrototype(JSObject* object)
+{
+    for (; object; object = object->getPrototypeDirect().getObject()) {
+        if ((object->inherits<Prototypes>() || ...))
+            return true;
+    }
+    return false;
 }
 
 // Methods of these classes, such as `then` and `map`, construct through `this.constructor[Symbol.species]`. A spy on the prototype makes that the mock of the class.
@@ -2825,7 +2852,7 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
 
             AutomockRole role = AutomockRole::Member;
             if (isFunction && key == vm.propertyNames->prototype) {
-                // Only a constructor makes instances from its `prototype`: a generator function does not.
+                // Only `new` makes an instance from the `prototype` of the mock. The generators of a generator function inherit from its own `prototype`.
                 bool isOfClass = original->isConstructor();
                 // With `spy`, the tag still decides for a prototype that the tested code does not own, and for one that constructs through Symbol.species.
                 if (isOfClass && spy)

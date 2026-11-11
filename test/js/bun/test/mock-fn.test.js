@@ -3184,8 +3184,17 @@ if (isBun) {
           "from WeakMap": () => withMethod(class extends WeakMap {}),
           "from EventTarget": () => withMethod(class extends EventTarget {}),
           "from URLSearchParams": () => withMethod(class extends URLSearchParams {}),
+          "from Function, with a tag of its own": () =>
+            withMethod(
+              class extends Function {
+                get [Symbol.toStringTag]() {
+                  return "Tagged";
+                }
+              },
+            ),
+          "from AsyncFunction": () => withMethod(class extends (async () => {}).constructor {}),
         };
-        // With `spy`, a class with one of these base classes stays as its tag says: see the test of Symbol.species below.
+        // With `spy`, these stay as their tag says: a class that constructs through Symbol.species, and a prototype that names no function of the tested code.
         const automockOnly = {
           "from Promise": () =>
             withMethod(
@@ -3204,6 +3213,16 @@ if (isBun) {
                 }
               },
             ),
+          "from Object.create() of a built-in prototype, with a tag of its own": () => {
+            function K() {}
+            K.prototype = Object.create(Date.prototype, { [Symbol.toStringTag]: { value: "Tagged" } });
+            return withMethod(K);
+          },
+          "an object literal with a tag and no constructor": () => {
+            function K() {}
+            K.prototype = { [Symbol.toStringTag]: "Tagged" };
+            return withMethod(K);
+          },
         };
 
         describe.each(modes)("%s", (_, options) => {
@@ -3265,13 +3284,16 @@ if (isBun) {
         });
 
         test("{ spy: true } writes nothing to a prototype that the tested code does not own", () => {
-          // The last one is a plain object that names a class of the runtime as its constructor.
+          // A plain object belongs to the function that a read of its `constructor` finds. For the last four that is a class of the runtime.
           const named = withMethod(tagged("Tagged")).prototype;
           Object.defineProperty(named, "constructor", { value: EventEmitter });
-          const shared = [Map.prototype, URL.prototype, Math, named];
-          const descriptors = () => shared.map(object => Object.getOwnPropertyDescriptors(object));
+          const inherits = Object.create(Date.prototype, { [Symbol.toStringTag]: { value: "Tagged" } });
+          const literal = { [Symbol.toStringTag]: "Tagged", method() {} };
+          const borrowed = [Map.prototype, URL.prototype, Math, Bun.JSONL, named, inherits, literal];
+          const watched = [...borrowed, Date.prototype];
+          const descriptors = () => watched.map(object => Object.getOwnPropertyDescriptors(object));
           const before = descriptors();
-          for (const prototype of shared) {
+          for (const prototype of borrowed) {
             function Borrows() {}
             Borrows.prototype = prototype;
             vi.mockObject({ Borrows, Map, URL }, { spy: true });
@@ -3421,9 +3443,12 @@ if (isBun) {
           yield 1;
         }
         async function* asyncGenerator() {}
+        // A generator inherits from the `prototype` of its function, so the mock keeps that object and what is on it.
+        asyncGenerator.prototype.own = function own() {};
         const mocked = vi.mockObject({ generator, asyncGenerator }, options);
         expect(mocked.generator.prototype).toBe(generator.prototype);
         expect(mocked.asyncGenerator.prototype).toBe(asyncGenerator.prototype);
+        expect(vi.isMockFunction(asyncGenerator.prototype.own)).toBe(false);
         expect(Reflect.ownKeys(generator.prototype)).toEqual([]);
         expect(vi.isMockFunction(Object.getPrototypeOf(generator.prototype).next)).toBe(false);
         expect([...generator()]).toEqual([1]);
@@ -3444,6 +3469,34 @@ if (isBun) {
           }
         },
       );
+
+      test.each(modes)("%s: a class with a static Symbol.toStringTag is kept as it is", (_, options) => {
+        class K {
+          static get [Symbol.toStringTag]() {
+            return "Tagged";
+          }
+          method() {}
+        }
+        expect(vi.mockObject({ K }, options).K).toBe(K);
+        expect(vi.isMockFunction(K.prototype.method)).toBe(false);
+      });
+
+      test("an instance of a tagged class is kept beside the mock of its class", () => {
+        class Tagged {
+          get [Symbol.toStringTag]() {
+            return "Tagged";
+          }
+          method() {
+            return "real";
+          }
+        }
+        const tagged = new Tagged();
+        const mocked = vi.mockObject({ Tagged, tagged });
+        expect(mocked.tagged).toBe(tagged);
+        expect(mocked.tagged.method()).toBe("real");
+        expect(new mocked.Tagged().method()).toBeUndefined();
+        expect(mocked.tagged instanceof mocked.Tagged).toBe(false);
+      });
 
       test("a prototype given as a value, whose Symbol.toStringTag getter needs an instance", () => {
         class NeedsInstance {

@@ -226,7 +226,12 @@ function compiled(dress: Dress, name: keyof typeof sources) {
     // Nothing here runs a program.
     await build(String(folder), [withProgramOutput(file), buildFlags.withoutExecutable]);
     const { lines, stderr, exitCode } = await runOn("bytes", file);
-    expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    // What `bytes` prints begins with a unit: unitsIn() would leave out whatever stands in front of the first.
+    expect({ begins: lines[0]?.split(" ")[0], stderr, exitCode }).toEqual({
+      begins: "unit",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
     return { title, file, units: unitsIn(lines) };
   };
   if (!whenCompiled.has(title)) whenCompiled.set(title, compile());
@@ -300,7 +305,6 @@ function blocksFirst(lines: string[]) {
 async function operationsOf(program: Program, keys: string[]) {
   const names = keys.map(key => program.units.get(key)!.name);
   const { lines, stderr, exitCode } = await runOn("walk", program.file, ...names);
-  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const texts = new Map<string, string[]>();
   let text: string[] = [];
   for (const line of lines) {
@@ -308,8 +312,13 @@ async function operationsOf(program: Program, keys: string[]) {
     if (name) texts.set(name, (text = []));
     text.push(line);
   }
-  return (key: string) =>
-    texts.get(program.units.get(key)!.name) ?? [`testaot walk has printed nothing of it in ${program.title}`];
+  // `walk` prints the code of every unit that it is given, and stops at one that fails: a control must not take a unit that is missing for one that differs.
+  expect({ notPrinted: names.filter(name => !texts.has(name)), stderr, exitCode }).toEqual({
+    notPrinted: [],
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+  return (key: string) => texts.get(program.units.get(key)!.name)!;
 }
 
 async function explained(programs: Pair, withOtherBytes: string[], judge: Judge) {
@@ -345,7 +354,8 @@ async function compare(programs: Pair, files: string[], judge: Judge = "operatio
 
 async function expectSameCode(programs: Pair, files: string[], judge?: Judge) {
   const { shared, differences } = await compare(programs, files, judge);
-  expect(shared).not.toEqual([]);
+  // Each of the files has units that both programs have: one of which nothing is compared would pass unseen beside the others.
+  expect(files.filter(file => !shared.some(key => fileOf(key) === file))).toEqual([]);
   expect(differences).toEqual([]);
 }
 
@@ -377,6 +387,8 @@ for (const dress of Object.keys(extensions) as Dress[]) {
           line => !/^f\d+:\S+ (same: |has the code of f\d+:\S+$|has no code in the whole program$)/.test(line),
         );
         expect({ notTheSame, stderr, exitCode }).toEqual({ notTheSame: [], stderr: expect.any(String), exitCode: 0 });
+        // One line for each unit, in their order: a run that ends early says nothing of the units behind.
+        expect(lines.map(line => line.split(" ")[0])).toEqual(units);
         expect(lines.some(line => / same: /.test(line))).toBe(true);
       },
       timeLimit,
@@ -427,24 +439,39 @@ for (const dress of Object.keys(extensions) as Dress[]) {
 
     declared(
       "the comparison reports a changed constant",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another limit"), [feature])).differences).not.toEqual([]),
+      async () => {
+        const { differences } = await compare(await both(dress, "alone", "another limit"), [feature]);
+        const limit = Number(/area < (\d+)/.exec(sources.alone(dress)[feature])?.[1]);
+        // Each is the constant as the walk reads it: the limit in the one program, one more in the other.
+        const constant = new RegExp(
+          String.raw`\n +walk, alone, \w+: .*\binteger=${limit}\b.*\n +walk, another limit, \w+: .*\binteger=${limit + 1}\b`,
+        );
+        expect(differences).not.toEqual([]);
+        for (const difference of differences) expect(difference).toMatch(constant);
+      },
       timeLimit,
     );
 
     declared(
       "the comparison reports another type that a shared helper is handed",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another type"), features)).differences).not.toEqual([]),
+      async () => {
+        const { differences } = await compare(await both(dress, "alone", "another type"), features);
+        // In each feature: all of them call the helper.
+        expect([...new Set(differences.map(fileOf))]).toEqual(features);
+      },
       timeLimit,
     );
 
     declared(
       "the comparison reports a helper that is no longer copied in line",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another helper"), features)).differences.join("\n")).toMatch(
-          /calls, another helper, \w+: Call Function Body .* "isInteger" /,
-        ),
+      async () => {
+        const { differences } = await compare(await both(dress, "alone", "another helper"), features);
+        const call = /\n +calls, another helper, \w+: Call Function Body .* "isInteger" /;
+        // In each feature, and each is the call.
+        expect(differences.map(difference => (call.test(difference) ? fileOf(difference) : difference))).toEqual(
+          features,
+        );
+      },
       timeLimit,
     );
   });

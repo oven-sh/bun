@@ -83,6 +83,23 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(notExists).toBe(false);
       });
 
+      test("exists refuses a second key and answers for one key for each call", async () => {
+        const redis = ctx.redis;
+        const missing = "exists:missing:" + randomUUIDv7();
+        const present = "exists:present:" + randomUUIDv7();
+        await redis.set(present, "x");
+
+        // The server counts both keys. The first key alone answers false.
+        expect(await redis.send("EXISTS", [missing, present])).toBe(1);
+        // @ts-expect-error: exists takes one key
+        expect(() => redis.exists(missing, present)).toThrow("exists takes one key");
+        // @ts-expect-error: exists takes one key
+        expect(() => redis.exists(Buffer.from(missing), Buffer.from(present))).toThrow("exists takes one key");
+
+        // Array.prototype.map passes (key, index, array): each call has one key.
+        expect(await Promise.all([missing, present].map(redis.exists, redis))).toEqual([false, true]);
+      });
+
       test("should increment and decrement counters", async () => {
         const redis = ctx.redis;
         const counterKey = "counter";
@@ -7837,13 +7854,64 @@ describe("RedisClient command encoding", () => {
     expect(received).toEqual([["PING"]]);
   });
 
+  test("exists() sends one key and refuses a second key", async () => {
+    // toThrow() also passes for a returned promise that rejects. The refusal has to be synchronous.
+    const thrownBy = (call: () => unknown) => {
+      try {
+        Promise.resolve(call()).catch(() => {});
+      } catch (error) {
+        return error;
+      }
+    };
+    const received = await recordCommands(async (client: any) => {
+      // EXISTS counts its keys, so the answer for the first key alone is the answer to another question.
+      for (const refused of [
+        () => client.exists("a", "b"),
+        () => client.exists("a", "b", "c"),
+        () => client.exists(...["a", "b"]),
+        () => client.exists("a", undefined, "c"),
+        () => client.exists("a", 0, "c"),
+        () => client.exists("a", "b", ["c"]),
+        () => client.exists("a", ["b"]),
+        () => client.exists("a", new String("b")),
+        () => client.exists("a", Buffer.from("b")),
+        () => client.exists("a", new Uint8Array([98])),
+        () => client.exists("a", new ArrayBuffer(1)),
+        () => client.exists("a", new Blob(["b"])),
+        () => client.exists(Buffer.from("a"), Buffer.from("b")),
+      ]) {
+        expect(thrownBy(refused)).toMatchObject({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'exists takes one key. Use send("EXISTS", keys) to count several keys',
+        });
+      }
+      // The key is checked first.
+      expect(thrownBy(() => client.exists(undefined, "b"))).toMatchObject({
+        message: "Expected key to be a string or buffer for 'exists'.",
+      });
+
+      // Any other argument is not read: map() passes an index and then the array, Array.from() an index.
+      await client.exists("a");
+      await client.exists("b", undefined);
+      await client.exists("c", null, undefined);
+      await client.exists("d", 0);
+      await client.exists("e", () => {});
+      await client.exists("f", 0, ["g"]);
+      await Promise.all(["h", "i"].map(client.exists, client));
+      await Promise.all(new Proxy(["j", "k"], {}).map(client.exists, client));
+      await Promise.all(Array.from(["l", "m"], client.exists.bind(client)));
+    });
+    expect(received).toEqual(["a", "b", "c", "d", "e", "f", "h", "i", "j", "k", "l", "m"].map(key => ["EXISTS", key]));
+  });
+
   // Every method is called with ("a", 1, undefined or null, "d"). A rest parameter starts at the
   // first, second or third argument, so the undefined/null is inside it and a real argument
   // follows it. A method has to throw before it writes, unless it is listed here.
   const readsNoArgument = ["dbsize", "lastsave", "randomkey", "time"];
   // prettier-ignore
   const readsOneArgument = [
-    "decr", "dump", "echo", "exists", "expiretime", "get", "getdel", "hgetall", "hkeys", "hlen", "hvals", "incr",
+    "decr", "dump", "echo", "expiretime", "get", "getdel", "hgetall", "hkeys", "hlen", "hvals", "incr",
     "keys", "llen", "persist", "pexpiretime", "ping", "pttl", "scard", "smembers", "strlen", "ttl", "type", "xlen",
     "zcard",
   ];

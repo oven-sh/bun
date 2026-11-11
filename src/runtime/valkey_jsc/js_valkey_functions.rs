@@ -556,11 +556,30 @@ impl JSValkeyClient {
         )
     }
 
+    /// `EXISTS` counts its keys and `exists()` answers for one key, so a second key would be dropped.
+    #[cold]
+    #[inline(never)]
+    fn exists_reject_second_key(global: &JSGlobalObject, rest: &[JSValue]) -> JsResult<()> {
+        let is_key = |value: &JSValue| {
+            value.is_string()
+                || value.as_array_buffer(global).is_some()
+                || value.as_class_ref::<crate::webcore::Blob>().is_some()
+        };
+        // `keys.map(client.exists, client)` passes an index and then the array, so neither is a second key.
+        if rest.first().is_some_and(|value| value.is_array()) || rest.iter().any(is_key) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "exists takes one key. Use send(\"EXISTS\", keys) to count several keys"
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) fn exists(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
+        rest: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "exists")?;
@@ -568,6 +587,9 @@ impl JSValkeyClient {
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
+        if !rest.is_empty() {
+            Self::exists_reject_second_key(global, JsLocal::to_js_slice(rest))?;
+        }
         // Send EXISTS command with special Exists type for boolean conversion
         send_cmd(
             self,

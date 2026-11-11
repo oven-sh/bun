@@ -29,7 +29,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   echo: [["message"], 1],
   eval: [["...args"], 2],
   evalsha: [["...args"], 2],
-  exists: [["key"], 1],
+  exists: [["key", "...rest"], 1],
   expire: [["key", "seconds"], 2],
   expireat: [["key", "timestamp"], 2],
   expiretime: [["key"], 0],

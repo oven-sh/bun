@@ -392,6 +392,11 @@ exports[`property matchers on a MessageEvent 2`] = `MessageEvent {
   }, 
 }`;
 
+exports[`property matchers on a MessageEvent 3`] = `MessageEvent {
+  type: "message",
+  data: "x", 
+}`;
+
 exports[`property matchers on an ErrorEvent 1`] = `ErrorEvent {
   type: "error",
   message: "m", 
@@ -400,5 +405,6 @@ exports[`property matchers on an ErrorEvent 1`] = `ErrorEvent {
 
 exports[`property matchers on an ErrorEvent 2`] = `ErrorEvent {
   type: "error",
+  message: Any<String>, 
   error: Any<Error>
 }`;

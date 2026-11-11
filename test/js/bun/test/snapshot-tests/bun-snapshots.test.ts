@@ -470,12 +470,14 @@ describe("property matchers", () => {
     expect(new MessageEvent("message", { data: { id: 1, k: 2 } })).toMatchSnapshot({
       data: { id: expect.any(Number) },
     });
+    // The lines of the event go by its real type, also where a matcher matched the type.
+    expect(new MessageEvent("message", { data: "x" })).toMatchSnapshot({ type: expect.any(String) });
   });
 
   test("on an ErrorEvent", () => {
     const event = () => new ErrorEvent("error", { message: "m", error: new Error("e") });
     expect(event()).toMatchSnapshot({ error: expect.any(Error) });
-    // `message` has a line only when it is a string, and here the matcher is in its place.
+    // The matcher that the message matched is in its place.
     expect(event()).toMatchSnapshot({ message: expect.any(String), error: expect.any(Error) });
   });
 

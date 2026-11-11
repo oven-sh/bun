@@ -318,13 +318,16 @@ void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<c
         if (auto* row = matchedRows->find(place, name))
             listed.quickSet(row - rows.data());
     }
-    // In the order of the walk, so that what is appended does not depend on addresses.
+    // In the order of the walk, so that what is appended does not depend on addresses. Few names are missing, so each is put in its place.
     WTF::Vector<const JestMatchedRows::Row*, 8> unlisted;
     for (size_t i = 0; i < rows.size(); i++) {
-        if (!listed.quickGet(i) && (taken == MatchedRowsTaken::All || !rows[i].childPlace))
-            unlisted.append(&rows[i]);
+        if (listed.quickGet(i) || (taken != MatchedRowsTaken::All && rows[i].childPlace))
+            continue;
+        size_t at = unlisted.size();
+        while (at && unlisted[at - 1]->order > rows[i].order)
+            at--;
+        unlisted.insert(at, &rows[i]);
     }
-    std::sort(unlisted.begin(), unlisted.end(), [](const JestMatchedRows::Row* a, const JestMatchedRows::Row* b) { return a->order < b->order; });
     for (auto* row : unlisted)
         missing.append(row->name);
 }

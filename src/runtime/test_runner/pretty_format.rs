@@ -1952,7 +1952,12 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Event => {
                     let event_type_value: JSValue = 'brk: {
-                        let type_value = self.place.current().row_or("type", || value.get(self.global_this, "type"))?.0;
+                        // The layout goes by the real type. An older Bun went by the matcher that the type matched, and printed an object.
+                        let type_value = if self.like_older_bun.is_some() {
+                            self.place.current().row_or("type", || value.get(self.global_this, "type"))?.0
+                        } else {
+                            value.get(self.global_this, "type")?
+                        };
                         let value_: JSValue = match type_value {
                             Some(v) => v,
                             None => break 'brk JSValue::UNDEFINED,
@@ -2002,12 +2007,15 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                         ));
 
-                        let (message_value, message_place) = self
-                            .place
-                            .current()
-                            .row_or("message", || value.fast_get(self.global_this, jsc::BuiltinName::Message))?;
+                        let message_row = self.place.current().row("message");
+                        // A matcher that the message matched is printed in its place. An older Bun left the line out.
+                        let prints_row = message_row.is_some() && self.like_older_bun.is_none();
+                        let (message_value, message_place) = match message_row {
+                            Some((row, place)) => (Some(row), place),
+                            None => (value.fast_get(self.global_this, jsc::BuiltinName::Message)?, MatchedPlace::default()),
+                        };
                         if let Some(message_value) = message_value {
-                            if message_value.is_string() {
+                            if message_value.is_string() || prints_row {
                                 self.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
                                     "{}message{}:{} ",
@@ -2202,7 +2210,7 @@ impl<'a> Formatter<'a> {
                                     }
                                     let (property_value, property_place) = props_place
                                         .row_named(&prop)
-                                        .unwrap_or((own_value, MatchedPlace::default()));
+                                        .unwrap_or_else(|| (own_value, MatchedPlace::default()));
 
                                     let tag = Tag::get(property_value, self.global_this)?;
 

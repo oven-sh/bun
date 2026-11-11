@@ -1676,8 +1676,9 @@ declare module "bun:test" {
      *
      * When a property matcher matches inside an array, a plain object, or an instance of a class,
      * a serializer gets a plain array or object that has the matcher in place, so an `instanceof`
-     * test does not see the class there. A serializer gets every other value as it is, such as a
-     * `Map`, a `Response`, an `Error`, or an instance of a class that extends one of them.
+     * test does not see the class there. The plain array keeps the `length` of the array, also if
+     * a matcher matched it. A serializer gets every other value as it is, such as a `Map`, a
+     * `Response`, an `Error`, or an instance of a class that extends one of them.
      *
      * @example
      * expect.addSnapshotSerializer({

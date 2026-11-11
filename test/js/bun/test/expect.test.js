@@ -4296,6 +4296,42 @@ describe("expect()", () => {
         expect(holders.url.href).toBe("https://example.com/a");
         expect(pattern.headers.id).toBe(string);
 
+        // The lines of a MessageEvent go by its real type, also where a matcher matched the type, so its data is there.
+        expect(
+          marked(
+            failureOf(() =>
+              expect(new MessageEvent("message", { data: "x" })).toMatchObject({ type: string, data: "y" }),
+            ),
+          ),
+        ).toEqual([
+          "- {",
+          '-   "data": "y",',
+          '-   "type": Any<String>,',
+          "+ MessageEvent {",
+          '+   type: "message",',
+          '+   data: "x", ',
+          "- Expected  - 3",
+          "+ Received  + 3",
+        ]);
+        // The matcher that the message of an ErrorEvent matched is in its place.
+        expect(
+          marked(
+            failureOf(() =>
+              expect(new ErrorEvent("error", { message: "m", error: 1 })).toMatchObject({ message: string, error: 2 }),
+            ),
+          ),
+        ).toEqual([
+          "- {",
+          '-   "error": 2,',
+          '-   "message": Any<String>,',
+          "+ ErrorEvent {",
+          '+   type: "error",',
+          "+   message: Any<String>, ",
+          "+   error: 1",
+          "- Expected  - 3",
+          "+ Received  + 4",
+        ]);
+
         // A Map, a Set and a FormData print their entries, and an entry is not the object that matched.
         const form = new FormData();
         form.append("append", "entry");

@@ -192,9 +192,7 @@ function read(this: NativeReadable, maxToRead: number) {
   }
 }
 
-// `chunk` is the spare buffer the pull wrote into. Only handleNumberResult
-// advances kRemainingChunk, and it does so before push(): a nested read() from
-// a listener may pull again, and a listener throw unwinds the rest.
+// Only handleNumberResult advances kRemainingChunk, before push(): a listener can pull again or throw.
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);

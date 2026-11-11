@@ -450,9 +450,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("onClose");
         self.detach_tcp();
         self.parse_initial_data();
-        if !self.defer_finish_until_parsed() {
-            self.finish(Outcome::Closed);
-        }
+        self.finish_after_parse_or_now();
 
         // For the socket. The outer `ingest` holds its own ref while a finish is deferred.
         self.release_io_ref();
@@ -695,12 +693,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                     .initial_data
                     .take()
                     .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
+                bun_core::handle_oom(pending.0.try_reserve(data.len()));
                 pending.0.extend_from_slice(data);
                 self.initial_data.set(Some(pending));
-                // The queue has no bound of its own: stop reading until it is parsed.
-                if !self.paused_for_queue.replace(true) {
-                    self.pause();
-                }
+                // The queue has no bound of its own: stop reading until it is parsed. Every time,
+                // because `send_close` and `resume()` start reading again.
+                self.paused_for_queue.set(true);
+                self.pause();
             }
             return;
         }
@@ -729,10 +728,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         self.parsing.set(false);
 
-        if self.paused_for_queue.take()
-            && self.receive_state.get() != ReceiveState::Closed
-            && self.cpp_websocket().is_some_and(|ws| !ws.is_paused())
-        {
+        // Also after a Close frame or a failure: the peer's FIN must still be read.
+        if self.paused_for_queue.take() && self.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
             self.resume();
         }
         if self.finish_after_parse.take() {
@@ -740,15 +737,15 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// The connection ended while the parser is on the stack: `ingest` finishes it after the
-    /// bytes already read are parsed, so `close` follows their messages. Returns `false` when
-    /// the caller must finish now (no parse on the stack, or reading already stopped).
-    fn defer_finish_until_parsed(&self) -> bool {
-        if !self.parsing.get() || self.receive_state.get() == ReceiveState::Closed {
-            return false;
+    /// The connection ended. While the parser is on the stack, `ingest` finishes it after the
+    /// bytes already read are parsed, so `close` follows their messages. Otherwise, or when
+    /// reading already stopped, it is finished now.
+    fn finish_after_parse_or_now(&self) {
+        if self.parsing.get() && self.receive_state.get() != ReceiveState::Closed {
+            self.finish_after_parse.set(true);
+        } else {
+            self.finish(Outcome::Closed);
         }
-        self.finish_after_parse.set(true);
-        true
     }
 
     fn handle_data_loop(&self, data: &[u8]) {
@@ -1446,9 +1443,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Only `arm_close_timeout` sets a timeout.
     pub fn handle_timeout(&self, _socket: Socket<SSL>) {
-        if !self.defer_finish_until_parsed() {
-            self.finish(Outcome::Closed);
-        }
+        self.finish_after_parse_or_now();
     }
 
     pub(crate) fn has_backpressure(&self) -> bool {
@@ -1856,9 +1851,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             tunnel.close_socket(CloseMode::Fin);
         }
         this.parse_initial_data();
-        if !this.defer_finish_until_parsed() {
-            this.finish(Outcome::Closed);
-        }
+        this.finish_after_parse_or_now();
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains or a renegotiation ends.

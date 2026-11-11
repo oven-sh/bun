@@ -1,33 +1,39 @@
 // shim for using process in browser
 var queue = [];
+var batch = [];
+var index = 0;
 var draining = false;
+var scheduled = false;
 
+// node runs ticks before queued promise jobs. A browser has no hook for that, so the drain is one microtask.
 function scheduleDrain() {
-  if (typeof queueMicrotask === "function") {
-    queueMicrotask(drainQueue);
-  } else {
-    Promise.resolve().then(drainQueue);
-  }
+  scheduled = true;
+  queueMicrotask(drainQueue);
 }
 
 function drainQueue() {
+  scheduled = false;
   draining = true;
-  var batch = [];
-  var i = 0;
   try {
     // Ticks queued mid-drain run in the same pass, like node. A fresh array per batch lets finished ticks be freed.
-    while (queue.length) {
+    for (;;) {
+      while (index < batch.length) {
+        var item = batch[index++];
+        item.fun.apply(undefined, item.args);
+      }
+      if (!queue.length) break;
       batch = queue;
       queue = [];
-      for (i = 0; i < batch.length; i++) {
-        batch[i].fun.apply(null, batch[i].args);
-      }
+      index = 0;
     }
   } finally {
-    // On a throw, drop the callback that threw and keep the rest in order.
-    if (i < batch.length) queue = batch.slice(i + 1).concat(queue);
+    // On a throw, `index` is past the callback that threw. The rest of the batch runs first in the next drain.
+    if (index >= batch.length) {
+      batch = [];
+      index = 0;
+    }
     draining = false;
-    if (queue.length) scheduleDrain();
+    if (batch.length || queue.length) scheduleDrain();
   }
 }
 
@@ -39,9 +45,7 @@ export function nextTick(fun, ...args) {
     throw err;
   }
   queue.push({ fun, args });
-  if (queue.length === 1 && !draining) {
-    scheduleDrain();
-  }
+  if (!draining && !scheduled) scheduleDrain();
 }
 
 export const title = "browser";
@@ -62,12 +66,6 @@ export const removeAllListeners = noop;
 export const emit = noop;
 export const prependListener = noop;
 export const prependOnceListener = noop;
-export const emitWarning = function (warning, type) {
-  // An Error prints with its own name and ignores `type`, as in node.
-  if (warning instanceof Error) return console.warn(String(warning));
-  var name = typeof type === "string" ? type : (type && type.type) || "Warning";
-  console.warn(name + ": " + (warning && warning.message ? warning.message : warning));
-};
 
 export const listeners = function (name) {
   return [];
@@ -87,29 +85,4 @@ export const chdir = function (dir) {
 
 export const umask = function () {
   return 0;
-};
-
-export default {
-  nextTick,
-  title,
-  browser,
-  env,
-  argv,
-  version,
-  versions,
-  on,
-  addListener,
-  once,
-  off,
-  removeListener,
-  removeAllListeners,
-  emit,
-  prependListener,
-  prependOnceListener,
-  emitWarning,
-  listeners,
-  binding,
-  cwd,
-  chdir,
-  umask,
 };

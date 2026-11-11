@@ -124,6 +124,8 @@
       // user's bundle. They are plain JS, not JSC builtins: a `$intrinsic`,
       // a node global such as `process` or `Buffer`, or any other undeclared
       // name is a ReferenceError in the browser. Read `globalThis.process`.
+      // This sees the hand-written sources only. The npm packages are in the
+      // built files: browser/NodePolyfills lints a bundle of all of them.
       "files": ["src/node-fallbacks/*.js"],
       "env": { "browser": true, "es2024": true },
       "rules": {

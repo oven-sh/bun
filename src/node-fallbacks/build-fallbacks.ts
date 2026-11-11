@@ -67,36 +67,44 @@ const resolveForPolyfill = (polyfill: string): Bun.BunPlugin => ({
 
 const requireShim = /var __require=\(\(x\)=>typeof require<"u"\?require:.*?is not supported'\)\}\);/;
 
+// Free `process` / `Buffer` in the npm packages: rename, then bind with the line for the output format.
+const injectedGlobals = [
+  {
+    defines: ["process", "global.process"],
+    id: "__bun_process",
+    // A Node.js-like host keeps its own process. A page, also one with a partial `process` shim, gets the polyfill.
+    esm: 'import __bun_process_polyfill from "process";var __bun_process=globalThis.process?.versions?.node?globalThis.process:__bun_process_polyfill;',
+    cjs: 'var __bun_process=globalThis.process?.versions?.node?globalThis.process:(m=>m.default||m)(require("process"));',
+  },
+  {
+    defines: ["Buffer"],
+    id: "__bun_Buffer",
+    esm: 'import { Buffer as __bun_Buffer } from "buffer";',
+    cjs: 'var __bun_Buffer = require("buffer").Buffer;',
+  },
+];
+
+// Node.js globals that a browser does not have and that no polyfill binds. A polyfill that reads one fails the build.
+const notInABrowser = ["setImmediate", "clearImmediate", "__dirname", "__filename"];
+
 let commands: Promise<void>[] = [];
 
 for (const name of allFiles) {
   const polyfill = name.slice(0, -".js".length);
 
-  // A source that sets `module.exports` stays CommonJS, so `require()` of the polyfill returns that value.
-  const format = /^module\.exports\s*=/m.test(fs.readFileSync(name, "utf8")) ? "cjs" : "esm";
+  const source = fs.readFileSync(name, "utf8");
 
-  // Free `process` / `Buffer` in the npm packages: rename, then import from the sibling polyfill.
-  const injectedGlobals = [
-    {
-      defines: ["process", "global.process"],
-      id: "__bun_process",
-      skip: ["process.js"],
-      esm: 'import __bun_process from "process";',
-      cjs: 'var __bun_process = require("process").default;',
-    },
-    {
-      defines: ["Buffer", "global.Buffer"],
-      id: "__bun_Buffer",
-      // assert.js: only npm util's never-called isBuffer() names Buffer; the import would cost 31 KB.
-      skip: ["buffer.js", "assert.js"],
-      esm: 'import { Buffer as __bun_Buffer } from "buffer";',
-      cjs: 'var __bun_Buffer = require("buffer").Buffer;',
-    },
-  ].filter(g => !g.skip.includes(name));
+  // A source that sets `module.exports` stays CommonJS, so `require()` of the polyfill returns that value.
+  const format = /^module\.exports\s*=/m.test(source) ? "cjs" : "esm";
+
+  // An ES module without a default export gets one that has every named export.
+  const named = new Bun.Transpiler().scan(source).exports;
+  const needsDefault = format === "esm" && !named.includes("default");
 
   commands.push(
     Bun.build({
       entrypoints: [name],
+      files: needsDefault ? { [path.resolve(name)]: `${source}\nexport default { ${named} };` } : {},
       outdir,
       target: "browser",
       format,
@@ -106,12 +114,15 @@ for (const name of allFiles) {
         "process.browser": "true",
         "global": "globalThis",
         ...Object.fromEntries(injectedGlobals.flatMap(g => g.defines.map(d => [d, g.id]))),
+        ...Object.fromEntries(notInABrowser.map(global => [global, `__bun_no_${global}`])),
       },
       plugins: [resolveForPolyfill(polyfill)],
       metafile: true,
       throw: true,
     }).then(async ({ metafile }) => {
       if (!metafile) throw new Error("This bun has no Bun.build({ metafile })");
+      const exported = Object.values(metafile.outputs).flatMap(output => output.exports ?? []);
+      if (format === "esm" && !exported.includes("default")) throw new Error(`${name} has no default export`);
       const inlined = Object.keys(metafile.inputs).filter(input => input.startsWith("node:"));
       if (inlined.length > 0) {
         throw new Error(`${name} bundles ${inlined.join(", ")} from the bun that runs codegen`);
@@ -126,6 +137,10 @@ for (const name of allFiles) {
 
       if (outfile.includes("__require")) {
         throw new Error("Unexpected __require in " + name);
+      }
+
+      for (const global of notInABrowser) {
+        if (outfile.includes(`__bun_no_${global}`)) throw new Error(`${name} reads the global \`${global}\``);
       }
 
       for (const { id, esm, cjs } of injectedGlobals) {

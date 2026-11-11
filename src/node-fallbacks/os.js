@@ -62,23 +62,3 @@ export const EOL = "\n";
 export const homedir = function () {
   return "/";
 };
-
-export default {
-  endianness,
-  hostname,
-  loadavg,
-  uptime,
-  freemem,
-  totalmem,
-  cpus,
-  type,
-  release,
-  getNetworkInterfaces,
-  networkInterfaces,
-  arch,
-  platform,
-  tmpdir,
-  tmpDir,
-  EOL,
-  homedir,
-};

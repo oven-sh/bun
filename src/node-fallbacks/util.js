@@ -91,33 +91,10 @@ export function deprecate(fn, msg) {
   return deprecated;
 }
 
-// This function has been edited to be tree-shakable and minifiable
-export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex, debugEnv) => (
-  (debugEnv = globalThis.process?.env?.NODE_DEBUG) &&
-    (debugEnvRegex = new RegExp(
-      "^" +
-        debugEnv
-          .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
-          .replace(/\*/g, ".*")
-          .replace(/,/g, "$|^")
-          .toUpperCase() +
-        "$",
-      "i",
-    )),
-  set => {
-    set = set.toUpperCase();
-    if (!debugs[set]) {
-      if (debugEnvRegex?.test(set)) {
-        debugs[set] = function (...args) {
-          console.error("%s: %s", set, format(...args));
-        };
-      } else {
-        debugs[set] = function () {};
-      }
-    }
-    return debugs[set];
-  }
-))();
+// A browser build has no NODE_DEBUG, so no section prints.
+export function debuglog(set) {
+  return function () {};
+}
 
 /**
  * Echos the value of a value. Tries to print the value out
@@ -601,6 +578,14 @@ export const promisify = /* @__PURE__ */ (x => ((x.custom = kCustomPromisifiedSy
       return fn;
     }
 
+    // A page's own timers have no `promisify.custom` function. The generic form would pass the callback last.
+    if (original === globalThis.setTimeout) {
+      return (delay, value) => new Promise(resolve => original(resolve, delay, value));
+    }
+    if (original === globalThis.setImmediate) {
+      return value => new Promise(resolve => original(resolve, value));
+    }
+
     function fn(...args) {
       var promiseResolve, promiseReject;
       var promise = new Promise(function (resolve, reject) {
@@ -686,33 +671,3 @@ export function callbackify(original) {
 
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
-export default {
-  format,
-  deprecate,
-  debuglog,
-  inspect,
-  types,
-  isArray,
-  isBoolean,
-  isNull,
-  isNullOrUndefined,
-  isNumber,
-  isString,
-  isSymbol,
-  isUndefined,
-  isRegExp,
-  isObject,
-  isDate,
-  isError,
-  isFunction,
-  isPrimitive,
-  isBuffer,
-  log,
-  inherits,
-  _extend,
-  promisify,
-  callbackifyOnRejected,
-  callbackify,
-  TextEncoder,
-  TextDecoder,
-};

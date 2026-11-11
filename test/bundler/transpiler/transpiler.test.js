@@ -4752,7 +4752,7 @@ console.log(foo, array);
       }
 
       // A renamer prints another name, so the value still moves.
-      expect(print({ minify: true }, "const q = () => {}; return q.name;")).toContain("{return(()=>{}).name}");
+      expect(print({ minify: true }, "const q = () => {}; return q.name;")).toBe("function t(){return(()=>{}).name}");
     });
 
     it("comma operator transforms", () => {

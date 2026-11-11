@@ -9,6 +9,7 @@ use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
+use crate::api::standalone_graph_jsc::find_source_path;
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
@@ -570,6 +571,14 @@ impl Stdio {
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
+        if let (1 | 2, webcore::blob::Any::Blob(file)) = (i, &blob) {
+            file.follow_source_path();
+            if let Some(path) = find_source_path(file) {
+                crate::node::fs::note_written_file(path);
+                *self = Stdio::Path(PathLike::owned(path.to_vec()));
+                return Ok(());
+            }
+        }
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {

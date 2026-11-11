@@ -6,7 +6,7 @@ use bun_jsc::PinnedArrayBuffer;
 use core::ffi::c_char;
 use std::rc::Rc;
 
-use crate::node::fs::{open_embedded_shell_operand, prepare_shell_redirect};
+use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand};
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
@@ -571,24 +571,20 @@ impl Builtin {
                     }
                 } else {
                     let cwd = Self::shell(interp, cmd).cwd();
-                    let prepared =
-                        prepare_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
-                    let result = prepared.and_then(|()| {
-                        bun_io::open_for_writing_impl(
-                            cwd_fd,
-                            &path,
-                            redirect.to_flags(),
-                            perm,
-                            &mut pollable,
-                            &mut is_socket,
-                            false,
-                            &mut is_nonblocking,
-                            (),
-                            |_| {},
-                            is_pollable_from_mode,
-                            shell_openat,
-                        )
-                    });
+                    let result = bun_io::open_for_writing_impl(
+                        cwd_fd,
+                        &path,
+                        redirect.to_flags(),
+                        perm,
+                        &mut pollable,
+                        &mut is_socket,
+                        false,
+                        &mut is_nonblocking,
+                        (),
+                        |_| {},
+                        is_pollable_from_mode,
+                        shell_openat,
+                    );
                     match result {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
@@ -602,7 +598,10 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => f,
+                        Ok(f) => {
+                            note_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
+                            f
+                        }
                     }
                 };
 

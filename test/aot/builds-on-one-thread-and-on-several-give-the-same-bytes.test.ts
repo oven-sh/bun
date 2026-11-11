@@ -44,13 +44,77 @@ export function show() { return Object.keys(table).length + table.a.weight; }
 `,
 };
 
+// The same of an alias that a package declares: no declaration of a package is trusted, so neither is `Loaded`, whichever of `Loaded | Weight` and `Loaded` is asked for first. Trusted it is where the
+// program declares `Weight` itself.
+function writeSidesOfUnion(order: "union first" | "union last", weight: "Grams" | "number") {
+  const classes = [
+    "class Both { held: Loaded | Weight; constructor(held: Loaded | Weight) { this.held = held; } kind(): string { return typeof this.held; } }",
+    "class Alone { value: Loaded; constructor(value: Loaded) { this.value = value; } twice(): number { return this.value * 2; } }",
+  ];
+  if (order === "union last") classes.reverse();
+  const filler = Array.from(
+    { length: 3000 },
+    (_, index) =>
+      `export function fill${index}(n: number): number { let all = ${index}; for (let i = 0; i < n; i++) all = (all * 17 + i) % 7919; return all; }`,
+  );
+  return {
+    "node_modules/units/package.json": `{ "name": "units", "version": "1.0.0", "main": "index.js", "types": "index.d.ts" }`,
+    "node_modules/units/index.d.ts": `export type Grams = number;\nexport declare function weigh(): Grams;\n`,
+    "node_modules/units/index.js": `exports.weigh = function () { return JSON.parse("14"); };\n`,
+    "tsconfig.json": `{ "compilerOptions": { "strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "esnext" } }`,
+    "types.ts": `import type { Grams } from "units";\nimport { loaded } from "./data";\nexport type Weight = ${weight};\nexport type Loaded = typeof loaded;\nexport type Unused = Grams;\n`,
+    "data.ts": `import { weigh } from "units";\nimport type { Weight } from "./types";\n${filler.join("\n")}\nexport const loaded: Weight = weigh();\n`,
+    "entry.ts": `import type { Loaded, Weight } from "./types";\nimport { loaded, fill5 } from "./data";\n${classes.join("\n")}\nconsole.log(new Alone(loaded).twice(), fill5(4), new Both(loaded).kind());\n`,
+  };
+}
+
 describe.skipIf(!!unsupported)("compile/aot/builds-on-one-thread-and-on-several-give-the-same-bytes", () => {
   const folder = String(tempDir("aot-same-bytes-by-threads", sources));
   const folderOfNamedTypes = String(tempDir("aot-same-bytes-by-threads-named-types", sourcesOfNamedTypes));
+  const folderOfUnionFirst = String(
+    tempDir("aot-same-bytes-by-threads-union-first", writeSidesOfUnion("union first", "Grams")),
+  );
+  const folderOfUnionLast = String(
+    tempDir("aot-same-bytes-by-threads-union-last", writeSidesOfUnion("union last", "Grams")),
+  );
+  const folderOfOwnAlias = String(
+    tempDir("aot-same-bytes-by-threads-own-alias", writeSidesOfUnion("union first", "number")),
+  );
   afterAll(() => {
-    rmSync(folder, { recursive: true, force: true });
-    rmSync(folderOfNamedTypes, { recursive: true, force: true });
+    for (const each of [folder, folderOfNamedTypes, folderOfUnionFirst, folderOfUnionLast, folderOfOwnAlias])
+      rmSync(each, { recursive: true, force: true });
   });
+
+  async function countBuilds(folder: string, threadCounts: number[]) {
+    const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
+    const counts: string[] = [];
+    for (const threads of threadCounts) {
+      const build = await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          ...withoutDebugInformation,
+          "--aot",
+          `--aot-threads=${threads}`,
+          "--explain=statistics",
+          "./entry.ts",
+          "--outfile",
+          executable,
+        ],
+        folder,
+        bunEnv,
+      );
+      built(build);
+      rmSync(executable);
+      const lines = `${build.stdout}\n${build.stderr}`
+        .split("\n")
+        .filter(line => /^ *(?:Accesses|Values)[A-Za-z]+:? +\d+ *$/.test(line));
+      expect(lines).not.toBeEmpty();
+      counts.push(lines.map(line => line.trim()).join("\n"));
+    }
+    return counts;
+  }
 
   async function hashBuilds(folder: string, entry: string, threadCounts: number[]) {
     const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
@@ -93,6 +157,18 @@ describe.skipIf(!!unsupported)("compile/aot/builds-on-one-thread-and-on-several-
     await slot(async () => {
       const hashes = await hashBuilds(folderOfNamedTypes, "./entry.ts", [1, 4, 16, 32]);
       expect(hashes).toEqual(hashes.map(() => hashes[0]));
+    });
+  }, 600_000);
+
+  test("an alias that a package declares is trusted through no value, on any number of threads", async () => {
+    await slot(async () => {
+      const hashes = await hashBuilds(folderOfUnionFirst, "./entry.ts", [1, 4, 16, 32]);
+      expect(hashes).toEqual(hashes.map(() => hashes[0]));
+      const [untrusted] = await countBuilds(folderOfUnionLast, [1]);
+      const [trusted] = await countBuilds(folderOfOwnAlias, [1]);
+      expect(untrusted).not.toBe(trusted);
+      expect(await countBuilds(folderOfUnionFirst, [1, 8])).toEqual([untrusted, untrusted]);
+      expect(await countBuilds(folderOfUnionLast, [8])).toEqual([untrusted]);
     });
   }, 600_000);
 });

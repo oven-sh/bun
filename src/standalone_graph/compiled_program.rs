@@ -851,13 +851,7 @@ fn is_at_or_below(path: &[u8], ancestor: &[u8]) -> bool {
     below.is_some_and(|it| it.is_empty() || it[0] == b'/')
 }
 
-/// The files that the program has renamed inside the executable: the new name of each, and its key in the graph.
-static RENAMED_FILES: bun_threading::Guarded<Vec<(Box<[u8]>, Box<[u8]>)>> =
-    bun_threading::Guarded::new(Vec::new());
-static HAS_RENAMED_FILES: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-
-/// A file of the executable that the program writes on the disk.
+/// A file that nobody asked the build to embed, which the program has written on the disk.
 struct WrittenFile {
     /// Its path under the root of the executable.
     path: Box<[u8]>,
@@ -871,11 +865,17 @@ static WRITTEN_FILES: bun_threading::Guarded<Vec<WrittenFile>> =
 static HAS_WRITTEN_FILES: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// `name` as an absolute path without `.` and `..`.
+pub fn normalize_source_path(name: &[u8]) -> Option<Box<[u8]>> {
+    let mut buffer = path_buffer_pool::get();
+    Some(absolute_key(name, &mut buffer)?.as_bytes().into())
+}
+
 pub fn has_written_files() -> bool {
     HAS_WRITTEN_FILES.load(core::sync::atomic::Ordering::Acquire)
 }
 
-/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable.
+/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable. What another process has laid there is not trusted.
 pub fn find_written_file(name: &[u8]) -> Option<Box<[u8]>> {
     if !has_written_files() || !is_bun_standalone_file_path(name) {
         return None;
@@ -961,79 +961,6 @@ fn has_vanished(path: &[u8]) -> bool {
         nearest = bun_paths::dirname(path);
     }
     false
-}
-
-/// What the program has set on a file of the executable.
-#[derive(Copy, Clone)]
-pub enum ChangedAttribute {
-    Mode(bun_sys::Mode),
-    /// User and group. `ChangedAttribute::KEPT` leaves one as it is.
-    Owner(u32, u32),
-    /// Of the last access and modification: seconds and nanoseconds.
-    Times([(i64, i64); 2]),
-}
-
-impl ChangedAttribute {
-    const KEPT: u32 = u32::MAX;
-
-    /// What this leaves as it is stays as `earlier` has set it.
-    fn over(self, earlier: Option<ChangedAttribute>) -> ChangedAttribute {
-        let choose = |id: u32, earlier: u32| if id == Self::KEPT { earlier } else { id };
-        match (self, earlier) {
-            (Self::Owner(user, group), Some(Self::Owner(earlier_user, earlier_group))) => {
-                Self::Owner(choose(user, earlier_user), choose(group, earlier_group))
-            }
-            _ => self,
-        }
-    }
-}
-
-static CHANGED_ATTRIBUTES: bun_threading::Guarded<Vec<(Box<[u8]>, ChangedAttribute)>> =
-    bun_threading::Guarded::new(Vec::new());
-static HAS_CHANGED_ATTRIBUTES: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-
-pub(crate) fn apply_changed_attributes(key: &[u8], stat: &mut Stat) {
-    if !HAS_CHANGED_ATTRIBUTES.load(core::sync::atomic::Ordering::Acquire) {
-        return;
-    }
-    let changed = CHANGED_ATTRIBUTES.lock();
-    for (_, attribute) in changed.iter().filter(|it| *it.0 == *key) {
-        match *attribute {
-            ChangedAttribute::Mode(mode) => {
-                stat.st_mode = (stat.st_mode as bun_sys::Mode & !0o7777 | mode & 0o7777) as _;
-            }
-            ChangedAttribute::Owner(user, group) => {
-                if user != ChangedAttribute::KEPT {
-                    stat.st_uid = user as _;
-                }
-                if group != ChangedAttribute::KEPT {
-                    stat.st_gid = group as _;
-                }
-            }
-            ChangedAttribute::Times([accessed, modified]) => {
-                #[cfg(not(windows))]
-                {
-                    (stat.st_atime, stat.st_atime_nsec) = (accessed.0 as _, accessed.1 as _);
-                    (stat.st_mtime, stat.st_mtime_nsec) = (modified.0 as _, modified.1 as _);
-                }
-                #[cfg(windows)]
-                for (time, set) in [(&mut stat.atim, accessed), (&mut stat.mtim, modified)] {
-                    (time.sec, time.nsec) = (set.0 as _, set.1 as _);
-                }
-            }
-        }
-    }
-}
-
-fn write_name_in_executable(name: &[u8]) -> Box<[u8]> {
-    #[cfg(windows)]
-    {
-        let mut buffer = path_buffer_pool::get();
-        crate::StandaloneModuleGraph::normalize_file_key(name, &mut buffer).into()
-    }
-    #[cfg(not(windows))]
-    name.into()
 }
 
 fn is_file_on_disk(path: &[u8]) -> bool {
@@ -1258,6 +1185,40 @@ fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
     bun_sys::fstat(fd).map(|stat| PosixStat::init(&stat))
 }
 
+/// `fd` reads the file at `path` from here on, from the same offset, if it still is what `is_meant` asks for when that is open.
+#[cfg(not(windows))]
+fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
+    use bun_sys::FdExt as _;
+    let opened = bun_sys::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    let reopened = (|| {
+        let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
+        bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
+        if !is_meant() {
+            return Ok(false);
+        }
+        // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // SAFETY: both are descriptors of this process.
+            let moved = unsafe { libc::dup3(opened.native(), fd.native(), libc::O_CLOEXEC) };
+            match moved {
+                -1 => Err(bun_sys::Error::from_code(
+                    bun_sys::E::EIO,
+                    bun_sys::Tag::dup,
+                )),
+                _ => Ok(true),
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            bun_sys::dup2(opened, fd)?;
+            bun_sys::set_close_on_exec(fd).map(|()| true)
+        }
+    })();
+    opened.close();
+    reopened
+}
+
 impl StandaloneModuleGraph {
     /// `descriptor` holds the result of `to_graph_bytes` and stays open: the engine maps the code from it.
     pub fn from_descriptor(descriptor: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
@@ -1461,8 +1422,7 @@ impl StandaloneModuleGraph {
                 && (self.files.contains(path) || self.dirs.contains(path));
             return is_held
                 || self.key_of_mounted_asset(path).is_some()
-                || self.find_renamed_file(path).is_some()
-                || self.contains_moved_file(path);
+                || self.contains_written_file(path);
         }
         if root.is_some_and(|root| key.starts_with(root)) {
             return true;
@@ -1618,6 +1578,34 @@ impl StandaloneModuleGraph {
         DESCRIPTOR_FILTER.fetch_or(filter_bit(fd), Ordering::Relaxed);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         bun_sys::IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
+    }
+
+    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there.
+    #[cfg(not(windows))]
+    pub fn move_descriptors_to_disk(&self, name: &[u8]) {
+        let mut buffer = path_buffer_pool::get();
+        let path = absolute_key(name, &mut buffer);
+        let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
+            return;
+        };
+        let key = Self::key_under_own_root(program, path.as_bytes());
+        let Some(file) = key.and_then(|it| self.lookup_file(&it)) else {
+            return;
+        };
+        let mut descriptors = DESCRIPTORS.lock();
+        for (index, slot) in descriptors.iter_mut().enumerate() {
+            let Some(descriptor) = slot.as_deref().filter(|it| it.path == file.name) else {
+                continue;
+            };
+            let fd = Fd::from_native(index as _);
+            let is_open = || {
+                stat_descriptor(fd)
+                    .is_ok_and(|now| is_same_file(&now, &descriptor.opened, has_birth_time()))
+            };
+            if !is_open() || reopen_at(fd, path, is_open).is_ok() {
+                *slot = None;
+            }
+        }
     }
 
     /// For a descriptor of an embedded path, returns the `lstat()` of the path with any changes made through the descriptor.
@@ -1959,13 +1947,12 @@ impl StandaloneModuleGraph {
                 || program.entry_point_by_source_path(key).is_some()
                 || program.entry_points_in_directory(key).next().is_some()
                 || self.key_of_mounted_asset(key).is_some()
-                || self.find_renamed_file(key).is_some()
-                || self.contains_moved_file(key)
+                || self.contains_written_file(key)
         };
         holds(key) || Self::key_under_own_root(program, key).is_some_and(|it| holds(&it))
     }
 
-    /// The program writes the file at the source path `name` on the disk, or what is in that folder. Once a file is there, its copy in the executable is outdated.
+    /// The program has written the file at the source path `name` on the disk, or has moved a folder there. The copy in the executable of a file that nobody asked the build to embed is outdated.
     pub fn note_written_file(&self, name: &[u8]) {
         let mut buffer = path_buffer_pool::get();
         let path_on_disk = absolute_key(name, &mut buffer);
@@ -1973,41 +1960,28 @@ impl StandaloneModuleGraph {
             return;
         };
         let path_on_disk = path_on_disk.as_bytes();
-        let Some(path) =
-            Self::key_under_own_root(program, path_on_disk).filter(|it| *it != path_on_disk)
-        else {
+        let folder = Self::key_under_own_root(program, path_on_disk);
+        let Some(folder) = folder.filter(|it| *it != path_on_disk) else {
             return;
         };
-        let find = |path: &[u8]| {
-            self.lookup_file(path)
-                .or_else(|| self.find_renamed_file(path))
-        };
-        if let Some(file) = find(&path) {
-            record_written_file(&path, file.name, path_on_disk);
+        if let Some(file) = self.lookup_file(&folder) {
+            if self.is_file_for_file_system_alone(file) {
+                record_written_file(&folder, file.name, path_on_disk);
+            }
             return;
         }
-        let below = self
-            .files
-            .keys()
-            .iter()
-            .filter(|it| is_at_or_below(it, &path));
-        for key in below {
-            let path_on_disk = [path_on_disk, &key[path.len()..]].concat();
-            record_written_file(key, key, &path_on_disk);
+        if !self.dirs.contains(&folder) {
+            return;
         }
-    }
-
-    /// The source path of the file at `name` under the root of the executable, if nobody asked the build to embed it. The program may write such a file, as it may over its sources.
-    pub fn find_source_path_to_write(&self, name: &[u8]) -> Option<Vec<u8>> {
-        let program = self.compiled_program.as_ref()?;
-        if program.preserves_source_paths || !is_bun_standalone_file_path(name) {
-            return None;
+        for (key, file) in self.files.keys().iter().zip(self.files.values()) {
+            if !is_at_or_below(key, &folder) || !self.is_file_for_file_system_alone(file) {
+                continue;
+            }
+            let path_on_disk = [path_on_disk, &key[folder.len()..]].concat();
+            if bun_sys::exists(&path_on_disk) {
+                record_written_file(key, key, &path_on_disk);
+            }
         }
-        let file = self.find_ref(name)?;
-        if !self.is_file_for_file_system_alone(file) {
-            return None;
-        }
-        Self::path_on_build_machine(program, file.name)
     }
 
     /// Where the file or folder `key` of the graph was when the program was built.
@@ -2108,84 +2082,74 @@ impl StandaloneModuleGraph {
             if self.is_file_for_file_system_alone(file) {
                 record_removed_path(file.name);
             }
-        } else if self.dirs.contains(key) && !self.forget_folder_for_file_system_only(key, false) {
+        } else if self.dirs.contains(key) && !self.forget_folder(key) {
             let files = self.files.keys().iter().zip(self.files.values());
             files
                 .filter(|it| is_at_or_below(it.0, key) && !is_removed_by_program(it.0))
                 .filter(|it| self.is_file_for_file_system_alone(it.1))
                 .for_each(|it| record_removed_path(it.0));
         }
-        if HAS_RENAMED_FILES.load(core::sync::atomic::Ordering::Acquire) {
-            let mut renamed = RENAMED_FILES.lock();
-            renamed.retain(|it| !is_at_or_below(&it.0, key));
-        }
     }
 
-    /// The program removes `name` in the executable. Returns false unless that is a file that nobody asked the build to embed: then it is gone for the program, as it would be on the disk.
-    pub fn forget_file_for_file_system_only(&self, name: &[u8]) -> bool {
-        let found = self.find_ref(name);
-        let Some(file) = found.filter(|file| self.is_file_for_file_system_alone(file)) else {
-            return false;
-        };
-        RENAMED_FILES.lock().retain(|it| *it.1 != *file.name);
-        record_removed_path(file.name);
-        true
-    }
-
-    /// Sets it on the file or folder that the program finds at `name`. Returns false for an asset or code under its own path.
-    pub fn change_attribute(&self, name: &[u8], attribute: ChangedAttribute) -> bool {
-        let name = strings::without_trailing_slash(name);
-        let mut buffer = path_buffer_pool::get();
-        let key: &[u8] = match self.find_ref(name) {
-            Some(file) if self.yields_to_changes(name, file) => file.name,
-            Some(_) => return false,
-            None if is_bun_standalone_file_path(name) && self.list_movable(name).is_none() => {
-                return false;
-            }
-            None => match self.directory_key(name, &mut buffer) {
-                Some(folder) => folder,
-                None => return false,
-            },
-        };
-        let mut changed = CHANGED_ATTRIBUTES.lock();
-        let is_same = |it: &ChangedAttribute| {
-            core::mem::discriminant(it) == core::mem::discriminant(&attribute)
-        };
-        let mut earlier = None;
-        changed.retain(|it| {
-            let is_replaced = *it.0 == *key && is_same(&it.1);
-            if is_replaced {
-                earlier = Some(it.1);
-            }
-            !is_replaced
-        });
-        changed.push((key.into(), attribute.over(earlier)));
-        HAS_CHANGED_ATTRIBUTES.store(true, core::sync::atomic::Ordering::Release);
-        true
-    }
-
-    /// The disk has the source folder `name`. What the executable still answers for in it: the sources are not there, so a listing holds both.
+    /// The disk has the source folder `name`. What the executable still answers for in it, where the sources are not there: that can't be moved or removed with the folder. Where they are, the disk has all the names there are.
     pub fn list_beside_disk(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
         let name = strings::without_trailing_slash(name);
         let mut buffer = path_buffer_pool::get();
         let found = absolute_key(name, &mut buffer);
-        let program = self.compiled_program.as_ref().zip(found);
-        let key = program.and_then(|it| Self::key_under_own_root(it.0, it.1.as_bytes()));
+        let Some((program, found)) = self.compiled_program.as_ref().zip(found) else {
+            return Vec::new();
+        };
+        let found = found.as_bytes();
+        let key = Self::key_under_own_root(program, found);
         let Some(key) = key.filter(|it| self.dirs.contains(it)) else {
             return Vec::new();
         };
+        let in_folder = |folder: &[u8]| [folder, b"/x"].concat();
+        if self.has_source_on_disk(&in_folder(&key), &in_folder(found)) {
+            return Vec::new();
+        }
+        // The build has named what is imported as a file. No folder of the sources holds such a name.
+        let has_name_of_source = |file: &File| self.find_file_record(file.name).is_some();
         let mut entries = self.list_folder(&key, recursive);
         entries.retain(|(below, is_folder)| {
             let path = [name, b"/", below].concat();
-            !is_folder && self.find_at_source_path(&path).is_some()
-                || *is_folder && self.find_dir(&path)
+            match is_folder {
+                true => self.find_dir(&path),
+                false => self
+                    .find_at_source_path(&path)
+                    .is_some_and(has_name_of_source),
+            }
         });
         entries
     }
 
-    /// Under its own path an asset is read-only. A path of the disk is the program's.
-    fn yields_to_changes(&self, name: &[u8], file: &File) -> bool {
-        !is_bun_standalone_file_path(name) || self.is_file_for_file_system_alone(file)
+    /// Whether the program finds at `path`, a source path, what the executable holds there.
+    pub(crate) fn holds_at_source_path(&self, path: &[u8], is_folder: bool) -> bool {
+        match is_folder {
+            true => self.find_dir(path),
+            false => self.find_at_source_path(path).is_some() || self.is_source_file(path),
+        }
+    }
+
+    /// The program asks that nothing is at the source path `name`, and the disk had nothing there. That holds for what nobody asked the build to embed.
+    pub fn forget_unasked_files(&self, name: &[u8]) {
+        let mut buffer = path_buffer_pool::get();
+        let key = absolute_key(name, &mut buffer);
+        let program = self.compiled_program.as_ref().zip(key);
+        let Some(key) = program.and_then(|it| Self::key_under_own_root(it.0, it.1.as_bytes()))
+        else {
+            return;
+        };
+        let mut files = self.files.keys().iter().zip(self.files.values());
+        let holds_asset = files.any(|(it, file)| {
+            is_at_or_below(it, &key)
+                && !self.is_file_for_file_system_alone(file)
+                && !self.is_file_of_compiled_entry_point(file)
+        });
+        match holds_asset || self.key_of_mounted_asset(&key).is_some() {
+            true => self.forget_implicit_files(&key),
+            false => self.forget_source_path(name),
+        }
     }
 
     fn holds_code_below(&self, folder: &[u8]) -> bool {
@@ -2195,163 +2159,32 @@ impl StandaloneModuleGraph {
         })
     }
 
-    /// What a rename of `name` moves: a file, or the files and folders in a folder, by their names below it. Returns `None` for what stays: an asset under its own path, and code.
-    pub fn list_movable(&self, name: &[u8]) -> Option<Vec<(Box<[u8]>, bool)>> {
-        let is_movable = |name: &[u8]| {
-            let found = self.find_ref(name);
-            found.is_some_and(|file| self.yields_to_changes(name, file))
-                || find_written_file(name).is_some()
-        };
-        if self.contains_file(name) {
-            return is_movable(name).then(Vec::new);
-        }
-        let mut buffer = path_buffer_pool::get();
-        let folder = self.directory_key(name, &mut buffer)?;
-        if self.holds_code_below(folder) {
-            return None;
-        }
-        let mut entries = self.readdir(name, true)?;
-        let is_movable_entry =
-            |it: &(Box<[u8]>, bool)| it.1 || is_movable(&[name, b"/", &it.0].concat());
-        if !entries.iter().all(is_movable_entry) {
-            return None;
-        }
-        entries.sort();
-        Some(entries)
-    }
-
-    /// The same for a rename to `new_name`, which is in the executable too.
-    pub fn rename_in_executable(&self, name: &[u8], new_name: &[u8]) -> bool {
-        let (name, new_name) = (
-            strings::without_trailing_slash(name),
-            strings::without_trailing_slash(new_name),
-        );
-        let is_in_executable = |it: &[u8]| crate::is_bun_standalone_file_path(it);
-        let folder = bun_paths::dirname(new_name).unwrap_or(b"/");
-        if !is_in_executable(name) || !is_in_executable(new_name) || !self.find_dir(folder) {
-            return false;
-        }
-        if self.contains_file(name) {
-            return self.rename_file_in_executable(name, new_name);
-        }
-        let Some(entries) = self.list_movable(name) else {
-            return false;
-        };
-        let is_empty = |folder: &[u8]| self.readdir(folder, false).is_none_or(|it| it.is_empty());
-        if is_at_or_below(new_name, name) || self.contains_file(new_name) || !is_empty(new_name) {
-            return name == new_name;
-        }
-        let mut moved: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
-        for (below, _) in entries.iter().filter(|it| !it.1) {
-            let place = |folder: &[u8]| [folder, b"/", below].concat();
-            if let Some(file) = self.find_ref(&place(name)) {
-                moved.push((
-                    write_name_in_executable(&place(new_name)),
-                    Box::from(file.name),
-                ));
-            }
-        }
-        if !self.forget_folder_for_file_system_only(name, false) {
-            return false;
-        }
-        RENAMED_FILES.lock().extend(moved);
-        HAS_RENAMED_FILES.store(true, core::sync::atomic::Ordering::Release);
-        true
-    }
-
-    /// The same for two source paths, where the disk has neither the file nor the folder of `new_name`.
-    pub fn rename_source_path(&self, name: &[u8], new_name: &[u8]) -> bool {
-        let find_key = |name: &[u8]| {
-            let mut buffer = path_buffer_pool::get();
-            let key = absolute_key(strings::without_trailing_slash(name), &mut buffer)?;
-            Self::key_under_own_root(self.compiled_program.as_ref()?, key.as_bytes())
-        };
-        let keys = find_key(name).zip(find_key(new_name));
-        keys.is_some_and(|it| self.rename_in_executable(&it.0, &it.1))
-    }
-
-    fn rename_file_in_executable(&self, name: &[u8], new_name: &[u8]) -> bool {
-        if self.find_dir(new_name) {
-            return false;
-        }
-        let key = match self.find_ref(name) {
-            Some(file) if self.is_file_for_file_system_alone(file) => file.name,
-            _ => return false,
-        };
-        let replaced = self.find_ref(new_name);
-        if replaced.is_some_and(|it| it.name == key) {
-            return true;
-        }
-        if replaced.is_some() && !self.forget_file_for_file_system_only(new_name) {
-            return false;
-        }
-        self.forget_file_for_file_system_only(name);
-        let renamed = (write_name_in_executable(new_name), Box::from(key));
-        RENAMED_FILES.lock().push(renamed);
-        HAS_RENAMED_FILES.store(true, core::sync::atomic::Ordering::Release);
-        true
-    }
-
-    /// The same for the folder `name` with what is in it. Returns false if an asset or code is.
-    pub fn forget_folder_for_file_system_only(&self, name: &[u8], must_be_empty: bool) -> bool {
-        if !crate::is_bun_standalone_file_path(name) {
-            return false;
-        }
-        let mut buffer = path_buffer_pool::get();
-        let Some(folder) = self.directory_key(name, &mut buffer) else {
-            return false;
-        };
-        let holds_code = self.holds_code_below(folder);
-        let is_below = |key: &[u8]| {
-            let below = key.strip_prefix(folder);
-            below.is_some_and(|it| it.first() == Some(&b'/'))
-        };
+    /// The folder `key` is gone with what is in it, unless an asset or code is.
+    fn forget_folder(&self, key: &[u8]) -> bool {
+        let is_below = |it: &[u8]| it.len() > key.len() && is_at_or_below(it, key);
         let mut files = self.files.keys().iter().zip(self.files.values());
-        let is_kept = files.any(|(key, file)| {
-            is_below(key)
-                && !is_removed_by_program(key)
-                && (must_be_empty || !self.is_file_for_file_system_alone(file))
+        let is_kept = files.any(|(it, file)| {
+            is_below(it) && !is_removed_by_program(it) && !self.is_file_for_file_system_alone(file)
         });
-        let mut renamed = RENAMED_FILES.lock();
-        if holds_code || is_kept || must_be_empty && renamed.iter().any(|it| is_below(&it.0)) {
+        if is_kept || self.holds_code_below(key) {
             return false;
         }
-        renamed.retain(|it| !is_below(&it.0));
-        record_removed_path(folder);
+        record_removed_path(key);
         true
     }
 
-    pub(crate) fn find_renamed_file(&self, name: &[u8]) -> Option<&File> {
-        if !HAS_RENAMED_FILES.load(core::sync::atomic::Ordering::Acquire) {
-            return None;
-        }
-        let name = write_name_in_executable(name);
-        let renamed = RENAMED_FILES.lock();
-        let (_, key) = renamed.iter().find(|it| it.0 == name)?;
-        self.files.get(key)
-    }
-
-    /// The program has removed the source path `key` or renamed it, and has renamed nothing to it since.
+    /// The program has removed the source path `key` or renamed it, and has written nothing below it since.
     fn is_gone(&self, program: &CompiledProgram, key: &[u8]) -> bool {
-        let is_renamed_to =
-            |it: Vec<u8>| self.find_renamed_file(&it).is_some() || self.contains_moved_file(&it);
+        let is_written_to = |it: Vec<u8>| self.contains_written_file(&it);
         is_removed_by_program(key)
-            && !Self::key_under_own_root(program, key).is_some_and(is_renamed_to)
+            && !Self::key_under_own_root(program, key).is_some_and(is_written_to)
     }
 
-    /// Whether the program has renamed a file into `folder`, or has written one there.
-    fn contains_moved_file(&self, folder: &[u8]) -> bool {
+    /// Whether the program has written a file of `folder`.
+    fn contains_written_file(&self, folder: &[u8]) -> bool {
         let is_below = |path: &[u8]| path.len() > folder.len() && is_at_or_below(path, folder);
         let is_written = |it: &WrittenFile| is_below(&it.path) && bun_sys::exists(&it.path_on_disk);
         has_written_files() && WRITTEN_FILES.lock().iter().any(is_written)
-            || HAS_RENAMED_FILES.load(core::sync::atomic::Ordering::Acquire)
-                && RENAMED_FILES.lock().iter().any(|it| is_below(&it.0))
-    }
-
-    pub(crate) fn for_each_renamed_file(&self, visit: &mut dyn FnMut(&[u8])) {
-        if HAS_RENAMED_FILES.load(core::sync::atomic::Ordering::Acquire) {
-            RENAMED_FILES.lock().iter().for_each(|it| visit(&it.0));
-        }
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
@@ -2374,12 +2207,6 @@ impl StandaloneModuleGraph {
         let key =
             absolute_key(name, &mut buffer).filter(|it| !self.is_gone(program, it.as_bytes()))?;
         let under_own_root = Self::key_under_own_root(program, key.as_bytes());
-        if let Some(renamed) = under_own_root
-            .as_deref()
-            .and_then(|it| self.find_renamed_file(it))
-        {
-            return (!bun_sys::exists(key.as_bytes())).then_some(renamed);
-        }
         if !program.preserves_source_paths && under_own_root.is_none() {
             return None;
         }
@@ -2449,7 +2276,7 @@ impl StandaloneModuleGraph {
                     && !is_removed_by_program(key)
                     && !self.has_folder_vanished(key)
                     || program.is_some_and(|program| program.holds_module_below(key))
-                    || self.contains_moved_file(key)
+                    || self.contains_written_file(key)
             };
             if is_directory(Self::normalize_dir_path(name, buffer)) {
                 return Some(Self::normalize_dir_path(name, buffer));
@@ -2471,13 +2298,15 @@ impl StandaloneModuleGraph {
             // Every key of such a graph lies under its own root.
             program.root_on_build_machine()?;
             let mut on_build_machine = path_buffer_pool::get();
+            // The key of the root is empty. The disk has the root.
             let key = absolute_key(name, &mut on_build_machine)
+                .filter(|it| !it.as_bytes().is_empty())
                 .filter(|it| !self.is_gone(program, it.as_bytes()))?;
             let under_own_root = Self::key_under_own_root(program, key.as_bytes())?;
             let is_directory = |key: &[u8]| {
                 self.dirs.contains_key(key)
                     || program.holds_module_below(key)
-                    || self.contains_moved_file(key)
+                    || self.contains_written_file(key)
             };
             let under_own_root = match is_directory(&under_own_root) {
                 true => under_own_root,
@@ -2495,7 +2324,8 @@ impl StandaloneModuleGraph {
             buffer[..length].copy_from_slice(&under_own_root);
             return Some(&buffer[..length]);
         }
-        let key = absolute_key(name, buffer).filter(|it| !is_removed_by_program(it.as_bytes()))?;
+        let key = absolute_key(name, buffer)
+            .filter(|it| !it.as_bytes().is_empty() && !is_removed_by_program(it.as_bytes()))?;
         if !self.is_near_source_paths(program, key.as_bytes())
             || !self.dirs.contains_key(key.as_bytes())
             || self.has_folder_vanished(key.as_bytes())
@@ -2914,17 +2744,6 @@ pub(crate) mod tests {
         assert!(!is_removed_by_program(b"/recorded-once/ab"));
     }
 
-    #[test]
-    fn owner_is_changed_one_by_one() {
-        let kept = ChangedAttribute::KEPT;
-        let earlier = ChangedAttribute::Owner(kept, 5).over(None);
-        let later = ChangedAttribute::Owner(7, kept).over(Some(earlier));
-        assert!(matches!(later, ChangedAttribute::Owner(7, 5)));
-        let mode = ChangedAttribute::Mode(0o600).over(None);
-        assert!(matches!(mode, ChangedAttribute::Mode(0o600)));
-    }
-
-    #[cfg(not(windows))]
     #[test]
     fn change_time_is_no_birth_time() {
         let at = |sec: i64| bun_sys::Timespec { sec, nsec: 0 };
@@ -3520,6 +3339,44 @@ pub(crate) mod tests {
         let answers_in_folder = answers();
         bun_sys::chdir(&previous).unwrap();
         assert_eq!(answers_in_folder, (true, true, Some(SourcePathKind::File)));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn root_of_the_disk_is_no_folder_of_the_executable() {
+        fn list_modules(start: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
+            for path in [
+                &b"/$bunfs/_.._/_.._/no-such-lib/x.js"[..],
+                b"/$bunfs/root/main.js",
+            ] {
+                if path.starts_with(start) && !each(path) {
+                    return;
+                }
+            }
+        }
+        let folder = TemporaryFolder::create("root-of-the-disk");
+        let mut graph = with_request(&folder, false, read_graph);
+        let program = graph.compiled_program.take().unwrap();
+        program.set_module_listing(list_modules);
+        program.set_test_of_path_starts(|start| {
+            let folder = &start[..=strings::last_index_of_char(start, b'/').unwrap()];
+            let mut holds_one = false;
+            list_modules(folder, &mut |_| {
+                holds_one = true;
+                false
+            });
+            holds_one
+        });
+        let program = program.with_root_on_build_machine(Some(b"/no-such-app"));
+        graph.compiled_program = Some(program.with_levels_above_root(2));
+        for name in [&b"/"[..], b"//", b"/tmp/..", b"/."] {
+            let shown = String::from_utf8_lossy(name);
+            assert_eq!(directory_key(&graph, name), None, "{shown}");
+            assert!(!graph.owns_directory(name), "{shown}");
+        }
+        let library = directory_key(&graph, b"/no-such-lib");
+        let key = &b"/$bunfs/_.._/_.._/no-such-lib"[..];
+        assert_eq!(library.as_deref(), Some(key));
     }
 
     #[test]

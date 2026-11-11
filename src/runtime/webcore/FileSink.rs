@@ -793,6 +793,9 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
+        if let PathOrFileDescriptor::Path(path) = &options.input_path {
+            crate::node::fs::note_opened_for_write(path.slice(), false);
+        }
         match options.input_path {
             PathOrFileDescriptor::Path(_) => self.close_with_graph(context),
             #[cfg(unix)]

@@ -1785,8 +1785,8 @@
     "asan": 240000
   },
   "aot/harness/where-a-child-is.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 300,
+    "asan": 1200
   },
   "aot/held-results.test.ts": {
     "default": 4500,

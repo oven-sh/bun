@@ -4,3 +4,10 @@ L.push("<main");
 let r1; try { r1 = require("./m1.mjs"); } catch (e) { console.log("main CAUGHT " + (e.code ?? e.name)); }
 exports.tmain = "main";
 L.push("main>");
+
+/* Output:
+GOT THROWN(TypeError:require() async module .. is unsup)
+m2 CAUGHT TypeError
+main CAUGHT TypeError
+ORDER <main <m2 <m4 <leaf m4> m2> main> leaf> m3 m1 | exit 0
+*/

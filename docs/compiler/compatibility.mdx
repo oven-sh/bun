@@ -11,6 +11,7 @@ Most programs behave the same under [`bun compile`](/compiler/aot) as under `bun
 | --------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | [Built-in objects are read-only](#built-in-objects-are-read-only)     | Add methods, don't replace them                                  |
 | [Code from a string is interpreted](#code-from-strings)               | Keep it out of hot paths                                         |
+| [Unused built-ins are left out](#unused-built-ins)                    | Write the name of one that you need                              |
 | [A dynamic import finds only what the build found](#dynamic-imports)  | Start the path with a folder, or pass the file as an entry point |
 | [Nothing hooks the module loader](#loader-hooks-and-the-module-cache) | Use `paths` in `tsconfig.json`                                   |
 | [Your files are inside the executable](#paths-of-the-running-file)    | Embed what you read with `--asset`                               |
@@ -104,6 +105,22 @@ Interpreted code is fine for a template or a config file. It costs you when a li
 If your program needs no code from strings, build with [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings). `eval` then throws an `EvalError`, and the compiler can optimize more.
 
 `ShadowRealm` isn't supported. The build warns (`TS100076`), and `new ShadowRealm()` throws a `ReferenceError`. Use a `node:vm` context.
+
+## Unused built-ins
+
+An executable holds the parts of Bun's own JavaScript that your code uses. When [code from a string](#code-from-strings) uses another part, such as `Bun.$` or `console.Console`, it gets an error that it can catch. Write `void Bun.$` anywhere in your code to keep that part.
+
+```txt
+Error: Bun.$ was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code.
+```
+
+An event can lead to such a part too. Called without a receiver, `dispatchEvent()` and `addEventListener()` work on the global object, and `event.target` is the global object. The build follows that where your code writes the method's name. It doesn't if the name is only known at run time, as in `const send = signal[process.env.METHOD]; send(event)`, or if it comes out of a `for...in`. Reading `event.target.process.finalization` then throws:
+
+```txt
+Error: process.finalization was not compiled into this executable because the compiler saw no use of it. Your code reached it through the `target` of an event on the global object. To keep it, write `void dispatchEvent` anywhere in your code.
+```
+
+Call the method with its receiver instead: `signal[name](event)`. Or write `void dispatchEvent`, which keeps everything that the global object leads to and makes the executable about 3 MB larger.
 
 ## WebAssembly
 
@@ -242,7 +259,7 @@ That path is inside the executable, so the read only finds a file that's in ther
 
 Two kinds of files are embedded without the flag, where the build can see the read: a file inside a package in `node_modules`, such as the package's own `package.json` or a font, and the `package.json` nearest above your entry point. `--explain` lists them (`TS100166`). A package in `node_modules` whose code reads, checks or lists files at paths that the build can't know, for example by searching the folders above it, or hands its own folder to code that may do so, gets its own `package.json` embedded too (`TS100170`). Where it hands on a folder from which a search finds a `package.json` that isn't embedded, such as `path.join(__dirname, "..")`, the build warns (`TS100174`). It also warns where a package hands on a folder to code that may list it, and the executable holds some of its files alone (`TS100175`). Code that searches upward finds the nearest `package.json`, as in plain Bun: where one is embedded this way, each one that lies nearer to compiled code is embedded as well (`TS100171`), in a folder of your own too, and so is each one in the folders below a package's own, and if one of those has to stay out, so does the one above it. A file that is only tested for, by `existsSync`, `stat` or `access`, takes no room: the executable knows that it exists and how large it is, and holds none of its bytes. A `package.json` is the exception and is embedded whole, because code that finds one reads it. A package is a folder directly below `node_modules` that has a `package.json`. A file reached through a symbolic link, a file or folder whose name begins with a dot, and a lock file always need the flag.
 
-A read through `__dirname` finds the file on the machine that built the executable, and the embedded one anywhere else. Once your program removes or renames that file on disk, the embedded one is gone for it too. A file that was embedded without `--asset` is also gone where something else removed it and the executable runs beside its sources, which means that the code around that file is still on disk. Appending to an embedded file, or opening it to update it, first copies it to that path on disk.
+A read through `__dirname` finds the file on the machine that built the executable, and the embedded one anywhere else. Once your program removes or renames that file on disk, the embedded one is gone for it too. A file that was embedded without `--asset` is also gone where something else removed it and the executable runs beside its sources, which means that the code around that file is still on disk. Where that path's folder isn't on disk, the embedded file can be read and not changed: writing, renaming or removing it fails with `ENOENT` or `EROFS`, and so does writing a new file beside it. Make the folder with `mkdirSync(folder, { recursive: true })` first. A listing of a folder that's on disk has only what's there. Writing a file there writes it on disk alone: appending to an embedded file that isn't on disk starts an empty file. By its path under `import.meta.dirname`, an embedded file is read-only. A `Bun.file()` object of that path reads what's there when it's read, and writes and deletes it there.
 
 A path made from `import.meta.dirname` climbs at most one folder above the root of the executable. An asset that lies two or more folders above it is embedded, but such a path doesn't find it. Where the build can see the read, it warns (`TS100087`). `__dirname` finds it.
 

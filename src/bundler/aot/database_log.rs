@@ -1,5 +1,8 @@
 //! A SQLite database in write-ahead mode has its newest commits in a log beside it, which an executable doesn't have.
 
+#[cfg(test)]
+mod tests;
+
 const HEADER_LENGTH: usize = 32;
 const FRAME_HEADER_LENGTH: usize = 24;
 
@@ -82,6 +85,10 @@ fn apply_log(database: &[u8], log: &[u8]) -> Option<Vec<u8>> {
         }
     }
     let (frame_count, page_count) = committed?;
+    // Each page was there or is in the log. A count past them is no commit of this database.
+    if page_count > database.len().div_ceil(page_size) + frame_count {
+        return None;
+    }
     let mut database = database.to_vec();
     database.resize(page_count * page_size, 0);
     for &(number, page) in &frames[..frame_count] {

@@ -4,3 +4,8 @@ L.push("<main");
 let r1; try { r1 = require("./m1.mjs"); } catch (e) { console.log("main CAUGHT " + (e.code ?? e.name)); }
 exports.tmain = "main";
 L.push("main>");
+
+/* Output:
+GOT ns(tleaf=leaf)
+ORDER <main <m2 <m4 <leaf leaf> m4> m3 m2> m1 main> | exit 0
+*/

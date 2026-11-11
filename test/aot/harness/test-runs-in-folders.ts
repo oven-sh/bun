@@ -10,6 +10,7 @@
 // The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
 // A file says.json in the folder, { why, printed, tests, exitCode }: `bun test` has more than one answer here, by how busy the machine is: the tests leave a call in flight that nobody awaits, and the run ends
 // when they have ended. A compiled run has one answer, the one that `bun test` gives most often: it alone is run, and held to what the file says.
+// A file one-thread.txt in the folder says why plain Bun reads the files of the project on one thread: with threads, files complete in the order in which the threads finish.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
@@ -85,7 +86,13 @@ const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 async function outcomeOf(dir: string, words: string, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
-  const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0", BUN_DEBUG_TEST_AOT_WORDS: words };
+  const oneThread = !flags.includes("--aot") && existsSync(join(dir, "one-thread.txt")) ? "1" : "0";
+  const env = {
+    ...bunEnv,
+    NO_COLOR: "1",
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
+    BUN_DEBUG_TEST_AOT_WORDS: words,
+  };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env);
   return {
     printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),

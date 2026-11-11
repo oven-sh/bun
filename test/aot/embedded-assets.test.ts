@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { chmodSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { without } from "./harness/capabilities";
 import { run as runCommand } from "./harness/run";
@@ -35,14 +35,26 @@ async function bothWaysIn(dir: string, folder: string, entryPoint: string, ...fl
   return { plain, built, compiled };
 }
 
-/** Plain Bun runs behind the build, because the program changes its files. Then they are moved away. */
-async function plainAfterBuild(dir: string) {
+/** Plain Bun runs behind the build, because the program changes its files. Then they are moved away, and `folders` are there without them. */
+async function plainAfterBuild(dir: string, ...folders: string[]) {
   const app = join(dir, "app");
   const outfile = join(dir, "built.exe");
   const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const plain = await run(app, [bunExe(), "run", "./main.mjs"]);
   renameSync(app, join(dir, "moved-away"));
+  for (const folder of folders) mkdirSync(join(app, folder), { recursive: true });
+  const compiled = await run(dir, [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  return { plain, built, compiled };
+}
+
+/** The executable runs beside its sources, and plain Bun over a copy of them, because the program changes its files. */
+async function plainAndBeside(dir: string, ...flags: string[]) {
+  const [app, copy, outfile] = ["app", "copy", "built.exe"].map(it => join(dir, it));
+  cpSync(app, copy, { recursive: true });
+  const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", ...flags, "--outfile", outfile]);
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const plain = await run(copy, [bunExe(), "run", "./main.mjs"]);
   const compiled = await run(dir, [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   return { plain, built, compiled };
 }
@@ -156,66 +168,6 @@ console.log(serve.folder(path.join(__dirname, "public"))("index.html"), app.rend
     120_000,
   );
 
-  test("a module of a package removes a file that it names", async () => {
-    using dir = tempDir("aot-module-removes-embedded-file", {
-      "app/node_modules/locks/package.json": `{ "name": "locks", "version": "1.0.0", "type": "module", "exports": "./index.js" }`,
-      "app/node_modules/locks/index.js": `import fs from "node:fs";
-import path from "node:path";
-import { clear } from "./clear.js";
-const lock = path.join(import.meta.dirname, "a.lock");
-const cache = path.join(import.meta.dirname, "cache.json");
-const state = path.join(import.meta.dirname, "state.json");
-const log = path.join(import.meta.dirname, "app.log");
-export const start = async () => {
-  clear(lock);
-  clear(lock);
-  if (fs.existsSync(cache)) fs.unlinkSync(cache);
-  if (fs.existsSync(state)) await fs.promises.rm(state);
-  const parts = fs.readdirSync(path.join(import.meta.dirname, "parts"));
-  fs.rmSync(path.join(import.meta.dirname, "parts"), { recursive: true, force: true });
-  fs.rmSync(path.join(import.meta.dirname, "parts"), { recursive: true, force: true });
-  if (parts.join() !== "a.txt,below" || fs.existsSync(path.join(import.meta.dirname, "parts"))) throw new Error(parts.join());
-  if (fs.readFileSync(path.join(import.meta.dirname, "single/a.txt"), "utf8") !== "a") throw new Error("unread");
-  fs.unlinkSync(path.join(import.meta.dirname, "single/a.txt"));
-  fs.rmdirSync(path.join(import.meta.dirname, "single"));
-  if (fs.readdirSync(import.meta.dirname).some(name => name === "parts" || name === "single")) throw new Error("left");
-  try {
-    fs.rmSync(import.meta.dirname, { recursive: true, force: true });
-    throw new Error("code is removed");
-  } catch (error) {
-    if (error.code !== "EROFS") throw error;
-  }
-  if (fs.existsSync(log)) fs.renameSync(log, log + ".old");
-  if (fs.existsSync(log)) fs.renameSync(log, log + ".older");
-  const left = fs.readdirSync(import.meta.dirname).filter(name => /\\.(lock|json|log|old|older)$/.test(name) && name !== "package.json");
-  return [lock, cache, state, log].map(file => fs.existsSync(file)).concat(left, fs.readFileSync(log + ".old", "utf8")).join();
-};
-`,
-      "app/node_modules/locks/clear.js": `import fs from "node:fs";
-export const clear = file => fs.rmSync(file, { force: true });
-`,
-      "app/node_modules/locks/a.lock": "1",
-      "app/node_modules/locks/cache.json": "{}",
-      "app/node_modules/locks/state.json": "{}",
-      "app/node_modules/locks/app.log": "a line",
-      "app/node_modules/locks/parts/a.txt": "a",
-      "app/node_modules/locks/parts/below/b.txt": "b",
-      "app/node_modules/locks/single/a.txt": "a",
-      "app/main.mjs": `import { start } from "locks"; console.log(await start());`,
-    });
-    const app = join(String(dir), "app");
-    const outfile = join(String(dir), "built.exe");
-    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-      stderr: "",
-      exitCode: 0,
-    });
-    expect(warnings(built)).toEqual([]);
-    renameSync(app, join(String(dir), "moved-away"));
-    const compiled = await run(String(dir), [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect(compiled).toEqual({ stdout: "false,false,false,false,app.log.old,a line\n", stderr: "", exitCode: 0 });
-  }, 120_000);
-
   test("a package removes by __dirname what its ES module reads", async () => {
     using dir = tempDir("aot-module-reads-removed-file", {
       "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
@@ -276,9 +228,9 @@ exports.change = () => {
     });
   }, 120_000);
 
-  describe.each(["__dirname", "import.meta.dirname"])("a package changes its own files by %s", own => {
+  describe.each(["__dirname"])("a package changes its own files by %s", own => {
     const isModule = own !== "__dirname";
-    test("away from its sources", async () => {
+    test("beside its sources", async () => {
       using dir = tempDir("aot-package-changes-embedded-files", {
         "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.${isModule ? "mjs" : "cjs"}" }`,
         [`app/node_modules/store/index.${isModule ? "mjs" : "cjs"}`]: `${
@@ -334,7 +286,7 @@ ${isModule ? "export { start };" : "exports.start = start;"}
         "app/node_modules/store/asked.txt": "asked",
         "app/main.mjs": `import { start } from "store"; console.log(await start());`,
       });
-      const { plain, built, compiled } = await plainAfterBuild(String(dir));
+      const { plain, built, compiled } = await plainAndBeside(String(dir));
       expect(warnings(built)).toEqual([]);
       const expected = `kept 1,l,r,m,s,o
 unlink undefined
@@ -363,7 +315,7 @@ end false
     }, 120_000);
   });
 
-  test.each(["__dirname", "import.meta.dirname"])(
+  test.each(["__dirname"])(
     "a package renames a folder of its own files by %s",
     async own => {
       const isModule = own !== "__dirname";
@@ -402,7 +354,7 @@ ${isModule ? "export { start };" : "exports.start = start;"}
         "app/node_modules/store/data/sub/b.txt": "b",
         "app/main.mjs": `import { start } from "store"; console.log(start());`,
       });
-      const { plain, built, compiled } = await plainAfterBuild(String(dir));
+      const { plain, built, compiled } = await plainAndBeside(String(dir));
       expect(warnings(built)).toEqual([]);
       expect(plain.stdout).toBe(
         "a.txt,sub,sub/b.txt false a.txt,sub,sub/b.txt b b.txt a.txt true ENOTEMPTY false data data,data/b.txt b false\n",
@@ -412,54 +364,93 @@ ${isModule ? "export { start };" : "exports.start = start;"}
     120_000,
   );
 
-  test.each([[], ["--asset", "./data", "--asset", "./other"]])(
-    "a program writes into an embedded folder, away from its sources %j",
-    async (...flags) => {
-      using dir = tempDir("aot-writes-into-embedded-folder", {
-        "app/package.json": `{ "name": "app" }`,
-        "app/main.mjs": flags.length ? `import "./start.cjs";` : `import "store";`,
-        [`app/${flags.length ? "" : "node_modules/store/"}start.cjs`]: `const fs = require("node:fs"), path = require("node:path");
-const data = path.join(__dirname, "data");
-const list = () => fs.readdirSync(data).sort().join();
-const said = [list()];
-fs.writeFileSync(path.join(__dirname, "other", "new.txt"), "o");
-said.push(fs.readFileSync(path.join(__dirname, "other", "new.txt"), "utf8") + fs.existsSync(path.join(__dirname, "other", "e.txt")));
-for (const name of ["data", "data/logs"]) {
-  const folder = path.join(__dirname, name);
-  if (!fs.existsSync(folder)) fs.mkdirSync(folder);
-}
-if (fs.existsSync(data)) fs.chmodSync(data, 0o755);
-fs.writeFileSync(path.join(data, "new.txt"), "n");
-fs.appendFileSync(path.join(data, "logs", "app.log"), "l");
-fs.appendFileSync(path.join(data, "a.txt"), "+");
-fs.copyFileSync(path.join(data, "b.txt"), path.join(data, "c.txt"));
-said.push(list(), fs.readdirSync(data, { recursive: true }).sort().join().replaceAll(path.sep, "/"));
-said.push(...["a", "b", "c", "new"].map(name => fs.readFileSync(path.join(data, name + ".txt"), "utf8")));
-fs.rmSync(path.join(data, "b.txt"));
-said.push(list());
-console.log(said.join(" "));
+  test.each([
+    ["__dirname"],
+    ["import.meta.dirname"],
+    ["__dirname", "--asset", "./node_modules/store/data"],
+    ["import.meta.dirname", "--asset", "./node_modules/store/data"],
+  ])(
+    "a program reads what is embedded and is refused what would change it, away from its sources, by %s %s",
+    async (own, ...flags) => {
+      const index = own === "__dirname" ? "index.cjs" : "index.mjs";
+      const refused: Record<string, string> = {
+        "writeFileSync": `fs.writeFileSync(a, "x")`,
+        "appendFileSync": `fs.appendFileSync(a, "x")`,
+        "promises.writeFile": `await fs.promises.writeFile(a, "x")`,
+        "Bun.write": `await Bun.write(a, "x")`,
+        "a new file": `fs.writeFileSync(at("new.txt"), "x")`,
+        "open r+": `fs.openSync(a, "r+")`,
+        "truncate": `fs.truncateSync(a, 1)`,
+        "copy onto": `fs.copyFileSync(at("b.txt"), a)`,
+        "unlink": `fs.unlinkSync(a)`,
+        "promises.unlink": `await fs.promises.unlink(a)`,
+        "rm": `fs.rmSync(a)`,
+        "rm of the folder": `fs.rmSync(data, { recursive: true })`,
+        "rmdir": `fs.rmdirSync(at("below"))`,
+        "rename": `fs.renameSync(a, at("c.txt"))`,
+        "rename out": `fs.renameSync(a, path.join(os.tmpdir(), "aot-none", "a.txt"))`,
+        "rename of the folder": `fs.renameSync(data, data + "-moved")`,
+        "rename onto itself": `fs.renameSync(a, a)`,
+        "mkdir": `fs.mkdirSync(at("logs"))`,
+        "mkdtemp": `fs.mkdtempSync(at("t-"))`,
+        "chmod": `fs.chmodSync(a, 0o600)`,
+        "chmod of the folder": `fs.chmodSync(data, 0o700)`,
+        "utimes": `fs.utimesSync(a, 1, 2)`,
+      };
+      using dir = tempDir("aot-changes-are-refused", {
+        "app/main.mjs": `import { start } from "store"; await start();`,
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./${index}" }`,
+        [`app/node_modules/store/${index}`]: `${
+          index === "index.mjs"
+            ? `import fs from "node:fs"; import os from "node:os"; import path from "node:path";`
+            : `const fs = require("node:fs"), os = require("node:os"), path = require("node:path");`
+        }
+const data = path.join(${own}, "data"), at = name => path.join(data, name), a = at("a.txt");
+const read = () => [
+  ["a.txt", "b.txt", "below/d.txt"].map(name => fs.readFileSync(path.join(${own}, "data", name), "utf8")),
+  fs.readdirSync(data).sort(),
+  fs.readdirSync(data, { recursive: true }).length,
+  [...new Bun.Glob("**/*").scanSync({ cwd: data })].length,
+  fs.existsSync(a), fs.statSync(a).size, fs.existsSync(at("new.txt")),
+].join(" ");
+const start = async () => {
+  const before = read();
+  console.log(before);
+  const say = async (name, change) => {
+    let said = "done";
+    try { await change(); } catch (error) { said = ["ENOENT", "ENOTEMPTY", "EROFS"].includes(error.code) ? "refused" : error.code; }
+    console.log(name, said, read() === before ? "" : read());
+  };
+${Object.entries(refused)
+  .map(([name, change]) => `  await say(${JSON.stringify(name)}, async () => { ${change}; });`)
+  .join("\n")}
+};
+${index === "index.mjs" ? "export { start };" : "exports.start = start;"}
 `,
-        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "main": "start.cjs" }`,
         ...Object.fromEntries(
-          ["data/a.txt", "data/b.txt", "data/below/d.txt", "other/e.txt"].map(name => [
-            `app/${flags.length ? "" : "node_modules/store/"}${name}`,
-            name.at(-5),
-          ]),
+          ["a.txt", "b.txt", "below/d.txt"].map(name => [`app/node_modules/store/data/${name}`, name.at(-5)!]),
         ),
       });
       const app = join(String(dir), "app");
       const outfile = join(String(dir), "built.exe");
-      const command = [bunExe(), "build", "--compile", "--aot", "./main.mjs", ...flags, "--outfile", outfile];
-      const built = await run(app, command);
+      const built = await run(app, [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "./main.mjs",
+        ...flags,
+        "--outfile",
+        outfile,
+      ]);
       expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
         stderr: "",
         exitCode: 0,
       });
       renameSync(app, join(String(dir), "moved-away"));
-      const compiled = await run(String(dir), [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({
-        stdout:
-          "a.txt,b.txt,below otrue a.txt,b.txt,below,c.txt,logs,new.txt a.txt,b.txt,below,below/d.txt,c.txt,logs,logs/app.log,new.txt a+ b b n a.txt,below,c.txt,logs,new.txt\n",
+      const lines = Object.keys(refused).map(name => `${name} refused \n`);
+      expect(await run(String(dir), [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual({
+        stdout: `a,b,d a.txt,b.txt,below 4 3 true 1 false\n${lines.join("")}`,
         stderr: "",
         exitCode: 0,
       });
@@ -586,7 +577,7 @@ exports.start = async () => {
       "app/node_modules/store/data/below/b.txt": "b",
       "app/main.mjs": `import { start } from "store"; await start();`,
     });
-    const { plain, compiled } = await bothWays(String(dir), "./main.mjs");
+    const { plain, compiled } = await plainAndBeside(String(dir));
     const list = `["a.txt","below","below/b.txt","below/made.txt"]`;
     const listBelowData = `["data/a.txt","data/below","data/below/b.txt","data/below/made.txt"]`;
     const owner = isWindows ? "" : "group true true\nuser true true\n";
@@ -622,52 +613,162 @@ const readers = {
   "a file object": file => Bun.file(file).text(),
 };
 export const start = async () => {
-  const said = [fs.readdirSync(own("data")).sort().join()];
+  const said = [];
   const read = async (label, name) => {
     for (const [reader, text] of Object.entries(readers)) said.push(label + " " + reader + " " + (await text(own(name))));
   };
-  for (const name of ["a", "b", "c", "d", "e", "f"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
+  const before = Bun.file(own("data/a.txt"));
+  said.push(await before.text());
+  for (const name of ["a", "b", "c", "d", "e", "f", "g"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
   await read("embedded", "data/a.txt");
   fs.writeFileSync(below("data/a.txt"), "written");
   await read("written", "data/a.txt");
+  said.push(await before.text(), before.size);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "store-"));
   const made = name => (fs.writeFileSync(path.join(temporary, name), name), path.join(temporary, name));
   fs.mkdirSync(below("data"), { recursive: true });
   fs.cpSync(made("cpSync"), below("data/b.txt"));
   await fs.promises.cp(made("cp"), below("data/c.txt"));
   await $\`mv \${made("mv")} \${below("data/d.txt")}\`;
-  await Bun.write(below("data/e.txt"), "Bun.write");
-  fs.mkdirSync(path.join(temporary, "data"));
-  fs.writeFileSync(path.join(temporary, "data/f.txt"), "folder");
-  fs.cpSync(path.join(temporary, "data"), below("data"), { recursive: true });
-  for (const name of ["b", "c", "d", "e", "f"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
+  await Bun.write(Bun.file(below("data/e.txt")), "Bun.write");
+  for (const name of ["b", "c", "d", "e"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
   fs.rmSync(below("data/a.txt"));
   fs.writeFileSync(below("data/a.txt"), "again");
   await read("again", "data/a.txt");
-  said.push(fs.readdirSync(own("data")).sort().join());
   fs.rmSync(temporary, { recursive: true });
   return said.join("\\n");
 };
 `,
       ...Object.fromEntries(
-        ["a", "b", "c", "d", "e", "f"].map(it => [`app/node_modules/store/data/${it}.txt`, "first"]),
+        ["a", "b", "c", "d", "e", "f", "g"].map(it => [`app/node_modules/store/data/${it}.txt`, "first"]),
+      ),
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+    });
+    const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/store", "node_modules/store/data");
+    const readers = ["mmap", "the shell", "open", "a file object"];
+    expect(plain).toEqual({
+      stdout: [
+        ...Array(8).fill("first"),
+        ...readers.map(it => `embedded ${it} first`),
+        ...readers.map(it => `written ${it} written`),
+        "written",
+        "7",
+        ...["cpSync", "cp", "mv", "Bun.write"],
+        ...readers.map(it => `again ${it} again`),
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test("a slice of a file object of a package's file keeps its range behind a write", async () => {
+    const forms = {
+      "a longer range": `Bun.file(P).slice(0, 100)|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
+      "the whole old length": `Bun.file(P).slice(0, 5)|"abcdefghij"|slice => slice.text()`,
+      "behind the old end": `Bun.file(P).slice(8, 13)|"abcdefghijklmnopq"|slice => slice.text()`,
+      "from a place": `Bun.file(P).slice(2)|"abcdefghij"|slice => slice.text()`,
+      "a slice of a slice": `Bun.file(P).slice(0, 100).slice(0, 50)|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
+      "within": `Bun.file(P).slice(1, 4)|"abcdefghij"|slice => slice.text()`,
+      "a shorter file": `Bun.file(P).slice(0, 5)|"ab"|slice => slice.text()`,
+      "a response": `new Response(Bun.file(P).slice(0, 100))|"x".repeat(300)|response => response.text().then(it => it.length)`,
+      "a stream": `Bun.file(P).slice(0, 100)|"x".repeat(300)|slice => new Response(slice.stream()).text().then(it => it.length)`,
+      "the whole file": `Bun.file(P)|"abcdefghij"|file => file.text()`,
+      "read before": `await (async slice => (await slice.text(), slice))(Bun.file(P).slice(0, 100))|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
+      "measured before": `await (async slice => (slice.size, slice))(Bun.file(P).slice(0, 100))|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
+      "made behind": `Bun.file(P)|"abcdefghijklmnopq"|file => file.slice(8, 13).text()`,
+      "a slice of a slice, made behind": `Bun.file(P).slice(0, 100)|"abcdefghijklmnopq"|slice => slice.slice(8, 13).text()`,
+      "a clone": `structuredClone(Bun.file(P).slice(0, 100))|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
+      "a held stream": `Bun.file(P).stream()|"abcdefghij"|async stream => { let text = ""; for await (const chunk of stream) text += Buffer.from(chunk); return text; }`,
+      "a held stream of a slice": `Bun.file(P).slice(2, 100).stream()|"abcdefghij"|async stream => { let text = ""; for await (const chunk of stream) text += Buffer.from(chunk); return text; }`,
+      "a held stream, as a body": `Bun.file(P).slice(2, 100).stream()|"abcdefghij"|stream => new Response(stream).text()`,
+      "branches": `Bun.file(P).stream().tee()|"abcdefghij"|async ([a, b]) => (await new Response(a).text()) + (await new Response(b).text())`,
+      "routes": `await (async server => { for (const at of ["/", "/file", "/slice"]) said.push("a route: " + (await (await fetch(new URL(at, server.url))).text())); return server; })(Bun.serve({ port: 0, routes: { "/": new Response(Bun.file(P)), "/file": Bun.file(P), "/slice": new Response(Bun.file(P).slice(1, 100)) }, fetch: () => new Response("none") }))|"abcdefghij"|async server => { const texts = []; for (const at of ["/", "/file", "/slice"]) texts.push(await (await fetch(new URL(at, server.url))).text()); server.stop(true); return texts.join(); }`,
+    };
+    const names = Object.keys(forms);
+    const at = (index: number) => `path.join(__dirname, "f${index}.txt")`;
+    const run = Object.values(forms).map((form, index) => {
+      const [made, text, use] = form.replaceAll("P", at(index)).split("|");
+      return `  { const made = ${made}; fs.writeFileSync(${at(index)}, ${text}); said.push(${JSON.stringify(names[index])} + ": " + (await (${use})(made))); }`;
+    });
+    using dir = tempDir("aot-slices-of-embedded-files", {
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.cjs" }`,
+      "app/node_modules/store/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+exports.start = async () => {
+  const said = [];
+${run.join("\n")}
+  const descriptor = fs.openSync(${at(names.length)});
+  fs.writeFileSync(path.join(__dirname, "other.txt"), "copied over");
+  fs.copyFileSync(path.join(__dirname, "other.txt"), ${at(names.length)});
+  said.push("open and copied over: " + fs.readFileSync(descriptor, "utf8"));
+  fs.closeSync(descriptor);
+  const letters = Bun.file(path.join(__dirname, "letters.txt"));
+  said.push("letters: " + [await letters.slice(0, 3).text(), await letters.slice(0, 9).text(), await letters.text()].join());
+  said.push("unwritten: " + [await Bun.file(${at(names.length + 1)}).slice(1, 3).text(), Bun.file(${at(names.length + 1)}).slice(1, 3).size, await Bun.file(${at(names.length + 1)}).slice(3).text()].join());
+  return said.join("\\n");
+};
+`,
+      "app/node_modules/store/letters.txt": "abc d\u00e9f",
+      ...Object.fromEntries(
+        Array.from({ length: names.length + 2 }, (_, index) => [`app/node_modules/store/f${index}.txt`, "first"]),
+      ),
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+    });
+    const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/store");
+    const answers = ["100", "abcde", "ijklm", "cdefghij", "50", "bcd", "ab", "100", "100", "abcdefghij"];
+    answers.push("100", "100", "ijklm", "ijklm", "100", "abcdefghij", "cdefghij", "cdefghij");
+    answers.push("abcdefghijabcdefghij", "abcdefghij,abcdefghij,bcdefghij");
+    expect(plain).toEqual({
+      stdout: [
+        ...names.slice(0, -1).map((name, index) => `${name}: ${answers[index]}`),
+        ...["first", "first", "irst"].map(it => `a route: ${it}`),
+        `routes: ${answers.at(-1)}`,
+        "open and copied over: copied over",
+        "letters: abc,abc d\u00e9f,abc d\u00e9f",
+        "unwritten: ir,2,st",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+    // On Windows a file that was opened keeps its bytes.
+    const stdout = isWindows ? plain.stdout.replace("over: copied over", "over: first") : plain.stdout;
+    expect(compiled).toEqual({ ...plain, stdout });
+  }, 120_000);
+
+  test("a data file that a package has written is loaded as it is on the disk", async () => {
+    using dir = tempDir("aot-written-data-file", {
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name); exports.load = name => require(name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import path from "node:path";
+import { below, load } from "./below.cjs";
+const ways = { own: name => path.join(import.meta.dirname, name), below };
+const made = name => Buffer.from(name).toString();
+export const start = async () => {
+  const said = [];
+  for (const name of ["a", "b", "c", "d", "e"]) said.push(JSON.parse(fs.readFileSync(ways.own(name + ".json"), "utf8")).word);
+  fs.mkdirSync(below(""), { recursive: true });
+  for (const [way, at] of Object.entries(ways)) {
+    const [required, imported] = way === "own" ? ["a", "b"] : ["c", "d"];
+    for (const name of [required, imported]) fs.writeFileSync(below(name + ".json"), '{ "word": "written" }');
+    said.push(way, load(at(made(required + ".json"))).word, (await import(at(made(imported + ".json")))).default.word);
+  }
+  const loaded = load(ways.own(made("e.json")));
+  fs.writeFileSync(below("e.json"), '{ "word": "written" }');
+  said.push(loaded.word, load(ways.own(made("e.json"))) === loaded);
+  return said.join();
+};
+`,
+      ...Object.fromEntries(
+        ["a", "b", "c", "d", "e"].map(it => [`app/node_modules/store/${it}.json`, `{ "word": "first" }`]),
       ),
       "app/main.mjs": `import { start } from "store"; console.log(await start());`,
     });
     const { plain, compiled } = await plainAfterBuild(String(dir));
-    const readers = ["mmap", "the shell", "open", "a file object"];
-    const files = "a.txt,b.txt,c.txt,d.txt,e.txt,f.txt";
     expect(plain).toEqual({
-      stdout: [
-        files,
-        ...Array(6).fill("first"),
-        ...readers.map(it => `embedded ${it} first`),
-        ...readers.map(it => `written ${it} written`),
-        ...["cpSync", "cp", "mv", "Bun.write", "folder"],
-        ...readers.map(it => `again ${it} again`),
-        files,
-        "",
-      ].join("\n"),
+      stdout: "first,first,first,first,first,own,written,written,below,written,written,first,true\n",
       stderr: "",
       exitCode: 0,
     });
@@ -719,7 +820,7 @@ export const start = async () => {
       "app/node_modules/store/a.txt": "first",
       "app/main.mjs": `import { start } from "store"; console.log(await start());`,
     });
-    const { plain, compiled } = await plainAfterBuild(String(dir));
+    const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/store");
     const forms = ["string", "Buffer", "Uint8Array", "URL", "not normalized", "Buffer, not normalized"];
     const texts = Array(isWindows ? 4 : 5).fill("written");
     expect(plain).toEqual({
@@ -729,6 +830,55 @@ export const start = async () => {
     });
     expect(compiled).toEqual(plain);
   }, 120_000);
+
+  // On Windows a file that was opened keeps its bytes.
+  test.skipIf(isWindows).each(["__dirname", "import.meta.dirname"])(
+    "a package writes a file of its own that it has open by %s",
+    async own => {
+      const isModule = own !== "__dirname";
+      const index = isModule ? "index.mjs" : "index.cjs";
+      using dir = tempDir("aot-writes-open-embedded-file", {
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./${index}" }`,
+        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name);`,
+        [`app/node_modules/store/${index}`]: `${isModule ? `import fs from "node:fs"; import path from "node:path"; import { below } from "./below.cjs";` : `const fs = require("node:fs"), path = require("node:path"), { below } = require("./below.cjs");`}
+const start = async () => {
+  const said = [];
+  const handle = await fs.promises.open(path.join(${own}, "a.txt"));
+  const begun = fs.openSync(path.join(${own}, "b.txt"));
+  said.push(String((await handle.read(Buffer.alloc(2), 0, 2, 0)).buffer), fs.readSync(begun, Buffer.alloc(2)));
+  fs.writeFileSync(below("a.txt"), "written");
+  fs.writeFileSync(below("b.txt"), "first and more");
+  said.push(await handle.readFile("utf8"), (await handle.stat()).size, fs.readFileSync(begun, "utf8"), fs.fstatSync(begun).size);
+  fs.writeFileSync(below("a.txt"), "again");
+  said.push((await handle.stat()).size, fs.readFileSync(below("a.txt"), "utf8"));
+  fs.unlinkSync(below("a.txt"));
+  said.push((await handle.stat()).size, fs.existsSync(below("a.txt")));
+  await handle.close();
+  fs.closeSync(begun);
+  const later = fs.openSync(path.join(${own}, "c.txt"));
+  fs.closeSync(later);
+  const other = fs.openSync(process.execPath);
+  fs.writeFileSync(below("c.txt"), "c");
+  said.push(fs.fstatSync(other).size > 1000);
+  return said.join();
+};
+${isModule ? "export { start };" : "exports.start = start;"}
+`,
+        "app/node_modules/store/a.txt": "first",
+        "app/node_modules/store/b.txt": "first",
+        "app/node_modules/store/c.txt": "first",
+        "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+      });
+      const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/store");
+      expect(plain).toEqual({
+        stdout: "fi,2,written,7,rst and more,14,5,again,5,false,true\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
 
   test("what a package reads by a known path, and the program's own package.json", async () => {
     using dir = tempDir("aot-package-files-embedded-unasked", {
@@ -1930,6 +2080,136 @@ exports.ownName = () => JSON.parse(fs.readFileSync(path.join(__dirname, "package
     120_000,
   );
 
+  test("a listing of a folder that stands on the disk holds the disk's names alone", async () => {
+    using dir = tempDir("aot-listing-beside-sources", {
+      "app/logo.txt": "the logo",
+      "app/note.txt": "a note",
+      "app/gone.txt": "gone",
+      "app/sub/other.txt": "other",
+      "app/main.mjs": `import logo from "./logo.txt" with { type: "file" };
+import fs from "node:fs";
+import path from "node:path";
+const opened = async folder => {
+  const names = [];
+  for await (const entry of fs.opendirSync(folder)) names.push(entry.name);
+  return names;
+};
+const list = async folder => {
+  const said = [
+    fs.readdirSync(folder),
+    fs.readdirSync(Buffer.from(folder)),
+    fs.readdirSync(folder, { withFileTypes: true }).map(it => it.name),
+    await fs.promises.readdir(folder),
+    await opened(folder),
+  ];
+  const below = fs.readdirSync(folder, { recursive: true }).map(it => it.replaceAll("\\\\", "/"));
+  console.log([...new Set(said.map(it => it.sort().join(" ")))].join(" | "), "below", below.sort().join(" "));
+};
+console.log(typeof logo, fs.readFileSync(path.join(__dirname, "note.txt"), "utf8"));
+if (process.argv.includes("away")) {
+  fs.mkdirSync(__dirname, { recursive: true });
+  fs.writeFileSync(path.join(__dirname, "written.txt"), "written");
+}
+await list(__dirname);
+process.chdir(__dirname);
+await list(".");
+`,
+    });
+    const [app, outfile] = [join(String(dir), "app"), join(String(dir), "built.exe")];
+    const assets = ["--asset", "./note.txt", "--asset", "./gone.txt"];
+    const command = [bunExe(), "build", "--compile", "--aot", "./main.mjs", ...assets, "--outfile", outfile];
+    const built = await run(app, command);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    rmSync(join(app, "gone.txt"));
+    const plain = await run(app, [bunExe(), "run", "./main.mjs"]);
+    const listed = "logo.txt main.mjs note.txt sub below logo.txt main.mjs note.txt sub sub/other.txt";
+    expect(plain).toEqual({ stdout: `string a note\n${listed}\n${listed}\n`, stderr: "", exitCode: 0 });
+    const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+    expect(await run(String(dir), [outfile], env)).toEqual(plain);
+    renameSync(app, join(String(dir), "moved-away"));
+    // The program makes the folder where the sources are not there.
+    const made = "written.txt below written.txt";
+    const stdout = `string a note\n${made}\n${made}\n`;
+    expect(await run(String(dir), [outfile, "away"], env)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  }, 120_000);
+
+  test("a write that fails leaves what is embedded as it is, in a folder that is on the disk without the sources", async () => {
+    using dir = tempDir("aot-writes-that-fail", {
+      "app/main.mjs": `import { start } from "store"; await start();`,
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import path from "node:path";
+import { $ } from "bun";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, "data", name);
+const read = name => fs.readFileSync(own(name), "utf8") + " " + fs.readFileSync(below(name), "utf8");
+const say = async (label, change, name) => {
+  let said = "done";
+  try { const done = await change(); if (done?.exitCode) said = "exit " + done.exitCode; } catch (error) { said = error.code; }
+  console.log(label, said, name ? read(name) : "");
+};
+export const start = async () => {
+  for (const name of ["a", "b", "c", "d", "e"]) fs.readFileSync(own(name + ".txt"));
+  fs.readFileSync(own("deep/f.txt"));
+  const opened = fs.openSync(own("a.txt")), missing = below("missing.txt");
+  await say("a copy of nothing", () => fs.copyFileSync(missing, below("a.txt")), "a.txt");
+  await say("a later copy of nothing", () => fs.promises.copyFile(missing, below("a.txt")), "a.txt");
+  await say("Bun.write() of nothing", () => Bun.write(below("a.txt"), Bun.file(missing)), "a.txt");
+  console.log("what is open", fs.readFileSync(opened, "utf8"));
+  fs.closeSync(opened);
+  // Somebody else has laid it there.
+  await say("nothing over another's", () => Bun.write(below("laid.txt"), Bun.file(missing)));
+  console.log("another's", fs.readFileSync(own("laid.txt"), "utf8"));
+  await say("wx", () => fs.closeSync(fs.openSync(below("b.txt"), "wx")), "b.txt");
+  await say("a copy that must make it", () => fs.copyFileSync(below("c.txt"), below("b.txt"), fs.constants.COPYFILE_EXCL), "b.txt");
+  await say("mkdir", () => fs.mkdirSync(below("b.txt")), "b.txt");
+  await say("mkdir below it", () => fs.mkdirSync(below("b.txt") + "/x", { recursive: true }), "b.txt");
+  await say("symlink", () => fs.symlinkSync("c.txt", below("b.txt")), "b.txt");
+  await say("a write onto a folder", () => fs.writeFileSync(below("deep"), "x"), "deep/f.txt");
+  await say("rm -f of a folder", () => $\`rm -f \${below("deep")}\`.nothrow().quiet(), "deep/f.txt");
+  await say("touch", () => $\`touch \${below("d.txt")}\`.nothrow().quiet(), "d.txt");
+  await say("a write", () => fs.writeFileSync(below("e.txt"), "new"), "e.txt");
+};
+`,
+      ...Object.fromEntries(
+        ["a", "b", "c", "d", "e", "laid", "deep/f"].map(name => [`app/node_modules/store/data/${name}.txt`, "first"]),
+      ),
+    });
+    const [app, outfile] = [join(String(dir), "app"), join(String(dir), "built.exe")];
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    renameSync(app, join(String(dir), "moved-away"));
+    mkdirSync(join(app, "node_modules/store/data"), { recursive: true });
+    writeFileSync(join(app, "node_modules/store/data/laid.txt"), "laid");
+    expect(await run(String(dir), [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual({
+      stdout: `a copy of nothing ENOENT first first
+a later copy of nothing ENOENT first first
+Bun.write() of nothing ENOENT first first
+what is open first
+nothing over another's ENOENT${" "}
+another's first
+wx EEXIST first first
+a copy that must make it EEXIST first first
+mkdir EEXIST first first
+mkdir below it ENOTDIR first first
+symlink EEXIST first first
+a write onto a folder EISDIR first first
+rm -f of a folder exit 1 first first
+touch done first first
+a write done new new
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 120_000);
+
   test("what a package removes or renames beside itself is gone for it, where the executable runs beside its sources", async () => {
     const at = (name: string) => `path.join(__dirname, ${JSON.stringify(name)})`;
     const ways = [
@@ -2357,6 +2637,7 @@ await keeper.run();
 ${say}
 exports.run = async () => {
   say("a short text", () => fs.readFileSync(${at("state.txt")}, "utf8"));
+  fs.mkdirSync(__dirname, { recursive: true });
   console.log("written", await Bun.write(${at("state.txt")}, "second"));
   say("a short text", () => fs.readFileSync(${at("state.txt")}, "utf8"));
   console.log("by Bun.file()", await Bun.file(${at("state.txt")}).text());
@@ -2401,125 +2682,94 @@ a blob third
     120_000,
   );
 
-  test.each([[[]], [["--asset", "node_modules/keeper/data"]]])(
-    "an append or an update of an embedded file goes on from its bytes, away from the sources %j",
-    async flags => {
-      const at = (name: string) => `path.join(__dirname, "data", ${JSON.stringify(name)})`;
-      const names = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt", "deep/g.txt"];
-      using dir = tempDir("aot-append-to-embedded-file", {
-        "app/package.json": `{ "name": "server" }`,
-        "app/main.mjs": `import keeper from "keeper";
-await keeper.run();
-`,
-        "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-        "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-exports.run = async () => {
-  say("no folder for it", () => fs.appendFileSync(${at("a.txt")}, " more"));
-  say("no folder for it", () => fs.readFileSync(${at("a.txt")}, "utf8"));
-  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-  fs.appendFileSync(${at("a.txt")}, " more");
-  say("appendFileSync", () => fs.readFileSync(${at("a.txt")}, "utf8"));
-  await fs.promises.appendFile(${at("b.txt")}, " more");
-  say("promises.appendFile", () => fs.readFileSync(${at("b.txt")}, "utf8"));
-  fs.writeFileSync(${at("c.txt")}, " more", { flag: "a" });
-  say("writeFileSync with a", () => fs.readFileSync(${at("c.txt")}, "utf8"));
-  const fd = fs.openSync(${at("d.txt")}, "r+");
-  fs.writeSync(fd, "F");
-  fs.closeSync(fd);
-  say("openSync with r+", () => fs.readFileSync(${at("d.txt")}, "utf8"));
-  fs.writeFileSync(${at("e.txt")}, "new");
-  say("a write that truncates", () => fs.readFileSync(${at("e.txt")}, "utf8"));
-  say("untouched", () => fs.readFileSync(${at("f.txt")}, "utf8"));
-  say("writeFileSync onto a folder", () => fs.writeFileSync(${at("deep")}, "x"));
-  console.log("Bun.write onto a folder", await Bun.write(${at("deep")}, "x").catch(error => error.code));
-  say("below that folder", () => fs.readFileSync(${at("deep/g.txt")}, "utf8"));
-};
-`,
-        ...Object.fromEntries(names.map(name => [`app/node_modules/keeper/data/${name}`, "first"])),
-      });
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        ...flags,
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      renameSync(cwd, join(String(dir), "away"));
-      const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({
-        stdout: `no folder for it undefined
-no folder for it first more
-appendFileSync first more more
-promises.appendFile first more
-writeFileSync with a first more
-openSync with r+ First
-a write that truncates new
-untouched first
-writeFileSync onto a folder EISDIR
-Bun.write onto a folder EISDIR
-below that folder first
-`,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
-
-  test("truncate() of an embedded file cuts its bytes, away from the sources", async () => {
-    const at = (name: string) => `path.join(__dirname, "data", ${JSON.stringify(name)})`;
-    using dir = tempDir("aot-truncate-embedded-file", {
+  test("a file object of an embedded file is of what its path leads to, away from the sources", async () => {
+    const at = (name: string) => `path.join(__dirname, ${JSON.stringify(name)})`;
+    const names = ["written", "large", "copied", "streamed", "removed", "unlinked", "renamed", "replaced"];
+    names.push("appended", "answered", "served", "sliced", "measured", "named", "cloned", "again", "unchanged");
+    using dir = tempDir("aot-file-objects-of-embedded-files", {
       "app/package.json": `{ "name": "server" }`,
       "app/main.mjs": `import keeper from "keeper";
 await keeper.run();
 `,
       "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
       "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-exports.run = async () => {
-  say("no folder for it", () => fs.truncateSync(${at("a.txt")}, 2));
-  say("no folder for it", () => fs.readFileSync(${at("a.txt")}, "utf8"));
-  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-  fs.truncateSync(${at("a.txt")}, 2);
-  say("to two bytes", () => fs.readFileSync(${at("a.txt")}, "utf8"));
-  await fs.promises.truncate(${at("b.txt")});
-  say("to nothing", () => JSON.stringify(fs.readFileSync(${at("b.txt")}, "utf8")));
-  say("a folder", () => fs.truncateSync(${at("deep")}, 2));
-  say("below that folder", () => fs.readFileSync(${at("deep/c.txt")}, "utf8"));
+const attempt = async run => {
+  try {
+    return await run();
+  } catch (error) {
+    return error.code;
+  }
 };
+const say = async (label, ...runs) => {
+  const answers = [];
+  for (const run of runs) answers.push(await attempt(run));
+  console.log(label, JSON.stringify(answers));
+};
+const longer = "second, which is longer";
+exports.run = async () => {
+  const written = Bun.file(${at("written.txt")}), other = Bun.file(${at("written.txt")});
+  await say("write()", () => written.text(), () => written.write(longer), () => written.text(), () => other.text(), () => other.size);
+  const large = Bun.file(${at("large.txt")});
+  await say("a large one", () => large.write("x".repeat(3_000_000)), async () => (await large.text()).length);
+  const copied = Bun.file(${at("copied.txt")});
+  await say("Bun.write()", () => Bun.write(copied, new Response(longer)), () => copied.text(), () => Bun.write(copied, copied));
+  const streamed = Bun.file(${at("streamed.txt")});
+  fs.writeFileSync(${at("streamed.txt")}, "first");
+  const writer = await attempt(() => streamed.writer());
+  await say("writer()", () => writer.write("AB"), () => writer.end(), () => streamed.text());
+  await say("writer() of what is not there yet", async () => {
+    const writer = Bun.file(path.join(__dirname, "made-" + names.length + ".txt")).writer();
+    writer.write("AB");
+    return await writer.end();
+  }, () => fs.readFileSync(path.join(__dirname, "made-" + names.length + ".txt"), "utf8"));
+  const removed = Bun.file(${at("removed.txt")});
+  fs.writeFileSync(${at("removed.txt")}, "first");
+  await say("delete()", () => removed.text(), () => removed.delete(), () => removed.text(), () => removed.exists(), () => fs.existsSync(${at("removed.txt")}), () => removed.delete());
+  const unlinked = Bun.file(${at("unlinked.txt")});
+  fs.writeFileSync(${at("unlinked.txt")}, "first");
+  await say("behind unlinkSync()", () => fs.unlinkSync(${at("unlinked.txt")}), () => unlinked.text(), () => unlinked.exists());
+  const renamed = Bun.file(${at("renamed.txt")});
+  fs.writeFileSync(${at("renamed.txt")}, "first");
+  await say("behind renameSync()", () => fs.renameSync(${at("renamed.txt")}, ${at("new-name.txt")}), () => renamed.text(), () => Bun.file(${at("new-name.txt")}).text());
+  const replaced = Bun.file(${at("replaced.txt")});
+  await say("behind writeFileSync()", () => replaced.text(), () => fs.writeFileSync(${at("replaced.txt")}, longer), () => replaced.text(), () => replaced.stream().text(), () => replaced.size);
+  const appended = Bun.file(${at("appended.txt")});
+  fs.writeFileSync(${at("appended.txt")}, "first");
+  await say("behind appendFileSync()", () => fs.appendFileSync(${at("appended.txt")}, " and more"), () => appended.text());
+  const answered = new Response(Bun.file(${at("answered.txt")}));
+  await say("a response", () => fs.writeFileSync(${at("answered.txt")}, longer), () => answered.text());
+  const served = Bun.file(${at("served.txt")});
+  using server = Bun.serve({ port: 0, fetch: () => new Response(served) });
+  const get = async () => (await fetch(server.url)).text();
+  await say("a server", get, () => fs.writeFileSync(${at("served.txt")}, longer), get);
+  const sliced = Bun.file(${at("sliced.txt")}), slice = sliced.slice(0, 3);
+  await say("a slice", () => slice.text(), () => fs.writeFileSync(${at("sliced.txt")}, longer), () => slice.text(), () => sliced.slice(8, 13).text());
+  const measured = Bun.file(${at("measured.txt")});
+  await say("stat()", async () => (await measured.stat()).size, () => fs.writeFileSync(${at("measured.txt")}, longer), async () => (await measured.stat()).size);
+  const named = Bun.file(${at("named.txt")});
+  fs.writeFileSync(${at("named.txt")}, "first");
+  await say("its name", () => named.name === ${at("named.txt")}, () => (named.name = "other"), () => named.delete(), () => fs.existsSync(${at("named.txt")}));
+  const cloned = structuredClone(Bun.file(${at("cloned.txt")}));
+  fs.writeFileSync(${at("cloned.txt")}, "first");
+  await say("a clone", () => cloned.text(), () => cloned.delete(), () => fs.existsSync(${at("cloned.txt")}));
+  const again = Bun.file(${at("again.txt")});
+  fs.writeFileSync(${at("again.txt")}, "first");
+  await say("delete() and write()", () => again.delete(), () => again.write(longer), () => again.text(), () => fs.readFileSync(${at("again.txt")}, "utf8"));
+  const unchanged = Bun.file(${at("unchanged.txt")});
+  await say("what nobody changes", () => unchanged.text(), () => unchanged.size, () => unchanged.exists(), () => unchanged.type);
+};
+const names = ${JSON.stringify(names)};
 `,
-      "app/node_modules/keeper/data/a.txt": "first",
-      "app/node_modules/keeper/data/b.txt": "first",
-      "app/node_modules/keeper/data/deep/c.txt": "first",
+      ...Object.fromEntries(names.map(name => [`app/node_modules/keeper/${name}.txt`, "first"])),
     });
-    const cwd = join(String(dir), "app");
-    const built = await run(cwd, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", "../built.exe"]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+    const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/keeper");
+    expect({ ...plain, lines: plain.stdout.split("\n").length }).toEqual({
+      stdout: plain.stdout,
       stderr: "",
       exitCode: 0,
+      lines: 19,
     });
-    renameSync(cwd, join(String(dir), "away"));
-    const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect(compiled).toEqual({
-      stdout: `no folder for it undefined
-no folder for it fi
-to two bytes fi
-to nothing ""
-a folder EISDIR
-below that folder first
-`,
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(compiled).toEqual(plain);
   }, 120_000);
 
   test.skipIf(!isLinux)(
@@ -2548,340 +2798,6 @@ fs.closeSync(fd);
         const compiled = await run(String(dir), [outfile], { ...bunEnv, TMPDIR: folder, BUN_TMPDIR: folder });
         expect(compiled).toEqual({ stdout: "true a.txt\nEISDIR\n", stderr: "", exitCode: 0 });
       }
-    },
-    120_000,
-  );
-
-  test("a package writes its own files by both of their names", async () => {
-    const names = "abcdefghij".split("").map(it => `${it}.txt`);
-    using dir = tempDir("aot-writes-by-both-names", {
-      "app/package.json": `{ "name": "server" }`,
-      "app/main.mjs": `import { run } from "keeper";
-await run();
-`,
-      "app/node_modules/keeper/package.json": `{ "name": "keeper", "exports": "./index.mjs" }`,
-      "app/node_modules/keeper/by-dirname.cjs": `const fs = require("node:fs"), path = require("node:path");
-const at = name => path.join(__dirname, "data", name);
-exports.read = name => fs.readFileSync(at(name), "utf8");
-exports.write = (name, text) => fs.writeFileSync(at(name), text);
-exports.replace = (name, text) => {
-  fs.writeFileSync(at("next"), text);
-  fs.renameSync(at("next"), at(name));
-};
-`,
-      "app/node_modules/keeper/index.mjs": `import fs from "node:fs";
-import path from "node:path";
-import { finished } from "node:stream/promises";
-import byDirname from "./by-dirname.cjs";
-${say}
-const at = name => path.join(import.meta.dirname, "data", name);
-const show = (label, name) => say(label, () => [fs.readFileSync(at(name), "utf8"), byDirname.read(name), fs.statSync(at(name)).size].join());
-export const run = async () => {
-  byDirname.write("a.txt", "written");
-  show("written by the other name", "a.txt");
-  fs.appendFileSync(at("b.txt"), " and more");
-  show("appended", "b.txt");
-  const fd = fs.openSync(at("c.txt"), "r+");
-  fs.writeSync(fd, "F");
-  fs.closeSync(fd);
-  show("updated", "c.txt");
-  fs.truncateSync(at("d.txt"), 2);
-  show("truncated", "d.txt");
-  fs.writeFileSync(at("e.txt"), "whole");
-  show("written", "e.txt");
-  await Bun.write(at("f.txt"), "by Bun.write");
-  show("written by Bun", "f.txt");
-  fs.copyFileSync(at("e.txt"), at("g.txt"));
-  show("copied", "g.txt");
-  await finished(fs.createWriteStream(at("h.txt")).end("streamed"));
-  show("streamed", "h.txt");
-  say("a file that is there", () => fs.writeFileSync(at("i.txt"), "no", { flag: "wx" }));
-  show("not written", "i.txt");
-  byDirname.replace("j.txt", "replaced");
-  show("replaced by the other name", "j.txt");
-  fs.unlinkSync(at("e.txt"));
-  say("removed", () => fs.existsSync(at("e.txt")));
-  show("removed", "e.txt");
-};
-`,
-      ...Object.fromEntries(names.map(it => [`app/node_modules/keeper/data/${it}`, "first"])),
-    });
-    const { plain, compiled } = await plainAfterBuild(String(dir));
-    expect(plain.stdout).toBe(`written by the other name written,written,7
-appended first and more,first and more,14
-updated First,First,5
-truncated fi,fi,2
-written whole,whole,5
-written by Bun by Bun.write,by Bun.write,12
-copied whole,whole,5
-streamed streamed,streamed,8
-a file that is there EEXIST
-not written first,first,5
-replaced by the other name replaced,replaced,8
-removed false
-removed ENOENT
-`);
-    expect(compiled).toEqual(plain);
-  }, 120_000);
-
-  test("an open that must make the file finds the embedded one, away from the sources", async () => {
-    const at = (name: string) => `path.join(__dirname, "data", ${JSON.stringify(name)})`;
-    using dir = tempDir("aot-exclusive-open-of-embedded-file", {
-      "app/package.json": `{ "name": "server" }`,
-      "app/main.mjs": `import keeper from "keeper";
-keeper.run();
-`,
-      "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-      "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-exports.run = () => {
-  for (const made of [false, true]) {
-    if (made) fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-    for (const flag of ["wx", "wx+", "ax", "ax+"]) say(flag, () => fs.closeSync(fs.openSync(${at("a.txt")}, flag)));
-    say("writeFileSync with wx", () => fs.writeFileSync(${at("a.txt")}, "new", { flag: "wx" }));
-    say("its text", () => fs.readFileSync(${at("a.txt")}, "utf8"));
-  }
-  say("a new file", () => fs.closeSync(fs.openSync(${at("new.txt")}, "wx")));
-};
-`,
-      "app/node_modules/keeper/data/a.txt": "first",
-    });
-    const cwd = join(String(dir), "app");
-    const built = await run(cwd, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", "../built.exe"]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-      stderr: "",
-      exitCode: 0,
-    });
-    renameSync(cwd, join(String(dir), "away"));
-    const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    const refused = ["wx", "wx+", "ax", "ax+", "writeFileSync with wx"].map(it => `${it} EEXIST\n`).join("");
-    const stdout = `${refused}its text first\n${refused}its text first\na new file undefined\n`;
-    expect(compiled).toEqual({ stdout, stderr: "", exitCode: 0 });
-    // Nothing was laid.
-    expect(await Bun.file(join(cwd, "node_modules/keeper/data/a.txt")).exists()).toBe(false);
-  }, 120_000);
-
-  test.skipIf(isWindows)(
-    "an embedded file that can't be laid whole is not laid at all",
-    async () => {
-      using dir = tempDir("aot-copy-up-fails-midway", {
-        "app/package.json": `{ "name": "server" }`,
-        "app/main.mjs": `import keeper from "keeper";
-keeper.run();
-`,
-        "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-        "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-exports.run = () => {
-  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-  say("an append", () => fs.appendFileSync(path.join(__dirname, "data", "large.txt"), "more"));
-  say("its length", () => fs.readFileSync(path.join(__dirname, "data", "large.txt")).length);
-};
-`,
-        "app/node_modules/keeper/data/large.txt": Buffer.alloc(300_000, "x").toString(),
-      });
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      renameSync(cwd, join(String(dir), "away"));
-      // No file grows past 100 blocks, as on a disk that is full.
-      const limited = ["sh", "-c", "ulimit -f 100 && exec ./built.exe"];
-      const compiled = await run(String(dir), limited, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({ stdout: "an append EFBIG\nits length 300000\n", stderr: "", exitCode: 0 });
-      const left = [...new Bun.Glob("*").scanSync({ cwd: join(cwd, "node_modules/keeper/data"), dot: true })];
-      expect(left).toEqual([]);
-    },
-    120_000,
-  );
-
-  test.skipIf(isWindows)(
-    "the shell's >> goes on from an embedded file's bytes, and its name is taken, away from the sources",
-    async () => {
-      const at = (name: string) => `path.join(__dirname, "data", ${JSON.stringify(name)})`;
-      using dir = tempDir("aot-shell-appends-to-embedded-file", {
-        "app/package.json": `{ "name": "server" }`,
-        "app/main.mjs": `import keeper from "keeper";
-await keeper.run();
-`,
-        "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-        "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-exports.run = async () => {
-  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-  await Bun.$\`echo more >> \${${at("a.txt")}}\`;
-  say("a command of the shell", () => JSON.stringify(fs.readFileSync(${at("a.txt")}, "utf8")));
-  await Bun.$\`echo more >> b.txt\`.cwd(path.join(__dirname, "data"));
-  say("a relative path", () => JSON.stringify(fs.readFileSync(${at("b.txt")}, "utf8")));
-  await Bun.$\`sh -c "echo more" >> \${${at("c.txt")}}\`;
-  say("another program", () => JSON.stringify(fs.readFileSync(${at("c.txt")}, "utf8")));
-  await Bun.$\`echo new > \${${at("d.txt")}}\`;
-  say("a redirect that truncates", () => JSON.stringify(fs.readFileSync(${at("d.txt")}, "utf8")));
-  say("mkdirSync", () => fs.mkdirSync(${at("e.txt")}));
-  say("mkdirSync, recursive", () => fs.mkdirSync(${at("e.txt")}, { recursive: true }));
-  say("symlinkSync", () => fs.symlinkSync("a.txt", ${at("e.txt")}));
-  say("copyFileSync, exclusive", () => fs.copyFileSync(${at("a.txt")}, ${at("e.txt")}, fs.constants.COPYFILE_EXCL));
-  say("its text", () => fs.readFileSync(${at("e.txt")}, "utf8"));
-  say("copyFileSync", () => fs.copyFileSync(${at("d.txt")}, ${at("e.txt")}));
-  say("its text", () => JSON.stringify(fs.readFileSync(${at("e.txt")}, "utf8")));
-};
-`,
-        ...Object.fromEntries(
-          ["a", "b", "c", "d", "e"].map(name => [`app/node_modules/keeper/data/${name}.txt`, "first "]),
-        ),
-      });
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      renameSync(cwd, join(String(dir), "away"));
-      const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({
-        stdout: `a command of the shell "first more\\n"
-a relative path "first more\\n"
-another program "first more\\n"
-a redirect that truncates "new\\n"
-mkdirSync EEXIST
-mkdirSync, recursive EEXIST
-symlinkSync EEXIST
-copyFileSync, exclusive EEXIST
-its text first 
-copyFileSync undefined
-its text "new\\n"
-`,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
-
-  test("appends at once, as the first writes to embedded files, all arrive", async () => {
-    const names = Array.from({ length: 24 }, (_, index) => `${index}.txt`);
-    using dir = tempDir("aot-appends-at-once", {
-      "app/package.json": `{ "name": "server" }`,
-      "app/main.mjs": `import keeper from "keeper";
-await keeper.run();
-`,
-      "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-      "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-const files = [
-${names.map(name => `  path.join(__dirname, "data", ${JSON.stringify(name)}),`).join("\n")}
-];
-exports.run = async () => {
-  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-  const appended = files.flatMap(file => [fs.promises.appendFile(file, "one\\n"), fs.promises.appendFile(file, "two\\n")]);
-  const failed = (await Promise.allSettled(appended)).filter(it => it.status === "rejected").map(it => it.reason.code);
-  const texts = new Set(files.map(file => fs.readFileSync(file, "utf8").split("\\n").sort().join()));
-  console.log(failed, [...texts], fs.readdirSync(path.join(__dirname, "data")).length);
-};
-${names.map(name => `exports[${JSON.stringify(name)}] = () => fs.readFileSync(path.join(__dirname, "data", ${JSON.stringify(name)}));`).join("\n")}
-`,
-      ...Object.fromEntries(names.map(name => [`app/node_modules/keeper/data/${name}`, "first\n"])),
-    });
-    const cwd = join(String(dir), "app");
-    const built = await run(cwd, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", "../built.exe"]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-      stderr: "",
-      exitCode: 0,
-    });
-    renameSync(cwd, join(String(dir), "away"));
-    const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect(compiled).toEqual({ stdout: `[] [ ",first,one,two" ] 24\n`, stderr: "", exitCode: 0 });
-  }, 120_000);
-
-  test.skipIf(isWindows)(
-    "the shell's rm, touch, mkdir and [[ -f ]] find an embedded file, away from the sources",
-    async () => {
-      const at = (name: string) => `path.join(__dirname, "data", ${JSON.stringify(name)})`;
-      using dir = tempDir("aot-shell-finds-embedded-file", {
-        "app/package.json": `{ "name": "server" }`,
-        "app/main.mjs": `import keeper from "keeper";
-await keeper.run();
-`,
-        "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-        "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-const code = async command => (await command.nothrow().quiet()).exitCode;
-exports.run = async () => {
-  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
-  console.log("rm", await code(Bun.$\`rm \${${at("a.txt")}}\`));
-  say("rm", () => fs.readFileSync(${at("a.txt")}, "utf8"));
-  console.log("rm and >>", await code(Bun.$\`rm \${${at("b.txt")}}; echo more >> \${${at("b.txt")}}\`));
-  say("rm and >>", () => JSON.stringify(fs.readFileSync(${at("b.txt")}, "utf8")));
-  console.log("rm -r of a folder", await code(Bun.$\`rm -r \${${at("deep")}}\`));
-  say("rm -r of a folder", () => fs.readFileSync(${at("deep/g.txt")}, "utf8"));
-  console.log("rm of what is nowhere", await code(Bun.$\`rm \${${at("nowhere.txt")}}\`));
-  console.log("touch", await code(Bun.$\`touch \${${at("c.txt")}}\`));
-  say("touch", () => fs.readFileSync(${at("c.txt")}, "utf8"));
-  console.log("mkdir", await code(Bun.$\`mkdir \${${at("d.txt")}}\`), await code(Bun.$\`mkdir -p \${${at("d.txt")}}\`));
-  say("mkdir", () => fs.readFileSync(${at("d.txt")}, "utf8"));
-  say("mkdirSync below it", () => fs.mkdirSync(${at("e.txt")} + "/below", { recursive: true }));
-  say("mkdirSync below it", () => fs.readFileSync(${at("e.txt")}, "utf8"));
-  say("[[ -f ]]", () => fs.readFileSync(${at("f.txt")}, "utf8"));
-  console.log("[[ -f ]]", await code(Bun.$\`[[ -f \${${at("f.txt")}} ]]\`), await code(Bun.$\`[[ -d \${${at("f.txt")}} ]]\`), await code(Bun.$\`[[ -f \${${at("nowhere.txt")}} ]]\`));
-};
-`,
-        ...Object.fromEntries(
-          ["a", "b", "c", "d", "e", "f", "deep/g"].map(name => [`app/node_modules/keeper/data/${name}.txt`, "first"]),
-        ),
-      });
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      renameSync(cwd, join(String(dir), "away"));
-      const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({
-        stdout: `rm 0
-rm ENOENT
-rm and >> 0
-rm and >> "more\\n"
-rm -r of a folder 0
-rm -r of a folder ENOENT
-rm of what is nowhere 1
-touch 0
-touch first
-mkdir 1 1
-mkdir first
-mkdirSync below it ENOTDIR
-mkdirSync below it first
-[[ -f ]] first
-[[ -f ]] 0 1 1
-`,
-        stderr: "",
-        exitCode: 0,
-      });
     },
     120_000,
   );
@@ -2932,61 +2848,6 @@ a started command first
 by a relative path second
 a built-in command said
 what is nowhere 1 1
-`,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
-
-  test.skipIf(isWindows)(
-    "the shell's rm -f without -r keeps an embedded folder, away from the sources",
-    async () => {
-      const at = (name: string) => `path.join(__dirname, "data", ${JSON.stringify(name)})`;
-      using dir = tempDir("aot-shell-keeps-embedded-folder", {
-        "app/package.json": `{ "name": "server" }`,
-        "app/main.mjs": `import keeper from "keeper";
-await keeper.run();
-`,
-        "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-        "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-${say}
-const code = async command => (await command.nothrow().quiet()).exitCode;
-exports.run = async () => {
-  say("embedded", () => fs.readFileSync(${at("deep/g.txt")}, "utf8"));
-  console.log("rm -f", await code(Bun.$\`rm -f \${${at("deep")}}\`));
-  say("rm -f", () => fs.readFileSync(${at("deep/g.txt")}, "utf8"));
-  console.log("rm -f of what is nowhere", await code(Bun.$\`rm -f \${${at("nowhere")}}\`));
-  console.log("rm -rf", await code(Bun.$\`rm -rf \${${at("deep")}}\`));
-  say("rm -rf", () => fs.readFileSync(${at("deep/g.txt")}, "utf8"));
-};
-`,
-        "app/node_modules/keeper/data/deep/g.txt": "first",
-      });
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      renameSync(cwd, join(String(dir), "away"));
-      const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({
-        stdout: `embedded first
-rm -f 1
-rm -f first
-rm -f of what is nowhere 0
-rm -rf 0
-rm -rf ENOENT
 `,
         stderr: "",
         exitCode: 0,

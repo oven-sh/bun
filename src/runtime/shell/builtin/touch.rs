@@ -285,15 +285,16 @@ impl ShellTouchTask {
         let mtime = atime;
         if let Err(err) = bun_sys::utimens(filepath, atime, mtime) {
             'out: {
+                // The executable holds it: it is there.
+                if err.get_errno() == bun_sys::E::ENOENT
+                    && crate::node::fs::is_embedded_source_file(filepath.as_bytes())
+                {
+                    break 'out;
+                }
                 if err.get_errno() == bun_sys::E::ENOENT {
                     const PERM: bun_sys::Mode = 0o664;
                     let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
-                    let prepared = crate::node::fs::prepare_source_path_write(
-                        filepath.as_bytes(),
-                        flags,
-                        PERM,
-                    );
-                    match prepared.and_then(|()| bun_sys::open(filepath, flags, PERM)) {
+                    match bun_sys::open(filepath, flags, PERM) {
                         Ok(fd) => {
                             fd.close();
                             break 'out;

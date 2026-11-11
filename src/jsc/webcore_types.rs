@@ -173,6 +173,9 @@ pub struct Blob {
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
+/// What makes a blob of a file that the executable holds, and that was asked for by its source path, one of what is there now. Set with the first such blob.
+pub static FOLLOW_SOURCE_PATH: std::sync::OnceLock<fn(&Blob)> = std::sync::OnceLock::new();
+
 // SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
 // that cross threads (object-URL registry entries, the standalone-graph
 // template) carry a null global and a `make_thread_shareable()`d `name`;
@@ -354,6 +357,25 @@ impl Blob {
         &slice[..slice.len().min(self.size.get() as usize)]
     }
 
+    /// As over its sources, a program reads what is at the path when it reads, not what was there when it made the blob.
+    #[inline]
+    pub fn follow_source_path(&self) {
+        if let Some(follow) = FOLLOW_SOURCE_PATH.get() {
+            follow(self);
+        }
+    }
+
+    /// The size, as far as there are bytes: a slice of such a blob keeps the range that was asked for, because the file may be a longer one later.
+    pub fn available_size(&self) -> SizeType {
+        let size = self.size.get();
+        match self.store.get().as_deref().map(|it| &it.data) {
+            Some(store::Data::Bytes(bytes)) => {
+                size.min((bytes.len() as SizeType).saturating_sub(self.offset.get()))
+            }
+            _ => size,
+        }
+    }
+
     /// Release the store ref without
     /// dropping `self`.
     #[inline]
@@ -439,6 +461,7 @@ impl Blob {
     /// in-memory consumer can see them.
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
+        self.follow_source_path();
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 

@@ -937,10 +937,11 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMG
 
 NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, NodeVMContextOptions options, JSValue importer, JSObject* contextifiedObject)
 {
+    auto* globalProxy = NodeVMGlobalProxy::create(vm);
     // A Structure points at its realm, so sharing one across contexts would keep the last context alive.
     auto* structure = createStructure(vm);
     auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure, options, importer);
-    cell->finishCreation(vm);
+    cell->finishCreation(vm, globalProxy);
     // Must be set after finishCreation(), which reads and deletes the bare global's properties.
     cell->m_sandbox.setMayBeNull(vm, cell, contextifiedObject);
     defaultGlobalObject(vm)->addDerivedRealm(cell);
@@ -1023,10 +1024,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
 }
 #endif // ENABLE(WEBASSEMBLY)
 
-void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
+void NodeVMGlobalObject::finishCreation(JSC::VM& vm, NodeVMGlobalProxy* globalProxy)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Base::finishCreation(vm);
+    Base::finishCreation(vm, globalProxy);
+    globalProxy->setTarget(vm, this);
     RETURN_IF_EXCEPTION(scope, );
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
@@ -1318,6 +1320,18 @@ bool NodeVMGlobalObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObjec
     return getOwnPropertySlot(cell, globalObject, Identifier::from(vm, index), slot);
 }
 
+bool NodeVMGlobalObject::defineOnContextifiedObject(JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* contextifiedObject = m_sandbox.get();
+    bool did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (did && contextifiedObject->isProxy() && !propertyName.isSymbol() && !parseIndex(propertyName))
+        m_namesDefinedThroughProxy.add(propertyName.uid());
+    return did;
+}
+
 bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -1346,7 +1360,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
     // PropertyDefinerCallback.
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, thisObject->defineOnContextifiedObject(globalObject, propertyName, descriptor, shouldThrow));
     }
 
     // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
@@ -1359,10 +1373,10 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, thisObject->defineOnContextifiedObject(globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
+    bool did = thisObject->defineOnContextifiedObject(globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!did) return false;
 
@@ -1555,24 +1569,112 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
 
 const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
+const ClassInfo NodeVMGlobalProxy::s_info = { "JSGlobalProxy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalProxy) };
+
+NodeVMGlobalProxy* NodeVMGlobalProxy::create(JSC::VM& vm)
+{
+    auto* structure = JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalProxyType, StructureFlags), info());
+    auto* proxy = new (NotNull, JSC::allocateCell<NodeVMGlobalProxy>(vm)) NodeVMGlobalProxy(vm, structure);
+    proxy->finishCreation(vm);
+    return proxy;
+}
+
+bool NodeVMGlobalProxy::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
+{
+    auto* context = uncheckedDowncast<NodeVMGlobalObject>(uncheckedDowncast<NodeVMGlobalProxy>(cell)->target());
+    return context->deletePropertyOfGlobalThis(globalObject, propertyName, slot);
+}
+
+// Only `delete name` gets here. NodeVMGlobalProxy::deleteProperty() is the other ways to delete.
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-    if (!thisObject->m_sandbox) [[unlikely]] {
-        return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isResolved = thisObject->resolvesForDelete(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isResolved)
+        RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+
+    RELEASE_AND_RETURN(scope, thisObject->deletePropertyOfGlobalThis(globalObject, propertyName, slot));
+}
+
+static bool hasOwnAccessorBehindProxies(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
+{
+    while (auto* proxy = dynamicDowncast<ProxyObject>(object)) {
+        if (proxy->isRevoked())
+            return false;
+        object = proxy->target();
     }
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &JSC::getVM(globalObject));
+    return object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot) && slot.isAccessor();
+}
+
+bool NodeVMGlobalObject::hasOwnRealProperty(JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    if (m_namesDefinedThroughProxy.contains(propertyName.uid()))
+        return true;
 
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* sandbox = thisObject->m_sandbox.get();
-    bool deleted = sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot);
+    PropertySlot slot(this, PropertySlot::InternalMethodType::HasProperty);
+    bool isOwn = Base::getOwnPropertySlot(this, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!deleted) {
+    if (!isOwn)
         return false;
+    if (!m_sandbox || slot.attributes() & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete))
+        return true;
+    bool isAccessor = hasOwnAccessorBehindProxies(globalObject, m_sandbox.get(), propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    return !isAccessor;
+}
+
+// As in Node.js, a bare identifier does not resolve to what a Proxy, or the global of another context, forwards.
+bool NodeVMGlobalObject::resolvesForDelete(JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    JSObject* sandbox = m_sandbox.get();
+    if (!sandbox || !sandbox->isProxy())
+        return true;
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (sandbox->type() == GlobalProxyType) {
+        auto* context = dynamicDowncast<NodeVMGlobalObject>(uncheckedDowncast<JSGlobalProxy>(sandbox)->target());
+        if (!context)
+            return true;
+        bool isOnContext = context->hasOwnRealProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isOnContext)
+            return true;
     }
 
-    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+    bool isOnGlobalObject = hasOwnRealProperty(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isOnGlobalObject)
+        return true;
+
+    JSValue prototype = getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, prototype.isObject() && asObject(prototype)->hasProperty(globalObject, propertyName));
+}
+
+bool NodeVMGlobalObject::deletePropertyOfGlobalThis(JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
+{
+    JSObject* sandbox = m_sandbox.get();
+    if (!sandbox) [[unlikely]]
+        return Base::deleteProperty(this, globalObject, propertyName, slot);
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+        return false;
+    bool deleted = sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!deleted)
+        return false;
+
+    m_namesDefinedThroughProxy.remove(propertyName.uid());
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(this, globalObject, propertyName, slot));
 }
 
 bool NodeVMGlobalObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
@@ -1584,6 +1686,8 @@ bool NodeVMGlobalObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* glo
 
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+        return false;
     bool deleted = sandbox->methodTable()->deletePropertyByIndex(sandbox, globalObject, index);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted)

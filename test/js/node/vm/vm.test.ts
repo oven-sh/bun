@@ -2609,6 +2609,8 @@ test.concurrent("operations on contexts that are nested too deeply throw a Range
       "in": inner => "missing" in inner,
       "getOwnPropertyDescriptor": inner => Object.getOwnPropertyDescriptor(inner, "missing"),
       "hasOwn": inner => Object.hasOwn(inner, "base"),
+      "delete": inner => delete inner.missing,
+      "delete an index": inner => delete inner[0],
     };
     let inner = { base: 1 };
     // A level of the others takes less of the stack than one of "get", but not that much less.
@@ -4039,6 +4041,87 @@ describe("delete in a context deletes as the sandbox itself does", () => {
     expect(() => runInContext("'use strict'; delete this.kept", context)).toThrow(
       expect.objectContaining({ name: "TypeError" }),
     );
+  });
+
+  const deleteTraps = (seen: string[]): Record<string, ProxyHandler<object>> => ({
+    "no trap": {},
+    "a trap that deletes": {
+      deleteProperty(target, key) {
+        seen.push(String(key));
+        return Reflect.deleteProperty(target, key);
+      },
+    },
+    "a trap that refuses": {
+      deleteProperty(target, key) {
+        seen.push(String(key));
+        return false;
+      },
+    },
+    "a trap that throws": {
+      deleteProperty(target, key) {
+        seen.push(String(key));
+        throw new RangeError("trap");
+      },
+    },
+  });
+
+  test.each(Object.keys(deleteTraps([])))("a bare identifier that nothing in the context declared: %s", kind => {
+    const seen: string[] = [];
+    const target = { counter: 1 };
+    const proxy = new Proxy(target, deleteTraps(seen)[kind]);
+    for (const sandbox of [proxy, new Proxy(proxy, {}), runInContext("globalThis", createContext(proxy))]) {
+      const context = createContext(sandbox);
+      for (const code of [
+        "[delete counter, delete (counter), delete absent]",
+        "(function () { return [delete counter, delete (counter), delete absent]; })()",
+        "eval('[delete counter, delete (counter), delete absent]')",
+        "typeof counter; [delete counter, delete (counter), delete absent]",
+      ])
+        expect(Array.from(runInContext(code, context))).toEqual([true, true, true]);
+      const compiled = compileFunction("return [delete counter, delete absent]", [], { parsingContext: context });
+      expect(Array.from(compiled())).toEqual([true, true]);
+    }
+    expect(target).toEqual({ counter: 1 });
+    expect(seen).toEqual([]);
+  });
+
+  test.each([
+    ["assigned", "counter = 2", "counter", true],
+    ["assigned through globalThis", "globalThis.counter = 2", "counter", true],
+    ["defined", "Object.defineProperty(globalThis, 'counter', { value: 2, configurable: true })", "counter", true],
+    ["an accessor", "Object.defineProperty(globalThis, 'counter', { get() {}, configurable: true })", "counter", true],
+    ["declared", "var counter = 2", "counter", false],
+    ["built in", "", "Array", true],
+    ["inherited", "", "toString", true],
+  ])("a bare identifier that is %s in the context", (_, code, name, answer) => {
+    for (const kind of Object.keys(deleteTraps([]))) {
+      const seen: string[] = [];
+      const context = createContext(new Proxy({ counter: 1 }, deleteTraps(seen)[kind]));
+      runInContext(code, context);
+      if (kind === "a trap that throws") expect(() => runInContext(`delete ${name}`, context)).toThrow("trap");
+      else expect(runInContext(`delete ${name}`, context)).toBe(kind === "a trap that refuses" ? false : answer);
+      expect(seen).toEqual(kind === "no trap" ? [] : [name]);
+    }
+  });
+
+  test("a bare identifier that is assigned through a setter of the target", () => {
+    for (const kind of Object.keys(deleteTraps([]))) {
+      const seen: string[] = [];
+      const stored: unknown[] = [];
+      const target = {
+        get counter() {
+          return 1;
+        },
+        set counter(value) {
+          stored.push(value);
+        },
+      };
+      const context = createContext(new Proxy(target, deleteTraps(seen)[kind]));
+      expect(runInContext("counter = 2; delete counter", context)).toBe(true);
+      expect(stored).toEqual([2]);
+      expect(Object.keys(target)).toEqual(["counter"]);
+      expect(seen).toEqual([]);
+    }
   });
 
   test("Proxy whose trap throws", () => {

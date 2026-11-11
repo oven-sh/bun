@@ -4186,6 +4186,17 @@ unsafe fn get_loader_and_virtual_source<'a>(
         virtual_source = virtual_source_to_use.as_ref();
         path = Fs::Path::init(specifier);
     } else if virtual_source.is_none()
+        && let Some(written) = bun_standalone_graph::find_written_file(path.text)
+        && let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), &*written)
+    {
+        // What the program has written is on the disk.
+        *virtual_source_to_use = Some(bun_ast::Source {
+            path: bun_paths::fs::Path::init(path.text),
+            contents: std::borrow::Cow::Owned(contents),
+            ..Default::default()
+        });
+        virtual_source = virtual_source_to_use.as_ref();
+    } else if virtual_source.is_none()
         && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
             graph
                 .find_at_source_path(path.text)

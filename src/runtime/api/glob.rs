@@ -140,7 +140,7 @@ pub(crate) mod standalone_accessor {
     #[derive(Clone, Copy)]
     pub(crate) struct StandaloneHandle {
         /// The opened directory's `Graph::dir_key` (`'static`: the graph is
-        /// the immortal process singleton).
+        /// the immortal process singleton), or its path among the sources.
         dir: Option<&'static [u8]>,
     }
 
@@ -174,6 +174,11 @@ pub(crate) mod standalone_accessor {
             return Err(SysError::from_code(E::ENOENT, Tag::open));
         };
         match graph.dir_key(path) {
+            // A folder of the sources is listed as one, by its path.
+            Ok(_) if !bun_standalone_graph::is_bun_standalone_file_path(path) => {
+                let path = Graph::keep_folder_path(path);
+                Ok(StandaloneHandle { dir: Some(path) })
+            }
             Ok(key) => Ok(StandaloneHandle { dir: Some(key) }),
             Err(code) => Err(SysError::from_code(code, Tag::open)),
         }

@@ -10,12 +10,12 @@ import { run } from "./run";
 
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
-async function outcomeOf(files: Record<string, string>, words: string, ...flags: string[]) {
+async function outcomeOf(files: Record<string, string>, words: string, oneThread: boolean, ...flags: string[]) {
   using dir = tempDir("aot-everyday-mock", files);
   const env = {
     ...bunEnv,
     NO_COLOR: "1",
-    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0",
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread ? "1" : "0",
     BUN_DEBUG_TEST_AOT_WORDS: words,
   };
   const testFiles = Object.keys(files)
@@ -41,11 +41,15 @@ function each(
   part: number,
   parts: number,
   judge: (name: string, plain: Outcome, compiled: Outcome) => void,
+  plainOnOneThread = false,
 ) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
     test(name, async () => {
-      const [plain, compiled] = await Promise.all([outcomeOf(files, ""), outcomeOf(files, wordsOfAll, "--aot")]);
+      const [plain, compiled] = await Promise.all([
+        outcomeOf(files, "", plainOnOneThread),
+        outcomeOf(files, wordsOfAll, false, "--aot"),
+      ]);
       // A run that printed nothing would be the same as any other that printed nothing.
       expect(plain.printed).not.toBeEmpty();
       judge(name, plain, compiled);
@@ -99,8 +103,9 @@ const partsInAChain: [cases: RegExp, what: string][] = [
   ],
 ];
 
+// Plain Bun reads the files on one thread: with threads it completes loads in the order in which the threads finish.
 export function mocksInAChainIn(part: number, parts: number) {
-  each(mocksInAChain(), part, parts, (name, plain, compiled) => {
+  const judge = (name: string, plain: Outcome, compiled: Outcome) => {
     if (!partsInAChain.some(([names]) => names.test(name))) {
       expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
       return;
@@ -108,7 +113,8 @@ export function mocksInAChainIn(part: number, parts: number) {
     // Which load in flight ends first is a matter of time, so that the two runs part is asked of nobody.
     if (Bun.deepEquals({ ...compiled, didNotRunAgain: 0 }, plain))
       console.error(`A LISTED PARTING AGREES WITH bun test: ${name}`);
-  });
+  };
+  each(mocksInAChain(), part, parts, judge, true);
 }
 
 export function mocksLaidTwiceIn(part: number, parts: number) {

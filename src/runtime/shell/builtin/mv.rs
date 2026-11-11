@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{ZBox, ZStr};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
-use crate::node::fs::{forget_shell_operand, note_written_shell_operand};
+use crate::node::fs::{forget_shell_operand, holds_more_than_disk_at, note_moved_shell_operand};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -313,7 +313,7 @@ impl Mv {
     }
 
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
-        let (all_done, had_err, moved, target) = {
+        let (all_done, had_err, moved, target, is_folder) = {
             let MvState::Executing {
                 task_count,
                 tasks_done,
@@ -334,13 +334,28 @@ impl Mv {
             } else {
                 moved = core::mem::take(&mut tasks[task_idx].sources);
             }
+            let is_folder = tasks[task_idx].target_fd.is_some() || moved.len() > 1;
             *tasks_done += 1;
-            (*tasks_done >= *task_count, err.is_some(), moved, target)
+            (
+                *tasks_done >= *task_count,
+                err.is_some(),
+                moved,
+                target,
+                is_folder,
+            )
         };
-        note_written_shell_operand(Builtin::shell(interp, cmd).cwd(), target.as_bytes());
         // One that stayed where it was, as under `-n`, is on the disk, which is asked first.
         for source in &moved {
-            forget_shell_operand(Builtin::shell(interp, cmd).cwd(), source.as_bytes());
+            let (cwd, source) = (Builtin::shell(interp, cmd).cwd(), source.as_bytes());
+            let name = bun_paths::basename(strings::without_trailing_slash(source));
+            match is_folder {
+                true => {
+                    let target = [target.as_bytes(), b"/", name].concat();
+                    note_moved_shell_operand(cwd, source, &target);
+                }
+                false => note_moved_shell_operand(cwd, source, target.as_bytes()),
+            }
+            forget_shell_operand(cwd, source, true);
         }
         if all_done {
             if had_err {
@@ -519,6 +534,10 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::E;
 
+        if holds_more_than_disk_at(src_dir, src.as_bytes()) {
+            let error = bun_sys::Error::from_code(E::EROFS, bun_sys::Tag::rename);
+            return Err(error.with_path(src.as_bytes()));
+        }
         if no_clobber {
             if shell_lstatat(dst_dir, dst).is_ok() {
                 // `dst` stays. A missing `src` is still an error.

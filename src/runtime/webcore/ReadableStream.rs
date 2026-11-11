@@ -537,6 +537,7 @@ impl ReadableStream {
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
+        blob.follow_source_path();
         let Some(store) = blob.store.get() else {
             return ReadableStream::empty(cx.global());
         };

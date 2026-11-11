@@ -12,21 +12,24 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
+use crate::api::standalone_graph_jsc::is_followed;
 use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest, StaticRoute};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
-use crate::webcore::{Blob, FetchHeaders, Response};
+use crate::webcore::{AnyBlob, Blob, FetchHeaders, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct FileRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
+    /// Answers with what the executable holds, until the program writes the file.
+    embedded: Option<RefPtr<StaticRoute>>,
     headers: Headers,
     status_code: u16,
     // Mutated on every request (`on()` runs `hash()`) through a shared
@@ -86,6 +89,7 @@ impl FileRoute {
         size_of::<FileRoute>()
             + self.headers.memory_cost()
             + self.blob.reported_estimated_size.get()
+            + self.embedded.as_ref().map_or(0, |it| it.memory_cost())
     }
 
     pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
@@ -121,6 +125,7 @@ impl FileRoute {
             has_content_range_header: headers.get(b"content-range").is_some(),
             has_date_header: headers.get(b"date").is_some(),
             blob,
+            embedded: None,
             headers,
             status_code,
             stat_hash: Cell::new(StatHash::default()),
@@ -152,8 +157,10 @@ impl FileRoute {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
             let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
-            if needs_read {
-                // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
+            let is_embedded =
+                !needs_read && matches!(body_value, BodyValue::Blob(b) if is_followed(b));
+            if needs_read || is_embedded {
+                // Both ⇒ `store` is Some, and `data` is `File` if it needs a read.
                 let is_fd = matches!(
                     body_value,
                     BodyValue::Blob(b)
@@ -179,17 +186,16 @@ impl FileRoute {
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(global, response.get_init_headers(), &blob)?;
                 let status_code = response.status_code();
-
-                return Ok(Some(RefPtr::new(FileRoute::new(
-                    blob,
-                    headers,
-                    None,
-                    status_code,
-                ))));
+                let mut route = FileRoute::new(blob, headers, None, status_code);
+                if is_embedded {
+                    route.embedded = StaticRoute::from_js(global, argument)?;
+                }
+                return Ok(Some(RefPtr::new(route)));
             }
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {
-            if blob.needs_to_read_file() {
+            let needs_read = blob.needs_to_read_file();
+            if needs_read || is_followed(blob) {
                 let b = blob.dupe();
                 b.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
@@ -197,7 +203,14 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 let headers = headers_from(global, None, &b)?;
-                return Ok(Some(RefPtr::new(FileRoute::new(b, headers, None, 200))));
+                let mut route = FileRoute::new(b, headers, None, 200);
+                if !needs_read {
+                    let embedded = AnyBlob::Blob(blob.dupe());
+                    route.embedded = Some(StaticRoute::init_from_any_blob_with_headers(
+                        global, embedded, None, 200,
+                    )?);
+                }
+                return Ok(Some(RefPtr::new(route)));
             }
         }
         Ok(None)
@@ -237,11 +250,27 @@ impl FileRoute {
         }
     }
 
+    /// What answers as long as the program has not written the file. A part of it is read as one of a file on the disk.
+    fn embedded_route(&self, req: &AnyRequest) -> Option<ThisPtr<StaticRoute>> {
+        let embedded = self.embedded.as_ref()?;
+        if self.blob.needs_to_read_file() || req.header(b"range").is_some() {
+            return None;
+        }
+        embedded.server.set(self.server.get());
+        Some(embedded.this_ptr())
+    }
+
     pub(crate) fn on_head_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
+        if let Some(embedded) = this.embedded_route(&req) {
+            return StaticRoute::on_head_request(embedded, req, resp);
+        }
         Self::on(this, req, resp, Method::HEAD);
     }
 
     pub(crate) fn on_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
+        if let Some(embedded) = this.embedded_route(&req) {
+            return StaticRoute::on_request(embedded, req, resp);
+        }
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         Self::on(this, req, resp, method);
     }
@@ -287,6 +316,12 @@ impl FileRoute {
             }
         };
 
+        let fd_result = match fd_result {
+            Err(err) if route.embedded.is_some() && !route.blob.needs_to_read_file() => {
+                crate::node::fs::open_embedded_for_one_read(path).unwrap_or(Err(err))
+            }
+            opened => opened,
+        };
         let Ok(fd) = fd_result else {
             req.set_yield(true);
             route.on_response_complete(resp);

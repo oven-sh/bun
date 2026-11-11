@@ -350,13 +350,13 @@ pub(crate) fn typed_files_for_build(
             let note = |checker: &mut Checker<'_, '_>, file: FileId| {
                 let file = checker.hir(file);
                 let is_module_by_force = file.is_forced_module && file.only_declares();
-                is_read_otherwise.fetch_or(is_module_by_force, Ordering::Relaxed);
+                is_read_otherwise.fetch_or(is_module_by_force, Ordering::SeqCst);
             };
             let texts = [&*typed, declarations, &newest_lib];
             let paths = entry_paths(typed, &newest_lib);
             let checked_in = CheckedIn::ProgramWithBunTypes(carried, &note);
             let report = check_once(&paths, texts, checked_in);
-            (!is_read_otherwise.load(Ordering::Relaxed)).then_some(report)
+            (!is_read_otherwise.load(Ordering::SeqCst)).then_some(report)
         });
         (report, with_bun_types)
     };

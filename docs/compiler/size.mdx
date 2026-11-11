@@ -57,10 +57,12 @@ With the last two, `--trim` keeps almost every API. With the others, unused Bun 
 ## Make it smaller
 
 - `--disallow-code-generation-from-strings` removes the parser and the interpreter. `eval` and `new Function` then throw.
-- `--trim-locales en,de` removes the `Intl` data for every other locale. Using another locale exits the process.
+- `--trim-locales en,de` removes the `Intl` data for every other locale. A call that needs the data of another locale exits the process.
 - `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`, and an error message [quotes less](/compiler/compatibility) of the code that failed.
 
 Without `--trim-locales`, Bun keeps the locales that your code passes as constants, as in `toLocaleString("de")`. One call with a computed locale, or with none, keeps them all. The flag has no effect on macOS, where Bun uses the system's ICU library.
+
+With `--trim-locales`, only the list counts. An executable built with `--aot` can pass a test with a locale that the list leaves out: it formats some values without the locale's data, and exits on others.
 
 ### Turn off code from strings
 

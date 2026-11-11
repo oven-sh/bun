@@ -256,9 +256,8 @@ pub trait Modules: Sync {
     /// mark itself is dropped. Can be called at any time.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
 
-    /// eslint-plugin-import's `listFilesToProcess(patterns, extensions)`, run from the working directory. With ESLint
-    /// 8's config files, it's `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))`. Otherwise it's
-    /// `listFilesWithNodeFs`: the files the run itself would find under `patterns`, so its ignores apply. Returns `Err`
+    /// eslint-plugin-import's `listFilesToProcess(patterns, extensions)`, run from the working directory: ESLint 8's
+    /// `FileEnumerator` with its config files, otherwise `listFilesWithNodeFs` with the run's ignores. Returns `Err`
     /// with the message of the error it throws. Can be called at any time.
     fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>>;
 

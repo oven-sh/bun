@@ -516,8 +516,8 @@ fn search(
     }
 }
 
-/// [`Modules::list_files`](bun_lint::modules::Modules::list_files) for a run. In a run with ESLint 8's configuration
-/// files, it's [`list_as_eslint_8`]. In every other run, it's [`list_with_fs`] with the run's own `loader`.
+/// [`Modules::list_files`](bun_lint::modules::Modules::list_files): [`list_as_eslint_8`] in a run with ESLint 8's
+/// configuration files, [`list_with_fs`] in every other run.
 pub(crate) fn list_files(
     run_state: (&Linter, &Environment, &Host),
     loader: &Loader,
@@ -532,12 +532,9 @@ pub(crate) fn list_files(
     }
 }
 
-/// Returns what eslint-plugin-import's `listFilesWithNodeFs(patterns, extensions)` yields, which it lists with when
-/// ESLint's `FileEnumerator` throws for a run without ESLint 8's configuration files: the files under `patterns` that
-/// have one of `extensions`, found the way the run itself finds files, so what its configuration and ignore files
-/// ignore is left out. A file is listed whether or not the configuration has `files` for it, an entry named
-/// `node_modules` or starting with `.` isn't entered, and an argument that selects nothing is skipped. Sorted by
-/// path. `Err` has the message of the error the search throws.
+/// eslint-plugin-import's `listFilesWithNodeFs(patterns, extensions)`: the files under `patterns` with one of
+/// `extensions` that the run doesn't ignore, searched as [`Walk::for_reading`] says. Sorted by path. `Err` has the
+/// message of the error the search throws.
 fn list_with_fs(
     loader: &Loader,
     pool: &Pool,
@@ -638,10 +635,8 @@ fn split_exclusions<'p>(
 struct Walk {
     /// ESLint's `errorOnUnmatchedPattern`: `Err` if an argument selects no file.
     error_on_unmatched_pattern: bool,
-    /// The search is for a rule that reads the files it finds, and lints none of them. An entry named `node_modules`,
-    /// or whose name starts with `.`, is skipped in every directory. A file that the configuration has no `files` for,
-    /// and a directory that an `eslint.config.*` doesn't reach, are listed instead of failing the search. The arguments
-    /// aren't recorded as the run's, so the configurations the run found don't change.
+    /// The files are read, not linted: `node_modules` and dot entries are skipped, a file without a matching `files`
+    /// or outside an `eslint.config.*`'s reach is listed instead of failing, and the arguments aren't the run's.
     for_reading: bool,
 }
 

@@ -1869,6 +1869,32 @@ describe("bundler", () => {
     },
     run: { file: "/out.js", stdout: "ReferenceError true" },
   });
+  // The same pass deletes a leading literal `const` whose use count is zero,
+  // which means that every read was inlined. `--no-bundle` for a browser
+  // target inlines no read, so a read in a later case still needs the
+  // declaration.
+  itBundled("minify/InlinedConstRemovalSeesAllSwitchCases", {
+    files: {
+      "/entry.js": /* js */ `
+        export function f(k) {
+          switch (k) {
+            case 0:
+              const early = 2;
+            case 1:
+              const read = () => [early, early];
+              return read();
+          }
+        }
+        console.log(JSON.stringify(f(0)));
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("const early = 2");
+    },
+    run: { stdout: "[2,2]" },
+  });
   // A single-use `let` is substituted into whichever child of the next
   // expression reads it. `a` is used where the substitution must happen;
   // `keep` where a side effect in between must block it.

@@ -426,6 +426,24 @@ describe("ipc mode advanced", () => {
   );
 });
 
+// Writes the messages with one write(), then makes the file "written". They fit the socket's buffer on Linux.
+function senderOfOneRead(serialization: string, messages: unknown[]) {
+  return `
+    const fs = require("node:fs");
+    const encode = {
+      json: message => Buffer.from(JSON.stringify(message) + "\\n"),
+      advanced(message) {
+        const body = Buffer.from(require("bun:jsc").serialize(message));
+        const header = Buffer.from([2, 0, 0, 0, 0]);
+        header.writeUInt32LE(body.length, 1);
+        return Buffer.concat([header, body]);
+      },
+    }["${serialization}"];
+    fs.writeSync(3, Buffer.concat(${JSON.stringify(messages)}.map(encode)));
+    fs.writeFileSync("written", "");
+  `;
+}
+
 // The handler of the first message disconnects and then waits in a nested event loop until the
 // Subprocess is done, so that only the stack keeps it. Decoding the second message collects it. The
 // three messages arrive in one read: the receiver starts to read when they are all written.
@@ -472,21 +490,11 @@ it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
         }
         await disconnected;
       `,
-      "sender.js": `
-        const fs = require("node:fs");
-        const messages = ["first", Array.from({ length: 5000 }, (_, i) => ({ i })), { cmd: "NODE_HANDLE" }];
-        const encode = {
-          json: message => Buffer.from(JSON.stringify(message) + "\\n"),
-          advanced(message) {
-            const body = Buffer.from(require("bun:jsc").serialize(message));
-            const header = Buffer.from([2, 0, 0, 0, 0]);
-            header.writeUInt32LE(body.length, 1);
-            return Buffer.concat([header, body]);
-          },
-        }["${serialization}"];
-        fs.writeSync(3, Buffer.concat(messages.map(encode)));
-        fs.writeFileSync("written", "");
-      `,
+      "sender.js": senderOfOneRead(serialization, [
+        "first",
+        Array.from({ length: 5000 }, (_, i) => ({ i })),
+        { cmd: "NODE_HANDLE" },
+      ]),
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "receiver.js", serialization],
@@ -503,6 +511,69 @@ it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "disconnected\n", stderr: "", exitCode: 0 });
+  },
+);
+
+// The handler of the first message waits for the response to a fetch(), which is read on the same event loop.
+it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
+  "the handler of the first of three messages of one read ticks the event loop: %s",
+  async serialization => {
+    using dir = tempDir("ipc-tick-between-messages", {
+      "entry.js": "",
+      "receiver.js": `
+        import { existsSync } from "node:fs";
+        using server = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(64 * 1024, "x")) });
+        const received = [];
+        let handled = false;
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        Bun.spawn({
+          cmd: [process.execPath, "sender.js"],
+          serialization: process.argv[2],
+          stdio: ["ignore", "inherit", "inherit"],
+          onDisconnect,
+          ipc(message) {
+            received.push(message);
+            if (received.length !== 1) return;
+            Bun.build({
+              entrypoints: ["./entry.js"],
+              plugins: [
+                {
+                  name: "ticks the event loop",
+                  async setup() {
+                    await (await fetch(server.url)).bytes();
+                  },
+                },
+              ],
+            });
+            handled = true;
+          },
+        });
+        const cell = new Int32Array(new SharedArrayBuffer(4));
+        for (let i = 0; !existsSync("written"); i++) {
+          if (i === 20_000) throw new Error("the sender did not write");
+          Atomics.wait(cell, 0, 0, 1);
+        }
+        await disconnected;
+        // The sender exits while the first handler waits. The rest is delivered when it returns.
+        while (!handled) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify(received));
+        process.exit();
+      `,
+      "sender.js": senderOfOneRead(serialization, ["first", ["second"], { third: 3 }]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "receiver.js", serialization],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '["first",["second"],{"third":3}]\n',
+      stderr: "",
+      exitCode: 0,
+    });
   },
 );
 

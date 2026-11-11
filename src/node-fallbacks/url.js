@@ -20,8 +20,10 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const URL = /* @__PURE__ */ globalThis.URL;
-const URLSearchParams = /* @__PURE__ */ globalThis.URLSearchParams;
+// No binding has the name of a global: a classic script declares its top-level bindings on the global object,
+// and a `var URL` there hides a `URL` that the host inherits. README.md has the cases.
+const urlURL = /* @__PURE__ */ globalThis.URL;
+const urlURLSearchParams = /* @__PURE__ */ globalThis.URLSearchParams;
 
 function util_isString(arg) {
   return typeof arg === "string";
@@ -319,7 +321,7 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
       // It only converts parts of the domain name that
       // have non-ASCII characters, i.e. it doesn't matter if
       // you call it with a domain that already is ASCII-only.
-      this.hostname = new URL(`https://${this.hostname}`).hostname;
+      this.hostname = new urlURL(`https://${this.hostname}`).hostname;
     }
 
     var p = this.port ? ":" + this.port : "";
@@ -734,8 +736,8 @@ Url.prototype.parseHost = function () {
 };
 
 export {
-  URL,
-  URLSearchParams,
+  urlURL as URL,
+  urlURLSearchParams as URLSearchParams,
   Url as Url,
   urlFormat as format,
   urlParse as parse,
@@ -753,6 +755,6 @@ export default {
   // fileURLToPath: fileURLToPath,
   // domainToASCII,
   // domainToUnicode,
-  URL,
-  URLSearchParams,
+  URL: urlURL,
+  URLSearchParams: urlURLSearchParams,
 };

@@ -3,6 +3,7 @@ import { describe, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+import vm from "vm";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -206,11 +207,14 @@ describe("bundler", () => {
         "AbortSignal", "atob", "btoa", "crypto", "TextEncoder", "TextDecoder", "URL", "URLSearchParams", "File", "Blob",
       ];
       const page = vm.createContext(Object.fromEntries(web.map(name => [name, globalThis[name]])));
-      // Every global object has these by itself.
-      const names = [...web, "escape", "unescape", "hasOwnProperty"];
-      const before = names.map(name => vm.runInContext(name, page));
+      // A content script of an extension is a classic script too. There, \`browser\` is the extension API.
+      if (process.argv[2] === "extension") page.browser = { runtime: { id: "an extension" } };
+      // Every global object has the last three by itself. Any other page has no \`browser\` and must get none.
+      const names = [...web, "browser", "escape", "unescape", "hasOwnProperty"];
+      const read = name => vm.runInContext('"' + name + '" in globalThis ? ' + name + ' : "no such global"', page);
+      const before = names.map(read);
       vm.runInContext(readFileSync(new URL("./out.js", import.meta.url), "utf8"), page, { filename: "out.js" });
-      const replaced = names.filter((name, i) => vm.runInContext(name, page) !== before[i]);
+      const replaced = names.filter((name, i) => read(name) !== before[i]);
       if (replaced.length) console.log("the bundle replaced the page's " + replaced.join(", "));
     `,
   };
@@ -875,6 +879,186 @@ describe("bundler", () => {
     target: "browser",
     // The third run has every polyfill in one classic script: none may replace a global of the page.
     run: ["/out.js", "/without-node-globals.js", "/classic-script.js"].map(file => ({ file, stdout: defaultImports })),
+  });
+  // Every script of a page sees the top-level `var`, `function` and `class` names of a classic script. A polyfill
+  // binding with the name of a global replaces that global, hides one that the host inherits, or declares one on a
+  // host that has none. So the bundle of each polyfill declares no name of a global of a page, a worker or an
+  // extension. The last bundle is a script that does, to show that the test sees each kind of declaration.
+  const bundles = [...polyfilled, "a-script"];
+  itBundled("browser/NodePolyfillsDeclareNoPageGlobal", {
+    files: {
+      ...Object.fromEntries(
+        polyfilled.map(name => [
+          `/bundle-of-${name}.js`,
+          `import * as polyfill from "node:${name}";\nglobalThis.polyfill = polyfill;`,
+        ]),
+      ),
+      "/bundle-of-a-script.js": /* js */ `
+        import "./reads-a-global.js";
+        var browser = 1;
+        function escape() {}
+        class File {}
+        var queueMicrotask = 2;
+        globalThis.declared = [browser, escape, File, queueMicrotask];
+      `,
+      "/reads-a-global.js": `queueMicrotask(() => {});`,
+    },
+    entryPoints: bundles.map(name => `/bundle-of-${name}.js`),
+    outdir: "/out",
+    target: "browser",
+    async onAfterBundle(api) {
+      const declaredBy = new Map<string, string[]>();
+      for (const bundle of bundles) {
+        const code = api.readFile(`/out/bundle-of-${bundle}.js`);
+        const page = vm.createContext({});
+        // The global object starts without names, so that a `var escape` adds one.
+        const ownNames: () => string[] = vm.runInContext(
+          "((page, names) => (names(page).forEach(name => delete page[name]), () => names(page)))(this, Object.getOwnPropertyNames)",
+          page,
+        );
+        const before = new Set(ownNames());
+        // A script declares its `var` and `function` names on the global object before it runs. The first
+        // statement throws, so nothing runs.
+        let thrown: unknown;
+        try {
+          vm.runInContext("throw 'declared';" + code, page);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBe("declared");
+        // A class is not a property of the global object. The bundler prints a top-level class at the start of a line.
+        const classes = [...code.matchAll(/^class ([\w$]+)/gm)].map(match => match[1]);
+        for (const name of [...ownNames().filter(name => !before.has(name)), ...classes]) {
+          declaredBy.set(name, [...(declaredBy.get(name) ?? []), bundle]);
+        }
+      }
+      // The bundler numbers a binding when another module of the bundle reads a global of that name, as it does
+      // for `queueMicrotask` of the script. Without its number, a name such as `default2` is a keyword.
+      const withoutNumber = (name: string) => name.replace(/\d+$/, "");
+      const isIdentifier = (name: string) => {
+        try {
+          new vm.Script(name);
+          return name !== "";
+        } catch {
+          return false;
+        }
+      };
+      const names = new Set([...declaredBy.keys()].flatMap(name => [name, withoutNumber(name)]).filter(isIdentifier));
+      // `bun lint` knows the globals of these environments, and no-undef reports every other name.
+      api.writeFile("/names.js", [...names].map(name => `${name};`).join("\n"));
+      api.writeFile(
+        "/page-globals.json",
+        JSON.stringify({
+          plugins: [],
+          categories: { correctness: "off" },
+          rules: { "no-undef": "error" },
+          env: { browser: true, worker: true, serviceworker: true, webextensions: true, es2024: true },
+        }),
+      );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "--config", api.join("page-globals.json"), "--no-ignore", "--format=unix", "names.js"],
+        env: bunEnv,
+        cwd: api.root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const notGlobal = new Set([...(stdout + stderr).matchAll(/'([^']+)' is not defined/g)].map(match => match[1]));
+      // Every global object inherits the names of Object.prototype, such as `hasOwnProperty`.
+      const isGlobal = (name: string) => names.has(name) && (!notGlobal.has(name) || name in Object.prototype);
+      const pageGlobals = [...declaredBy].filter(([name]) => isGlobal(name) || isGlobal(withoutNumber(name)));
+      expect(Object.fromEntries(pageGlobals)).toEqual({
+        browser: ["a-script"],
+        escape: ["a-script"],
+        File: ["a-script"],
+        queueMicrotask2: ["a-script"],
+      });
+    },
+  });
+  // The process polyfill exports `browser`, and each polyfill that reads `process` loads it. In the content script of
+  // an extension, a binding of that name replaces the extension API, also for the code of the same bundle. On any
+  // other page it declares a `browser`.
+  itBundled("browser/NodePolyfillsKeepExtensionApi", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Readable } from "node:stream";
+        import process, { browser } from "node:process";
+        console.log(JSON.stringify([typeof Readable, browser, process.browser, typeof globalThis.browser?.runtime]));
+      `,
+    },
+    runtimeFiles: asClassicScript,
+    target: "browser",
+    run: [
+      { file: "/classic-script.js", args: ["extension"], stdout: '["function",true,true,"object"]' },
+      { file: "/classic-script.js", stdout: '["function",true,true,"undefined"]' },
+    ],
+  });
+  // Six exports are the host's own global of the same name. A classic script declares a `var URL` before it runs.
+  // On a host that inherits `URL`, as a content script of Firefox does, that hides it, and `globalThis.URL` then
+  // reads `undefined`. On a host without `TextEncoder`, as the window of jsdom 25, it declares one, and a default
+  // export that reads the global throws. The exports are the globals of load time, as in a module script.
+  const exportsOfGlobals = ["TextDecoder", "TextEncoder", "URL", "URLSearchParams", "Blob", "File"];
+  const loadAsClassicScript = /* js */ `
+    import vm from "node:vm";
+    import { readFileSync } from "node:fs";
+    const names = ${JSON.stringify(exportsOfGlobals)};
+    const load = page => vm.runInContext(readFileSync(new URL("./out.js", import.meta.url), "utf8"), page, { filename: "out.js" });
+  `;
+  itBundled("browser/NodePolyfillExportsOfGlobals", {
+    files: {
+      "/entry.js": /* js */ `
+        import util, { TextDecoder, TextEncoder } from "node:util";
+        import url, { URL, URLSearchParams } from "node:url";
+        import { Blob, File } from "node:buffer";
+        const named = { TextDecoder, TextEncoder, URL, URLSearchParams, Blob, File };
+        const defaults = { ...util, ...url };
+        const wrong = Object.keys(named).filter(
+          name => named[name] !== globalThis[name] || (name in defaults && defaults[name] !== globalThis[name]),
+        );
+        console.log(wrong.length ? "not the global of the host: " + wrong : "each export is the global of the host");
+        globalThis.hostnameOf = href => url.parse(href).hostname;
+        globalThis.typeOfTextEncoderExports = () => typeof TextEncoder + " " + typeof util.TextEncoder;
+      `,
+    },
+    runtimeFiles: {
+      "/host-inherits-them.js":
+        loadAsClassicScript +
+        /* js */ `
+        const page = vm.createContext({ console, inherited: Object.fromEntries(names.map(name => [name, globalThis[name]])) });
+        vm.runInContext("Object.setPrototypeOf(globalThis, Object.assign(Object.create(Object.getPrototypeOf(globalThis)), inherited)); delete globalThis.inherited;", page);
+        load(page);
+        const hidden = names.filter(vm.runInContext("name => typeof globalThis[name] !== 'function'", page));
+        if (hidden.length) console.log("the bundle hid " + hidden.join(", "));
+        console.log(vm.runInContext("hostnameOf('http://b\\u00fccher.example/')", page));
+      `,
+      "/host-without-them.js":
+        loadAsClassicScript +
+        /* js */ `
+        const page = vm.createContext({ console });
+        load(page);
+        const declared = names.filter(vm.runInContext("name => name in globalThis", page));
+        if (declared.length) console.log("the bundle declared " + declared.join(", "));
+      `,
+      "/host-changes-them.js":
+        loadAsClassicScript +
+        /* js */ `
+        const page = vm.createContext({ console, ${exportsOfGlobals.filter(name => name !== "TextEncoder")} });
+        load(page);
+        vm.runInContext("TextEncoder = function () {}; URL = function () { throw new Error('url.parse() used the new URL'); }", page);
+        console.log(vm.runInContext("typeOfTextEncoderExports()", page));
+        console.log(vm.runInContext("hostnameOf('http://b\\u00fccher.example/')", page));
+      `,
+    },
+    target: "browser",
+    run: [
+      { stdout: "each export is the global of the host" },
+      { file: "/host-inherits-them.js", stdout: "each export is the global of the host\nxn--bcher-kva.example" },
+      { file: "/host-without-them.js", stdout: "each export is the global of the host" },
+      {
+        file: "/host-changes-them.js",
+        stdout: "each export is the global of the host\nundefined undefined\nxn--bcher-kva.example",
+      },
+    ],
   });
   itBundled("browser/NodePolyfillExternal", {
     todo: true,

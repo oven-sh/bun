@@ -669,5 +669,8 @@ export function callbackify(original) {
   return callbackified;
 }
 
-export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
-export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
+// No binding has the name of a global: a classic script declares its top-level bindings on the global object,
+// and a `var TextEncoder` there hides a `TextEncoder` that the host inherits. README.md has the cases.
+const utilTextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
+const utilTextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
+export { utilTextDecoder as TextDecoder, utilTextEncoder as TextEncoder };

@@ -49,7 +49,10 @@ export function nextTick(fun, ...args) {
 }
 
 export const title = "browser";
-export const browser = true;
+// Not named `browser`: a content script of an extension is a classic script, which declares its top-level
+// bindings on the global object, and `browser` is the extension API there. README.md has the cases.
+const processBrowser = true;
+export { processBrowser as browser };
 export const env = {};
 export const argv = [];
 export const version = ""; // empty string to avoid regexp issues

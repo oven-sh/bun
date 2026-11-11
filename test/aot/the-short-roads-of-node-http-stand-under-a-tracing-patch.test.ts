@@ -86,30 +86,35 @@ async function serve(entry: string, prints: string) {
   });
 }
 
-let quiet: Promise<number> | undefined;
-/** The guard bits that the server ends which nothing is laid over. Every other program is held against it, so it is built once. */
-const endedByAQuietServer = () => (quiet ??= serve("quiet.mjs", untraced));
+// A server that nothing is laid over ends no guard bit. Every other program is held against that.
+const endedByAQuietServer = 0;
 
 // The programs are built beside one another. A debug build of Bun holds more than a gigabyte of memory for each build, so there
 // they are built one by one.
 const declare = isDebug ? testOneByOne : test.concurrent;
+// The time of a test includes its wait for a slot behind the builds of the others, so each has the limit that one test had for all 16.
+const limit = 900_000;
 
-declare("a quiet server answers its six requests, and its run counts the guard bits that it ended", async () => {
-  expect(await endedByAQuietServer()).toBeGreaterThanOrEqual(0);
-});
+declare(
+  "a quiet server ends no guard bit",
+  async () => {
+    expect(await serve("quiet.mjs", untraced)).toBe(endedByAQuietServer);
+  },
+  limit,
+);
 
 declare(
   "plain stores of functions over and beside the library's methods end no guard that a quiet server keeps",
   async () => {
-    const [ended, endedByQuiet] = await Promise.all([serve("traced.mjs", traced), endedByAQuietServer()]);
-    expect(ended).toBe(endedByQuiet);
+    expect(await serve("traced.mjs", traced)).toBe(endedByAQuietServer);
   },
+  limit,
 );
 
 declare.each(Object.keys(deeds).flatMap(deed => [[deed, "ahead"] as const, [deed, "later"] as const]))(
   "%s, laid %s: what sees a read or a store above the messages of a server ends some guards, whoever wrote its functions",
   async (deed, moment) => {
-    const [ended, endedByQuiet] = await Promise.all([serve(`${deed}-${moment}.mjs`, untraced), endedByAQuietServer()]);
-    expect(ended).toBeGreaterThan(endedByQuiet);
+    expect(await serve(`${deed}-${moment}.mjs`, untraced)).toBeGreaterThan(endedByAQuietServer);
   },
+  limit,
 );

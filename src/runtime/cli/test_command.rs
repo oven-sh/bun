@@ -2897,7 +2897,11 @@ impl TestCommand {
             };
         }
 
-        vm.transpiler.configure_defines()?;
+        if let Err(err) = vm.transpiler.configure_defines() {
+            let err = err.into();
+            crate::run_main::exit_if_logged(&err, ctx.log_ref());
+            return Err(err);
+        }
         if run_compiled::is_requested(ctx) {
             run_compiled::hand_on_environment(&env_loader.map);
         }

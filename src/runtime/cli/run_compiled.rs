@@ -200,7 +200,9 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
         Err(error) => {
             print_log(&said_before_the_build);
             print_log(ctx.log_ref());
-            Output::err_generic("{}", (BStr::new(error.name()),));
+            if !crate::run_main::is_logged(&error, ctx.log_ref()) {
+                Output::err_generic("{}", (BStr::new(error.name()),));
+            }
             exit_or_wait_for_change(watched)
         }
         Ok(Err(failure)) => {

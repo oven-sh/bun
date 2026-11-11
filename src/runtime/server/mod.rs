@@ -2161,14 +2161,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let config = unsafe { (*server).config.get_mut() };
         if let Some(bake_options) = &mut config.bake {
             let broadcast = config.broadcast_console_log_from_browser_to_server_for_bake;
-            let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
-                arena: &bake_options.arena,
-                root: bake_options.root.as_zstr(),
-                // SAFETY: per-thread VM singleton; STATIC lifetime.
-                vm: jsc::VirtualMachine::get(),
-                framework: core::mem::take(&mut bake_options.framework),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options),
-                broadcast_console_log_from_browser_to_server: broadcast,
+            // Here, and not in `DevServer::init`: that one drops nothing of a server it has partly built.
+            let defines = bake_options
+                .bundler_options
+                .parse_defines(&bake_options.arena, global);
+            let dev = match defines.and_then(|()| {
+                crate::bake::DevServer::init(crate::bake::DevServer::Options {
+                    arena: &bake_options.arena,
+                    root: bake_options.root.as_zstr(),
+                    // SAFETY: per-thread VM singleton; STATIC lifetime.
+                    vm: jsc::VirtualMachine::get(),
+                    framework: core::mem::take(&mut bake_options.framework),
+                    bundler_options: core::mem::take(&mut bake_options.bundler_options),
+                    broadcast_console_log_from_browser_to_server: broadcast,
+                })
             }) {
                 Ok(d) => d,
                 Err(e) => {

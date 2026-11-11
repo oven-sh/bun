@@ -125,23 +125,12 @@ impl Framework {
             },
         )?;
 
-        if !bundler_options.define.keys.is_empty() {
-            debug_assert_eq!(
-                bundler_options.define.keys.len(),
-                bundler_options.define.values.len()
-            );
-            use bun_bundler::DefineDataExt;
-            for (k, v) in bundler_options
+        out.options.define.insert_from_iterator(
+            bundler_options
                 .define
-                .keys
                 .iter()
-                .zip(bundler_options.define.values.iter())
-            {
-                let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
-                out.options.define.insert(k, parsed)?;
-            }
-        }
+                .map(|(key, data)| (key.as_ref(), data)),
+        )?;
 
         if mode != Mode::Development {
             // Hide information about the source repository, at the cost of debugging quality.

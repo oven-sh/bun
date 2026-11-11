@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -2008,5 +2008,144 @@ describe("production headers and import.meta.env", () => {
       cases.map(([development, value]) => run(development, `[serve.static]\nsourcemap = ${value}`)),
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
+  });
+});
+
+describe.concurrent("bunfig [serve.static] define", () => {
+  const page = `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`;
+  // Starts a server, reloads it, and says what the page's script holds. A throw of `Bun.serve()` is the answer too.
+  async function serve(
+    development: string,
+    define: string,
+    app = `console.log(typeof K === "undefined" ? "no K" : K);`,
+  ) {
+    using dir = tempDir("html-serve-define", {
+      "index.html": page,
+      "app.ts": app,
+      "bunfig.toml": `[serve.static]\ndefine = ${define}\n`,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        const routes = { "/": index };
+        let server;
+        try {
+          server = Bun.serve({ port: 0, development: ${development}, routes });
+        } catch (e) {
+          console.log(JSON.stringify({ threw: e.name, messages: (e.errors ?? [e]).map(error => error.message) }));
+          process.exit(0);
+        }
+        server.reload({ development: ${development}, routes });
+        const base = server.url.href;
+        const response = await fetch(base);
+        const jsPath = (await response.text()).match(/src="([^"]+\\.js)"/)?.[1];
+        const js = jsPath ? await (await fetch(new URL(jsPath, base))).text() : "";
+        console.log(JSON.stringify({ status: response.status, hasValue: js.includes("the value of K") }));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+    return JSON.parse(stdout);
+  }
+  const valid = `{ K = "\\"the value of K\\"" }`;
+  const notIdentifier = (key: string) => `define key ${JSON.stringify(key)} must be a valid identifier`;
+
+  test.each(["true", "{ hmr: false }", "false"])("development: %s puts the value in the bundle", async development => {
+    expect(await serve(development, valid)).toEqual({ status: 200, hasValue: true });
+  });
+
+  test.each<[string, string, string, string[]]>([
+    ["a key that is not a valid identifier", `{ "1x" = "1" }`, "BuildMessage", [notIdentifier("1x")]],
+    ["every such key", `{ "1x" = "1", "a-b" = "2" }`, "AggregateError", [notIdentifier("1x"), notIdentifier("a-b")]],
+    ["a value that does not parse", `{ K = "{" }`, "BuildMessage", [`Expected "}" but found end of file`]],
+  ])("development: true throws %s", async (_, define, threw, messages) => {
+    expect(await serve("true", define)).toEqual({ threw, messages });
+  });
+
+  // Without the throw, the dev server puts the value in place of `cfg["my-key"].url`.
+  test("development: true throws a key with a middle part that is not an identifier", async () => {
+    const define = `{ "cfg.my-key.url" = "\\"the value of K\\"" }`;
+    expect(await serve("true", define, `console.log(cfg["my-key"].url);`)).toEqual({
+      threw: "BuildMessage",
+      messages: [`define key "cfg.my-key.url" contains invalid identifier "my-key"`],
+    });
+  });
+
+  test.each(["{ hmr: false }", "false"])(
+    "development: %s fails the page for a key that is not a valid identifier",
+    async development => {
+      expect(await serve(development, `{ "1x" = "1" }`)).toEqual({ status: 500, hasValue: false });
+    },
+  );
+
+  // `Bun.serve()` throws before it creates the dev server, which frees nothing of what it has only partly built.
+  test.skipIf(!isASAN)("development: true loses no memory when it throws", async () => {
+    using dir = tempDir("html-serve-define-leak", {
+      "index.html": page,
+      "app.ts": `console.log(1);`,
+      "bunfig.toml": `[serve.static]\ndefine = { K = "{" }\n`,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        let threw = 0;
+        for (let i = 0; i < 3; i++) {
+          try {
+            Bun.serve({ port: 0, development: true, routes: { "/": index } }).stop(true);
+          } catch {
+            threw++;
+          }
+        }
+        console.log("threw", threw);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: {
+        ...bunEnv,
+        NODE_ENV: undefined,
+        // abort_on_error=0: a leak is exit code 1, not SIGABRT.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "abort_on_error=0"].filter(Boolean).join(":"),
+        // The check says on stderr that it ran.
+        LSAN_OPTIONS: [bunEnv.LSAN_OPTIONS, "verbosity=1"].filter(Boolean).join(":"),
+        // Frees what JavaScript still holds, so only what is lost counts.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("threw 3\n");
+    expect(stderr).toContain("LeakSanitizer: checking for leaks");
+    const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
+    expect(leaks).toEqual([]);
+    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test("bun ./index.html exits with the error of a key that is not a valid identifier", async () => {
+    using dir = tempDir("html-entry-define", {
+      "index.html": page,
+      "app.ts": `console.log(1);`,
+      "bunfig.toml": `[serve.static]\ndefine = { "1x" = "1" }\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.html", "--port=0"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, firstLineOfStderr: stderr.split("\n")[0], exitCode }).toEqual({
+      stdout: "",
+      firstLineOfStderr: `error: ${notIdentifier("1x")}`,
+      exitCode: 1,
+    });
   });
 });

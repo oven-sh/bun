@@ -60,7 +60,9 @@ pub(super) fn exec(options: &Options) -> ! {
     match compile_command::compile_from_context(ctx, CompileProduct::ReportsOnly) {
         Err(error) => {
             compile_command::print_log(ctx.log_ref());
-            Output::err_generic("{}", (error.name(),));
+            if !crate::run_main::is_logged(&error, ctx.log_ref()) {
+                Output::err_generic("{}", (error.name(),));
+            }
             Global::exit(1);
         }
         Ok(Ok(outcome)) => report_compile_check(ctx, options, &cwd, Ok(outcome)),

@@ -1786,6 +1786,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           `wrap finalizer: ${gated}`,
           "wrap finalizer: create_error=0 typeof=0 is_object=1 get_instance_data=0 data=ours pending=0",
           "instance data finalizer: data=ours",
+          "instance data finalizer: open=0 escape=0 close=0",
           `instance data finalizer: call_function=${status} pending=0`,
         ],
         stderr: "",

@@ -283,7 +283,10 @@ public:
         }
         m_isFinishingFinalizers = false;
 
-        instanceDataFinalizer.call(this, instanceData, true);
+        {
+            Bun::NapiHandleScope handle_scope(m_globalObject);
+            instanceDataFinalizer.call(this, instanceData, true);
+        }
         instanceDataFinalizer.clear();
         // napi_get_instance_data is ungated: never hand out the finalized pointer.
         instanceData = nullptr;

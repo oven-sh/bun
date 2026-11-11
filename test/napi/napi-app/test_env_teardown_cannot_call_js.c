@@ -47,6 +47,18 @@ static void instance_data_finalizer(napi_env env, void *data, void *hint) {
   napi_ref fn_ref = (napi_ref)hint;
   printf("instance data finalizer: data=%s\n",
          data == &instance_data ? "ours" : "wrong");
+
+  // Unlike a cleanup hook, it runs inside a handle scope.
+  napi_escapable_handle_scope scope = NULL;
+  napi_value object = NULL;
+  napi_value escaped = NULL;
+  napi_status open = napi_open_escapable_handle_scope(env, &scope);
+  napi_create_object(env, &object);
+  napi_status escape = napi_escape_handle(env, scope, object, &escaped);
+  napi_status close = napi_close_escapable_handle_scope(env, scope);
+  printf("instance data finalizer: open=%d escape=%d close=%d\n", (int)open,
+         (int)escape, (int)close);
+  fflush(stdout);
   call_js(env, fn_ref, "instance data finalizer");
   napi_delete_reference(env, fn_ref);
 }

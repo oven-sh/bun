@@ -580,6 +580,26 @@ pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: 
         && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
 }
 
+fn is_global_object(hir: &File<'_>, bound: &Bound<'_>, object: ExprId) -> bool {
+    let object = follow_settled_bindings(hir, bound, object);
+    let global_objects = [known::globalThis, known::global, known::self_];
+    is_free_name(hir, bound, object, &global_objects)
+}
+
+pub(super) fn is_member_of_global_object(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    e: ExprId,
+    names: &[Atom],
+) -> bool {
+    if let Some((object, MemberKey::Name(name))) = hir.member_key(e) {
+        return names.contains(&name) && is_global_object(hir, bound, object);
+    }
+    let taken = settled_symbol(hir, bound, e).map(|symbol| bound.binding_initializer(hir, symbol));
+    matches!(taken, Some(BindingInitializer::PatternProperty { source, path })
+        if matches!(path[..], [name] if names.contains(&name)) && is_global_object(hir, bound, source))
+}
+
 pub(crate) fn is_process(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -1211,9 +1231,7 @@ fn find_whether_constructor_is_worker(
     }
     let constructor = follow_settled_bindings(hir, bound, callee);
     if let Some((object, MemberKey::Name(name))) = hir.member_key(constructor) {
-        let object = follow_settled_bindings(hir, bound, object);
-        let global_objects = [known::globalThis, known::global, known::self_];
-        return is_free_name(hir, bound, object, &global_objects).then_some(name == known::Worker);
+        return is_global_object(hir, bound, object).then_some(name == known::Worker);
     }
     let is_own = |class: ClassId| hir[class].extends.is_none().then_some(false);
     match expr_kind(hir, constructor)? {

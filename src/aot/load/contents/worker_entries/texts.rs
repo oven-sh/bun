@@ -534,13 +534,28 @@ impl ContentsScan<'_, '_> {
         }
     }
 
+    fn makes_object_url(&self, callee: ExprId) -> bool {
+        let hir = self.request.hir;
+        let known = worker_builtins();
+        let builtin = self.find_builtin_named(callee);
+        if builtin.is_some() {
+            return builtin == known.object_url_maker;
+        }
+        let member = hir.member_key(hir.skip_type_assertions(callee));
+        let Some((class, MemberKey::Name(name))) = member else {
+            return false;
+        };
+        self.is_named(name, known.name_of_object_url_maker)
+            && self.find_class_of_module(hir.skip_type_assertions(class)) == Some(Constructor::Url)
+    }
+
     fn find_texts_behind_object_url(&self, url: ExprId) -> Option<(Vec<Vec<u8>>, Option<Atom>)> {
         let hir = self.request.hir;
         let known = worker_builtins();
         let ExprKind::Call(call) = hir[self.find_value_under_name(url)].kind else {
             return None;
         };
-        if self.find_builtin_named(hir[call].callee)? != known.object_url_maker? {
+        if !self.makes_object_url(hir[call].callee) {
             return None;
         }
         let blob = self.find_value_under_name(hir.ids(hir[call].args).next()?);

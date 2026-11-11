@@ -718,6 +718,61 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     ),
     (
         "a.mjs",
+        r#"import { createRequire } from "module"; import { URL } from "node:url"; createRequire(new URL(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import * as url from "url"; createRequire(new url.URL(import.meta.url).href)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(new globalThis.URL(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; const g = globalThis; createRequire(new g.URL(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "module"; import type { URL } from "node:url"; createRequire(new URL(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const { URL } = require("node:url"); require("module").createRequire(new URL("file://" + __filename))("a");"#,
+        &["node:url", "module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const Address = URL; require("module").createRequire(new Address("file:" + __filename).href)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cts",
+        r#"import url = require("url"); require("module").createRequire(new url.URL("file://" + __filename))("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(new (createRequire(import.meta.url)("node:url").URL)(import.meta.url))("a");"#,
+        &["node:url", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; const { URL } = await import("node:url"); createRequire(new URL(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { createRequire } = await import("module"); const { fileURLToPath, URL } = await import("url"); createRequire(fileURLToPath(new URL(import.meta.url)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
         r#"import { createRequire } from "module"; import { pathToFileURL } from "url"; createRequire(pathToFileURL(import.meta.filename))("a");"#,
         &["a"],
     ),
@@ -760,6 +815,21 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         "a.cjs",
         r#"require("module").createRequire(new Other("file:" + __filename).href)("a");"#,
         &["module"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { URL } from "./url.js"; createRequire(new URL(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import * as URL from "node:url"; createRequire(new URL(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const { Url } = require("node:url"); require("module").createRequire(new Url("file://" + __filename))("a");"#,
+        &["node:url", "module"],
     ),
     (
         "a.cjs",
@@ -1712,6 +1782,61 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
     ),
     (
         "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath, URL } from "node:url"; createRequire(join(fileURLToPath(new URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import * as url from "node:url"; createRequire(join(url.fileURLToPath(new url.URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(join(fileURLToPath(new globalThis.URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath, Url } from "node:url"; createRequire(join(fileURLToPath(new Url(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; createRequire(new URL("./lib/", import.meta.url))("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { URL } from "node:url"; createRequire(new URL("./lib/", import.meta.url))("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; const { URL } = await import("node:url"); createRequire(new URL("./lib/", import.meta.url))("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { URL } from "./own.mjs"; createRequire(new URL("./lib/", import.meta.url))("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { dirname } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(dirname(fileURLToPath(new URL(import.meta.url))) + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { dirname } from "node:path"; import { fileURLToPath, URL } from "node:url"; createRequire(dirname(fileURLToPath(new URL(import.meta.url))) + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { dirname } from "node:path"; import { fileURLToPath } from "node:url"; import { URL } from "./own.mjs"; createRequire(dirname(fileURLToPath(new URL(import.meta.url))) + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
         r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(join(fileURLToPath(new URL(".", import.meta.url), other), "lib", "index.js"))("./a");"#,
         None,
     ),
@@ -1900,6 +2025,14 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     (
         "import { fileURLToPath } from 'node:url'; const folder = fileURLToPath(new URL('../a', import.meta.url)); require(require('path').join(folder, x + '.js'));",
         &["./../a/*.js"],
+    ),
+    (
+        "import { fileURLToPath, URL } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
+        &["./a/*.js"],
+    ),
+    (
+        "import { dirname, join } from 'node:path'; import { fileURLToPath, URL } from 'node:url'; const here = dirname(fileURLToPath(new URL(import.meta.url))); await import(join(here, 'lib', (c ? 'a' : 'b') + '.js'));",
+        &["./lib/a.js", "./lib/b.js"],
     ),
     (
         "import { fileURLToPath } from 'node:url'; require(require('path').join(fileURLToPath(import.meta.url), '..', 'a', x));",
@@ -2594,6 +2727,96 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./a/*.js"],
     ),
     (
+        "export {}; import { URL } from 'node:url'; await import(new URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; import { URL as Address } from 'url'; await import(new Address(`a/${x}.js`, import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; import * as url from 'node:url'; await import(new url.URL('./a.js', import.meta.url).href);",
+        ResolvedForm::Url,
+        &["./a.js"],
+    ),
+    (
+        "export {}; import url from 'url'; await import(new url.URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "const { URL, pathToFileURL } = require('node:url'); import(new URL('./a.js', pathToFileURL(__filename)));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "const url = require('url'); import(new url.URL('./a.js', url.pathToFileURL(__filename)));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const { URL } = process.getBuiltinModule('node:url'); await import(new URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; import * as url from 'node:url'; const same = url; await import(new same.URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; import { URL } from 'node:url'; const Address = URL; await import(new Address('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const { URL } = await import('node:url'); await import(new URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; await import(new globalThis.URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; await import(new self.URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; await import(new global.URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const Address = URL; await import(new Address('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const Address = globalThis.URL; await import(new Address('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const { URL: Address } = globalThis; await import(new Address('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const g = globalThis; await import(new g.URL('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; const g = self; const { URL: Address } = g; await import(new Address('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
         "import(require('url').pathToFileURL(require('path').join(__dirname, 'a', x + '.js')).href);",
         ResolvedForm::Url,
         &["./a/*.js"],
@@ -2698,6 +2921,19 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; class URL {} await import(new URL('./a.js', import.meta.url));",
     "export {}; function URL() {} await import(new URL('./a.js', import.meta.url));",
     "export {}; async function load(URL) { await import(new URL('./a.js', import.meta.url)); }",
+    "export {}; import * as URL from 'node:url'; await import(new URL('./a.js', import.meta.url));",
+    "export {}; import URL from 'node:url'; await import(new URL('./a.js', import.meta.url));",
+    "export {}; import { Url as URL } from 'node:url'; await import(new URL('./a.js', import.meta.url));",
+    "export {}; import { URLSearchParams as URL } from 'node:url'; await import(new URL('./a.js', import.meta.url));",
+    "export {}; import { URL } from './url.js'; await import(new URL('./a.js', import.meta.url));",
+    "export {}; import * as URL from 'node:url'; await import(URL.parse('./a.js', import.meta.url));",
+    "export {}; const globalThis = own; await import(new globalThis.URL('./a.js', import.meta.url));",
+    "export {}; await import(new own.URL('./a.js', import.meta.url));",
+    "export {}; await import(new globalThis.Other('./a.js', import.meta.url));",
+    "export {}; const Address = Other; await import(new Address('./a.js', import.meta.url));",
+    "export {}; const { Other: URL } = globalThis; await import(new URL('./a.js', import.meta.url));",
+    "export {}; const { URL } = own; await import(new URL('./a.js', import.meta.url));",
+    "export {}; const g = own; await import(new g.URL('./a.js', import.meta.url));",
     "export {}; import.meta.url = x; await import(new URL('./a.js', import.meta.url));",
     "export {}; await import(c ? new URL('./a.js', import.meta.url) : import.meta.resolve('./b'));",
     "require(require.resolve('./a').trimEnd(x));",
@@ -2761,6 +2997,18 @@ const NAMES_OF_WORKERS_THAT_ARE_KNOWN_IN_PART: &[(&str, &[&str])] = &[
     ),
     (
         "export {}; new Worker(new URL(`./a/${x}.js`, import.meta.url), { name });",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; import { URL } from 'node:url'; new Worker(new URL(`./a/${x}.js`, import.meta.url));",
+        &["./a/*.js"],
+    ),
+    (
+        "const url = require('url'); new Worker(new url.URL(`./a/${x}.js`, url.pathToFileURL(__filename)));",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; new Worker(new globalThis.URL(`./a/${x}.js`, import.meta.url));",
         &["./a/*.js"],
     ),
     (
@@ -3029,6 +3277,22 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
         "const { writeFileSync } = await import('node:fs'); writeFileSync('/p/a.js', text);",
         &["/p/a.js"],
     ),
+    (
+        "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./a.js', import.meta.url), text);",
+        &["./a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { URL } from 'node:url'; writeFileSync(new URL('./a.js', import.meta.url), text);",
+        &["./a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; import * as url from 'node:url'; writeFileSync(new url.URL('./a.js', import.meta.url), text);",
+        &["./a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; writeFileSync(new globalThis.URL('./a.js', import.meta.url), text);",
+        &["./a.js"],
+    ),
 ];
 
 const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
@@ -3042,6 +3306,8 @@ const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
     "import { writeFileSync } from 'node:fs'; if (false) writeFileSync('/p/a.js', text);",
     "import { writeFileSync } from 'node:fs'; writeFileSync(...all);",
     "export {}; other.file('/p/a.js').write(text);",
+    "import { writeFileSync } from 'node:fs'; import { Url as URL } from 'node:url'; writeFileSync(new URL('./a.js', import.meta.url), text);",
+    "import { writeFileSync } from 'node:fs'; import { URL } from './mine.js'; writeFileSync(new URL('./a.js', import.meta.url), text);",
 ];
 
 fn describe_paths_of_changed_files(text: &str) -> Vec<String> {
@@ -3078,6 +3344,16 @@ const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",
         "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { URL } from 'node:url'; readFileSync(new URL('./a.txt', import.meta.url));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new globalThis.URL('./a.txt', import.meta.url));",
         &["./a.txt"],
     ),
     (
@@ -3431,6 +3707,11 @@ fn finds_known_load_names() {
 const CALLER_RELATIVE_READS: &[(&str, &[&str], &[&str])] = &[
     (
         "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { URL } from 'node:url'; export function read(base) { return readFileSync(new URL('./data.txt', base)); }",
         &["read 0 ./data.txt"],
         &[],
     ),

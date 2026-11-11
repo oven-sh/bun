@@ -1872,6 +1872,21 @@ const NAMES_MADE_BY_CALLS: &[(&str, &str, Option<MadeByCall>)] = &[
     ),
     (
         "a.mjs",
+        r#"import { dirname } from "node:path"; import { fileURLToPath } from "node:url"; import(dirname(fileURLToPath(new URL(import.meta.url))) + "/" + name);"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.mjs",
+        r#"import { dirname } from "node:path"; import { fileURLToPath, URL } from "node:url"; import(dirname(fileURLToPath(new URL(import.meta.url))) + "/" + name);"#,
+        Some(MadeByCall::WholePath),
+    ),
+    (
+        "a.mjs",
+        r#"import { dirname } from "node:path"; import { fileURLToPath } from "node:url"; import { URL } from "./own.mjs"; import(dirname(fileURLToPath(new URL(import.meta.url))) + "/" + name);"#,
+        None,
+    ),
+    (
+        "a.mjs",
         r#"import("kit-" + encodeURIComponent("a b") + name);"#,
         Some(MadeByCall::Part),
     ),

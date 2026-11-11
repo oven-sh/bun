@@ -690,7 +690,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         this.pending_input_scheduled.set(false);
-        if this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
+        if let Some(ws) = this.cpp_websocket() {
+            if ws.is_paused() {
+                return;
+            }
             this.enqueue_initial_data();
         }
         this.drain_pending_input();
@@ -712,6 +715,18 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn receive_data(&self, data: &[u8]) {
         self.enqueue_initial_data();
+        // Pausing stops future transport reads, but a TLS tunnel can still
+        // finish an active SSL pass with input deferred by a nested JS wait.
+        // Keep that input behind the upgrade bytes until resume's delivery
+        // task. Close paths deliberately drain through parse_initial_data.
+        if self.cpp_websocket().is_some_and(|ws| ws.is_paused()) {
+            if !data.is_empty() {
+                self.pending_input
+                    .borrow_mut()
+                    .push_back(BufferedInput::copy(data));
+            }
+            return;
+        }
         let queued = !self.pending_input.borrow().is_empty();
         if queued {
             if !data.is_empty() {

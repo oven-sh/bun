@@ -101,7 +101,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             }
             RETURN_IF_EXCEPTION(scope, {});
         }
-        return m_evaluationResult.get();
+        // None if the module was evaluated as part of the cycle of another one.
+        JSValue result = m_evaluationResult.get();
+        return result ? result : jsUndefined();
     }
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);

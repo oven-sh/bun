@@ -1076,6 +1076,26 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   );
 });
 
+// The native module object, which vm.Module wraps.
+test("evaluating a module again that was evaluated as part of a cycle returns a value", async () => {
+  const modules: Record<string, any> = {};
+  let again: unknown;
+  let status: string | undefined;
+  modules.a = new SourceTextModule(`import "b"; import "c"; export const a = 1;`, { identifier: "a" });
+  modules.b = new SourceTextModule(`import "a"; export const b = 1;`, { identifier: "b" });
+  modules.c = new SourceTextModule(`export const meta = () => import.meta;`, {
+    identifier: "c",
+    initializeImportMeta() {
+      const kNative = Object.getOwnPropertySymbols(modules.a).find(symbol => symbol.description === "kNative")!;
+      status = modules.a.status;
+      again = [modules.a[kNative].evaluate(-1, false)];
+    },
+  });
+  await modules.a.link((specifier: string) => modules[specifier]);
+  await modules.a.evaluate();
+  expect({ status, again }).toStrictEqual({ status: "evaluated", again: [undefined] });
+});
+
 test("SourceTextModule.link passes each request's import attributes when a specifier repeats", async () => {
   const dep = new SourceTextModule(`export default 1; export let x = 1;`, { identifier: "dep" });
   const seen: [string, Record<string, string>][] = [];

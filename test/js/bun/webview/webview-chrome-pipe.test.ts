@@ -422,6 +422,31 @@ for (const kind of ["click-no-value", "click-huge-value"]) {
   });
 }
 
+test.concurrent("a callback that runs the event loop leaves the replies behind it intact", async () => {
+  const result = await runScenario(`
+    const other = newView();
+    await other.navigate("http://fake/other");
+    const view = newView();
+    const navigated = [];
+    let nested;
+    view.onNavigated = url => {
+      navigated.push(url);
+      if (navigated.length > 1) return;
+      // Bun.build() runs the event loop until the plugin's setup() settles.
+      Bun.build({
+        entrypoints: ["./does-not-exist.ts"],
+        throw: false,
+        plugins: [{ name: "wait", async setup() { nested = await other.evaluate("6 * 7"); } }],
+      }).catch(() => {});
+    };
+    await view.navigate("http://fake/page");
+    print({ navigated, nested, title: view.title, after: await view.evaluate("1 + 1") });
+    view.close();
+    other.close();
+  `);
+  expect(result).toEqual({ navigated: ["http://fake/page"], nested: 42, title: "fake chrome", after: 2 });
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

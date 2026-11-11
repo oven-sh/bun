@@ -284,6 +284,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         m_dead = false;
         m_readSock = nullptr;
         m_rx.clear();
+        m_rxConsumed = 0;
         m_txQueue.clear();
     }
     m_mode = TransportMode::Pipe;
@@ -468,6 +469,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
         m_wsOpen = false;
         m_wsPending.clear();
         m_rx.clear();
+        m_rxConsumed = 0;
         m_txQueue.clear();
     }
     m_global = zig;
@@ -553,24 +555,23 @@ void Transport::onData(const char* data, int length)
     Bun__EventLoop__enter(m_global);
 
     // NUL-delimited. memchr for the first \0, dispatch the message, repeat.
-    size_t off = 0;
-    const uint8_t* base = m_rx.span().data();
-    size_t size = m_rx.size();
-    while (off < size) {
-        const uint8_t* nul = static_cast<const uint8_t*>(
-            memchr(base + off, '\0', size - off));
+    // m_rx is read again each time: a handler may run the event loop, whose onData() goes on from m_rxConsumed, or respawn Chrome.
+    while (m_rxConsumed < m_rx.size()) {
+        auto rest = byteCast<char>(m_rx.subspan(m_rxConsumed));
+        const char* nul = static_cast<const char*>(memchr(rest.data(), '\0', rest.size()));
         if (!nul) break; // partial message — wait for more bytes
-        std::span<const char> msg(reinterpret_cast<const char*>(base + off),
-            static_cast<size_t>(nul - (base + off)));
+        auto msg = rest.first(static_cast<size_t>(nul - rest.data()));
+        m_rxConsumed += msg.size() + 1;
+        // Runs script last, when it is done with the bytes of `msg`.
         handleMessage(msg);
-        off = static_cast<size_t>(nul - base) + 1;
 
         if (auto* ex = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;
             m_global->reportUncaughtExceptionAtEventLoop(m_global, ex);
         }
     }
-    if (off) m_rx.removeAt(0, off);
+    if (size_t consumed = std::exchange(m_rxConsumed, 0))
+        m_rx.removeAt(0, consumed);
 
     Bun__EventLoop__exit(m_global);
 }

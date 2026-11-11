@@ -277,7 +277,13 @@ setInterval(() => {}, 1000);`,
 
   it("keeps a server that survives an uncaught exception running, with no status line", async () => {
     using dir = tempDir("watch-status-server", {
-      "server.mjs": `const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+      "server.mjs": `const server = Bun.serve({
+  port: 0,
+  fetch() {
+    console.log("served");
+    return new Response("ok");
+  },
+});
 console.log(server.port);
 setTimeout(() => { throw new Error("boom"); }, 0);`,
     });
@@ -296,10 +302,12 @@ setTimeout(() => { throw new Error("boom"); }, 0);`,
     for await (const line of stderr) {
       if (line.includes("boom")) break;
     }
-    // The run has not ended: the server still answers, so no line says it failed.
+    // The run has not ended: the server still answers, so no line says it failed. The line of
+    // the second request bounds the check: a status line would come before it.
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
-    expect(stdout.output()).toBe(`${port}\n`);
+    await stdout.waitFor("served\nserved\n");
+    expect(stdout.output()).toBe(`${port}\nserved\nserved\n`);
     await stop();
   });
 

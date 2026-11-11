@@ -2,8 +2,9 @@ use crate::jest::{self, OxlintOrder, is_vitest_import_source, parent_expression}
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::bun_test;
 use bun_lint_oxlint::hash_order::HashOrder;
-use bun_lint_oxlint::import::{ImportImportName, import_entries};
+use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries};
 use rustc_hash::FxBuildHasher;
 use smallvec::SmallVec;
 use std::hash::BuildHasher;
@@ -118,7 +119,10 @@ fn run_once(cx: &Cx<'_, PreferImportingVitestGlobals>) {
             let globals_founds = globals_imports();
             format!("Import global functions `{globals_founds}` from `vitest` package instead of using globals.")
         })
-        .fix(|fixer| build_fix(file, &globals_imports(), fixer));
+        .fix_where_safe(
+            || !changes_module_mock_calls(file, &missing_globals),
+            |fixer| build_fix(file, &globals_imports(), fixer),
+        );
 }
 
 /// Calls to the global `require` whose only argument is a string naming Vitest.
@@ -136,9 +140,57 @@ fn vitest_requires<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Expr<'a>, Na
         })
 }
 
+/// The first import from Vitest that isn't a type import.
+fn vitest_import<'a>(file: &'a File<'a>) -> Option<ImportEntry<'a>> {
+    import_entries(file)
+        .find(|it| is_vitest_import_source(it.declaration.spec().bytes()) && !it.is_type())
+}
+
+/// True if the fix adds the names to `import`, an `import` statement that the file has.
+fn adds_to_import(import: Option<ImportEntry<'_>>) -> bool {
+    let kind = import.map(|it| it.import_name);
+    matches!(kind, Some(ImportImportName::Name(_) | ImportImportName::Default(_)))
+}
+
+/// The module that the fix names if it inserts an `import` statement.
+fn import_source<'a>(file: &'a File<'a>, import: Option<ImportEntry<'a>>) -> &'a [u8] {
+    let source = (import.map(|it| it.declaration.spec()))
+        .or_else(|| vitest_requires(file).next().map(|it| it.1));
+    source.map_or(b"vitest".as_slice(), Name::bytes)
+}
+
+/// True if the fix changes how the file gets `vi`, and that changes what `bun test` does with a call on it: see
+/// [`bun_test`]. The global becomes a name from `require()`, or a named import, and `bun test` treats a named import
+/// like the global only if it is from `vitest`.
+#[cold]
+fn changes_module_mock_calls<'a>(file: &'a File<'a>, missing_globals: &[&str]) -> bool {
+    let import = vitest_import(file);
+    let is_required = !adds_to_import(import) && required_pattern(file).is_some();
+    let source = (!is_required).then(|| import_source(file, import));
+    let mut added = (bun_test::MOCK_APIS.into_iter()).filter(|it| missing_globals.contains(it));
+    added.any(|it| {
+        !source.is_some_and(|source| bun_test::is_known_import(source, it.as_bytes()))
+            && bun_test::global_has_module_mock_call(file, it.as_bytes())
+    })
+}
+
+/// The `{ .. }` of the `const { .. } = require("vitest")` that the fix adds the names to, if it finds no `import` for
+/// them.
+fn required_pattern<'a>(file: &'a File<'a>) -> Option<(Pat<'a>, List<'a, PatProp<'a>>)> {
+    for (call, _) in vitest_requires(file) {
+        let declarator = Node::Expr(call).ancestors().find_map(|it| match it {
+            Node::VarDecl(declarator) => Some(declarator),
+            _ => None,
+        })?;
+        if let PatKind::Object(properties) = declarator.pat().kind() {
+            return Some((declarator.pat(), properties));
+        }
+    }
+    None
+}
+
 fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) -> Fix {
-    let vitest_esm_import = import_entries(file)
-        .find(|it| is_vitest_import_source(it.declaration.spec().bytes()) && !it.is_type());
+    let vitest_esm_import = vitest_import(file);
     match vitest_esm_import.map(|it| (it, it.import_name)) {
         // `import { .. } from "vitest"`: insert after the last name.
         Some((entry, ImportImportName::Name(_))) => {
@@ -168,16 +220,7 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
         _ => {}
     }
     // `const { .. } = require("vitest")`
-    for (call, _) in vitest_requires(file) {
-        let Some(declarator) = Node::Expr(call).ancestors().find_map(|it| match it {
-            Node::VarDecl(declarator) => Some(declarator),
-            _ => None,
-        }) else {
-            break;
-        };
-        let PatKind::Object(properties) = declarator.pat().kind() else {
-            continue;
-        };
+    if let Some((pattern, properties)) = required_pattern(file) {
         let mut text = b"{ ".to_vec();
         for property in properties.iter().filter(|it| !it.is_rest()) {
             text.extend_from_slice(property.text());
@@ -189,11 +232,9 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
             text.extend_from_slice(rest.text());
         }
         text.extend_from_slice(b" }");
-        return fixer.replace(declarator.pat(), text);
+        return fixer.replace(pattern, text);
     }
-    let import_source = (vitest_esm_import.map(|it| it.declaration.spec()))
-        .or_else(|| vitest_requires(file).next().map(|it| it.1));
-    let import_source = import_source.map_or(b"vitest".as_slice(), Name::bytes);
+    let import_source = import_source(file, vitest_esm_import);
     let text = [
         b"import { ".as_slice(),
         globals_imports.as_bytes(),

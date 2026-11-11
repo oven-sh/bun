@@ -3,6 +3,7 @@ use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries_of};
 use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::bun_test;
 use smallvec::SmallVec;
 
 /// This rule triggers an error when an unexpected Vitest accessor is used.
@@ -50,9 +51,37 @@ impl Rule for ConsistentVitestVi {
             cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
                 .data("function", function)
                 .data("opposite", self.opposite)
-                .fix(|fixer| fixer.replace(object.outer_span(), function));
+                .fix_where_safe(|| !changes_module_mock_call(object, function), |fixer| fixer.replace(object.outer_span(), function));
         }
     }
+}
+
+/// True if the file gets `object` and the `function` that replaces it in different ways, and that changes what
+/// `bun test` does with the call on it: see [`bun_test`].
+#[cold]
+fn changes_module_mock_call<'a>(object: Expr<'a>, function: &str) -> bool {
+    // The rule doesn't resolve the file's names for any other call.
+    if !bun_test::is_object_of_module_mock_call(object, function.as_bytes()) {
+        return false;
+    }
+    let Some(name) = object.as_ident() else {
+        return false;
+    };
+    let symbol = object.symbol();
+    // `check_import` renames an import from Vitest, so the call stays on what it was on.
+    let is_renamed = |it: Declaration<'a>| {
+        let import = match it {
+            Declaration::ImportSpec(specifier) => Some(specifier.import()),
+            Declaration::ImportDefault(import) | Declaration::ImportNamespace(import) => Some(import),
+            _ => None,
+        };
+        import.is_some_and(|it| jest::is_vitest_import_source(it.spec().bytes()))
+    };
+    if symbol.is_some_and(|it| it.declarations().any(is_renamed)) {
+        return false;
+    }
+    let replacement = Node::Expr(object).scope().resolve_bytes(function.as_bytes());
+    bun_test::is_known(name.bytes(), symbol) != bun_test::is_known(function.as_bytes(), replacement)
 }
 
 fn span_of(specifier: &ImportEntry) -> Span {

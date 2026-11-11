@@ -1,6 +1,7 @@
 use crate::jest::{self, is_vitest_import_source};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::bun_test;
 use smallvec::SmallVec;
 
 /// The rule disallows importing any Vitest global functions.
@@ -74,7 +75,19 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
     };
     let report = cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).first_label(REMOVE_THIS);
     let others = import_decl.named().iter().filter(is_global).skip(1);
-    others.fold(report, |report, it| report.label(it, REMOVE_THIS)).fix(|fixer| {
+    // The names become globals, and `bun test` treats a call on the global `vi` like one on a `vi` from `vitest`, and
+    // not like one on a `vi` from another package: see [`bun_test`].
+    let is_safe = || {
+        let source = import_decl.spec().bytes();
+        let mut removed = import_decl.named().iter().filter(is_global);
+        !removed.any(|it| {
+            let (imported, local) = (it.imported().bytes(), it.local().bytes());
+            let export = if bun_test::is_mock_api(local) { local } else { imported };
+            bun_test::is_known_import(source, imported) != bun_test::is_mock_api(local)
+                && Node::Stmt(node).scope().get_name(it.local().name()).is_some_and(|it| bun_test::has_module_mock_call(it.references(), export))
+        })
+    };
+    others.fold(report, |report, it| report.label(it, REMOVE_THIS)).fix_where_safe(is_safe, |fixer| {
         let others = usize::from(import_decl.default().is_some()) + usize::from(import_decl.namespace().is_some());
         if others == 0 && import_decl.named().iter().all(|it| is_global(&it)) {
             return Some(fixer.remove(node));
@@ -109,6 +122,16 @@ fn is_global_property(property: &PatProp) -> bool {
     property.key().and_then(|it| it.name()).is_some_and(|it| it.is_any(&VITEST_GLOBALS))
 }
 
+/// True if the fix makes a `vi` or `vitest` from `require()` a global, and that changes what `bun test` does with a call
+/// on it: see [`bun_test`].
+#[cold]
+fn changes_module_mock_calls<'a>(declarations: List<'a, VarDecl<'a>>) -> bool {
+    let properties = declarations.iter().filter_map(vitest_require).flat_map(|it| it.0.iter());
+    let is_mock_api = |it: &PatProp| it.value().as_ident().is_some_and(|it| bun_test::is_mock_api(it.bytes()));
+    let mut removed = properties.filter(|it| is_global_property(it) && is_mock_api(it)).filter_map(|it| it.value().symbol());
+    removed.any(bun_test::changes_as_global)
+}
+
 fn check_variable_declaration<'a>(
     node: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
@@ -126,7 +149,7 @@ fn check_variable_declaration<'a>(
         }
         None => cx.report_file(NO_IMPORTING_VITEST_GLOBALS),
     };
-    report.fix(|fixer| {
+    report.fix_where_safe(|| !changes_module_mock_calls(declarations), |fixer| {
         let variable_modifier = match declarations.first()?.var_kind() {
             VarKind::Const => "const",
             VarKind::Let => "let",

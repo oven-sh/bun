@@ -1,7 +1,7 @@
 //! Builds a Markdown text's document: Prettier's `src/language-markdown/print/*.js`.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
-use super::parse::{Syntax, leaves_paragraph};
+use super::parse::{Syntax, is_paragraph_on_its_own, leaves_paragraph};
 use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
     ordered_item_info,
@@ -617,14 +617,16 @@ impl<'a> Printer<'a, '_> {
             return false;
         }
         let follows_directly = self.end_line(previous) + 1 == self.start_line(node);
+        if let Some(keeps_empty_line) =
+            self.empty_line_decides_block(previous, node, follows_directly)
+        {
+            return keeps_empty_line;
+        }
         if self.is_loose_list_item(node.previous)
             || (node.kind == Kind::List
                 && parent.kind == Kind::ListItem
-                && (matches!(previous.kind, Kind::Code | Kind::Paragraph)
-                    || (previous.kind == Kind::Html
-                        && previous.number == 0
-                        && self.options.flavor.is_oxfmt()))
-                && self.end_line(previous) + 1 < self.start_line(node))
+                && matches!(previous.kind, Kind::Code | Kind::Paragraph)
+                && !follows_directly)
         {
             return true;
         }
@@ -650,6 +652,108 @@ impl<'a> Printer<'a, '_> {
             || is_previous_ignore
             || is_html_after_html_or_paragraph
             || is_liquid_without_blank_line)
+    }
+
+    /// Whether the empty line between `previous` and `node`, or its absence, decides where a block ends. Then it is
+    /// printed as the source has it, whatever `should_pre_print_double_hardline` says. None if it does not.
+    ///
+    /// - HTML that only an empty line ends (a `<div>`, a `<x-y>` on its own line: CommonMark 4.6, kinds 6 and 7) keeps
+    ///   the empty line after it. Prettier drops it before a list in a list item, `- <div>\n\n  - b` becomes
+    ///   `- <div>\n  - b`, and the item is then a line of the HTML.
+    /// - A complete tag on a line without the markers of its containers, `- a\n<b>\nc`, does not end the paragraph
+    ///   before it. To micromark it ends the paragraph and the containers, so Prettier prints an empty line before `c`,
+    ///   which takes `c` out of the list. Here `c` follows the HTML directly, as it does in the source.
+    /// - The line after a definition was a line of the definition's paragraph. Prettier prints an empty line between
+    ///   them, after which `9. c` is a list that starts at 9, `<x-y>` an HTML block, `2.` an empty item.
+    /// - A marker alone on a line after indented code is a paragraph to micromark, `    a\n-\n- b`, and two of them
+    ///   a setext heading, which MDX prints as `## -`. Prettier prints an empty line between it and the list: the
+    ///   list becomes loose.
+    fn empty_line_decides_block(
+        &self,
+        previous: &Node,
+        node: &Node,
+        follows_directly: bool,
+    ) -> Option<bool> {
+        if matches!(previous.kind, Kind::Html | Kind::Jsx) && previous.number == 0 {
+            return (!follows_directly).then_some(true);
+        }
+        if !follows_directly {
+            return None;
+        }
+        match (previous.kind, node.kind) {
+            (Kind::List | Kind::Blockquote, Kind::Paragraph) => {
+                self.ends_in_lazy_html(previous).then_some(false)
+            }
+            (Kind::Definition, Kind::Paragraph) => {
+                let line = self.source(node);
+                let line = &line
+                    [..bun_core::strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
+                let line = bun_core::strings::trim_js_whitespace_end(line);
+                (!is_paragraph_on_its_own(line)).then_some(false)
+            }
+            (Kind::Paragraph | Kind::Heading, Kind::List)
+                if previous.kind == Kind::Paragraph || !self.is_mdx =>
+            {
+                let text = self.source(previous);
+                let word = &text[..text
+                    .iter()
+                    .take_while(|&&byte| !matches!(byte, b'\t' | b'\n' | b' '))
+                    .count()];
+                Self::is_list_marker(word).then_some(false)
+            }
+            _ => None,
+        }
+    }
+
+    /// True if the last leaf of `container` is HTML on a line without the container's markers, printed right after
+    /// its paragraph. oxfmt prints an empty line before such HTML, except in a tight item: what follows is then a
+    /// paragraph after the container however the two are separated.
+    fn ends_in_lazy_html(&self, container: &Node) -> bool {
+        let mut node = container;
+        while matches!(node.kind, Kind::List | Kind::ListItem | Kind::Blockquote) {
+            let Some(last) = self.node(node.last_child) else {
+                return false;
+            };
+            node = last;
+        }
+        self.is_html_without_markers(node)
+            && (!self.is_lazy_html(node) || self.is_lazy_html_in_tight_item(node))
+    }
+
+    /// A bullet or an ordered marker, and nothing else.
+    fn is_list_marker(word: &[u8]) -> bool {
+        match word {
+            [b'*' | b'+' | b'-'] => true,
+            [digits @ .., b')' | b'.'] => {
+                !digits.is_empty() && digits.len() <= 9 && digits.iter().all(u8::is_ascii_digit)
+            }
+            _ => false,
+        }
+    }
+
+    /// True if `sentence` starts a paragraph with a list marker. To CommonMark such a paragraph is a list: micromark
+    /// reads a list that cannot interrupt a paragraph as one where it follows indented code, `    a\n2. b\n3. c`, or
+    /// a definition, `[a]: /url\n2.\n3. c`. Its lines stay lines. Prettier joins a line that starts with a marker to
+    /// the line before it, `2. b 3. c`, which is one item, escapes a `-` on a line of its own, and with `proseWrap:
+    /// always` wraps `-\nb` into `- b`.
+    fn is_list_to_common_mark(&self, sentence: &Node) -> bool {
+        if sentence.previous != NONE || self.kind(sentence.parent) != Some(Kind::Paragraph) {
+            return false;
+        }
+        let first_word = match sentence.number {
+            preprocess::PLAIN => {
+                let text = self.str(sentence.value);
+                &text[..text
+                    .iter()
+                    .take_while(|&&byte| !matches!(byte, b'\t' | b'\n' | b' '))
+                    .count()]
+            }
+            _ => match self.tokens(sentence).first() {
+                Some(token) if token.is_word() => self.str(token.value),
+                _ => return false,
+            },
+        };
+        Self::is_list_marker(first_word)
     }
 
     /// oxfmt's `front_matter_risk`: the document's first paragraph starts with `---` or `+++`, and what follows would
@@ -694,7 +798,14 @@ impl<'a> Printer<'a, '_> {
     /// oxfmt: HTML right after a paragraph in a container, on a line without the container's line prefix. With the
     /// prefix before it, only an empty line keeps it from being a line of the paragraph.
     fn is_lazy_html(&self, node: &Node) -> bool {
-        if !self.options.flavor.is_oxfmt() || node.kind != Kind::Html {
+        self.options.flavor.is_oxfmt() && self.is_html_without_markers(node)
+    }
+
+    /// HTML right after a paragraph in a list item or a block quote, on a line without the markers of its container.
+    /// To CommonMark that line is a line of the paragraph. To micromark it is HTML in the container, which Prettier
+    /// prints without the markers.
+    fn is_html_without_markers(&self, node: &Node) -> bool {
+        if node.kind != Kind::Html {
             return false;
         }
         let (Some(previous), Some(parent)) = (self.node(node.previous), self.node(node.parent))
@@ -923,6 +1034,7 @@ impl<'a> Printer<'a, '_> {
         let text = self.str(node.value);
         let is_white = |byte: u8| matches!(byte, b'\t' | b'\n' | b' ');
         let is_preserved = self.options.prose_wrap == ProseWrap::Preserve;
+        let is_list = self.is_list_to_common_mark(node);
         let mut parts = FillParts::new(false);
         // The start of the text that hasn't been printed yet.
         let mut start = 0;
@@ -974,7 +1086,7 @@ impl<'a> Printer<'a, '_> {
             let after = &after[..after.iter().take_while(|&&byte| is_white(byte)).count()];
             let is_whole_line = white_end + word.len() == text.len()
                 || bun_core::strings::contains_char(after, b'\n');
-            if Self::may_start_block(word) && !(word == b"-" && is_whole_line) {
+            if Self::may_start_block(word) && !(word == b"-" && is_whole_line) && !is_list {
                 parts.content(Doc::from(" "));
                 continue;
             }
@@ -984,7 +1096,8 @@ impl<'a> Printer<'a, '_> {
                 && is_whole_line
                 && (word.iter().all(|&byte| byte == b'=') || word.iter().all(|&byte| byte == b'-'))
                 && !node.is_aligned
-                && !self.is_mdx;
+                && !self.is_mdx
+                && !is_list;
             if is_fake_setext_line {
                 parts.content(Doc::from("\\"));
             }
@@ -1057,10 +1170,11 @@ impl<'a> Printer<'a, '_> {
             self.find_ancestor(id, |it| matches!(it.kind, Kind::Emphasis | Kind::Strong));
         let is_newline =
             |token: Option<&Token>| token.is_some_and(|it| it.kind == TokenKind::Newline);
+        let is_list = self.is_list_to_common_mark(node);
         let mut parts = FillParts::new(self.options.prose_wrap == ProseWrap::Always);
         for (index, token) in tokens.iter().enumerate() {
             if token.is_word() {
-                parts.content(self.print_word(node, tokens, index, emphasis));
+                parts.content(self.print_word(node, tokens, index, emphasis, is_list));
                 continue;
             }
             let next = tokens.get(index + 1);
@@ -1072,7 +1186,9 @@ impl<'a> Printer<'a, '_> {
                 && !after_next.is_some_and(|it| it.kind == TokenKind::NoSpace)
                 && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line))
                 || (can_break && self.must_not_start_line(node, tokens, index + 1));
-            let prose_wrap = if joins {
+            let prose_wrap = if is_list && token.kind == TokenKind::Newline {
+                ProseWrap::Preserve
+            } else if joins {
                 ProseWrap::Never
             } else {
                 self.options.prose_wrap
@@ -1085,13 +1201,15 @@ impl<'a> Printer<'a, '_> {
         parts.finish()
     }
 
-    /// Prettier's `printWord`. `emphasis` is the emphasis or strong emphasis that contains it.
+    /// Prettier's `printWord`. `emphasis` is the emphasis or strong emphasis that contains it, `is_list` says that the
+    /// sentence is a list to CommonMark: see `is_list_to_common_mark`.
     fn print_word(
         &self,
         sentence: &Node,
         tokens: &[Token],
         index: usize,
         emphasis: Option<NodeId>,
+        is_list: bool,
     ) -> Doc<'a> {
         let text = self.str(tokens[index].value);
         if self.is_mdx {
@@ -1106,7 +1224,8 @@ impl<'a> Printer<'a, '_> {
             let is_fake_setext_line = self.options.prose_wrap == ProseWrap::Preserve
                 && (text.iter().all(|&byte| byte == b'=') || text.iter().all(|&byte| byte == b'-'))
                 && is_newline(previous)
-                && (next.is_none() || is_newline(next));
+                && (next.is_none() || is_newline(next))
+                && !is_list;
             return match is_fake_setext_line {
                 true => Doc::from([b"\\", text].concat()),
                 false => Doc::from(text),

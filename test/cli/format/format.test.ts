@@ -2036,6 +2036,70 @@ describe.concurrent("bun fmt", () => {
       expect(result.files).toEqual({ "a.md": byPrettier });
     });
 
+    describe("an empty line between two blocks", () => {
+      // The empty line between two blocks, or its absence, can decide where a block ends. Prettier 3.9.9 and oxfmt
+      // 0.72.0 drop it after HTML that only an empty line ends, and add it after a definition, after a line that
+      // continues a list item without its indentation, and inside a chunk of indented code. Each row has the text,
+      // Bun's output, and Prettier's output. Bun's output is the same as Markdown and as MDX, except where the fourth
+      // column has the MDX output.
+      const rows = [
+        ["- <div>\n\n  - b\n", "- <div>\n\n  - b\n", "- <div>\n  - b\n"],
+        ["- <x-y>\n\n  10. b\n", "- <x-y>\n\n  10. b\n", "- <x-y>\n  10. b\n"],
+        ["- - <div>\n\n    - b\n", "- - <div>\n\n    - b\n", "- - <div>\n    - b\n"],
+        ["- a\n<b>\nc\n", "- a\n<b>\nc\n", "- a\n<b>\n\nc\n", "- a\n  <b>\n\nc\n"],
+        ["[a]: /url\n9. c\n", "[a]: /url\n9. c\n", "[a]: /url\n\n9. c\n"],
+        ["[a]: /url\n2.\n", "[a]: /url\n2.\n", "[a]: /url\n\n2.\n"],
+        ["[a]: /url\n-\n", "[a]: /url\n-\n", "[a]: /url\n\n-\n"],
+        ["[a]: /url\n<x-y>\n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
+        ["-\n\n    a\n    b\n", "-\n\n    a\n    b\n", "-\n\n    a\n\n    b\n"],
+        ["-\n\n    a\n\n\n    b\n", "-\n\n    a\n\n\n    b\n", "-\n\n    a\n\n    b\n"],
+        ["    a\n-\n- b\n", "    a\n\n-\n- b\n", "    a\n\n-\n\n- b\n"],
+        ["    a\n2. b\n3. c\n", "    a\n\n2. b\n3. c\n", "    a\n\n2. b 3. c\n"],
+      ] as const;
+
+      test.each(rows)("%j", async (before, after, byPrettier, mdx = after) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": mdx };
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format({ "a.md": before, "b.md": after }, ["--flavor=oxfmt"], { reads: ["a.md", "b.md"] }),
+        ]);
+        expect(result.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": mdx, "b.mdx": mdx });
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual({ "a.md": after, "b.md": after });
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      // A line that starts with a marker is joined to the line before it, so that it doesn't start a list. In a
+      // paragraph that starts with one, the line breaks are those between items, so they stay.
+      test.each([
+        ["    a\n-\nb\n", "    a\n\n-\nb\n", "    a\n\n- b\n"],
+        ["    a\n2. b\n3. c\n", "    a\n\n2. b\n3. c\n", "    a\n\n2. b 3. c\n"],
+        ["[a]: /url\n9. c\n10. d\n", "[a]: /url\n9. c\n10. d\n", "[a]: /url\n\n9. c 10. d\n"],
+      ])("--prose-wrap=always: %j", async (before, after, byPrettier) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after };
+        const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("an empty line that doesn't decide anything is still added or dropped", async () => {
+        const files = { "definition.md": "[a]: /url\nb\n", "comment.md": "- a\n\n  <!-- b -->\n\n  - c\n" };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "definition.md": "[a]: /url\n\nb\n",
+          "comment.md": "- a\n\n  <!-- b -->\n  - c\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
     describe("a file that starts with a line of four dashes", () => {
       // Front matter is fenced by exactly three dashes, plus signs or dots. Prettier 3.9.9 and oxfmt 0.72.0 treat the
       // first three characters of a longer line as the fence, and what's left of the closing line turns into a list

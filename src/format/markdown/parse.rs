@@ -655,6 +655,23 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
         .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
 }
 
+/// True if `line`, on its own, is a paragraph to CommonMark: not a list item, HTML, a thematic break. After an empty
+/// line, a line that was a line of a paragraph can be any of those.
+pub(crate) fn is_paragraph_on_its_own(line: &[u8]) -> bool {
+    let text = [line, b"\n"].concat();
+    let mut tree = Tree::default();
+    let syntax = Syntax::CommonMark {
+        gfm: true,
+        math: false,
+    };
+    let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
+        return true;
+    };
+    let first = tree.get(root).map_or(NONE, |root| root.first_child);
+    tree.get(first)
+        .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
+}
+
 impl Builder<'_> {
     // ───────────────────────────── positions ─────────────────────────────
 
@@ -1060,17 +1077,8 @@ impl Builder<'_> {
         let Some(first) = lines.first() else {
             return;
         };
-        // At the end of a line, micromark checks if that same line, not the next one, continues without its containers'
-        // markers. So code that starts on the line that ends a container ends with that line.
-        let line_start = self.tree.line_start(first.beg);
-        if lines.len() > 1 && !self.is_for_oxfmt && self.ended.iter().any(|it| it.1 == line_start) {
-            self.indented_code(&lines[..1]);
-            let blank_lines = lines[1..]
-                .iter()
-                .take_while(|line| line.beg >= line.end)
-                .count();
-            return self.indented_code(&lines[1 + blank_lines..]);
-        }
+        // Unlike micromark's, code that starts on the line that ends a container goes on past that line: the empty
+        // line that Prettier prints between the two pieces would be a line of the code.
         let (start, _) = self.indentation_start(first.beg, first.indent + 4);
         // A blank line that is indented enough is part of the code, even at its end.
         let code_column = self.column(first.beg).saturating_sub(first.indent);
@@ -1135,7 +1143,7 @@ impl Builder<'_> {
         let (start, _) = self.indentation_start(first.beg, first.indent);
         let node = self.add_leaf(Kind::Html, start, last.end);
         if let Some(node) = self.tree.get_mut(node) {
-            node.number = u32::from(is_ended_by_text && self.is_for_oxfmt);
+            node.number = u32::from(is_ended_by_text);
         }
         let first_segment = self.segments.len();
         for line in lines {

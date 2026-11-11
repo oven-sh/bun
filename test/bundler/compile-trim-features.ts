@@ -1,5 +1,5 @@
 import { builtinFeatureUses, readTrimTable } from "bun:internal-for-testing";
-import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import {
@@ -12,6 +12,7 @@ import {
 import { describeFiller } from "../../scripts/build/trim/report";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
+import { declare } from "../aot/harness/capabilities";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..");
 
@@ -40,6 +41,9 @@ export function getMappedSegments(file: Buffer): Buffer[] {
       ),
     );
 }
+
+/** A floor under the number of features that an executable lacks. What Bun's own modules use hangs on the platform in places, and the counts are those of Linux. */
+export const atLeastOnLinux = (count: number): number => (isLinux ? count : 0);
 
 export const model: FeatureModel = loadFeatures(repositoryRoot);
 export const builtinEntries: BuiltinEntry[] = builtinFeatureUses();
@@ -264,3 +268,5 @@ export function removedOnlyWith(name: string): string[] {
   }
   return chosen.slice(1).map(each => each.name);
 }
+
+declare("a Bun that trims", () => (canTrim ? undefined : "this build of Bun doesn't support --trim"));

@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout [[layout]] kind=Environment {{*}}fields=[{key=@"binding.0" declared={type=number|absent site=w{{*}}}
+// CHECK: layout [[layout]] kind=Environment {{*}}fields=[{key=@"0" declared={type=number|absent} variableName="x"
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[environment]] = NewObject layout=[[layout]]
 // CHECK: = NewClosure [[environment]] function=

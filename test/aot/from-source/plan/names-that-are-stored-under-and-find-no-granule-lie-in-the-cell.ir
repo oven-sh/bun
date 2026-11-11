@@ -1,0 +1,21 @@
+# -- source: names-past-the-extension.ts
+# interface Wide { id: number; a0?: number; a1?: number; a2?: number; a3?: number; a4?: number; a5?: number; a6?: number; a7?: number; a8?: number; a9?: number; a10?: number; a11?: number; a12?: number; a13?: number; a14?: number; a15?: number; a16?: number; a17?: number; a18?: number; a19?: number; a20?: number; a21?: number; a22?: number; a23?: number; a24?: number; a25?: number; a26?: number; a27?: number; a28?: number; a29?: number; a30?: number; a31?: number; a32?: number; a33?: number; a34?: number; a35?: number; a36?: number; a37?: number; a38?: number; a39?: number; a40?: number; a41?: number; a42?: number; a43?: number; a44?: number; a45?: number; a46?: number; a47?: number; a48?: number; a49?: number; a50?: number; a51?: number; a52?: number; a53?: number; a54?: number; a55?: number; a56?: number; a57?: number; a58?: number; a59?: number; a60?: number; a61?: number; a62?: number; a63?: number; a64?: number; a65?: number; a66?: number; a67?: number; a68?: number; a69?: number }
+# function make(id: number): Wide { return { id }; }
+# function mark(o: any): void { o.later = 1; }
+# function fill(w: Wide, n: number): void {
+#   w.a0 = n; w.a1 = n; w.a2 = n; w.a3 = n; w.a4 = n; w.a5 = n; w.a6 = n; w.a7 = n; w.a8 = n; w.a9 = n; w.a10 = n; w.a11 = n; w.a12 = n; w.a13 = n; w.a14 = n; w.a15 = n; w.a16 = n; w.a17 = n; w.a18 = n; w.a19 = n; w.a20 = n; w.a21 = n; w.a22 = n; w.a23 = n; w.a24 = n; w.a25 = n; w.a26 = n; w.a27 = n; w.a28 = n; w.a29 = n; w.a30 = n; w.a31 = n; w.a32 = n; w.a33 = n; w.a34 = n; w.a35 = n; w.a36 = n; w.a37 = n; w.a38 = n; w.a39 = n; w.a40 = n; w.a41 = n; w.a42 = n; w.a43 = n; w.a44 = n; w.a45 = n; w.a46 = n; w.a47 = n; w.a48 = n; w.a49 = n; w.a50 = n; w.a51 = n; w.a52 = n; w.a53 = n; w.a54 = n; w.a55 = n; w.a56 = n; w.a57 = n; w.a58 = n; w.a59 = n; w.a60 = n; w.a61 = n; w.a62 = n; w.a63 = n; w.a64 = n; w.a65 = n; w.a66 = n; w.a67 = n; w.a68 = n; w.a69 = n;
+# }
+# let total = 0;
+# for (let i = 0; i < 300; i++) { const w = make(i); mark(w); fill(w, i); total += w.id + (w.a69 ?? 0); }
+# console.log(total);
+# -- end of source
+# Seventy optional names that no maker gives wait for the 64 granules of an Extension, and fill() stores under every one. What is stored under a name without a slot is an extra property, and of this layout Link has ruled out
+# that its objects gain properties: it finds the declared field at each store. So the six names that find no granule, the last six of the layout, lie in the cell. Made no fields, as names are that nobody stores under, they ended the process at the first store.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK-NOT: None
+# CHECK: slot 63 "a66" {{*}}OutOfLine
+# CHECK-NEXT: slot 64 "a67" {{*}}Inline
+# CHECK-NOT: None
+# CHECK: slot 69 "a9" {{*}}Inline
+# CHECK: slot 70 "id"

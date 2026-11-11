@@ -13,7 +13,7 @@
 // CHECK: b0([[subject]]: {{*}}):
 // CHECK-NOT: TypeOf
 // CHECK: [[isFunction]] = TypeTest [[subject]] testedType=function
-// CHECK-NEXT: Branch [[isFunction]] -> taken {{*}}(| 0), notTaken [[others]](| 0)
+// CHECK-NEXT: Branch [[isFunction]] -> taken {{*}}(), notTaken [[others]](| 0)
 // CHECK: [[others]]([[notCallable]]):
 // CHECK: = TypeTest [[notCallable]] testedType=null|object
 export function byKind(value) { switch (typeof value) { case "string": return value.length; case "number": return value + 1; default: return 0; } }

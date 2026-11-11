@@ -1,0 +1,31 @@
+# The function object of Array.from runs the engine's own text, which takes whatever arrives: it calls `next` by value and reads `done` and `value` off an object a step. Two rows of the table are special cases with a
+# function of the library of their own, for what the engine's iterators walk. A call goes to that function where those rows alone are reached: it holds a for-of, so it is walked at the call like any helper that calls
+# a function handed to it in a loop.
+# doubled, joined: the class of `items` is declared: the Set | Map is asked ONCE whether it is as its class makes it, in front of the call; behind the test the loop goes through the table and has no arm of the protocol;
+# the engine's text stands in the rare arm. The list is the loop's own: nothing is defined under a computed key.
+# copied: no function is handed over: native code copies a Set at once whichever function is entered, so nothing is asked.
+# byAnyFunction: nobody knows the mapper: a copy would have nothing to put into its loop: nothing is asked.
+# -- source: from.ts
+# declare function sink(...values: unknown[]): void;
+# function doubled(items: Set<number>) { return Array.from(items, value => value * 2); }
+# function joined(items: Map<string, number>) { return Array.from(items, ([key, value]) => key + value); }
+# function copied(items: Set<number>) { return Array.from(items); }
+# function byAnyFunction(items: Set<number>, mapper: (value: number) => number) { return Array.from(items, mapper); }
+# sink(doubled, joined, copied, byAnyFunction);
+# -- end of source
+# f1 = doubled, f2 = joined, f3 = copied, f4 = byAnyFunction
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Set
+# CHECK-NOT: = IsPristine {{*}} builtinClass=Set
+# CHECK: = SetNext
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsPristine {{*}} builtinClass=Map
+# CHECK-NOT: = IsPristine {{*}} builtinClass=Map
+# CHECK: = MapNext
+# RUN(PROTOCOL): walk f1 f2 mechanisms=all
+# PROTOCOL-NOT: key="next"
+# RUN(OTHERS): walk f3 f4 mechanisms=all
+# OTHERS-NOT: = SetNext
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: = SetNext

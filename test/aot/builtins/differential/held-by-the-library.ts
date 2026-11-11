@@ -80,6 +80,18 @@ function openQuery(adapter: "postgres" | "mysql"): Open {
   };
 }
 
+// What bun:ffi is handed for `new JSCallback(..)`, before it lays it below a prototype of its own.
+const openCallbackOfFFI: Open = realm => {
+  const value = bindingOf(realm, "native:Bindgen:ffi.bind.ts:makeCallback")({ args: [], returns: "void" }, noop);
+  return { value, close: () => value.close() };
+};
+
+// The function pointer is never called.
+const openLibraryOfFFI: Open = realm => {
+  const value = bindingOf(realm, "native:Bindgen:ffi.bind.ts:linkLibrary")({ never: { ptr: 8, args: [], returns: "void" } });
+  return { value, close: () => value.close() };
+};
+
 export const openersOfWhatTheLibraryHolds: Open[] = [
   receiverOf("%ParsedShellScript%.prototype", "setEnv", () => void Bun.$`true`.env({})),
   sourceOf("Blob", () => new Blob(["text"]).stream()),
@@ -89,4 +101,6 @@ export const openersOfWhatTheLibraryHolds: Open[] = [
   openMySQLConnection,
   openQuery("postgres"),
   openQuery("mysql"),
+  openCallbackOfFFI,
+  openLibraryOfFFI,
 ];

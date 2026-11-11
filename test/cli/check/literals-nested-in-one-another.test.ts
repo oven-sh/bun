@@ -123,3 +123,8 @@ test("literals nested 100 deep are what they are nested 2 deep", async () => {
   `);
   expect(deep).toEqual(shallow);
 });
+
+test("literals nested 300 deep are what they are nested 2 deep", async () => {
+  const [shallow, deep] = await Promise.all([messages(2), messages(300)]);
+  expect(deep).toEqual(shallow);
+});

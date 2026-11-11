@@ -1,0 +1,13 @@
+# -- source: the-guard-of-a-constructor-asks-for-the-class-that-it-makes-where-such-are-seen-to-arrive.js
+# function Vec(o) { if (o) { this.x = o.x; this.y = o.y; } else { this.x = 1; this.y = 2; } }
+# const table = { Vec }, name = JSON.parse('"Vec"');
+# let v = new table[name]();
+# for (let i = 0; i < 40; i++) v = new table[name](v);
+# print(v.x, v.y);
+# -- end of source
+# The twin: the one place that may reach the constructor, through the table, is seen to hand it a Vec or nothing: what the names say is seen to arrive, and the word stands at the entry as it stood.
+# f1 = Vec
+# RUN: walk f1:ParameterGuard mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=undefined|null|L0
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 1 2

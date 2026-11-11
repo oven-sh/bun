@@ -38,7 +38,7 @@ The LinkerContext operates in several main phases:
 
 **What it does**:
 
-1. Calls `load()` to initialize the context
+1. Expects `load()` to have initialized the context (`BundleV2::link` calls both)
 2. Computes source map data if needed
 3. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
 4. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries

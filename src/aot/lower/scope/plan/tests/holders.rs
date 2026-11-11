@@ -1,4 +1,4 @@
-use super::{Probe, analyze_files};
+use super::{Probe, analyze_files, analyze_files_that_run_again};
 
 const NAMES: (&str, &str) = ("names.cjs", "exports.f = () => 1; exports.n = 2;");
 const ES_NAMES: (&str, &str) = ("names.mjs", "export const f = () => 1; export let n = 2;");
@@ -33,7 +33,7 @@ fn holder_is_not_captured_by_a_function_made_behind_it() {
 fn hoisted_function_asks_whether_the_holder_is_initialized() {
     let source = "function hoisted() { return a.f(); } const a = require('./names.cjs'); \
                   module.exports = hoisted;";
-    analyze_files(&[("main.cjs", source), NAMES], |probe| {
+    analyze_files_that_run_again(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "hoisted", "a"));
         assert!(!probe.captures_of("hoisted").is_empty());
         assert!(probe.placement_of("a").is_shared);
@@ -44,7 +44,7 @@ fn hoisted_function_asks_whether_the_holder_is_initialized() {
 fn holder_that_is_a_value_is_captured() {
     let source = "const a = require('./names.cjs'); \
                   module.exports = function later() { return a; };";
-    analyze_files(&[("main.cjs", source), NAMES], |probe| {
+    analyze_files_that_run_again(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
         assert_eq!(probe.captures_of("later"), [probe.copy_of("a")]);
     });
@@ -54,7 +54,7 @@ fn holder_that_is_a_value_is_captured() {
 fn var_holder_initialized_in_a_branch_is_read() {
     let source = "if (process.argv.length) { var a = require('./names.cjs'); } \
                   module.exports = function later() { return a.f(); };";
-    analyze_files(&[("main.cjs", source), NAMES], |probe| {
+    analyze_files_that_run_again(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
         assert!(!probe.captures_of("later").is_empty());
     });
@@ -64,7 +64,7 @@ fn var_holder_initialized_in_a_branch_is_read() {
 fn holder_that_is_stored_again_is_an_ordinary_variable() {
     let source = "let a = require('./names.cjs'); \
                   module.exports = function later() { return a.f(); }; a = null;";
-    analyze_files(&[("main.cjs", source), NAMES], |probe| {
+    analyze_files_that_run_again(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
         assert!(!probe.captures_of("later").is_empty());
     });

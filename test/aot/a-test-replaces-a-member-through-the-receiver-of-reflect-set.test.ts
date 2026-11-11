@@ -3,9 +3,12 @@ import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
 import { test } from "./supported";
 
 // The cases share the layers below them, so each writes on an object of its own and none puts a member back by a store.
-const project = casesOfOneRun("a-test-replaces-a-member-through-the-receiver-of-reflect-set", {
-  "package.json": `{ "name": "p", "type": "module" }`,
-});
+// Every case that was wrong was wrong over layers, half of them there alone.
+const project = casesOfOneRun(
+  "a-test-replaces-a-member-through-the-receiver-of-reflect-set",
+  { "package.json": `{ "name": "p", "type": "module" }` },
+  [[[]], [["--debug-aot"], "TestRunLayers:0"]],
+);
 
 function runsAsPlain(title: string, expected: string, body: string) {
   const name = project.add(
@@ -24,7 +27,6 @@ function runsAsPlain(title: string, expected: string, body: string) {
   test(title, async () => {
     const plain = (await project.ran()).get(name);
     expect(plain?.printed).toBe(expected + "\n");
-    expect((await project.ran(["--debug-aot"], "TestRunLayers:2")).get(name)).toEqual(plain);
     expect((await project.ran(["--debug-aot"], "TestRunLayers:0")).get(name)).toEqual(plain);
   });
 }

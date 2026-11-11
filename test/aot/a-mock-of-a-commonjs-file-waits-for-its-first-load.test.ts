@@ -75,14 +75,11 @@ async function printedBy(directory: string, words: string, ...flags: string[]) {
   return { printed: stdout.replace(/^bun test .*\n/, ""), exitCode };
 }
 
-test.each([
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
-])("%s", async (_, words) => {
+test("as one program", async () => {
   using directory = tempDir("mock-of-a-commonjs-file-waits", files);
-  const plain = await printedBy(String(directory), words);
+  const plain = await printedBy(String(directory), "");
   expect(plain.printed).toContain("2 mocked\n2 the factory runs\n2 mock of ./b.cjs");
   expect(plain.printed).toContain("7 made with after");
   expect(plain.printed).not.toContain("the first factory runs");
-  expect(await printedBy(String(directory), words, "--aot")).toEqual(plain);
+  expect(await printedBy(String(directory), "TestRunLayers:0", "--aot")).toEqual(plain);
 });

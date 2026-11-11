@@ -1,0 +1,35 @@
+A test ends a hoisted mock of a module whose body never ran: whoever was linked against the mock goes on reading it, in the next test too; the next file reads the module.
+#### a.test.js
+import { test, vi } from "bun:test";
+import * as ns from "./dep.js";
+import * as star from "./star.js";
+import { fn, value } from "./dep.js";
+import { seen } from "./user.js";
+vi.mock("./dep.js", () => { console.log("| CASE factory runs"); return { fn: () => "mock fn", value: "mock value" }; });
+const said = run => { try { return String(run()); } catch (error) { return error.constructor.name + ": " + error.message; } };
+const all = () => [said(() => fn()), said(() => value), said(() => ns.fn()), said(() => ns.value), said(() => star.fn()), said(() => star.value), Object.keys(ns).join("+"), seen()].join(" . ");
+test("the mock ends", () => {
+  console.log("| CASE mocked:", all());
+  vi.doUnmock("./dep.js");
+  console.log("| CASE ended:", all());
+});
+test("the next test", () => console.log("| CASE the next test:", all()));
+#### b.test.js
+import { test } from "bun:test";
+import { seen } from "./user.js";
+import { value } from "./dep.js";
+test("the next file", () => console.log("| CASE the next file:", value, ".", seen()));
+#### dep.js
+console.log("| CASE dep runs");
+export function fn() { return "real fn"; }
+export const value = "real value";
+export let count = 0;
+export const bump = () => ++count;
+#### package.json
+{}
+#### star.js
+export * from "./dep.js";
+#### user.js
+import { fn, value } from "./dep.js";
+const said = run => { try { return String(run()); } catch (error) { return error.constructor.name + ": " + error.message; } };
+export const seen = () => said(() => fn() + ", " + value);

@@ -1,0 +1,17 @@
+# -- source: a-store-of-what-may-be-a-number-guesses-no-storage-for-any-value.ts
+# declare function sink(...values: unknown[]): void;
+# declare function given(): any;
+# function best(item: any, room: number): number { const table = new Array(room + 1).fill(0); for (let w = room; w >= 1; w--) { const value = table[w - 1] + item.value; if (value > table[w]) table[w] = value; } return table[room]; }
+# function named(item: any, room: number): unknown { const table = new Array(room + 1).fill(""); for (let w = room; w >= 1; w--) table[w] = String(item.value); return table[room]; }
+# sink(best(given(), 9), named(given(), 9));
+# -- end of source
+# What `table[w - 1] + item.value` gives is a number or a text. The store guessed the storage that takes any value, and the list, filled with 0, has the storage of integers: the guess missed at every store.
+# Where what is stored may be a number no storage is guessed. A text alone still guesses the storage for any value.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PutArrayElement
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: PutArrayElement {{*}}arrayStorage=Contiguous
+# RUN(TEXT): walk f2 mechanisms=all
+# TEXT-LABEL: code f2:Body
+# TEXT: arrayStorage=Contiguous

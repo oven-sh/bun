@@ -1,5 +1,5 @@
 // The same program built again and again yields the same executable, byte for byte, whatever the number of threads. The compiler works on
-// many threads, and a fact that one of them writes while another reads shows up once in some hundred builds: as a build that aborts, as a build
+// many threads, and a fact that one of them writes while another reads shows up in one build of many: as a build that aborts, as a build
 // that reports an error of the compiler, or as an executable that differs and then behaves differently.
 //
 //   bun test test/aot/repeated-builds                            a few builds of each program, all at once so that the threads disturb each other
@@ -8,8 +8,8 @@
 //
 // A build counts by its exit code and by the bytes it wrote. A build that fails is a failure, not a missing sample.
 //
-// A race passes "the same bytes at 1, 16 and 64 threads" 97 to 99 times of 100. What one run of this file lets through the next ones catch, and
-// AOT_REPEATED_BUILDS asks for more: a test of this file that fails now and then is a race, never a flake.
+// A race passes most runs. What one run of this file lets through the next ones catch, and AOT_REPEATED_BUILDS asks for more: a test of this
+// file that fails now and then is a race, never a flake.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
@@ -17,9 +17,9 @@ import { availableParallelism } from "os";
 import { dirname, join } from "path";
 import { spawned, unsupported, withoutDebugInformation } from "./harness/commands";
 import { withThreads } from "./harness/flags";
-import { wanted } from "./harness/shares";
 
 const requested = Number(process.env.AOT_REPEATED_BUILDS);
+const wanted = process.env.AOT_PROGRAMS ?? "";
 const isSlowBun = isASAN || isDebug;
 // Fewer threads than cores, as many, and many more: threads that wait for a core stop at other places than threads that run.
 const threadCounts = [1, 16, 64];
@@ -27,9 +27,9 @@ const threadCounts = [1, 16, 64];
 const programs: { path: string; builds: number; flags?: string[] }[] = [
   // What it prints depends on which methods the compiler has seen their classes assign to.
   { path: "repeated-builds/methods-reassigned-by-class.ts", builds: 3 },
-  // Steps of the flow analysis ran side by side, and one of them opened a phase of the type table while another held an arena of it: 5 builds of 200 aborted.
+  // Whether an access runs code is a fact about every object on a prototype chain, and accessors get onto the chains in every way.
   { path: "parallel/relational-summaries/accessors-arrive-on-chain-in-every-way.js", builds: 3 },
-  // Calls inlined into a hot loop: with 16 threads 3 builds of 8 differed from the build with one thread.
+  // Three small functions are inlined into a loop, and the prototype later gets accessors under the name of the field they update.
   { path: "repeated-builds/optional-field-hot-loop.ts", builds: 9 },
 ];
 
@@ -40,7 +40,7 @@ describe("compile/aot/repeated builds", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
   const carrier = withoutDebugInformation();
   for (const { path: program, builds: usualBuilds, flags = [] } of programs) {
-    if (wanted === "quick" ? program !== programs[0].path : !program.includes(wanted)) continue;
+    if (!program.includes(wanted)) continue;
     const builds = requested || (isSlowBun ? Math.min(usualBuilds, threadCounts.length) : usualBuilds);
     // Each build takes some hundred megabytes, so not one for each core of a large machine.
     const atOnce = Math.max(2, Math.min(builds, availableParallelism(), 12));

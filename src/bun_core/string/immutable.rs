@@ -1350,9 +1350,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
 ///
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every
 /// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
-/// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
-/// `crate::env::const_str_slice` (compile-time git-SHA slicing), which is
-/// the only place `core::str::from_utf8` may appear.
+/// scalar DFA on AVX2/NEON). NOT `const`: const evaluation (`crate::__runtime_embed_load`) uses `core::str::from_utf8`.
 #[inline]
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     if simdutf::validate::utf8(bytes) {
@@ -1424,6 +1422,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 pub use highway::contains_newline_or_non_ascii_or_quote;
 pub use highway::line_starts;
 pub use highway::{ScannerStops, ScannerStopsBuffer};
+pub use highway::{pack_words, unpack_words};
 
 /// Supports:
 /// - `"`

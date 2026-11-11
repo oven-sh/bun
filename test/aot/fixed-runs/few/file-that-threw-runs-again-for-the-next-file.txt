@@ -1,0 +1,19 @@
+A test file makes a CommonJS file throw (the factory of a mock that it requires throws) and catches that; the next test file requires the same file, which runs again.
+#### a.test.mjs
+import { test, mock, beforeAll } from "bun:test";
+beforeAll(() => { mock.module("./lib.mjs", () => { throw new Error("thrown by the factory"); }); });
+test("the first file", () => {
+  try { console.log("| CASE first:", import.meta.require("./user.cjs").read()); } catch (error) { console.log("| CASE first failed:", error.message); }
+  mock.restore();
+});
+#### lib.mjs
+export const value = "real";
+#### package.json
+{ "name": "p", "type": "module" }
+#### user.cjs
+const lib = require("./lib.mjs"); exports.read = () => lib.value;
+#### z.test.mjs
+import { test } from "bun:test";
+test("the next file", () => {
+  try { console.log("| CASE next:", import.meta.require("./user.cjs").read()); } catch (error) { console.log("| CASE next failed:", error.message); }
+});

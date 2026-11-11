@@ -235,17 +235,7 @@ impl PackageManager {
         source: &bun_ast::Source,
         resolver: &mut R,
     ) -> crate::Result<()> {
-        // SAFETY: `self` is a live `&mut PackageManager`; the callee
-        // split-borrows `self.lockfile` / `self.log` (separate
-        // allocations) alongside `self` for the call's duration.
-        unsafe {
-            package.parse_from_real_manager(
-                std::ptr::from_mut::<PackageManager>(self),
-                source,
-                resolver,
-                Features::NPM,
-            )
-        }
+        package.parse_from_real_manager(self, source, resolver)
     }
 
     /// Parses the package.json of an extracted package and adds what its `file:` folders depend on.

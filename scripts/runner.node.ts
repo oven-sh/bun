@@ -82,6 +82,7 @@ import {
   type JunitFileSuite,
 } from "./buildkite.ts";
 import { costOfNewTests } from "./ci-cost-of-new-tests.ts";
+import { checkoutVendor } from "./vendor-checkout.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -326,7 +327,6 @@ const aotTestsThatAskTheSystem = [
   "aot/a-hardened-build",
   "aot/executable-memory-filter",
   "aot/compiled-code-mapping",
-  "aot/code-addresses-have-names",
   "aot/symbols-of-compiled-functions",
   "aot/packed-relocations",
   "aot/static-tls-size",
@@ -342,14 +342,13 @@ const aotTestsThatAskTheSystem = [
   "aot/exit-hooks-of-an-executable",
   "aot/time-zone-at-start",
   "aot/raw-mode-of-a-terminal",
-  "aot/perf/start",
+  "aot/the-listener-for-the-size-of-a-terminal",
   "aot/a-busy-caller-unbinds-no-child",
   "aot/programs-that-died-in-the-shell-on-one-platform",
   "aot/back-end-options-from-environment",
   "aot/program-handover",
   "aot/parallel/process/",
   "aot/parallel/globals/",
-  "aot/parallel/host-classes/process-env-read-fast-every-variable",
   // Workers and threads.
   "aot/workers-",
   "aot/a-program-that-starts-itself-as-a-worker-ends-every-time",
@@ -369,8 +368,6 @@ const aotTestsThatAskTheSystem = [
   "aot/the-folder-of-a-program-has-a-short-name",
   "aot/diagnostics-end-in-lf",
   "aot/absolute-path-missing-at-build",
-  "aot/a-file-that-is-saved-while-the-layers-of-a-test-run-are-built",
-  "aot/parallel/modules/all-kinds-path-starts-folder-executable",
   // Native code: addons, sockets, the engine's own tests.
   "aot/native-addons",
   "aot/napi-addon",
@@ -391,14 +388,12 @@ const aotTestsThatAskTheSystem = [
   "aot/heap-limit",
   "aot/a-heap-that-was-full",
   "aot/cell-cage-messages",
-  "aot/a-field-that-holds-undefined-outside-the-cell-fails-no-test",
   "aot/the-first-read-of-a-standard-stream-finds-no-room-on-the-stack",
   "aot/reading-a-property-of-null-throws-",
   "aot/native-fault-still-crashes",
   "aot/fault-inside-a-removed-range",
   "aot/crash-in-compiled-code",
   "aot/abort-is-reported",
-  "aot/uncaught-errors-show-the-frames-of-the-throw",
   "aot/memory-",
   "aot/small-program-memory",
   "aot/json-stringify-",
@@ -412,17 +407,15 @@ const aotTestsThatAskTheSystem = [
   "aot/commands-that-hold-too-much-memory-together-are-ended",
   "aot/no-leak-records-at-exit",
   "aot/the-marking-version-wraps",
-  // A Mac that is no virtual machine counts instructions too, and only there has it ever failed.
-  "aot/fields-created-by-name-cost-the-same-after-a-collection",
   "aot/under-zombie-mode-a-sweep-overwrites-dead-cells",
-  "aot/gc-verifier-reports-unmarked-cells",
   "aot/address-sanitizer-",
   "aot/parallel/gc/",
   "aot/parallel/stress/",
-  // Debian x64 holds its memory budgets, Alpine x64 its instruction budgets, macOS the growth of both.
+  // Alpine x64 counts their instructions, Debian x64 judges how their memory grows, macOS how the instructions of a build grow.
   "aot/build-scaling/",
-  // Programs of the language, a hundred to a build: cheap each, and together they go through the calling convention and
-  // the unwinding of the platform.
+  "aot/compiler/",
+  // Programs of the language: cheap each, and together they go through the calling convention and the unwinding of the
+  // platform.
   "aot/parallel/builtins/",
   "aot/parallel/calls/",
   "aot/parallel/errors/",
@@ -434,13 +427,8 @@ const aotTestsThatAskTheSystem = [
 const aotTestsThatAskAlpine = [
   "aot/a-proxy-above-a-prototype",
   "aot/analysis-scaling/",
-  "aot/engine/instruction-bounds",
-  "aot/fields-created-by-name-cost-the-same-after-a-collection",
-  "aot/long-functions-",
   "aot/long-generated-functions",
-  "aot/parsed-records-of-booleans",
   "aot/perf/",
-  "aot/typed-parse-key-order",
   "aot/load/unsupported-options",
 ];
 // Windows as well: there the compiler is built by another toolchain, which the listings hold against the others, and the library
@@ -448,36 +436,23 @@ const aotTestsThatAskAlpine = [
 const aotTestsThatAskWindows = [
   "aot/engine/ir-",
   "aot/the-table-of-section-headers-has-room-on-windows",
-  "aot/first-reads-by-name-avoid-the-lookup-of-the-runtime",
-  "aot/one-line-changes-little-1",
-  "aot/one-line-changes-little-2",
   "aot/asking-about-a-class-keeps-none-of-its-code",
   "aot/process-env-opens-nothing",
   "aot/a-build-that-stops-says-where",
   "aot/parallel/closed-world/names-of-the-host-bring-little-of-the-library",
-  "aot/parallel/soundness/members-bun-taken-values-unknown-names",
-  "aot/parallel/type-rules/log-build-continues-after-mismatch",
 ];
 // Under a sanitizer the compiler itself is what is tested, and a sanitizer finds by which code runs over which input, never by a
 // verdict. There every test runs but those that feed it nothing new: they compile one text again and again with a line or a flag
 // changed and compare what comes out, or read a number or a list off a report.
 const aotTestsThatFeedNothingNew = [
-  "aot/static-modules-one-odd-file",
-  "aot/one-line-changes-little-",
   "aot/tools/same-code-",
-  "aot/a-function-constructor-kept-under-a-computed-key-costs-the-analysis-a-fixed-amount",
-  "aot/a-name-read-on-an-object-nobody-follows-costs-the-analysis-a-fixed-amount",
-  "aot/an-object-that-leaves-late-costs-the-analysis-a-fixed-amount",
-  "aot/an-object-wrapped-key-by-key-costs-the-analysis-a-fixed-amount",
-  "aot/an-object-copied-from-whatever-is-handed-on-costs-the-analysis-a-bounded-amount",
   "aot/entry-points-begin-programs-of-their-own",
-  "aot/sabotages",
   "aot/audit-agrees-with-the-executable",
   "aot/transpiler-parity-",
   "aot/builtins/differential/",
   "aot/build-options",
   "aot/build-flags",
-  "aot/bun-build-takes-aot-disable-and-aot-heat",
+  "aot/aot-harden",
   "aot/strict-flag-refuses-as-without-aot",
   "aot/same-program-however-the-threads-fall",
   "aot/two-builds-give-the-same-bytes",
@@ -486,18 +461,13 @@ const aotTestsThatFeedNothingNew = [
   "aot/the-table-of-built-ins-lists-the-own-names-of-what-its-rows-make",
   "aot/names-of-unreached-code-in-executables",
   "aot/names-of-bindings-in-minified-executables",
-  "aot/methods-of-library-classes-nobody-calls",
   "aot/options-that-a-library-module-carries-out",
   "aot/library-modules-by-computed-name",
   "aot/members-of-bun-named-late",
-  "aot/small-programs-stay-closed",
   "aot/runtime-use-",
   "aot/trim-keeps-functions-handed-on",
   "aot/trim-report-",
-  "aot/later-awaits-avoid-runtime",
   "aot/program-handover",
-  // The driver compiles the same programs there.
-  "aot/counts-pinned-by-programs",
 ];
 // The engine's shell, its test program and its tests are packed beside Bun and are as large as Bun. They stay packed in a shard
 // that has none of the tests that start them: startsToolsOfTheEngine().
@@ -517,13 +487,11 @@ const linuxDistro = isLinux ? getDistro() : undefined;
 // Asked once: with glibc getAbi() starts `ldd`.
 const isMusl = getAbi() === "musl";
 const distroOfAotTest = (path: string) =>
-  /^aot\/(?:parallel\/|backend-packages\/|frameworks\/|trimmed-is-whole\/|one-line-changes-little)/.test(path)
-    ? "ubuntu"
-    : "debian";
+  /^aot\/(?:parallel\/|backend-packages\/|frameworks\/|trimmed-is-whole\/)/.test(path) ? "ubuntu" : "debian";
 const sharesAotTests = linuxDistro === "debian" || linuxDistro === "ubuntu";
 // Only these are split across the lanes. Every other test runs on every lane.
 const isSplitAcrossLanes = /^(?:aot|bundler\/trim-by-use)\//;
-// The second build of a program, with its types erased, asks the compiler, and is the same text again.
+// The builds of a program behind the first (test/aot/harness/ways.ts) ask the compiler, and are the same text again.
 const flagsOfAotDriver = (execPath: string) =>
   isCI && (hasSanitizer(execPath) || linuxDistro !== distroOfAotTest("aot/parallel/")) ? ["--no-erased"] : [];
 function runsOnThisLane(testPath: string, execPath: string) {
@@ -1731,7 +1699,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
             output.stderr.trimEnd(),
           ].filter(Boolean);
 
-    const aotProgramsSkipped = new Map<string, number>();
     const reportAotProgram = (testPath: string, verdict: AotVerdict) => {
       const title = join("test", testPath).replaceAll("\\", "/");
       const result: TestResult = {
@@ -1746,8 +1713,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       if (verdict.state === "skip") {
         console.log(`${getAnsi("gray")}[${++i}/${total}] ${title} - skipped: ${verdict.message}${getAnsi("reset")}`);
         okResults.push({ ...result, status: "skip" });
-        const why = verdict.message.startsWith("todo: ") ? "marked `// Todo:`" : verdict.message;
-        aotProgramsSkipped.set(why, (aotProgramsSkipped.get(why) ?? 0) + 1);
         return;
       }
       if (verdict.state === "pass") {
@@ -1861,17 +1826,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       startGroup(`Running ${parallelSafeTests.length} parallel-safe tests (${parallelSafeWidth}-wide)`);
     }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
-    for (const [why, count] of aotProgramsSkipped) {
-      const line = `SKIPPED ${count} of ${aotPrograms.length} programs compiled ahead of time: ${why}`;
-      console.log(`${getAnsi("yellow")}${line}${getAnsi("reset")}`);
-      if (why.startsWith("marked ")) continue;
-      reportAnnotationToBuildkite({
-        context: "aot-programs-skipped",
-        label: "programs compiled ahead of time",
-        style: "warning",
-        content: `${escapeHtml(line)} <i>(on ${getBuildLabel()})</i>\n\n`,
-      });
-    }
   }
 
   if (vendorTests?.length) {
@@ -3177,7 +3131,10 @@ function getTests(cwd: string): string[] {
 interface Vendor {
   package: string;
   repository: string;
+  /** The release `commit` is of. */
   tag: string;
+  /** What is checked out. */
+  commit: string;
   packageManager?: string;
   testPath?: string;
   testRunner?: string;
@@ -3218,34 +3175,22 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({
+        package: name,
+        repository,
+        commit,
+        testPath,
+        testExtensions,
+        testRunner,
+        packageManager,
+        skipTests,
+      }) => {
         const vendorPath = join(cwd, "vendor", name);
 
-        if (!existsSync(vendorPath)) {
-          const { ok, error } = await spawnWithTimeout({
-            command: "git",
-            args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
-            timeout: testTimeout,
-            cwd,
-          });
-          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
-        }
-
-        let { ok, error } = await spawnWithTimeout({
-          command: "git",
-          args: ["fetch", "--depth", "1", "origin", "tag", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
+        await checkoutVendor({ repository, commit, vendorPath }, async (...args) => {
+          const { ok, error } = await spawnWithTimeout({ command: "git", args, timeout: testTimeout, cwd });
+          if (!ok) throw new Error(`failed to git ${args.join(" ")} for vendor '${name}': ${error}`);
         });
-        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
-
-        ({ ok, error } = await spawnWithTimeout({
-          command: "git",
-          args: ["checkout", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
-        }));
-        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {
@@ -3349,10 +3294,7 @@ function filesAtOnce(testPath: string) {
   return isInBucket ? 3 : 2;
 }
 
-/**
- * The programs under test/aot/parallel by the builds that hold them. A build compiles Bun's library once for up to a hundred programs:
- * dealt one by one, every shard would compile it for its few.
- */
+/** The programs under test/aot/parallel, each with what its builds take, as run-parallel.ts --deal prints them. */
 function getBuildsOfAotPrograms(execPath: string, testsPath: string, programs: string[]) {
   const folder = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "aot-programs-")));
   try {

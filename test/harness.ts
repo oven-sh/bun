@@ -8,7 +8,7 @@
 import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
-import { beforeAll, describe, expect } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
@@ -2566,6 +2566,27 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
 }
 
 export const rss: () => number = process.memoryUsage.rss;
+
+/**
+ * The `test` of a file that judges by the memory of its own process. ASAN's quarantine keeps freed blocks resident, so
+ * under ASAN the file runs again in a child without one, and its tests are skipped in this process.
+ */
+export function testThatMeasuresOwnMemory(file: string): typeof test {
+  if (!isASAN || process.env.ASAN_OPTIONS?.includes("quarantine_size_mb=0")) return test;
+  test(
+    "in a child without ASAN's quarantine",
+    async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "test", "--timeout=270000", file],
+        env: withoutAsanQuarantine(bunEnv),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      expect(await child.exited).toBe(0);
+    },
+    270_000,
+  );
+  return test.skip as typeof test;
+}
 
 /** Read exactly `len` bytes from `fd` at absolute `offset`. */
 export function preadExact(fd: number, offset: number, len: number): Buffer {

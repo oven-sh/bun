@@ -1,0 +1,31 @@
+# -- source: main.js
+# class Base { constructor() { this.total = 0; } step() { this.total += 1; return this.total; } }
+# class Below extends Base { }
+# function runBase(object, turns) { var sum = 0; for (var i = 0; i < turns; i++) sum = (sum + object.step()) | 0; return sum; }
+# function runBelow(object, turns) { var sum = 0; for (var i = 0; i < turns; i++) sum = (sum + object.step()) | 0; return sum; }
+# var base = new Base(), other = new Base(), below = new Below();
+# publish(base, other, below);
+# print(runBase(base, 10), runBase(other, 10), runBelow(below, 10));
+# change(base, below);
+# print(runBase(base, 10), runBase(other, 10), runBelow(below, 10));
+# print(report());
+# -- end of source
+# Code that the build has not seen lays a function on one object, under the name of a method. The build knows of no such store, so the guard of the name answers for every object of the class, and it ends.
+# It is the guard of the class of that object: an object of a class below looks the name up past itself and past the prototype objects, and the object that hides the method is none of them.
+# RUN: run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsInvalidated")) return parseInt(lines[i]); } return 0; }; globalThis.report = () => ended() < 2 ? "at most one guard has ended" : "guards of other classes have ended"; globalThis.publish = () => { }; globalThis.change = (upper) => { upper.step = function () { return -1; }; };
+# CHECK: 55 55 55
+# CHECK-NEXT: -10 155 155
+# CHECK-NEXT: at most one guard has ended
+# CHECK-NEXT: exited with 0
+# In the run LOWER the object of the class below hides the method: the objects of the class above find it as before.
+# RUN(LOWER): run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsInvalidated")) return parseInt(lines[i]); } return 0; }; globalThis.report = () => ended() < 2 ? "at most one guard has ended" : "guards of other classes have ended"; globalThis.publish = () => { }; globalThis.change = (upper, lower) => { lower.step = function () { return -2; }; };
+# LOWER: 55 55 55
+# LOWER-NEXT: 155 155 -20
+# LOWER-NEXT: at most one guard has ended
+# LOWER-NEXT: exited with 0
+# In the run ABOVE the method itself is replaced, and that is seen from every class of the row.
+# RUN(ABOVE): run-in-shell globalThis.report = () => "replaced"; globalThis.publish = () => { }; globalThis.change = (upper) => { Object.getPrototypeOf(upper).step = function () { return 7; }; };
+# ABOVE: 55 55 55
+# ABOVE-NEXT: 70 70 70
+# ABOVE-NEXT: replaced
+# ABOVE-NEXT: exited with 0

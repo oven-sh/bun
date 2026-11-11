@@ -1,0 +1,60 @@
+A graph fails at its first import and leaves a module linked: its body runs ahead of a mock that is laid on it, its error is the error of the call, and the next test file reads the module's own value.
+#### a-runs.test.ts
+import { test, vi } from "bun:test";
+const failed = () => import("./runs/all").catch(error => console.log("| CASE", error.message));
+test("the body runs ahead of the mock", async () => {
+  await failed();
+  vi.mock("./runs/tax", () => ({ rate: 0.5 }));
+  console.log("| CASE", (await import("./runs/tax")).rate, (globalThis.ranBehindFailedGraph ??= []).splice(0).join());
+});
+#### b-fails.test.ts
+import { test, vi } from "bun:test";
+const failed = () => import("./fails/all").catch(error => console.log("| CASE", error.message));
+test("its error is the error of the call", async () => {
+  await failed();
+  try {
+    vi.mock("./fails/tax", async importOriginal => ({ ...(await importOriginal<any>()) }));
+    console.log("| CASE nothing thrown");
+  } catch (error) {
+    console.log("| CASE", (error as Error).message, (globalThis.ranBehindFailedGraph ??= []).splice(0).join());
+  }
+});
+#### c-first.test.ts
+import { test, vi } from "bun:test";
+const failed = () => import("./next/all").catch(error => console.log("| CASE", error.message));
+test("the file that mocks", async () => {
+  await failed();
+  vi.mock("./next/tax", () => ({ rate: 0.5 }));
+  console.log("| CASE", (await import("./next/tax")).rate);
+});
+#### d-next.test.ts
+import { test } from "bun:test";
+test("the next file", async () => {
+  console.log("| CASE", (await import("./next/tax")).rate);
+});
+#### fails/all.ts
+import "./throws"; import "./between";
+#### fails/between.ts
+(globalThis.ranBehindFailedGraph ??= []).push("between"); import "./tax";
+#### fails/tax.ts
+(globalThis.ranBehindFailedGraph ??= []).push("tax"); export const rate = 0.2; throw new Error("tax.ts threw");
+#### fails/throws.ts
+(globalThis.ranBehindFailedGraph ??= []).push("throws"); throw new Error("throws.ts threw");
+#### next/all.ts
+import "./throws"; import "./between";
+#### next/between.ts
+(globalThis.ranBehindFailedGraph ??= []).push("between"); import "./tax";
+#### next/tax.ts
+(globalThis.ranBehindFailedGraph ??= []).push("tax"); export const rate = 0.2; 
+#### next/throws.ts
+(globalThis.ranBehindFailedGraph ??= []).push("throws"); throw new Error("throws.ts threw");
+#### package.json
+{ "name": "mock-linked-failed" }
+#### runs/all.ts
+import "./throws"; import "./between";
+#### runs/between.ts
+(globalThis.ranBehindFailedGraph ??= []).push("between"); import "./tax";
+#### runs/tax.ts
+(globalThis.ranBehindFailedGraph ??= []).push("tax"); export const rate = 0.2; 
+#### runs/throws.ts
+(globalThis.ranBehindFailedGraph ??= []).push("throws"); throw new Error("throws.ts threw");

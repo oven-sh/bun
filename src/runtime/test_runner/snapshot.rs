@@ -241,9 +241,10 @@ pub(crate) struct File {
     format: Format,
     file: Option<bun_sys::File>,
     dirty: bool,
-    /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
-    /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
+    /// Older versions of Bun appended entries in their own format, under their own keys, to Jest's and Vitest's files.
     may_hold_entries_of_bun: bool,
+    /// Jest and Vitest keep their files sorted, so keys out of order are an older Bun's. `write_sorted` keeps that order.
+    keys_were_out_of_order: bool,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -399,13 +400,47 @@ impl Snapshots {
         if format != Format::Bun {
             self.file_buf = Vec::new();
         }
-        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
+        let keys_were_out_of_order = format != Format::Bun && !self.keys_are_sorted();
+        let may_hold_entries_of_bun = format == Format::Bun
+            || keys_were_out_of_order
+            || (format == Format::Vitest && self.holds_a_key_in_both_spellings());
+        self._current_file =
+            Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun, keys_were_out_of_order });
         Ok(format)
     }
 
     fn keys_are_sorted(&self) -> bool {
         self.values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
+    }
+
+    /// Whether a Vitest file holds a snapshot under Vitest's key and under the key that an older Bun had for it.
+    fn holds_a_key_in_both_spellings(&self) -> bool {
+        let keys = self.values.keys();
+        let separator = Format::Vitest.name_separator();
+        // An older Bun's key has no " > ", unless a name has one.
+        if keys.iter().all(|key| strings::contains(key, separator)) {
+            return false;
+        }
+        let mut key_of_bun: Vec<u8> = Vec::new();
+        keys.iter().any(|key| {
+            let Some(last) = strings::last_index_of(key, separator) else { return false };
+            let (names, rest) = (&key[..last], &key[last + separator.len()..]);
+            key_of_bun.clear();
+            for (i, name) in strings::split(names, separator).enumerate() {
+                if i > 0 {
+                    key_of_bun.extend_from_slice(Format::Bun.name_separator());
+                }
+                key_of_bun.extend_from_slice(name);
+            }
+            let names = key_of_bun.len();
+            // What follows the last " > " is the name of the test, or a hint.
+            [Format::Bun.name_separator(), Format::Bun.hint_separator()].iter().any(|before_rest| {
+                key_of_bun.truncate(names);
+                key_of_bun.extend_from_slice(before_rest);
+                key_of_bun.extend_from_slice(rest);
+                self.values.contains(&key_of_bun)
+            })
+        })
     }
 
     fn may_hold_entries_of_bun(&self) -> bool {
@@ -782,7 +817,8 @@ impl Snapshots {
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
         // An entry with no test, under Bun's key, or that differs may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
         let may_be_of_bun = |entry: &Entry| !entry.checked || entry.found_under_key_of_bun || entry.differs;
-        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(may_be_of_bun);
+        // Keys that were in order stay in order: such a file is known for an older Bun's only by its keys.
+        let stays_as_it_is = file.keys_were_out_of_order && self.values.values().iter().any(may_be_of_bun);
         for (i, key) in keys.iter().enumerate() {
             let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
             order.insert(at, i);

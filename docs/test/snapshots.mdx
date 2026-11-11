@@ -298,6 +298,8 @@ With `--update-snapshots`, Bun removes entries that no test uses anymore from a 
 
 Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 
+Earlier versions of Bun also used Bun's keys and Bun's format in every file. In a file from Vitest they added a second entry for each snapshot inside a `describe`: `outer inner 1` beside Vitest's `outer > inner 1`. Bun no longer adds such entries. If Vitest's entry doesn't match under Bun, for example because it holds an error message of another engine, the snapshot still passes when the second entry matches. `--update-snapshots` rewrites Vitest's entry and removes the second one, and so does an update by Vitest. If the project no longer runs Vitest, you can instead change the first line of the file to `// Bun Snapshot v1`. Bun then reads and writes the file in its own format.
+
 ## Best Practices
 
 ### Keep Snapshots Small

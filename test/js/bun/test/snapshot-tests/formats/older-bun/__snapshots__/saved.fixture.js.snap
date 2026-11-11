@@ -1,0 +1,59 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`at the top level 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`pairs > a thrown error 1`] = `[TypeError: node]`;
+
+exports[`pairs > a value 1`] = `"node"`;
+
+exports[`pairs > a value and a hint > hint 1`] = `
+{
+  "runtime": "node",
+}
+`;
+
+exports[`pairs > nested > twice 1`] = `"node"`;
+
+exports[`pairs > nested > twice 2`] = `
+[
+  "node",
+]
+`;
+
+exports[`pairs a thrown error 1`] = `"bun"`;
+
+exports[`pairs a value 1`] = `"bun"`;
+
+exports[`pairs a value and a hint: hint 1`] = `
+{
+  "runtime": "bun",
+}
+`;
+
+exports[`pairs nested twice 1`] = `"bun"`;
+
+exports[`pairs nested twice 2`] = `
+[
+  "bun",
+]
+`;
+
+exports[`the same for both > a thrown error 1`] = `[RangeError: out of range]`;
+
+exports[`the same for both > a value 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`the same for both a thrown error 1`] = `"out of range"`;
+
+exports[`the same for both a value 1`] = `
+{
+  "a": 1,
+}
+`;

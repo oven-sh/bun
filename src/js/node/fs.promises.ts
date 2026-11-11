@@ -419,8 +419,32 @@ const exports = {
           errno: $processBindingConstants.os.errno.EISDIR,
         });
       }
+      return fs.rm(path, options);
     }
-    return fs.rm(path, options);
+    // Like Node's rimraf, wait for the next attempt on a timer: no thread is held.
+    for (let retries = 0; ;) {
+      try {
+        return await fs.rm(path, options);
+      } catch (err: any) {
+        const code = err?.code;
+        if (retries > 0 && code === "ENOENT") return;
+        if (
+          retries >= (options.maxRetries ?? 0) ||
+          (code !== "EBUSY" && code !== "EMFILE" && code !== "ENFILE" && code !== "ENOTEMPTY" && code !== "EPERM")
+        ) {
+          throw err;
+        }
+        retries++;
+        // A timer fires after 1 ms when its delay does not fit in an int32, so a long wait is split.
+        for (let wait = retries * (options.retryDelay ?? 100); wait > 0;) {
+          const step = Math.min(wait, 2147483647);
+          wait -= step;
+          const { promise, resolve } = Promise.withResolvers<void>();
+          setTimeout(resolve, step);
+          await promise;
+        }
+      }
+    }
   },
   rmdir: async function rmdir(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.

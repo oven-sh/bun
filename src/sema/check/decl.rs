@@ -3770,13 +3770,11 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.symbol_to_string(sym)
         };
-        let subject = self.subject_of_arguments(&[Arg::Sym(sym)]);
         self.error_at(
             at,
             code,
             &[Arg::Bytes(&name), Arg::Number(least), Arg::Number(most)],
-        )
-        .subject = subject;
+        );
         is_js.then_some(most)
     }
 

@@ -1,0 +1,37 @@
+# process.nextTick(() => {})
+# The table has a row for `new process.nextTick(..)`, which answers an object that it says nothing of. Nobody constructs here, so that row makes nothing. If every row of a built-in in use counted, objects of any class might exist,
+# native code would find `constructor` on the prototype object of each class, and what hangs on the objects of AbortController, the printer of warnings, would be in a program of one line.
+# The queue of ticks is there: the library makes the value of process.nextTick.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    v2 = Convert v1 declared={type=builtin(ProcessNextTick) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, v0, v3 calleeKey="nextTick" calleeName="process.nextTick"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

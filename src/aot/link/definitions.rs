@@ -72,7 +72,7 @@ fn find_writer(projects: &Projects<'_, '_>, exporter: ProgramModule) -> ExportWr
             false => ExportWriter::Loader,
         },
         ProgramModule::Inner { .. } => ExportWriter::Body,
-        ProgramModule::Face(_) | ProgramModule::Check(_) => ExportWriter::Face,
+        ProgramModule::Facade(_) | ProgramModule::Check(_) => ExportWriter::Facade,
         ProgramModule::Runtime(_) | ProgramModule::External { .. } => ExportWriter::Loader,
     }
 }
@@ -500,17 +500,17 @@ fn add_synthetic_exports(
             let Some((file, copy)) = with_copies else {
                 continue;
             };
-            let Some(&face) = index_by_module.get(&ProgramModule::Face(file)) else {
+            let Some(&facade) = index_by_module.get(&ProgramModule::Facade(file)) else {
                 continue;
             };
             debug_assert!(has_key(copy, context.variable_key(VariableKey::Copy(id))));
             let captures = projects.get(file.project).graph.commonjs();
-            let captures = captures.face_captures(file.file);
+            let captures = captures.has_capturing_facade(file.file);
             let writer = match captures && export.name != bun_sema::atom::known::default {
                 true => ExportWriter::Capture,
-                false => ExportWriter::Face,
+                false => ExportWriter::Facade,
             };
-            define(copy, face, export, writer);
+            define(copy, facade, export, writer);
         }
     }
     let context = key_context(projects, ProjectId::Application);
@@ -543,6 +543,7 @@ pub(super) fn variable_that_holds_mock(module: ModuleId) -> Variable {
         declared,
         initialization: VariableInitialization::Uninitialized,
         flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK,
+        place: Some(0),
         ..Variable::default()
     }
 }
@@ -860,14 +861,14 @@ pub(super) fn synthetic_export_variable(
     is_known_member: bool,
 ) -> Variable {
     let initialization = match writer {
-        ExportWriter::Loader | ExportWriter::Face | ExportWriter::Capture => {
+        ExportWriter::Loader | ExportWriter::Facade | ExportWriter::Capture => {
             VariableInitialization::Uninitialized
         }
         ExportWriter::Body => VariableInitialization::Undefined,
     };
     let mut declared = DeclaredType::untyped();
     let may_stay_empty = match writer {
-        ExportWriter::Capture | ExportWriter::Face => true,
+        ExportWriter::Capture | ExportWriter::Facade => true,
         ExportWriter::Loader => !is_known_member,
         ExportWriter::Body => false,
     };

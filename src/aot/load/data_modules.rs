@@ -16,6 +16,7 @@ pub(crate) struct ParsedDataModule<'s> {
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub web_assembly: Option<Vec<u8>>,
     pub failure: Option<Vec<u8>>,
+    pub failed_at: Option<Location>,
 }
 
 pub(crate) fn parse_data_module<'s>(
@@ -25,13 +26,14 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
-    let mut failure = None;
+    let (mut failure, mut failed_at) = (None, None);
     let module = messages.with_log(|log| {
         let module = provider.parse_data(source, arena, atoms, log);
         if matches!(module, Err(DataFailure::InvalidText))
             && let Some(first) = log.msgs.iter().position(|it| it.kind == Kind::Err)
         {
             failure = Some(log.msgs[first].data.text.to_vec());
+            failed_at.clone_from(&log.msgs[first].data.location);
             for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
                 message.kind = Kind::Warn;
             }
@@ -51,36 +53,18 @@ pub(crate) fn parse_data_module<'s>(
     };
     let DataModuleTree { file, host_values } =
         module_from_data(module.as_ref().unwrap_or(&in_place_of_failed), atoms, arena);
-    let is_web_assembly = module.is_ok() && source.loader == Loader::Wasm;
+    let is_web_assembly = module.is_ok()
+        && match source.loader {
+            Loader::Wasm => true,
+            Loader::File => source.contents.starts_with(b"\0asm\x01\0\0\0"),
+            _ => false,
+        };
     ParsedDataModule {
         hir: file,
         host_values,
         web_assembly: is_web_assembly.then(|| source.contents.to_vec()),
         failure,
-    }
-}
-
-pub(crate) fn create_module_without_text<'s>(
-    is_in_es_package: bool,
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
-) -> ParsedDataModule<'s> {
-    let module = match is_in_es_package {
-        true => DataModule::Value {
-            default: &DataValue::Undefined,
-            exports_keys: false,
-        },
-        false => DataModule::Value {
-            default: &DataValue::Object(&[]),
-            exports_keys: true,
-        },
-    };
-    let DataModuleTree { file, host_values } = module_from_data(&module, atoms, arena);
-    ParsedDataModule {
-        hir: file,
-        host_values,
-        web_assembly: None,
-        failure: None,
+        failed_at,
     }
 }
 
@@ -525,6 +509,47 @@ mod tests {
         let default = default_export(&file.hir);
         assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
 
+        assert!(written_log(&messages).msgs.is_empty());
+    }
+
+    #[test]
+    fn file_that_holds_web_assembly_returns_bytes_and_stays_a_path() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let messages = LoadMessages::default();
+        let parse = |loader| {
+            let source = SourceFile {
+                path: b"/project/a.bin",
+                contents: b"\0asm\x01\0\0\0",
+                loader,
+            };
+            parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms)
+        };
+
+        let file = parse(Loader::File);
+        assert_eq!(
+            file.web_assembly.as_deref(),
+            Some(b"\0asm\x01\0\0\0".as_slice())
+        );
+        let default = default_export(&file.hir);
+        assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
+
+        assert!(written_log(&messages).msgs.is_empty());
+        assert!(parse(Loader::Base64).web_assembly.is_none());
+    }
+
+    #[test]
+    fn file_that_only_begins_like_web_assembly_returns_no_bytes() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/a.wasm",
+            contents: b"\0asm\x02\0\0\0",
+            loader: Loader::File,
+        };
+        let file = parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms);
+        assert!(file.web_assembly.is_none());
         assert!(written_log(&messages).msgs.is_empty());
     }
 

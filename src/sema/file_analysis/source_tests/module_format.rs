@@ -955,14 +955,13 @@ const KINDS_AND_ORDER: &str = r#"import("c1"); import a from "s1"; export { b } 
 const NOT_SITES: &[&str] = &[
     r#"function f(require) { require("a"); }"#,
     r#"const require = f; require("a");"#,
-    r#"with (o) require("a");"#,
+    r#"function f(require) { with (o) require("a"); }"#,
     r#"let r = require; r = f; r("a");"#,
     r#"const r = require; f(r);"#,
     r#"new require("a");"#,
     r#"require();"#,
     r#"x.require("a");"#,
     r#"function f(module) { module.require("a"); }"#,
-    r#"with (o) { (function () { eval(s); require("a"); }); }"#,
 ];
 
 const DEAD_SITES: &[&str] = &[
@@ -974,6 +973,11 @@ const DEAD_SITES: &[&str] = &[
 const ONE_SITE: &[(&str, &str)] = &[
     ("a.ts", r#"require("a");"#),
     ("a.cjs", r#"require?.("a");"#),
+    ("a.cjs", r#"with (o) require("a");"#),
+    (
+        "a.cjs",
+        r#"with (o) { (function () { eval(s); require("a"); }); }"#,
+    ),
     ("a.cjs", r#"const r = require; r("a");"#),
     ("a.ts", r#"(require as any)("a");"#),
     ("a.ts", r#"(module as any).require!("a");"#),
@@ -1213,6 +1217,40 @@ fn check_main_module_comparison(text: &str, main: Option<bool>, expected: Decisi
         analyzed_with_main(path, text, main, |s| {
             assert_eq!(comparison_decision(s), expected, "{path}: {text}: {main:?}");
             assert_eq!(s.analysis.module_format, format, "{path}: {text}: {main:?}");
+        });
+    }
+}
+
+#[test]
+fn this_in_a_value_assigned_behind_its_class_is_of_the_function_around() {
+    use bun_sema::module_format::{ThisPositions, evaluates_own_this};
+    let text = r#"
+        function mark(target: unknown, key: string) {}
+        function in_moved_value() { class A { @mark static a: unknown = this; } return A; }
+        function in_arrow_of_moved_value() { class A { @mark static a: unknown = (() => this)(); } return A; }
+        function of_static_field() { class A { static a: unknown = this; } return A; }
+        function of_decorated_field() { class A { @mark a: unknown = this; } return A; }
+        function of_function_in_moved_value() { class A { @mark static a: unknown = function () { return this; }; } return A; }
+    "#;
+    let moved: &[&str] = &["in_moved_value", "in_arrow_of_moved_value"];
+    for (experimental_decorators, expected) in [(true, moved), (false, &[][..])] {
+        let source = Source {
+            experimental_decorators,
+            ..Source::new("a.ts", text)
+        };
+        analyzed_source(&source, |s| {
+            let positions = ThisPositions::of(&s.hir, false);
+            let functions = (0..s.hir.fns.len() as u32).map(FnId);
+            let declared = functions.filter(|&it| s.hir[it].kind == FnKind::Decl);
+            let reading = declared.filter(|&it| {
+                let by_walk = evaluates_own_this(&s.hir, it, false);
+                assert_eq!(positions.evaluates_own_this(&s.hir, it), by_walk);
+                by_walk
+            });
+            let names: Vec<String> = reading
+                .map(|it| s.workspace.text(s.hir[it].name).to_owned())
+                .collect();
+            assert_eq!(names, expected, "{experimental_decorators}");
         });
     }
 }

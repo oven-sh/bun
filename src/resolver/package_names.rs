@@ -7,10 +7,11 @@ use bun_core::strings;
 use bun_paths::is_sep_native;
 
 use crate::compiled_program::{
-    ENDS_SEARCH, LEADS_OUTSIDE, compare_source_paths, normalize_separator, public_path_from_root,
+    ENDS_SEARCH, LEADS_OUTSIDE, LEADS_OUTSIDE_AS_FOLDER, compare_source_paths, normalize_separator,
+    public_path_from_root,
 };
 use crate::package_json::Package;
-use crate::resolver::{Resolver, TSConfigRef};
+use crate::resolver::{Resolver, TSConfigRef, rewritten_file_extensions};
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -479,9 +480,19 @@ impl Resolver<'_> {
     }
 
     /// A mark for each name under which the executable finds one of `files`, the compiled files, and `bun run` another file on the disk of the build, which was not compiled.
-    pub fn find_names_that_lead_outside(&mut self, files: &[BuildPaths<'_>]) -> Vec<PackageName> {
+    pub fn find_names_that_lead_outside(
+        &mut self,
+        files: &[BuildPaths<'_>],
+        entry_points: &[BuildPaths<'_>],
+    ) -> Vec<PackageName> {
         let mut compiled: Vec<&[u8]> = files.iter().map(|file| file.source_path).collect();
         compiled.sort_unstable_by(|a, b| compare_source_paths(a, b));
+        let without_extension = |path: &'_ [u8]| path.len() - bun_paths::extension(path).len();
+        let mut stems_of_entry_points: Vec<&[u8]> = entry_points
+            .iter()
+            .map(|it| &it.source_path[..without_extension(it.source_path)])
+            .collect();
+        stems_of_entry_points.sort_unstable_by(|a, b| compare_source_paths(a, b));
         let mut asked: Vec<(BuildPaths<'_>, Vec<u8>, bool)> = Vec::new();
         for file in files {
             let (Some(source_path), Some(public_path)) =
@@ -494,9 +505,8 @@ impl Resolver<'_> {
                 public_path,
             };
             let names = list_other_names(last_component(file.source_path));
-            if names.first().is_some_and(|stem| stem == b"index")
-                && let (Some(source_path), Some(public_path)) =
-                    (parent(folder.source_path), parent(folder.public_path))
+            if let (Some(source_path), Some(public_path)) =
+                (parent(folder.source_path), parent(folder.public_path))
             {
                 let above = BuildPaths {
                     source_path,
@@ -533,32 +543,16 @@ impl Resolver<'_> {
             let lower = name.to_ascii_lowercase();
             let start = listed.1.partition_point(|entry| entry[..] < lower[..]);
             let beside = listed.1[start..].iter();
-            let mut spellings = beside
+            let spellings = beside
                 .take_while(|entry| entry.starts_with(&lower))
                 .map(|entry| &entry[lower.len()..]);
-            let lies_beside = spellings.any(|spelling| {
-                SPELLINGS[usize::from(*is_folder)..].contains(&spelling)
+            let outside = spellings.filter(|spelling| {
+                SPELLINGS[usize::from(*is_folder)..].contains(spelling)
                     && !is_compiled(&[folder.source_path, separator, &name[..], spelling].concat())
             });
-            if !lies_beside && !names_main_file {
-                continue;
-            }
-            // The resolver keeps what it is asked for.
-            let store = &self.fs_ref().dirname_store;
-            let Ok(specifier) = store.append_parts(&[b"./", &name[..]]) else {
-                continue;
-            };
-            let mut leads_outside = |kind: ImportKind| {
-                let found = self.resolve(folder.source_path, specifier, kind).ok();
-                found.is_some_and(|found| !is_compiled(found.path_pair.primary.text()))
-            };
-            let is_hidden_from_require = leads_outside(ImportKind::Require);
-            let is_hidden_from_import = leads_outside(ImportKind::Dynamic);
-            if !is_hidden_from_require && !is_hidden_from_import {
-                continue;
-            }
-            names.push(PackageName {
-                public_path: [folder.public_path, b"/", &name[..], LEADS_OUTSIDE]
+            let mark = |written: &[&[u8]], for_require: bool, for_import: bool| PackageName {
+                public_path: [&[folder.public_path, b"/", &name[..]], written]
+                    .concat()
                     .concat()
                     .into_iter()
                     .map(normalize_separator)
@@ -566,9 +560,58 @@ impl Resolver<'_> {
                 required: None,
                 imported: None,
                 hides_other_paths: false,
-                is_hidden_from_require,
-                is_hidden_from_import,
-            });
+                is_hidden_from_require: for_require,
+                is_hidden_from_import: for_import,
+            };
+            // An entry point is embedded under a `.js` name, and the executable finds it under every extension of a source.
+            let is_stem_of_entry_point = !*is_folder
+                && stems_of_entry_points
+                    .binary_search_by(|stem| {
+                        let asked = [folder.source_path, separator, &name[..]].concat();
+                        compare_source_paths(stem, &asked)
+                    })
+                    .is_ok();
+            let mut lies_beside = false;
+            for spelling in outside {
+                lies_beside = true;
+                if is_stem_of_entry_point && !spelling.is_empty() {
+                    names.push(mark(&[spelling, LEADS_OUTSIDE], true, true));
+                }
+            }
+            // `./lib.js` is lib.ts where no file is called lib.js, also where a folder is, and so is `./lib.js/`.
+            let extension = bun_paths::extension(name);
+            let is_written_for_typescript_file = *is_folder
+                && rewritten_file_extensions(extension, || false)
+                    .iter()
+                    .any(|rewritten| {
+                        let file = [&name[..name.len() - extension.len()], rewritten].concat();
+                        listed.1.binary_search(&file.to_ascii_lowercase()).is_ok()
+                            && !is_compiled(&[folder.source_path, separator, &file[..]].concat())
+                    });
+            if !lies_beside && !names_main_file && !is_written_for_typescript_file {
+                continue;
+            }
+            // `./tool/` is the folder, whatever lies beside it.
+            let forms: &[(&[u8], &[u8])] = match names_main_file || is_written_for_typescript_file {
+                true => &[(b"", LEADS_OUTSIDE), (b"/", LEADS_OUTSIDE_AS_FOLDER)],
+                false => &[(b"", LEADS_OUTSIDE)],
+            };
+            for &(end, written) in forms {
+                // The resolver keeps what it is asked for.
+                let store = &self.fs_ref().dirname_store;
+                let Ok(specifier) = store.append_parts(&[b"./", &name[..], end]) else {
+                    continue;
+                };
+                let mut leads_outside = |kind: ImportKind| {
+                    let found = self.resolve(folder.source_path, specifier, kind).ok();
+                    found.is_some_and(|found| !is_compiled(found.path_pair.primary.text()))
+                };
+                let for_require = leads_outside(ImportKind::Require);
+                let for_import = leads_outside(ImportKind::Dynamic);
+                if for_require || for_import {
+                    names.push(mark(&[written], for_require, for_import));
+                }
+            }
         }
         self.log = log_of_build;
         self.prefer_module_field = prefers_module_field;

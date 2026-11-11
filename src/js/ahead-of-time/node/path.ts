@@ -1,0 +1,130 @@
+// What the compiler reads in place of src/js/node/path.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 03984179ed1b60c8aaa162b928af21eb47feff5157782c9efb2f597fb4284cfb.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
+
+// Hardcoded module "node:path"
+declare global {
+  namespace $Node {
+    interface ParsedPath {
+      root: string;
+      dir: string;
+      base: string;
+      ext: string;
+      name: string;
+    }
+
+    /** `path.posix` and `path.win32`. The native functions validate their arguments themselves. */
+    interface Path {
+      resolve(...paths: unknown[]): string;
+      normalize(path: unknown): string;
+      isAbsolute(path: unknown): boolean;
+      join(...paths: unknown[]): string;
+      relative(from: unknown, to: unknown): string;
+      toNamespacedPath<T>(path: T): T;
+      dirname(path: unknown): string;
+      basename(path: unknown, suffix?: unknown): string;
+      extname(path: unknown): string;
+      format(pathObject: unknown): string;
+      parse(path: unknown): ParsedPath;
+      matchesGlob(path: string, pattern: string): boolean;
+      sep: "/" | "\\";
+      delimiter: ":" | ";";
+      win32: Path;
+      posix: Path;
+      _makeLong<T>(path: T): T;
+    }
+  }
+}
+
+// Object lists a member from when it is first read. internal/validators, which is loaded at the first matchesGlob(), reads these three
+// when it loads: whoever imports this module finds them read, in this order.
+const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
+
+const toNamespacedPathPosix = $bindgen("node_path.bind.ts", "toNamespacedPathPosix");
+const toNamespacedPathWin32 = $bindgen("node_path.bind.ts", "toNamespacedPathWin32");
+const posix = {
+  resolve: $bindgen("node_path.bind.ts", "resolvePosix"),
+  normalize: $bindgen("node_path.bind.ts", "normalizePosix"),
+  isAbsolute: $bindgen("node_path.bind.ts", "isAbsolutePosix"),
+  join: $bindgen("node_path.bind.ts", "joinPosix"),
+  relative: $bindgen("node_path.bind.ts", "relativePosix"),
+  toNamespacedPath: toNamespacedPathPosix,
+  dirname: $bindgen("node_path.bind.ts", "dirnamePosix"),
+  basename: $bindgen("node_path.bind.ts", "basenamePosix"),
+  extname: $bindgen("node_path.bind.ts", "extnamePosix"),
+  format: $bindgen("node_path.bind.ts", "formatPosix"),
+  parse: $bindgen("node_path.bind.ts", "parsePosix"),
+  sep: "/",
+  delimiter: ":",
+  win32: undefined! as $Node.Path,
+  posix: undefined! as $Node.Path,
+  _makeLong: toNamespacedPathPosix,
+  matchesGlob: undefined! as $Node.Path["matchesGlob"],
+} as $Node.Path;
+const win32 = {
+  resolve: $bindgen("node_path.bind.ts", "resolveWin32"),
+  normalize: $bindgen("node_path.bind.ts", "normalizeWin32"),
+  isAbsolute: $bindgen("node_path.bind.ts", "isAbsoluteWin32"),
+  join: $bindgen("node_path.bind.ts", "joinWin32"),
+  relative: $bindgen("node_path.bind.ts", "relativeWin32"),
+  toNamespacedPath: toNamespacedPathWin32,
+  dirname: $bindgen("node_path.bind.ts", "dirnameWin32"),
+  basename: $bindgen("node_path.bind.ts", "basenameWin32"),
+  extname: $bindgen("node_path.bind.ts", "extnameWin32"),
+  format: $bindgen("node_path.bind.ts", "formatWin32"),
+  parse: $bindgen("node_path.bind.ts", "parseWin32"),
+  sep: "\\",
+  delimiter: ";",
+  win32: undefined! as $Node.Path,
+  posix,
+  _makeLong: toNamespacedPathWin32,
+  matchesGlob: undefined! as $Node.Path["matchesGlob"],
+} as $Node.Path;
+posix.win32 = win32.win32 = win32;
+posix.posix = posix;
+
+type Glob = import("bun").Glob;
+
+// the most-recently used glob is memoized in case `matchesGlob` is called in a
+// loop with the same pattern
+let prevGlob: Glob | undefined;
+let prevPattern: string | undefined;
+// What validateString() of internal/validators does. That module would keep node:url and util.inspect in every executable that imports node:path.
+function validateStringWithoutValidators(value: unknown, name: string) {
+  ("has no frames");
+  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
+}
+function matchesGlob(isWindows: boolean, path: string, pattern: string) {
+  const { validateString } =
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+      ? { validateString: validateStringWithoutValidators }
+      : require("internal/validators");
+  let glob: Glob;
+
+  validateString(path, "path");
+  if (isWindows) path = path.replaceAll("\\", "/");
+
+  if (prevGlob) {
+    $assert(prevPattern !== undefined);
+    if (prevPattern === pattern) {
+      glob = prevGlob;
+    } else {
+      validateString(pattern, "pattern");
+      if (isWindows) pattern = pattern.replaceAll("\\", "/");
+      glob = prevGlob = new Bun.Glob(pattern);
+      prevPattern = pattern;
+    }
+  } else {
+    validateString(pattern, "pattern");
+    if (isWindows) pattern = pattern.replaceAll("\\", "/");
+    glob = prevGlob = new Bun.Glob(pattern);
+    prevPattern = pattern;
+  }
+
+  return glob.match(path);
+}
+
+posix.matchesGlob = matchesGlob.bind(null, false);
+win32.matchesGlob = matchesGlob.bind(null, true);
+
+export default process.platform === "win32" ? win32 : posix;

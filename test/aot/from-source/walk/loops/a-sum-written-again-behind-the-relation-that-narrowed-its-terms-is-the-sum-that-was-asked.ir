@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function behindMarks(words: readonly string[]): string {
+#   let found = "";
+#   for (let i = 0; i < words.length; i++) {
+#     if (words[i] === "-" && i + 1 < words.length) found += words[i + 1];
+#   }
+#   return found;
+# }
+# print(behindMarks(["-", "a", "b", "-", "c", "-"]));
+# -- end of source
+# Behind `i + 1 < words.length` the term `i` has a narrower name, so `i + 1` written again would give a narrower type than the sum that the relation asked. That sum was refused as too wide, another was built,
+# and what the relation says of the first, that it stands inside the list, was lost. The first sum has a narrower name of its own behind the relation, and that name answers.
+# f1 = behindMarks
+# RUN(MARKS): walk f1 mechanisms=all
+# MARKS-LABEL: code f1:Body
+# MARKS: = GetArrayElement {{*}}isInBounds
+# MARKS: = Less
+# MARKS: = GetArrayElement {{*}}isInBounds
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: ac

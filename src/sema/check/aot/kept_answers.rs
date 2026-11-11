@@ -149,6 +149,9 @@ fn copy_shape<'n>(shape: TypeShape<'_>, arena: &'n Arena) -> TypeShape<'n> {
             is_readonly,
         },
         ShapeKind::Class(class) => ShapeKind::Class(class),
+        ShapeKind::ConstructorFunctionInstance(function) => {
+            ShapeKind::ConstructorFunctionInstance(function)
+        }
         ShapeKind::Object => ShapeKind::Object,
         ShapeKind::Int32 { base } => ShapeKind::Int32 { base },
     };

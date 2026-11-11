@@ -43,6 +43,7 @@ pub(super) enum Tag {
     Untrusted,
     BackReference,
     Cyclic,
+    ConstructorFunctionInstance,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

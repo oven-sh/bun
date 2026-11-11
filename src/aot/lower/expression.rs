@@ -9,10 +9,7 @@ mod tests;
 mod unused;
 
 use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
-use bun_sema::hir::{
-    BinOp, Call, Chain, ExprId, ExprKind, Keyword, PropKey, PropKind, TypeNodeId, TypeNodeKind,
-    UnOp,
-};
+use bun_sema::hir::{BinOp, Call, Chain, ExprId, ExprKind, PropKey, PropKind, TypeNodeId, UnOp};
 use smallvec::SmallVec;
 
 use super::member::{self, GivenName};
@@ -20,6 +17,7 @@ use super::{
     FileLowering, FunctionLowering, async_function, call, control, generator, module, object,
     operator, scope, template,
 };
+use crate::builtins::resolve::passes_every_assertion;
 use crate::builtins::{BuiltinId, Mutability, Resolved, table};
 use crate::compile::removable::{is_name_left_out_by_bun_run, is_read_left_out_by_bun_run};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
@@ -93,7 +91,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn lower_operand_of_taken_void(&mut self, operand: ExprId) {
-        if !(self.file).reads_only_what_bun_run_leaves_out(operand, true) {
+        if !(self.file).reads_only_what_bun_run_leaves_out_below_void(operand) {
             self.lower_taken_value_for_effect(operand);
         }
     }
@@ -408,6 +406,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             ExprKind::Array(_) | ExprKind::Object(_)
                 if self.file.decisions().is_data_literal(expression)
+                    && !object::is_born_level_by_level(self, expression)
                     && !self.file.is_built_by_code(expression) =>
             {
                 self.lower_decided_data(expression)
@@ -683,6 +682,46 @@ impl FileLowering<'_, '_, '_, '_> {
         expression: ExprId,
         names_below_top_level: bool,
     ) -> bool {
+        self.reads_only_what_is_left_out(expression, names_below_top_level, false)
+    }
+
+    pub(in crate::lower) fn reads_only_what_bun_run_leaves_out_below_void(
+        &self,
+        expression: ExprId,
+    ) -> bool {
+        let (names_below_top_level, is_below_void) = (true, true);
+        self.reads_only_what_is_left_out(expression, names_below_top_level, is_below_void)
+    }
+
+    pub(in crate::lower) fn reads_only_what_bun_run_leaves_out_of_empty_if(
+        &self,
+        test: ExprId,
+    ) -> bool {
+        let mut asked = self.skip_type_syntax(test);
+        while let ExprKind::Unary {
+            op: UnOp::Not,
+            operand,
+        } = self.hir[asked].kind
+        {
+            asked = self.skip_type_syntax(operand);
+        }
+        let truth_is_never_known = matches!(
+            self.hir[asked].kind,
+            ExprKind::Ident(_)
+                | ExprKind::Binary {
+                    op: BinOp::EqEqEq | BinOp::NotEqEq,
+                    ..
+                }
+        );
+        self.reads_only_what_is_left_out(test, true, truth_is_never_known)
+    }
+
+    fn reads_only_what_is_left_out(
+        &self,
+        expression: ExprId,
+        names_below_top_level: bool,
+        is_below_void: bool,
+    ) -> bool {
         if self.counts_executions() {
             return false;
         }
@@ -690,9 +729,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let top_scope = self.bound.top_scope(hir, bun_sema::bind::CodeUnit::File);
         let decisions = self.decisions();
         let mut reads_member = false;
-        let mut parts: SmallVec<[ExprId; 4]> = SmallVec::new();
-        parts.push(expression);
-        while let Some(part) = parts.pop() {
+        let mut parts: SmallVec<[(ExprId, bool); 4]> = SmallVec::new();
+        parts.push((expression, is_below_void));
+        while let Some((part, is_below_void)) = parts.pop() {
             match decisions.decision(part) {
                 Decision::Constant(_) | Decision::Data(_) => continue,
                 Decision::GlobalPath(_) | Decision::DeferredData => return false,
@@ -703,13 +742,13 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             match hir[part].kind {
                 ExprKind::Unary {
-                    op: UnOp::Void | UnOp::Not,
+                    op: UnOp::Void,
                     operand,
-                } => parts.push(operand),
+                } => parts.push((operand, true)),
                 ExprKind::Unary {
-                    op: UnOp::Typeof,
+                    op: UnOp::Not | UnOp::Typeof,
                     operand,
-                } => parts.push(operand),
+                } => parts.push((operand, is_below_void)),
                 ExprKind::Binary {
                     op:
                         BinOp::EqEqEq
@@ -720,21 +759,24 @@ impl FileLowering<'_, '_, '_, '_> {
                         | BinOp::Nullish,
                     left,
                     right,
-                } => parts.extend([left, right]),
+                } => parts.extend([left, right].map(|part| (part, is_below_void))),
                 ExprKind::Cond { test, branches } => {
                     let branches = hir.branches(branches);
-                    parts.extend([test, branches.yes, branches.no]);
+                    let below = [test, branches.yes, branches.no];
+                    parts.extend(below.map(|part| (part, is_below_void)));
                 }
                 ExprKind::Satisfies { expr: operand, .. }
                 | ExprKind::AsConst(operand)
                 | ExprKind::NonNull(operand)
-                | ExprKind::Instantiation { expr: operand, .. } => parts.push(operand),
+                | ExprKind::Instantiation { expr: operand, .. } => {
+                    parts.push((operand, is_below_void));
+                }
                 ExprKind::Array(elements) => {
                     for element in hir.ids(elements) {
                         match hir[element].kind {
                             ExprKind::Missing => {}
                             ExprKind::Spread(_) => return false,
-                            _ => parts.push(element),
+                            _ => parts.push((element, is_below_void)),
                         }
                     }
                 }
@@ -742,7 +784,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     for property in properties.iter().map(|property| &hir[property]) {
                         match (property.kind, property.key) {
                             (PropKind::Init | PropKind::Shorthand, PropKey::Name(_)) => {
-                                parts.push(property.value);
+                                parts.push((property.value, is_below_void));
                             }
                             (
                                 PropKind::Method | PropKind::Getter | PropKind::Setter,
@@ -754,7 +796,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 ExprKind::Ident(_)
                     if matches!(self.bound.binding(part), bun_sema::bind::Binding::Symbol(symbol)
-                        if self.bound.binding_kind(symbol) != bun_sema::bind::BindingKind::Import
+                        if (is_below_void
+                            || self.bound.binding_kind(symbol) != bun_sema::bind::BindingKind::Import)
                             && (names_below_top_level || self.bound.symbol_scope(symbol) == top_scope))
                         && self
                             .bound
@@ -819,23 +862,7 @@ impl FileLowering<'_, '_, '_, '_> {
         expression: ExprId,
         constant: Constant,
     ) -> bool {
-        if !self.is_checked() {
-            return true;
-        }
-        let hir = self.hir;
-        let mut current = expression;
-        while let Some(operand) = hir.type_assertion_operand(current) {
-            if let ExprKind::As { ty, .. } = hir[current].kind {
-                let TypeNodeKind::Keyword(keyword) = hir[ty].kind else {
-                    return false;
-                };
-                if !keyword_accepts(keyword, constant) {
-                    return false;
-                }
-            }
-            current = operand;
-        }
-        true
+        !self.is_checked() || passes_every_assertion(self.hir, expression, Some(constant))
     }
 }
 
@@ -930,31 +957,5 @@ fn holds_written_numbers_alone(file: &FileLowering<'_, '_, '_, '_>, expression: 
                 && holds_written_numbers_alone(file, right)
         }
         _ => false,
-    }
-}
-
-fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
-    match (keyword, constant) {
-        (Keyword::Any | Keyword::Unknown, _)
-        | (_, Constant::Undefined | Constant::Null)
-        | (Keyword::String, Constant::String(_))
-        | (Keyword::Number, Constant::Number(_))
-        | (Keyword::Boolean, Constant::Boolean(_))
-        | (Keyword::BigInt, Constant::BigInt(_)) => true,
-        (
-            Keyword::Never
-            | Keyword::Void
-            | Keyword::Undefined
-            | Keyword::Null
-            | Keyword::String
-            | Keyword::Number
-            | Keyword::Boolean
-            | Keyword::BigInt
-            | Keyword::Symbol
-            | Keyword::Object
-            | Keyword::This
-            | Keyword::Intrinsic,
-            _,
-        ) => false,
     }
 }

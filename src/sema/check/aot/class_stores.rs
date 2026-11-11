@@ -3,18 +3,24 @@ use super::prototype_links::{NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent, SymbolId};
-use crate::check::Program;
+use crate::check::{Checker, Program};
 use crate::hir::{
     self, BinOp, CallId, ClassId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, MemberKey,
     PatKind, PropKey, PropKind, StmtId, StmtKind,
 };
 use crate::program::FileId;
-use crate::util::{FxHashMap, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::sync::OnceLock;
 
 #[derive(Copy, Clone)]
 pub(in crate::check) struct StoreIndex<'s> {
     this_stores: &'s [ThisStore],
+    binding_stores: &'s [BindingStore],
+}
+
+#[derive(Copy, Clone)]
+pub(in crate::check) struct WrittenStores<'s> {
+    names_stored_into_this: &'s [(FnId, Atom)],
     binding_stores: &'s [BindingStore],
 }
 
@@ -24,6 +30,15 @@ impl<'s> Program<'s> {
             let arena = self.session.arena();
             &*arena.alloc_slice_fill_default(self.files.modules.len())
         });
+        &of_files[file.idx()]
+    }
+
+    fn aot_written_stores_of(&self, file: FileId) -> &'s OnceLock<WrittenStores<'s>> {
+        let of_files: &'s [OnceLock<WrittenStores<'s>>] =
+            *self.aot_written_stores.get_or_init(|| {
+                let arena = self.session.arena();
+                &*arena.alloc_slice_fill_default(self.files.modules.len())
+            });
         &of_files[file.idx()]
     }
 }
@@ -80,10 +95,107 @@ impl<'c> StoreIndex<'c> {
     }
 
     pub(super) fn binding_stores_of(&self, symbol: SymbolId) -> &'c [BindingStore] {
-        let stores = self.binding_stores;
-        let start = stores.partition_point(|store| store.symbol < symbol);
-        let len = stores[start..].partition_point(|store| store.symbol == symbol);
-        &stores[start..start + len]
+        find_stores_of_binding(self.binding_stores, symbol)
+    }
+}
+
+impl<'s> WrittenStores<'s> {
+    pub(super) fn names_stored_into_this_of(&self, function: FnId) -> &'s [(FnId, Atom)] {
+        let names = self.names_stored_into_this;
+        let start = names.partition_point(|stored| stored.0 < function);
+        let len = names[start..].partition_point(|stored| stored.0 == function);
+        &names[start..start + len]
+    }
+
+    pub(super) fn binding_stores_of(&self, symbol: SymbolId) -> &'s [BindingStore] {
+        find_stores_of_binding(self.binding_stores, symbol)
+    }
+}
+
+fn find_stores_of_binding(stores: &[BindingStore], symbol: SymbolId) -> &[BindingStore] {
+    let start = stores.partition_point(|store| store.symbol < symbol);
+    let len = stores[start..].partition_point(|store| store.symbol == symbol);
+    &stores[start..start + len]
+}
+
+impl<'s> Checker<'_, 's> {
+    pub(super) fn written_stores(&mut self, file: FileId) -> WrittenStores<'s> {
+        if let Some(&stores) = self.p.aot_written_stores_of(file).get() {
+            return stores;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let expressions = self.exprs_by_kind(file);
+        let mut stored_into_this = Vec::new();
+        let mut binding_stores = Vec::new();
+        for &assign in expressions.of(ExprTag::Assign) {
+            let ExprKind::Assign { op, target, value } = hir[assign].kind else {
+                continue;
+            };
+            let is_unreached = bound.parent_of_expr(assign) == Parent::None;
+            if is_unreached || self.is_dead_expression(file, assign) {
+                continue;
+            }
+            let Some((object, MemberKey::Name(name))) = hir.member_key(target) else {
+                continue;
+            };
+            if name == known::__proto__ {
+                continue;
+            }
+            let form = classify_store_form(op);
+            let object = hir.skip_type_assertions(object);
+            let object = find_prototype_object_held_by(hir, bound, object).unwrap_or(object);
+            if let Some(this) = find_this_held_by(hir, bound, object) {
+                if let Some(Ok(function)) = self.this_container(file, this)
+                    && !matches!(bound.fns[function.idx()].owner, FnOwner::Member(_))
+                {
+                    stored_into_this.push((function, hir[assign].pos, name));
+                }
+            } else if let Some(symbol) = bound_symbol(hir, bound, object) {
+                if name != known::prototype {
+                    binding_stores.push(BindingStore {
+                        symbol,
+                        kind: BindingStoreKind::Static,
+                        name,
+                        source: assign,
+                        value,
+                        form,
+                    });
+                } else if form == StoreForm::Plain {
+                    add_prototype_literal_stores(hir, symbol, value, &mut binding_stores);
+                }
+            } else if let Some(symbol) = prototype_object_symbol(hir, bound, object) {
+                let member_kind = match form {
+                    StoreForm::Plain | StoreForm::Logical => stored_value_kind(hir, value),
+                    StoreForm::Compound => ObjectMemberKind::Field,
+                };
+                binding_stores.push(BindingStore {
+                    symbol,
+                    kind: BindingStoreKind::Prototype(member_kind),
+                    name,
+                    source: assign,
+                    value,
+                    form,
+                });
+            }
+        }
+        stored_into_this
+            .shared_sort_unstable_by_key(|&(function, position, _)| (function, position));
+        let mut listed = FxHashSet::default();
+        let names_stored_into_this: Vec<(FnId, Atom)> = stored_into_this
+            .into_iter()
+            .map(|(function, _, name)| (function, name))
+            .filter(|&stored| listed.insert(stored))
+            .collect();
+        binding_stores.shared_sort_unstable_by_key(|store| {
+            (store.symbol, hir[store.source].pos, store.source)
+        });
+        *self
+            .p
+            .aot_written_stores_of(file)
+            .get_or_init(|| WrittenStores {
+                names_stored_into_this: list_in(self.arena, &names_stored_into_this),
+                binding_stores: list_in(self.arena, &binding_stores),
+            })
     }
 }
 
@@ -118,7 +230,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let assigns = self.c.exprs_by_kind(file);
         let mut this_stores = Vec::new();
-        let mut binding_stores = Vec::new();
         let mut first_exits = FxHashMap::default();
         let mut first_returns = FxHashMap::default();
         let mut has_asked_checker = false;
@@ -170,50 +281,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     birth,
                 });
             }
-            if let Some(this) = find_this_held_by(hir, bound, object) {
-                if let Some(owner) = self.this_owner(file, this) {
-                    let is_in_every_construction = form == StoreForm::Plain
-                        && self.is_in_every_construction(file, owner, assign, &mut first_exits);
-                    this_stores.push(ThisStore {
-                        owner,
-                        name,
-                        assign,
-                        value,
-                        form,
-                        is_in_every_construction,
-                        defined: MemberForm::default(),
-                        is_stored_by_callee: false,
-                        birth: match is_in_every_construction {
-                            true => hir[assign].pos,
-                            false => u32::MAX,
-                        },
-                    });
-                }
-            } else if let Some(symbol) = bound_symbol(hir, bound, object) {
-                if name != known::prototype {
-                    binding_stores.push(BindingStore {
-                        symbol,
-                        kind: BindingStoreKind::Static,
-                        name,
-                        source: assign,
-                        value,
-                        form,
-                    });
-                } else if form == StoreForm::Plain {
-                    add_prototype_literal_stores(hir, symbol, value, &mut binding_stores);
-                }
-            } else if let Some(symbol) = prototype_object_symbol(hir, bound, object) {
-                let member_kind = match form {
-                    StoreForm::Plain | StoreForm::Logical => stored_value_kind(hir, value),
-                    StoreForm::Compound => ObjectMemberKind::Field,
-                };
-                binding_stores.push(BindingStore {
-                    symbol,
-                    kind: BindingStoreKind::Prototype(member_kind),
+            if let Some(this) = find_this_held_by(hir, bound, object)
+                && let Some(owner) = self.this_owner(file, this)
+            {
+                let is_in_every_construction = form == StoreForm::Plain
+                    && self.is_in_every_construction(file, owner, assign, &mut first_exits);
+                this_stores.push(ThisStore {
+                    owner,
                     name,
-                    source: assign,
+                    assign,
                     value,
                     form,
+                    is_in_every_construction,
+                    defined: MemberForm::default(),
+                    is_stored_by_callee: false,
+                    birth: match is_in_every_construction {
+                        true => hir[assign].pos,
+                        false => u32::MAX,
+                    },
                 });
             }
         }
@@ -227,20 +312,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         this_stores.shared_sort_unstable_by_key(|store| {
             (store.owner, hir[store.assign].pos, store.assign)
         });
-        binding_stores.shared_sort_unstable_by_key(|store| {
-            (store.symbol, hir[store.source].pos, store.source)
-        });
+        let binding_stores = self.c.written_stores(file).binding_stores;
         if has_asked_checker {
             let index = StoreIndex {
                 this_stores: list_in(self.arena, &this_stores),
-                binding_stores: list_in(self.arena, &binding_stores),
+                binding_stores,
             };
             self.kept.store_indexes.insert(file, index);
             return index;
         }
         *self.c.p.aot_store_index(file).get_or_init(|| StoreIndex {
             this_stores: list_in(self.c.arena, &this_stores),
-            binding_stores: list_in(self.c.arena, &binding_stores),
+            binding_stores,
         })
     }
 

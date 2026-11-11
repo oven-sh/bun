@@ -23,9 +23,11 @@ pub(crate) struct RuntimeRoots {
     pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub loads_events: bool,
+    pub loads_path: bool,
     pub imports_uncompiled_code: bool,
     pub asks: RuntimeUses,
     pub holds_what_unseen_code_finds: bool,
+    pub holds_it_for_uses_of_files_alone: bool,
     pub keeps_code_without_names: bool,
 }
 
@@ -82,14 +84,14 @@ pub(crate) fn collect_runtime_roots(
     let mut imports_uncompiled_code = false;
     let mut asks_module_of_host = used_at_start.has_module_of_host();
     let mut named: Vec<RuntimeModule> = Vec::new();
-    let mut lets_in_what_nobody_names =
-        further.has_file_that_asks_for_it || used_at_start.lets_in_what_nobody_names;
+    let mut lets_in_what_nobody_names = further.has_file_that_asks_for_it;
+    let mut lets_it_in_beside_uses_of_files = used_at_start.lets_in_what_nobody_names;
     let mut asks_of_texts = used_at_start.asks;
     for &file in application.compiled_files() {
-        lets_in_what_nobody_names |=
+        lets_it_in_beside_uses_of_files |=
             loader_by_name(application.module(file).file_name()) == Loader::Napi;
         if let Some(compiled) = application.compiled(file) {
-            lets_in_what_nobody_names |=
+            lets_it_in_beside_uses_of_files |=
                 host_loader_kind(compiled.loader) == Some(HostLoaderKind::Loader(Loader::Napi));
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
             imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
@@ -100,12 +102,13 @@ pub(crate) fn collect_runtime_roots(
             functions.extend(source.builtins.called_functions());
             host_loaded.extend(source.builtins.loaded_modules());
             named.extend(source.named_modules().iter().map(|it| it.module));
-            lets_in_what_nobody_names |= source.builtins.uses().lets_in_what_nobody_names
-                || source.contents.names.may_go_to_loader_of_host;
+            lets_in_what_nobody_names |= source.builtins.uses().lets_in_what_nobody_names;
+            lets_it_in_beside_uses_of_files |= source.contents.names.may_go_to_loader_of_host;
             asks_module_of_host |= source.builtins.uses().has_module_of_host();
             asks_of_texts.add(&source.builtins.uses().asks);
         }
     }
+    lets_in_what_nobody_names |= lets_it_in_beside_uses_of_files;
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
         application,
     ));
@@ -169,6 +172,12 @@ pub(crate) fn collect_runtime_roots(
     let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
     modules.extend(&host_loaded_modules);
     let loads_events = modules.contains(&RuntimeModule::NodeEvents);
+    let loads_path = modules.iter().any(|module| {
+        matches!(
+            module,
+            RuntimeModule::NodePath | RuntimeModule::NodePathPosix | RuntimeModule::NodePathWin32
+        )
+    });
     let functions: Vec<RuntimeFunction> = functions.into_iter().collect();
     RuntimeRoots {
         paths: order_root_paths(runtime_modules, modules, functions),
@@ -176,8 +185,12 @@ pub(crate) fn collect_runtime_roots(
         modules_named_at_run_time: named,
         imports_cluster,
         loads_events,
+        loads_path,
         imports_uncompiled_code,
         holds_what_unseen_code_finds,
+        holds_it_for_uses_of_files_alone: holds_what_unseen_code_finds
+            && !keeps_code_without_names
+            && !lets_it_in_beside_uses_of_files,
         asks,
         keeps_code_without_names,
     }
@@ -302,7 +315,7 @@ mod tests {
         MODULE_LOADER_FUNCTIONS, RuntimeFunctionRole, STARTUP_FUNCTIONS, STARTUP_MODULES,
         runtime_functions,
     };
-    use crate::compile::testing::{default_settings, with_loaded_build};
+    use crate::compile::testing::{default_settings, with_loaded_build, with_loaded_test_run};
     use crate::load::runtime_modules::RuntimeFileKind;
     use crate::load::{ProjectId, host_platform};
 
@@ -364,6 +377,31 @@ mod tests {
         let by_text = count_roots_of_files(&[("main.ts", handed_on), ("kind.ts", plain)], &runtime);
         assert!(without < with, "{without} {with}");
         assert!(by_text <= with, "{by_text} {with}");
+    }
+
+    #[test]
+    fn name_that_a_builtin_does_not_list_hands_it_on_where_a_file_of_the_test_run_lays_it_above() {
+        let runtime = runtime_modules();
+        let count = |asks: &str, lays: &str| {
+            let files = [("main.test.js", asks), ("lays.js", lays)];
+            with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+                let roots = collect_runtime_roots(
+                    loaded.project(ProjectId::Application).loaded.files(),
+                    loaded.contents,
+                    &runtime,
+                    host_platform(),
+                    NOTHING_FURTHER,
+                );
+                roots.paths.len()
+            })
+        };
+        let asks_bun = "import \"./lays.js\"; console.log(Bun.madeUp);";
+        let above = "Object.defineProperty(Object.prototype, \"madeUp\", { get() { return 1; } });";
+        let another =
+            "Object.defineProperty(Object.prototype, \"other\", { get() { return 1; } });";
+        assert!(count(asks_bun, another) < count(asks_bun, above));
+        let through_a_helper = "function lay(o) { o.madeUp = 1; } lay(Object.prototype);";
+        assert!(count(asks_bun, another) < count(asks_bun, through_a_helper));
     }
 
     fn has_module_root(

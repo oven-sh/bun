@@ -14,7 +14,7 @@
 # CHECK: = GetArrayElement {{*}}level=Proven
 # RUN(NEVER): walk f1 mechanisms=all
 # NEVER-NOT: = PropGet {{*}}key="push"
-# NEVER-NOT: level=Expected
+# NEVER-NOT: = GetArrayElement {{*}}level=Expected
 # RUN(OUT): walk f2 mechanisms=all
 # OUT-LABEL: code f2:Body
 # OUT: = PropGet {{*}}key="push"

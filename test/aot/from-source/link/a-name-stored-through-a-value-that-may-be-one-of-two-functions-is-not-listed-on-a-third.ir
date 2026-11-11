@@ -1,0 +1,25 @@
+# `make` is stored through a value that may be One or Two. What is stored that way goes to every function that nobody can tell apart, and the second loop makes Top, Mid and Low such functions.
+# A statement lays `make` on One and on Two: they are listed with it. No statement lays it on one of the three: none of them is.
+# -- source: main.js
+# function Top() { this.t = 1; }
+# function Mid() { this.m = 1; }
+# function Low() { this.l = 1; }
+# function One() {}
+# function Two() {}
+# for (const each of [One, Two]) each.make = function () { return 1; };
+# for (const each of [Top, Mid, Low]) each.tag = 1;
+# print(typeof Top.make, typeof Mid.make, typeof Low.make, One.make(), Two.make());
+# -- end of source
+# f1 = Top, f2 = Mid, f3 = Low, f4 = One, f5 = Two
+# RUN: link members mechanisms=all
+# CHECK-NOT: on-function f1 "make"
+# CHECK-NOT: on-function f2 "make"
+# CHECK-NOT: on-function f3 "make"
+# CHECK: on-function f4 "make"
+# CHECK: on-function f5 "make"
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: undefined undefined undefined 1 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: undefined undefined undefined 1 1
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: undefined undefined undefined 1 1

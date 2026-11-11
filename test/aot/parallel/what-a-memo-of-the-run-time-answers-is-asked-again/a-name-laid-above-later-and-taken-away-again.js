@@ -1,7 +1,7 @@
 // Flags: --aot-testing=CheckWalkAtRunTime
 // The table of slots remembers, for a Structure and a name, where a read found its answer, or that it found none. A place that reads the name is filled out of that table. Under the word that checks the walk what the table says is asked again of the receiver before a place takes it.
 // The name is laid on the object above, and taken away again, between three places that read it. Where the table does not drop what hangs on a chain, the second place stops by name.
-// COUNTER: AnswersAskedAgain >= 3
+// COUNTER: FastPathResultsVerified >= 3
 const above = JSON.parse('{"a":1}');
 const made = [];
 for (let i = 0; i < 4; i++) made.push(Object.setPrototypeOf(JSON.parse('{"b":2}'), above));

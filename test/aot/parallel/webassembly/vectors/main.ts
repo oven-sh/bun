@@ -1,4 +1,11 @@
 // 128-bit vectors: in memory, in locals across a loop, through a call, as constants, and at the edge of memory. JavaScript can neither hand one over nor take one.
+// STATISTIC: WasmOptimizedCopies = 0
+// STATISTIC: WasmBaselineCopies = 19
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 8
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

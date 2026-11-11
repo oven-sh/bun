@@ -1,0 +1,18 @@
+# One value goes into two slots: first into an object that nobody reads, then into one that stays. The door stands in front of the first store alone: the second leans on what it has asked.
+# The sweep drops the first object and its store; the value goes on into the allocation that stays, so the door stays with it.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare const turns: number;
+# const kept: any[] = [null, null, null, null];
+# function both(a: number, p: number | undefined) { const lost: any = { a }; if (p !== undefined) { lost.p = p; kept[a & 3] = { q: p }; } return lost.a; }
+# let s = 0;
+# for (let i = 0; i < turns; i++) s += both(i & 7, i & 1 ? i : undefined);
+# print(s + " " + kept[1].q + " " + kept[3].q);
+# -- end of source
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:Body
+# WALK: CheckProof {{*}}source=Field
+# WALK: NewObject
+# RUN(ANSWERS): run-in-shell globalThis.turns = 8;
+# ANSWERS: 28 5 7
+# ANSWERS-NEXT: exited with 0

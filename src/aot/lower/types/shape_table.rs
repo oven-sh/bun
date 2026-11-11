@@ -83,6 +83,12 @@ impl FileLowering<'_, '_, '_, '_> {
                 let layout = self.class_type_layout(class, ty);
                 self.map_object(ty, Some(layout))
             }
+            ShapeKind::ConstructorFunctionInstance(function) => {
+                match self.declare_constructor_function_layout(function) {
+                    Some(layout) => Mapped::expected(self.fragment.types.intern_layout(layout)),
+                    None => Mapped::UNKNOWN,
+                }
+            }
             ShapeKind::Object => {
                 let layout = self.object_type_layout(ty);
                 let mapped = self.map_object(ty, layout);

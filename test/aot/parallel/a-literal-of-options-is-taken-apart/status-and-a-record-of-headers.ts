@@ -1,4 +1,4 @@
-// STATISTIC: LiteralArgumentsTakenApart >= 1
+// STATISTIC: LiteralArgumentsScalarized >= 1
 function answer(body: string, status: number, headers: Record<string, string>): Response {
   return new Response(body, { status, headers });
 }

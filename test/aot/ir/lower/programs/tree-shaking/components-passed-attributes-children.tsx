@@ -31,7 +31,7 @@ console.log(<a render={inAttribute} {...{ other: inSpread }}>{asChild}{...[inSpr
 
 // GENERATED: h inSpread
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = Data data=[[d_1]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
@@ -109,7 +109,7 @@ console.log(<a render={inAttribute} {...{ other: inSpread }}>{asChild}{...[inSpr
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inSpread"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = String string="spread"
 // CHECK-NEXT: Return v0

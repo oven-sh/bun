@@ -1,0 +1,16 @@
+# f1 = row
+# -- source: append-constants-in-a-loop.ts
+# function row(cells: number): string {
+#   let out = "";
+#   for (let i = 0; i < cells; i++) out += "<td></td>";
+#   return out;
+# }
+# declare const input: any;
+# (globalThis as any).answer = row(input);
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 11, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 11

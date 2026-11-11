@@ -13,32 +13,25 @@
 # sink(route, page, returned, caught, asked);
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = TypeTest {{*}}testedType=string
 # CHECK: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainURLWithPlainBase
 # CHECK: = Substring
 # CHECK: = Substring
 # RUN(ONCE): walk f1 mechanisms=all
-# REQUIRES(ONCE): entries-of-bun
 # ONCE-COUNT-1: overload=URL/
 # ONCE-COUNT-1: CompilerHelpersScanPlainURL
 # ONCE-NOT: URLPrototypePathname
 # RUN(QUERY): walk f2 mechanisms=all
-# REQUIRES(QUERY): entries-of-bun
 # QUERY-LABEL: code f2:Body
 # QUERY: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainURLWithPlainBase
 # QUERY: = CallBuiltin {{*}}overload=CompilerHelpersFindPlainQueryValue
 # QUERY: = CallBuiltin {{*}}overload=CompilerHelpersFindPlainQueryValue
 # RUN(RETURNED): walk f3 mechanisms=all
-# REQUIRES(RETURNED): entries-of-bun
 # RETURNED-NOT: CompilerHelpersScanPlainURL
 # RUN(CAUGHT): walk f4 mechanisms=all
-# REQUIRES(CAUGHT): entries-of-bun
 # CAUGHT-COUNT-1: CompilerHelpersScanPlainURL
 # RUN(ASKED): walk f5 mechanisms=all
-# REQUIRES(ASKED): entries-of-bun
 # ASKED-NOT: CompilerHelpersScanPlainURL
 # RUN(WITHHELD): walk f1 mechanisms=all-Guesses
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: CompilerHelpersScanPlainURL

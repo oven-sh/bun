@@ -264,6 +264,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) workbuf: Vec<WorkItem<A>>,
 
     followed_links: Vec<FollowedLink>,
+    /// A `.` or `..` component comes after a `**`, so a multi-index set can hold its index.
+    dot_after_globstar: bool,
 
     is_ignored: IgnoreFilterFn,
 
@@ -550,7 +552,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
     fn transition_to_dir_iter_state<const ROOT: bool>(
         &mut self,
-        work_item: WorkItem<A>,
+        mut work_item: WorkItem<A>,
     ) -> Result<Maybe<()>, Error> {
         // For SENTINEL=true, `MatchedPath`-derived WorkItem paths carry a trailing
         // NUL in their `.len()`; the logical path drops it (see `work_item_logical_path`).
@@ -583,9 +585,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let mut had_dot_dot = false;
-        // Single-index sets (the initial WorkItem) may point to Dot/DotBack
-        // or collapsible `**` runs. Multi-index sets only arise mid-traversal
-        // after `**/X` boundaries and are already past any Dots.
+        // A set of one index can point to Dot/DotBack or to a collapsible `**` run.
         let active: ComponentSet = 'set: {
             if work_item.active.count() == 1 {
                 let single: u32 =
@@ -613,7 +613,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
                 break 'set self.walker.single_set(norm);
             }
-            // Multi-index sets are already normalized by eval_dir.
+            // eval_dir already collapsed the `**` runs of a multi-index set.
+            if self.walker.dot_after_globstar {
+                self.walker.requeue_dot_component(&mut work_item);
+            }
             work_item.active
         };
 
@@ -1465,6 +1468,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             workbuf: Vec::new(),
             follow_matched_symlinks: false,
             followed_links: Vec::new(),
+            dot_after_globstar: false,
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
         };
@@ -1475,10 +1479,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
+        let mut after_globstar = false;
         for (index, component) in this.pattern_components.iter_mut().enumerate() {
             component.index = index as u32;
-            this.component_shapes
-                .push(Shape::of(component.pattern_slice(&this.pattern)));
+            let text = component.pattern_slice(&this.pattern);
+            this.dot_after_globstar |= after_globstar && is_dot_segment(text);
+            after_globstar |= component.syntax_hint == SyntaxHint::Double;
+            this.component_shapes.push(Shape::of(text));
         }
 
         // copy arena after all allocations are successful
@@ -2022,6 +2029,27 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         self.workbuf.push(item);
     }
 
+    /// No entry is named `.` or `..`: that member of a multi-index set gets a work item of its own.
+    #[cold]
+    fn requeue_dot_component(&mut self, item: &mut WorkItem<A>) {
+        let Some((dot, goes_up)) =
+            dot_member(&self.pattern_components, &self.pattern, &item.active)
+        else {
+            return;
+        };
+        let is_link_target =
+            item.fd.is_some() || self.followed_links.len() > item.followed_links_len;
+        // The kernel and an absolute join disagree on `link/..`, so it stays unresolved (#46366).
+        if goes_up && is_link_target {
+            return;
+        }
+        item.active.unset(dot);
+        let active = self.single_set(dot as u32);
+        // The caller copied the path into its buffer already.
+        let path = core::mem::take(&mut item.path);
+        self.push_work_item(WorkItem::new(path, active, WorkItemKind::Directory), None);
+    }
+
     /// Identify `Pending` ancestors in place (each is stat'd at most once) so
     /// the chain can be compared by `(st_dev, st_ino)`. Only called when a
     /// nested followed link actually needs the comparison.
@@ -2273,6 +2301,34 @@ pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
 
 pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
+}
+
+/// The text of a `Dot` or `DotBack` component, and of a final `./` or `../`, which is a `Literal`.
+#[inline]
+fn is_dot_segment(component: &[u8]) -> bool {
+    matches!(component, b"." | b"..")
+}
+
+/// The `.` or `..` member of `active`, and whether the run of them that starts there holds a `..`.
+#[inline(never)]
+fn dot_member(
+    components: &[Component],
+    pattern: &[u8],
+    active: &ComponentSet,
+) -> Option<(usize, bool)> {
+    let mut members = active.iterator::<true, true>();
+    let dot = loop {
+        let index = members.next()?;
+        if is_dot_segment(components[index].pattern_slice(pattern)) {
+            break index;
+        }
+    };
+    let goes_up = components[dot..]
+        .iter()
+        .map(|component| component.pattern_slice(pattern))
+        .take_while(|text| is_dot_segment(text))
+        .any(|text| text == b"..");
+    Some((dot, goes_up))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

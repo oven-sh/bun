@@ -817,6 +817,30 @@ describe("bun", () => {
     });
   });
 
+  // `--filter` walks a `workspaces` entry as written. `bun install` joins it first, to `packages/**` here.
+  test("a workspace pattern with a `..` segment after `**/name`", () => {
+    using dir = tempDir("filter-globstar-dotdot", {
+      "packages/pkga/marker/keep": "",
+      "packages/pkga/package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo out-pkga" } }),
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/**/marker/.."] }),
+    });
+    runInCwdSuccess({ cwd: String(dir), pattern: "*", target_pattern: /out-pkga/ });
+  });
+
+  test("a `..` segment after a symlinked directory under `**` matches nothing", () => {
+    using dir = tempDir("filter-globstar-dotdot-link", {
+      "packages/a/package.json": JSON.stringify({ name: "a", scripts: { present: "echo out-a" } }),
+      "elsewhere/real/package.json": JSON.stringify({ name: "real", scripts: { present: "echo out-real" } }),
+      "elsewhere/real/other/package.json": JSON.stringify({ name: "other", scripts: { present: "echo out-other" } }),
+      "elsewhere/real/sub/keep": "",
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*", "packages/**/lnk/../*"] }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type is ignored on POSIX.
+    symlinkSync(join(String(dir), "elsewhere", "real", "sub"), join(String(dir), "packages", "a", "lnk"), "junction");
+    // `lnk/..` is `elsewhere/real`, but as text in a joined path it is `packages/a`.
+    runInCwdSuccess({ cwd: String(dir), pattern: "*", target_pattern: /out-a/, antipattern: /out-(real|other)/ });
+  });
+
   test("warning names which package.json failed to parse", async () => {
     await using dir = tempDir("filter-bad-pkgjson", {
       packages: {

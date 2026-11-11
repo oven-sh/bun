@@ -998,6 +998,13 @@ booga"
       })
       .runAsTest("Should work with a different cwd");
 
+    TestBuilder.command`echo **/sub/../f.txt`
+      .ensureTempDir()
+      .directory("dir/sub")
+      .file("dir/f.txt", "")
+      .stdout(out => expect(out.replaceAll("\\", "/")).toBe("dir/sub/../f.txt\n"))
+      .runAsTest("a .. segment after **/name is resolved");
+
     describe("interpolated values cannot inject glob syntax", () => {
       // Only `*`/`**` written literally in the template act as glob syntax.
       // Metacharacters arriving via `${...}` interpolation are data and must

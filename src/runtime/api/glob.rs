@@ -129,7 +129,7 @@ impl ScanOpts {
 /// can walk the embedded `/$bunfs/` tree. Up-tier from the trait on purpose,
 /// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
-    use bun_core::ZStr;
+    use bun_core::{ZStr, strings};
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{PathBuffer, Platform, platform, resolve_path};
     use bun_standalone_graph::Graph;
@@ -240,7 +240,15 @@ pub(crate) mod standalone_accessor {
         ) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
             // Pooled: a stack `PathBuffer` is ~64 KB on Windows.
             let mut buf = bun_paths::path_buffer_pool::get();
-            Ok(open_resolved(resolve(handle, path.as_bytes(), &mut buf)))
+            let path = path.as_bytes();
+            let opened = open_resolved(resolve(handle, path, &mut buf));
+            // A key above the root keeps its `..`: the path as written comes first, joined on a miss.
+            if opened.is_err() && Platform::AUTO.is_absolute(path) && strings::contains(path, b"/.")
+            {
+                let joined = resolve_path::join_string_buf::<platform::Auto>(&mut buf, &[path]);
+                return Ok(open_resolved(joined));
+            }
+            Ok(opened)
         }
 
         fn statat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {

@@ -3,12 +3,14 @@ use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, O
 use crate::builtins::table::{self, BuiltinId};
 use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, Span};
+use crate::diagnostics::{
+    Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
+};
 use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
-    collect_program_contents,
+    collect_program_contents, find_named_workers,
 };
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
@@ -27,11 +29,16 @@ use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
-use bun_sema::atom::Interner;
+use bun_options_types::aot_options::DependencyTypeErrors;
+use bun_options_types::aot_options::ExplainSet;
+use bun_sema::atom::{Atom, Interner};
+use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::aot::FileOrigin;
-use bun_sema::fold::FoldInputs;
-use bun_sema::hir::{ExprId, ExprKind};
-use bun_sema::import_sites::ImportSpecifier;
+use bun_sema::fold::{Constant, FoldInputs, FoldedValue};
+use bun_sema::hir::{ExprId, ExprKind, MemberKey};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
+};
 use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
@@ -145,46 +152,249 @@ fn warn_of_files_left_out_by_patterns(
     }
 }
 
+fn warn_of_guesses_left_out(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    let Some(file_whose_loader_decides_its_kind) = host.guesses_left_out() else {
+        return;
+    };
+    let why = match file_whose_loader_decides_its_kind {
+        Some(file) => [
+            &b"\""[..],
+            &host.display_path_of(&file),
+            b"\" doesn't say whether it's CommonJS or an ES module, so whichever load gets to it first decides, and nothing says when this one runs. Write `export {}` or `module.exports = {}` in that file",
+        ]
+        .concat(),
+        None => b"The build only brings such files along if nothing more hangs on them: no path in the program that it can't work out other than this kind, no TypeScript among them to check, none above the folders that the executable holds. Add the files as entry points".to_vec(),
+    };
+    let files = view.files();
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for &file in files.compiled_files() {
+        let folder = host.directory_of(files.file_name(file));
+        let is_held = |name: &[u8]| {
+            let found = host.find_file_that_require_finds(&folder, name);
+            found.is_some_and(|path| held.contains(&path[..]))
+        };
+        let guessed = files.analysis(file).names_from_data_files.iter();
+        let guessed = guessed.filter(|it| it.2 && !is_held(files.atoms().bytes(it.0)));
+        let guessed: Vec<(ExprId, Atom)> = guessed.map(|it| (it.1, it.0)).collect();
+        for of_site in guessed.chunk_by(|one, next| one.0 == next.0) {
+            let names: Vec<&[u8]> = of_site.iter().map(|it| files.atoms().bytes(it.1)).collect();
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(of_site[0].0));
+            let code = Code::FilesLeftOutByPattern;
+            let warning = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..]), &why]);
+            diagnostics.add(Some(view), warning);
+        }
+    }
+}
+
+fn warn_of_names_unread_at_loads_found_late(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        for site in analysis.import_sites {
+            let (ImportSiteKind::Require(call) | ImportSiteKind::RequireResolve(call)) = site.kind
+            else {
+                continue;
+            };
+            let mut written = analysis.alternatives_of(&site.specifier).iter();
+            if written.any(|it| matches!(it, ImportSpecifier::Unknown))
+                && is_load_found_late(hir, files.bound(file), &analysis.decisions, call)
+            {
+                let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
+                let code = Code::ModuleMayBeNamedAtRunTime;
+                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+            }
+        }
+    }
+}
+
+fn warn_of_folders_unread_at_resolves(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        for &options in files.analysis(file).options_of_resolves_with_unread_folders {
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(options));
+            let code = Code::FoldersOfResolveAreNotRead;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    let noted = host.resolves_whose_folders_bring_nothing();
+    if noted.is_empty() {
+        return;
+    }
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for resolve in &noted {
+        let found = &resolve.found_by_search_that_goes_on_above;
+        if resolve.is_found_in_listed_folders_alone && held.contains(&found[..]) {
+            continue;
+        }
+        if let Some(file) = files.by_path.get(&resolve.file[..]) {
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(resolve.written_at));
+            let code = Code::SearchGoesOnAboveListedFolder;
+            let found = host.display_path_of(found);
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&found]));
+        }
+    }
+}
+
+fn find_resolves_that_miss(view: ProgramView<'_, '_>, host: &LoadHost<'_>) -> Vec<Diagnostic> {
+    let mut warnings = Vec::new();
+    let files = view.files();
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        let member_of = |expression: ExprId| match hir.member_key(expression) {
+            Some((object, MemberKey::Name(name))) => {
+                Some((hir.skip_type_assertions(object), files.atoms().bytes(name)))
+            }
+            _ => None,
+        };
+        let is_import_meta = |it: ExprId| matches!(hir[it].kind, ExprKind::ImportMeta);
+        let takes_folder = |callee: ExprId| {
+            let named = source.builtins.builtin_of_expression(callee);
+            named.is_some_and(table::is_path_resolver)
+        };
+        let is_resolver = |callee: ExprId| {
+            takes_folder(callee)
+                || matches!(member_of(callee), Some((object, b"resolveSync")) if is_import_meta(object))
+        };
+        let is_own_folder = |folder: ExprId| {
+            let folder = hir.skip_type_assertions(folder);
+            let own = [&b"dir"[..], b"dirname", b"path", b"filename", b"url"];
+            matches!(member_of(folder), Some((object, name)) if is_import_meta(object) && own.contains(&name))
+                || matches!(
+                    files.bound(file).binding(folder),
+                    Binding::CommonJs(CommonJsVariable::Dirname | CommonJsVariable::Filename)
+                )
+        };
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Call(call) = hir[expression].kind else {
+                continue;
+            };
+            if analysis.decisions.is_dead_expr(expression) {
+                continue;
+            }
+            let callee = hir.skip_type_assertions(hir[call].callee);
+            let mut given: Vec<ExprId> = hir.ids(hir[call].args).collect();
+            let resolver = match member_of(callee) {
+                Some((object, b"call")) if is_resolver(object) && !given.is_empty() => {
+                    given.remove(0);
+                    object
+                }
+                Some((object, b"apply")) if is_resolver(object) && given.len() > 1 => {
+                    if let ExprKind::Array(listed) = hir[hir.skip_type_assertions(given[1])].kind {
+                        given = hir.ids(listed).collect();
+                    } else {
+                        given = vec![given[1]];
+                    }
+                    object
+                }
+                _ if is_resolver(callee) => callee,
+                _ => continue,
+            };
+            let Some(&path) = given.first() else {
+                continue;
+            };
+            let span = Span::of_node(hir, file, NodeData::Expr(path));
+            let name = match analysis.decisions.constant(hir, path) {
+                FoldedValue::Constant(Constant::String(name))
+                | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => name,
+                FoldedValue::Constant(_)
+                | FoldedValue::ConstantOutsideDeadZone(_)
+                | FoldedValue::Unknown => continue,
+            };
+            if takes_folder(resolver) && !given.get(1).is_some_and(|&it| is_own_folder(it)) {
+                continue;
+            }
+            let folder = host.directory_of(files.file_name(file));
+            let found = host.find_file_that_require_finds(&folder, files.atoms().bytes(name));
+            if let Some(found) = found.filter(|found| !held.contains(&found[..])) {
+                let code = Code::ResolvedFileNotEmbedded;
+                let found = host.display_path_of(&found);
+                warnings.push(Diagnostic::new(code, Some(span), &[&found]));
+            }
+        }
+    }
+    warnings
+}
+
+fn warn_of_made_requires_that_go_out_of_sight(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        let names_module_of_maker = |specifier: &ImportSpecifier| {
+            matches!(*specifier, ImportSpecifier::Constant(name)
+                if matches!(files.atoms().bytes(name), b"module" | b"node:module"))
+        };
+        let mut sites = analysis.import_sites.iter();
+        if !sites.any(|site| names_module_of_maker(&site.specifier)) {
+            continue;
+        }
+        let decisions = &analysis.decisions;
+        for made in find_made_requires_that_go_out_of_sight(hir, files.bound(file), decisions) {
+            let span = Span::of_node(hir, file, NodeData::Expr(made));
+            let code = Code::MadeRequireGoesOutOfSight;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+}
+
 fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<'_>) {
     let paths = host.background_reads();
     let count = paths.len().min(MAX_ASSET_READERS);
     start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
 }
 
-fn find_starts_that_led_to_files(
+fn find_worker_positions(
     files: &Files<'_>,
     sources: &Sources,
-    contents: &ProgramContents,
+    workers: &[(FileId, ExprId)],
 ) -> Vec<(Vec<u8>, u32)> {
     let mut places = Vec::new();
-    let starts = contents.found_entry_points.iter();
-    for &(file, start) in starts.flat_map(|found| &found.starts) {
+    for &(file, start) in workers {
         let hir = &files.module(file).hir;
-        let ExprKind::New(call) = hir[ExprId(start)].kind else {
+        let ExprKind::New(call) = hir[start].kind else {
             continue;
         };
         let callee = hir.skip_type_assertions(hir[call].callee);
-        for expression in [ExprId(start), callee] {
-            places.push((sources.diagnostic_path(file).to_vec(), hir[expression].pos));
+        let last_name = match hir[callee].kind {
+            ExprKind::Dot { .. } => hir.name_pos(callee),
+            ExprKind::Index { index, .. } => hir[index].pos,
+            _ => hir[callee].pos,
+        };
+        for position in [hir[start].pos, last_name] {
+            places.push((sources.diagnostic_path(file).to_vec(), position));
         }
     }
     places
 }
 
-fn find_node_workers_that_led_to_no_file(
-    files: &Files<'_>,
-    contents: &ProgramContents,
-) -> Vec<Diagnostic> {
+fn find_unknown_node_workers(files: &Files<'_>, contents: &ProgramContents) -> Vec<Diagnostic> {
     let mut said = Vec::new();
     for &file in files.compiled_files() {
         let Some(source) = parsed_source(files, file) else {
             continue;
         };
         for start in &source.contents.node_workers_out_of_sight {
-            let mut found = contents.found_entry_points.iter();
-            let led_to_file = matches!(start.at, NodeData::Expr(at)
-                if found.any(|found| found.starts.contains(&(file, at.0))));
-            if led_to_file {
+            if matches!(start.at, NodeData::Expr(at) if contents.is_followed_worker(file, at)) {
                 continue;
             }
             let code = match start.is_told_to_evaluate {
@@ -192,6 +402,22 @@ fn find_node_workers_that_led_to_no_file(
                 false => Code::WorkerStartedFromUnknownValue,
             };
             let span = Span::of_node(&files.module(file).hir, file, start.at);
+            said.push(Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    said
+}
+
+fn find_missing_node_workers(files: &Files<'_>, contents: &ProgramContents) -> Vec<Diagnostic> {
+    let mut said = Vec::new();
+    for &file in files.compiled_files() {
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        let starts = source.contents.named_node_workers.iter();
+        for &at in starts.filter(|&&at| !contents.is_followed_worker(file, at)) {
+            let span = Span::of_node(&files.module(file).hir, file, NodeData::Expr(at));
+            let code = Code::WorkerStartedFromUnknownValue;
             said.push(Diagnostic::new(code, Some(span), &[]));
         }
     }
@@ -311,6 +537,7 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 #[derive(Default)]
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
+    followed_workers: Vec<(FileId, ExprId)>,
     names_written: Vec<EntryPointPaths>,
 }
 
@@ -441,6 +668,8 @@ impl<'a> Build<'a> {
             mocks_any_file: options.load.runs_tests,
             follows_paths_to_functions_of_other_files: options.load.runs_tests,
             looks_for_type_errors: options.aot.looks_for_type_errors,
+            checks_dependency_sources: options.aot.dependency_type_errors
+                != DependencyTypeErrors::NotChecked,
             ..options.code.clone()
         };
         let host = LoadHost::new(LoadHostInput {
@@ -509,7 +738,11 @@ impl<'a> Build<'a> {
         let (application, found) = match options.aot.checks_only {
             true => {
                 let application = self.load_application(shared, project, request)?;
-                (application, FoundByLoad::default())
+                let found = FoundByLoad {
+                    followed_workers: find_named_workers(application.files()),
+                    ..FoundByLoad::default()
+                };
+                (application, found)
             }
             false => {
                 let finder = EntryPointFinder::new(FinderInput {
@@ -524,8 +757,11 @@ impl<'a> Build<'a> {
                 };
                 let application = self.load_application(shared, project, &request_that_finds)?;
                 let names_written = finder.take_names_written();
+                let (entry_points, followed_workers) =
+                    finder.finish(application.files(), options.entry_points.len());
                 let found = FoundByLoad {
-                    entry_points: finder.finish(application.files(), options.entry_points.len()),
+                    entry_points,
+                    followed_workers,
                     names_written,
                 };
                 (application, found)
@@ -555,8 +791,11 @@ impl<'a> Build<'a> {
             files,
             options,
             found_entry_points: found.entry_points,
+            followed_workers: found.followed_workers,
             any_file_may_become_main_module: host.may_any_file_become_main_module(),
             is_every_text_asked: !host.has_file_that_asks_for_what_unseen_code_finds(),
+            builtin_names: shared.builtin_names,
+            platform: self.platform,
             in_parallel: &in_parallel,
         });
         steps.end("contents of the program");
@@ -580,13 +819,22 @@ impl<'a> Build<'a> {
         let mut compiled_files = files.compiled_files().iter();
         self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
             && !options.can_load_code_at_run_time()
-            && !contents.loads_by_unknown_path
+            && !contents.loads_code_on_disk_by_unknown_path
             && !contents.any_module_loads_again
             && !contents.run.loads.reads_files_from_disk()
             && !roots.imports_uncompiled_code
-            && !compiled_files.any(|&file| may_run_code_outside_image(files, file));
+            && !compiled_files.any(|&file| {
+                contents.run.rejects_uncompiled_code.get(file.idx()) != Some(&true)
+                    && may_run_code_outside_image(files, file)
+            });
         let session = shared.sessions.runtime;
-        let inputs = self.create_runtime_load_inputs(shared, session, &roots, &contents);
+        let evaluates_text = options.aot.loads_code_from_disk
+            && !options.load.runs_tests
+            && (files.compiled_files().iter())
+                .filter_map(|&file| parsed_source(files, file))
+                .any(|source| source.builtins.mentions_evaluator());
+        let inputs =
+            self.create_runtime_load_inputs(shared, session, &roots, &contents, evaluates_text);
         let takes_known_regions = Cell::new(true);
         let runtime_request = self.create_runtime_request(shared, &inputs, &roots.paths);
         let RuntimeLoadInputs {
@@ -626,17 +874,40 @@ impl<'a> Build<'a> {
             sources: &sources.application,
         };
         if !options.load.runs_tests {
-            for diagnostic in find_node_workers_that_led_to_no_file(files, &contents) {
+            for diagnostic in find_unknown_node_workers(files, &contents) {
                 self.diagnostics.add(Some(view), diagnostic);
+            }
+            if !options.aot.checks_only {
+                self.missing_node_workers = find_missing_node_workers(files, &contents);
             }
         }
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
+            warn_of_guesses_left_out(&mut self.diagnostics, view, host);
+            if !options.aot.loads_code_from_disk {
+                warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
+                warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
+                warn_of_made_requires_that_go_out_of_sight(&mut self.diagnostics, view);
+                self.resolves_that_miss = find_resolves_that_miss(view, host);
+            }
+        }
+        let aot = &options.aot;
+        let ignore_comment_options = IgnoreCommentOptions {
+            should_report_stale: !aot.checks_only
+                && !aot.runs_in_place
+                && !aot.loads_code_from_disk,
+            should_list_silenced: aot.explain.contains(ExplainSet::TEXT),
+        };
+        self.diagnostics
+            .read_ignore_comments(view, ignore_comment_options);
+        self.started_workers.followed_at =
+            find_worker_positions(files, &sources.application, &contents.followed_workers);
+        if options.aot.loads_code_from_disk {
+            self.started_workers.named_at =
+                find_worker_positions(files, &sources.application, &find_named_workers(files));
         }
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);
-            self.started_workers.named_at =
-                find_starts_that_led_to_files(files, &sources.application, &contents);
             self.started_workers.levels_above_root = sources.application.levels_above_root();
             let (names, said) = collect_entry_point_aliases(
                 files,
@@ -675,6 +946,7 @@ impl<'a> Build<'a> {
             loads_code_by_unknown_names_alone,
             keeps_library_code_without_names: roots.keeps_code_without_names,
             holds_what_unseen_code_finds: roots.holds_what_unseen_code_finds,
+            holds_it_for_uses_of_files_alone: roots.holds_it_for_uses_of_files_alone,
             finish_asset_reads: project.finish_asset_reads,
             known_library_regions: &|| {
                 let reach = runtime_host.reach.as_ref()?;
@@ -692,10 +964,12 @@ impl<'a> Build<'a> {
         session: &'s Session,
         roots: &'c RuntimeRoots,
         contents: &'c ProgramContents,
+        evaluates_text: bool,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
-        let makes_names = contents.loads_by_unknown_path
+        let makes_names = evaluates_text
+            || contents.loads_by_unknown_path
             || (contents.loads_by_unknown_name && !options.load.runs_tests);
         let loads_code_by_unknown_names_alone =
             !is_told_of_code && makes_names && options.aot.loads_code_from_disk;
@@ -717,12 +991,16 @@ impl<'a> Build<'a> {
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                     can_replace_builtins: contents.can_replace_builtins(),
+                    can_replace_builtin_functions: contents.can_replace_builtin_functions(),
                     process_reaches_code_on_its_prototypes: can_load_code_at_run_time
                         || contents.process_reaches_code_on_its_prototypes,
                     warnings_load_events: can_load_code_at_run_time
                         || contents.loads_by_unknown_name
                         || contents.inspects_prototype_chain_of_process
                         || roots.loads_events,
+                    can_load_node_path: can_load_code_at_run_time
+                        || contents.loads_by_unknown_name
+                        || roots.loads_path,
                     takes_first_texts: options.aot.takes_first_texts,
                 },
             ),
@@ -1011,9 +1289,104 @@ mod tests {
                 false,
             ),
             (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Bun.ModuleGraph;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "ModuleGraph");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "Module" + "Graph");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Object.getOwnPropertyDescriptor(Bun, "ModuleGraph").value;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.getOwnPropertyDescriptor(Bun, "ModuleGraph").value;"#,
+                ),
+                false,
+            ),
+            (
+                r#"console.log(typeof Reflect.get(Bun as any, "ModuleGraph"));"#,
+                PLAIN,
+                false,
+            ),
+            (
+                r#"console.log(typeof (Bun as any)["Module" + "Graph"]);"#,
+                PLAIN,
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"const key = "ModuleGraph"; export const mark = typeof Bun[key];"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"const { ["Module" + "Graph"]: found } = Bun; export const mark = typeof found;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Bun["ver" + "sion"];"#,
+                ),
+                true,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(globalThis, "eval");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = typeof Reflect.get(Bun, "version");"#,
+                ),
+                true,
+            ),
+            (
                 r#"vi.mock("./helper.cjs", () => ({ mark: 2 }));"#,
                 PLAIN,
                 true,
+            ),
+            (
+                r#"vi.mock("./helper.cjs", async () => ({ mark: 2 }));"#,
+                PLAIN,
+                false,
             ),
             (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
             (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
@@ -1026,6 +1399,46 @@ mod tests {
             );
             if stays_in_compiled_files(&[("a.test.ts", &test_file), (helper, text)]) != stays {
                 wrong.push((head, text));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn what_a_file_of_the_product_may_load_or_run_keeps_a_test_run_in_its_compiled_files() {
+        const OF_PRODUCT: &str = r#"{ "name": "p", "dependencies": { "loader": "1.0.0" } }"#;
+        const OF_TESTS: &str = r#"{ "name": "p" }"#;
+        let rows = [
+            (OF_PRODUCT, "module.exports = name => require(name);", true),
+            (
+                OF_PRODUCT,
+                "module.exports = name => require.main.require(name);",
+                true,
+            ),
+            (OF_PRODUCT, r#"module.exports = (0, eval)("1");"#, true),
+            (
+                OF_PRODUCT,
+                r#"module.exports = new Function("p", "return import(p)");"#,
+                true,
+            ),
+            (OF_TESTS, "module.exports = name => require(name);", false),
+        ];
+        let mut wrong = Vec::new();
+        for (manifest, loader, stays) in rows {
+            let files = [
+                (
+                    "a.test.ts",
+                    "import { test } from \"bun:test\";\nimport load from \"loader\";\ntest(\"t\", () => console.log(load));\n",
+                ),
+                ("package.json", manifest),
+                (
+                    "node_modules/loader/package.json",
+                    r#"{ "name": "loader", "version": "1.0.0", "main": "index.js" }"#,
+                ),
+                ("node_modules/loader/index.js", loader),
+            ];
+            if stays_in_compiled_files(&files) != stays {
+                wrong.push((manifest, loader));
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
@@ -1087,6 +1500,43 @@ mod tests {
                 if found != sites {
                     wrong.push((head, text, found));
                 }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn manual_mock_is_loaded_for_every_call_that_runs_it() {
+        let rows = [
+            (r#"vi.mock("./sub/thing.js");"#, true),
+            (r#"jest.mock("./sub/thing.js");"#, true),
+            (r#"await vi.importMock("./sub/thing.js");"#, true),
+            (r#"jest.requireMock("./sub/thing.js");"#, true),
+            (r#"vi.mock("./sub/thing.js", () => ({}));"#, false),
+            (r#"await vi.importActual("./sub/thing.js");"#, false),
+            (r#"jest.requireActual("./sub/thing.js");"#, false),
+            (r#"jest.createMockFromModule("./sub/thing.js");"#, false),
+        ];
+        let mut wrong = Vec::new();
+        for (text, is_loaded) in rows {
+            let test_file = format!("import {{ jest, vi }} from \"bun:test\";\n{text}\n");
+            let files = [
+                ("a.test.js", &test_file[..]),
+                ("sub/thing.js", "export const thing = 1;"),
+                ("sub/__mocks__/thing.js", "export const thing = 2;"),
+            ];
+            let found = with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+                let files = loaded.project(ProjectId::Application).loaded.files();
+                let file = files.by_path.get(&b"/project/a.test.js"[..]);
+                let source = parsed_source(files, file.expect("it is loaded"));
+                source.expect("it is parsed").manual_mocks.clone()
+            });
+            let expected: &[&[u8]] = match is_loaded {
+                true => &[b"/project/sub/__mocks__/thing.js"],
+                false => &[],
+            };
+            if found != expected {
+                wrong.push((text, found.len()));
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");

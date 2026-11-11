@@ -88,7 +88,7 @@ pub(crate) fn describe_module(
     let interop = graph.interop(ModuleRef::File(file));
     let (kind, rule, result) = (interop.kind, interop.export_rule, interop.require_result);
     let mut lines = vec![format!("kind {kind:?} {rule:?} {result:?}")];
-    if interop.answers_loader_with_namespace {
+    if interop.loader_returns_namespace {
         lines.push(String::from("namespace for the loader"));
     }
     if graph.has_top_level_await(file) {
@@ -200,7 +200,7 @@ pub(crate) fn describe_module_ref(input: &BindInput<'_, '_>, module: ModuleRef) 
         ModuleRef::Inner { file, callback } => {
             format!("{}#{}", project_path(input, file), callback.0)
         }
-        ModuleRef::Face(file) => format!("face:{}", project_path(input, file)),
+        ModuleRef::Facade(file) => format!("facade:{}", project_path(input, file)),
         ModuleRef::Check(file) => format!("check:{}", project_path(input, file)),
         ModuleRef::Runtime(module) => format!("runtime:{module:?}"),
         ModuleRef::External { specifier, .. } => {

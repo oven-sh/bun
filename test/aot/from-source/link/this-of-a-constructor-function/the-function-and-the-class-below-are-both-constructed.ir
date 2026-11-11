@@ -1,0 +1,19 @@
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Base(v) { this.held = v; }
+# class A extends Base { constructor(v) { super(v); this.y = 2; } }
+# const a = new A(o), b = new Base(o);
+# print(a.y, o.m(), a.held === o, b.held === o);
+# -- end of source
+# `Base` is constructed itself and entered from the class below: both layouts arrive at its `this`, each brought by the construction that makes it, and nothing else.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS-NOT: parameter 0 expected=L1 declared proven=object
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: 2 1 true true
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: 2 1 true true
+# CHECKED-NEXT: exited with 0

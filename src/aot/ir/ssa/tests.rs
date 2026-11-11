@@ -12,6 +12,26 @@ struct Diamond {
     join: BlockId,
 }
 
+#[test]
+fn what_is_built_at_the_empty_entry_stands_behind_the_undefined_values_in_front_of_it() {
+    let mut builder = create_builder(&[]);
+    let place = builder.place();
+    let first = builder.create_variable(None);
+    let second = builder.create_variable(None);
+    let undefined_first = builder.read_variable(first);
+    let own = builder.integer(1);
+    let undefined_second = builder.read_variable(second);
+    let placed = builder.build_at(place, |builder| builder.integer(2));
+    let mut order = Vec::new();
+    let mut next = builder.blocks[ENTRY_BLOCK.index()].first_value;
+    while next != NO_VALUE {
+        order.push(next);
+        next = builder.values[next as usize].next;
+    }
+    let expected = [undefined_second, undefined_first, placed, own].map(|value| value.to_word());
+    assert_eq!(order, expected);
+}
+
 fn enter_blocks(builder: &mut FunctionBuilder, count: usize) -> BlockId {
     for _ in 0..count {
         enter_block(builder, None);
@@ -355,7 +375,7 @@ fn loop_parameter_only_for_modified_variable() {
     let entry = builder.current_block();
     let [header, body, exit] = create_blocks(&mut builder);
     builder.declare_loop_header(header, &[modified]);
-    assert_eq!(variable_parameters(&builder, header).len(), 1);
+    assert!(variable_parameters(&builder, header).is_empty());
     builder.jump(Edge::to(header));
     builder.switch_to(header);
     let counter = builder.read_variable(modified);
@@ -375,6 +395,133 @@ fn loop_parameter_only_for_modified_variable() {
     assert_eq!(variable_parameters(&builder, header), [counter]);
     assert_eq!(variable_arguments(&builder, entry, 0), [initial]);
     assert_eq!(variable_arguments(&builder, body, 0), [updated]);
+}
+
+fn write_loop_that_stores(
+    builder: &mut FunctionBuilder,
+    variable: LocalVariable,
+    [condition, initial, updated]: [ValueId; 3],
+) -> [BlockId; 4] {
+    builder.write_variable(variable, initial);
+    let entry = builder.current_block();
+    let [header, body, exit] = create_blocks(builder);
+    builder.declare_loop_header(header, &[variable]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    builder.write_variable(variable, updated);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    [entry, header, body, exit]
+}
+
+#[test]
+fn modified_variable_that_nothing_reads_has_no_loop_parameter() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let values = [0, 1, 2].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    let [entry, header, body, _] = write_loop_that_stores(&mut builder, variable, values);
+    assert!(variable_parameters(&builder, header).is_empty());
+    assert!(variable_arguments(&builder, entry, 0).is_empty());
+    assert!(variable_arguments(&builder, body, 0).is_empty());
+}
+
+#[test]
+fn loop_parameters_stand_in_the_order_of_the_declaration_whichever_is_read_first() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let [condition, initial, updated] = [0, 1, 2].map(|index| builder.parameter(index));
+    let [first, unread, second] = [(); 3].map(|()| builder.create_variable(None));
+    for variable in [first, unread, second] {
+        builder.write_variable(variable, initial);
+    }
+    let entry = builder.current_block();
+    let [header, body, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[first, unread, second]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    let read_first = builder.read_variable(second);
+    let read_second = builder.read_variable(first);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    builder.write_variable(second, updated);
+    builder.write_variable(unread, updated);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    assert_eq!(
+        variable_parameters(&builder, header),
+        [read_second, read_first]
+    );
+    assert_eq!(variable_arguments(&builder, entry, 0), [initial, initial]);
+    assert_eq!(
+        variable_arguments(&builder, body, 0),
+        [read_second, updated]
+    );
+}
+
+#[test]
+fn modified_variable_read_only_behind_the_loop_gets_its_parameter_there() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let values = [0, 1, 2].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    let [entry, header, body, _] = write_loop_that_stores(&mut builder, variable, values);
+    enter_blocks(&mut builder, 5);
+    let counter = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, header), [counter]);
+    assert_eq!(variable_arguments(&builder, entry, 0), [values[1]]);
+    assert_eq!(variable_arguments(&builder, body, 0), [values[2]]);
+    assert_eq!(builder.read_variable(variable), counter);
+}
+
+#[test]
+fn parameter_made_behind_the_sealed_loop_stands_where_its_variable_is_declared() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number, number, number]);
+    let [
+        condition,
+        first_enters,
+        second_enters,
+        first_stored,
+        second_stored,
+    ] = [0, 1, 2, 3, 4].map(|index| builder.parameter(index));
+    let [read_behind, read_inside] = [(); 2].map(|()| builder.create_variable(None));
+    builder.write_variable(read_behind, first_enters);
+    builder.write_variable(read_inside, second_enters);
+    let entry = builder.current_block();
+    let [header, body, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[read_behind, read_inside]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    let inside = builder.read_variable(read_inside);
+    builder.write_variable(read_behind, first_stored);
+    builder.write_variable(read_inside, second_stored);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    let behind = builder.read_variable(read_behind);
+    assert_eq!(variable_parameters(&builder, header), [inside, behind]);
+    builder.order_late_parameters_as_declared();
+    assert_eq!(variable_parameters(&builder, header), [behind, inside]);
+    assert_eq!(
+        variable_arguments(&builder, entry, 0),
+        [first_enters, second_enters]
+    );
+    assert_eq!(
+        variable_arguments(&builder, body, 0),
+        [first_stored, second_stored]
+    );
 }
 
 fn write_empty_loop(builder: &mut FunctionBuilder, condition: ValueId) -> BlockId {
@@ -446,16 +593,14 @@ fn variable_stored_once_above_a_loop_that_modifies_it_is_the_parameter_in_the_bo
     write_empty_loop(&mut builder, condition);
     let [header, body, exit] = create_blocks(&mut builder);
     builder.declare_loop_header(header, &[variable]);
-    let [counter] = variable_parameters(&builder, header)[..] else {
-        panic!("the header has one parameter");
-    };
     builder.jump(Edge::to(header));
     builder.switch_to(header);
     builder.branch(condition, Edge::to(body), Edge::to(exit));
     builder.seal(body);
     builder.switch_to(body);
     enter_blocks(&mut builder, 5);
-    assert_eq!(builder.read_variable(variable), counter);
+    let counter = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, header), [counter]);
     builder.write_variable(variable, updated);
     builder.jump(Edge::to(header));
     builder.seal(header);
@@ -533,6 +678,8 @@ fn variable_listed_twice_as_modified_has_one_parameter() {
     let variable = builder.create_variable(None);
     let header = builder.create_block(None);
     builder.declare_loop_header(header, &[variable, variable]);
+    builder.switch_to(header);
+    builder.read_variable(variable);
     assert_eq!(variable_parameters(&builder, header).len(), 1);
 }
 
@@ -1082,6 +1229,54 @@ fn removed_handler_parameter_pops_handler_arguments() {
     assert_eq!(builder.values.len(), value_count);
 }
 
+fn narrow(builder: &mut FunctionBuilder, variable: LocalVariable) {
+    let value = builder.read_variable(variable);
+    let origin = builder.value_behind_tests(value);
+    let narrowed = builder.type_of(origin);
+    builder.write_narrowed_variable(variable, narrowed, value);
+}
+
+#[test]
+fn every_edge_of_a_switch_with_many_keys_into_a_block_gets_the_argument_of_that_block() {
+    for key_count in [7, 8, 9, 40] {
+        let mut builder = create_builder(&[TypeTable::NUMBER]);
+        let subject = builder.parameter(0);
+        let variable = builder.create_variable(None);
+        let above = builder.integer(1);
+        builder.write_variable(variable, above);
+        let entry = builder.current_block();
+        let [even, odd, otherwise] = create_blocks(&mut builder);
+        let keys: Vec<i64> = (0..key_count as i64).collect();
+        let cases: Vec<Edge<'_>> = (0..key_count)
+            .map(|key| Edge::to([even, odd][key % 2]))
+            .collect();
+        builder.switch(subject, &keys, &cases, Edge::to(otherwise));
+        builder.seal(otherwise);
+        builder.switch_to(otherwise);
+        builder.return_value(None);
+        builder.seal(odd);
+        builder.switch_to(odd);
+        let stored = builder.integer(2);
+        builder.write_variable(variable, stored);
+        builder.jump(Edge::to(even));
+        builder.seal(even);
+        builder.switch_to(even);
+        let read = builder.read_variable(variable);
+        assert_eq!(variable_parameters(&builder, even), [read]);
+        assert_eq!(variable_arguments(&builder, odd, 0), [stored]);
+        let mut edge_count = 0;
+        for target in 0..key_count + 1 {
+            let terminator = builder.blocks[entry.index()].terminator.as_ref();
+            let first = terminator.expect("the block is terminated").targets.start as usize;
+            let leads_to_reader = builder.targets[first + target].block == even;
+            let expected: &[ValueId] = if leads_to_reader { &[above] } else { &[] };
+            assert_eq!(variable_arguments(&builder, entry, target), expected);
+            edge_count += usize::from(leads_to_reader);
+        }
+        assert_eq!(edge_count, key_count.div_ceil(2));
+    }
+}
+
 fn fill_nested(
     builder: &mut FunctionBuilder,
     generator: &mut Generator,
@@ -1092,7 +1287,11 @@ fn fill_nested(
 ) {
     for _ in 0..1 + generator.below(5) {
         let condition = builder.parameter(0);
-        let kind = generator.below(if depth == 0 { 2 } else { 7 });
+        let kind = generator.below(if depth == 0 { 2 } else { 8 });
+        if kind == 0 && generator.one_in(3) {
+            narrow(builder, all[generator.below(all.len())]);
+            continue;
+        }
         if kind == 0 {
             let value = builder.integer(generator.below(1000) as i64);
             builder.write_variable(written[generator.below(written.len())], value);
@@ -1142,6 +1341,17 @@ fn fill_nested(
                     None => builder.return_value(None),
                 }
             }
+            7 => {
+                let tested = all[generator.below(all.len())];
+                let arms = [create(builder), create(builder)];
+                builder.branch(condition, Edge::to(arms[0]), Edge::to(arms[1]));
+                for arm in arms {
+                    enter(builder, arm);
+                    narrow(builder, tested);
+                    fill_nested(builder, generator, all, written, exits, depth - 1);
+                    builder.jump(Edge::to(after));
+                }
+            }
             5 => {
                 let handler = builder.create_handler(BlockRole::CatchHandler, None, covering);
                 let inside = builder.create_block(Some(handler));
@@ -1170,6 +1380,7 @@ fn fill_nested(
 fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
     let mut definition_counts = [0, 0];
     let mut ordered_variable_count = 0;
+    let mut narrowed_and_ordered_variable_count = 0;
     for seed in 1..=300 {
         let bodies = [false, true].map(|steps_through_every_join| {
             let function = build_function(&[TypeTable::BOOLEAN], |builder| {
@@ -1190,7 +1401,9 @@ fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
                 definition_counts[usize::from(steps_through_every_join)] += definition_count;
                 let variables = builder.ssa.variables.iter();
                 let ordered = variables.filter(|variable| variable.are_definitions_ordered);
-                ordered_variable_count += ordered.count();
+                ordered_variable_count += ordered.clone().count();
+                narrowed_and_ordered_variable_count +=
+                    ordered.filter(|variable| variable.is_narrowed).count();
             });
             (
                 function.body.code,
@@ -1201,5 +1414,6 @@ fn body_is_the_same_with_shortcuts_in_the_order_of_ends_and_step_by_step() {
         assert_eq!(bodies[0], bodies[1], "seed {seed}");
     }
     assert!(ordered_variable_count > 300);
+    assert!(narrowed_and_ordered_variable_count > 300);
     assert!(definition_counts[0] < definition_counts[1]);
 }

@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function makeRunner(seed: number) { let text = "k" + seed; return () => { text += "!"; return eval("text") + seed; }; }
+# const runner = makeRunner(1);
+# function all() { return runner() + " " + runner(); }
+# print(all());
+# -- end of source
+# The text handed to eval is written and is a name: it is compiled as a read of that name behind a test that `eval` is the built-in, and nothing looks a name up at run time. So the scope is never made.
+# The twin, ..-that-eval-of-a-made-text-reads-is-kept.ir, makes the text at run time. f1 = makeRunner
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: k1!1 k1!!1
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: k1!1 k1!!1

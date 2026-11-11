@@ -12,7 +12,6 @@
 # and `anything` asks no other: CastEmitter::generateCheckProof() looks at the kind of the cell. Where the type lets the empty word in, as of a variable that may be in its dead zone, the check lets it in too.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f0 f4 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f0:Body
 # CHECK: [[id]]: anything{{*}} = GetSlot {{*}}key="id"
 # CHECK-NEXT: CheckProof [[id]] checkedType=anything typeWithoutProof=absent|anything source=Field

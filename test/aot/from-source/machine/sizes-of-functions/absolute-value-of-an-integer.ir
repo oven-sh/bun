@@ -1,0 +1,12 @@
+# f1 = size
+# -- source: absolute-value-of-an-integer.ts
+# function size(a: number): number { return Math.abs(a); }
+# declare const input: any;
+# (globalThis as any).answer = size(input | 0);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 7, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

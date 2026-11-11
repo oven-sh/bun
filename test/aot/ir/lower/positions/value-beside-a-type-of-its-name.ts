@@ -1,12 +1,12 @@
 // RUN: link
 // CHECK: variable {{*}}name="Box" module=[[entry]] declared={type=[[box]] flags=[IsFromCompiler]} initialization=Function function=[[box]]
-// CHECK: variable {{*}}name="First" module=[[entry]] declared={type=anything|absent}
+// CHECK: variable {{*}}name="First" module=[[entry]] declared={type=undefined|null|absent|[[first]] flags=[IsExpected
 // CHECK: variable {{*}}name="Alias" module=[[entry]] declared={type=undefined|null|absent|[[alias]]
 // CHECK: variable {{*}}name="Written" module=[[entry]] declared={type=undefined|null|absent|[[written]]
 // CHECK: function [[box]] name="Box" module=[[entry]]
 
 // One symbol holds all meanings of a name. Whether the type or the value is declared first, the variable goes by the value: a type of its name is no annotation.
-// `First` is stored to once and has no annotation, so it is untyped. `Alias` is stored to again, so it has the checker's type of the value.
+// `First` is stored to once, by a literal, and has no annotation: the record that the literal makes is expected of it. `Alias` is stored to again, so it has the checker's type of the value.
 
 import { Box } from "./imports/box";
 

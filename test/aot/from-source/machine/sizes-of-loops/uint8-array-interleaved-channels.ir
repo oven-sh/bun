@@ -1,0 +1,14 @@
+# f1 = toGray
+# -- source: uint8-array-interleaved-channels.ts
+# function toGray(pixels: Uint8Array, gray: Uint8Array): void {
+#   for (let k = 0; k < gray.length; k++) gray[k] = (pixels[4 * k]! + pixels[4 * k + 1]! + pixels[4 * k + 2]!) >> 2;
+# }
+# declare const input: any;
+# toGray(new Uint8Array(input), new Uint8Array(input));
+# -- end of source
+# The compiler before this one: 30 instructions, 16 of them patches, a turn of the written loop steps by 4.
+# When the bound was taken: loop: operations 17, patches 1, moves 1, unlikely 0.
+# RUN(X64): loops most:18 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 18

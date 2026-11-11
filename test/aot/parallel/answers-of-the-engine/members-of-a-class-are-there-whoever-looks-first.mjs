@@ -1,5 +1,5 @@
 // The members of a class as a program sees them: their keys in order, their descriptors, their identity and their names, whoever looks at the class first and however: a list of keys, a call, a store, a deletion, a definition, a freeze, another prototype. The record of the class creates them, with the class or when one is first looked for.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Listed { first() { return 1; } get size() { return 2; } set size(v) { } second(a, b) { return 3; } static make() { return 4; } static get kind() { return 5; } }
 report(Reflect.ownKeys(Listed.prototype).join());

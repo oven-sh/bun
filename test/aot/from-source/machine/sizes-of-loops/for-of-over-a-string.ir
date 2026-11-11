@@ -1,0 +1,19 @@
+# f1 = commasIn
+# -- source: for-of-over-a-string.ts
+# function commasIn(text: string): number {
+#   let count = 0;
+#   for (const character of text) if (character === ",") count++;
+#   return count;
+# }
+# declare const input: any;
+# (globalThis as any).answer = commasIn("" + input);
+# -- end of source
+# The compiler before this one: 27 instructions, 16 of them patches.
+# When the bound was taken: loop: operations 90, patches 8, moves 0, unlikely 6 ; loop: operations 18, patches 2, moves 2, unlikely 22. The first lays out eight turns: 11 a character.
+# Since the turns are laid out once for each width of the text a second loop of eight turns stands between the two, for wide texts: operations 98, patches 8, moves 8, unlikely 6.
+# RUN(X64): loops most:90,106,20 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 90
+# X64-NEXT: loop: at most 106
+# X64-NEXT: loop: at most 20

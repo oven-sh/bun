@@ -1,5 +1,5 @@
 // The arms of the guess at the holder meet in front of the call.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 type Part = { p: number };
 type Rest = { q: number };
 type Sum = { c: number; p?: number; q?: number };

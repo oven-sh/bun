@@ -81,19 +81,19 @@ const questions: { title: string; gap?: Gap; ask(path: string, token: string): s
   },
   {
     title: "whether an object is an instance of it",
-    gap: { block: 3, name: 96 },
+    gap: { block: 1, name: 99 },
     ask: path => [`{} instanceof ${path}`],
   },
   {
     title: "whether an object made over its prototype object is an instance of it",
-    gap: { block: 3, name: 96 },
+    gap: { block: 3, name: 97 },
     ask: path => [`Object.create(${path}.prototype) instanceof ${path}`],
   },
   { title: "the numbers on it", ask: (_, token) => constantsOf(token).map(constant => constant.path) },
 ];
 const allQuestions: (typeof questions)[number] = {
   title: "all of that in one program",
-  gap: { block: 3, name: 96 },
+  gap: { block: 3, name: 97 },
   ask: (path, token) => questions.flatMap(each => each.ask(path, token)),
 };
 

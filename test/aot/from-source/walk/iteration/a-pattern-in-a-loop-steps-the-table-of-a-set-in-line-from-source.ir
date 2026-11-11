@@ -1,5 +1,5 @@
 # `const [a, b] = set` in a loop, on what is written to be a Set: one test that it is a Set as made, two steps through its table in line, and the stub for patterns on the failing side alone. Outside of a loop the pattern stays the one stub: no byte there.
-# A pattern over a generator in a loop is no matter of that stub at all.
+# A pattern over a generator in a loop steps it in place, and is left to that stub where the generator is not as it was made.
 # OPTIONS: check=Validate
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
@@ -13,7 +13,10 @@
 # ONCE-NOT: = SetNext
 # ONCE: = DestructureIterable
 # RUN(GENERATOR): walk f4 mechanisms=all
-# GENERATOR-NOT: = DestructureIterable
+# GENERATOR: = IsUnmodifiedGenerator
+# GENERATOR-COUNT-3: = StepGenerator
+# RUN(CHANGED): walk f4 mechanisms=all
+# CHANGED-COUNT-1: = DestructureIterable
 # -- source: a-pattern-in-a-loop-steps-the-table-of-a-set-in-line-from-source.ts
 # declare function sink(...values: unknown[]): void;
 # function often(set: Set<number>, turns: number): number { let sum = 0; for (let i = 0; i < turns; i++) { const [a, b] = set; sum += a! + b!; } return sum; }

@@ -1,0 +1,31 @@
+# print({}, hidden(Error).width);
+# Error goes out of sight with all below it, and a name is read off a value that nobody knows. The host loads what it prints objects with only where an object may have the method that it looks up,
+# and an object of native code that the table does not describe may have any member. Nothing below Error is such an object: `message` and `cause` of an error hold a text and what the constructor read off its operand,
+# and in Error.prepareStackTrace lies a function that the table describes, until the program stores one of its own.
+# The control: namespace-let-go-that-holds-an-object-nobody-describes-may-have-the-method-that-the-host-looks-up.ir
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Error
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hidden" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v3 key="width"
+    v5 = NewObject layout=L0
+    v6 = FinishObject v5
+    v7 = PropGet v1 key="print" [isFreeName]
+    v8 = Call v7, -, v6, v4 calleeName="print"
+    Return v8
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

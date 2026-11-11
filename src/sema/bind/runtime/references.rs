@@ -12,8 +12,8 @@ use super::stores::{
 };
 use super::type_only_code::TypeOnlyCode;
 use super::{
-    Binding, CodeUnit, CommonJsVariable, FunctionFlags, RuntimeBindOptions, RuntimeInput,
-    RuntimeScopes,
+    Binding, BindingKind, CodeUnit, CommonJsVariable, FunctionFlags, RuntimeBindOptions,
+    RuntimeInput, RuntimeScopes,
 };
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
@@ -55,8 +55,10 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         hands_arguments_on: Vec::new(),
         reads_elements_of_arguments: Vec::new(),
         may_read_above_arguments: Vec::new(),
+        mentions_own_name: Vec::new(),
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
+        writes_import_meta_path: false,
         has_import_meta: false,
     };
     pass.resolve_idents();
@@ -81,8 +83,10 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         hands_arguments_on,
         reads_elements_of_arguments,
         may_read_above_arguments,
+        mentions_own_name,
         has_direct_eval,
         import_meta_may_be_modified,
+        writes_import_meta_path,
         has_import_meta,
         ..
     } = pass;
@@ -91,7 +95,10 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         matches!(
             binding,
             Binding::CommonJs(
-                CommonJsVariable::Require | CommonJsVariable::Module | CommonJsVariable::Filename
+                CommonJsVariable::Require
+                    | CommonJsVariable::Module
+                    | CommonJsVariable::Filename
+                    | CommonJsVariable::Dirname
             )
         )
     };
@@ -109,6 +116,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
     bound.runtime.import_meta_may_be_modified = import_meta_may_be_modified;
+    bound.runtime.writes_import_meta_path = writes_import_meta_path;
     bound.ids.extend(eval_symbol_ids);
     for unit in uses_arguments {
         match unit {
@@ -127,6 +135,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     }
     for function in may_read_above_arguments {
         bound.runtime.function_flags[function.idx()] |= FunctionFlags::MAY_READ_ABOVE_ARGUMENTS;
+    }
+    for function in mentions_own_name {
+        bound.runtime.function_flags[function.idx()] |= FunctionFlags::MENTIONS_OWN_NAME;
     }
     for function in has_direct_eval {
         bound.runtime.function_flags[function.idx()] |= FunctionFlags::HAS_DIRECT_EVAL;
@@ -183,8 +194,10 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) hands_arguments_on: Vec<FnId>,
     pub(super) reads_elements_of_arguments: Vec<FnId>,
     pub(super) may_read_above_arguments: Vec<FnId>,
+    pub(super) mentions_own_name: Vec<FnId>,
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
+    pub(super) writes_import_meta_path: bool,
     pub(super) has_import_meta: bool,
 }
 
@@ -211,6 +224,7 @@ impl ReferencePass<'_, '_> {
     fn resolve_idents(&mut self) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         let taken_out_by_bundler = self.find_names_that_the_bundler_takes_out();
+        let binding_kinds = &bound.runtime.declarations.binding_kinds;
         let mut recent = RecentLookups::new(&self.lookup);
         for &(ident, scope) in self.idents {
             let ExprKind::Ident(name) = hir[ident].kind else {
@@ -243,6 +257,13 @@ impl ReferencePass<'_, '_> {
             }
             if !bound.is_default_binding(ident, found.binding) {
                 self.references.ident_bindings.push((ident, found.binding));
+            }
+            if let Binding::Symbol(symbol) = found.binding
+                && binding_kinds.get(symbol.idx()) == Some(&BindingKind::FunctionName)
+                && let Some(&Decl::Fn(function)) = bound.symbols[symbol.idx()].decls.first()
+                && self.mentions_own_name.last() != Some(&function)
+            {
+                self.mentions_own_name.push(function);
             }
             if let Binding::Arguments(unit) = found.binding {
                 self.uses_arguments.push(unit);

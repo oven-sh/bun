@@ -114,13 +114,16 @@ impl<S: Storage> BoundIn<S> {
         {
             return false;
         }
+        let mut declared = self.runtime.declarations.declared_symbols.iter();
+        if declared
+            .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
+        {
+            return false;
+        }
         let stores = &references.stores[..];
         let first_store = stores.partition_point(|store| store.symbol < symbol);
-        let mut declared = self.runtime.declarations.declared_symbols.iter();
         let mut own_declarations = self.symbol(symbol).decls.iter();
-        declared
-            .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
-            || own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
+        own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
             || flags.intersects(other_ways)
             || has_bit(&references.eval_visible_symbols, symbol.idx())
             || (stores.get(first_store)).is_some_and(|store| store.symbol == symbol)
@@ -416,6 +419,13 @@ impl Bound<'_> {
         binding.map_or(Binding::Free, |&binding| self.binding_under_goal(binding))
     }
 
+    pub fn is_named_by_export(&self, symbol: SymbolId) -> bool {
+        let binding = Binding::Symbol(symbol);
+        let references = &self.runtime.references;
+        (references.exported_bindings.iter()).any(|entry| entry.1 == binding)
+            || (references.entity_root_bindings.iter()).any(|entry| entry.1 == binding)
+    }
+
     pub fn exports_value(&self, statement: StmtId) -> bool {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::ExportExpr(statement)) != Some(SymbolId::NONE)
@@ -557,12 +567,27 @@ impl Bound<'_> {
         self.runtime.file_uses_arguments
     }
 
+    pub fn lets_made_requires_out_of_sight(&self, ask: impl FnOnce() -> bool) -> bool {
+        *self
+            .runtime
+            .lets_made_requires_out_of_sight
+            .get_or_init(ask)
+    }
+
+    pub fn stores(&self) -> &[SymbolStore] {
+        &self.runtime.references.stores[..]
+    }
+
     pub fn may_require_get_members(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.runtime.may_require_get_members.get_or_init(compute)
     }
 
     pub fn import_meta_may_be_modified(&self) -> bool {
         self.runtime.import_meta_may_be_modified
+    }
+
+    pub fn writes_import_meta_path(&self) -> bool {
+        self.runtime.writes_import_meta_path
     }
 
     #[inline]
@@ -710,19 +735,10 @@ impl Bound<'_> {
     }
 
     pub fn finds_itself(&self, hir: &File, function: FnId) -> bool {
-        if hir[function].kind == FnKind::Arrow {
-            return false;
-        }
-        let ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
-        if self.function_flags(function).intersects(ways) {
-            return true;
-        }
-        if hir[function].name == Atom::NONE {
-            return false;
-        }
-        let own_name = Binding::Symbol(self.declared_symbol(Decl::Fn(function)));
-        let mut idents = (0..hir.exprs.len() as u32).map(ExprId);
-        idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
+        let ways = FunctionFlags::USES_ARGUMENTS
+            | FunctionFlags::HAS_DIRECT_EVAL
+            | FunctionFlags::MENTIONS_OWN_NAME;
+        hir[function].kind != FnKind::Arrow && self.function_flags(function).intersects(ways)
     }
 
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {

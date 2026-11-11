@@ -1,0 +1,16 @@
+# f1 = total
+# -- source: read-leaves-a-loop-and-stays-behind-its-layout-test.js
+# function total(item, count) {
+#   let sum = 0;
+#   for (let i = 0; i < count; i++) sum += item.weight;
+#   return sum;
+# }
+# globalThis.answer = total(input ? { weight: +input } : input, input | 0);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches, a turn of the written loop steps by 1.
+# When the bound was taken: loop: operations 11, patches 0, moves 0, unlikely 6 ; loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:11,5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 11
+# X64-NEXT: loop: at most 5

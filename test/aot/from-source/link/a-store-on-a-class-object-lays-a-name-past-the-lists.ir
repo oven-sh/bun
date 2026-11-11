@@ -1,0 +1,15 @@
+# `Plain.label = v` makes an own property of the class object. No list names it, and the class does not escape by it: the word alone says that a lookup from Plain or from Heir may find more than the lists hold.
+# -- source: main.js
+# class Plain {}
+# class Heir extends Plain {}
+# class Beside {}
+# class Last {}
+# Plain.label = "plain";
+# print(Heir.label, new Beside(), new Last());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L1 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L2
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L3

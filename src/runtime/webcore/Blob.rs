@@ -1129,8 +1129,7 @@ impl BlobExt for Blob {
             return JSValue::TRUE;
         }
 
-        // Every file kind a stat finds exists, except a directory. `seekable` is
-        // set only by a successful stat, and `mode` is meaningful only then.
+        // Any file kind except a directory. `seekable` is set only by a successful stat.
         let store::Data::File(file) = &store.data else {
             return JSValue::FALSE;
         };

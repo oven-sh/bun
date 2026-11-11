@@ -215,7 +215,7 @@ public:
 private:
     /* `ctx` is what every accepted socket starts from, nullptr exactly when !SSL. */
     TemplatedApp(struct ssl_ctx_st *ctx) : httpContext(HttpContext<SSL>::create(Loop::get())), sslCtx(ctx) {
-        us_internal_ssl_ctx_up_ref(ctx);
+        if constexpr (SSL) us_internal_ssl_ctx_up_ref(ctx);
     }
 public:
 

@@ -137,7 +137,6 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) default_timeout_override: u32,
 
     pub(crate) vi_config: vi_utils::Config,
-    pub(crate) vi_config_of_preload: vi_utils::Config,
 
     pub(crate) test_options: &'a TestOptions,
 

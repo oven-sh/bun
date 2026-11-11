@@ -533,6 +533,8 @@ pub(crate) struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub(crate) active_file: BunTestPtrOptional,
     pub(crate) hook_scope: Box<DescribeScope>,
+    /// What the preloads set with `vi.setConfig()`. Lives as long as `hook_scope`.
+    pub(crate) vi_config_of_preload: super::vi_utils::Config,
     /// `RefData` pointers handed to `Promise.then()`. Tracked here (process-lifetime)
     /// so a never-settled promise's `+1` stays reachable; do not free orphans —
     /// a queued reaction may still consume them.
@@ -558,15 +560,17 @@ impl BunTestRoot {
         BunTestRoot {
             active_file: None,
             hook_scope,
+            vi_config_of_preload: Default::default(),
             pending_then_refs: std::cell::RefCell::new(Vec::new()),
             file_generation: 0,
         }
     }
 
-    /// Drop preload-level hooks registered in the previous global. The next
-    /// file's `loadPreloads()` re-registers them against the fresh global.
+    /// Drop what the preloads registered: their hooks and their `vi.setConfig()`. The next
+    /// file's `loadPreloads()` registers both again, under `--isolate=modules` in the same global.
     pub(crate) fn reset_hook_scope_for_test_isolation(&mut self) {
         debug_assert!(self.hook_scope.entries.is_empty());
+        self.vi_config_of_preload = Default::default();
         // drop old, create fresh
         self.hook_scope = DescribeScope::create(BaseScope {
             parent: None,

@@ -25,8 +25,14 @@ const fakePackages = {
             await Promise.resolve();
             console.log("abort", id);
           },
+          close: async () => {
+            await this.happyDOM.abort();
+            this.closed = true;
+            console.log("close", id);
+          },
         };
-        this.close = () => console.log("close", id);
+        // Like happy-dom 18 and later: only a window that another window opened closes itself.
+        this.close = () => {};
       }
     };
   `,
@@ -953,6 +959,51 @@ describe.concurrent("test environment", () => {
     ]);
     expect(stdout.filter(line => line.startsWith("open "))).toHaveLength(3);
     expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--isolate: a file's global can be collected once its window is closed", async () => {
+    const files = 4;
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      // Like happy-dom, the package keeps a window reachable until happyDOM.close().
+      "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+        const open = new Set();
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            open.add(this);
+            const { close } = this.happyDOM;
+            this.happyDOM.close = async () => {
+              await close();
+              open.delete(this);
+            };
+          }
+        };`,
+      ...Object.fromEntries(
+        Array.from({ length: files }, (_, i) => [
+          `${i}.test.js`,
+          `// ${VITEST} happy-dom
+          import { afterAll, test } from "bun:test";
+          import { heapStats } from "bun:jsc";
+          test("the window reaches the file's global", () => {
+            window.file = globalThis;
+          });
+          afterAll(() => {
+            Bun.gc(true);
+            console.log("globals", heapStats().objectTypeCounts.GlobalObject);
+          });`,
+        ]),
+      ),
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    const globals = stdout.filter(line => line.startsWith("globals ")).map(line => Number(line.split(" ")[1]));
+    expect(globals).toHaveLength(files);
+    // The count is measured before the file's own window closes, so only the earlier files' globals can be gone.
+    expect(globals.slice(1)).toEqual(Array(files - 1).fill(globals[1]));
+    expect(globals[1]).toBeLessThanOrEqual(globals[0] + 1);
+    expect(summary(stderr)).toEqual([`${files} pass`, "0 fail"]);
     expect(exitCode).toBe(0);
   });
 

@@ -367,11 +367,15 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
   return {
     ...globals,
     async close() {
-      if (win.close && win.happyDOM.abort) {
-        await win.happyDOM.abort();
+      const { happyDOM } = win;
+      // Since happy-dom 18, window.close() only closes a window that another window opened.
+      if (happyDOM.close) {
+        await happyDOM.close();
+      } else if (win.close && happyDOM.abort) {
+        await happyDOM.abort();
         win.close();
       } else {
-        win.happyDOM.cancelAsync();
+        happyDOM.cancelAsync();
       }
     },
   };

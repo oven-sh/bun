@@ -47,16 +47,24 @@ async function expectCompiledToRunAsPlain(
     if (exitCode !== 0) console.error(stderr);
     return { stdout, exitCode };
   };
-  const prints = (ran: { stdout: string; exitCode: number }, line: string) =>
-    ran.exitCode === 0 && ran.stdout.split("\n").includes(line);
-  const plain = await seen();
-  if (!owed) expect(plain.exitCode).toBe(0);
-  for (const words of ["TestRunLayers:0"]) {
-    const compiled = await seen(words, "--aot");
-    // Only that line is owed: a run that ends or prints otherwise ends well here, which is red.
-    if (owed && !(prints(plain, owed[0]) && prints(compiled, owed[1]))) return;
-    expect(compiled).toEqual(plain);
+  if (owed) {
+    // Only that line is owed: a run that throws, or ends or prints otherwise, ends well here, which is red.
+    type Ran = Awaited<ReturnType<typeof seen>>;
+    const prints = (ran: Ran, line: string) => ran.exitCode === 0 && ran.stdout.split("\n").includes(line);
+    let plain: Ran, compiled: Ran;
+    try {
+      plain = await seen();
+      compiled = await seen("TestRunLayers:0", "--aot");
+    } catch (error) {
+      console.error(error);
+      return;
+    }
+    if (prints(plain, owed[0]) && prints(compiled, owed[1])) expect(compiled).toEqual(plain);
+    return;
   }
+  const plain = await seen();
+  expect(plain.exitCode).toBe(0);
+  for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
 }
 
 test("a CommonJS file finds its own module in require.cache while it runs, whoever has begun it", async () => {

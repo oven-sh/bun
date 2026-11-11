@@ -2336,8 +2336,8 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     "%s: a finished file's import() that is still loading is dropped",
     async (_, args, env) => {
       using dir = tempDir("isolate-late-import", {
-        // A file that imports from "vitest" has no `jest` global.
         "preload.ts": saysWhenTheNextFileRuns,
+        // A file that imports from "vitest" has no `jest` global.
         "helper.ts": `export const makeSpy = () => jest.fn(); ${large}`,
         "other.ts": large,
         "a-import.test.ts": `
@@ -2383,9 +2383,8 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     },
   );
 
-  // On the JS thread a job that failed to parse rejects its import(), and with a plugin registered it transpiles
-  // the file again and runs its macros. Neither may happen for a finished file. Where the realm of that file is
-  // retired, its handler does not run either way.
+  // On the JS thread a job that failed to parse rejects its import(). For a finished file that ran its handler in
+  // the next file. Where the realm of the finished file is retired, the handler does not run either way.
   test.each(sourceCacheModes.filter(([, args]) => args.includes("--isolate=modules")))(
     "%s: a finished file is not told that its import() failed to parse",
     async (_, args, env) => {
@@ -2430,11 +2429,11 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     },
   );
 
+  // With a plugin registered, the JS thread transpiles a file that calls a macro once more, and runs the macro.
   test.each(sourceCacheModes)(
     "%s: a finished file's import() does not run its macro in the next file",
     async (_, args, env) => {
       using dir = tempDir("isolate-late-macro-import", {
-        // With a plugin, the thread pool leaves the macros of a file to the JS thread.
         "preload.ts": `
           ${saysWhenTheNextFileRuns}
           Bun.plugin({ name: "never matches", setup(build) { build.onLoad({ filter: /never-matches$/ }, () => undefined); } });

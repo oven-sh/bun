@@ -956,13 +956,16 @@ impl Build<'_> {
                 );
                 steps.end_with(|| format!("{project_name}: warnings"));
                 graph.leave_out_files(&left_out.files, &in_parallel);
-                for &(_, _, entry_point) in &starts_of_workers {
-                    if left_out.files.binary_search(&entry_point).is_ok() {
-                        let path = source_path_of(view.files().module(entry_point).file_name());
-                        let names = &mut self.started_workers.names;
-                        names.retain(|name| name.source_path != path);
-                    }
-                }
+                let names = &mut self.started_workers.names;
+                let left_out_starts = (starts_of_workers.iter())
+                    .filter(|start| left_out.files.binary_search(&start.2).is_ok());
+                let left_out_paths: FxHashSet<Vec<u8>> = match names.is_empty() {
+                    true => FxHashSet::default(),
+                    false => left_out_starts
+                        .map(|start| source_path_of(view.files().module(start.2).file_name()))
+                        .collect(),
+                };
+                names.retain(|name| !left_out_paths.contains(&name.source_path));
                 steps.end_with(|| format!("{project_name}: leave out files"));
                 graph.limit_exports(&in_parallel, &|file, export| {
                     left_out.find_export_use(file, export)

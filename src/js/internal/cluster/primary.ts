@@ -397,6 +397,8 @@ function send(worker: ClusterWorker, message: object, handle?: object | null, cb
 Worker.prototype.disconnect = function (this: ClusterWorker) {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
+  // A process that never loads the child half of node:cluster doesn't answer. Node loads it in every worker.
+  if (this.state === "none" && this.process.connected) this.process.disconnect!();
   removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;

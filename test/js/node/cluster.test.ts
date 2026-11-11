@@ -596,6 +596,43 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each(["worker.disconnect()", "cluster.disconnect()"])(
+  "%s reaches a worker that never loads node:cluster",
+  async call => {
+    using dir = tempDir("cluster-disconnect-unloaded", {
+      "primary.js": `
+const cluster = require("node:cluster");
+cluster.setupPrimary({ exec: require("node:path").join(__dirname, "job.js") });
+const worker = cluster.fork();
+const events = [];
+worker.on("message", () => ${call});
+worker.on("disconnect", () => events.push("disconnect"));
+worker.on("exit", (code, signal) => {
+  clearTimeout(timer);
+  console.log(JSON.stringify({ events, code, signal }));
+});
+const timer = setTimeout(() => worker.process.kill("SIGKILL"), 20_000);
+`,
+      "job.js": `
+process.on("message", () => {});
+process.on("disconnect", () => (process.exitCode = 7));
+process.send("ready");
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "primary.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ events: ["disconnect"], code: 7, signal: null });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

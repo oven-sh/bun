@@ -213,8 +213,8 @@ private:
              * a hangup they never do. Node.js destroys the socket on the failed write. */
             s->hangup_closes_unsent = 1;
 
-            /* A request body is a Node stream: until its reader shows that it takes whole chunks (syncReadSize in
-             * src/js/internal/http.ts), it is read as libuv would. Its first bytes can arrive with its head. */
+            /* A request body is a Node stream: until its reader shows that it takes whole chunks
+             * (IncomingMessage.prototype._read), it is read as libuv would. Its first bytes can arrive with its head. */
             s->node_stream_reads = 1;
         }
 

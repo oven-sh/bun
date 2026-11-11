@@ -5635,3 +5635,45 @@ describe.concurrent("addAbortSignal() on a branch of a byte tee", () => {
     expect(result).toMatchObject({ exitCode: 0, signalCode: null });
   });
 });
+
+it("text() of one chunk over a SharedArrayBuffer decodes a copy of it", async () => {
+  // The worker keeps switching between two bytes a character and one, so bytes that are measured and then decoded in place
+  // produce more code units than there is room for.
+  using dir = tempDir("shared-chunk-text", {
+    "worker.js": `
+      const { workerData, parentPort } = require("node:worker_threads");
+      const words = new Uint32Array(workerData);
+      parentPort.postMessage("ready");
+      for (;;) {
+        words.fill(0xa9c3a9c3);
+        words.fill(0x61616161);
+      }
+    `,
+    "main.js": `
+      const { Worker } = require("node:worker_threads");
+      const { once } = require("node:events");
+      const shared = new SharedArrayBuffer(64 * 1024);
+      const worker = new Worker(require.resolve("./worker.js"), { workerData: shared });
+      await once(worker, "message");
+      for (const chunk of [new Uint8Array(shared), shared]) {
+        for (let i = 0; i < 50; i++) {
+          const stream = new ReadableStream({ start(c) { c.enqueue(chunk); c.close(); } });
+          const text = await Bun.readableStreamToText(stream);
+          if (/[^a\u00e9\ufffd]/.test(text)) throw new Error("unexpected text");
+        }
+      }
+      console.log("done");
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "done\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

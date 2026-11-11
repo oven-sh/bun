@@ -11,6 +11,7 @@
 #include "GeneratedBlob.h"
 #include "GeneratedSink.h"
 #include "helpers.h"
+#include "JSBuffer.h"
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamController.h"
@@ -470,6 +471,14 @@ static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out)
     return false;
 }
 
+static bool isSharedBinaryChunk(JSValue chunk)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
+        return view->isShared();
+    auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk);
+    return jsBuffer && jsBuffer->isShared();
+}
+
 // The toArrayBuffer chunk-array converter (RS:157-206).
 static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue chunksValue)
 {
@@ -590,6 +599,12 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
             if (exceedsStringLimit(span.size())) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
+            }
+            WTF::MallocSpan<uint8_t> copyOfSharedBytes;
+            if (isSharedBinaryChunk(chunk)) [[unlikely]] {
+                copyOfSharedBytes = Bun::copySharedBytes(globalObject, scope, span);
+                RETURN_IF_EXCEPTION(scope, {});
+                span = copyOfSharedBytes.span();
             }
             WTF::String text = Zig::convertUTF8ToString(span);
             if (text.isNull() && !span.empty()) [[unlikely]] {

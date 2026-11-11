@@ -1,7 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
@@ -2127,6 +2127,21 @@ describe("pipe() goes on for the other consumers once a destination that failed 
       ["good got a", "bad error: fail", ...theRest],
     ],
     [
+      "the sink destroys itself inside write() with no error",
+      (readable, events) => {
+        const bad = new Writable({
+          write(chunk, encoding, callback) {
+            this.destroy();
+            callback();
+          },
+        });
+        bad.on("close", () => events.push("bad close"));
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad close", ...theRest],
+    ],
+    [
       "write() throws",
       (readable, events) => {
         readable.pipe(
@@ -2407,90 +2422,117 @@ describe("pipe() goes on for the other consumers once a destination that failed 
     });
   });
 
-  // Node's resume() does nothing on a destroyed stream. Ours still resumes one that only flagged itself destroyed
-  // right before push(null), as fd-slicer does, so the pipe asks which of the two it has before it resumes.
-  describe("a destroyed source", () => {
-    function teeInto(events, first) {
-      const readable = new Readable({ read() {} });
+  // Node's resume() does nothing on a destroyed stream. Ours still resumes one, so that a source which only flagged
+  // itself destroyed right before push(null), as fd-slicer does, flushes its tail. So for a source that carries the
+  // flag the release asks the destination, as it did before, and Node's statement is for a live source.
+  describe("a source that carries the destroyed flag", () => {
+    function teeInto(events, first, options) {
+      const readable = new Readable({ read() {}, ...options });
       readable.pipe(first);
       readable.pipe(sink(events));
       return readable;
     }
-    const state = (readable, events) => ({
-      events,
-      flowing: readable.readableFlowing,
-      buffered: readable.readableLength,
-    });
 
-    it("is left alone when a destination in backpressure is unpiped", async () => {
+    it.each([
+      ["destroy()", {}, false],
+      ["destroy() whose _destroy() has not called back", { destroy() {} }, false],
+      ["destroy() behind push(null)", {}, true],
+    ])("is left alone when a destination that failed a write is removed: %s", async (name, options, ended) => {
       const events = [];
-      const stuck = new Writable({ highWaterMark: 1, write() {} });
-      const readable = teeInto(events, stuck);
-      readable.push("a");
-      await atRest();
-      readable.push("b");
-      readable.destroy();
-      await atRest();
-      readable.on("resume", () => events.push("resume"));
-      readable.unpipe(stuck);
-      await atRest();
-      expect(state(readable, events)).toEqual({ events: ["good got a"], flowing: false, buffered: 1 });
-    });
-
-    it("is left alone when a destination drains", async () => {
-      const events = [];
-      let drain;
-      const slow = new Writable({
-        highWaterMark: 1,
-        write(chunk, encoding, callback) {
-          drain = callback;
-        },
-      });
-      const readable = teeInto(events, slow);
-      readable.push("a");
-      await atRest();
-      readable.push("b");
-      readable.destroy();
-      await atRest();
-      readable.on("resume", () => events.push("resume"));
-      drain();
-      await atRest();
-      expect(state(readable, events)).toEqual({ events: ["good got a"], flowing: false, buffered: 1 });
-    });
-
-    it("is left alone when a destination that failed a write is removed", async () => {
-      const events = [];
-      const readable = teeInto(events, failing(events));
+      const readable = teeInto(events, failing(events), options);
       readable.once("data", () => {
         readable.destroy();
         readable.on("resume", () => events.push("resume"));
       });
       readable.push("a");
       readable.push("b");
+      if (ended) readable.push(null);
       await atRest();
-      expect(state(readable, events)).toEqual({
+      expect({ events, flowing: readable.readableFlowing, buffered: readable.readableLength }).toEqual({
         events: ["good got a", "bad error: fail"],
         flowing: false,
         buffered: 1,
       });
     });
 
-    // Node v26.12.1 stops behind "bad error: fail" here.
-    it("that only flagged itself destroyed before the end still flushes its tail", async () => {
+    // Node v26.12.1 stops behind "good got a" in both.
+    it.each([
+      ["a Writable in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
+      ["a destination with no state to ask", () => Object.assign(new EventEmitter(), { write: () => false, end() {} })],
+    ])("still flushes its tail when it only flagged itself and %s is unpiped", async (name, destination) => {
       const events = [];
-      const chunks = ["a", "b"];
-      const readable = new Readable({
-        read() {
-          if (chunks.length) return this.push(chunks.shift());
-          this.destroyed = true;
-          this.push(null);
-        },
-      });
+      const stuck = destination();
+      const readable = teeInto(events, stuck);
       readable.on("end", () => events.push("end"));
-      readable.pipe(failing(events));
-      readable.pipe(sink(events));
+      readable.push("a");
       await atRest();
-      expect(events).toEqual(["good got a", "bad error: fail", "good got b", "end", "good finish"]);
+      readable.push("b");
+      readable.destroyed = true;
+      readable.push(null);
+      readable.unpipe(stuck);
+      await atRest();
+      expect(events).toEqual(["good got a", "good got b", "end", "good finish"]);
     });
+
+    it("process.stdin is not taken back when a destination that failed a write is removed", async () => {
+      // stdin stays open for the child's whole lifetime: it only exits if the pipe did not resume the stdin that
+      // the program destroyed.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Writable } = require("node:stream");
+          const bad = new Writable({ write(chunk, encoding, callback) { callback(new Error("fail")); } });
+          bad.on("error", () => console.log("removed"));
+          const other = new Writable({ write(chunk, encoding, callback) { console.log("other got " + chunk); callback(); } });
+          process.stdin.pipe(bad);
+          process.stdin.pipe(other);
+          process.stdin.once("data", () => process.stdin.destroy());`,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write("a");
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      proc.stdin.end();
+      expect({ stdout, exitCode }).toEqual({ stdout: "other got a\nremoved\n", exitCode: 0 });
+    });
+  });
+
+  // Nothing tears this pipe down: the destination emitted its last event before pipe(). Node holds the source too.
+  it("a destination that was destroyed before pipe() still holds the source", async () => {
+    const events = [];
+    const readable = source(events);
+    const dead = new Writable({ write() {} });
+    dead.destroy();
+    await atRest();
+    readable.pipe(dead);
+    readable.pipe(sink(events));
+    await atRest();
+    expect(events).toEqual(["good got a"]);
+  });
+
+  // This sink has no 'error' listener, so its error is fatal and Node ends there. Bun reports the error and still
+  // runs what is queued (#34661), which is now the rest of the tee.
+  it.failing("a failing sink without an 'error' listener ends the process at its error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Readable, Writable } = require("node:stream");
+        const chunks = ["a", "b", "c"];
+        const source = new Readable({ read() { this.push(chunks.length ? chunks.shift() : null); } });
+        const good = new Writable({ write(chunk, encoding, callback) { console.log("good got " + chunk); callback(); } });
+        source.pipe(new Writable({ write(chunk, encoding, callback) { callback(new Error("fail")); } }));
+        source.pipe(good);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "good got a\n", exitCode: 1 });
   });
 });

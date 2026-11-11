@@ -1,5 +1,6 @@
 // A destination that fails a write in its own call, beside the others of one Readable: what the others get once it is gone, whether the source still waits for one that has not drained,
 // what becomes of a source that the program paused or destroyed meanwhile, and of one that only flagged itself destroyed before its end.
+import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -9,7 +10,7 @@ const reading = () => {
   source.on("end", () => console.log("  end"));
   return source;
 };
-const pushed = () => new Readable({ read() {} });
+const pushed = options => new Readable({ read() {}, ...options });
 const sink = (name = "good") => {
   const it = new Writable({ write(chunk, encoding, done) { console.log("  " + name, "got", String(chunk)); done(); } });
   it.on("finish", () => console.log("  " + name, "finish"));
@@ -37,6 +38,16 @@ console.log("the failing one between two others");
   source.pipe(sink("first"));
   source.pipe(failing());
   source.pipe(sink("last"));
+  await turn();
+  say(source);
+}
+console.log("one that destroys itself and says no error");
+{
+  const source = reading();
+  const gone = new Writable({ write(chunk, encoding, done) { this.destroy(); done(); } });
+  gone.on("close", () => console.log("  bad close"));
+  source.pipe(gone);
+  source.pipe(sink());
   await turn();
   say(source);
 }
@@ -100,42 +111,13 @@ console.log("every destination at once");
   await turn();
   say(source);
 }
-console.log("a destroyed source, and one in backpressure goes");
-{
-  const source = pushed();
-  const stuck = new Writable({ highWaterMark: 1, write() {} });
-  source.pipe(stuck);
-  source.pipe(sink());
-  source.push("a");
-  await turn();
-  source.push("b");
-  source.destroy();
-  await turn();
-  source.on("resume", () => console.log("  resume"));
-  source.unpipe(stuck);
-  await turn();
-  say(source);
-}
-console.log("a destroyed source, and one drains");
-{
-  const source = pushed();
-  let drain;
-  const slow = new Writable({ highWaterMark: 1, write(chunk, encoding, done) { drain = done; } });
-  source.pipe(slow);
-  source.pipe(sink());
-  source.push("a");
-  await turn();
-  source.push("b");
-  source.destroy();
-  await turn();
-  source.on("resume", () => console.log("  resume"));
-  drain();
-  await turn();
-  say(source);
-}
-console.log("a destroyed source, and the failing one goes");
-{
-  const source = pushed();
+for (const [title, options, ended] of [
+  ["a destroyed source, and the failing one goes", {}, false],
+  ["a source whose destroy has not called back, and the failing one goes", { destroy() {} }, false],
+  ["a source destroyed behind its end, and the failing one goes", {}, true],
+]) {
+  console.log(title);
+  const source = pushed(options);
   source.pipe(failing());
   source.pipe(sink());
   source.once("data", () => {
@@ -144,22 +126,26 @@ console.log("a destroyed source, and the failing one goes");
   });
   source.push("a");
   source.push("b");
+  if (ended) source.push(null);
   await turn();
   say(source);
 }
-console.log("a source that says it is destroyed before its end");
-{
-  const chunks = ["a", "b"];
-  const source = new Readable({
-    read() {
-      if (chunks.length) return this.push(chunks.shift());
-      this.destroyed = true;
-      this.push(null);
-    },
-  });
+for (const [title, destination] of [
+  ["a source that only says it is destroyed, and one in backpressure goes", () => new Writable({ highWaterMark: 1, write() {} })],
+  ["a source that only says it is destroyed, and one with no state goes", () => Object.assign(new EventEmitter(), { write: () => false, end() {} })],
+]) {
+  console.log(title);
+  const source = pushed();
+  const stuck = destination();
   source.on("end", () => console.log("  end"));
-  source.pipe(failing());
+  source.pipe(stuck);
   source.pipe(sink());
+  source.push("a");
+  await turn();
+  source.push("b");
+  source.destroyed = true;
+  source.push(null);
+  source.unpipe(stuck);
   await turn();
   say(source);
 }

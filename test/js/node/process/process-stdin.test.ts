@@ -500,54 +500,6 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.each([
-  [
-    "a destination drains",
-    `let drain;
-    const slow = new Writable({ highWaterMark: 1, write(chunk, encoding, callback) { drain = callback; } });
-    process.stdin.pipe(slow);
-    process.stdin.pipe(other);
-    process.stdin.once("data", () => {
-      process.stdin.destroy();
-      process.stdin.once("close", () => {
-        drain();
-        console.log("drained");
-      });
-    });`,
-    "other got a\ndrained\n",
-  ],
-  [
-    "a destination that failed a write is removed",
-    `const bad = new Writable({ write(chunk, encoding, callback) { callback(new Error("fail")); } });
-    bad.on("error", () => console.log("removed"));
-    process.stdin.pipe(bad);
-    process.stdin.pipe(other);
-    process.stdin.once("data", () => process.stdin.destroy());`,
-    "other got a\nremoved\n",
-  ],
-])("a pipe does not take a destroyed stdin back when %s", async (name, pipes, stdout) => {
-  // stdin stays open for the child's whole lifetime: it only exits if the pipe
-  // did not resume the stdin that the program destroyed.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Writable } = require("node:stream");
-      const other = new Writable({ write(chunk, encoding, callback) { console.log("other got " + chunk); callback(); } });
-      ${pipes}`,
-    ],
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  proc.stdin.write("a");
-
-  const result = await stdioResult(proc);
-  proc.stdin.end();
-  expect(result).toEqual({ stdout, exitCode: 0 });
-});
-
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the

@@ -1,0 +1,22 @@
+# `const o = { width: w }; o.height`: the walk has made the cell a moment ago and knows its order word, which lists its keys: `height` is not among them. So the slot is empty, and where an empty slot is undefined
+# (nothing above answers to the name) the read loads nothing. Nothing else needs the object then, and the sweep drops it. A store on one way alone ends what is known of the word where the ways meet.
+# f1 = lacks, f2 = has, f3 = maybe
+# -- source: read-of-a-field-that-a-fresh-object-lacks-loads-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# type Options = { width?: number; height?: number; style?: { bold?: boolean; color?: string } };
+# function lacks(w: number) { const o: Options = { width: w }; return o.height; }
+# function has(w: number) { const o: Options = { width: w }; return o.width; }
+# function maybe(w: number) { const o: Options = { width: w }; if (w > 1) o.height = 2; return o.height; }
+# sink(lacks, has, maybe);
+# -- end of source
+# RUN(LACKS): walk f1 mechanisms=all
+# LACKS-NOT: GetSlotOrUndefined
+# RUN(GONE): walk f1 mechanisms=all
+# GONE-NOT: = NewObject
+# RUN(WITHHELD): walk f1 mechanisms=all-Folding
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: = GetSlotOrUndefined {{*}}key="height"
+# RUN(MAYBE): walk f3 mechanisms=all
+# MAYBE-LABEL: code f3:Body
+# MAYBE: PutSlotOrAdd {{*}}key="height"
+# MAYBE: = GetSlotOrUndefined {{*}}key="height"

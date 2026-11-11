@@ -1,0 +1,14 @@
+# the same program with typed operations withheld: the definition stays under its computed key
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: DefineGetter
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: DefineGetter {{*}}key="size"
+# -- source: accessor-under-a-key-that-is-one-name-goes-by-the-name.ts
+# declare function sink(...values: unknown[]): void;
+# function named(on: boolean) { const key = on ? "size" : "size"; return { get [key]() { return 1; } }; }
+# function computed(key: string) { return { get [key]() { return 1; } }; }
+# function indexed(on: boolean) { const key = on ? "7" : "7"; return { get [key]() { return 1; } }; }
+# sink(named, computed, indexed);
+# -- end of source
+# f1 = named, f2 = computed, f3 = indexed

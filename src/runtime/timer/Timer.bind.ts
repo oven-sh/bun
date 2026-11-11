@@ -7,13 +7,25 @@ export const timerClockMs = b.fn({ returns: b.f64 });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 export const setNextTimerId = b.fn({ args: { id: b.u64.optional }, length: 1, capability: "heap", throws: true });
 
-const chainable = { returns: b.self, passThis: true, invalidThis: "undefined" } as const;
+// These change flags of the native timer and its place among the timers that wait. None of them keeps the wrapper or hands it to anybody but the caller.
+const inspectsTimer = { this: table.inspected };
+const answersTimer = { this: [table.returned] };
+// The handle of the native timer holds the wrapper again. Only the firing takes it out, as `this` of the callback of that timer, which the entry that stored the callback says.
+const keepsTimer = { this: [table.returned, table.storedIn(table.nativeCell("Timeout.wrapper"))] };
+
+const chainable = {
+  returns: b.self,
+  passThis: true,
+  answersThis: true,
+  invalidThis: "undefined",
+  uses: answersTimer,
+} as const;
 const ref = { ...chainable, rustName: "do_ref" } as const;
 const unref = { ...chainable, rustName: "do_unref" } as const;
 const destroyed = { getter: b.bool, pure: true } as const;
-const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
-const dispose = { capability: "js", invalidThis: "undefined", name: "" } as const;
-const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "" } as const;
+const hasRef = { returns: b.bool, invalidThis: "undefined", uses: inspectsTimer } as const;
+const dispose = { capability: "js", invalidThis: "undefined", name: "", uses: inspectsTimer } as const;
+const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "", uses: inspectsTimer } as const;
 
 export const Timeout = b.class({
   rustPath: "crate::timer::TimeoutObject",
@@ -31,7 +43,7 @@ export const Timeout = b.class({
     close: { ...chainable, capability: "js" },
     hasRef,
     ref,
-    refresh: { ...chainable, capability: "js" },
+    refresh: { ...chainable, capability: "js", uses: keepsTimer },
     unref,
     "@@dispose": dispose,
     "@@toPrimitive": toPrimitive,

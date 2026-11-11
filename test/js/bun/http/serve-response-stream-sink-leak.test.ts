@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, withoutAsanQuarantine } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "serve-response-stream-sink-leak-fixture.ts");
@@ -49,7 +49,7 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   // Without LeakSanitizer, measure RSS growth.
   await using proc = Bun.spawn({
     cmd: [bunExe(), fixture],
-    env: bunEnv,
+    env: withoutAsanQuarantine(bunEnv),
     stdout: "pipe",
     stderr: "pipe",
   });

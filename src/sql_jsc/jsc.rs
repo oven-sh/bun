@@ -177,7 +177,7 @@ pub struct SqlRuntimeHooks {
     /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
     pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
     /// `&mut runtime_state().timer` — opaque `bun_runtime::timer::All`.
-    pub timer_heap: unsafe fn(*mut VirtualMachine) -> *mut c_void,
+    pub timer_heap: fn(*mut VirtualMachine) -> *mut c_void,
     /// `Timer.All.insert` — push an intrusive `EventLoopTimer` into the heap.
     pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
     /// `Timer.All.remove`.
@@ -185,7 +185,7 @@ pub struct SqlRuntimeHooks {
     /// Parses a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when it threw.
-    pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
+    pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> *mut c_void,
     /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
     pub ssl_config_free: unsafe fn(*mut c_void),
     /// `SSLConfig::asUSocketsForClientVerification`.
@@ -377,11 +377,6 @@ pub mod api {
         #[derive(Default)]
         pub struct SSLConfig(Option<NonNull<c_void>>);
 
-        // SAFETY: the boxed `bun_runtime::socket::SSLConfig` is `Send` (only
-        // `CString`/`Vec`/`AtomicU64` fields); the handle moves between
-        // construction and the connection struct on the same JS thread anyway.
-        unsafe impl Send for SSLConfig {}
-
         impl Drop for SSLConfig {
             fn drop(&mut self) {
                 if let Some(p) = self.0.take() {
@@ -441,8 +436,7 @@ pub mod api {
             }
 
             pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-                // SAFETY: hook contract — may run JS getters / throw.
-                let config = unsafe { (hooks().ssl_config_from_js)(global, value) };
+                let config = (hooks().ssl_config_from_js)(global, value);
                 match NonNull::new(config) {
                     Some(config) => Ok(Self(Some(config))),
                     None => Err(JsError::Thrown),

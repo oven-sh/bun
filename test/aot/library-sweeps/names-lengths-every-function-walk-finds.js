@@ -19,11 +19,16 @@ const passedOver = new Set([
   "globalThis.Bun.env",
   "globalThis.process.mainModule",
   "globalThis.ShadowRealm",
-  // A compiled program makes the agent at its first read, so there this is an accessor.
-  "node:_http_agent.globalAgent",
-  "node:_http_agent.globalAgent<get>",
-  "node:_http_agent.globalAgent<set>",
 ]);
+// The bundler of plain Bun's library gives these functions names of its own ("Cipheriv2", "$"). A compiled program says what is written, as Node does:
+// parallel/builtin-modules/functions-that-the-bundler-of-the-library-renames.js.
+const renamedByBundler = new Set([
+  "@vercel/fetch",
+  "node:_http_server.ServerResponse.prototype.setTimeout",
+  "node:crypto.Cipheriv",
+  "node:crypto.Decipheriv",
+]);
+const describeAt = (path, fn, key) => (key === "name" && renamedByBundler.has(path) ? "by the bundler" : describe(fn, key));
 const visit = (value, path) => {
   if (Object(value) !== value || found.has(value) || passedOver.has(path)) return;
   found.add(value);
@@ -96,6 +101,8 @@ visit(require("node:string_decoder"), "node:string_decoder");
 visit(require("node:timers"), "node:timers");
 visit(require("node:timers/promises"), "node:timers/promises");
 visit(require("node:tls"), "node:tls");
+// A compiled node:tty holds an accessor under this name until somebody reads it: parallel/builtin-modules/node-tty-holds-read-stream-before-anybody-reads-it.cjs.
+void require("node:tty").ReadStream;
 visit(require("node:tty"), "node:tty");
 visit(require("node:url"), "node:url");
 visit(require("node:util"), "node:util");
@@ -112,7 +119,7 @@ while (queue.length) {
   const [value, path] = queue.shift();
   if (path.split(".").length > 7) continue;
   if (typeof value === "function")
-    lines.push([path, ...["name", "length", "prototype"].map(key => key + " " + describe(value, key))].join("  "));
+    lines.push([path, ...["name", "length", "prototype"].map(key => key + " " + describeAt(path, value, key))].join("  "));
   if (Array.isArray(value) || ArrayBuffer.isView(value)) continue;
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key);

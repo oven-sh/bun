@@ -1,0 +1,19 @@
+# f1 = checksum
+# -- source: sum-of-code-units.ts
+# function checksum(text: string): number {
+#   let sum = 0;
+#   for (let i = 0; i < text.length; i++) sum = (sum + text.charCodeAt(i)) | 0;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = checksum(input);
+# -- end of source
+# The compiler before this one: 4 instructions, 1 of them patches, a turn of the written loop steps by 1 ; 18 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 29, patches 8, moves 0, unlikely 6 ; loop: operations 9, patches 2, moves 0, unlikely 3.
+# Since the turns are laid out once for each width of the text a second loop of eight turns stands between the two, for wide texts: operations 28, patches 8, moves 0, unlikely 6.
+# RUN(X64): loops most:29,28,9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 29
+# X64-NEXT: loop: at most 28
+# X64-NEXT: loop: at most 9

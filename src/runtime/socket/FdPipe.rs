@@ -86,8 +86,8 @@ impl FdPipe {
             FilePoll::init(ctx, self.fd, Default::default(), owner)
         });
         self.poll.set(Some(poll));
-        // SAFETY: `poll` is this pipe's live hive slot, and no other borrow of it or of the loop is live.
-        unsafe { (*poll).register(ctx.platform_event_loop(), Flags::Writable, true) }.is_ok()
+        // SAFETY: `poll` is this pipe's live hive slot, no other borrow of it is live, and the loop is this thread's.
+        unsafe { (*poll).register(&*ctx.loop_(), Flags::Writable, true) }.is_ok()
     }
 
     #[cfg(windows)]

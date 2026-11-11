@@ -27,7 +27,7 @@ names.forEach(function (name) {
     return [thing, size(thing), first(thing)];
   });
 });
-(async function () {
+module.exports = (async function () {
   for (var name of names) {
     try {
       var thing = await imports.imported(name);

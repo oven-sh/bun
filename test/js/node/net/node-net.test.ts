@@ -24,6 +24,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { request } from "node:http";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -1168,6 +1169,44 @@ it.each([false, true])(
     });
   },
 );
+
+describe.concurrent("'timeout' is emitted with a write that does not move", () => {
+  it("while the socket is connecting", async () => {
+    const neverAnswers = () => {};
+    const socket = connect({ host: "localhost", port: 1, lookup: neverAnswers });
+    try {
+      socket.write("x");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(socket.connecting).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it.each([
+    ["the TLS handshake gets no answer", tlsConnect as typeof connect, (socket: any) => socket.secureConnecting],
+    ["the peer does not read", connect, (socket: Socket) => socket.writableLength > 0],
+  ])("while %s", async (_, dial, isWaiting) => {
+    const accepted: Socket[] = [];
+    const server = createServer(socket => accepted.push(socket)).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = dial({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+    try {
+      await once(socket, "connect");
+      // The kernel takes only so much for a peer that does not read.
+      do socket.write(Buffer.alloc(16 * 1024 * 1024));
+      while (socket.writableLength === 0);
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(isWaiting(socket)).toBe(true);
+    } finally {
+      socket.destroy();
+      for (const socket of accepted) socket.destroy();
+      server.close();
+    }
+  });
+});
 
 // Regression test for #30697: net.connect({ localPort, lookup }) on the
 // happy-eyeballs path must not throw a ReferenceError before the socket

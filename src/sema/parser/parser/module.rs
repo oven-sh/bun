@@ -686,6 +686,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             mode,
             stmt: StmtId::NONE,
             attributes,
+            loaded_as: Atom::NONE,
         });
         let statement = self.add_stmt(StmtKind::Import(declaration), start, modifiers);
         self.f[declaration].stmt = statement;

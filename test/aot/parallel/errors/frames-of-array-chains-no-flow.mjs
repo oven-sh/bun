@@ -1,4 +1,3 @@
-// Flags: --aot-disable=flow-results
 // A trace that is taken in the callback of an array method names the method, also where the compiler runs a chain of methods as one loop.
 const names = e => String(e.stack).split("\n").slice(1, 6).map(l => l.trim().replace(/\(?[^ (]*[\\/]/, "(")).join(" < ");
 function take(x) { if (x > 1) throw new Error("x"); return true; }

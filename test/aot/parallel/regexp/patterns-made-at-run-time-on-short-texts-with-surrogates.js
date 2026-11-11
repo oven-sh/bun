@@ -1,5 +1,8 @@
 // A pattern in unicode mode takes a lead and a trail surrogate as one character. A text with a surrogate among its first units goes to the matcher that does so at once.
-// The patterns are made from texts at run time, so no code was compiled for them. Every pattern is asked about every text, from every place.
+// The patterns are made from texts that only the run knows, so no code was compiled for them. Every pattern is asked about every text, from every place.
+// The build goes through the start of the program on real values, and both ways where a condition hangs on what only the run knows. So a text is the run's alone only where it hangs on a VALUE that only the run knows:
+// here, how much is cut off in front, which is nothing.
+// COUNTER: RegExpMatchesInterpreted >= 100000
 const sources = [
   ".",
   "^.$",
@@ -84,7 +87,7 @@ for (const flags of ["u", "iu", "gu", "giu", "yu", "su", "mu", "v", "g", ""]) {
   for (const source of sources) {
     let pattern;
     try {
-      pattern = new RegExp(source, flags);
+      pattern = new RegExp(source.slice(Math.min(0, process.pid)), flags);
     } catch (error) {
       mix(source + flags + error.name);
       continue;

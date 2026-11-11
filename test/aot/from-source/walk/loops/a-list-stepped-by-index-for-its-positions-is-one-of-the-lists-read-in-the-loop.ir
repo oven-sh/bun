@@ -1,0 +1,19 @@
+# -- source: a-list-stepped-by-index-for-its-positions-is-one-of-the-lists-read-in-the-loop.cjs
+# "use strict";
+# const key = JSON.parse('"each"');
+# const T = { each(x) { let s = 0; for (const i of x.keys()) s += i; return s; } };
+# class Own extends Array { *keys() { yield 70; } }
+# print(T[key]([5, , 7]), T[key](Own.from([1, 2])), T[key](new Map([[9, 1]])), T[key]([]));
+# -- end of source
+# `for (const i of list.keys())`: the loop steps a list by index and is handed its positions. Such a list counts among the lists that the loop reads: it is asked once in front whether it is a list as made, and the loop is built twice: a copy
+# that steps by index alone, and the loop as written for whatever else has a method `keys`. The recognizer says nothing of what the step hands out: that of lists stepped for their elements is as it was.
+# f1 = each
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: isLoopHead=true
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 3 70 9 0
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 3 70 9 0
+# NONE-NEXT: exited with 0

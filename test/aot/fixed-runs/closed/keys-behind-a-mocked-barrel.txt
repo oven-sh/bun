@@ -1,0 +1,23 @@
+A barrel stars a CommonJS package and exports a name of its own; a mock stands in place of it: the barrels above hand on what the mock has.
+#### a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./barrel.js", () => ({ x: "mock x", extra: "mock extra" }));
+import { seen } from "./user.js";
+test("a", async () => console.log("| CASE", seen(), Object.keys(await import("./barrel2.js")).join("+")));
+#### barrel.js
+export * from "pkg";
+export const own = "own";
+export * from "./barrel2.js";
+#### barrel2.js
+export * from "./barrel.js";
+export const second = "second";
+#### node_modules/pkg/index.js
+exports.x = "real x";
+#### node_modules/pkg/package.json
+{ "name": "pkg", "main": "index.js" }
+#### package.json
+{ "name": "mock-star-keys", "type": "module" }
+#### user.js
+import * as all from "./barrel2.js";
+const key = JSON.parse('"own"');
+export const seen = () => [Object.keys(all).join("+"), "own" in all, key in all, all.own, all[key], all.x, all.extra].join();

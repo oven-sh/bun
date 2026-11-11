@@ -306,6 +306,22 @@ impl Handlers {
         Ok(())
     }
 
+    /// Calls `writeComplete(socket, status)`. What it throws is an uncaught exception, as in Node.
+    pub(crate) fn call_write_complete(&self, this_value: JSValue, status: core::ffi::c_int) {
+        let callback = self.on_write_complete();
+        if callback.is_empty() {
+            return;
+        }
+        let global = self.global_object;
+        global.bun_vm().event_loop_mut().run_callback(
+            self.context,
+            callback,
+            &global,
+            this_value,
+            &[this_value, JSValue::js_number_from_int32(status)],
+        );
+    }
+
     pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,

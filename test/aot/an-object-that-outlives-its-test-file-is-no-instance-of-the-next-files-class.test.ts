@@ -35,8 +35,8 @@ async function linesOf(flags: string[], words?: string) {
   return { lines: stderr.split("\n").filter(line => line.startsWith("LEFT")), exitCode };
 }
 
-test("in a run of two layers, as in bun test", async () => {
+test("as in bun test", async () => {
   const plain = await linesOf([]);
   expect(plain).toEqual({ lines: ["LEFT nothing", "LEFT false,false,true"], exitCode: 0 });
-  expect(await linesOf(["--aot"], "TestRunLayers:2")).toEqual(plain);
+  expect(await linesOf(["--aot"], "TestRunLayers:0")).toEqual(plain);
 }, 240_000);

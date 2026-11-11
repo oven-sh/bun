@@ -25,20 +25,20 @@ public:
     constexpr uint32_t index() const { return 0; }
 };
 
-class AskerOfModule {
+class ModuleRequesterScope {
 public:
-    AskerOfModule(JSGlobalObject*, const String&) {}
+    ModuleRequesterScope(JSGlobalObject*, const String&) {}
 };
 
-enum class LoadByName : uint8_t { Require,
+enum class LoadKind : uint8_t { Require,
     Import };
 enum class RequireOverride : uint8_t {
     ResolveFilename = 1 << 0,
     RequireFunction = 1 << 1,
 };
 
-inline void willLoadByName(JSGlobalObject*, JSValue, LoadByName = LoadByName::Require) {}
-inline void willAnswerWithModule(JSGlobalObject*, ModuleID, LoadByName = LoadByName::Require) {}
+inline void willLoadByName(JSGlobalObject*, JSValue, LoadKind = LoadKind::Require) {}
+inline void checkModuleAccess(JSGlobalObject*, ModuleID, LoadKind = LoadKind::Require) {}
 inline void willChangeRequireOverride(JSGlobalObject*, RequireOverride, bool) {}
 inline bool isCompiledModuleRecord(AbstractModuleRecord*) { return false; }
 inline bool entryPointIsCommonJS(JSGlobalObject*) { return false; }
@@ -47,22 +47,25 @@ inline bool hasESModuleMarker(JSCell*) { return false; }
 inline void setESModuleMarker(JSCell*, bool) {}
 
 inline void lockBuiltinsWithoutImage() {}
-inline ASCIILiteral evaluationRefusedMessage() { return ""_s; }
+inline ASCIILiteral rejectedEvaluationMessage() { return ""_s; }
 inline void hostDidCreateRealm(JSGlobalObject*) {}
 inline void hostDidCreateStructure(JSGlobalObject*, Structure*) {}
 inline void hostDidCreateConstructor(JSGlobalObject*, JSObject*) {}
 inline void hostDidCreateNodeModule(JSGlobalObject*, JSObject*) {}
-inline void hostDidCreateObjectOfGlobal(JSGlobalObject*, UniquedStringImpl*, JSObject*) {}
+inline void hostDidCreateGlobalMember(JSGlobalObject*, UniquedStringImpl*, JSObject*) {}
 inline void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral, std::span<const ASCIILiteral>) {}
 inline void hostDidReplaceProperty(JSGlobalObject*, UniquedStringImpl*) {}
 inline void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t, JSValue) {}
+inline void willExposeBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t) {}
+inline void willExposeBuiltinExportToNativeCode(JSGlobalObject*, uint32_t, ASCIILiteral) {}
 
 inline bool hasBuiltinModule(JSGlobalObject*, uint32_t) { return false; }
-inline bool refusesLibraryText() { return false; }
-inline bool refusesLibraryText(JSGlobalObject*) { return false; }
-inline bool refusesToRun(JSFunction*) { return false; }
-inline bool isNeededByNothingThatRuns(JSFunction*) { return false; }
+inline bool rejectsLibrarySource() { return false; }
+inline bool rejectsLibrarySource(JSGlobalObject*) { return false; }
+inline bool isFunctionDisallowed(JSFunction*) { return false; }
+inline bool isUnreachableLibraryFunction(JSFunction*) { return false; }
 inline void throwBuiltinNotCompiled(JSGlobalObject*, const String&) {}
+inline void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject*) {}
 
 namespace PropertyWalk {
 
@@ -84,6 +87,8 @@ enum class Presence : uint8_t { Present,
 
 constexpr bool isCompiledObject(const JSCell*) { return false; }
 template<typename Functor> Result forEachOwnProperty(VM&, JSObject*, Filter, const Functor&) { return Result::NeedsGenericPath; }
+template<typename Functor> Result forEachOwnPropertyAsCreated(VM&, JSObject*, const Functor&) { return Result::NeedsGenericPath; }
+inline JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned*) { return {}; }
 inline void materializeLazyProperties(VM&, JSObject*) {}
 inline void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject*) {}
 inline Presence tryGetOwnValue(JSObject*, UniquedStringImpl*, JSValue&) { return Presence::Unknown; }

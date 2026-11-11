@@ -898,22 +898,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// Calls `writeComplete(socket, status)`. What it throws is an uncaught exception, as in Node.
-    fn call_write_complete(handlers: &Handlers, this_value: JSValue, status: c_int) {
-        let callback = handlers.on_write_complete();
-        if callback.is_empty() {
-            return;
-        }
-        let global = handlers.global_object;
-        global.bun_vm().event_loop_mut().run_callback(
-            handlers.context(),
-            callback,
-            &global,
-            this_value,
-            &[this_value, JSValue::js_number_from_int32(status)],
-        );
-    }
-
     /// Completes a write from the event loop, like libuv, not inside the call that closed the handle or stopped its reads.
     fn complete_write_later(&self, handlers: &Rc<Handlers>, status: Option<c_int>) {
         if self.flags.get().contains(Flags::FINALIZING) {
@@ -1015,7 +999,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if queue.completion() == Completion::Owed {
             if !this.holds_unsent_tls_records() {
                 this.buffered_data_for_node_net.with_mut(|b| b.take());
-                Self::call_write_complete(&handlers, this.get_this_value(&global), 0);
+                handlers.call_write_complete(this.get_this_value(&global), 0);
             }
             return Ok(());
         }
@@ -2274,7 +2258,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if let Some(errno) = failed_write {
             let this_value = this.get_this_value(&handlers.global_object);
-            Self::call_write_complete(&handlers, this_value, uv_status(errno));
+            handlers.call_write_complete(this_value, uv_status(errno));
         }
 
         let callback = handlers.on_close();
@@ -3283,7 +3267,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get()
             .as_ref()
             .is_some_and(|handlers| handlers.mode == SocketMode::Server);
-        let groups: *mut bun_jsc::rare_data::SocketGroups = if accepted {
+        let groups = if accepted {
             // In its listener's own group: the listener's context.
             let listener_context = self
                 .handlers
@@ -3293,13 +3277,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             let vm = VirtualMachine::get();
             let context =
                 listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
-            core::ptr::from_mut(vm.as_mut().client_socket_groups_in(context))
+            vm.as_mut().client_socket_groups_in(context)
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
         };
-        // SAFETY: a boxed set that outlives this call; JS thread.
-        let groups = unsafe { &mut *groups };
         let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `options.ctx` is the +1 ref
@@ -3497,7 +3479,8 @@ impl<const SSL: bool> DeferredWriteCompletion<SSL> {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
         if let Some(status) = self.status {
-            NewSocket::<SSL>::call_write_complete(&self.handlers, self.this_value.get(), status);
+            self.handlers
+                .call_write_complete(self.this_value.get(), status);
         } else if self.socket.lost_write_of_stopped_reader() {
             self.socket.socket.get().close(uws::CloseCode::Failure);
         }
@@ -3871,6 +3854,14 @@ pub(crate) fn get_bytes_read(socket: SocketHandle<'_>) -> f64 {
         SocketHandle::Tcp(this) => this.total_bytes_read() as f64,
         SocketHandle::Tls(this) => this.total_bytes_read() as f64,
         SocketHandle::Ignored(_) => 0.0,
+    }
+}
+
+pub(crate) fn has_pending_read(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Tls(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Ignored(_) => false,
     }
 }
 

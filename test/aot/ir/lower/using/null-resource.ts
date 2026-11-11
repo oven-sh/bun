@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="maybe"
 // CHECK: [[method]] = Call [[helper]], -, [[resource]]
 // CHECK: TypeTest [[method]] testedType=undefined

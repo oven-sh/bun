@@ -476,6 +476,36 @@ describe("bundler", () => {
       `,
     },
   });
+  // A file imported with { type: "file" } is embedded byte for byte, whatever it begins with and whatever its extension.
+  itBundled("compile/EmbeddedFileKeepsItsBytes", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync } from "fs";
+        import utf8Bin from "./utf8.bin" with { type: "file" };
+        import utf8Txt from "./utf8.txt" with { type: "file" };
+        import utf8Js from "./utf8.js" with { type: "file" };
+        import utf16Bin from "./utf16.bin" with { type: "file" };
+        import utf16Json from "./utf16.json" with { type: "file" };
+        import bytesBin from "./bytes.bin" with { type: "file" };
+        import bytesTs from "./bytes.ts" with { type: "file" };
+        for (const path of [utf8Bin, utf8Txt, utf8Js, utf16Bin, utf16Json, bytesBin, bytesTs]) {
+          console.log(readFileSync(path).toString("hex"));
+        }
+      `,
+      "/utf8.bin": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.txt": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.js": Buffer.from("efbbbf61620a", "hex"),
+      "/utf16.bin": Buffer.from("fffe61006200", "hex"),
+      "/utf16.json": Buffer.from("fffe61006200", "hex"),
+      "/bytes.bin": Buffer.from("fffe000180810a", "hex"),
+      "/bytes.ts": Buffer.from("fffe000180810a", "hex"),
+    },
+    outfile: "dist/out",
+    run: {
+      stdout: "efbbbf61620a\nefbbbf61620a\nefbbbf61620a\nfffe61006200\nfffe61006200\nfffe000180810a\nfffe000180810a",
+    },
+  });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
     compile: true,

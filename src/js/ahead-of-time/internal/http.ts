@@ -14,6 +14,7 @@ const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kMadeOverHandle = Symbol("handle");
 // http.Server.prototype method for the `ws` package: takes a connection out of HTTP.
 const kLeaveHttp = Symbol("kLeaveHttp");
 // On a server socket: the stream that 'upgrade' got in its place, while the body of the request is incomplete.
@@ -47,10 +48,14 @@ const requestRoad: {
   continueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
-  beginDump?: (request: $Node.IncomingMessage) => void;
+  beginDump?: (request: $Node.IncomingMessage) => boolean;
+  readsUnseen?: (request: $Node.IncomingMessage) => boolean;
+  chainIsPlain?: () => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
+  resumeUnlessFlowing?: (socket: $Node.HttpSocket, asksWhetherReadable: boolean) => void;
 } = {};
 const responseRoad: {
+  IncomingMessage?: $Node.IncomingMessageConstructor;
   makeExchange?: (
     response: $Node.ServerResponse,
     connection: $Node.HttpServerSocket | null,
@@ -58,16 +63,22 @@ const responseRoad: {
     requestState: $Node.ReadableState | null,
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
+  storeOnMessageAsFirstHeaderDoes?: (
+    message: $Node.OutgoingMessage,
+    exchange: $Node.HttpExchange,
+    name: string,
+  ) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  spillStateReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (
     exchange: $Node.HttpExchange,
     message: $Node.OutgoingMessage,
     key: string,
     bit: number,
   ) => boolean;
-  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined, message: $Node.OutgoingMessage) => unknown[] | undefined;
+  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[] | null;
+  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined) => unknown[] | null;
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,
@@ -76,6 +87,7 @@ const responseRoad: {
     value: $Node.HttpHeaderValue,
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
+  noChunks?: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[];
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {
@@ -461,8 +473,8 @@ declare global {
       [kHandle]: NodeHTTPResponse | null | undefined;
       [kPendingCallbacks]: HttpWriteCallback[];
       /** `null` while the response waits for its turn on the connection. */
-      [fakeSocketSymbol]?: HttpSocket | null;
-      [kCloseCallback]?: () => void;
+      [fakeSocketSymbol]: HttpSocket | null | undefined;
+      [kCloseCallback]: (() => void) | undefined;
     }
 
     interface HttpServer {
@@ -686,6 +698,7 @@ export {
   kInternalSocketData,
   kLeaveHttp,
   kLenientValidation,
+  kMadeOverHandle,
   kNeedDrain,
   kOutHeaders,
   kPendingCallbacks,

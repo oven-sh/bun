@@ -1,0 +1,12 @@
+# a field of a parameter is read, a constructor function is constructed, and the field is read again: the construction runs nobody's code, so the second read is answered by the first
+# f1 = Point, f2 = twice
+# -- source: field-read-in-front-of-a-construction-is-remembered-behind-it.ts
+# declare function sink(...values: unknown[]): void;
+# class Holder { count = 1; }
+# function Point(this: any, x: number, y: number) { this.x = x; this.y = y; }
+# function twice(holder: Holder) { const before = holder.count; const point = new (Point as any)(before, 2); return before + holder.count + point.x; }
+# sink(twice, new Holder());
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-1: = GetSlot {{*}}key="count"

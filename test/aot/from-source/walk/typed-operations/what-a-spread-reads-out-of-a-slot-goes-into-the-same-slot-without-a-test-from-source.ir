@@ -1,0 +1,15 @@
+# `{ ...state, name: action.name }`: behind the test for the shapes of the state's layout the copy reads each slot and lays it into the same slot of a new object of that layout.
+# The slot holds what it takes by induction over its stores, so what comes out of it goes in again as it is: nothing is decoded and nothing is tested at that store.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest
+# CHECK: [[name]]: {{*}} @Cell32 = GetSlot {{*}} key="name"
+# CHECK-NOT: CheckProof {{*}} source=Field
+# CHECK: = NewObject -, [[name]],
+# RUN(NONE): walk f1 mechanisms=all
+# NONE-NOT: CheckProof {{*}} source=Field
+# -- source: what-a-spread-reads-out-of-a-slot-goes-into-the-same-slot-without-a-test-from-source.js
+# function reducer(state, action) { switch (action.type) { case "add": return { ...state, items: [...state.items, action.item], count: state.count + 1 }; case "clear": return { ...state, items: [], count: 0 }; case "rename": return { ...state, name: action.name }; default: return state; } }
+# function run(n) { let state = { name: "s", items: [], count: 0 }, total = 0; const actions = [{ type: "add", item: 1 }, { type: "add", item: 2 }, { type: "rename", name: "t" }, { type: "clear" }, { type: "noop" }]; for (let i = 0; i < n; i++) { state = reducer(state, actions[i % 5]); total += state.count + state.items.length; } return total; }
+# console.log(run(Number(process.env.COUNT ?? "1000")));
+# -- end of source

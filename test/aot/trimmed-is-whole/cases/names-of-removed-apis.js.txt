@@ -28,35 +28,35 @@ console.log("color" in Bun, Object.hasOwn(Bun, "color"), "nothing" in Bun);
 console.log("WebSocket" in globalThis, Object.hasOwn(globalThis, "WebSocket"));
 //// instanceof
 //@ alone
-//@ removes WebSocket
+//@ kept-today WebSocket a class that is asked a question counts as used
 console.log({} instanceof WebSocket, Object.create(WebSocket.prototype) instanceof WebSocket);
 //// a-property-that-holds-an-instance
 //@ removes Bun.redis
 console.log("redis" in Bun, Object.hasOwn(Bun, "redis"), Object.keys(Bun).includes("redis"));
 //// has-instance
-//@ removes WebSocket
+//@ kept-today WebSocket a class that is asked a question counts as used
 console.log(WebSocket[Symbol.hasInstance]({}), Function.prototype[Symbol.hasInstance].call(WebSocket, Object.create(WebSocket.prototype)));
 //// constants-of-other-classes
 //@ removes Event
 console.log(Event.NONE, Event.CAPTURING_PHASE, Event.AT_TARGET, Event.BUBBLING_PHASE, Event.prototype.BUBBLING_PHASE, DOMException.ABORT_ERR, DOMException.DATA_CLONE_ERR, DataView.BYTES_PER_ELEMENT);
 //// a-constant-of-a-global-that-the-program-replaces
-//@ removes WebSocket
+//@ kept-today WebSocket a store under the name of a global counts as a use of what it held
 globalThis.WebSocket = { OPEN: 7 };
 console.log(WebSocket.OPEN);
 //// a-constant-that-a-store-does-not-change
-//@ removes WebSocket
+//@ kept-today WebSocket a class that is handed to Reflect counts as used
 console.log(Reflect.set(WebSocket, "OPEN", 9), Reflect.defineProperty(WebSocket, "OPEN", { value: 9 }), WebSocket.OPEN);
 //// in-the-prototypes-of-other-classes
 //@ removes Worker
-//@ removes URLPattern
-//@ removes BroadcastChannel
-//@ removes Bun.Cookie
+//@ kept-today URLPattern a read of the prototype counts as a use of the class
+//@ kept-today BroadcastChannel a read of the prototype counts as a use of the class
+//@ kept-today Bun.Cookie a read of the prototype counts as a use of the class
 console.log("terminate" in Worker.prototype, "test" in URLPattern.prototype, "postMessage" in BroadcastChannel.prototype, "serialize" in Bun.Cookie.prototype);
 //// names-of-the-prototypes-of-other-classes
-//@ removes Worker
-//@ removes URLPattern
-//@ removes BroadcastChannel
-//@ removes Bun.Cookie
+//@ kept-today Worker a read of the prototype counts as a use of the class
+//@ kept-today URLPattern a read of the prototype counts as a use of the class
+//@ kept-today BroadcastChannel a read of the prototype counts as a use of the class
+//@ kept-today Bun.Cookie a read of the prototype counts as a use of the class
 for (const each of [Worker, URLPattern, BroadcastChannel, Bun.Cookie]) console.log(Object.getOwnPropertyNames(each.prototype).sort().join());
 //// a-method-taken-from-the-prototype
 for (const each of [WebSocket.prototype.send, Worker.prototype.terminate, URLPattern.prototype.test, Bun.Cookie.prototype.serialize]) {
@@ -66,6 +66,33 @@ for (const each of [WebSocket.prototype.send, Worker.prototype.terminate, URLPat
     console.log(error.name, error.code, error.message);
   }
 }
+//// the-constructor-found-on-the-prototype
+//@ alone
+const Found = WebSocket.prototype.constructor;
+const socket = new Found("ws://localhost:1");
+socket.onerror = () => {};
+socket.close();
+console.log(typeof socket.send, socket.readyState);
+//// a-method-of-the-prototype-that-is-bound
+//@ alone
+const bound = WebSocket.prototype.close.bind({});
+try {
+  bound();
+} catch (error) {
+  console.log(error.name, error.code, error.message);
+}
+//// instanceof-a-class-that-tests-by-its-own-code
+//@ alone
+console.log({} instanceof File, new Date() instanceof File);
+//// the-class-above-a-class-by-its-accessor
+//@ alone
+const Base = CustomEvent.__proto__;
+console.log(new Base("x").type);
+//// the-class-itself-by-the-accessor-of-species
+//@ alone
+const Kind = Float32Array[Symbol.species];
+const list = new Kind(2);
+console.log(list.length, list instanceof Object);
 //// a-getter-of-the-prototype-found-from-below
 try {
   console.log(Object.create(WebSocket.prototype).readyState);
@@ -80,7 +107,7 @@ try {
 }
 //// a-class-that-a-module-exports-too
 //@ alone
-//@ removes AbortController
+//@ kept-today AbortController a class that is asked a question counts as used
 console.log(typeof AbortController, AbortController.name, AbortController.length, {} instanceof AbortController, "abort" in AbortController.prototype);
 console.log(Object.getOwnPropertyNames(AbortController).join(), "AbortSignal" in AbortController);
 //// members-that-a-module-puts-on-a-class

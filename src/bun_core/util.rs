@@ -148,22 +148,6 @@ impl ZStr {
         // SAFETY: `p[len] == 0` (strlen postcondition) and `p[..len]` readable.
         unsafe { Self::from_raw(p.cast::<u8>(), len) }
     }
-    // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
-    // supported only as a transitional shim for ported fields that were typed
-    // `Box<ZStr>` before `ZBox` existed (e.g. `PackageManager.cache_directory_path`).
-    // The slice metadata of the returned `Box<ZStr>` covers `bytes.len() + 1`
-    // (i.e. INCLUDES the trailing NUL) so `Drop` deallocates the full
-    // allocation; `as_bytes()` will therefore include the trailing NUL.
-    // Retire once all `Box<ZStr>` fields are migrated to `ZBox`.
-    pub fn boxed(bytes: &[u8]) -> Box<ZStr> {
-        let mut v = Vec::with_capacity(bytes.len() + 1);
-        v.extend_from_slice(bytes);
-        v.push(0);
-        let b: Box<[u8]> = v.into_boxed_slice();
-        // SAFETY: `ZStr` is a transparent newtype over `[u8]`; the fat-pointer
-        // metadata (len = bytes.len()+1) is preserved by the `as *mut ZStr` cast.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
-    }
 }
 
 /// Owned, heap-allocated, NUL-terminated byte string. `.len()` / `Deref`
@@ -455,35 +439,12 @@ impl WStr {
     pub const fn as_ptr(&self) -> *const u16 {
         self.0.as_ptr()
     }
-    /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
-    /// Mirrors [`ZStr::from_raw_mut`] so callers can rewrite UTF-16 path
-    /// chars in place (Windows tar path-escape pass) without round-tripping
-    /// through an owned buffer.
-    #[inline]
-    pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
-        // SAFETY: caller upholds `ptr[..=len]` writable for `'a`; `WStr` is
-        // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
-        unsafe {
-            &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len))
-                as *mut WStr)
-        }
-    }
-    #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [u16] {
-        &mut self.0
-    }
 }
 impl core::ops::Deref for WStr {
     type Target = [u16];
     #[inline]
     fn deref(&self) -> &[u16] {
         &self.0
-    }
-}
-impl core::ops::DerefMut for WStr {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u16] {
-        &mut self.0
     }
 }
 impl AsRef<[u16]> for WStr {
@@ -684,10 +645,7 @@ pub use bun_alloc::SEP;
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
 /// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
-/// hard `assert!`. We do *not* bump this struct
-/// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
-/// `&mut [u8]` *as* `PathBuffer`, and raising the nominal alignment would
-/// make *those* casts unsound instead. In practice every `PathBuffer` fed to
+/// hard `assert!`. In practice every `PathBuffer` fed to
 /// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
 /// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]
@@ -1288,9 +1246,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 /// -2 when the buffer is too small, 0 on
 /// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
 /// down from `bun_sys` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable `u16` units.
-pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
+pub fn fd_path_raw_w(fd: Fd, buf: &mut [u16]) -> isize {
     #[cfg(windows)]
     {
         unsafe extern "system" {
@@ -1301,9 +1257,11 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
                 dwFlags: u32,
             ) -> u32;
         }
+        let cap = buf.len();
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf.as_mut_ptr(), cap as u32, 0) }
+            as usize;
         // The size check below is `>=` because a return
         // value equal to `cap` is the buffer-too-small sentinel (required size
         // including NUL), not a successful write of `cap` chars.
@@ -1317,44 +1275,33 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
-        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
-        // `buf` would invalidate that borrow's tag under Stacked Borrows.
-        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
-        // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+        let buf = &mut buf[..n];
         let bs = b'\\' as u16;
         let off: usize =
-            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+            if n >= 4 && buf[0] == bs && buf[1] == bs && buf[2] == b'?' as u16 && buf[3] == bs {
                 if n >= 8
-                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                    && at(7) == bs
+                    && (buf[4] == b'U' as u16 || buf[4] == b'u' as u16)
+                    && (buf[5] == b'N' as u16 || buf[5] == b'n' as u16)
+                    && (buf[6] == b'C' as u16 || buf[6] == b'c' as u16)
+                    && buf[7] == bs
                 {
                     // `\\?\UNC\server\share` → `\\server\share`
-                    // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
+                    buf[6] = bs;
+                    buf.copy_within(6.., 0);
                     6
                 } else {
                     // `\\?\C:\...` → `C:\...`
+                    buf.copy_within(4.., 0);
                     4
                 }
             } else {
                 0
             };
-        let out_len = n - off;
-        if off != 0 {
-            // SAFETY: src = buf+off and dst = buf both derive from the same
-            // raw `*mut u16` provenance (no intervening reference), src > dst,
-            // and `out_len` units fit within the `n` initialized units.
-            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
-        }
-        return out_len as isize;
+        return (n - off) as isize;
     }
     #[cfg(not(windows))]
     {
-        let _ = (fd, buf, cap);
+        let _ = (fd, buf);
         0
     }
 }
@@ -1813,15 +1760,11 @@ pub mod io {
     impl Write for Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
+            Writer::write_all(self, buf)
         }
         #[inline]
         fn flush(&mut self) -> crate::CrateResult<()> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.flush)(core::ptr::from_mut(self)) }
+            Writer::flush(self)
         }
     }
 
@@ -2925,13 +2868,19 @@ pub enum EmbedKind {
 
 #[doc(hidden)]
 pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
-    // SAFETY: CODEGEN_PATH/BASE_PATH originate from `option_env!` (`&'static str`
-    // → bytes), so the bytes are valid UTF-8 by construction.
-    let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
+    // `core::str::from_utf8`, not simdutf (`strings::str_utf8`): a `const fn` cannot call FFI.
+    const fn utf8(b: &'static [u8]) -> &'static str {
+        match ::core::str::from_utf8(b) {
+            Ok(s) => s,
+            Err(_) => panic!("build_options path is not UTF-8"),
+        }
+    }
+    const CODEGEN_PATH: &str = utf8(crate::build_options::CODEGEN_PATH);
+    const BASE_PATH: &str = utf8(crate::build_options::BASE_PATH);
     let mut p = match kind {
-        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Codegen => ::std::path::PathBuf::from(CODEGEN_PATH),
         EmbedKind::Src => {
-            let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
+            let mut b = ::std::path::PathBuf::from(BASE_PATH);
             b.push("src");
             b
         }
@@ -3800,8 +3749,6 @@ pub(crate) fn set_bun_options_argc(n: usize) {
 }
 
 /// Trait for arg types accepted by [`append_options_env`].
-/// Impl'd for `bun_core::String`
-/// and `Box<ZStr>` in their owning crates.
 pub trait OptionsEnvArg {
     fn from_slice(s: &[u8]) -> Self;
     fn from_buf(buf: Vec<u8>) -> Self;
@@ -3822,22 +3769,6 @@ impl OptionsEnvArg for &'static ZStr {
         buf.push(0);
         let z: &'static [u8] = buf.leak();
         ZStr::from_slice_with_nul(z)
-    }
-}
-
-/// Owned `Box<ZStr>` arm of `appendOptionsEnv` — used by `bun::init_argv`'s
-/// BUN_OPTIONS splice path, which stores argv entries as `Box<ZStr>`.
-impl OptionsEnvArg for Box<ZStr> {
-    fn from_slice(s: &[u8]) -> Self {
-        ZStr::boxed(s)
-    }
-    fn from_buf(mut buf: Vec<u8>) -> Self {
-        buf.push(0);
-        let b: Box<[u8]> = buf.into_boxed_slice();
-        // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`; the fat-pointer
-        // metadata (len includes the trailing NUL) is preserved by the cast —
-        // identical to `ZStr::boxed` but consuming the Vec without re-copying.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 

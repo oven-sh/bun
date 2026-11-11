@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use bun_aot::statistics::{LimitId, LimitValues};
 use bun_bundler::aot::FileFinder;
 use bun_core::strings;
 use bun_jsc::JsResult;
@@ -306,10 +305,12 @@ fn json_text(json: &Json) -> Vec<u8> {
     text
 }
 
-pub(crate) fn fold_options_with_limits<'s>(limits: &LimitValues) -> FoldOptions<'s> {
-    let max_string_bytes = limits.get(LimitId::MaxFoldedStringBytes);
+/// Must equal `MAX_FOLDED_STRING_BYTES` in `src/aot/load/fold_inputs.rs`, which is private to the compiler crate.
+const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
+
+pub(crate) fn fold_options_for_compile<'s>() -> FoldOptions<'s> {
     FoldOptions {
-        max_string_bytes: usize::try_from(max_string_bytes).unwrap_or(usize::MAX),
+        max_string_bytes: MAX_FOLDED_STRING_BYTES,
         ..FoldOptions::default()
     }
 }
@@ -386,6 +387,7 @@ pub(crate) fn resolve_computed_specifier(
         directory: &directory,
         kind,
         form: CodeImportForm::Static,
+        site: Default::default(),
     });
     Ok(Some(json_text(&computed_resolution_json(
         &host, resolution,
@@ -595,7 +597,6 @@ pub(crate) fn describe_code_graph(
         false => working_directory_argument,
     });
 
-    let limits = LimitValues::for_host();
     let mut code = CodeOptions::bun_run(&working_directory);
     for condition in strings::tokenize(conditions_argument, b"\n") {
         code.add_custom_condition(condition);
@@ -616,7 +617,7 @@ pub(crate) fn describe_code_graph(
     let fold_options = FoldOptions {
         defines: arena.alloc_slice_copy(&defines),
         features: arena.alloc_slice_copy(&features),
-        ..fold_options_with_limits(&limits)
+        ..fold_options_for_compile()
     };
     let fold = FoldInputs::new(fold_options, arena);
     let entry_points: Vec<Vec<u8>> = strings::tokenize(entry_points_argument, b"\n")
@@ -632,6 +633,7 @@ pub(crate) fn describe_code_graph(
         threads: NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN),
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
     };
     let description = match load_program(&session, &host, &request) {
         Ok(loaded) => {

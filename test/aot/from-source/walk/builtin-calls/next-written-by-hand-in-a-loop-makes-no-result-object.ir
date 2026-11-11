@@ -1,0 +1,19 @@
+# a generator driven by hand: each turn steps it, asks done and takes value. The step stands in the loop, no object is made for it, the call as written stands in a rare block, and each read is the value at hand or, behind the call, the read as written
+# -- source: next-written-by-hand-in-a-loop-makes-no-result-object.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number): Generator<number, string, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i) ?? 0; return "sum " + sum; }
+# function drive(walk: Generator<number, string, number | undefined>) { let answer: number | undefined; for (;;) { const step = walk.next(answer); if (step.done) return step.value; answer = (step.value as number) * 2; } }
+# sink(drive(count(4)), drive(count(5)));
+# -- end of source
+# f1 = count, f2 = drive
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isLoopHead=true
+# CHECK: [[step]]: {{*}} = StepGenerator {{*}}check=IsUnmodified 
+# CHECK: = ResultAt [[step]]
+# CHECK: frequency=Rare
+# CHECK: [[answer]]: {{*}} = Call {{*}}calleeKey="next"
+# CHECK: frequency=Rare
+# CHECK: = PropGet {{*}}key="done"
+# RUN(NONE): walk f2 mechanisms=all
+# NONE-NOT: = NewObject

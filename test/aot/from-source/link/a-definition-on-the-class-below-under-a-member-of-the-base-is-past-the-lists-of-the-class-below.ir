@@ -1,0 +1,13 @@
+# The list of Base names `make`; the list of Heir does not. A definition on the class object of Heir makes an own property there: it is past the lists of Heir, and Base stays as its lists say.
+# -- source: main.js
+# class Base { static make() { return 1; } }
+# class Heir extends Base {}
+# class Last {}
+# Object.defineProperty(Heir, "make", { value: function () { return 2; } });
+# print(Base.make(), Heir.make(), new Last());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L1 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L2

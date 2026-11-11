@@ -40,24 +40,6 @@ fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
-// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
-// ────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
-    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
-    // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
-}
-#[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
-    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
-}
-
 bun_core::declare_scope!(BodyValue, visible);
 
 // R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
@@ -373,7 +355,6 @@ impl PendingValue {
                 }
                 Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                 Action::GetText => global_this.readable_stream_to_text(readable.value),
-                Action::GetJSONSource => global_this.readable_stream_to_json_source(readable.value),
                 Action::GetBlob => global_this.readable_stream_to_body_blob(
                     readable.value,
                     bun_string_jsc::create_utf8_for_js(global_this, self.content_type().given())?,
@@ -421,8 +402,6 @@ pub(crate) enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
-    /// [`AnyBlob::to_json_source`].
-    GetJSONSource,
     GetBlob,
     /// `read_body` fills it in from the owner's `Content-Type`.
     GetFormData(Option<Box<webcore::form_data::Encoding>>),
@@ -441,11 +420,9 @@ impl Action {
         cx: &bun_jsc::JsThread<'_>,
     ) -> JsResult<JSValue> {
         if let Action::GetBlob = self {
-            let blob_ptr = Blob::new(body.use_());
-            // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
-            let blob = unsafe { &*blob_ptr };
-            set_type_of_body_blob(blob, content_type, true);
-            return Ok(blob.to_js(cx.global()));
+            let blob = body.use_();
+            set_type_of_body_blob(&blob, content_type, true);
+            return Ok(blob.into_js(cx.global()));
         }
 
         let mut blob = match self {
@@ -458,7 +435,6 @@ impl Action {
             Action::GetJSON => blob.to_json(cx, Lifetime::Share),
             Action::GetArrayBuffer => blob.to_array_buffer(cx, Lifetime::Transfer),
             Action::GetBytes => blob.to_uint8_array(cx, Lifetime::Transfer),
-            Action::GetJSONSource => blob.to_json_source(cx, Lifetime::Transfer),
             Action::GetFormData(encoding) => {
                 let encoding = encoding.take().expect("read_body sets the encoding");
                 webcore::form_data::FormData::to_js(cx.global(), blob.slice(), &encoding)
@@ -983,8 +959,7 @@ impl Value {
             return ReadableStream::empty(cx.global());
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper in
+        // Ownership of the heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -1061,19 +1036,17 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return match Blob::from_dom_form_data(global_this, unsafe { &mut *form_data }) {
+        if let Some(form_data) = DOMFormData::from_js(value) {
+            return match Blob::from_dom_form_data(global_this, form_data) {
                 Ok(blob) => Ok(Value::Blob(blob)),
                 Err(err) => Err(err.throw(global_this)),
             };
         }
 
-        if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
+        if let Some(search_params) = URLSearchParams::from_js(value) {
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                search_params,
             )));
         }
 
@@ -1866,29 +1839,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 pub(crate) enum Unusable {
     Disturbed,
     Locked,
-}
-
-/// A promise for what `body.json()` parses, where compiled code parses it by a type (`bodyBytesForm` of the table of built-ins).
-#[unsafe(no_mangle)]
-#[bun_jsc::host_call]
-fn Body__jsonSource(global_this: *mut JSGlobalObject, body: JSValue) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
-    bun_jsc::to_js_host_call(global_this, || {
-        let cx = global_this.js_thread_of_caller();
-        if let Some(request) = body.as_class_ref::<webcore::Request>() {
-            return request.read_body(&cx, Action::GetJSONSource);
-        }
-        if let Some(response) = body.as_class_ref::<webcore::Response>() {
-            return response.read_body(&cx, Action::GetJSONSource);
-        }
-        match body.as_class_ref::<Blob>() {
-            Some(blob) => blob.json_source(&cx),
-            None => Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected a Request, a Response or a Blob",
-            ))),
-        }
-    })
 }
 
 /// If the body already failed, reject the read with that error. Every body

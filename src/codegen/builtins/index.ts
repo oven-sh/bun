@@ -22,6 +22,7 @@ import { checkNativeCalls, collectBufferAccessors, collectNativeLoads } from "./
 import { collectRuntimeFunctions } from "./collect-runtime-functions.ts";
 import { collectStaticTables } from "./collect-static-tables.ts";
 import { collectSyntaxUses } from "./collect-syntax-uses.ts";
+import { collectWebCoreTables } from "./collect-webcore-tables.ts";
 import { GeneratorError, leftOutOf, Problems, symbolsNaming, type SourcedDeclaration } from "./declarations.ts";
 import type { TableDump } from "./dump.ts";
 import { emitHostBindings } from "./emit-cpp-bindings.ts";
@@ -153,6 +154,7 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
     ...written,
     ...usesOfBindingsForTests,
     ...staticTableMembers,
+    ...collectWebCoreTables(bunRoot, written, problems).declarations,
     ...collectModules(bunRoot, written, problems),
     ...collectOwnProperties(bunRoot, ownPropertiesFile, problems),
     ...collectNativeBindings(calls, isLeftOut, schemas.bindingsOfOtherValues, problems),

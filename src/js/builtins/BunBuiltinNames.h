@@ -172,6 +172,7 @@ using namespace JSC;
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
+    macro(requestListener) \
     macro(require) \
     macro(requireCacheCompiledEntry) \
     macro(requireCacheDidDelete) \
@@ -228,6 +229,7 @@ using namespace JSC;
     macro(isOpen) \
     macro(isPrepared) \
     macro(ownReadableState) \
+    macro(requestListener) \
     macro(resumeUnlessFlowing)
 
 class BunBuiltinNames {

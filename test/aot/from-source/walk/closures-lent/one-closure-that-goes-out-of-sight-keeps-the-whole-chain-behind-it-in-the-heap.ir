@@ -1,0 +1,41 @@
+# Three frames deep. The arrow of `keepLater` is pushed to a list: it goes to a callee out of sight, which may keep it and what it holds, so `g` does not count as only called. That goes up: the arrow of `middle` is handed to a place that is not only called, so `f` is not either. All three arrows are made in the heap by their makers, and nothing is moved. (The mover that takes along what a closure holds has its native tests.)
+# f1 = keepLater, f2 = middle, f4 = maker, f3 = deep
+# -- source: one-closure-that-goes-out-of-sight-keeps-the-whole-chain-behind-it-in-the-heap.ts
+# declare function print(...values: unknown[]): void;
+# declare function gc(): void;
+# const kept: (() => number)[] = [];
+# function keepLater(g: () => number): number { kept.push(() => g() + 100); return 1; }
+# function middle(f: () => number): number { const t = keepLater(() => f() + 10); return t + 1; }
+# function maker(k: number): number { const t = middle(() => k); return t + 1; }
+# function deep(n: number): number { return n ? deep(n - 1) + n : 0; }
+# print(maker(1), maker(2));
+# gc();
+# print(deep(200));
+# print(kept[0](), kept[1](), kept[0]());
+# -- end of source
+# RUN: bytes f4 mechanisms=all-Inlining
+# CHECK: NewSlimClosure.Plain
+# RUN(MAKER): bytes f4 mechanisms=all-Inlining
+# MAKER-NOT: NewSlimClosureInFrame
+# RUN(MIDDLE): bytes f2 mechanisms=all-Inlining
+# MIDDLE: NewSlimClosure.Plain
+# RUN(LENT): bytes f2 mechanisms=all-Inlining
+# LENT-NOT: NewSlimClosureInFrame
+# RUN(ASKED): bytes f2 mechanisms=all-Inlining
+# ASKED-NOT: operationAOTMoveClosureToHeap
+# RUN(MOVED): bytes f1 mechanisms=all-Inlining
+# MOVED-NOT: operationAOTMoveClosureToHeap
+# RUN(WORDS): link functions mechanisms=all
+# WORDS-LABEL: function f1
+# WORDS-NOT: only-called
+# WORDS-LABEL: function f2
+# WORDS-NOT: only-called
+# WORDS-LABEL: function f3
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3 3
+# ANSWERS-NEXT: 20100
+# ANSWERS-NEXT: 111 112 111
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 3 3
+# CALLED-NEXT: 20100
+# CALLED-NEXT: 111 112 111

@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
-import { isASAN, isDebug, rss } from "harness";
+import { expect } from "bun:test";
+import { isASAN, isDebug, rss, testThatMeasuresOwnMemory } from "harness";
 
+const test = testThatMeasuresOwnMemory(import.meta.path);
 const MB = 1024 * 1024;
 
 // `new Request(request)` once leaked the body slot that the constructor allocates before it copies the

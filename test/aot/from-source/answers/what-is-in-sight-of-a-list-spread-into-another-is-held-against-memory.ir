@@ -1,0 +1,22 @@
+# -- source: what-is-in-sight-of-a-list-spread-into-another-is-held-against-memory.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# function take(x: number, y: number, z: number): string { return x + "," + y + "," + z; }
+# function run(a: number, b: number, c: number): string { const list: [number, number, number] = [a, b, c]; list.reverse(); return [0, ...list].join(); }
+# print(id(run)(3, 4, 5));
+# -- end of source
+# LIBRARY: own
+# f2 = run. What is in sight of a list made here (its length, its elements) is taken by an operation that is no read, and no record of a read is left.
+# Fault injection, testing=IgnoreFreshArrayEscapes: no operation except an append counts as letting a fresh array escape or as writing to it.
+# So the walk still tracks 3, 4, 5 where memory holds 5, 4, 3.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the consuming operation checks the tracked contents against memory:
+# that the cell is pristine, the length, and each element. See Walker::checkWhatIsInSightOfList().
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 0,5,4,3
+# RIGHT-NEXT: exited with 0
+# RUN(NAMED): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckProofsAtRunTime
+# NAMED: bun: internal AOT error: redundancy elimination check failed at {{*}} (run)
+# NAMED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# NAMED-NEXT: This is a bug in Bun, not in your code.
+# NAMED-NEXT: and please report it: https://github.com/oven-sh/bun/issues
+# NAMED-NEXT: crashed with

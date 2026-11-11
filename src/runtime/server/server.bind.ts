@@ -25,6 +25,7 @@ function server(name: string) {
     refCounted: true,
     finalize: true,
     memoryCost: true,
+    lockedMembers: ["prototype"],
     /** GC roots for the handlers (the struct keeps raw copies for the request path) and for the C++ route list. */
     internalFields: [
       "routeList",

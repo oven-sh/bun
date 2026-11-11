@@ -11,6 +11,7 @@
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isCI, isWindows } from "harness";
 import { dirname, join } from "path";
+import { declare } from "../harness/capabilities";
 import { unsupported } from "../harness/commands";
 import { canWriteProgram, findTool, whyNoScriptStarts } from "./find-tools";
 
@@ -49,3 +50,10 @@ export const scriptSkipReason = whyNoScriptStarts(bunExe(), unsupported, { jsc, 
 export function scriptEnvironment(): Record<string, string | undefined> {
   return { ...bunEnv, JSC: jsc, TESTAOT: testaot, FRONT_END: frontEnd, PLAIN: bunExe() };
 }
+
+declare("jsc", () =>
+  jsc
+    ? undefined
+    : "there is no jsc: not in $JSC, not beside the Bun under test, not in build/release-local or build/release",
+);
+declare("the scripts of the shell", () => scriptSkipReason);

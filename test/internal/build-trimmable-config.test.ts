@@ -16,6 +16,7 @@ import {
 } from "../../scripts/build/config.ts";
 import { computeFlags, linkerMapOutputs, linkerMapPath, writesLinkerMap } from "../../scripts/build/flags.ts";
 import { getProfile, profiles } from "../../scripts/build/profiles.ts";
+import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 
 const buildScript = join(import.meta.dirname, "..", "..", "scripts", "build.ts");
 
@@ -101,6 +102,15 @@ describe.skipIf(isWindows)("trimmable build config", () => {
     expect(flagsOf({ lto: true }).cxxflags).not.toContain(keepsFunction);
     expect(flagsOf({ lto: false }).cflags).not.toContain(keepsFunction);
     expect(flagsOf({ lto: true, trimmable: false }).cflags).not.toContain(keepsFunction);
+  });
+
+  test("without LTO over the crates, rustc gives no section the names of two functions", () => {
+    const keepsFunctionsApart = "-Zmerge-functions=disabled";
+    const flagsOf = (partial: PartialConfig) =>
+      cargoBuildInvocation(resolve({ ...linux, lto: false, ...partial })).rustflags;
+    expect(flagsOf({ rustLto: false })).toContain(keepsFunctionsApart);
+    expect(flagsOf({ rustLto: true })).not.toContain(keepsFunctionsApart);
+    expect(flagsOf({ rustLto: false, trimmable: false })).not.toContain(keepsFunctionsApart);
   });
 
   test("is off unless asked for", () => {

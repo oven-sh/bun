@@ -1,5 +1,5 @@
-// RUN: lower
-// CHECK: function {{*}}kind=Arrow {{*}}captures=[{type=anything
+// RUN: link
+// CHECK: variable {{*}}name="g" {{*}}declared={type=anything
 
 {
   function g() {}

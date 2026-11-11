@@ -225,7 +225,8 @@ pub(crate) struct QuicEndpoint {
     pending_new_sessions: JsCell<Vec<*mut QuicSession>>,
     pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN], u64)>>,
     block_list: Cell<Option<*mut crate::node::net::block_list::BlockList>>,
-    block_list_js: JsCell<Option<bun_jsc::Strong>>,
+    /// Keeps `block_list` alive.
+    _block_list_js: Option<bun_jsc::Strong>,
     block_list_allow: Cell<bool>,
     pending_endpoint_close: Cell<bool>,
     /// Set while the pass runs from the microtask drain: session Closed events
@@ -742,6 +743,84 @@ impl QuicEndpoint {
     ) -> JsResult<JsWrapper<'a, Self>> {
         lsquic::debug_assert_layout();
 
+        let mut bind_config = BindConfig::default();
+        let mut block_list = None;
+        let mut block_list_js = None;
+        let mut block_list_allow = false;
+        let mut disable_stateless_reset = false;
+        let mut stateless_reset_burst = 0;
+        let mut stateless_reset_rate = 0.0;
+        let options = options.to_js();
+        if options.is_object() {
+            let global = cx.global();
+            if let Some(addr_js) = options
+                .get(global, "address")?
+                .filter(|v| !v.is_empty_or_undefined_or_null())
+            {
+                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
+                    let stored = StoredAddr::from_socket_address(addr);
+                    if let Some((_, port, ip)) = stored.decode() {
+                        use core::fmt::Write;
+                        let mut host = String::new();
+                        match ip.len() {
+                            4 => {
+                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
+                            }
+                            16 => {
+                                let segs: [u16; 8] = core::array::from_fn(|i| {
+                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
+                                });
+                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
+                            }
+                            _ => {}
+                        }
+                        let mut host_nul = host.into_bytes();
+                        host_nul.push(0);
+                        bind_config.host = host_nul;
+                        bind_config.port = port;
+                    }
+                }
+            }
+            if options.get_boolean_loose(global, "ipv6Only")? == Some(true) {
+                bind_config.flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
+            }
+            if options.get_boolean_loose(global, "reusePort")? == Some(true) {
+                // The bind fails where SO_REUSEPORT doesn't exist, like UV_UDP_REUSEPORT.
+                bind_config.flags |=
+                    uws::LIBUS_LISTEN_REUSE_PORT | uws::LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
+            }
+            let read_i32 = |name| -> JsResult<i32> {
+                Ok(read_u64_option(global, options, name)?
+                    .map_or(0, |v| v.min(i32::MAX as u64) as i32))
+            };
+            bind_config.receive_buffer_size = read_i32("udpReceiveBufferSize")?;
+            bind_config.send_buffer_size = read_i32("udpSendBufferSize")?;
+            bind_config.ttl = read_i32("udpTTL")?;
+            if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
+                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
+                {
+                    block_list = Some(bl.as_ptr());
+                    block_list_js = Some(bun_jsc::Strong::create(bl_js, global));
+                }
+            }
+            if let Some(policy) = options.get(global, "blockListPolicy")? {
+                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
+                block_list_allow = policy == b"allow";
+            }
+            if let Some(v) = options
+                .get(global, "disableStatelessReset")?
+                .filter(|v| v.is_boolean())
+            {
+                disable_stateless_reset = v.to_boolean();
+            }
+            if let Some(v) = options.get(global, "statelessResetBurst")? {
+                stateless_reset_burst = v.as_number() as u32;
+            }
+            if let Some(v) = options.get(global, "statelessResetRate")? {
+                stateless_reset_rate = v.as_number();
+            }
+        }
+
         let this = QuicEndpoint {
             vtable_ptr: null(),
             vtable: JsCell::new(None),
@@ -751,7 +830,7 @@ impl QuicEndpoint {
             closed: Cell::new(false),
             driver: Cell::new(null_mut()),
             udp: Cell::new(null_mut()),
-            bind_config: JsCell::new(BindConfig::default()),
+            bind_config: JsCell::new(bind_config),
             local_addr: Cell::new(StoredAddr::default()),
             poll_ref: JsCell::new(KeepAlive::init()),
             this_value: JsCell::new(JsRef::empty()),
@@ -761,18 +840,18 @@ impl QuicEndpoint {
             server_alpn_wire: JsCell::new(Vec::new()),
             server_verify_client: Cell::new(false),
             server_session_options: JsCell::new(None),
-            disable_stateless_reset: Cell::new(false),
+            disable_stateless_reset: Cell::new(disable_stateless_reset),
             origin_blob: JsCell::new(Vec::new()),
-            stateless_reset_burst: Cell::new(0),
-            stateless_reset_rate: Cell::new(0.0),
+            stateless_reset_burst: Cell::new(stateless_reset_burst),
+            stateless_reset_rate: Cell::new(stateless_reset_rate),
             next_pass_at_ns: Cell::new(u64::MAX),
             follow_up: Cell::new(FollowUp::None),
             sessions: JsCell::new(Vec::new()),
             pending_new_sessions: JsCell::new(Vec::new()),
             pending_verneg: JsCell::new(Vec::new()),
-            block_list: Cell::new(None),
-            block_list_js: JsCell::new(None),
-            block_list_allow: Cell::new(false),
+            block_list: Cell::new(block_list),
+            _block_list_js: block_list_js,
+            block_list_allow: Cell::new(block_list_allow),
             pending_endpoint_close: Cell::new(false),
             defer_closes: Cell::new(false),
             send_scope_depth: Cell::new(0),
@@ -812,102 +891,6 @@ impl QuicEndpoint {
         unsafe {
             (*raw).vtable_ptr = &raw const *vt;
             (*raw).vtable.set(Some(vt));
-        }
-
-        let options = options.to_js();
-        if options.is_object() {
-            if let Some(addr_js) = options
-                .get(global, "address")?
-                .filter(|v| !v.is_empty_or_undefined_or_null())
-            {
-                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(addr);
-                    if let Some((_, port, ip)) = stored.decode() {
-                        use core::fmt::Write;
-                        let mut host = String::new();
-                        match ip.len() {
-                            4 => {
-                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-                            }
-                            16 => {
-                                let segs: [u16; 8] = core::array::from_fn(|i| {
-                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
-                                });
-                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
-                            }
-                            _ => {}
-                        }
-                        let mut host_nul = host.into_bytes();
-                        host_nul.push(0);
-                        // SAFETY: `raw` is uniquely owned here.
-                        unsafe {
-                            (*raw).bind_config.with_mut(|cfg| {
-                                cfg.host = host_nul;
-                                cfg.port = port;
-                            })
-                        };
-                    }
-                }
-            }
-            let mut flags = uws::LIBUS_LISTEN_DEFAULT;
-            if options.get_boolean_loose(global, "ipv6Only")? == Some(true) {
-                flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
-            }
-            if options.get_boolean_loose(global, "reusePort")? == Some(true) {
-                // The bind fails where SO_REUSEPORT doesn't exist, like UV_UDP_REUSEPORT.
-                flags |=
-                    uws::LIBUS_LISTEN_REUSE_PORT | uws::LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
-            }
-            let read_i32 = |name| -> JsResult<i32> {
-                Ok(read_u64_option(global, options, name)?
-                    .map_or(0, |v| v.min(i32::MAX as u64) as i32))
-            };
-            let receive_buffer_size = read_i32("udpReceiveBufferSize")?;
-            let send_buffer_size = read_i32("udpSendBufferSize")?;
-            let ttl = read_i32("udpTTL")?;
-            // SAFETY: as above.
-            unsafe {
-                (*raw).bind_config.with_mut(|cfg| {
-                    cfg.flags = flags;
-                    cfg.receive_buffer_size = receive_buffer_size;
-                    cfg.send_buffer_size = send_buffer_size;
-                    cfg.ttl = ttl;
-                })
-            };
-            if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
-                {
-                    // SAFETY: `raw` is uniquely owned here; the Strong keeps
-                    // the BlockList wrapper (and thus the native object)
-                    // alive for the endpoint's lifetime.
-                    unsafe {
-                        (*raw).block_list.set(Some(bl.as_ptr()));
-                        (*raw)
-                            .block_list_js
-                            .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
-                    }
-                }
-            }
-            if let Some(policy) = options.get(global, "blockListPolicy")? {
-                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
-                // SAFETY: as above.
-                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
-            }
-            if let Some(v) = options
-                .get(global, "disableStatelessReset")?
-                .filter(|v| v.is_boolean())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
-            }
-            if let Some(v) = options.get(global, "statelessResetBurst")? {
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_burst.set(v.as_number() as u32) };
-            }
-            if let Some(v) = options.get(global, "statelessResetRate")? {
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_rate.set(v.as_number()) };
-            }
         }
 
         let state_ptr = alloc_exposed_array_buffer(
@@ -1001,7 +984,7 @@ impl QuicEndpoint {
         let Some(bl) = self.block_list.get() else {
             return false;
         };
-        // SAFETY: the Strong in `block_list_js` keeps the wrapper (and
+        // SAFETY: the Strong in `_block_list_js` keeps the wrapper (and
         // native object) alive for the endpoint's lifetime.
         let blocked = unsafe { (*bl).check_sockaddr(peer) } != self.block_list_allow.get();
         if blocked {
@@ -1314,7 +1297,7 @@ impl QuicEndpoint {
         match QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             self.this_value.get().get(),
             self.server_engine(),
         ) {
@@ -1322,10 +1305,10 @@ impl QuicEndpoint {
                 if let Err(err) = self.apply_server_session_options(global, session) {
                     crate::dispatch::fold(Err(err));
                 }
-                // SAFETY: session was just created.
-                unsafe { (*session).bind_mini_conn(conn) };
-                self.sessions.with_mut(|v| v.push(session));
-                session
+                session.bind_mini_conn(conn);
+                let session_ptr = core::ptr::from_ref(session).cast_mut();
+                self.sessions.with_mut(|v| v.push(session_ptr));
+                session_ptr
             }
             Err(e) => {
                 crate::dispatch::fold(Err(e));
@@ -1341,13 +1324,9 @@ impl QuicEndpoint {
     }
 
     /// Binds a promoted server conn to its mini conn's session, or drops the conn if that session was destroyed.
-    pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
-        // SAFETY: `conn` is the live conn lsquic just created.
-        let Some(new_conn) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
-            return null_mut();
-        };
-        // SAFETY: `conn` is the live conn lsquic just created.
-        let ctx = unsafe { lsquic::lsquic_conn_get_ctx(conn) };
+    pub(super) fn on_new_conn(&self, new_conn: lsquic::Conn) -> *mut QuicSession {
+        // SAFETY: `new_conn` is the live conn lsquic just created.
+        let ctx = unsafe { lsquic::lsquic_conn_get_ctx(new_conn.raw()) };
         // SAFETY: `ctx_ref` documents the shim's context-pointer contract.
         let Some(session) = (unsafe { ctx_ref::<QuicSession>(ctx) }) else {
             if self.closing.get() {
@@ -1361,7 +1340,7 @@ impl QuicEndpoint {
         };
         // `connect()` binds a client conn itself.
         if session.is_server() {
-            session.bind_conn(conn);
+            session.bind_conn(new_conn);
             // lsquic only promotes a server conn once its handshake is done, and never calls `on_hsk_done` for it.
             session.note_handshake_ok(new_conn);
         }
@@ -1526,7 +1505,7 @@ impl QuicEndpoint {
     fn apply_server_session_options(
         &self,
         global: &JSGlobalObject,
-        session: *mut QuicSession,
+        session: &QuicSession,
     ) -> JsResult<()> {
         if let Some(options) = self
             .server_session_options
@@ -1534,8 +1513,7 @@ impl QuicEndpoint {
             .as_ref()
             .map(bun_jsc::Strong::get)
         {
-            // SAFETY: `session` was just created and is live.
-            unsafe { (*session).apply_options(global, options) }?;
+            session.apply_options(global, options)?;
         }
         Ok(())
     }
@@ -1678,10 +1656,11 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             this_value.to_js(),
             Some(Rc::clone(&engine)),
         )?;
+        let session_ptr = core::ptr::from_ref(session).cast_mut();
         let resume_blob: Vec<u8> = if config.enable_early_data {
             session_ticket
                 .as_array_buffer(global)
@@ -1694,44 +1673,42 @@ impl QuicEndpoint {
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         // `options.token` isn't replayed: lsquic breaks the token and zero-rtt tests with it. That costs the Retry RTT it would have saved.
         // SAFETY: the engine is live and remote/tls/sni are valid for this call. `session` is
-        // the conn-ctx, at its final address in its wrapper.
+        // the conn-ctx, at its final address in its wrapper. lsquic returns a live conn or null.
+        // The session's copy is cleared in `on_conn_closed`. The local copy is used after
+        // `apply_options`, which reads own data properties of an object that quic.ts builds, so no
+        // script runs there.
         let conn = unsafe {
-            uws::quic::Udp::opaque_ref(self.udp.get()).connect(
+            let conn = uws::quic::Udp::opaque_ref(self.udp.get()).connect(
                 engine.raw.cast(),
                 remote.as_ptr().cast(),
                 tls.raw(),
-                session.cast(),
+                session_ptr.cast(),
                 config.servername.as_ptr().cast(),
                 &resume_blob,
-            )
-        }
-        .cast::<lsquic::lsquic_conn>();
+            );
+            lsquic::Conn::from_raw(conn.cast())
+        };
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);
-        if conn.is_null() {
-            // SAFETY: `session` was just created and nothing else owns it.
-            unsafe { (*session).teardown(global) };
+        let Some(conn) = conn else {
+            session.teardown(global);
             return Ok(JSValue::UNDEFINED);
+        };
+        // SAFETY: `conn` is live.
+        unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), session_ptr.cast()) };
+        session.conn.set(Some(conn));
+        session.cache_sockaddrs(conn.sockaddrs());
+        // `conn` is set above, so teardown clears its ctx and no late callback reaches the session.
+        if let Err(e) = session.apply_options(global, options) {
+            session.teardown(global);
+            return Err(e);
         }
-        // SAFETY: `conn` is live; out-params are stack slots.
-        unsafe {
-            lsquic::lsquic_conn_set_ctx(conn, session.cast());
-            (*session).conn.set(conn);
-            (*session).cache_sockaddrs(lsquic::Conn::from_raw(conn).and_then(|c| c.sockaddrs()));
-            // `conn` is set above, so teardown clears the conn's ctx and the
-            // late callbacks no-op instead of reaching an unrooted session.
-            if let Err(e) = (*session).apply_options(global, options) {
-                (*session).teardown(global);
-                return Err(e);
-            }
-            if !resume_blob.is_empty() {
-                (*session).apply_peer_datagram_budget();
-            }
+        if !resume_blob.is_empty() {
+            session.apply_peer_datagram_budget();
         }
-        // SAFETY: `conn` is live (checked above).
-        if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) }.filter(|_| use_preferred) {
-            c.use_preferred_address(true);
+        if use_preferred {
+            conn.use_preferred_address(true);
         }
-        self.sessions.with_mut(|v| v.push(session));
+        self.sessions.with_mut(|v| v.push(session_ptr));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
@@ -1745,13 +1722,8 @@ impl QuicEndpoint {
         version: u32,
         min_version: u32,
     ) -> JsResult<JSValue> {
-        let (session, handle) = QuicSession::create(
-            global,
-            self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
-            this_value,
-            None,
-        )?;
+        let (session, handle) =
+            QuicSession::create(global, self.vtable_ptr, self, this_value, None)?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
         bun_boringssl_sys::rand_bytes(&mut dcid);
@@ -1769,12 +1741,9 @@ impl QuicEndpoint {
         probe[off] = VERNEG_PROBE_CID_LEN as u8;
         off += 1;
         probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&scid);
-        // SAFETY: `session` was just created and is kept alive by its JS
-        // wrapper (`handle`).
-        unsafe {
-            (*session).verneg.set(Some((version, min_version)));
-            (*session).remote_addr.set(remote);
-        }
+        session.verneg.set(Some((version, min_version)));
+        session.remote_addr.set(remote);
+        let session = core::ptr::from_ref(session).cast_mut();
         self.pending_verneg
             .with_mut(|v| v.push((session, scid, now_ns())));
         // A probe has no engine, so nothing else would ever arm the timer that

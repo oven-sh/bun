@@ -52,13 +52,13 @@ timersSetImmediate[promisifyCustom] = (value, options) =>
 export const _unrefActive = () => {};
 // In a classic script a top-level `var setTimeout` replaces the page's own, so no binding here has a global's name.
 export {
-  promises,
-  timersSetTimeout as setTimeout,
-  timersClearTimeout as clearTimeout,
-  timersSetInterval as setInterval,
-  timersClearInterval as clearInterval,
-  timersSetImmediate as setImmediate,
   timersClearImmediate as clearImmediate,
+  timersClearInterval as clearInterval,
+  timersClearTimeout as clearTimeout,
+  promises,
+  timersSetImmediate as setImmediate,
+  timersSetInterval as setInterval,
+  timersSetTimeout as setTimeout,
 };
 export default {
   promises,

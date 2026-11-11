@@ -27,7 +27,7 @@ export const kStringMaxLength = 0x1fffffe8;
 // A browser throws "Illegal invocation" when these are called as a method, so the exports do not pass `this`.
 const bufferBtoa = data => globalThis.btoa(data);
 const bufferAtob = data => globalThis.atob(data);
-export { bufferBtoa as btoa, bufferAtob as atob };
+export { bufferAtob as atob, bufferBtoa as btoa };
 export const File = /* @__PURE__ */ globalThis.File;
 export const Blob = /* @__PURE__ */ globalThis.Blob;
 

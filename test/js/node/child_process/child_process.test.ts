@@ -487,6 +487,53 @@ describe("spawn()", () => {
     }
   });
 
+  it("should pass a variable named `__proto__` to the child", async () => {
+    const print = ["-e", "console.log(process.env.__proto__)"];
+    // The computed key makes it an own property, as it is on process.env.
+    const env = { ...bunEnv, ["__proto__"]: "from the parent" };
+    const fromEnv = spawnSync(bunExe(), print, { env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+
+    const child = new ChildProcess();
+    // Without the values that hold a "=", which spawn() cuts short.
+    const envPairs = Object.entries(env).flatMap(([name, value]) => (value?.includes("=") ? [] : [`${name}=${value}`]));
+    // @ts-ignore
+    child.spawn({ file: bunExe(), args: [bunExe(), ...print], envPairs, stdio: ["ignore", "pipe", "inherit"] });
+    const [fromEnvPairs] = await Promise.all([child.stdout!.toArray(), once(child, "close")]);
+
+    expect({ env: fromEnv.stdout, envPairs: Buffer.concat(fromEnvPairs).toString() }).toEqual({
+      env: "from the parent\n",
+      envPairs: "from the parent\n",
+    });
+  });
+
+  it("should pass a variable named like a member of a frozen Object.prototype to the child", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { ChildProcess, spawnSync } = require("node:child_process");
+         const print = ["-e", "console.log(process.env.toString)"];
+         // Loads every module that a spawn needs before the freeze.
+         spawnSync(process.execPath, print);
+         Object.freeze(Object.prototype);
+         const stdio = ["ignore", "inherit", "inherit"];
+         spawnSync(process.execPath, print, { stdio });
+         // Without the values that hold a "=", which spawn() cuts short.
+         const envPairs = Object.entries(process.env).flatMap(([name, value]) => (value.includes("=") ? [] : [name + "=" + value]));
+         new ChildProcess().spawn({ file: process.execPath, args: [process.execPath, ...print], envPairs, stdio });`,
+      ],
+      env: { ...bunEnv, toString: "from the parent" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: "from the parent\nfrom the parent\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("should allow explicit setting of argv0", async () => {
     var resolve: (_?: any) => void;
     const promise = new Promise<string>(resolve1 => {

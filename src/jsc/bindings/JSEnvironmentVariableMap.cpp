@@ -89,8 +89,7 @@ static void maybeEmitEnvNonstringDeprecation(JSGlobalObject* globalObject, JSC::
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// Node's EnvSetter value handling, shared by put / putByIndex /
-// defineOwnProperty: DEP0104, then ToString coercion.
+// Node's EnvSetter value handling: DEP0104, then ToString coercion.
 static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value)
 {
     maybeEmitEnvNonstringDeprecation(globalObject, scope, value);
@@ -164,6 +163,30 @@ static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* 
     applyTLSRejectFromString(globalObject, view->toString());
 }
 
+// [[Set]] of an index can run a setter of a prototype. JSObject's [[DefineOwnProperty]] asks no prototype.
+static bool defineIndexedVariable(JSObject* object, JSGlobalObject* globalObject, PropertyName name, JSValue value, bool shouldThrow)
+{
+    PropertyDescriptor descriptor(value, 0);
+    return JSObject::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+}
+
+// Out of line and with a lookup of its own: a tail that shares put()'s lookup adds a branch to the write of a variable that exists.
+static NEVER_INLINE bool putSlowCase(JSEnvironmentVariableMap* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, JSString* string, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // First, because JSObject::put() sends an index back to putByIndex().
+    if (parseIndex(propertyName)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, defineIndexedVariable(thisObject, globalObject, propertyName, string, slot.isStrictMode()));
+    // An own accessor, as BUN_CONFIG_VERBOSE_FETCH is, takes the write: [[Set]] ends at an own property.
+    unsigned attributes = 0;
+    if (isValidOffset(thisObject->structure()->get(vm, propertyName, attributes)))
+        RELEASE_AND_RETURN(scope, JSObject::put(thisObject, globalObject, propertyName, string, slot));
+    // A new variable is defined and no prototype is asked, as by Node's setter: https://github.com/nodejs/node/blob/v26.3.0/src/node_env_var.cc#L620-L639
+    RELEASE_AND_RETURN(scope, thisObject->putInlineFast(globalObject, propertyName, string, slot));
+}
+
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -226,7 +249,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
-    // No write is cached, so skip the prototype chain walk when the variable is already a plain property.
+    // No write is cached, so a variable that is already a plain property is stored in place.
     Structure* structure = cell->structure();
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, propertyName, attributes);
@@ -235,15 +258,13 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         thisObject->putDirectOffset(vm, offset, string);
         return true;
     }
-    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, ownSlot));
+    RELEASE_AND_RETURN(scope, putSlowCase(thisObject, globalObject, propertyName, string, ownSlot));
 }
 
 void JSEnvironmentVariableMap::putInitialValue(JSGlobalObject* globalObject, const Identifier& name, JSValue value)
 {
     if (parseIndex(name)) [[unlikely]] {
-        // putDirectIndex falls back to [[Set]] on this exotic object, which can run an indexed setter on Object.prototype.
-        PropertyDescriptor descriptor(value, 0);
-        JSObject::defineOwnProperty(this, globalObject, name, descriptor, false);
+        defineIndexedVariable(this, globalObject, name, value, false);
         return;
     }
     putDirectWithoutTransition(globalObject->vm(), name, value, 0);
@@ -251,14 +272,9 @@ void JSEnvironmentVariableMap::putInitialValue(JSGlobalObject* globalObject, con
 
 bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Numeric keys route through EnvSetter in Node too, so the same DEP0104
-    // and coercion rules apply.
-    JSString* string = coerceEnvValue(globalObject, scope, value);
-    RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+    // The index as a name, then put(), as Node's EnvSetterIndexed: https://github.com/nodejs/node/blob/v26.3.0/src/node_env_var.cc#L582-L588
+    PutPropertySlot slot(cell, shouldThrow);
+    return put(cell, globalObject, Identifier::from(globalObject->vm(), index), value, slot);
 }
 
 bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -1040,9 +1056,7 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     auto putValue = [&](const Identifier& name, JSValue value) {
 #if OS(WINDOWS)
         if (parseIndex(name)) [[unlikely]] {
-            // Not [[Set]], which can run an indexed setter on Object.prototype.
-            PropertyDescriptor descriptor(value, 0);
-            JSObject::defineOwnProperty(object, globalObject, name, descriptor, false);
+            defineIndexedVariable(object, globalObject, name, value, false);
             return;
         }
         object->putDirect(vm, name, value, 0);

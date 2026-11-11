@@ -486,7 +486,7 @@ export function windowsEnv(
   (internalEnv as any)[customInspect] = () => {
     let o = {};
     for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
+      $putByValDirect(o, k, internalEnv[k.toUpperCase()]);
     }
     return o;
   };
@@ -497,7 +497,7 @@ export function windowsEnv(
     // storage keys into JSON.stringify(process.env) and IPC env echoes.
     let o = {};
     for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
+      $putByValDirect(o, k, internalEnv[k.toUpperCase()]);
     }
     return o;
   };
@@ -505,6 +505,7 @@ export function windowsEnv(
   // Shared write path for the `set` and `defineProperty` traps. Plain
   // assignment (never Object.defineProperty on the target) keeps the
   // proxy CustomAccessors on `internalEnv` and their side effects intact.
+  // Only a name that `internalEnv` does not have is defined on it directly.
   function writeEnvVar(p: string, k: string, value: unknown) {
     // Node's EnvSetter semantics (DEP0104 + ToString) and the TZ side effect;
     // name-matching TZ here survives a prior `delete process.env.TZ`.
@@ -512,10 +513,16 @@ export function windowsEnv(
     // Track the key for enumeration if it isn't already there. Don't gate on
     // `k in internalEnv`: the TZ and NODE_TLS_REJECT_UNAUTHORIZED accessors
     // always exist as DontEnum CustomAccessors even when the variable was never set.
+    let isNew = false;
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
+      isNew = $Object.$getOwnPropertyDescriptor(internalEnv, k) === undefined;
     }
-    if (internalEnv[k] !== coerced) {
+    if (isNew) {
+      // Not the assignment below: it runs an inherited setter, and an inherited read-only property refuses it.
+      editWindowsEnvVar(k, coerced);
+      $putByValDirect(internalEnv, k, coerced);
+    } else if (internalEnv[k] !== coerced) {
       editWindowsEnvVar(k, coerced);
       internalEnv[k] = coerced;
     }
@@ -618,7 +625,7 @@ export function windowsEnv(
         return true;
       }
       // Node's EnvDefiner delegates the validated value to EnvSetter, i.e.
-      // plain assignment — never a real defineProperty on the target.
+      // the write path of an assignment, never a defineProperty with these attributes.
       writeEnvVar(p, k, attributes.value);
       return true;
     },
@@ -759,12 +766,14 @@ export function loadEnvFile(path) {
   }
   const content = require("node:fs").readFileSync(path, "utf8");
   const parsed = require("node:util").parseEnv(content);
-  const env = process.env;
+  // As Node, the environment and not what `process.env` is by now: https://github.com/nodejs/node/blob/v26.3.0/src/node_dotenv.cc#L69-L87
+  const env = Bun.env;
   for (const key of Object.keys(parsed)) {
     // Node: existing env keys win; the file only fills in missing ones.
     // Compare against undefined rather than `in`: accessor-backed keys (TZ,
     // HTTP_PROXY) always exist but read back undefined while unset.
-    if (env[key] === undefined) {
+    // Own first: what the environment inherits (`toString`, `constructor`) is not a variable.
+    if ($Object.$getOwnPropertyDescriptor(env, key) === undefined || env[key] === undefined) {
       env[key] = parsed[key];
     }
   }

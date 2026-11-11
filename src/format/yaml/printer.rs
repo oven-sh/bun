@@ -230,6 +230,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         })
     }
 
+    /// True if `node` is inside the key of a pair.
+    fn is_in_key(&self, mut node: &'t Node<'a>) -> bool {
+        while let Some(parent) = self.parent(node) {
+            if parent.kind == Kind::MappingKey {
+                return true;
+            }
+            node = parent;
+        }
+        false
+    }
+
     fn start_align(&mut self, width: u32) {
         self.out
             .start_indent(IndentCommand::Align(Alignment::Spaces(width)));
@@ -442,7 +453,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 }
                 self.out.text(line);
             }
-            if kept.is_some() && kept == self.ends_stream {
+            if kept.is_some() && kept == self.ends_stream && text.len() < source.len() {
                 self.out.start_indent(IndentCommand::DedentToRoot);
                 self.out.line(Line::Literal);
                 self.out.break_parent();
@@ -514,11 +525,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         match node.kind {
             Kind::Root => {
                 // A scalar in a key prints no line break of its own: the root prints one after the empty value.
-                let ends_stream = self.kept_line_break_at_end(node).filter(|&scalar| {
-                    let parent = self.node(scalar).parent.map(|it| self.node(it).kind);
-                    parent != Some(Kind::MappingKey)
-                });
+                let ends_stream = self
+                    .kept_line_break_at_end(node)
+                    .filter(|&scalar| !self.is_in_key(self.node(scalar)));
                 let mut keeps_line_breaks = false;
+                // True if the last document ends with a comment or with `...` and not with its content.
+                let mut ends_with_more = false;
                 for (index, child) in tree.items(node.children).enumerate() {
                     let document = self.node(child);
                     if index > 0 {
@@ -535,7 +547,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     };
                     // In oxfmt, the spacing between two documents doesn't depend on their content.
                     self.print(child, self.is_last_document || self.is_oxfmt);
-                    keeps_line_breaks = self.kept_line_break_at_end(document).is_some();
+                    let body_has_end_comments = document
+                        .children
+                        .last()
+                        .is_some_and(|body| !self.node(body).end_comments.is_empty());
+                    keeps_line_breaks =
+                        self.kept_line_break_at_end(document).is_some() && !body_has_end_comments;
+                    ends_with_more = body_has_end_comments;
                     if self.should_print_document_end_marker(
                         document,
                         document.next.map(|next| self.node(next)),
@@ -544,13 +562,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         // After the scalar's own line break the file ends with the marker. Otherwise the marker ends
                         // the stream. Prettier prints no line break before it whenever the stream ends with such a
                         // scalar, in any document: `a: 1\n...\n---\nb: |+\n  x\n` becomes `a: 1...`.
-                        let ends_with_the_kept_line_break = self.ends_stream.is_some()
-                            && document
-                                .children
-                                .last()
-                                .is_none_or(|body| self.node(body).end_comments.is_empty());
+                        let ends_with_the_kept_line_break =
+                            self.ends_stream.is_some() && !body_has_end_comments;
                         if !ends_with_the_kept_line_break {
                             self.ends_stream = None;
+                            ends_with_more = true;
                             if !(self.is_oxfmt && self.is_empty(document)) {
                                 self.out.hard_line();
                             }
@@ -566,6 +582,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 // `keep: |+\n` stays `keep: |+`. In oxfmt a file always ends with a line break.
                 let last = self.last_descendant(node);
                 let ends_with_a_kept_scalar_without_a_line = !self.is_oxfmt
+                    && !ends_with_more
                     && matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
                     && last.chomping == Chomping::Keep
                     && self.has_no_line(last);

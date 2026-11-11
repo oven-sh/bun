@@ -2604,15 +2604,16 @@ describe.concurrent("bun fmt", () => {
       ["a:   |+\n  x\n# c\n---\nb: 1\n", "a: |+\n  x\n# c\n---\nb: 1\n", "a: |+\n  x# c\n---\nb: 1\n"],
       ["a:   |+\n  x\n\n# c\n---\nb: 1\n", "a: |+\n  x\n\n# c\n---\nb: 1\n", "a: |+\n  x\n  # c\n---\nb: 1\n"],
       ["a:   1\n...\n---\nb: |+\n  x\n", "a: 1\n...\n---\nb: |+\n  x\n", "a: 1...\n---\nb: |+\n  x\n"],
-      ["a:   |+\n...\n", "a: |+\n...", "a: |+..."],
+      ["a:   |+\n...\n", "a: |+\n...\n", "a: |+..."],
       ["a:   |+\n  x\n# c\n...\n", "a: |+\n  x\n# c\n...\n", "a: |+\n  x\n# c..."],
       ["a:   |+\n  x\n# c\n... # t\n", "a: |+\n  x\n# c\n... # t\n", "a: |+\n  x\n# c... # t"],
-      ["a:   |+\n# c\n", "a: |+\n# c", "a: |+# c"],
+      ["a:   |+\n# c\n", "a: |+\n# c\n", "a: |+# c"],
       ["a:   |+\n  x\n# c\n...\n---\nb: 1\n", "a: |+\n  x\n# c\n...\n---\nb: 1\n", "a: |+\n  x# c\n...\n---\nb: 1\n"],
       // The same for a key whose value is empty, which is the last thing Prettier prints for its pair.
       ["? |+\n  a\n", "? |+\n  a\n", "? |+\n  a\n\n"],
       ["? |+\n  a\n# c\n", "? |+\n  a\n# c\n", "? |+\n  a\n\n# c\n"],
       ["? |+\n  a\n\n# c\n", "? |+\n  a\n\n# c\n", "? |+\n  a\n\n\n\n# c\n"],
+      ["? - |+\n    a\n# c\n", "? - |+\n    a\n# c\n", "? - |+\n    a\n\n# c\n"],
       [
         "x:\n  ? |+\n    a\n\n  # c\ny:   1\n",
         "x:\n  ? |+\n    a\n\n  # c\ny: 1\n",
@@ -2637,23 +2638,20 @@ describe.concurrent("bun fmt", () => {
       expect(checked.exitCode).toBe(0);
     });
 
-    // The same in both flavors: what is printed in the Prettier flavor, then in the oxfmt flavor, where a file always
-    // ends with a line break.
+    // The same in the oxfmt flavor.
     test.each([
-      ["a:\n  b:   |+\n    x\n  # c\n", "a:\n  b: |+\n    x\n  # c\n", "a:\n  b: |+\n    x\n  # c\n"],
-      ["a:\n  b:   |+\n    x\n\n  # c\n", "a:\n  b: |+\n    x\n\n  # c\n", "a:\n  b: |+\n    x\n\n  # c\n"],
-      ["a:   |+\n# c\n", "a: |+\n# c", "a: |+\n# c\n"],
-      ["? |+\n# c\n", "? |+\n# c\n", "? |+\n# c\n"],
-      ["a:   |+\n...\n", "a: |+\n...", "a: |+\n...\n"],
-      ["a:   |+\n  x\n# c\n...\n", "a: |+\n  x\n# c\n...\n", "a: |+\n  x\n# c\n...\n"],
-      ["a:   |+\n  x\n\n---\nb: 1\n", "a: |+\n  x\n\n---\nb: 1\n", "a: |+\n  x\n\n---\nb: 1\n"],
-    ])("a block scalar that keeps its line breaks, in both flavors: %j", async (before, byPrettier, byOxfmt) => {
-      const flavors: [Record<string, string>, string][] = [
-        [{}, byPrettier],
-        [{ ".oxfmtrc.json": "{}\n" }, byOxfmt],
-      ];
-      for (const [config, after] of flavors) {
-        expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
+      ["a:\n  b:   |+\n    x\n  # c\n", "a:\n  b: |+\n    x\n  # c\n"],
+      ["a:\n  b:   |+\n    x\n\n  # c\n", "a:\n  b: |+\n    x\n\n  # c\n"],
+      ["a:   |+\n# c\n", "a: |+\n# c\n"],
+      ["? |+\n# c\n", "? |+\n# c\n"],
+      ["a:   |+\n...\n", "a: |+\n...\n"],
+      ["a:   |+\n  x\n# c\n...\n", "a: |+\n  x\n# c\n...\n"],
+      ["a:   |+\n  x\n\n---\nb: 1\n", "a: |+\n  x\n\n---\nb: 1\n"],
+      ["a:   |+\n  x\n# c\n\n---\nb: 1\n", "a: |+\n  x\n# c\n\n---\nb: 1\n"],
+      ["# prettier-ignore\n---\na: |+\n  x\n# c\n...\n", "# prettier-ignore\n---\na: |+\n  x\n# c\n...\n"],
+    ])("a block scalar that keeps its line breaks, in both flavors: %j", async (before, after) => {
+      expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
+      for (const config of [{}, { ".oxfmtrc.json": "{}\n" }]) {
         const files = { ...config, "a.yaml": before, "b.yaml": after };
         const result = await format(files, [], { reads: ["a.yaml", "b.yaml"] });
         expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });

@@ -4116,13 +4116,13 @@ node:fs.Dir.prototype readSync("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:fs.Dir.prototype read()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:fs.Dir.prototype read("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received type string ('a') <- every receiver
 node:fs.Dir.prototype close()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:fs.Dir.prototype close("a", 1)
@@ -6453,15 +6453,15 @@ node:assert.CallTracker.prototype reset()
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:assert.CallTracker.prototype reset("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:assert.CallTracker.prototype getCalls()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:assert.CallTracker.prototype getCalls("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:assert.CallTracker.prototype calls()
@@ -7034,51 +7034,51 @@ exports[`members of the prototype objects of node:console 1`] = `
 
 exports[`members of the prototype objects of node:test 1`] = `
 "what is above node:test.mock fn()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock fn("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock method()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock method("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock getter()
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Cannot access private method or acessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: Cannot access private method or accessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock getter("a", 1)
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Cannot access private method or acessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: Cannot access private method or accessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock setter()
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Cannot access private method or acessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: Cannot access private method or accessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock setter("a", 1)
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Cannot access private method or acessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: Cannot access private method or accessor <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock property()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock property("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock timers, read
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above node:test.mock reset()
@@ -7104,11 +7104,11 @@ what is above node:test.mock module()
 what is above node:test.mock module("a", 1)
   throws NotImplementedError ERR_NOT_IMPLEMENTED: mock.module() is not yet implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/5090. Use \`bun:test\` in the interim. <- every receiver
 what is above object 1 tick()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above object 1 tick("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above object 1 enable()
@@ -7120,7 +7120,7 @@ what is above object 1 enable("a", 1)
   throws TypeError: undefined is not an object (near '...enable(options = {...') <- undefined
   throws TypeError: null is not an object (near '...enable(options = {...') <- null
 what is above object 1 setTime()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above object 1 setTime("a", 1)
@@ -7134,11 +7134,11 @@ what is above object 1 reset("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above object 1 runAll()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above object 1 runAll("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 what is above object 1 [Symbol.dispose]()
@@ -7446,11 +7446,11 @@ bun:sqlite.Statement.prototype [Symbol.toStringTag], read
   throws TypeError: Cannot access invalid private field <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: null is not an object <- null
 bun:sqlite.Statement.prototype [Symbol.iterator]()
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 bun:sqlite.Statement.prototype [Symbol.iterator]("a", 1)
-  throws TypeError: Cannot access private method or acessor <- every object, a number, a string
+  throws TypeError: Cannot access private method or accessor <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 bun:sqlite.Statement.prototype [Symbol.dispose]()

@@ -808,6 +808,87 @@ const dir = String(
       module.exports = require("./payload.wrapped");
     `,
     "payload.wrapped": "",
+    "wrapper-of-the-host.mjs": `
+      import Module from "node:module";
+      globalThis.F = new Function("exports", "require", "module", "if (module) module.exports = 1; return [A0, A1, A2, A3, A4, A5, A6, A7, A8, A9];");
+      Module.wrapper = ["globalThis.F || (function () {", "})"];
+      const globals = {};
+      for (let i = 0; i < 10; i++) globals["A" + i] = { i };
+      const errors = [];
+      const run = fn => { try { fn(); } catch (e) { errors.push(e.message); } };
+      for (let i = 0; i < 2; i++) {
+        await new Bun.ModuleGraph({ globals }).import(import.meta.dir + "/empty.cjs").catch(e => errors.push(e.message));
+        Bun.gc(true);
+        run(globalThis.F);
+      }
+      console.log(JSON.stringify(errors));
+      process.exit(0);
+    `,
+    "empty.cjs": "module.exports = 1;",
+    "compiles-the-function-of-the-host.cjs": `
+      const module2 = new (require("node:module"))("/virtual/x.cjs");
+      module2._compile("}); globalThis.F || ({ x() {} ", "/virtual/x.cjs");
+      module.exports = module2.exports;
+    `,
+    "keeps-its-wrapper.cjs": `
+      const module2 = new (require("node:module"))("/virtual/y.cjs");
+      module2._compile("}); globalThis.kept = (function () { return [A0, A1, A2, A3, A4, A5, A6, A7, A8, A9]; ", "/virtual/y.cjs");
+    `,
+    "compiled-function-of-the-host.mjs": `
+      globalThis.F = new Function("exports", "require", "module", "module.exports = { from: 'F' };");
+      const from = [];
+      for (let i = 0; i < 2; i++)
+        from.push((await new Bun.ModuleGraph({ globals: { X: i } }).import(import.meta.dir + "/compiles-the-function-of-the-host.cjs")).default.from);
+      console.log(JSON.stringify(from));
+      process.exit(0);
+    `,
+    "compiled-function-that-is-kept.mjs": `
+      const globals = {};
+      for (let i = 0; i < 10; i++) globals["A" + i] = { i };
+      const errors = [];
+      await new Bun.ModuleGraph({ globals }).import(import.meta.dir + "/keeps-its-wrapper.cjs").catch(e => errors.push(e.message));
+      Bun.gc(true);
+      try { globalThis.kept(); } catch (e) { errors.push(e.message); }
+      console.log(JSON.stringify(errors));
+      process.exit(0);
+    `,
+    "wrapper-that-has-run.mjs": `
+      import Module from "node:module";
+      Module.wrapper = [
+        "(function (exports, require) { if (!require) return globalThis.F = arguments.callee; ",
+        "\\nreturn [A0, A1, A2, A3, A4, A5, A6, A7, A8, A9]; })()",
+      ];
+      const globals = {};
+      for (let i = 0; i < 10; i++) globals["A" + i] = { i };
+      const errors = [];
+      await new Bun.ModuleGraph({ globals }).import(import.meta.dir + "/empty.cjs").catch(e => errors.push(e.message));
+      Bun.gc(true);
+      try { globalThis.F(1, 2); } catch (e) { errors.push(e.message); }
+      console.log(JSON.stringify(errors));
+      process.exit(0);
+    `,
+    "wraps-commonjs-with-comments.cjs": `
+      const Module = require("node:module");
+      Module.wrapper = ["// a comment\\n/* another */ \\n;(function (exports, require, module) {", "\\n}); // the end\\n//# sourceMappingURL=x.map"];
+      require.extensions[".wrapped"] = (module, filename) => module._compile("module.exports = () => typeof tag;", filename);
+      module.exports = require("./payload.wrapped");
+    `,
+    "wraps-commonjs-with-directive.cjs": `
+      const Module = require("node:module");
+      Module.wrapper = ["\\ufeff'use strict';\\u00a0(function (exports, require, module) {", "\\n})"];
+      require.extensions[".wrapped"] = (module, filename) => module._compile("module.exports = () => typeof tag;", filename);
+      module.exports = require("./payload.wrapped");
+    `,
+    "commonjs-wrapper-with-directive.mjs": `
+      const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
+      console.log(JSON.stringify((await graph.import(import.meta.dir + "/wraps-commonjs-with-directive.cjs")).default()));
+      process.exit(0);
+    `,
+    "commented-commonjs-wrapper.mjs": `
+      const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
+      console.log(JSON.stringify((await graph.import(import.meta.dir + "/wraps-commonjs-with-comments.cjs")).default()));
+      process.exit(0);
+    `,
     "custom-commonjs-wrapper.mjs": `
       const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
       const read = (await graph.import(import.meta.dir + "/wraps-commonjs-its-own-way.cjs")).default;
@@ -3784,6 +3865,20 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
+  test.each([
+    ["wrapper-of-the-host.mjs", `["A0 is not defined","A0 is not defined","A0 is not defined","A0 is not defined"]`],
+    ["compiled-function-of-the-host.mjs", `["F","F"]`],
+    ["compiled-function-that-is-kept.mjs", `["A0 is not defined","A0 is not defined"]`],
+    ["wrapper-that-has-run.mjs", `["A0 is not defined","A0 is not defined"]`],
+  ])("a CommonJS wrapper that the program keeps runs under its own scope: %s", async (script, stdout) => {
+    expect(await runsFixture(script)).toEqual({ stdout, exitCode: 0 });
+  });
+  test.each(["commented-commonjs-wrapper.mjs", "commonjs-wrapper-with-directive.mjs"])(
+    "a CommonJS wrapper with nothing callable beside it sees the globals of the graph: %s",
+    async script => {
+      expect(await runsFixture(script)).toEqual({ stdout: `"string"`, exitCode: 0 });
+    },
+  );
   test("a CommonJS module that had not run yet when dispose() was called never does", async () => {
     expect(await runsFixture("disposed-before-its-commonjs-ran.mjs")).toEqual({
       stdout: `{"imported":"ERR_INVALID_STATE","told":[]}`,

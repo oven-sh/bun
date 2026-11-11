@@ -45,6 +45,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParseInt.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceOrigin.h>
@@ -212,6 +213,52 @@ private:
     const unsigned m_overlayShape;
 };
 
+// Whether `text` is nothing but what may stand on one side of a wrapper function that is the whole program.
+static bool isBesideWrapper(StringView text, char16_t parenthesis)
+{
+    unsigned i = 0;
+    const auto skipLine = [&] {
+        while (i < text.length() && text[i] != '\n' && text[i] != '\r' && text[i] != 0x2028 && text[i] != 0x2029)
+            i++;
+    };
+    if (text.startsWith("#!"_s))
+        skipLine();
+    while (i < text.length()) {
+        auto rest = text.substring(i);
+        if (rest.startsWith("//"_s)) {
+            skipLine();
+        } else if (rest.startsWith("/*"_s)) {
+            size_t end = text.find("*/"_s, i + 2);
+            if (end == notFound)
+                return false;
+            i = end + 2;
+        } else if (char16_t c = text[i]; c == '"' || c == '\'') {
+            // A directive. Without the semicolon it could be what the function is an argument of.
+            size_t end = i + 1;
+            while (end < text.length() && text[end] != c && text[end] != '\n' && text[end] != '\r')
+                end += text[end] == '\\' ? 2 : 1;
+            if (end + 1 >= text.length() || text[end] != c || text[end + 1] != ';')
+                return false;
+            i = end + 2;
+        } else if (c == parenthesis || c == ';' || JSC::isStrWhiteSpace(c)) {
+            i++;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Whether `function` is the whole of the program whose completion value it is, so that nothing else can refer to it.
+static bool isWholeProgram(JSFunction* function, const JSC::SourceProvider& program)
+{
+    FunctionExecutable* executable = function->jsExecutable();
+    if (executable->source().provider() != &program)
+        return false;
+    StringView text = program.source();
+    return isBesideWrapper(text.left(executable->functionStart()), '(') && isBesideWrapper(text.substring(executable->source().endOffset()), ')');
+}
+
 // The require map lacks the compiled files.
 static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* globalObject)
 {
@@ -353,12 +400,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     ASSERT(fnValue);
 
     // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
-    // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
-    // one a custom `Module.wrapper` made inside another function reads that function's variables by
-    // their offsets in its scope, and one that already ran was compiled for the chain it ran in.
+    // Only a wrapper that nothing but this call can run may be moved. Its code is compiled for the chain of the overlay:
+    // under any other chain, the one it was made in included, that code reads and writes variables at wrong places.
     JSModuleGraph* graph = moduleObject->moduleGraph();
-    if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && !wrapper->jsExecutable()->eitherCodeBlock())
-        fnValue = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
+    JSFunction* movedWrapper = nullptr;
+    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && isWholeProgram(wrapper, *code.provider())) {
+        movedWrapper = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
+        fnValue = movedWrapper;
+    }
 
     JSObject* fn = fnValue.getObject();
     if (!fn) [[unlikely]] {
@@ -404,8 +453,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
-        if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
+    if (movedWrapper) {
+        if (CodeBlock* linked = movedWrapper->jsExecutable()->codeBlockForCall()) {
             linked = linked->baselineAlternative();
             globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
             graph->keepCommonJSWrapper(vm, linked);

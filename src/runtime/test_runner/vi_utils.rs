@@ -90,16 +90,17 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
 /// `--isolate=modules` leaves the module graph of a test file after its last run, and the preloads run again for the
 /// next file. This ends what a preload made, and what the file made after `on_test_file_end`.
 pub(crate) fn on_module_graph_leave(global: &JSGlobalObject) {
-    if let Some(runner) = Jest::runner() {
-        runner.vi_config_of_preload = Config::default();
-        runner.vi_config = Config::default();
-    }
     run(global, JSMock__didLeaveModuleGraph);
     run(global, ViUtils__unstubAllEnvs);
     run(global, ViUtils__unstubAllGlobals);
     ViUtils__forgetDynamicImports(global);
     if !global.bun_vm().preload.is_empty() {
         JSMock__willRunPreloads(global);
+    }
+    // Last, because a trap that the passes above call can set it.
+    if let Some(runner) = Jest::runner() {
+        runner.vi_config_of_preload = Config::default();
+        runner.vi_config = Config::default();
     }
 }
 

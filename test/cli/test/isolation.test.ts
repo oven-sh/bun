@@ -3653,6 +3653,76 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: [notSetForB, notSetForB], exitCode: 1 });
     });
 
+    // The end of the file restores the spy, and the trap of its target runs then.
+    test("a vi.setConfig() that runs while a spy of a preload is restored ends with the file", async () => {
+      using dir = tempDir("state-of-a-preload", {
+        "preload.ts": `
+          import { spyOn, vi } from "bun:test";
+          if (Bun.main.endsWith("a.test.ts")) {
+            let isOver = false;
+            globalThis.target = new Proxy({ method() {} }, {
+              defineProperty(...args) {
+                if (isOver) vi.setConfig({ clearMocks: true });
+                return Reflect.defineProperty(...args);
+              },
+            });
+            spyOn(target, "method");
+            isOver = true;
+          }
+        `,
+        "a.test.ts": `import { test } from "bun:test"; test("a", () => Bun.gc(true));`,
+        "b.test.ts": state("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: [notSetForB], exitCode: 0 });
+    });
+
+    test("fake timers of a preload end with the file", async () => {
+      using dir = tempDir("state-of-a-preload", {
+        "preload.ts": `
+          import { vi } from "bun:test";
+          if (Bun.main.endsWith("a.test.ts")) vi.useFakeTimers({ now: new Date(2001, 0, 1) });
+        `,
+        "a.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("a", () => {
+            expect([vi.isFakeTimers(), new Date().getFullYear(), typeof setTimeout.clock]).toEqual([true, 2001, "boolean"]);
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import timers from "node:timers";
+          test("b", async () => {
+            expect({
+              isFakeTimers: vi.isFakeTimers(),
+              year: new Date().getFullYear() === 2001 ? 2001 : "now",
+              clock: typeof setTimeout.clock,
+              isSameInNodeTimers: timers.setTimeout === setTimeout,
+            }).toEqual({ isFakeTimers: false, year: "now", clock: "undefined", isSameInNodeTimers: true });
+            await new Promise(resolve => setTimeout(resolve, 1));
+            vi.useFakeTimers();
+            const fired = Promise.withResolvers();
+            setTimeout(fired.resolve, 1000);
+            vi.advanceTimersByTime(1000);
+            await fired.promise;
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        [isolate, "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
     test.each([[[]], [["--rerun-each=2"]]])(
       "a preload that does the same for every file finds nothing that it did for the file before %j",
       async flags => {

@@ -1,3 +1,5 @@
+// Not the Buffer global: a page has none. The build gives the npm packages of this file the same polyfill.
+import { Buffer } from "buffer";
 import * as cryptoBrowserify from "crypto-browserify";
 
 export const Hash = cryptoBrowserify.Hash;
@@ -49,31 +51,73 @@ function nodeError(Ctor, code, message) {
   return error;
 }
 
-function toBytes(value, name) {
-  if (value instanceof ArrayBuffer || (typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer)) {
-    return new Uint8Array(value);
+const getter = (prototype, name) => Object.getOwnPropertyDescriptor(prototype, name).get;
+const slots = prototype => ["buffer", "byteOffset", "byteLength"].map(name => getter(prototype, name));
+const TypedArray = Object.getPrototypeOf(Uint8Array);
+const typedArrayName = getter(TypedArray.prototype, Symbol.toStringTag);
+const typedArraySlots = slots(TypedArray.prototype);
+const dataViewSlots = slots(DataView.prototype);
+const arrayBufferByteLength = getter(ArrayBuffer.prototype, "byteLength");
+const anyBuffer = "an instance of ArrayBuffer, Buffer, TypedArray, or DataView";
+
+function doesNotThrow(run) {
+  try {
+    run();
+    return true;
+  } catch {
+    return false;
   }
+}
+
+// As Node, each test reads an internal slot: a buffer of another realm (an iframe) passes, and no other object can.
+const isArrayBuffer = value => doesNotThrow(() => arrayBufferByteLength.call(value));
+// Only an isolated page has the SharedArrayBuffer global. A DataView takes an ArrayBuffer or shared memory.
+const isArrayBufferOrShared = value => doesNotThrow(() => new DataView(value));
+// The getter of ArrayBuffer throws for shared memory. The tag says which test to run first, to save that throw.
+const hasSharedTag = value => Object.prototype.toString.call(value) === "[object SharedArrayBuffer]";
+
+function toBytes(value, name, expected = anyBuffer) {
   if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const [buffer, byteOffset, byteLength] = typedArrayName.call(value) === undefined ? dataViewSlots : typedArraySlots;
+    return new Uint8Array(buffer.call(value), byteOffset.call(value), byteLength.call(value));
   }
-  throw nodeError(
-    TypeError,
-    "ERR_INVALID_ARG_TYPE",
-    `The "${name}" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.`,
-  );
+  if ((!hasSharedTag(value) && isArrayBuffer(value)) || isArrayBufferOrShared(value)) return new Uint8Array(value);
+  throw nodeError(TypeError, "ERR_INVALID_ARG_TYPE", `The "${name}" argument must be ${expected}.`);
+}
+
+// By the name, as Node: 8 for a Float64Array, 1 for a Uint8Array. A DataView or a buffer has no name: 1.
+function elementSizeOf(value) {
+  const name = typedArrayName.call(value) ?? "";
+  return name.includes("64") ? 8 : name.includes("32") ? 4 : name.includes("16") ? 2 : 1;
+}
+
+function checkType(value, name, type) {
+  if (typeof value !== type) {
+    throw nodeError(TypeError, "ERR_INVALID_ARG_TYPE", `The "${name}" argument must be of type ${type}.`);
+  }
 }
 
 // npm create-hmac reads key.length. An ArrayBuffer or a DataView has none, and the MAC would be that of an empty key.
-export function createHmac(algorithm, key) {
-  return cryptoBrowserify.createHmac(algorithm, typeof key === "string" ? key : toBytes(key, "key"));
+export function createHmac(algorithm, key, options) {
+  checkType(algorithm, "hmac", "string");
+  const encoding = options ? options.encoding : undefined;
+  if (encoding != null) checkType(encoding, "options.encoding", "string");
+  // npm create-hmac reads a string key as UTF-8. Node reads it with options.encoding.
+  if (typeof key === "string") key = Buffer.from(key, encoding === "buffer" ? "utf8" : encoding);
+  else key = toBytes(key, "key", `of type string or ${anyBuffer}`);
+  return cryptoBrowserify.createHmac(algorithm, key);
 }
 export const Hmac = createHmac;
 
 // The callback forms of npm randombytes and randomfill call process.nextTick, which a browser does not have.
 export function randomBytes(size, callback) {
+  size = checkSize(size, 1);
+  if (callback !== undefined) checkType(callback, "callback", "function");
   const bytes = cryptoBrowserify.randomBytes(size);
-  if (typeof callback !== "function") return bytes;
-  queueMicrotask(() => callback(null, bytes));
+  if (callback === undefined) return bytes;
+  // As Node: with no bytes to make, the callback runs in the call.
+  if (bytes.length === 0) callback(null, bytes);
+  else queueMicrotask(() => callback(null, bytes));
 }
 export const prng = randomBytes;
 export const pseudoRandomBytes = randomBytes;
@@ -87,45 +131,59 @@ function outOfRange(name, range, received) {
   );
 }
 
-function bytesToFill(buffer, offset = 0, size) {
-  const bytes = toBytes(buffer, "buf");
-  const elementSize = buffer.BYTES_PER_ELEMENT || 1;
-  if (typeof offset !== "number") {
-    throw nodeError(TypeError, "ERR_INVALID_ARG_TYPE", 'The "offset" argument must be of type number.');
-  }
+const kMaxLength = 2 ** 31 - 1;
+
+function checkSize(size, elementSize) {
+  checkType(size, "size", "number");
+  size *= elementSize;
+  if (!(size >= 0 && size <= kMaxLength)) throw outOfRange("size", `>= 0 && <= ${kMaxLength}`, size);
+  return size;
+}
+
+// As Node: offset and size count elements, and each loses its fraction. subarray drops the fraction of the end.
+function bytesToFill(bytes, elementSize, offset, size) {
+  checkType(offset, "offset", "number");
   offset *= elementSize;
   if (!(offset >= 0 && offset <= bytes.length)) throw outOfRange("offset", `>= 0 && <= ${bytes.length}`, offset);
+  offset >>>= 0;
   if (size === undefined) return bytes.subarray(offset);
-  if (typeof size !== "number") {
-    throw nodeError(TypeError, "ERR_INVALID_ARG_TYPE", 'The "size" argument must be of type number.');
-  }
-  size *= elementSize;
-  if (!(size >= 0)) throw outOfRange("size", ">= 0", size);
+  size = checkSize(size, elementSize);
   if (size + offset > bytes.length) throw outOfRange("size + offset", `<= ${bytes.length}`, size + offset);
   return bytes.subarray(offset, offset + size);
 }
 
 // Not npm randomfill: its browser file fills from the start of the ArrayBuffer and ignores the byteOffset of a view.
-export function randomFillSync(buffer, offset, size) {
-  const bytes = bytesToFill(buffer, offset, size);
-  const shared = typeof SharedArrayBuffer === "function" && bytes.buffer instanceof SharedArrayBuffer;
+function fill(bytes) {
+  // Which of the two this real buffer is. instanceof saves the tag for the usual buffer.
+  const shared = !(bytes.buffer instanceof ArrayBuffer) && hasSharedTag(bytes.buffer);
   // getRandomValues takes at most 65536 bytes in one call. In a browser it rejects a view of a SharedArrayBuffer.
   for (let i = 0; i < bytes.length; i += 65536) {
     const chunk = bytes.subarray(i, i + 65536);
     if (shared) chunk.set(crypto.getRandomValues(new Uint8Array(chunk.length)));
     else crypto.getRandomValues(chunk);
   }
+}
+
+export function randomFillSync(buffer, offset = 0, size) {
+  fill(bytesToFill(toBytes(buffer, "buf"), elementSizeOf(buffer), offset, size));
   return buffer;
 }
 
 export function randomFill(buffer, offset, size, callback) {
-  if (typeof offset === "function") [offset, size, callback] = [undefined, undefined, offset];
-  else if (typeof size === "function") [size, callback] = [undefined, size];
-  if (typeof callback !== "function") {
-    throw nodeError(TypeError, "ERR_INVALID_ARG_TYPE", 'The "callback" argument must be of type function.');
+  const all = toBytes(buffer, "buf");
+  const elementSize = elementSizeOf(buffer);
+  if (typeof offset === "function") {
+    [offset, size, callback] = [0, undefined, offset];
+  } else if (typeof size === "function") {
+    // As Node: this size counts elements. With an offset of 1.5 it loses the last byte.
+    [size, callback] = [all.length / elementSize - offset, size];
+  } else {
+    checkType(callback, "callback", "function");
   }
-  randomFillSync(buffer, offset, size);
-  queueMicrotask(() => callback(null, buffer));
+  const bytes = bytesToFill(all, elementSize, offset, size);
+  fill(bytes);
+  if (bytes.length === 0) callback(null, buffer);
+  else queueMicrotask(() => callback(null, buffer));
 }
 
 export function timingSafeEqual(buf1, buf2) {

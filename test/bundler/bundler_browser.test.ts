@@ -166,13 +166,19 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // A browser has none of these globals, and its getRandomValues rejects shared memory. A second run makes bun the same.
+  // A second run makes bun like a page that is not cross-origin isolated. node:vm is its iframe: another realm.
   const withoutNodeGlobals = {
     "/without-node-globals.js": /* js */ `
-      for (const name of ["process", "Buffer", "global", "setImmediate", "clearImmediate"]) delete globalThis[name];
+      import vm from "node:vm";
+      const isShared = buffer => Object.prototype.toString.call(buffer) === "[object SharedArrayBuffer]";
+      globalThis.anotherRealm = vm.runInNewContext("({ ArrayBuffer })");
+      for (const name of ["process", "Buffer", "global", "setImmediate", "clearImmediate", "SharedArrayBuffer"]) {
+        delete globalThis[name];
+      }
       const getRandomValues = crypto.getRandomValues.bind(crypto);
       crypto.getRandomValues = view => {
-        if (view.buffer instanceof SharedArrayBuffer) throw new TypeError("The view must not be shared.");
+        if (isShared(view.buffer)) throw new TypeError("The view must not be shared.");
+        if (view.byteLength > 65536) throw new DOMException("The quota is 65536 bytes.", "QuotaExceededError");
         return getRandomValues(view);
       };
       await import("./out.js");
@@ -185,6 +191,7 @@ describe("bundler", () => {
     hmac: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
     hmacWithArrayBufferKey: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
     hmacWithDataViewKey: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
+    hmacWithOtherKeys: Array.from({ length: 6 }, () => "4fd0b215276ef12f2b3e4c8ecac2811498b656fc"),
     pbkdf2: "653cc888d937efe22810a5cbdb25a5bd",
     encrypted: "4c55a6ffda2e565b40c2051d3d067614",
     decrypted: "hello",
@@ -209,6 +216,14 @@ describe("bundler", () => {
         const bob = createECDH("secp256k1");
         alice.generateKeys();
         bob.generateKeys();
+        // Only the second run has another realm. A page has no SharedArrayBuffer global unless it is isolated.
+        const realm = globalThis.anotherRealm ?? globalThis;
+        const SharedBuffer = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer.constructor;
+        const padded = new Uint8Array(32);
+        const keyOfAnotherRealm = new Uint8Array(new realm.ArrayBuffer(3));
+        const sharedKey = new Uint8Array(new SharedBuffer(3));
+        for (const bytes of [padded.subarray(8), keyOfAnotherRealm, sharedKey]) bytes.set(hmacKey);
+        const hmacWith = (key, options) => createHmac("sha1", key, options).update("abc").digest("hex");
         console.log(JSON.stringify({
           sha256: createHash("sha256").update("abc").digest("hex"),
           sha256OfDataView: createHash("sha256").update(new DataView(abc.buffer)).digest("hex"),
@@ -216,6 +231,14 @@ describe("bundler", () => {
           hmac: createHmac("sha1", "key").update("abc").digest("hex"),
           hmacWithArrayBufferKey: createHmac("sha1", hmacKey.buffer).update("abc").digest("hex"),
           hmacWithDataViewKey: createHmac("sha1", new DataView(hmacKey.buffer)).update("abc").digest("hex"),
+          hmacWithOtherKeys: [
+            hmacWith("6b6579", { encoding: "hex" }),
+            hmacWith("key", { encoding: "buffer" }),
+            hmacWith("key", { encoding: null }),
+            hmacWith(new DataView(padded.buffer, 8, 3)),
+            hmacWith(keyOfAnotherRealm.buffer),
+            hmacWith(sharedKey),
+          ],
           pbkdf2: pbkdf2Sync("password", "salt", 10, 16, "sha256").toString("hex"),
           encrypted: Buffer.concat([cipher.update("hello"), cipher.final()]).toString("hex"),
           decrypted: Buffer.concat([decipher.update("4c55a6ffda2e565b40c2051d3d067614", "hex"), decipher.final()]).toString(),
@@ -243,13 +266,57 @@ describe("bundler", () => {
     subtle: "function",
     webcrypto: true,
     timingSafeEqual: [true, false],
+    timingSafeEqualOfUnequalBytes: [false, false, false, false, false],
+    timingSafeEqualOfOtherBuffers: [true, true, true],
+    timingSafeEqualOfNoBuffers: Array.from({ length: 3 }, () => "TypeError ERR_INVALID_ARG_TYPE"),
     randomFillSync: [false, true, false],
     randomFillSyncOfElements: [false, true, false],
     randomFillSyncOfSharedMemory: [false, true, false],
+    randomFillSyncReturnsItsBuffer: true,
     randomFill: true,
     randomFillFromOffset: [false, true],
     randomBytes: 8,
     errorCodes: ["ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE"],
+    fills: {
+      "u8, 16.5, 16.9": ["16 to 32", "16 to 32"],
+      "u8, 63.5, 1": ["63 to 64", "63 to 64"],
+      "u8, 16.5": ["16 to 64", "16 to 63"],
+      "u8 with wrong properties, 16, 16": ["16 to 32", "16 to 32"],
+      "buffer, 16": ["16 to 64", "16 to 64"],
+      "new DataView(buffer, 16, 32), 8": ["24 to 48", "24 to 48"],
+      "new Uint16Array(buffer, 16, 16)": ["16 to 48", "16 to 48"],
+      "new Uint32Array(buffer), 4": ["16 to 64", "16 to 64"],
+      "new Float64Array(buffer), 2": ["16 to 64", "16 to 64"],
+      "buffer of another realm, 16, 16": ["16 to 32", "16 to 32"],
+      "70000 shared bytes": ["0 to 70000", "0 to 70000"],
+    },
+    errors: {
+      "randomBytes(NaN)": "RangeError ERR_OUT_OF_RANGE",
+      'randomBytes("8")': "TypeError ERR_INVALID_ARG_TYPE",
+      "randomBytes(2 ** 31)": "RangeError ERR_OUT_OF_RANGE",
+      "randomBytes(-1, callback)": "RangeError ERR_OUT_OF_RANGE",
+      "randomBytes(8, null)": "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFillSync(u8, NaN)": "RangeError ERR_OUT_OF_RANGE",
+      "randomFillSync(u8, null)": "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFill(u8, undefined, callback)": "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFillSync(u8, -1)": "RangeError ERR_OUT_OF_RANGE",
+      'randomFill(u8, -1, 1, "callback")': "TypeError ERR_INVALID_ARG_TYPE",
+      'randomFill("buffer", -1, 1, callback)': "TypeError ERR_INVALID_ARG_TYPE",
+      'createHmac(5, "key")': "TypeError ERR_INVALID_ARG_TYPE",
+      'createHmac("sha256", "key", { encoding: 5 })': "TypeError ERR_INVALID_ARG_TYPE",
+      'createHmac("sha256", 5)': "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFillSync(a Proxy of an ArrayBuffer)": "TypeError ERR_INVALID_ARG_TYPE",
+      "createHmac with a Proxy of an ArrayBuffer": "TypeError ERR_INVALID_ARG_TYPE",
+    },
+    callbacks: {
+      "randomBytes(8, callback)": "after the call",
+      "randomBytes(0, callback)": "in the call",
+      "randomFill(u8, callback)": "after the call",
+      "randomFill(u8, 10, callback)": "in the call",
+      "randomFill(u8, 0, 0.5, callback)": "in the call",
+      lengths: [0, 8, 10],
+      unexpectedCalls: [],
+    },
   });
   itBundled("browser/NodeCryptoPolyfillDefaultImport", {
     files: {
@@ -258,11 +325,14 @@ describe("bundler", () => {
         import * as namespace from "node:crypto";
         const named = Object.keys(namespace).filter(name => name !== "default");
         const filled = (bytes, start, end) => bytes.subarray(start, end).some(byte => byte !== 0);
+        // Only the second run has another realm. A page has no SharedArrayBuffer global unless it is isolated.
+        const realm = globalThis.anotherRealm ?? globalThis;
+        const SharedBuffer = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer.constructor;
         const view = new Uint8Array(48);
         crypto.randomFillSync(new Uint8Array(view.buffer, 16, 16));
         const elements = new Uint8Array(48);
         crypto.randomFillSync(new Uint16Array(elements.buffer, 16, 8), 2, 4);
-        const shared = new Uint8Array(new SharedArrayBuffer(48));
+        const shared = new Uint8Array(new SharedBuffer(48));
         crypto.randomFillSync(new Uint8Array(shared.buffer, 16, 16));
         const codeOf = fn => {
           try {
@@ -271,6 +341,101 @@ describe("bundler", () => {
             return error.code;
           }
         };
+        const errorOf = fn => {
+          try {
+            fn();
+            return "no error";
+          } catch (error) {
+            return error.name + " " + error.code;
+          }
+        };
+        const u8 = () => new Uint8Array(10);
+        const zeros = () => new Uint8Array(64);
+        // What fill() changes in zeros. Four rounds, so that no byte at an end stays zero by chance.
+        const range = async (fill, make = zeros) => {
+          let [start, end] = [Infinity, 0];
+          for (let round = 0; round < 4; round++) {
+            const bytes = make();
+            await fill(bytes);
+            if (!bytes.some(Boolean)) continue;
+            start = Math.min(start, bytes.findIndex(Boolean));
+            end = Math.max(end, bytes.findLastIndex(Boolean) + 1);
+          }
+          return start + " to " + end;
+        };
+        const unexpectedCalls = [];
+        const notCalled = () => unexpectedCalls.push("after an error");
+        // The value of the callback. A second call, and arguments that are not (null, value), are unexpected.
+        const calledBack = start =>
+          new Promise(resolve => {
+            let calls = 0;
+            start((...args) => {
+              if (++calls > 1 || args.length !== 2 || args[0] !== null)
+                unexpectedCalls.push(calls + ": " + args.length);
+              resolve(args[1]);
+            });
+          });
+        const when = start =>
+          new Promise(resolve => {
+            let inTheCall = true;
+            start(() => resolve(inTheCall ? "in the call" : "after the call"));
+            inTheCall = false;
+          });
+        // Views that lie about themselves. Node reads the internal slots, so the lies change nothing.
+        const wrongProperties = bytes =>
+          Object.defineProperties(bytes, {
+            buffer: { value: new ArrayBuffer(64) },
+            byteOffset: { value: 8 },
+            byteLength: { value: 4 },
+            BYTES_PER_ELEMENT: { value: 2 },
+          });
+        const notBuffers = [
+          new Proxy(new ArrayBuffer(8), {}),
+          { [Symbol.toStringTag]: "ArrayBuffer" },
+          Object.create(ArrayBuffer.prototype),
+        ];
+        // The arguments of randomFillSync, and of randomFill before its callback. Then: what each of the two fills.
+        const fills = {
+          "u8, 16.5, 16.9": [bytes => [bytes, 16.5, 16.9]],
+          "u8, 63.5, 1": [bytes => [bytes, 63.5, 1]],
+          "u8, 16.5": [bytes => [bytes, 16.5]],
+          "u8 with wrong properties, 16, 16": [bytes => [wrongProperties(bytes), 16, 16]],
+          "buffer, 16": [bytes => [bytes.buffer, 16]],
+          "new DataView(buffer, 16, 32), 8": [bytes => [new DataView(bytes.buffer, 16, 32), 8]],
+          "new Uint16Array(buffer, 16, 16)": [bytes => [new Uint16Array(bytes.buffer, 16, 16)]],
+          "new Uint32Array(buffer), 4": [bytes => [new Uint32Array(bytes.buffer), 4]],
+          "new Float64Array(buffer), 2": [bytes => [new Float64Array(bytes.buffer), 2]],
+          "buffer of another realm, 16, 16": [
+            bytes => [bytes.buffer, 16, 16],
+            () => new Uint8Array(new realm.ArrayBuffer(64)),
+          ],
+          "70000 shared bytes": [bytes => [bytes.buffer], () => new Uint8Array(new SharedBuffer(70000))],
+        };
+        const errors = {
+          "randomBytes(NaN)": () => crypto.randomBytes(NaN),
+          'randomBytes("8")': () => crypto.randomBytes("8"),
+          "randomBytes(2 ** 31)": () => crypto.randomBytes(2 ** 31),
+          "randomBytes(-1, callback)": () => crypto.randomBytes(-1, notCalled),
+          "randomBytes(8, null)": () => crypto.randomBytes(8, null),
+          "randomFillSync(u8, NaN)": () => crypto.randomFillSync(u8(), NaN),
+          "randomFillSync(u8, null)": () => crypto.randomFillSync(u8(), null),
+          "randomFill(u8, undefined, callback)": () => crypto.randomFill(u8(), undefined, notCalled),
+          "randomFillSync(u8, -1)": () => crypto.randomFillSync(u8(), -1),
+          'randomFill(u8, -1, 1, "callback")': () => crypto.randomFill(u8(), -1, 1, "callback"),
+          'randomFill("buffer", -1, 1, callback)': () => crypto.randomFill("buffer", -1, 1, notCalled),
+          'createHmac(5, "key")': () => crypto.createHmac(5, "key"),
+          'createHmac("sha256", "key", { encoding: 5 })': () => crypto.createHmac("sha256", "key", { encoding: 5 }),
+          'createHmac("sha256", 5)': () => crypto.createHmac("sha256", 5),
+          "randomFillSync(a Proxy of an ArrayBuffer)": () => crypto.randomFillSync(notBuffers[0]),
+          "createHmac with a Proxy of an ArrayBuffer": () => crypto.createHmac("sha256", notBuffers[0]),
+        };
+        for (const [label, [args, make]] of Object.entries(fills)) {
+          fills[label] = [
+            await range(bytes => crypto.randomFillSync(...args(bytes)), make),
+            await range(bytes => calledBack(callback => crypto.randomFill(...args(bytes), callback)), make),
+          ];
+        }
+        for (const [label, run] of Object.entries(errors)) errors[label] = errorOf(run);
         console.log(JSON.stringify({
           createHash: crypto.createHash("sha256").update("abc").digest("hex"),
           missing: named.filter(name => crypto[name] !== namespace[name]),
@@ -281,9 +446,23 @@ describe("bundler", () => {
             crypto.timingSafeEqual(new Uint8Array([1, 0, 2, 0]), new Uint16Array([1, 2])),
             crypto.timingSafeEqual(new Uint8Array([1]), new Uint8Array([2])),
           ],
+          timingSafeEqualOfUnequalBytes: [
+            crypto.timingSafeEqual(new Uint8Array([9, 2, 3, 4]), new Uint8Array([1, 2, 3, 4])),
+            crypto.timingSafeEqual(new Uint8Array([1, 9, 3, 4]), new Uint8Array([1, 2, 3, 4])),
+            crypto.timingSafeEqual(new Uint8Array(33).fill(7, 32), new Uint8Array(33)),
+            crypto.timingSafeEqual(new Float64Array([0]), new Float64Array([-0])),
+            crypto.timingSafeEqual(new Uint8Array([1, 1]), new Uint8Array([2, 2])),
+          ],
+          timingSafeEqualOfOtherBuffers: [
+            crypto.timingSafeEqual(new realm.ArrayBuffer(4), new Uint8Array(4)),
+            crypto.timingSafeEqual(new SharedBuffer(4), new Uint8Array(new SharedBuffer(4))),
+            crypto.timingSafeEqual(wrongProperties(zeros().fill(1)), zeros().fill(1)),
+          ],
+          timingSafeEqualOfNoBuffers: notBuffers.map(value => errorOf(() => crypto.timingSafeEqual(value, value))),
           randomFillSync: [filled(view, 0, 16), filled(view, 16, 32), filled(view, 32, 48)],
           randomFillSyncOfElements: [filled(elements, 0, 20), filled(elements, 20, 28), filled(elements, 28, 48)],
           randomFillSyncOfSharedMemory: [filled(shared, 0, 16), filled(shared, 16, 32), filled(shared, 32, 48)],
+          randomFillSyncReturnsItsBuffer: crypto.randomFillSync(view) === view,
           randomFill: await new Promise(resolve => {
             crypto.randomFill(new Uint8Array(16), (error, bytes) => resolve(error ?? filled(bytes, 0, 16)));
           }),
@@ -301,6 +480,21 @@ describe("bundler", () => {
             codeOf(() => crypto.randomFillSync(new Uint8Array(4), 2, 3)),
             codeOf(() => crypto.randomFillSync("not a buffer")),
           ],
+          fills,
+          errors,
+          callbacks: {
+            "randomBytes(8, callback)": await when(callback => crypto.randomBytes(8, callback)),
+            "randomBytes(0, callback)": await when(callback => crypto.randomBytes(0, callback)),
+            "randomFill(u8, callback)": await when(callback => crypto.randomFill(u8(), callback)),
+            "randomFill(u8, 10, callback)": await when(callback => crypto.randomFill(u8(), 10, callback)),
+            "randomFill(u8, 0, 0.5, callback)": await when(callback => crypto.randomFill(u8(), 0, 0.5, callback)),
+            lengths: [
+              (await calledBack(callback => crypto.randomBytes(0, callback))).length,
+              (await calledBack(callback => crypto.randomBytes(8, callback))).length,
+              (await calledBack(callback => crypto.randomFill(u8(), 10, callback))).length,
+            ],
+            unexpectedCalls,
+          },
         }));
       `,
     },

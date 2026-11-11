@@ -802,11 +802,12 @@ impl Builder<'_> {
         Str::source(start, end)
     }
 
-    /// Joins the lines `segments[first..]` with line breaks, and removes them from `segments`.
+    /// Joins the lines `segments[first..]` with line breaks, and removes them from `segments`. `null` if there are no
+    /// lines.
     fn joined_value(&mut self, first: usize) -> Str {
         let segments = self.segments.get(first..).unwrap_or_default();
         let (Some(first_segment), Some(last_segment)) = (segments.first(), segments.last()) else {
-            return Str::EMPTY;
+            return Str::NO;
         };
         // Nothing was stripped from the lines, so the value is a plain range of the text.
         let is_plain = segments.iter().all(|it| it.virtual_spaces == 0)
@@ -870,22 +871,27 @@ impl Builder<'_> {
             None if self.is_extended_to_the_end => Some(self.text.len() as u32),
             None => None,
         };
+        let is_code = self.tree.get(node).is_some_and(|it| it.kind == Kind::Code);
         if let Some(end) = end {
-            self.segments.push(Segment {
-                start: end,
-                end,
-                virtual_spaces: 0,
-            });
+            // Without a closing fence, the line break at the end is part of HTML, not of code or math.
+            if is_html {
+                self.segments.push(Segment {
+                    start: end,
+                    end,
+                    virtual_spaces: 0,
+                });
+            }
             self.set_end(node, end);
-        }
-        // Without a closing fence, the line break at the end isn't part of the value.
-        if !is_html
+        } else if !is_html
+            && !is_code
             && self
                 .segments
                 .get(first_segment..)
                 .and_then(|it| it.last())
                 .is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
         {
+            // An empty line ends a container's math without a line break after it. For code, that line is a line of
+            // the code: `> ```\n> a\n>\n` is `a\n\n`. Prettier 3.9.9 and mdast drop it, and so print `a\n`.
             self.segments.pop();
         }
         let value = self.joined_value(first_segment);

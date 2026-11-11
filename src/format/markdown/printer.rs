@@ -333,6 +333,17 @@ enum Whitespace {
     Hardline,
 }
 
+/// What a code block is printed with between its fences.
+enum Body<'a> {
+    /// The code as it is written.
+    Verbatim,
+    /// The code, formatted, including the line break after it, and the length of the longest run of the fence
+    /// character in it.
+    Formatted(Doc<'a>, usize),
+    /// One empty line in place of the code.
+    OneEmptyLine,
+}
+
 impl<'a> Printer<'a, '_> {
     fn node(&self, id: NodeId) -> Option<&'a Node> {
         self.tree.get(id)
@@ -1671,7 +1682,7 @@ impl<'a> Printer<'a, '_> {
                     children
                 ]
             }
-            Kind::Code => self.print_code(id, node, None),
+            Kind::Code => self.print_code(id, node, Body::Verbatim),
             Kind::Html => {
                 let mut value = self.str(node.value);
                 if self.kind(node.parent) == Some(Kind::Root) && node.next == NONE {
@@ -1974,11 +1985,9 @@ impl<'a> Printer<'a, '_> {
         Doc::Array(parts)
     }
 
-    /// `formatted` is set if the code was formatted. It's the code, including the line break after it, and the length
-    /// of the longest run of the fence character in it.
-    fn print_code(&self, id: NodeId, node: &Node, formatted: Option<(Doc<'a>, usize)>) -> Doc<'a> {
+    fn print_code(&self, id: NodeId, node: &Node, body: Body<'a>) -> Doc<'a> {
         let value = self.str(node.value);
-        if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
+        if matches!(body, Body::Verbatim) && is_indented_code(self.original, self.tree, id) {
             // Whatever is printed next starts with a `hardline`, which would trim the last line. A last line that is
             // only whitespace isn't part of the code, so trimming it is fine.
             let end = match &value[value.trim_ascii_end().len()..] {
@@ -1994,9 +2003,13 @@ impl<'a> Printer<'a, '_> {
             return align_with_spaces(4, code);
         }
         let style_unit = self.fence_unit(node);
-        let (code, run) = match formatted {
-            Some(formatted) => formatted,
-            None => (
+        let (code, run) = match body {
+            // No line between the fences. Prettier 3.9.9 and oxfmt 0.72.0 print an empty line there, which is a line
+            // of code: `<pre><code></code></pre>` becomes `<pre><code>\n</code></pre>`.
+            _ if node.value.is_null() => (Doc::EMPTY, 0),
+            Body::Formatted(code, run) => (code, run),
+            Body::OneEmptyLine => (hardline(), 0),
+            Body::Verbatim => (
                 docs![self.verbatim_code(value, false), line_break_after(value)],
                 max_continuous_count(value, style_unit),
             ),
@@ -2032,7 +2045,7 @@ impl<'a> Printer<'a, '_> {
             return None;
         }
         let language = self.str(node.second);
-        if language.is_empty() {
+        if language.is_empty() || node.value.is_null() {
             return None;
         }
         let width = (self.options.line_width.value() as usize).saturating_sub(self.indentation);
@@ -2047,14 +2060,7 @@ impl<'a> Printer<'a, '_> {
             if bun_core::strings::trim_js_whitespace_end(code).is_empty()
                 && super::oxfmt_parser_for(language).is_some()
             {
-                let style = vec![self.fence_unit(node); 3];
-                return Some(docs![
-                    style.clone(),
-                    self.print_info(node),
-                    hardline(),
-                    hardline(),
-                    style
-                ]);
+                return Some(self.print_code(id, node, Body::OneEmptyLine));
             }
         }
         let formatted = (self.embed)(&Embedded {
@@ -2082,7 +2088,7 @@ impl<'a> Printer<'a, '_> {
         Some(mark_as_root(self.print_code(
             id,
             node,
-            Some((docs![formatted, end], run)),
+            Body::Formatted(docs![formatted, end], run),
         )))
     }
 

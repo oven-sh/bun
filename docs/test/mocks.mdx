@@ -533,7 +533,7 @@ test("hoisted", () => {
 });
 ```
 
-A factory that reads such a variable throws a `ReferenceError` when Bun calls it. The `vi.mock()` or `jest.mock()` call throws that error if a module that imports the mocked module is already linked and about to run. A later mock can't reach that module. For example, a test file imports `./mocks` first and `./notify` second, and `./mocks` mocks a module that `./notify` imports. In every other case the mock waits, and Bun calls the factory at the next import of the mocked module. Declare the variable with `vi.hoisted()`, or use `mock.module()`, which isn't hoisted.
+A factory that reads such a variable throws a `ReferenceError` when Bun calls it. The `vi.mock()` or `jest.mock()` call throws that error if a module that imports the mocked module is already linked and about to run. A later mock can't reach that module. For example, a test file imports `./mocks` first and `./notify` second, and `./mocks` mocks a module that `./notify` imports. In every other case the mock waits, and Bun calls the factory at the next `import` or `require()` that gets the mock. Declare the variable with `vi.hoisted()`, or use `mock.module()`, which isn't hoisted.
 
 `mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written.
 

@@ -103,3 +103,7 @@ test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wai
 # The next one: a hoisted factory reads a variable below its call, over a module that an import that failed left linked, and the test file imports that module with no statement.
 # Plain lets the mock wait, and a later import() gets it. Compiled throws the error of the factory at the mock call.
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > over a module that an import that failed left linked > waits for the next import where it doesn't
+# The next one: an importer in an import cycle that has yet to end has run when the hoisted call comes. Plain lets the mock wait. Compiled throws the error of the factory.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > still waits where the module that is linked has run, in an import cycle that has yet to end
+# The next one: the mock call that throws evicts the mocked module and its importers. Plain runs them again for the next test file. Compiled has one instance of each. The tests end the same.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > leaves nothing of the test file that fails to the next one

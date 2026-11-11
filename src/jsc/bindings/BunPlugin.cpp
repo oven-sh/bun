@@ -4126,7 +4126,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-// Whether a module whose body is on the stack imports `record` through modules that have yet to run: the evaluation under way comes to `record`.
+// Whether a module that Vitest doesn't externalize is linked to `record` and has yet to run. `running` is the one that asks.
+__attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
+{
+    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
+        auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!importer || importer->status() < JSC::CyclicModuleRecord::Status::Linked || importer->status() > JSC::CyclicModuleRecord::Status::Evaluating)
+            continue;
+        String key(mapKey.first);
+        if (key == running || isExternalizedByVitest(globalObject, key))
+            continue;
+        for (auto& loaded : importer->loadedModules().values()) {
+            if (loaded.m_module.get() == record)
+                return true;
+        }
+    }
+    return false;
+}
+
+// Whether the evaluation under way comes to `record`, which is linked: a module whose body is on the stack imports it through modules that have yet to run.
 __attribute__((minsize)) static bool isReachedByEvaluationUnderWay(Zig::GlobalObject* globalObject, JSC::CyclicModuleRecord* record)
 {
     for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
@@ -4137,25 +4155,28 @@ __attribute__((minsize)) static bool isReachedByEvaluationUnderWay(Zig::GlobalOb
     return false;
 }
 
-// Whether a module that Vitest doesn't externalize is linked to `record` and has yet to run. `running` is the one that asks.
-// `waiting` is a mock that would wait for the next import of `record`. Then only a module that the evaluation under way runs counts: the eviction behind
-// such a mock takes out the others that a test file loaded, and they are loaded again behind the mock. A mock of Jest's kind is also for what Vitest externalizes.
-__attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running, JSModuleMock* waiting = nullptr)
+// Whether a module that is linked to `record` has yet to run its body, or runs it now as `running`. Any other importer that a test file loaded is evicted with `record` when `mock` waits, and is loaded again.
+__attribute__((minsize)) static bool isLinkedToBodyYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, JSModuleMock* mock, const String& running)
 {
+    using Status = JSC::CyclicModuleRecord::Status;
     for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
         auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-        if (!importer || importer->status() < JSC::CyclicModuleRecord::Status::Linked || importer->status() > JSC::CyclicModuleRecord::Status::Evaluating)
+        if (!importer || importer->status() < Status::Linked || importer->status() > Status::Evaluating)
             continue;
         String key(mapKey.first);
-        if (key == running || ((!waiting || waiting->isOfVitest()) && isExternalizedByVitest(globalObject, key)))
+        // vi.mock() leaves what Vitest externalizes to the real module.
+        if (mock->isOfVitest() && isExternalizedByVitest(globalObject, key))
             continue;
-        for (auto& loaded : importer->loadedModules().values()) {
-            if (loaded.m_module.get() != record)
-                continue;
-            if (!waiting || importer->status() == JSC::CyclicModuleRecord::Status::Evaluating || isReachedByEvaluationUnderWay(globalObject, importer))
-                return true;
-            break;
-        }
+        bool isLinked = false;
+        for (auto& loaded : importer->loadedModules().values())
+            isLinked |= loaded.m_module.get() == record;
+        if (!isLinked)
+            continue;
+        if (importer->status() == Status::Linked && isReachedByEvaluationUnderWay(globalObject, importer))
+            return true;
+        // A module of an import cycle keeps this status behind its body until the cycle has run. Of those only the calling module is known to run.
+        if (importer->status() == Status::Evaluating && (key == running || !anyUnevaluatedImport(importer, [&](JSC::CyclicModuleRecord* imported) { return imported == importer; })))
+            return true;
     }
     return false;
 }
@@ -5811,7 +5832,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         JSC::Exception* thrown = scope.exception();
         if (thrown && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
             // No load comes from a module that is linked to the module and has yet to run, the calling module among them. The mock would never reach it, so the error of the factory is thrown.
-            if (loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), String(), mock)) {
+            if (loaded.esmNamespace && isLinkedToBodyYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), mock, callerPath(vm, callframe))) {
+                // As behind a mock that waits, the module and its importers are not for the next test file.
+                ModulesToEvict evict;
+                evict.onlyImportersFromEarlierTestFiles = true;
+                evict.modules.append(specifier);
+                evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+                RETURN_IF_EXCEPTION(scope, {});
                 scope.throwException(globalObject, thrown);
                 return {};
             }

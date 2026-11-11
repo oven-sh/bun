@@ -7517,8 +7517,8 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
           `,
         }),
       });
-      for (const variable of ["ofOwnModule", "ofTestFile", "handedOn", "awaited", "called", "ofLibrary", "ofCommonJS"])
-        expect(stderr).toContain(thrown(variable));
+      const variables = ["ofOwnModule", "ofTestFile", "handedOn", "awaited", "called", "ofLibrary", "ofCommonJS"];
+      for (const variable of variables) expect(stderr).toContain(thrown(variable));
       expect(stderr).toContain(" 0 pass\n 7 fail\n 7 errors\n");
       expect(exitCode).toBe(1);
     });
@@ -7527,14 +7527,14 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
     test("still waits for the next import where every module that is linked to the module has run", async () => {
       await expectFixturesToPass(
         {
-          "mail.ts": mail,
-          "service.ts": service("./mail"),
-          "mocks.ts": `
+          "first/mail.ts": mail,
+          "first/service.ts": service("./mail"),
+          "first/mocks.ts": `
             import { vi } from "bun:test";
             const impl = () => "mock";
             vi.mock("./mail", () => ({ send: impl }));
           `,
-          "first.test.ts": `
+          "first/first.test.ts": `
             import { expect, test } from "bun:test";
             import { atLoad, notify } from "./service";
             import "./mocks";
@@ -7546,6 +7546,102 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         },
         1,
       );
+    });
+
+    // render.ts has run when mocks.ts runs. It keeps the status of a module that is running until index.ts has run.
+    test("still waits where the module that is linked has run, in an import cycle that has yet to end", async () => {
+      await expectFixturesToPass(
+        {
+          "mail.ts": mail,
+          "index.ts": `export * from "./render"; export * from "./mocks";`,
+          "render.ts": `import { send } from "./mail"; import "./index"; export const notify = () => send();`,
+          "mocks.ts": `
+            import { vi } from "bun:test";
+            const sendMock = vi.fn(() => "mock");
+            vi.mock("./mail", () => ({ send: sendMock }));
+            export { sendMock };
+          `,
+          "cycle.test.ts": `
+            import { expect, test } from "bun:test";
+            import { notify, sendMock } from "./index";
+            test("the importer ran first, in an import cycle", async () => {
+              expect(notify()).toBe("real");
+              expect((await import("./mail")).send()).toBe("mock");
+              expect(sendMock).toHaveBeenCalledTimes(1);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("is thrown once under --rerun-each", async () => {
+      const { stderr, exitCode } = await run(
+        mocksFirst("again", "./mail", `const again = () => "mock"; vi.mock("./mail", () => ({ send: again }));`, {
+          "again/mail.ts": mail,
+        }),
+        ["--rerun-each=2"],
+      );
+      expect(stderr).toContain(thrown("again"));
+      expect(stderr).toContain(" 0 pass\n 1 fail\n 1 error\n");
+      expect(exitCode).toBe(1);
+    });
+
+    // The module and its importers are evicted as behind a mock that waits, and a mock that the file made before is undone.
+    test("leaves nothing of the test file that fails to the next one", async () => {
+      const { stderr, exitCode } = await run({
+        // service.ts runs while mocks.ts waits for its own import.
+        "later/node_modules/mail-e/package.json": JSON.stringify({ name: "mail-e", main: "index.js" }),
+        "later/node_modules/mail-e/index.js": `exports.send = () => "real";`,
+        "later/service.ts": `import { send } from "mail-e"; export const notify = () => send();`,
+        "later/tag.ts": `export const tag = "mock";`,
+        "later/mocks.ts": `
+          import { vi } from "bun:test";
+          import { tag } from "./tag";
+          const ofFirstFile = () => tag;
+          vi.mock("mail-e", () => ({ send: ofFirstFile }));
+        `,
+        "later/a.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { notify } from "./service";
+          test("fails to load", () => expect(notify()).toBe("mock"));
+        `,
+        "later/mocks-that-work.ts": `
+          import { vi } from "bun:test";
+          vi.mock("mail-e", () => ({ send: () => "mock of the next file" }));
+        `,
+        "later/b.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks-that-work";
+          import { notify } from "./service";
+          test("the next file mocks the package", () => expect(notify()).toBe("mock of the next file"));
+        `,
+        // The first mock of the helper is in place when the second one throws.
+        "two/mail.ts": mail,
+        "two/log.ts": `export const log = () => "real";`,
+        "two/service.ts": `import { send } from "./mail"; import { log } from "./log"; export const notify = () => send() + " " + log();`,
+        "two/mocks.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./log", () => ({ log: () => "mock" }));
+          const ofSecondMock = () => "mock";
+          vi.mock("./mail", () => ({ send: ofSecondMock }));
+        `,
+        "two/a.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { notify } from "./service";
+          test("fails to load", () => expect(notify()).toBe("mock mock"));
+        `,
+        "two/b.test.ts": `
+          import { expect, test } from "bun:test";
+          import { notify } from "./service";
+          test("the next file mocks nothing", () => expect(notify()).toBe("real real"));
+        `,
+      });
+      for (const variable of ["ofFirstFile", "ofSecondMock"]) expect(stderr).toContain(thrown(variable));
+      expect(stderr).toContain(" 2 pass\n 2 fail\n 2 errors\n");
+      expect(exitCode).toBe(1);
     });
 
     // An import that fails leaves service.ts linked, and not run. The next test file runs it where it imports it with a statement.

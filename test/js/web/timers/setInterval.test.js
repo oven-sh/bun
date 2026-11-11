@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunRun, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -134,3 +134,100 @@ it.concurrent(
   },
   30_000,
 );
+
+it.concurrent("a timer that ends itself through _repeat or _idleTimeout does not keep its object", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { heapStats } = require("bun:jsc");
+        const count = 50;
+        const cases = {
+          "interval, _repeat = null"(done) {
+            const timer = setInterval(() => {
+              timer._repeat = null;
+              done();
+            }, 1);
+          },
+          "interval, _idleTimeout = -1"(done) {
+            const timer = setInterval(() => {
+              timer._idleTimeout = -1;
+              done();
+            }, 1);
+          },
+          "interval, _repeat = null before refresh()"(done) {
+            const timer = setInterval(() => {
+              timer._repeat = null;
+              timer.refresh();
+              done();
+            }, 1);
+          },
+          "interval, refresh() before _repeat = null"(done) {
+            let calls = 0;
+            const timer = setInterval(() => {
+              if (++calls === 2) return done();
+              timer.refresh();
+              timer._repeat = null;
+            }, 1);
+          },
+          "timeout, refresh() with _idleTimeout = -1 in the callback"(done) {
+            const timer = setTimeout(() => {
+              timer._idleTimeout = -1;
+              timer.refresh();
+              done();
+            }, 1);
+          },
+          "timeout, refresh() with _idleTimeout = -1 after the callback"(done) {
+            const timer = setTimeout(() => {
+              setImmediate(() => {
+                timer._idleTimeout = -1;
+                timer.refresh();
+                done();
+              });
+            }, 1);
+          },
+          "timeout, _repeat = -1"(done) {
+            const timer = setTimeout(() => {
+              timer._repeat = -1;
+              done();
+            }, 1);
+          },
+        };
+        const rooted = () => heapStats().protectedObjectTypeCounts.Timeout ?? 0;
+        const keepAlive = new MessageChannel();
+        keepAlive.port1.onmessage = () => {};
+        const result = {};
+        for (const [name, start] of Object.entries(cases)) {
+          await Promise.all(Array.from({ length: count }, () => new Promise(done => start(done))));
+          await new Promise(setImmediate);
+          result[name] = rooted();
+        }
+        keepAlive.port1.close();
+        // The probe sees a timer that will fire.
+        const pending = setTimeout(() => {}, 100_000);
+        result.pending = rooted();
+        clearTimeout(pending);
+        console.log(JSON.stringify(result));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ rooted: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    rooted: {
+      "interval, _repeat = null": 0,
+      "interval, _idleTimeout = -1": 0,
+      "interval, _repeat = null before refresh()": 0,
+      "interval, refresh() before _repeat = null": 0,
+      "timeout, refresh() with _idleTimeout = -1 in the callback": 0,
+      "timeout, refresh() with _idleTimeout = -1 after the callback": 0,
+      "timeout, _repeat = -1": 0,
+      pending: 1,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});

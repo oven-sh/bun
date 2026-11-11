@@ -579,7 +579,7 @@ extern "C" fn Bun__FakeTimers__replacedPerformanceNow() -> f64 {
 struct ClearedTimers {
     /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
     /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
-    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
+    /// `schedule`) and `internals.this_value` still GC-roots the wrapper, so
     /// neither side ever frees.
     pinned: Vec<core::ptr::NonNull<TimerObjectInternals>>,
     /// Likewise, an unlinked `AbortSignal.timeout()` timer is still its

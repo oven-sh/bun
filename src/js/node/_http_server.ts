@@ -31,7 +31,6 @@ const {
   ConnResetException,
   ErrnoException,
   ExceptionWithHostPort,
-  listenException,
   hasObserver,
   startPerf,
   stopPerf,
@@ -322,6 +321,7 @@ function emitListenErrorNextTick(self, err) {
 }
 
 function emitListenError(server, err, port, host, socketPath, fd) {
+  const { listenException } = require("internal/net/errors");
   if (fd !== undefined) err = listenException(err, null);
   else err = socketPath ? listenException(err, socketPath, -1) : listenException(err, host ?? "::", port);
   process.nextTick(emitListenErrorNextTick, server, err);

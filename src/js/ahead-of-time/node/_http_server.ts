@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5207cb4738d6ac8e096ab4bcca780a992b7a6cd7fcf4bfd501ec3e3db268cd31.
+// Written against that file with the SHA-256 dae95a0d0caa9ce7b4dbd63a75f431a318b15f0c07786b5bb6a92dae31fccc0e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -69,7 +69,6 @@ const {
   ConnResetException,
   ErrnoException,
   ExceptionWithHostPort,
-  listenException,
   hasObserver,
   startPerf,
   stopPerf,
@@ -499,6 +498,7 @@ function emitListenError(
   socketPath: string | undefined,
   fd: number | undefined,
 ) {
+  const { listenException } = require("internal/net/errors");
   if (fd !== undefined) err = listenException(err, null);
   else err = socketPath ? listenException(err, socketPath, -1) : listenException(err, host ?? "::", port as number);
   process.nextTick(emitListenErrorNextTick, server, err);

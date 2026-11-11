@@ -281,6 +281,7 @@ if (mode === "end" || mode === "end-strict" || mode === "destroySoon") {
   process.exit(0);
 } else if (mode === "server-end") {
   const clientSawFin = Promise.withResolvers();
+  const serverFinished = Promise.withResolvers();
   let serverSocket;
   const server = net.createServer(raw => {
     const socket = (serverSocket = new TLSSocket(raw, {
@@ -290,7 +291,10 @@ if (mode === "end" || mode === "end-strict" || mode === "destroySoon") {
     }));
     socket.on("error", () => {});
     raw.on("error", () => {});
-    socket.on("finish", () => log.push("finish"));
+    socket.on("finish", () => {
+      log.push("finish");
+      serverFinished.resolve();
+    });
     // bun's wrap adopts the connection's handle on a later turn, so end() from
     // the turn after the wrap is the reported shape: the engine runs and waits
     // for a client flight that never arrives.
@@ -306,7 +310,9 @@ if (mode === "end" || mode === "end-strict" || mode === "destroySoon") {
   client.on("error", () => {});
   client.on("end", () => clientSawFin.resolve());
 
-  await clientSawFin.promise;
+  // Bun completes the shutdown request after the poll that reads the FIN when end() ran from
+  // setImmediate, so 'finish' can follow the client's 'end'. Wait for both.
+  await Promise.all([clientSawFin.promise, serverFinished.promise]);
 
   client.destroy();
   serverSocket?.destroy();

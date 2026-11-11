@@ -288,6 +288,30 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // It queues a task on the event loop that calls the function with the operands, in the async context of the call.
+  b.static(cpp("BunProcess.cpp", "jsFunctionQueueLoopTask"), {
+    args: { fn: b.callable, a: b.any.optional, b: b.any.optional },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    uses: {
+      fn: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Later",
+          this: b.undefined,
+          args: [b.operand("a"), b.operand("b")],
+          result: "Ignored",
+        }),
+      ],
+      a: [b.retained],
+      b: [b.retained],
+    },
+    reads: externalState,
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   // It keeps the function. The process object calls it when the process or the worker starts to exit: inside process.exit() and process.reallyExit(), and when nothing is left to do.
   b.static(cpp("BunProcess.cpp", "jsFunctionRunWhenProcessExits"), {
     // It refuses nothing: what is no object is as good as nothing.

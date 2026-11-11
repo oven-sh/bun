@@ -2280,8 +2280,10 @@ impl<'a> Printer<'a, '_> {
                         if node.next == NONE && prefix.len() + room < min_indent {
                             // Its number as written was wide enough.
                             let digits = ordered_item_digits(printer.original, printer.tree, item);
-                            prefix
-                                .splice(0..prefix.len().saturating_sub(2), digits.iter().copied());
+                            let marker = prefix.len().saturating_sub(2);
+                            if digits.len() > marker {
+                                prefix.splice(0..marker, digits.iter().copied());
+                            }
                         }
                         min_indent
                             .saturating_sub(alignment_before + prefix.len())
@@ -2290,7 +2292,11 @@ impl<'a> Printer<'a, '_> {
                 };
                 prefix.splice(0..0, std::iter::repeat_n(b' ', leading));
             }
-            previous_content = prefix.len();
+            // An empty item's line ends at its marker.
+            previous_content = match node.first_child == NONE {
+                true => prefix.trim_ascii_end().len() + 1,
+                false => prefix.len(),
+            };
 
             let (first, second) = (
                 printer.node(node.first_child),

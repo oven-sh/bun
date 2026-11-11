@@ -65,10 +65,11 @@ pub(crate) fn parse(
     text: &[u8],
     original: &[u8],
     syntax: Syntax,
+    joins_code_lines: bool,
     tree: &mut Tree,
 ) -> Option<NodeId> {
     let Some(front_matter) = super::front_matter::parse(original) else {
-        return parse_lines(text, tree, syntax, 0);
+        return parse_lines(text, tree, syntax, joins_code_lines, 0);
     };
     let is_blanked = !matches!(original.get(front_matter.end), None | Some(b'\n'));
     let first_line = if is_blanked {
@@ -76,7 +77,7 @@ pub(crate) fn parse(
     } else {
         front_matter.end + 1
     };
-    let root = parse_lines(text, tree, syntax, first_line)?;
+    let root = parse_lines(text, tree, syntax, joins_code_lines, first_line)?;
     let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
     tree.prepend(root, node);
     Some(root)
@@ -90,7 +91,7 @@ pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Opt
     } else {
         Syntax::Markdown
     };
-    parse_lines(text, tree, syntax, 0)
+    parse_lines(text, tree, syntax, false, 0)
 }
 
 fn is_space(byte: u8) -> bool {
@@ -539,6 +540,8 @@ struct Builder<'t> {
     is_on_verbatim_line: bool,
     /// The runs of backticks that are text in the open paragraph, heading or cell.
     stray_backticks: BacktickRuns,
+    /// See [`parse_lines`].
+    joins_code_lines: bool,
 }
 
 /// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
@@ -618,8 +621,14 @@ impl BacktickRuns {
     }
 }
 
-/// The first `len` bytes of `rest`, a line that starts with a code span, with the fence the span is printed with.
-fn with_printed_backticks(rest: &[u8], len: usize, strays: BacktickRuns) -> Vec<u8> {
+/// The first `len` bytes of `rest`, a line that starts with a code span, with the fence the span is printed with. If
+/// the span goes on past the line and is printed on one line, that line.
+fn with_printed_backticks(
+    rest: &[u8],
+    len: usize,
+    strays: BacktickRuns,
+    joins_lines: bool,
+) -> Vec<u8> {
     let run_at = |at: usize| rest[at..].iter().take_while(|&&byte| byte == b'`').count();
     let source_run = run_at(0);
     let mut at = source_run;
@@ -632,7 +641,17 @@ fn with_printed_backticks(rest: &[u8], len: usize, strays: BacktickRuns) -> Vec<
         at += run;
     }
     let content = rest.get(source_run..at).unwrap_or_default();
-    let mut line = vec![b'`'; BacktickRuns::of(content).with(strays).fence_len()];
+    let fence = BacktickRuns::of(content).with(strays).fence_len();
+    let mut line = vec![b'`'; fence];
+    if joins_lines && at > len {
+        line.extend(
+            content
+                .iter()
+                .map(|&byte| if byte == b'\n' { b' ' } else { byte }),
+        );
+        line.extend(std::iter::repeat_n(b'`', fence));
+        return line;
+    }
     line.extend_from_slice(rest.get(source_run..len).unwrap_or_default());
     line
 }
@@ -693,7 +712,7 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
     };
     let text = [first, b"\n", line, b"\n"].concat();
     let mut tree = Tree::default();
-    let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
+    let Some(root) = parse_lines(&text, &mut tree, syntax, false, 0) else {
         return false;
     };
     let first = tree.get(root).map_or(NONE, |root| root.first_child);
@@ -1604,7 +1623,12 @@ impl Builder<'_> {
         let line = match follower {
             Follower::Code => {
                 let rest = text.get(it.line.0 as usize..).unwrap_or_default();
-                printed = with_printed_backticks(rest, line.len(), self.stray_backticks);
+                printed = with_printed_backticks(
+                    rest,
+                    line.len(),
+                    self.stray_backticks,
+                    self.joins_code_lines,
+                );
                 &printed[..]
             }
             _ => line,
@@ -2192,10 +2216,12 @@ impl RendererImpl for Builder<'_> {
 
 /// Fills `tree` with the syntax tree of `text`, in which every line break is `\n`, starting at `first_line`, which is
 /// the start of a line. Returns the root.
+/// `joins_code_lines`: the printer puts a code span on one line, as it does unless `proseWrap` is `preserve`.
 pub(crate) fn parse_lines(
     text: &[u8],
     tree: &mut Tree,
     syntax: Syntax,
+    joins_code_lines: bool,
     first_line: usize,
 ) -> Option<NodeId> {
     tree.clear();
@@ -2300,6 +2326,7 @@ pub(crate) fn parse_lines(
         guarded_break: None,
         is_on_verbatim_line: false,
         stray_backticks: BacktickRuns::default(),
+        joins_code_lines,
     };
     render_with_extensions(
         &text[first_line..],

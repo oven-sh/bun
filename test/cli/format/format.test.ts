@@ -2256,13 +2256,26 @@ describe.concurrent("bun fmt", () => {
       test.each([
         // The indentation goes, and with three backticks the line would start a code block, so the line break before
         // it becomes a space. Prettier 3.9.9 prints one backtick, and the stray one closes it.
-        ["a ` and `` then\n    ````x\n    y```` more\n", "a ` and `` then ```x\n    y``` more\n"],
+        ["a ` and `` then\n    ````x\n    y```` more\n", [], "a ` and `` then ```x\n    y``` more\n"],
         // After a hard break the line keeps its indentation instead.
-        ["a ` and `` then\\\n    ````x\n    y```` more\n", "a ` and `` then\\\n    ```x\n    y``` more\n"],
-      ])("starts a line that is paragraph text because it's indented: %j", async (before, after) => {
-        expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before).replace("then\n", "then "));
+        ["a ` and `` then\\\n    ````x\n    y```` more\n", [], "a ` and `` then\\\n    ```x\n    y``` more\n"],
+        // Unless the span is printed on one line, which starts no code block.
+        [
+          "a ` and `` then\n    ````x\n    y```` more\n",
+          ["--prose-wrap=always"],
+          "a ` and `` then ```x     y``` more\n",
+        ],
+        [
+          "a ` and `` then\\\n    ````x\n    y```` more\n",
+          ["--prose-wrap=never"],
+          "a ` and `` then\\\n```x     y``` more\n",
+        ],
+      ])("starts a line that is paragraph text because it's indented: %j %j", async (before, args, after) => {
+        // On one line, the indentation of the second line stays in the code, as Prettier prints it.
+        const html = (text: string) => Bun.markdown.html(text).replace("then\n", "then ").replace(/ +/g, " ");
+        expect(html(after)).toBe(html(before));
         const files = { "a.md": before, "b.md": after };
-        const result = await format(files, [], { reads: Object.keys(files) });
+        const result = await format(files, args, { reads: Object.keys(files) });
         expect(result.files).toEqual({ "a.md": after, "b.md": after });
         expect(result.exitCode).toBe(0);
       });

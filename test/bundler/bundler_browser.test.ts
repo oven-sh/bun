@@ -118,6 +118,224 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // emit("error") in the "events" polyfill and in what the "domain" polyfill adds to an emitter (src/node-fallbacks)
+  // follows src/js/node/events.ts and domain.ts. One script runs against both: as a browser bundle it gets the
+  // polyfills, as a bun bundle it gets the runtime modules. Both must print the same. Node prints the same too, but
+  // for one line: it wraps an Error of another realm.
+  const emitErrorEntry = /* js */ `
+    import * as domain from "node:domain";
+    import { EventEmitter, once } from "node:events";
+    import { PassThrough, finished } from "node:stream";
+    const print = (label, ...columns) => console.log(label + ": " + columns.join(" | "));
+    // undefined and null stay apart, and a symbol or a bigint has a text.
+    const text = value =>
+      typeof value === "string" ? JSON.stringify(value) : String(value) + (typeof value === "bigint" ? "n" : "");
+    const list = values => "[" + values.map(text).join(", ") + "]";
+    // What emit("error", ...args) throws while nothing listens for "error".
+    function thrown(emitter, ...args) {
+      try {
+        emitter.emit("error", ...args);
+      } catch (error) {
+        return error;
+      }
+    }
+    // The Error that emit() makes for a value that is not an Error.
+    function wrapper(error, value) {
+      if (error === value) return "the value itself";
+      if (!(error instanceof Error)) return "not an Error";
+      const context = "context" in error && Object.is(error.context, value) ? "context is the value" : "no context";
+      return [error.name, error.code, error.message, context].join(" | ");
+    }
+    {
+      const e = new EventEmitter();
+      const seen = [];
+      e.on("error", (...args) => seen.push(list(args)));
+      const returned = [e.emit("error"), e.emit("error", undefined, "second"), e.emit("error", null)];
+      print("a listener gets the arguments of emit()", seen.join(" "), returned.join());
+    }
+    {
+      const e = new EventEmitter();
+      const seen = [];
+      e.on(EventEmitter.errorMonitor, (...args) => seen.push(list(args)));
+      const error = thrown(e, null, "x");
+      print("an errorMonitor listener gets them too, and emit() throws", seen.join(" "), wrapper(error, null));
+    }
+    {
+      const e = new EventEmitter();
+      const seen = [];
+      e.on(EventEmitter.errorMonitor, () => e.on("error", (...args) => seen.push(list(args))));
+      print("an errorMonitor listener that adds an error listener", e.emit("error", 1), seen.join(" "));
+    }
+    {
+      const e = Object.create(EventEmitter.prototype);
+      print("an emitter whose constructor did not run", wrapper(thrown(e, 7), 7), typeof e._events);
+    }
+    {
+      class CustomError extends Error {}
+      const errors = [new Error("boom"), new CustomError("boom"), new RangeError("boom")];
+      const same = errors.map(error => thrown(new EventEmitter(), error, "more") === error);
+      print("an Error is thrown as it is", same.join());
+    }
+    for (const value of ["str", undefined, null, true, 42, 1n, Symbol("s")]) {
+      print('emit("error", ' + text(value) + ")", wrapper(thrown(new EventEmitter(), value), value));
+    }
+    print('emit("error")', wrapper(thrown(new EventEmitter()), undefined));
+    {
+      const e = new EventEmitter();
+      const promise = once(e, "never");
+      e.emit("error");
+      const settled = await promise.then(
+        () => "resolved",
+        reason => "rejected with " + text(reason),
+      );
+      print("events.once() rejects with the value", settled);
+    }
+    {
+      const e = new EventEmitter({ captureRejections: true });
+      const seen = new Promise(resolve => e.on("error", (...args) => resolve(list(args))));
+      e.on("x", () => Promise.reject());
+      e.emit("x");
+      print("captureRejections gives the error listener the rejection value", await seen);
+    }
+    {
+      // A bundle for the browser has no "node:vm". It runs in bun, where the process has the module.
+      const foreign = process.getBuiltinModule("node:vm").runInNewContext("new TypeError('other realm')");
+      print("an Error of another realm", foreign instanceof Error, thrown(new EventEmitter(), foreign) === foreign);
+    }
+    {
+      const stream = new PassThrough();
+      stream.on("error", () => {});
+      const done = new Promise(resolve => finished(stream, (...args) => resolve(list(args))));
+      stream.emit("error");
+      print('stream.finished() after stream.emit("error")', await done);
+    }
+    // The seven emits of Node's test-event-emitter-no-error-provided-to-error-event.js.
+    for (const args of [[], [false], [null], [undefined], [42], ["fortytwo"], [true]]) {
+      const e = new EventEmitter();
+      const d = domain.create();
+      d.add(e);
+      const seen = [];
+      d.on("error", er => seen.push(er instanceof Error ? [er.name, er.code, er.message].join(" | ") : text(er)));
+      e.emit("error", ...args);
+      print('d.add(e), e.emit("error"' + args.map(arg => ", " + text(arg)).join("") + ")", seen.join(" "));
+    }
+    {
+      const e = new EventEmitter();
+      const d = domain.create();
+      d.on("error", () => {});
+      d.add(e);
+      d.remove(e);
+      print('d.remove(e), e.emit("error", 7)', wrapper(thrown(e, 7), 7));
+    }
+  `;
+  const emitErrorStdout = `
+    a listener gets the arguments of emit(): [] [undefined, "second"] [null] | true,true,true
+    an errorMonitor listener gets them too, and emit() throws: [null, "x"] | Error | ERR_UNHANDLED_ERROR | Unhandled error. (null) | context is the value
+    an errorMonitor listener that adds an error listener: true | [1]
+    an emitter whose constructor did not run: Error | ERR_UNHANDLED_ERROR | Unhandled error. (7) | context is the value | undefined
+    an Error is thrown as it is: true,true,true
+    emit("error", "str"): Error | ERR_UNHANDLED_ERROR | Unhandled error. ('str') | context is the value
+    emit("error", undefined): Error | ERR_UNHANDLED_ERROR | Unhandled error. (undefined) | context is the value
+    emit("error", null): Error | ERR_UNHANDLED_ERROR | Unhandled error. (null) | context is the value
+    emit("error", true): Error | ERR_UNHANDLED_ERROR | Unhandled error. (true) | context is the value
+    emit("error", 42): Error | ERR_UNHANDLED_ERROR | Unhandled error. (42) | context is the value
+    emit("error", 1n): Error | ERR_UNHANDLED_ERROR | Unhandled error. (1n) | context is the value
+    emit("error", Symbol(s)): Error | ERR_UNHANDLED_ERROR | Unhandled error. (Symbol(s)) | context is the value
+    emit("error"): Error | ERR_UNHANDLED_ERROR | Unhandled error. (undefined) | context is the value
+    events.once() rejects with the value: rejected with undefined
+    captureRejections gives the error listener the rejection value: [undefined]
+    an Error of another realm: false | true
+    stream.finished() after stream.emit("error"): [undefined]
+    d.add(e), e.emit("error"): Error | ERR_UNHANDLED_ERROR | Unhandled error.
+    d.add(e), e.emit("error", false): Error | ERR_UNHANDLED_ERROR | Unhandled error.
+    d.add(e), e.emit("error", null): Error | ERR_UNHANDLED_ERROR | Unhandled error.
+    d.add(e), e.emit("error", undefined): Error | ERR_UNHANDLED_ERROR | Unhandled error.
+    d.add(e), e.emit("error", 42): 42
+    d.add(e), e.emit("error", "fortytwo"): "fortytwo"
+    d.add(e), e.emit("error", true): true
+    d.remove(e), e.emit("error", 7): Error | ERR_UNHANDLED_ERROR | Unhandled error. (7) | context is the value
+  `;
+  itBundled("browser/NodeEventsEmitError", {
+    files: { "/entry.js": emitErrorEntry },
+    target: "browser",
+    run: { stdout: emitErrorStdout },
+  });
+  itBundled("browser/NodeEventsEmitErrorInRuntime", {
+    files: { "/entry.js": emitErrorEntry },
+    target: "bun",
+    run: { stdout: emitErrorStdout },
+  });
+  // Node and the runtime module put util.inspect(value) in the message. The polyfill has no inspect: it names a
+  // primitive only, and it runs no code of the value for the message. The bundle is minified, as a release bundle is.
+  itBundled("browser/NodeEventsEmitErrorWithoutInspect", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const print = (label, ...columns) => console.log(label + ": " + columns.join(" | "));
+        function thrown(value) {
+          try {
+            new EventEmitter().emit("error", value);
+          } catch (error) {
+            return error;
+          }
+        }
+        function wrapper(value) {
+          const error = thrown(value);
+          if (error === value) return "the value itself";
+          if (!(error instanceof Error)) return "not an Error";
+          const context = "context" in error && error.context === value ? "context is the value" : "no context";
+          return [error.name, error.code, error.message, context].join(" | ");
+        }
+        {
+          const calls = [];
+          const record = name => () => {
+            calls.push(name);
+            throw new Error(name + " ran");
+          };
+          const hostile = { toString: record("toString"), valueOf: record("valueOf") };
+          for (const key of ["message", "name", "constructor", Symbol.toPrimitive, Symbol.toStringTag]) {
+            Object.defineProperty(hostile, key, { get: record(String(key)) });
+          }
+          // The handler is a Proxy too: it records each trap that the engine looks for.
+          const proxy = new Proxy({}, new Proxy({}, { get: (_, trap) => void calls.push("proxy " + trap) }));
+          const values = [{ message: "m" }, [1, 2], function f() {}, new String("s"), new Event("error"), hostile, proxy];
+          print("an object or a function", [...new Set(values.map(wrapper))].join(" and "));
+          print("code of the value that ran", calls.join());
+        }
+        {
+          const line = wrapper(Buffer.alloc(20000, "a").toString());
+          print("a string of 20,000 characters", line.length, line.slice(0, 52) + "..." + line.slice(-28));
+        }
+        print("a symbol and a bigint", wrapper(Symbol("s")), wrapper(1n));
+        {
+          const inherits = Object.create(Error.prototype);
+          const dom = new DOMException("boom", "AbortError");
+          print("what inherits from Error.prototype is thrown as it is", thrown(inherits) === inherits, thrown(dom) === dom);
+        }
+        {
+          // The last block: it makes the engine one that has no Error.isError, as older browsers are.
+          const own = new TypeError("this realm");
+          const foreign = process.getBuiltinModule("node:vm").runInNewContext("new TypeError('other realm')");
+          delete Error.isError;
+          print("without Error.isError", thrown(own) === own, wrapper(foreign));
+        }
+      `,
+    },
+    target: "browser",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: {
+      stdout: `
+        an object or a function: Error | ERR_UNHANDLED_ERROR | Unhandled error. | context is the value
+        code of the value that ran: proxy getPrototypeOf
+        a string of 20,000 characters: 10074 | Error | ERR_UNHANDLED_ERROR | Unhandled error. ('aaa...aaa') | context is the value
+        a symbol and a bigint: Error | ERR_UNHANDLED_ERROR | Unhandled error. (Symbol(s)) | context is the value | Error | ERR_UNHANDLED_ERROR | Unhandled error. (1n) | context is the value
+        what inherits from Error.prototype is thrown as it is: true | true
+        without Error.isError: true | Error | ERR_UNHANDLED_ERROR | Unhandled error. | context is the value
+      `,
+    },
+  });
   // The polyfill is plain JS bundled into the user's output, so it cannot use
   // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
   // only rewritten inside src/js; in a browser bundle they are bare globals.

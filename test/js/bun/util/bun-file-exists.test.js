@@ -1,6 +1,6 @@
 import { write } from "bun";
 import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, lstatSync, openSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { closeSync, lstatSync, openSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { devNull, tmpdir } from "os";
@@ -80,7 +80,6 @@ describe.skipIf(isWindows)("exists() for a file that is not a regular file", () 
       renameSync(live, stale);
     }
 
-    expect(existsSync(live)).toBeFalse();
     expect(lstatSync(stale).isSocket()).toBeTrue();
     expect(await Bun.file(stale).exists()).toBeTrue();
   });

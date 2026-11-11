@@ -2759,7 +2759,7 @@ declare module "bun" {
      *
      * The same rule applies to a file descriptor. `Bun.stdin.exists()` is
      * true on a terminal, on `/dev/null`, and on a pipe or a socket. To find
-     * out whether stdin is piped, use `process.stdin.isTTY`.
+     * out whether stdin is a terminal, use `process.stdin.isTTY`.
      *
      * A race condition can occur where the file is deleted or renamed after
      * this is called but before you open it.

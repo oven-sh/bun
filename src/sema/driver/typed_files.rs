@@ -3549,7 +3549,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         let reads_enums = (written.iter().flatten())
             .any(|module| module.enums.is_some_and(|enums| !enums.reads.is_empty()));
         let mut output_expressions: FxHashMap<(Shape, u32, u32), ExprId> = FxHashMap::default();
-        // A build puts the constant of one read in several places: at each use of a `const` that holds the read.
+        // The literals of the output, by the place in a source that each is mapped to: a read, or a use of a `const`.
         let mut literals: FxHashMap<(u32, u32), Vec<ExprId>> = FxHashMap::default();
         for index in 0..output_file.exprs.len() {
             let expr = ExprId(index as u32);
@@ -3691,10 +3691,6 @@ impl<'a> Transfer<'_, 'a, '_> {
             let constants: FxHashSet<ExprId> = constants.collect();
             let holders: FxHashSet<ExprId> =
                 (constants.iter().copied().chain(fields).chain(defaults)).collect();
-            let annotated: FxHashMap<ExprId, TypeNodeId> = (file.var_decls.iter().take(all))
-                .filter(|declaration| declaration.kind == VarKind::Const)
-                .filter_map(|declaration| Some((declaration.init, declaration.ty.some()?)))
-                .collect();
             let parameters: FxHashMap<ExprId, u32> = (file.params.iter().take(all))
                 .filter(|parameter| {
                     parameter.ty.is_none() && matches!(file[parameter.pat].kind, PatKind::Ident(_))
@@ -3712,11 +3708,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                 outermost: expr,
                 casts: Vec::new(),
             }));
-            // The use of a `const` comes before the read that the `const` holds: its place says how it is cast.
-            let is_use = |chain: &CastChain| matches!(file[chain.operand].kind, ExprKind::Ident(_));
-            if has_reads {
-                chains.sort_by_key(|chain| !is_use(chain));
-            }
             for chain in chains {
                 if is_covered(
                     &module.type_ranges,
@@ -3734,22 +3725,16 @@ impl<'a> Transfer<'_, 'a, '_> {
                             .filter(|&literal| is_literal(literal))
                     })
                 };
-                let own = find(chain.operand).or_else(|| find_via_ancestor(&chain));
+                let own = || find(chain.operand).or_else(|| find_via_ancestor(&chain));
                 let is_read = read_of(chain.operand).is_some();
-                // Each is the output expression to cast, and whether a build put it there for a use of a `const`.
-                let mut operands: Vec<(ExprId, bool)> = Vec::new();
+                // The constant of a read is mapped to the read, and the value of a `const` to the use that it stands at.
                 let mapped = literals.get(&(index as u32, source_position));
-                match mapped.filter(|_| is_read && !is_use(&chain)) {
-                    // The constant of a read is mapped to the read. The build can move it inside its parent.
-                    Some(mapped) => {
-                        let is_copied = constants.contains(&chain.outermost);
-                        let is_copy = |literal: ExprId| is_copied && own != Some(literal);
-                        operands.extend(mapped.iter().map(|&literal| (literal, is_copy(literal))));
-                    }
-                    None if is_read => operands.extend(own.map(|own| (own, false))),
-                    None => operands.extend(own.or_else(literal).map(|own| (own, false))),
-                }
-                for (operand, is_copy) in operands {
+                let operands: Vec<ExprId> = match mapped.filter(|_| is_read) {
+                    Some(mapped) => mapped.clone(),
+                    None if is_read => own().into_iter().collect(),
+                    None => own().or_else(literal).into_iter().collect(),
+                };
+                for operand in operands {
                     if is_read && is_literal(operand) && !with_member_cast.insert(operand) {
                         continue;
                     }
@@ -3794,18 +3779,14 @@ impl<'a> Transfer<'_, 'a, '_> {
                     let (mut opens, mut suffix) = (0usize, Vec::new());
                     let is_member = member.is_some();
                     if let Some((twin, ty, read, member)) = member {
-                        let is_held_otherwise = !is_copy
-                            && holders.contains(&chain.outermost)
+                        let is_held_otherwise = holders.contains(&chain.outermost)
                             && !output_holders.contains(&operand);
-                        // Where a build puts the value of a `const` that has a type, the value has that type.
-                        let declared = (annotated.get(&chain.outermost))
-                            .filter(|_| is_copy && !read.is_in_const_context);
-                        if read.is_in_const_context || is_held_otherwise || declared.is_some() {
+                        let annotation = read.annotation;
+                        if read.is_in_const_context || is_held_otherwise || annotation.is_some() {
                             let ty = member.member_type(twin);
                             suffix.extend_from_slice(&[&b" as "[..], &ty].concat());
                             level = Level::Compare;
-                            if let Some(&declared) = declared {
-                                let (start, end) = syntax.type_span(declared);
+                            if let Some((start, end)) = annotation {
                                 let declared = module.text(start, end);
                                 suffix.extend_from_slice(&[&b" as "[..], &declared].concat());
                             }
@@ -3823,8 +3804,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                         }
                         // A default value that the build moved out of the parameter list no longer types the parameter.
                         let moved = (parameters.get(&chain.outermost)).filter(|_| {
-                            !is_copy
-                                && !read.is_default_of_contextual_parameter
+                            !read.is_default_of_contextual_parameter
                                 && !output_defaults.contains(&operand)
                         });
                         if let Some(&name) = moved {
@@ -4534,6 +4514,8 @@ pub struct EnumRead {
     pub is_discriminant: bool,
     /// `getContextuallyTypedParameterType`: the default value of a parameter that the context of its function types.
     pub is_default_of_contextual_parameter: bool,
+    /// For a use of a `const` that has the type of its annotation there: the place of that type.
+    pub annotation: Option<(u32, u32)>,
 }
 
 /// What the checker knows about the enums of a module.
@@ -4737,36 +4719,27 @@ fn note_enum_reads(
             note_read(facts, services, (file, hir), ExprId(index as u32), member);
         }
     }
-    // A `const` that holds a read is a read of the same member wherever a build puts its value.
-    let mut copies: FxHashMap<SymbolRef, u32> = FxHashMap::default();
+    // A `const` that holds a read, or a use of such a `const`, is a read of the same member wherever a build puts its value.
+    let mut copies: FxHashMap<SymbolRef, (u32, TypeNodeId)> = FxHashMap::default();
     let mut names: FxHashSet<Atom> = FxHashSet::default();
-    // The value of a `const` whose type annotation it narrows to the member: the `const` is that member where it is used.
-    let mut narrowed: FxHashSet<(u32, u32)> = FxHashSet::default();
     for declaration in hir.var_decls.iter() {
         let value = (declaration.init.some()).filter(|_| declaration.kind == VarKind::Const);
-        let member = value.and_then(|value| Some((value, *read_by.get(&value)?)));
-        let (PatKind::Ident(name), Some((value, member))) = (hir[declaration.pat].kind, member)
-        else {
+        let (PatKind::Ident(name), Some(value)) = (hir[declaration.pat].kind, value) else {
             continue;
         };
-        if let Some(annotation) = declaration.ty.some() {
-            let node = hir.node(annotation);
-            let declared = services.type_from_type_node(NodeRef { file, node });
-            if is_narrowed_to_member(services, declared) {
-                narrowed.insert((hir[value].pos, hir[value].end));
+        let member = match hir[value].kind {
+            ExprKind::Ident(held) if names.contains(&held) => {
+                let node = hir.node(value);
+                let symbol = services.symbol_at_location(NodeRef { file, node });
+                symbol.and_then(|symbol| Some(copies.get(&symbol)?.0))
             }
-            continue;
-        }
+            _ => read_by.get(&value).copied(),
+        };
         let node = hir.node(declaration.pat);
-        if let Some(symbol) = services.symbol_at_location(NodeRef { file, node }) {
-            copies.insert(symbol, member);
+        let symbol = services.symbol_at_location(NodeRef { file, node });
+        if let (Some(member), Some(symbol)) = (member, symbol) {
+            copies.insert(symbol, (member, declaration.ty));
             names.insert(name);
-        }
-    }
-    if !narrowed.is_empty() {
-        let reads = facts.reads.iter_mut();
-        for read in reads.filter(|read| narrowed.contains(&(read.pos, read.end))) {
-            read.is_in_const_context = true;
         }
     }
     // Only a file with such a `const` has its names looked at.
@@ -4776,25 +4749,32 @@ fn note_enum_reads(
     } else {
         &hir.exprs[..]
     };
+    let syntax = Syntax {
+        file: hir,
+        text: &hir.text[..],
+    };
     for (index, _) in exprs.iter().enumerate().filter(|(_, expr)| named(expr)) {
-        let node = hir.node(ExprId(index as u32));
-        let symbol = services.symbol_at_location(NodeRef { file, node });
-        if let Some(&member) = symbol.and_then(|symbol| copies.get(&symbol)) {
-            note_read(facts, services, (file, hir), ExprId(index as u32), member);
+        let node = NodeRef {
+            file,
+            node: hir.node(ExprId(index as u32)),
+        };
+        let symbol = services.symbol_at_location(node);
+        let Some(&(member, annotation)) = symbol.and_then(|symbol| copies.get(&symbol)) else {
+            continue;
+        };
+        note_read(facts, services, (file, hir), ExprId(index as u32), member);
+        // A `const` with a type annotation is, at a use, the member that its value narrowed that type to, or has that type.
+        let (Some(annotation), Some(read)) = (annotation.some(), facts.reads.last_mut()) else {
+            continue;
+        };
+        let used_as = services.type_at_location(node);
+        let flags = services.type_flags(used_as);
+        match flags.contains(TypeFlags::ENUM_LITERAL) && !flags.contains(TypeFlags::UNION) {
+            true => read.is_in_const_context = true,
+            false => read.annotation = Some(syntax.type_span(annotation)),
         }
     }
     facts.reads.shared_sort_by_key(|read| read.end);
-}
-
-/// Whether a member of an enum as the value of a `const` narrows this declared type to itself: `Kind`, `Kind.A | null`.
-fn is_narrowed_to_member(services: &mut Services<'_, '_, '_>, declared: TypeId) -> bool {
-    let narrowable = TypeFlags::ENUM_LITERAL | TypeFlags::NULL | TypeFlags::UNDEFINED;
-    let flags = services.type_flags(declared);
-    if !flags.contains(TypeFlags::UNION) {
-        return flags.contains(TypeFlags::ENUM_LITERAL);
-    }
-    let parts = services.constituents(declared).to_vec();
-    (parts.into_iter()).all(|part| services.type_flags(part).intersects(narrowable))
 }
 
 fn note_read(
@@ -4812,6 +4792,7 @@ fn note_read(
         is_in_const_context: is_in_const_context(services, (file, hir), node),
         is_discriminant: is_discriminant(services, file, node),
         is_default_of_contextual_parameter: false,
+        annotation: None,
     });
 }
 

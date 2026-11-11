@@ -2186,6 +2186,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);
+                if self.options.features.writes_typed_files {
+                    return self.value_at_use(replacement, loc);
+                }
                 return replacement;
             }
         }
@@ -7067,6 +7070,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.should_fold_typescript_constant_expressions
             && !self.keeps_enum_read(&binary.left.data)
             && !self.keeps_enum_read(&binary.right.data)
+    }
+
+    /// The value of a `const` where the `const` is used. The typed file types the value by that use, so it is mapped there.
+    #[cold]
+    #[inline(never)]
+    fn value_at_use(&mut self, value: Expr, loc: bun_ast::Loc) -> Expr {
+        let js_ast::ExprData::EInlinedEnum(member) = value.data else {
+            return Expr { loc, ..value };
+        };
+        let value = Expr {
+            loc,
+            ..member.value
+        };
+        let comment = member.comment;
+        self.new_expr(E::InlinedEnum { value, comment }, loc)
     }
 
     #[cold]

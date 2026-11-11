@@ -608,21 +608,30 @@ const wrong: 1 = Si.Kilo;
 export enum Limit { Max = 5 }
 const DEFAULT: Kind.A = Kind.A;
 const WIDE: Kind = Kind.A;
+const AUTO: Kind | "auto" = Kind.A;
 const LIMIT: number = Limit.Max;
+const PLAIN = Kind.A;
+const COPY: Kind = PLAIN;
 export const pair = [DEFAULT];
 export const wide = [WIDE];
+export const auto = [AUTO];
 export const limits = [LIMIT];
+export const copies = [COPY];
 export function pick(kind = DEFAULT) { return kind; }
+export function other(kind = WIDE) { return kind; }
 `,
     },
-    caller: `import { Kind, limits, pair, pick, wide } from "LIBRARY";
+    caller: `import { auto, copies, Kind, limits, other, pair, pick, wide } from "LIBRARY";
 limits.push(7);
 const a: Kind.A = pick();
+const b: Kind = other(Kind.B);
 pair.push(Kind.B);
 wide.push(Kind.B);
+auto.push(Kind.B);
+copies.push(Kind.B);
 pick(Kind.B);
 `,
-    errors: ["(4,11): TS2345", "(5,11): TS2345", "(6,6): TS2345"],
+    errors: ["(5,11): TS2345", "(6,11): TS2345", "(7,11): TS2345", "(8,13): TS2345", "(9,6): TS2345"],
   },
   "template-that-reads-the-enum-of-another-file": {
     files: {

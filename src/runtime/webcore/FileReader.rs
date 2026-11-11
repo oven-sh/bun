@@ -45,6 +45,8 @@ pub struct FileReader {
     pub(crate) start_offset: Option<usize>,
     /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
     pub(crate) max_size: Option<usize>,
+    /// The Blob this reads was a `File` or a view of one. Read-only after init.
+    pub(crate) name_detached: bool,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
@@ -72,6 +74,7 @@ impl Default for FileReader {
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
+            name_detached: false,
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // Sentinel only; never dispatched (callers must overwrite before use).

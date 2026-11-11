@@ -154,6 +154,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
+void forgetNamesOfStandardStreams();
 
 // Its argument runs when the process or the worker starts to exit, in front of the 'exit' listeners and where none run. No program can list it.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRunWhenProcessExits);

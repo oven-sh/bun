@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "WorkerMessagingProxy.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -109,6 +110,7 @@ JSVMClientData::~JSVMClientData()
     }
     ASSERT(m_sqliteDatabases.isEmpty());
 
+    Bun::forgetNamesOfStandardStreams();
     m_normalWorld = nullptr;
     if (vmHandle)
         Bun__VmHandle__release(std::exchange(vmHandle, nullptr));

@@ -1,6 +1,4 @@
-// A spy is stored in its object directly, past the object's own `put` and `defineOwnProperty`. For the `length` and the `name` of a function those do two things first. They lay the key
-// into the storage of the function: a compiled function answers for both without it, and then a spy on the getter was refused, and the next write laid the function's own value over a
-// spy on the value. And they record that the key is changed: without it, `bind()` takes both from the code.
+// A compiled function answers for `length` and `name` without storing them. the-suites-of-the-test-runner-run-compiled.test.ts runs mock-fn.test.js compiled too, but not under a sanitizer, and no case there writes to the spied function.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";

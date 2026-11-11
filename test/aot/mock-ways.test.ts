@@ -13,6 +13,7 @@ import { test, testOneByOne } from "./supported";
 // Each case says three things, and each is judged by itself: the keys and values of the holder's namespace, whether a spread of it survives, and a named import.
 // mock-ways.known.txt holds a line for each chain and each kind of mocked file: three marks for each of the twelve cases of `marked` below, in that order: `.` as `bun test`,
 // `S` something else is printed in silence, `L` an error is printed or nothing. A mark that changes fails. BUN_AOT_REWRITE_MOCK_WAYS=1 writes the list anew.
+// A debug build of Bun runs the cases only with AOT_MOCK_WAYS_ON_DEBUG=1.
 const hopsOfDepth = (depth: number): string[] =>
   depth ? hopsOfDepth(depth - 1).flatMap(hops => ["s", "r", "t"].map(hop => hops + hop)) : [""];
 const chains = [1, 2, 3].flatMap(hopsOfDepth);
@@ -142,9 +143,10 @@ const rewrites = !!process.env.BUN_AOT_REWRITE_MOCK_WAYS;
 // The kinds run beside one another, and each run takes a slot: no more of them run at once than the machine has processors.
 // A run of a debug build of Bun holds a gigabyte: there the kinds run one by one.
 const eachKind = isDebug ? testOneByOne : test.concurrent;
-// On a debug build of Bun the kinds are to do: about four in ten of its builds end with a crash that only a debug build has (#48169), and a kind is one build.
-// `--todo` runs them there, and so does the mode that writes the list anew.
-const declare = isDebug && !rewrites ? eachKind.todo : eachKind;
+// A debug build of Bun skips the kinds: about four in ten of its builds end with a crash that only a debug build has (#48169), and a kind is one build.
+// AOT_MOCK_WAYS_ON_DEBUG=1 runs them there as the tests that they are, and so does the mode that writes the list anew.
+const runsOnDebug = rewrites || !!process.env.AOT_MOCK_WAYS_ON_DEBUG;
+const declare = isDebug && !runsOnDebug ? eachKind.skip : eachKind;
 // The limit of a kind holds every run that may take a slot ahead of its own, each for its whole limit: all ten where the kinds run beside one another.
 // So no kind times out while it waits for a slot, and a run that hangs is ended at its own limit, where the kind says which. A minute more to lay and to remove the project.
 const limitOfAKind = Math.ceil((isDebug ? 2 : 2 * kinds.length) / slots) * limit + 60_000;

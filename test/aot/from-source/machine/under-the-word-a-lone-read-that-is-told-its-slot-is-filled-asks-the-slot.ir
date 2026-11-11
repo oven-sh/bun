@@ -1,0 +1,23 @@
+# -- source: under-the-word-a-lone-read-that-is-told-its-slot-is-filled-asks-the-slot.ts
+# declare function print(...values: unknown[]): void;
+# interface Row { first: number; second: number; third: string }
+# function make(seed: number): Row { return { first: seed, second: seed + 1, third: "t" + seed }; }
+# function lone(row: Row): string { return String(row.second); }
+# const shelf: any[] = [make, lone];
+# const at: number[] = JSON.parse("[0, 1]");
+# print(shelf[at[1]](shelf[at[0]](11)));
+# -- end of source
+# f1 = make, f2 = lone. A lone read is one operation: it tests the shape and the mark at run time and, where the plan says that the field is filled at birth, looks at no slot: it takes the plan's word that an
+# unmarked object of that shape has the slot filled. Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) a read of level Proven has its slot asked;
+# this one, of level Expected, had not. Now the slot is asked where it is read, and an empty one stops the program by name. As users build, nothing is asked.
+# RUN(FORM): walk f2 mechanisms=all-Inlining-ParameterGuards
+# FORM: GetSlot {{*}}key="second" {{*}}level=Expected [isFilledWhereShapeFits]
+# RUN(HELD): emit f2:Body mechanisms=all-Inlining-ParameterGuards testing=CheckProofsAtRunTime
+# HELD: Int64 @[[word]] = Load({{*}}, bucket
+# HELD: = Branch(@[[word]],{{*}}rare
+# RUN(PLAIN): emit f2:Body mechanisms=all-Inlining-ParameterGuards
+# PLAIN: Int64 @[[word]] = Load({{*}}, bucket
+# PLAIN-NOT: = Branch(@[[word]],
+# RUN(RIGHT): run-in-shell mechanisms=all-Inlining-ParameterGuards testing=CheckProofsAtRunTime
+# RIGHT: 12
+# RIGHT-NEXT: exited with 0

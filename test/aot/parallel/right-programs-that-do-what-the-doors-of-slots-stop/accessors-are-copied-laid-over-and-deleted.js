@@ -1,0 +1,10 @@
+const seen = { x: 1 };
+const copy = Object.assign({}, { get a() { seen.x = "s"; return 1; } });
+const taken = Object.assign({ set a(v) { seen.x = v; } }, { a: "t" });
+const lazy = { get value() { Object.defineProperty(this, "value", { value: 42, enumerable: true }); return 42; } };
+const gone = { get here() { return 5; }, beside: 1 };
+const first = gone.here;
+delete gone.here;
+const beside = { inner: { n: 1 }, get x() { return 1; } };
+Object.defineProperty(beside, "inner", { value: "text", enumerable: false });
+console.log(JSON.stringify(copy), seen.x, Object.keys(taken).join(), lazy.value, lazy.value, first, gone.here, Object.keys(gone).join(), beside.inner, Object.keys(beside).join());

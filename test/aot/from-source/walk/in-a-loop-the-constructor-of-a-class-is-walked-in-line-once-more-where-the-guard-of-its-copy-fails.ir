@@ -1,0 +1,23 @@
+# -- source: in-a-loop-the-constructor-of-a-class-is-walked-in-line-once-more-where-the-guard-of-its-copy-fails.ts
+# declare function sink(...values: unknown[]): void;
+# interface Row { id: number; name: string; email: string; active: boolean; score: number }
+# const build = (i: number): Row => { const out: Record<string, unknown> = {}; for (const [key, value] of [["id", i], ["name", "n" + i], ["email", "e" + i + "@x"], ["active", i % 3 === 0], ["score", i * 1.5]] as [string, unknown][]) out[key] = value; return out as unknown as Row; };
+# const written: Row[] = [{ id: 100, name: "w", email: "w@x", active: true, score: 0.5 }];
+# const rows: Row[] = Array.from({ length: 8 }, (_, i) => build(i));
+# class User { id: number; name: string; email: string; active: boolean; score: number; constructor(row: Row) { this.id = row.id; this.name = row.name; this.email = row.email; this.active = row.active; this.score = row.score; } }
+# const use = (row: Row): number => { const u = new User(row); return u.id + u.name.length + u.email.length + (u.active ? 1 : 0) + u.score; };
+# function total(list: Row[]): number { let s = 0; for (let i = 0; i < list.length; i++) s += use(list[i]!); return s; }
+# sink(total(rows), total(written), total([...rows, ...written, ...rows]));
+# -- end of source
+# f1 = total, f2 = User
+# The end of a class's constructor is two blocks that hold a jump and a return: all its operations stand in its entry block. Where the guard of its copy fails in a loop, it is walked in line once more with the
+# parameter unknown: the reads by name at their sites, the birth typed as in the first walk; the copy around it is not left for a call.
+# RUN: walk f1 mechanisms=all
+# CHECK: = NewObject layout=L0
+# CHECK: = NewObject layout=L0
+# CHECK: = PropGet {{*}}key="id"
+# CHECK: = PropGet {{*}}key="score"
+# CHECK: PutSlotOrAdd {{*}}key="id" receivers=[L0] level=Proven
+# RUN(STAYS): walk f1 mechanisms=all
+# STAYS: code f1:Body
+# STAYS-NOT: isNeverInlined

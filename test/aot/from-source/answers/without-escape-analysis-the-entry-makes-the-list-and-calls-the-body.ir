@@ -1,0 +1,20 @@
+# -- source: main.js
+# let on = false;
+# function log(...args) { if (!on) return "off"; return "on " + args.length; }
+# globalThis.log = log;
+# print(globalThis.log(1, 2));
+# on = true;
+# print(globalThis.log(1, 2));
+# -- end of source
+# That the generic call entry walks the body belongs to a mechanism like every form: with escape analysis withheld the entry makes the list at once and calls the body, as it did before.
+# RUN: run-in-shell
+# CHECK: off
+# CHECK-NEXT: on 2
+# CHECK-NEXT: exited with 0
+# RUN(WITH): walk f1:GenericCallEntry mechanisms=all
+# WITH: Branch
+# WITH: CreateRest
+# RUN(WITHOUT): walk f1:GenericCallEntry mechanisms=all-EscapeAnalysis
+# WITHOUT-NOT: Branch
+# WITHOUT: CreateRest
+# WITHOUT: CallDirect {{*}}function=f1

@@ -8,7 +8,7 @@
 // CHECK: [[key]] = ToPropertyKey
 // CHECK: [[isPrototype]] = StrictEq [[key]],
 // CHECK: Branch [[isPrototype]] -> taken [[invalid]](), notTaken [[valid]]()
-// CHECK: [[invalid]]() frequency=Unlikely:
+// CHECK: [[invalid]]():
 // CHECK-NEXT: = NewRuntimeError runtimeError=StaticPrototypeKey
 // CHECK: [[valid]]():
 // CHECK: = FinishClass

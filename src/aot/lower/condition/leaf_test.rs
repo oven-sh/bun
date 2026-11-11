@@ -25,9 +25,9 @@ pub(super) enum LeafTest {
         operand: ExprId,
         is_negated: bool,
     },
-    NumberQuestion {
-        question: BuiltinId,
-        operand: ExprId,
+    IsArray {
+        local: SymbolId,
+        callee: ExprId,
     },
     Comparison {
         op: BinOp,
@@ -47,12 +47,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let file = &*self.file;
         let (op, left, right) = match file.hir[expression].kind {
             ExprKind::Call(site) => {
-                return match file.find_number_question(expression) {
-                    Some((question, operand)) => LeafTest::NumberQuestion { question, operand },
-                    None => file
-                        .find_type_test_call(site)
-                        .unwrap_or(LeafTest::Truthiness),
-                };
+                return file
+                    .find_type_test_call(site)
+                    .or_else(|| self.find_is_array_call(site))
+                    .unwrap_or(LeafTest::Truthiness);
             }
             ExprKind::Binary { .. } if find_constant(file, expression).is_some() => {
                 return LeafTest::Truthiness;
@@ -79,7 +77,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `typeof value > "u"`, as minifiers write `typeof value === "undefined"`: an order that one of the eight names alone passes, or alone fails, asks for that name.
+    fn find_is_array_call(&self, site: CallId) -> Option<LeafTest> {
+        let file = &*self.file;
+        let call = file.hir[site];
+        let is_array = match file.builtins.of_expr(file.skip_type_syntax(call.callee))? {
+            Resolved::Builtin(path) => path.locked_builtin() == Some(BuiltinId::ArrayIsArray),
+            Resolved::Intrinsic(Intrinsic::Builtin(builtin)) => builtin == BuiltinId::ArrayIsArray,
+            Resolved::Intrinsic(_) | Resolved::DynamicGlobal(_) => false,
+        };
+        let mut arguments = file.hir.ids(call.args);
+        let (true, Chain::No, Some(operand), None) =
+            (is_array, call.chain, arguments.next(), arguments.next())
+        else {
+            return None;
+        };
+        let ExprKind::Ident(_) = file.hir[file.skip_type_syntax(operand)].kind else {
+            return None;
+        };
+        Some(LeafTest::IsArray {
+            local: scope::find_tested_local(self, operand)?,
+            callee: call.callee,
+        })
+    }
+
     fn classify_typeof_order(&self, op: BinOp, left: ExprId, right: ExprId) -> Option<LeafTest> {
         let file = &*self.file;
         let (operand, bound, is_typeof_on_the_left) = match self.find_typeof_operand(left) {
@@ -157,6 +177,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let file = &*self.file;
         let node = file.skip_type_syntax(side);
         let node = self.find_kept_typeof(node).unwrap_or(node);
+        if let Some(operand) = file.find_operand_of_typeof_helper(node) {
+            return Some(operand);
+        }
         let ExprKind::Unary {
             op: UnOp::Typeof,
             operand,
@@ -168,7 +191,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (!is_folded).then_some(operand)
     }
 
-    /// A local of the function that asks, past its dead zone, which has one value from there on. Not a `var`: that is undefined until its declaration runs.
     fn find_unchanging_local(&self, node: ExprId) -> Option<SymbolId> {
         let bound = self.file.bound;
         let ExprKind::Ident(_) = self.file.hir[node].kind else {
@@ -185,7 +207,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (has_no_value_before && bound.is_stable_binding(symbol)).then_some(symbol)
     }
 
-    /// `const kind = typeof value`: `kind` is `typeof value` wherever neither changes.
     fn find_kept_typeof(&self, node: ExprId) -> Option<ExprId> {
         let file = &*self.file;
         let kind = self.find_unchanging_local(node)?;

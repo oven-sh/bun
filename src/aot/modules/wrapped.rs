@@ -1,42 +1,40 @@
 use super::namespace_members::find_outermost_type_assertion;
+use crate::builtins::ResolvedBuiltins;
 use crate::ir::{InParallel, for_each_mut};
 use crate::known_helpers::{Helper, KnownHelpers, Quiet, Shape};
+use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, Bound, CodeUnit, Decl, FunctionFlags, Parent, PatParent, SymbolId,
 };
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{
-    self, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, PatId, PatKind,
-    PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId,
+    self, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, NodeData, PatId,
+    PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId,
 };
-use bun_sema::module_format::evaluates_own_this;
+use bun_sema::module_format::ThisPositions;
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::cell::OnceCell;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InnerModuleKind {
-    /// `var require_x = __commonJS((exports, module) => { .. })`
     CommonJs,
-    /// `var init_x = __esm(() => { .. })`: its variables are bindings of the file.
     Esm,
 }
 
-/// A module that a bundler wrapped in a function. The function is its body, and a call of the holder evaluates it.
 #[derive(Copy, Clone, Debug)]
 pub struct InnerModule {
     pub callback: FnId,
     pub kind: InnerModuleKind,
-    /// `require_x`, `init_x`. Every mention of it is a call without arguments.
     pub holder: SymbolId,
-    /// It declares holders only and has no code.
     pub statement: StmtId,
-    /// A call behind a failure throws the same error again. Otherwise it answers as if the body had ended.
-    pub keeps_error: bool,
+    pub caches_evaluation_error: bool,
     pub exports_parameter: Option<SymbolId>,
-    /// It occurs only as `module.exports`.
     pub module_parameter: Option<SymbolId>,
 }
 
@@ -49,10 +47,10 @@ enum Role {
 
 #[derive(Default)]
 struct FileModules {
-    /// In the order of the text.
     modules: Box<[InnerModule]>,
     by_callback: Box<[(FnId, u32)]>,
-    by_symbol: Box<[(SymbolId, Role, u32)]>,
+    calls: Box<[(ExprId, u32)]>,
+    names_super: bool,
 }
 
 #[derive(Default)]
@@ -62,13 +60,12 @@ pub struct WrappedModules {
 
 struct WrapperShape {
     kind: InnerModuleKind,
-    keeps_error: bool,
-    /// The function is the first member of a literal: `__commonJS({ "src/x.js"(exports, module) { .. } })`.
+    caches_evaluation_error: bool,
     takes_literal: bool,
 }
 
 fn classify(shape: Shape) -> Option<WrapperShape> {
-    let (kind, keeps_error, takes_literal) = match shape {
+    let (kind, caches_evaluation_error, takes_literal) = match shape {
         Shape::CommonJsRunsCallbackOnce | Shape::CommonJsRunsCallbackOnceThenDropsIt => {
             (InnerModuleKind::CommonJs, false, false)
         }
@@ -83,31 +80,27 @@ fn classify(shape: Shape) -> Option<WrapperShape> {
             (InnerModuleKind::Esm, false, true)
         }
         Shape::EsmRunsFirstOwnNameOnceRethrows => (InnerModuleKind::Esm, true, true),
-        // A body that threw runs again at the next call.
         Shape::CommonJsRunsFirstOwnNameAgainAfterThrow => return None,
         _ => return None,
     };
     Some(WrapperShape {
         kind,
-        keeps_error,
+        caches_evaluation_error,
         takes_literal,
     })
 }
 
-/// Where the code that holds a call of a holder starts to run at the earliest.
 #[derive(Copy, Clone)]
 enum SiteTime {
-    /// A position in the text of the file: the code of the file itself runs in that order.
     At(u32),
-    /// When the body of that candidate starts.
     WithBodyOf(usize),
 }
 
 struct Candidate {
     module: InnerModule,
-    /// Where the call of the helper ends: the holder is set from there on.
     defined_at: u32,
     sites: Vec<SiteTime>,
+    calls: Vec<ExprId>,
     is_refused: bool,
 }
 
@@ -118,11 +111,13 @@ struct Finder<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     decisions: &'a Decisions<'s>,
-    /// What `export { .. }` names.
+    builtins: &'a ResolvedBuiltins,
     exported_symbols: FxHashSet<SymbolId>,
     candidates: Vec<Candidate>,
     by_callback: Vec<(FnId, u32)>,
     by_symbol: Vec<(SymbolId, Role, u32)>,
+    names_super: bool,
+    this_positions: OnceCell<ThisPositions>,
 }
 
 fn find_by_key<K: Ord + Copy, T: Copy>(
@@ -134,7 +129,6 @@ fn find_by_key<K: Ord + Copy, T: Copy>(
     Some(entries[at])
 }
 
-// The declaration or the parameter that the pattern is a part of: its defaults and computed keys are evaluated there.
 fn parent_of_pattern(bound: &Bound<'_>, mut pattern: PatId) -> Parent {
     loop {
         match bound.pat_parent[pattern.idx()] {
@@ -146,7 +140,6 @@ fn parent_of_pattern(bound: &Bound<'_>, mut pattern: PatId) -> Parent {
     }
 }
 
-/// The functions around an expression, from the innermost out. `None`: the expression stands where this cannot tell.
 fn find_functions_around(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -201,7 +194,6 @@ fn find_functions_around(
     Some(functions)
 }
 
-/// The call without arguments that a name is the callee of.
 fn find_plain_call_of(hir: &hir::File<'_>, bound: &Bound<'_>, name: ExprId) -> Option<ExprId> {
     let callee = find_outermost_type_assertion(hir, bound, name);
     let Parent::Expr(call) = bound.parent_of_expr(callee) else {
@@ -232,7 +224,6 @@ impl Finder<'_, '_> {
             (ExprKind::Fn(_), false) => argument,
             (ExprKind::Object(properties), true) if properties.len() == 1 => {
                 let property = hir[properties.at(0)];
-                // `{ __proto__: f }` has no member.
                 let is_plain = matches!(property.kind, PropKind::Init | PropKind::Method)
                     && matches!(property.key, PropKey::Name(_))
                     && !hir::is_proto_setter(&property);
@@ -249,7 +240,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // The function becomes the body of a module, which has no parameters, no `this`, no `arguments` and no name, and whose value nobody sees.
     fn can_be_body(&self, callback: FnId, kind: InnerModuleKind) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[callback];
@@ -261,8 +251,13 @@ impl Finder<'_, '_> {
             && !record.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && record.this_param.is_none()
             && matches!(record.body, FnBody::Block(_));
-        let reads_this =
-            bound.fns[callback.idx()].contains_this || evaluates_own_this(hir, callback);
+        let reads_this = bound.fns[callback.idx()].contains_this || {
+            let jsx_takes_this = self.files.analysis(self.file).jsx_takes_this();
+            let positions = self
+                .this_positions
+                .get_or_init(|| ThisPositions::of(hir, jsx_takes_this));
+            positions.evaluates_own_this(hir, callback)
+        };
         if !is_plain || has_own_name || sees_its_call || reads_this {
             return false;
         }
@@ -271,7 +266,6 @@ impl Finder<'_, '_> {
         }
         match kind {
             InnerModuleKind::CommonJs => true,
-            // A call of the holder answers what the function returned.
             InnerModuleKind::Esm => {
                 let mut returns = bound.ids(bound.fns[callback.idx()].returns);
                 returns.all(|statement: StmtId| match hir[statement].kind {
@@ -346,12 +340,13 @@ impl Finder<'_, '_> {
                 kind: shape.kind,
                 holder,
                 statement,
-                keeps_error: shape.keeps_error,
+                caches_evaluation_error: shape.caches_evaluation_error,
                 exports_parameter,
                 module_parameter,
             },
             defined_at: hir[call].end,
             sites: Vec::new(),
+            calls: Vec::new(),
             is_refused: false,
         })
     }
@@ -393,7 +388,6 @@ impl Finder<'_, '_> {
         find_by_key(&self.by_callback, function, |entry| entry.0).map(|entry| entry.1 as usize)
     }
 
-    // `var x_exports = {}`
     fn holds_new_empty_object(&self, expression: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
@@ -412,10 +406,13 @@ impl Finder<'_, '_> {
             && bound.is_stable_binding(symbol)
     }
 
-    // A helper that only makes a function, or only defines getters on an object that nobody else has.
     fn runs_nothing(&self, call: CallId) -> bool {
         let hir = self.hir;
         let site = hir[call];
+        if let ExprKind::Fn(factory) = hir[hir.skip_type_assertions(site.callee)].kind {
+            let known = self.helpers.function(self.file, factory);
+            return known.is_some_and(|known| known.shape.helper() == Helper::Require);
+        }
         let Some(known) = self
             .helpers
             .certain_callee(self.files, self.file, site.callee)
@@ -439,6 +436,7 @@ impl Finder<'_, '_> {
             hir: self.hir,
             bound: self.bound,
             decisions: self.decisions,
+            builtins: self.builtins,
             allows_reads_of_open_globals: helpers
                 .is_some_and(|helpers| helpers.head_allows_reads_of_open_globals()),
             runs_nothing: &|call| self.runs_nothing(call),
@@ -455,7 +453,6 @@ impl Finder<'_, '_> {
         if let Some(around) = self.candidate_of_callback(outermost) {
             return Some(SiteTime::WithBodyOf(around));
         }
-        // Nothing calls a function while the head runs.
         Some(SiteTime::At(match hir[outermost].kind {
             FnKind::Decl => end_of_head,
             _ => end_of_head.max(hir[outermost].start),
@@ -496,10 +493,8 @@ impl Finder<'_, '_> {
         names_exports && is_plain && !is_deleted
     }
 
-    // `new.target` and `super` mean those of the nearest function that is no arrow function.
     fn refuse_owner_of(&mut self, expression: ExprId) {
         let Some(functions) = find_functions_around(self.hir, self.bound, expression) else {
-            // Every candidate stands at the top of the file, so its function is the outermost one around what it holds.
             for candidate in &mut self.candidates {
                 candidate.is_refused = true;
             }
@@ -523,6 +518,7 @@ impl Finder<'_, '_> {
                 ExprKind::Ident(_) => {}
                 ExprKind::NewTarget(_) | ExprKind::Super => {
                     if !self.decisions.is_dead_expr(expression) {
+                        self.names_super |= matches!(hir[expression].kind, ExprKind::Super);
                         self.refuse_owner_of(expression);
                     }
                     continue;
@@ -540,13 +536,23 @@ impl Finder<'_, '_> {
                 continue;
             };
             let index = index as usize;
+            if bound
+                .dynamic_lookup_scope(NodeData::Expr(expression))
+                .is_some()
+            {
+                self.candidates[index].is_refused = true;
+                continue;
+            }
             match role {
                 Role::Holder => {
                     let call = find_plain_call_of(hir, bound, expression);
                     let time = call.and_then(|call| self.find_site_time(call, end_of_head));
-                    match time {
-                        Some(time) => self.candidates[index].sites.push(time),
-                        None => self.candidates[index].is_refused = true,
+                    match (call, time) {
+                        (Some(call), Some(time)) => {
+                            self.candidates[index].sites.push(time);
+                            self.candidates[index].calls.push(call);
+                        }
+                        _ => self.candidates[index].is_refused = true,
                     }
                 }
                 Role::ExportsParameter => {}
@@ -566,35 +572,41 @@ impl Finder<'_, '_> {
         }
     }
 
-    fn find_starts(&self) -> Vec<u32> {
-        // The body of a candidate starts at the first call of its holder. Bodies that only call each other never start.
-        let mut starts = vec![u32::MAX; self.candidates.len()];
-        loop {
-            let mut has_changed = false;
-            for (index, candidate) in self.candidates.iter().enumerate() {
-                let times = candidate
-                    .sites
-                    .iter()
-                    .map(|&site| self.time_of(site, &starts));
-                let start = times.min().unwrap_or(u32::MAX);
-                has_changed |= start < starts[index];
-                starts[index] = starts[index].min(start);
-            }
-            if !has_changed {
-                return starts;
+    fn find_first_calls(&self) -> Vec<u32> {
+        let count = self.candidates.len();
+        let mut called_in_body: Vec<Vec<u32>> = vec![Vec::new(); count];
+        let mut pending = BinaryHeap::new();
+        for (candidate, index) in self.candidates.iter().zip(0u32..) {
+            for &site in &candidate.sites {
+                match site {
+                    SiteTime::At(position) => pending.push(Reverse((position, index))),
+                    SiteTime::WithBodyOf(around) => called_in_body[around].push(index),
+                }
             }
         }
-    }
-
-    fn time_of(&self, site: SiteTime, starts: &[u32]) -> u32 {
-        match site {
-            SiteTime::At(position) => position,
-            SiteTime::WithBodyOf(around) => match self.candidates[around].is_refused {
-                // Whoever holds the function that the helper made can call it from there on.
-                true => self.candidates[around].defined_at,
-                false => starts[around],
-            },
+        for (candidate, called) in self.candidates.iter().zip(&called_in_body) {
+            if candidate.is_refused {
+                let times = called.iter().map(|&it| Reverse((candidate.defined_at, it)));
+                pending.extend(times);
+            }
         }
+        let mut first_calls = vec![u32::MAX; count];
+        let mut is_known = vec![false; count];
+        while let Some(Reverse((time, index))) = pending.pop() {
+            let index = index as usize;
+            if core::mem::replace(&mut is_known[index], true) {
+                continue;
+            }
+            first_calls[index] = time;
+            let candidate = &self.candidates[index];
+            if candidate.is_refused {
+                continue;
+            }
+            let start = time.max(candidate.defined_at);
+            let times = called_in_body[index].iter().map(|&it| Reverse((start, it)));
+            pending.extend(times);
+        }
+        first_calls
     }
 
     fn count_holders_by_statement(&self) -> FxHashMap<StmtId, usize> {
@@ -616,26 +628,17 @@ impl Finder<'_, '_> {
         }
     }
 
-    // A call ahead of the definition finds the holder empty and throws.
-    fn refuse_until_all_fit(&mut self) {
-        loop {
-            let starts = self.find_starts();
-            let holders = self.count_holders_by_statement();
-            let misfits: Vec<usize> = (0..self.candidates.len())
-                .filter(|&index| {
-                    let candidate = &self.candidates[index];
-                    let statement = candidate.module.statement;
-                    !candidate.is_refused
-                        && (starts[index] < candidate.defined_at
-                            || holders.get(&statement) != Some(&self.count_declarations(statement)))
-                })
-                .collect();
-            if misfits.is_empty() {
-                return;
-            }
-            for index in misfits {
-                self.candidates[index].is_refused = true;
-            }
+    fn refuse_misfits(&mut self) {
+        let first_calls = self.find_first_calls();
+        for (candidate, first_call) in self.candidates.iter_mut().zip(first_calls) {
+            candidate.is_refused |= first_call < candidate.defined_at;
+        }
+        let holders = self.count_holders_by_statement();
+        for index in 0..self.candidates.len() {
+            let statement = self.candidates[index].module.statement;
+            let declares_holders_alone =
+                holders.get(&statement) == Some(&self.count_declarations(statement));
+            self.candidates[index].is_refused |= !declares_holders_alone;
         }
     }
 
@@ -644,31 +647,27 @@ impl Finder<'_, '_> {
             .candidates
             .iter()
             .filter(|candidate| !candidate.is_refused);
-        let modules: Box<[InnerModule]> = accepted.map(|candidate| candidate.module).collect();
+        let modules: Box<[InnerModule]> = accepted.clone().map(|it| it.module).collect();
         let mut by_callback = Vec::with_capacity(modules.len());
-        let mut by_symbol = Vec::with_capacity(modules.len());
-        for (module, index) in modules.iter().zip(0..) {
-            by_callback.push((module.callback, index));
-            by_symbol.push((module.holder, Role::Holder, index));
-            if let Some(parameter) = module.exports_parameter {
-                by_symbol.push((parameter, Role::ExportsParameter, index));
-            }
-            if let Some(parameter) = module.module_parameter {
-                by_symbol.push((parameter, Role::ModuleParameter, index));
-            }
+        let mut calls = Vec::new();
+        for (candidate, index) in accepted.zip(0..) {
+            by_callback.push((candidate.module.callback, index));
+            calls.extend(candidate.calls.iter().map(|&call| (call, index)));
         }
         by_callback.sort_unstable_by_key(|entry: &(FnId, u32)| entry.0);
-        by_symbol.shared_sort_unstable_by_key(|entry: &(SymbolId, Role, u32)| entry.0);
+        calls.sort_unstable_by_key(|entry: &(ExprId, u32)| entry.0);
         FileModules {
             modules,
             by_callback: by_callback.into_boxed_slice(),
-            by_symbol: by_symbol.into_boxed_slice(),
+            calls: calls.into_boxed_slice(),
+            names_super: self.names_super,
         }
     }
 }
 
 fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> FileModules {
-    let Some(compiled) = files.compiled(file).filter(|_| helpers.has_functions(file)) else {
+    let compiled = files.compiled(file).filter(|_| helpers.has_functions(file));
+    let (Some(compiled), Some(source)) = (compiled, parsed_source(files, file)) else {
         return FileModules::default();
     };
     let mut finder = Finder {
@@ -678,10 +677,13 @@ fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> File
         hir: files.hir(file),
         bound: files.bound(file),
         decisions: &compiled.analysis.decisions,
+        builtins: &source.builtins,
         exported_symbols: FxHashSet::default(),
         candidates: Vec::new(),
         by_callback: Vec::new(),
         by_symbol: Vec::new(),
+        names_super: false,
+        this_positions: OnceCell::new(),
     };
     finder.collect_exported_symbols();
     finder.collect_candidates();
@@ -690,7 +692,7 @@ fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> File
     }
     let end_of_head = finder.find_end_of_head();
     finder.read_mentions(end_of_head);
-    finder.refuse_until_all_fit();
+    finder.refuse_misfits();
     finder.finish()
 }
 
@@ -698,6 +700,7 @@ impl WrappedModules {
     pub fn compute(
         files: &Files<'_>,
         helpers: &KnownHelpers,
+        may_be_reevaluated: &(dyn Fn(FileId) -> bool + Sync),
         in_parallel: InParallel<'_>,
     ) -> WrappedModules {
         let mut wrapped = WrappedModules::default();
@@ -710,7 +713,9 @@ impl WrappedModules {
             .map(|&file| (file, FileModules::default()))
             .collect();
         for_each_mut(&mut found, in_parallel, &|(file, modules)| {
-            *modules = find_in_file(files, helpers, *file);
+            if !may_be_reevaluated(*file) {
+                *modules = find_in_file(files, helpers, *file);
+            }
         });
         wrapped
             .files
@@ -721,7 +726,6 @@ impl WrappedModules {
         wrapped
     }
 
-    /// The inner modules of a file, in the order of the text.
     pub fn of_file(&self, file: FileId) -> &[InnerModule] {
         match self.files.get(file.idx()) {
             Some(found) => &found.modules,
@@ -735,40 +739,30 @@ impl WrappedModules {
         Some(&found.modules[index as usize])
     }
 
-    fn of_symbol(&self, file: FileId, symbol: SymbolId, role: Role) -> Option<&InnerModule> {
-        let found = self.files.get(file.idx())?;
-        let (_, found_role, index) = find_by_key(&found.by_symbol, symbol, |entry| entry.0)?;
-        (found_role == role).then(|| &found.modules[index as usize])
+    pub fn names_super(&self, file: FileId) -> bool {
+        self.files
+            .get(file.idx())
+            .is_some_and(|found| found.names_super)
     }
 
-    fn of_name(
-        &self,
-        files: &Files<'_>,
-        file: FileId,
-        name: ExprId,
-        role: Role,
-    ) -> Option<&InnerModule> {
-        let (hir, bound) = (files.hir(file), files.bound(file));
-        let name = hir.skip_type_assertions(name);
-        match (hir[name].kind, bound.binding(name)) {
-            (ExprKind::Ident(_), Binding::Symbol(symbol)) => self.of_symbol(file, symbol, role),
-            _ => None,
-        }
+    pub fn calls_in(&self, file: FileId) -> impl Iterator<Item = (ExprId, &InnerModule)> {
+        let found = self.files.get(file.idx());
+        let calls = found.map_or(&[][..], |found| &found.calls[..]);
+        calls
+            .iter()
+            .filter_map(move |&(call, index)| Some((call, &found?.modules[index as usize])))
     }
 
-    /// `require_x()`, `init_x()`: the module that the call evaluates.
     pub fn of_call(&self, files: &Files<'_>, file: FileId, call: ExprId) -> Option<&InnerModule> {
-        if self.of_file(file).is_empty() {
+        let found = self.files.get(file.idx())?;
+        if found.calls.is_empty() {
             return None;
         }
-        let hir = files.hir(file);
-        let ExprKind::Call(site) = hir[hir.skip_type_assertions(call)].kind else {
-            return None;
-        };
-        self.of_name(files, file, hir[site].callee, Role::Holder)
+        let call = files.hir(file).skip_type_assertions(call);
+        let (_, index) = find_by_key(&found.calls, call, |entry| entry.0)?;
+        Some(&found.modules[index as usize])
     }
 
-    /// The inner module whose body holds the expression, be it in a function of that body.
     pub fn enclosing(
         &self,
         files: &Files<'_>,
@@ -782,7 +776,6 @@ impl WrappedModules {
         self.of_callback(file, *functions.last()?)
     }
 
-    /// The inner module whose exports object the expression resolves to by binding: the first parameter of its function, or `.exports` of the second.
     #[cfg(test)]
     pub fn is_exports_object(
         &self,
@@ -790,18 +783,26 @@ impl WrappedModules {
         file: FileId,
         expression: ExprId,
     ) -> Option<FnId> {
-        if self.of_file(file).is_empty() {
-            return None;
-        }
-        let hir = files.hir(file);
-        let expression = hir.skip_type_assertions(expression);
-        if let Some(module) = self.of_name(files, file, expression, Role::ExportsParameter) {
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let symbol_of = |name: ExprId| {
+            let name = hir.skip_type_assertions(name);
+            match (hir[name].kind, bound.binding(name)) {
+                (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
+                _ => None,
+            }
+        };
+        let mut modules = self.of_file(file).iter();
+        if let Some(symbol) = symbol_of(expression) {
+            let module = modules.find(|module| module.exports_parameter == Some(symbol))?;
             return Some(module.callback);
         }
-        let (object, MemberKey::Name(name)) = hir.member_key(expression)? else {
+        let (object, MemberKey::Name(name)) =
+            hir.member_key(hir.skip_type_assertions(expression))?
+        else {
             return None;
         };
-        let module = self.of_name(files, file, object, Role::ModuleParameter)?;
+        let symbol = symbol_of(object)?;
+        let module = modules.find(|module| module.module_parameter == Some(symbol))?;
         (name == known::exports).then_some(module.callback)
     }
 }
@@ -828,7 +829,10 @@ var __esmRethrows = (fn, res, err) => () => {
 };
 "#;
 
-    /// The names of the holders of the inner modules of `main.mjs`, each with `!` if it keeps its error.
+    fn compute(files: &Files<'_>, helpers: &KnownHelpers) -> WrappedModules {
+        WrappedModules::compute(files, helpers, &|_| false, &run_serially)
+    }
+
     fn holders_in(body: &str) -> Vec<String> {
         let main = format!("{BUN}{body}");
         holders_of(&[("main.mjs", main.as_str())], "main.mjs")
@@ -838,14 +842,14 @@ var __esmRethrows = (fn, res, err) => () => {
         with_graph(files, |_, bind_input| {
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);
-            let wrapped = WrappedModules::compute(files, &helpers, &run_serially);
+            let wrapped = compute(files, &helpers);
             let file = file_named(bind_input, name);
             let modules = wrapped.of_file(file).iter();
             modules
                 .map(|module| {
                     let name = files.bound(file).symbol(module.holder).name;
                     let name = String::from_utf8_lossy(files.atoms.bytes(name)).into_owned();
-                    match module.keeps_error {
+                    match module.caches_evaluation_error {
                         true => name + "!",
                         false => name,
                     }
@@ -870,7 +874,6 @@ export default require_b();
         );
     }
 
-    // The helpers as esbuild and rolldown write them: the function is the one member of a literal.
     #[test]
     fn a_function_that_is_the_first_member_of_a_literal_is_found() {
         let body = r#"var require_a = __commonJS({ "src/a.js"(exports) { exports.a = 1; } });
@@ -899,11 +902,47 @@ var __esm = (fn, res) => function __init() {
             let found = with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
                 let files = bind_input.files;
                 let helpers = KnownHelpers::compute(files, &run_serially);
-                let wrapped = WrappedModules::compute(files, &helpers, &run_serially);
+                let wrapped = compute(files, &helpers);
                 wrapped.of_file(file_named(bind_input, "main.mjs")).len()
             });
             assert_eq!(found, 3, "{helpers}");
         }
+    }
+
+    #[test]
+    fn the_helpers_behind_the_alias_of_require_are_certain() {
+        let main = r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+var __commonJS = (cb, mod) => function __require2() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+function lazy() { return require_a(); }
+var require_a = __commonJS({ "src/a.js"(exports) { exports.a = 1; } });
+lazy();
+"#;
+        assert_eq!(holders_of(&[("main.mjs", main)], "main.mjs"), ["require_a"]);
+    }
+
+    #[test]
+    fn a_file_whose_body_may_run_again_keeps_its_variables() {
+        let main = format!(
+            "{BUN}var require_a = __commonJS((exports) => {{ exports.a = 1; }});\nrequire_a();"
+        );
+        with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
+            let files = bind_input.files;
+            let helpers = KnownHelpers::compute(files, &run_serially);
+            let wrapped = WrappedModules::compute(files, &helpers, &|_| true, &run_serially);
+            assert!(
+                wrapped
+                    .of_file(file_named(bind_input, "main.mjs"))
+                    .is_empty()
+            );
+        });
     }
 
     #[test]
@@ -977,6 +1016,24 @@ var require_a = __commonJS((exports) => {});
 require_b();
 "#;
         assert_eq!(holders_in(behind_code), ["require_b", "require_a"]);
+        let through_a_function_that_goes_somewhere = r#"var require_b = __commonJS((exports) => { require_a(); });
+globalThis.hook(require_b);
+var require_a = __commonJS((exports) => {});
+"#;
+        assert_eq!(holders_in(through_a_function_that_goes_somewhere), [""; 0]);
+        let through_two_bodies = r#"var require_c = __commonJS((exports) => { require_b(); });
+var require_b = __commonJS((exports) => { require_a(); });
+require_c();
+var require_a = __commonJS((exports) => {});
+"#;
+        assert_eq!(holders_in(through_two_bodies), ["require_c", "require_b"]);
+        let bodies_that_only_call_each_other = r#"var require_b = __commonJS((exports) => { require_a(); });
+var require_a = __commonJS((exports) => { require_b(); });
+"#;
+        assert_eq!(
+            holders_in(bodies_that_only_call_each_other),
+            ["require_b", "require_a"]
+        );
     }
 
     #[test]
@@ -1039,7 +1096,7 @@ require_b();
         with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);
-            let wrapped = WrappedModules::compute(files, &helpers, &run_serially);
+            let wrapped = compute(files, &helpers);
             let file = file_named(bind_input, "main.mjs");
             let [module] = wrapped.of_file(file) else {
                 panic!("the file has one inner module");
@@ -1049,6 +1106,7 @@ require_b();
             let found = expressions
                 .filter(|&it| wrapped.is_exports_object(files, file, it) == Some(module.callback));
             assert_eq!(found.count(), 2);
+            assert_eq!(wrapped.calls_in(file).count(), 1);
             let StmtKind::Var(declarations) = hir[module.statement].kind else {
                 panic!("a variable statement declares the holder");
             };

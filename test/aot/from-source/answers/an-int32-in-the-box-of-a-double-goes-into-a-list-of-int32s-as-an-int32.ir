@@ -1,0 +1,26 @@
+# -- source: main.js
+# function box(at) { const l = JSON.parse("[0.5,1,2,3,4]"); l.push("x"); return l[at]; }
+# function sliced() { return [9, 9, 9, 9, 9, 9, 9].slice(); }
+# function filled() { return new Array(7).fill(9); }
+# function pushed() { const l = []; for (let i = 0; i < 7; i++) l.push(9); return l; }
+# function paint(to, x) { switch (x) { case 3: for (let i = 0; i < to.length; i++) to[i] = x; break; } return to; }
+# function cases(to, x) { switch (x) { case 1: case 2: case 3: case 4: for (let i = 0; i < to.length; i++) to[i] = x; } return to; }
+# function tell(l) { let t = "", s = 0; for (let i = 0; i < l.length; i++) t += l[i]; for (let i = 0; i < l.length; i++) s = (s * 3 + l[i]) | 0; print(t, l.join(), l.indexOf(3), l.includes(3), JSON.stringify(l), s); }
+# for (let n = 0; n < 2; n++) { tell(paint(sliced(), box(3))); tell(paint(filled(), box(3))); tell(cases(pushed(), box(3))); tell(paint(sliced(), 3)); }
+# const [kind, x] = JSON.parse("[3,0.5]"); tell(paint(sliced(), kind)); print(x);
+# -- end of source
+# The engine hands out a whole number of a list of doubles in the box of a double. A case of a switch takes it by its value, says that it is 3 and leaves the box. Every store of a boxed int32 brings it into the form of its type
+# (ConversionEmitter::inFormOfType()), but the one in the typed copy of a loop did not: `3333333 0,0,0,0,0,0,0 -1 false [0,0,0,0,0,0,0] 0`, silent, and half right: a read through the stub hands the whole word back.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 3333333 3,3,3,3,3,3,3 0 true [3,3,3,3,3,3,3] 3279
+# ANSWERS-NEXT: 0.5
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

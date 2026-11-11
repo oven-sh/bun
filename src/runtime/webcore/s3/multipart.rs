@@ -437,9 +437,8 @@ impl MultiPartUpload {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; this takes over the ref
         // `process_buffered` (or the retry path) took for this request.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `this` is live for at least the guard's duration.
-        let self_ = unsafe { &*this };
+        let guard = unsafe { RefPtr::from_raw(this) };
+        let self_ = &*guard;
         if self_.state.get() == State::Finished {
             return Ok(());
         }
@@ -687,9 +686,8 @@ impl MultiPartUpload {
     ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — takes over the ref taken before the request was queued.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `this` is live for at least the guard's duration.
-        let self_ = unsafe { &*this };
+        let guard = unsafe { RefPtr::from_raw(this) };
+        let self_ = &*guard;
         // `fail` ran while this request was in flight: an upload the server created is still open.
         let failed = self_.state.get() == State::Finished;
         match result {

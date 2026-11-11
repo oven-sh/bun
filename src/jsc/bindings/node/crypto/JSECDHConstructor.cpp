@@ -106,6 +106,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     auto buffer = keyView->span();
+    if (buffer.empty())
+        return JSValue::encode(jsEmptyString(vm));
 
     int nid = curveNidFromShortName(curveName);
     if (nid == NID_undef)

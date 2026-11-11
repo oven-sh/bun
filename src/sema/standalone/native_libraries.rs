@@ -1,5 +1,3 @@
-//! Stand-ins for native code the compiler's front end calls on every build, for binaries that link none of Bun's C++: BoringSSL's SHA-256 and library initializers, the abort handler for removed features, the crash handler's queries about compiled code, the two WTF string functions that `bun_sys::Error`'s `Display` links and never calls, ICU's collator, which only the React Compiler calls, and what `bun_core::output::stdio::init` calls at start.
-
 use bun_alloc::WTFStringImplStruct;
 use bun_boringssl_sys::{ENGINE, EVP_MD, EVP_MD_CTX, SHA256_CTX, env_md_ctx_md_data};
 use bun_core::ffi::zeroed;
@@ -283,19 +281,19 @@ extern "C" fn Bun__abortForRemovedFeature(feature: u16) -> ! {
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
+extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
     -1
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__frameAtReturnAddress(_return_address: *const c_void) -> i64 {
+extern "C" fn Bun__AOT__frameAtReturnAddress(_return_address: *const c_void) -> i64 {
     -1
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__describeAddresses(
+extern "C" fn Bun__AOT__describeAddresses(
     _addresses: *const usize,
     _count: usize,
     _buffer: *mut u8,
@@ -312,34 +310,31 @@ extern "C" fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize {
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromBytes(_bytes: *const u8, _len: usize) -> bun_core::String {
+extern "C" fn BunString__fromBytes(_bytes: *const u8, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromLatin1(_bytes: *const u8, _len: usize) -> bun_core::String {
+extern "C" fn BunString__fromLatin1(_bytes: *const u8, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromUTF16(_units: *const u16, _len: usize) -> bun_core::String {
+extern "C" fn BunString__fromUTF16(_units: *const u16, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromUTF16ToLatin1(
-    _units: *const u16,
-    _len: usize,
-) -> bun_core::String {
+extern "C" fn BunString__fromUTF16ToLatin1(_units: *const u16, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__WTFStringImpl__destroy(_this: *const WTFStringImplStruct) {
+extern "C" fn Bun__WTFStringImpl__destroy(_this: *const WTFStringImplStruct) {
     panic!("this program has no WTF strings")
 }
 
@@ -363,7 +358,7 @@ extern "C" fn bun_remember_inherited_file_descriptors() {}
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__collateUTF8(
+extern "C" fn Bun__collateUTF8(
     _is_numeric_and_base: bool,
     _a: *const u8,
     _a_len: usize,
@@ -375,7 +370,7 @@ unsafe extern "C" fn Bun__collateUTF8(
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__collateUTF16(
+extern "C" fn Bun__collateUTF16(
     _is_numeric_and_base: bool,
     _a: *const u16,
     _a_len: usize,
@@ -385,9 +380,6 @@ unsafe extern "C" fn Bun__collateUTF16(
     panic!("this program has no ICU")
 }
 
-// What Bun's transpiler asks of the rest of Bun. The compiler's front end runs it on the files that it lowers.
-
-/// `operationMathPow`
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {

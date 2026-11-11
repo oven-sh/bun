@@ -1,0 +1,19 @@
+# -- source: five-functions-that-go-to-unseen-code-behind-the-call-by-name-let-the-receiver-go.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# function e() { handOut(pick(hidden())); return this.count + 5; }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + typeof box.count; }
+# print(all(new Box(10)));
+# print(all(new Box(20)));
+# -- end of source
+# L0 = Box. One of the five, which Link reaches only where the pool is tied, hands the five to code that nobody sees, and that code lays a `call` of its own on one of them. The call by name was asked before: what is found on a closure climbs to anything when its function escapes, and the pool hears it.
+# RUN(BOX): link why-gone L0
+# BOX: why-gone L0: it has gone
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2; globalThis.handOut = f => { f.call = box => { box.count = "text"; return "own"; }; };
+# ANSWERS: 11,12,13,14,15,10,number
+# ANSWERS-NEXT: 21,22,own,text4,text5,text,string

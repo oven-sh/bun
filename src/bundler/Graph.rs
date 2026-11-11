@@ -220,22 +220,24 @@ impl<'a> Graph<'a> {
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
     }
+}
 
+impl BundleV2<'_> {
     /// Schedule a task to be run on the JS thread which resolves the promise of
     /// each `.defer()` called in an onLoad plugin.
     ///
     /// Returns true if there were more tasks queued.
-    pub(crate) fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        transpiler.thread_lock.assert_locked();
+    pub(crate) fn drain_deferred_tasks(&mut self) -> bool {
+        self.thread_lock.assert_locked();
 
-        if self.deferred_pending > 0 {
+        if self.graph.deferred_pending > 0 {
             // Their units are back in `pending_items` (a new epoch: those loads' own units are no longer
             // parked), plus one for the hop itself: the pass is not done until it is back (see
             // `DeferredBatchTask`).
-            self.pending_items += self.deferred_pending + 1;
-            self.deferred_pending = 0;
-            self.defer_epoch += 1;
-            transpiler.drain_defer_task.schedule();
+            self.graph.pending_items += self.graph.deferred_pending + 1;
+            self.graph.deferred_pending = 0;
+            self.graph.defer_epoch += 1;
+            self.drain_defer_task.schedule();
 
             return true;
         }

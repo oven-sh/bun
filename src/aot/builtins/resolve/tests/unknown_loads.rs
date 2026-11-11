@@ -87,14 +87,12 @@ const UNKNOWN_LOADS_OF_SCRIPTS: &[&str] = &[
     "f(require('node:module'));",
 ];
 
-// A Worker has a global of its own and starts with an entry point of the build, which begins a program of its own.
 const WORKERS: &[&str] = &[
     "new Worker(name);",
     "new Worker('./worker.ts');",
     "f(Worker);",
 ];
 
-// Machine code is native code like Bun's own. It brings no module that the compiler has not seen.
 const MACHINE_CODE_LOADS: &[&str] = &[
     "process.dlopen(target, name);",
     "f(process.dlopen);",
@@ -137,6 +135,18 @@ fn loading_machine_code_loads_nothing_unknown() {
     assert_loads_unknown_modules(PROGRAM, MACHINE_CODE_LOADS, false);
     let source = "require('bun:ffi').dlopen(name, symbols);";
     assert_loads_unknown_modules(SCRIPT, &[source], false);
+}
+
+#[test]
+fn stored_loader_function_loads_unknown_modules() {
+    let stores = [
+        "const Module = require('node:module'); Module._resolveFilename = function (name) { return this.createRequire(__filename)(name); };",
+        "const Module = require('node:module'); Module._resolveFilename = (name, parent) => parent.require(name);",
+        "require('node:module').prototype.require = function (name) { return name; };",
+    ];
+    assert_loads_unknown_modules(SCRIPT, &stores, true);
+    let reads = ["const Module = require('node:module'); typeof Module._resolveFilename;"];
+    assert_loads_unknown_modules(SCRIPT, &reads, false);
 }
 
 #[test]

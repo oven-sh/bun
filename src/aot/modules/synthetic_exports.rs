@@ -32,7 +32,6 @@ impl SyntheticExports {
     }
 }
 
-/// What the test runner may store another value under: single names, and every name of a module that it mocks.
 #[derive(Copy, Clone)]
 pub(super) struct ReplacedNames<'a> {
     pub names: &'a [SyntheticExportKey],
@@ -48,7 +47,7 @@ pub(super) fn number_synthetic_exports(
     commonjs: &CommonJsTexts,
     replaced: ReplacedNames<'_>,
 ) -> SyntheticExports {
-    let mut found = collect_synthetic_export_keys(input, modules, tables, imports, commonjs);
+    let mut found = collect_synthetic_export_keys(modules, tables, imports, commonjs);
     for &key in replaced.names {
         found.add(key, false);
     }
@@ -67,7 +66,6 @@ pub(super) fn number_synthetic_exports(
             !modules.is_uncompiled_code(module),
             "a binding of uncompiled code is live and is never captured"
         );
-        // `ns.x` is `undefined` where the module has no `x`. Only a name that is imported or exported must be there.
         let can_be_absent = !required.contains(&(module, name));
         SyntheticExport {
             module,
@@ -111,7 +109,6 @@ impl SyntheticExportKeys {
 }
 
 fn collect_synthetic_export_keys(
-    input: &BindInput<'_, '_>,
     modules: &ModuleSet,
     tables: &ExportTables,
     imports: &[FileImports],
@@ -122,7 +119,6 @@ fn collect_synthetic_export_keys(
         let symbols = file_imports.bindings.iter().map(|it| (it.1, true));
         let members = file_imports.members.iter().map(|it| (it.1, false));
         let jsx = file_imports.jsx.iter().map(|it| (it.binding, true));
-        // A key of `const { n } = require(K)` reads `undefined` where the module has no `n`.
         let named = file_imports.named_members.iter();
         let named = named.filter_map(|it| match it.1 {
             NamedMember::Binding(binding) => Some((binding, false)),
@@ -155,11 +151,14 @@ fn collect_synthetic_export_keys(
             }
         }
     }
-    // A name of a CommonJS module has a variable where somebody reads it. A store asks for none.
+    for named in tables.statements_ahead_of_stars() {
+        if let Resolution::Synthetic { module, name } = named {
+            keys.add((module, name), true);
+        }
+    }
     for (module, name) in commonjs.names_read_by_own_text() {
         keys.add_resolution(tables.resolve_required(modules, module, name).resolution);
     }
-    // A namespace object shows every name.
     for file in collect_seen_namespaces(modules, tables, imports) {
         let module = ModuleRef::File(file);
         let names = tables.commonjs.names_of(module);
@@ -167,16 +166,6 @@ fn collect_synthetic_export_keys(
             keys.add_resolution(tables.resolve_in(modules, module, name).resolution);
         }
     }
-    if let Some(application) = input.application {
-        for export in application.graph.synthetic_exports() {
-            if let ModuleRef::File(_) | ModuleRef::Inner { .. } = export.module
-                && let Some(module) = application.local_module(export.module)
-            {
-                keys.add((module, export.name), false);
-            }
-        }
-    }
-    // The copy of a name that a getter answers for is taken of what the getter returns.
     for position in 0..keys.keys.len() {
         let (module, name) = keys.keys[position];
         if tables.commonjs.is_copied(module, name) {
@@ -186,7 +175,6 @@ fn collect_synthetic_export_keys(
     keys
 }
 
-/// The names that the table of built-ins says a module of the library has.
 #[derive(Copy, Clone)]
 pub(super) struct KnownMembers<'a> {
     sources: &'a Sources,
@@ -216,7 +204,7 @@ impl<'a> KnownMembers<'a> {
         };
         !matches!(
             find_module_export(self.builtin_names, runtime_module, name, self.platform),
-            ModuleExport::Absent | ModuleExport::Unknown
+            ModuleExport::Absent | ModuleExport::Unknown | ModuleExport::PropertyOfNamespace(_)
         )
     }
 }
@@ -224,12 +212,17 @@ impl<'a> KnownMembers<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::commonjs_exports::{CommonJsInput, scan_commonjs_modules};
+    use crate::modules::exports::{collect_export_entries, resolve_exports};
+    use crate::modules::imports::find_mocked_modules;
     use crate::modules::module_set::collect_modules;
+    use crate::modules::order::compute_order;
     use crate::modules::requests::scan_files;
     use crate::modules::testing::{file_named, with_graph, with_runtime_graph};
     use crate::modules::{ExportBinding, ImportBinding, ModuleGraph};
-    use bun_sema::bind::Decl;
+    use bun_sema::bind::{Decl, SymbolId};
     use bun_sema::hir::ImportId;
+    use bun_sema::program::FileId;
 
     fn name_of<'a>(input: &BindInput<'a, '_>, export: &SyntheticExport) -> &'a str {
         let name = core::str::from_utf8(input.files.atoms.bytes(export.name));
@@ -259,6 +252,39 @@ mod tests {
             panic!("{exporter} does not have exactly one export");
         };
         export.binding
+    }
+
+    fn replaceable_names<'a>(
+        input: &BindInput<'a, '_>,
+        asked_for: &[SyntheticExportKey],
+        replaced: ReplacedNames<'_>,
+    ) -> Vec<&'a str> {
+        let scans = scan_files(input);
+        let modules = collect_modules(input, &scans);
+        let (order, _) = compute_order(input, &scans, &modules);
+        let commonjs_input = CommonJsInput {
+            bind: input,
+            scans: &scans,
+            modules: &modules,
+            half: &|module: ModuleRef| order.half(module),
+            half_at_link: &|module: ModuleRef| order.half_at_link(module),
+            is_prefix_root: &|file: FileId| order.is_prefix_root(file),
+        };
+        let texts = scan_commonjs_modules(&commonjs_input);
+        let entries = collect_export_entries(input, &scans, &modules);
+        let mocked = find_mocked_modules(input, &scans, &modules);
+        let tables = resolve_exports(input, &scans, &modules, entries, &texts, &mocked);
+        let bindings = asked_for
+            .iter()
+            .map(|&(module, name)| PendingBinding::Synthetic { module, name });
+        let imports = [FileImports {
+            bindings: (0..).map(SymbolId).zip(bindings).collect(),
+            ..FileImports::default()
+        }];
+        let numbered =
+            number_synthetic_exports(input, &modules, &tables, &imports, &texts, replaced);
+        let replaceable = numbered.list.iter().filter(|export| export.is_replaceable);
+        replaceable.map(|export| name_of(input, export)).collect()
     }
 
     #[test]
@@ -333,6 +359,68 @@ mod tests {
     }
 
     #[test]
+    fn seen_namespaces_ask_for_ids_of_all_names() {
+        let ways_to_see_the_namespace = [
+            "import * as ns from './c.cjs'; console.log(ns);",
+            "await import('./c.cjs');",
+            "export * from './c.cjs';",
+            "export * as ns from './c.cjs';",
+            "import * as ns from './c.cjs'; export { ns };",
+        ];
+        for main in ways_to_see_the_namespace {
+            let files = [
+                ("main.js", main),
+                ("c.cjs", "exports.a = 1; exports.b = 2;"),
+            ];
+            with_graph(&files, |graph, input| {
+                let exports = graph.synthetic_exports().iter();
+                let names: Vec<&str> = exports.map(|export| name_of(input, export)).collect();
+                assert_eq!(names, ["a", "b", "default"], "{main}");
+            });
+        }
+    }
+
+    #[test]
+    fn names_that_the_test_runner_may_store_are_replaceable() {
+        with_graph(&[("main.js", "export {};")], |_, input| {
+            let atom = |text: &str| input.files.atoms.intern(text.as_bytes());
+            let path = ModuleRef::Runtime(RuntimeModule::NodePath);
+            let test_runner = ModuleRef::Runtime(RuntimeModule::BunTest);
+            let asked_for = [
+                (path, atom("join")),
+                (path, atom("sep")),
+                (test_runner, atom("test")),
+            ];
+            let replaceable =
+                |replaced: ReplacedNames<'_>| replaceable_names(input, &asked_for, replaced);
+            let no_modules = FxHashSet::default();
+            let nothing = ReplacedNames {
+                names: &[],
+                modules: &no_modules,
+                is_every_module: false,
+            };
+            assert_eq!(replaceable(nothing), [""; 0]);
+            let names = [(path, atom("sep")), (path, atom("resolve"))];
+            let single_names = ReplacedNames {
+                names: &names,
+                ..nothing
+            };
+            assert_eq!(replaceable(single_names), ["resolve", "sep"]);
+            let modules: FxHashSet<ModuleRef> = [path].into_iter().collect();
+            let one_module = ReplacedNames {
+                modules: &modules,
+                ..nothing
+            };
+            assert_eq!(replaceable(one_module), ["join", "sep"]);
+            let every_module = ReplacedNames {
+                is_every_module: true,
+                ..nothing
+            };
+            assert_eq!(replaceable(every_module), ["join", "sep"]);
+        });
+    }
+
+    #[test]
     fn known_member_of_bun_module() {
         let main = "
             import { x } from './c.cjs';
@@ -357,6 +445,19 @@ mod tests {
             let known_members = KnownMembers::new(input);
             assert!(known_members.has(&modules, source, atom("join")));
             assert!(!known_members.has(&modules, source, atom("nope")));
+        });
+    }
+
+    #[test]
+    fn name_handed_on_from_bun_is_known_where_the_table_lists_it() {
+        let files = [("main.js", "export { nope, serve } from 'bun';")];
+        with_graph(&files, |graph, input| {
+            let exports = graph.synthetic_exports().iter();
+            let unknown: Vec<&str> = exports
+                .filter(|export| !export.is_known_member)
+                .map(|export| name_of(input, export))
+                .collect();
+            assert_eq!(unknown, ["nope"]);
         });
     }
 }

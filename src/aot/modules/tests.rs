@@ -1,11 +1,14 @@
 mod code_unit_order;
 
-use super::testing::{describe_module, file_named, with_graph, with_runtime_graph};
+use super::testing::{
+    bind_whole_program, describe_module, file_named, with_graph, with_graph_of_test_files,
+    with_runtime_graph,
+};
 use super::*;
 use crate::builtins::RuntimeModule;
 use bstr::BStr;
 use bun_sema::atom::Atom;
-use bun_sema::hir::{ExprId, ExprKind, ImportId};
+use bun_sema::hir::ImportId;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::session::Session;
@@ -172,7 +175,7 @@ fn task_order_does_not_change_graph() {
             in_parallel: &in_reverse,
             ..*input
         };
-        let reversed = bind_modules(&reversed_input).graph;
+        let reversed = bind_whole_program(&reversed_input);
         for (name, _) in PROGRAM {
             assert_eq!(
                 describe_module(&reversed, input, name),
@@ -276,42 +279,6 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
 }
 
 #[test]
-fn module_that_cannot_load_fails_nothing_else_that_the_stand_in_for_files_from_disk_imports() {
-    let files = [
-        (
-            "stand-in.js",
-            "import * as above from './above.js'; import * as fine from './fine.js'; console.log(above, fine.x);",
-        ),
-        ("above.js", "import './broken.js'; export const y = 1;"),
-        ("broken.js", "import './gone.js';"),
-        ("fine.js", "export const x = 1;"),
-    ];
-    with_graph(&files, |_, input| {
-        let file = |name: &str| file_named(input, name);
-        let names = ["stand-in.js", "above.js", "broken.js", "fine.js"];
-        let fails_load = |stand_in: Option<FileId>| {
-            let graph = bind_modules(&BindInput {
-                runs_tests: true,
-                runner_starts_entry_points: true,
-                host_runs_files_from_disk: true,
-                stand_in_for_files_from_disk: stand_in,
-                ..*input
-            })
-            .graph;
-            assert!(graph.errors().is_empty(), "{:?}", graph.errors());
-            let hir = input.files.hir(file("stand-in.js"));
-            let is_erased = |statement| graph.erased(file("stand-in.js"), statement);
-            let load_failures = names.map(|name| graph.load_failure(file(name)).is_some());
-            (load_failures, hir.ids(hir.body).any(is_erased))
-        };
-        // An importer like any other.
-        assert_eq!(fails_load(None), ([true, true, true, false], true));
-        let stand_in = Some(file("stand-in.js"));
-        assert_eq!(fails_load(stand_in), ([false, true, true, false], false));
-    });
-}
-
-#[test]
 fn typescript_module_is_bound_without_the_exports_that_find_nothing_where_the_run_drops_them() {
     let files = [
         (
@@ -341,11 +308,10 @@ fn typescript_module_is_bound_without_the_exports_that_find_nothing_where_the_ru
         expected.sort_unstable();
         assert_eq!(failing, expected);
 
-        let graph = bind_modules(&BindInput {
+        let graph = bind_whole_program(&BindInput {
             typescript_drops_absent_exports: true,
             ..*input
-        })
-        .graph;
+        });
         assert_eq!(importers(&graph), [file("again.js")]);
         let names_of = |name: &str| -> Vec<&BStr> {
             let exports = graph.exports(file(name)).iter();
@@ -355,7 +321,6 @@ fn typescript_module_is_bound_without_the_exports_that_find_nothing_where_the_ru
         };
         assert_eq!(names_of("again.ts"), ["one"]);
         assert_eq!(names_of("imported.ts"), ["one"]);
-        // Only the run knows whether the file has the name: the export is there while its copy holds something.
         let [perhaps] = graph.exports(file("file.ts")) else {
             panic!("file.ts does not have exactly one export");
         };
@@ -433,6 +398,46 @@ fn name_that_a_module_lacks_is_no_error_in_a_module_whose_load_fails() {
 }
 
 #[test]
+fn link_that_fails_behind_a_computed_name_is_left_to_the_run() {
+    let files = [
+        (
+            "main.js",
+            "for (const name of ['lacks.js', 'hands-on.js', 'torn.js']) await import('./' + name);",
+        ),
+        (
+            "lacks.js",
+            "import { absent } from './fine.js'; console.log(absent);",
+        ),
+        ("hands-on.js", "export { absent } from './fine.js';"),
+        (
+            "torn.js",
+            "import { twice } from './stars.js'; console.log(twice);",
+        ),
+        (
+            "stars.js",
+            "export * from './fine.js'; export * from './other.js';",
+        ),
+        ("fine.js", "export const twice = 1;"),
+        ("other.js", "export const twice = 2;"),
+    ];
+    with_graph(&files, |graph, input| {
+        assert!(graph.errors().is_empty(), "{:?}", graph.errors());
+        for (importer, exporter) in [
+            ("lacks.js", "fine.js"),
+            ("hands-on.js", "fine.js"),
+            ("torn.js", "stars.js"),
+        ] {
+            let required = only(graph.required_names(file_named(input, importer)));
+            assert_eq!(
+                required.module,
+                ModuleRef::File(file_named(input, exporter))
+            );
+            assert_eq!(required.asked_by.is_some(), importer == "hands-on.js");
+        }
+    });
+}
+
+#[test]
 fn only_es_modules_with_live_await_have_top_level_await() {
     let files = [
         (
@@ -485,28 +490,6 @@ fn entry_point_kind_and_source_kind_reach_graph() {
 }
 
 #[test]
-fn modules_bound_are_counted() {
-    let files = [
-        (
-            "main.js",
-            "import './a.js';\n\
-             import 'node:fs';\n\
-             import 'https://example.com/x.js';\n\
-             export const load = (name) => import(`./pages/${name}.js`);\n",
-        ),
-        ("a.js", "import 'node:fs';\n"),
-        ("pages/one.js", "export {};\n"),
-    ];
-    with_graph(&files, |graph, input| {
-        let counters = bind_modules(input).counters;
-        assert_eq!(graph.record_files().len(), 3);
-        assert_eq!(graph.other_modules().len(), 2);
-        assert_eq!(counters.counts(), [(StatisticId::ModulesBound, 5)]);
-        assert!(counters.losses().is_empty());
-    });
-}
-
-#[test]
 fn external_package_no_site_names_has_a_module() {
     with_graph(&[("main.js", "export {};\n")], |graph, input| {
         assert!(graph.other_modules().is_empty());
@@ -515,7 +498,7 @@ fn external_package_no_site_names_has_a_module() {
             external_packages: &packages,
             ..*input
         };
-        let graph = bind_modules(&input_with_package).graph;
+        let graph = bind_whole_program(&input_with_package);
         let outside = ModuleRef::External {
             importer: file_named(input, "main.js"),
             specifier: input.files.atoms.intern(b"outside"),
@@ -544,33 +527,25 @@ fn declared_side_effects_can_be_ignored() {
             ignores_declared_side_effects: true,
             ..*input
         };
-        assert!(!bind_modules(&ignoring).graph.has_no_side_effects(lib));
+        assert!(!bind_whole_program(&ignoring).has_no_side_effects(lib));
     });
 }
 
 #[test]
-fn computed_import_is_counted_with_all_the_files_that_it_means() {
-    let specifier = "`./pages/${name}.js`";
-    let main = format!("export const load = (name) => import({specifier});\n");
+fn computed_import_lists_all_the_files_that_it_means() {
+    let main = "export const load = (name) => import(`./pages/${name}.js`);\n";
     let page_names: Vec<String> = (0..1500).map(|page| format!("pages/{page}.js")).collect();
-    let mut files = vec![("main.js", main.as_str())];
+    let mut files = vec![("main.js", main)];
     let pages = page_names.iter();
     files.extend(pages.map(|name| (name.as_str(), "export {};\n")));
     with_graph(&files, |graph, input| {
         let main = file_named(input, "main.js");
-        let counters = bind_modules(input).counters;
-        assert!(counters.losses().is_empty());
-        let import = only(counters.computed_imports());
-        assert_eq!((import.files, import.bytes), (1500, 1500 * 11));
-        let span = import.site;
-        assert_eq!(span.file, main);
-        let text = &input.files.hir(main).text[span.start as usize..span.end as usize];
-        assert_eq!(BStr::new(text), specifier);
-        let mut exprs = input.files.hir(main).exprs.iter();
-        let call = exprs.position(|expr| matches!(expr.kind, ExprKind::ImportCall { .. }));
-        let call = ExprId(call.expect("the file has an import call") as u32);
-        let answer = graph.site_answer(main, ImportSiteKind::ImportCall(call));
-        assert_ne!(answer, SiteAnswer::Computed(Candidates::All));
+        let site = only(input.files.analysis(main).import_sites);
+        let answer = graph.site_answer(main, site.kind);
+        let SiteAnswer::Computed(Candidates::Modules(listed)) = answer else {
+            panic!("{answer:?}");
+        };
+        assert_eq!(listed.len(), page_names.len());
     });
 }
 
@@ -609,7 +584,6 @@ fn a_module_says_which_names_it_binds_that_the_table_of_a_library_module_does_no
             "through.js",
             "import { handedOn } from \"./barrel.js\";\nconsole.log(handedOn);\n",
         ),
-        // `undefined` where the module has no such name.
         (
             "members.js",
             "import * as fs from \"node:fs\";\nconsole.log(fs.unlisted);\n",
@@ -649,7 +623,6 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             "through.js",
             "import { ReadStream } from \"./barrel.js\";\nconsole.log(ReadStream);\n",
         ),
-        // The object answers, at the read.
         (
             "members.js",
             "import * as fs from \"node:fs\";\nconsole.log(fs.WriteStream, fs.statSync);\n",
@@ -658,7 +631,6 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             "required.cjs",
             "const { WriteStream } = require(\"node:fs\");\nconsole.log(WriteStream);\n",
         ),
-        // `Object.defineProperty(assert, "AssertionError", { get() { .. } })`
         (
             "defined.js",
             "import { AssertionError, ok } from \"node:assert\";\nconsole.log(AssertionError, ok);\n",
@@ -709,6 +681,88 @@ fn every_export_of_a_native_module_that_mirrors_an_object_may_be_deferred() {
         assert!(deferred_exports.contains(module, b"stdout"), "{specifier}");
     }
     assert!(!deferred_exports.contains(RuntimeModule::NodeFs, b"stdout"));
+}
+
+#[test]
+fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
+    let files = [
+        (
+            "a.test.js",
+            "import near from './conf.txt' with { type: 'jsonc' };\nimport { held } from './below.js';\nconsole.log(near, held);\n",
+        ),
+        (
+            "b.test.js",
+            "import { held } from './below.js';\nconsole.log(held);\n",
+        ),
+        (
+            "c.test.js",
+            "import alone from './alone.txt' with { type: 'jsonc' };\nconsole.log(alone);\n",
+        ),
+        (
+            "below.js",
+            "import held from './conf.txt' with { type: 'text' };\nexport { held };\n",
+        ),
+        ("conf.txt", "{ \"port\": 21 }\n"),
+        ("alone.txt", "{ \"port\": 21 }\n"),
+    ];
+    with_graph_of_test_files(&files, 3, 0, |graph, input| {
+        let types_left_to_loader = |graph: &ModuleGraph, name: &str| -> Vec<_> {
+            let requests = graph.requests(file_named(input, name)).iter();
+            let left = requests.filter_map(|request| match request.target {
+                ModuleRef::External { type_attribute, .. } => Some(type_attribute),
+                _ => None,
+            });
+            left.collect()
+        };
+        let is_loaded_by_loader = |graph: &ModuleGraph, name: &str| {
+            graph.is_loaded_by_loader(ModuleRef::File(file_named(input, name)))
+        };
+        for name in ["a.test.js", "b.test.js", "c.test.js", "below.js"] {
+            assert!(types_left_to_loader(graph, name).is_empty(), "{name}");
+            assert!(!is_loaded_by_loader(graph, name), "{name}");
+        }
+        let graph = bind_whole_program(&BindInput {
+            runs_in_several_realms: true,
+            ..*input
+        });
+        let (jsonc, text) = (Some(bun_ast::Loader::Jsonc), Some(bun_ast::Loader::Text));
+        assert_eq!(types_left_to_loader(&graph, "a.test.js"), [jsonc]);
+        assert_eq!(types_left_to_loader(&graph, "below.js"), [text]);
+        for name in ["a.test.js", "b.test.js", "below.js"] {
+            assert!(is_loaded_by_loader(&graph, name), "{name}");
+        }
+        assert!(types_left_to_loader(&graph, "c.test.js").is_empty());
+        assert!(!is_loaded_by_loader(&graph, "c.test.js"));
+    });
+}
+
+#[test]
+fn a_preload_says_in_front_of_the_test_files_which_type_comes_first() {
+    let files = [
+        (
+            "a.test.js",
+            "import near from './conf.txt' with { type: 'jsonc' };\nconsole.log(near);\n",
+        ),
+        (
+            "first.js",
+            "import conf from './conf.txt' with { type: 'text' };\nconsole.log(conf);\n",
+        ),
+        ("conf.txt", "{ \"port\": 21 }\n"),
+    ];
+    with_graph_of_test_files(&files, 1, 1, |graph, input| {
+        for name in ["a.test.js", "first.js"] {
+            let requests = graph.requests(file_named(input, name)).iter();
+            let forms = requests.filter_map(|request| match request.target {
+                ModuleRef::File(form) => Some(input.sources.public_path(form)),
+                _ => None,
+            });
+            let forms: Vec<&[u8]> = forms.collect();
+            assert!(
+                matches!(forms[..], [form] if !form.ends_with(b"?jsonc")),
+                "{name}"
+            );
+        }
+    });
 }
 
 #[test]

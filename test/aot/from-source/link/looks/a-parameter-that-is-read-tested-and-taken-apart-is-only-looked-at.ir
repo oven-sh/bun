@@ -1,0 +1,21 @@
+# A caller hands the first two an object that it has just made. All that they do with it is to read it by name, to test it and to take it apart: they only look at what arrives.
+# The third is handed a list. Array.prototype takes new names in every executable, so a getter of the program's own may answer a read off a list and keep the list: a list is not lent, and nobody asks.
+# f1 = area, f2 = apart, f3 = first, f4 = caller
+# -- source: a-parameter-that-is-read-tested-and-taken-apart-is-only-looked-at.ts
+# declare function sink(...values: unknown[]): void;
+# function area(o: { w: number; h: number }): number { let t = 0; for (let i = 0; i < 2; i++) t += o.w * o.h; return t; }
+# function apart(o: { a?: number; b?: number } | undefined): number { if (o === undefined || typeof o !== "object") return 0; const { a = 1, b = 2 } = o; let t = 0; for (let i = 0; i < 2; i++) t += a + b; return t; }
+# function first(list: number[], at: number): number { let t = 0; for (let i = 0; i < 2; i++) t += list[at] + list.length; return t; }
+# function caller(x: number) { return area({ w: x, h: 2 }) + apart({ a: x }) + first([x, 2, 3], 1); }
+# sink(caller(1), caller(2));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 0 {{*}}only-looked-at
+# CHECK-LABEL: function f2
+# CHECK: parameter 0 {{*}}only-looked-at
+# CHECK-LABEL: function f3
+# CHECK-NOT: only-looked-at
+# CHECK-LABEL: function f4
+# RUN(WITHHELD): link functions mechanisms=all-CellsInFrames
+# WITHHELD-NOT: only-looked-at

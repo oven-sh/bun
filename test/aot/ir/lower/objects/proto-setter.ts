@@ -40,8 +40,7 @@
 
 // RUN(ORDER): lower
 // ORDER-LABEL: function {{*}}name="valuesInSourceOrder"
-// ORDER: [[called]] = Call {{*}}calleeName="first"
-// ORDER-NEXT: [[prototype]] = Convert [[called]] declared={type=undefined|null|object site=w{{*}}} @
+// ORDER: [[prototype]] = Call {{*}}calleeName="first"
 // ORDER-NEXT: = Call {{*}}calleeName="second"
 // ORDER: [[head]] = NewObject -, {{*}}fields=[0]
 // ORDER-NEXT: SetLiteralPrototype [[head]], [[prototype]]

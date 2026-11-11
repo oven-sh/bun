@@ -1,0 +1,19 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(a, b) { var n = Math.min(a.length, b.length); for (var i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return a.length - b.length; } };
+# print(T[key](new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4])), T[key](new Uint8Array([1, 9]), new Uint8Array([1, 2, 4])), T[key](new Float64Array([0.5, NaN]), new Float64Array([0.5, NaN])), T[key]([1, 2, 3], [1, 2, 3, 4]), T[key](["a", "c"], ["a", "b"]), T[key]("abd", "abc"), T[key]([1, "2"], [1, 2]), T[key](new Int16Array([-1]), new Uint16Array([65535])), T[key]([{}], [{}]), T[key](new Uint8Array(0), [1]));
+# -- end of source
+# Two rows are compared by hand. In the turn an element is only held against an element, which says nothing of numbers: lists of anything are compared so. But the block that the loop leaves into puts the same holders' elements
+# in order (`a[i] < b[i]`): numbers or texts. So bytes and views are named beside the lists, and in their copies the other holder is asked for what the first is. Sixty-four comparisons of keys of eight bytes: 32,570 > 26,225.
+# What is left (plain Bun 4,226) stands outside the loop: two reads of `length` off what nobody knows in front, and the two reads on the way out, which all copies share.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK: = StrictEq {{*}} form=Integers
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -1 1 1 -1 1 1 1 -1 1 -1
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: -1 1 1 -1 1 1 1 -1 1 -1
+# NONE-NEXT: exited with 0

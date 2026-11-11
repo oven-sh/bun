@@ -1,0 +1,10 @@
+# `mixed[i] = first.indexOf(first[i])`, `first` a constant of the file out of JSON.parse: what is expected of `first` is asked of the loops that read it by key; the element's first user is the call, whose callee nobody knows,
+# so what is expected of the callee `first.indexOf` is asked, and that asks its receiver: `first` again. Nothing said that the search was under way: the build stopped with "Out of stack while compiling".
+# LIBRARY: own
+# -- source: main.js
+# const first = JSON.parse("[1.5,2.5,3.5,4.5]"), mixed = JSON.parse("[0,0,0,0]");
+# function run() { for (let i = 0; i < first.length; i++) mixed[i] = first.indexOf(first[i]); return mixed.join(); }
+# publish(run);
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 0,1,2,3

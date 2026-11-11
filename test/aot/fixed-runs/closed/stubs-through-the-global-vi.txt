@@ -1,0 +1,9 @@
+vi.stubGlobal() through the global vi, in a test file that imports nothing.
+#### a.test.js
+const tried = (f) => { try { return String(f()); } catch (e) { return e.constructor.name + ": " + String(e.message).slice(0, 70); } };
+test("t", () => {
+  console.log("| CASE Math", tried(() => { vi.stubGlobal("Math", { max: () => 7 }); return Math.max(1, 2); })); vi.unstubAllGlobals();
+  console.log("| CASE Date", tried(() => { vi.stubGlobal("Date", class { static now() { return 5; } }); return Date.now(); })); vi.unstubAllGlobals();
+  console.log("| CASE fetch", tried(() => { vi.stubGlobal("fetch", () => "stub"); return fetch("x"); })); vi.unstubAllGlobals();
+  console.log("| CASE behind", Math.max(1, 2), typeof Date.now(), typeof fetch);
+});

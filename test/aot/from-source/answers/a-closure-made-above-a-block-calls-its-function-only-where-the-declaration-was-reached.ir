@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# const out = [], say = f => { try { out.push(String(f())); } catch (e) { out.push(e.constructor.name); } };
+# function at(k) {
+#   const a = k, b = 2;
+#   const run = l => { let s = 0; for (let i = 0; i < l.length; i++) s += h(l[i]); return s; };
+#   say(() => run([]));
+#   say(() => run([1]));
+#   lab: { if (k & 1) break lab; function h(x) { return x + a + b; } }
+#   say(() => run([1, 2]));
+#   say(() => run([]));
+# }
+# for (let k = 0; k < 3; k++) at(k);
+# print(out.join("|"));
+# -- end of source
+# A closure made above a labelled block calls the function of the block in a loop. It reads the variable of the function around it: undefined above the block, and behind it too in the call that a break takes out above the declaration.
+# RUN: run-in-shell
+# CHECK: 0|TypeError|7|0|0|TypeError|TypeError|0|0|TypeError|11|0
+# CHECK-NEXT: exited with 0

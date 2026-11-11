@@ -1,25 +1,22 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="Base" {{*}}kind=BaseConstructor
 // CHECK: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
-// CHECK: = CallDirect
-// CHECK-NOT: PropSet
+// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
+// CHECK-NOT: PropDefine
 // CHECK: = Call {{*}}calleeName="initial"
-// CHECK: PropSet [[this]], {{*}}key="a"
-// CHECK: PropSet [[this]], {{*}}key="b"
+// CHECK: PropDefine [[this]], {{*}}key="a"
+// CHECK: PropDefine [[this]], {{*}}key="b"
 // CHECK-NOT: key="c"
 // CHECK-LABEL: function {{*}}name="Derived" {{*}}kind=DerivedConstructor
 // CHECK-NOT: PropSet
 // CHECK: [[derived]] = SuperConstruct
-// CHECK: [[convertedDerived]] = Convert [[derived]] declared={type=L{{*}} flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK: [[convertedDerived]] = Convert [[derived]] declared={type=L{{*}}} @
 // CHECK: PropSet [[convertedDerived]], {{*}}key="d"
 
 // RUN(FIELDS): lower
 // FIELDS-LABEL: function {{*}}kind=Initializer
 // FIELDS: [[first]] = Undefined
-// FIELDS-NEXT: PropDefine [[self]], [[first]] key="a"
-// FIELDS: [[second]] = Undefined
-// FIELDS-NEXT: PropDefine [[self]], [[second]] key="b"
+// FIELDS-NEXT: PropDefine [[self]], [[first]] key="d"
 
 declare function initial(): number;
 

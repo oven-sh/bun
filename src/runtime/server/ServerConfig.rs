@@ -1094,6 +1094,14 @@ impl ServerConfig {
                             "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
                         )));
                     }
+                    // The compiler counts on this option only where the object that is passed was written with it.
+                    if bun_jsc::compiled_program::compiled_program().is_some_and(|program| {
+                        !bun_jsc::compiled_program::admits_unknown_javascript(program)
+                    }) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: this executable only runs code that was compiled into it, and the build didn't see your code pass this option. Write it in the object that Bun.serve() is called with"
+                        )));
+                    }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
                         return Err(global.throw_invalid_arguments(format_args!(

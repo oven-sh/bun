@@ -18,7 +18,7 @@ use bun_jsc::{
     ErrorCode, JSGlobalObject, JSValue, JsClass, JsError, JsResult, JsThread, SysErrorJsc as _,
 };
 use bun_ptr::{BackRef, RawSlice};
-use bun_removable_features::removable_body;
+use bun_removable_features::removable_body_behind_value;
 use bun_sys::{self as sys, Error as SysError};
 
 pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
@@ -322,7 +322,7 @@ impl<T: JsSinkType> JSSink<T> {
 
     fn notify_subprocess(&self) {
         if let Some(subprocess) = self.subprocess.take() {
-            removable_body!(Spawn, Abort, {
+            removable_body_behind_value!(Spawn, {
                 // SAFETY: the `Subprocess` clears this with `forget_subprocess` before it is freed.
                 unsafe { subprocess.as_ref() }.on_stdin_destroyed();
             });
@@ -416,10 +416,10 @@ where
     /// A new JS object, which takes over one claim on `sink`.
     pub(crate) fn create_object(
         global: &JSGlobalObject,
-        sink: &mut T,
+        sink: NonNull<T>,
         subprocess: Option<NonNull<Subprocess<'static>>>,
     ) -> JSValue {
-        Self::new(NonNull::from(sink), subprocess).to_js(global)
+        Self::new(sink, subprocess).to_js(global)
     }
 
     /// The sink of `value`, unless that is not such an object or it is closed.
@@ -614,19 +614,19 @@ impl ReadableSinkController {
             None => 0,
             Some(AnyControlledSink::FileSink(sink)) => sink_memory_cost(sink),
             Some(AnyControlledSink::RewriterPipe(sink)) => {
-                removable_body!(HtmlRewriter, Abort, { sink_memory_cost(sink) })
+                removable_body_behind_value!(HtmlRewriter, { sink_memory_cost(sink) })
             }
             Some(AnyControlledSink::HTTPResponseSink(sink)) => {
-                removable_body!(Serve, Abort, { sink_memory_cost(sink) })
+                removable_body_behind_value!(Serve, { sink_memory_cost(sink) })
             }
             Some(AnyControlledSink::HTTPSResponseSink(sink)) => {
-                removable_body!(Serve, Abort, { sink_memory_cost(sink) })
+                removable_body_behind_value!(Serve, { sink_memory_cost(sink) })
             }
             Some(AnyControlledSink::NetworkSink(sink)) => {
-                removable_body!(S3Client, Abort, { sink_memory_cost(sink) })
+                removable_body_behind_value!(S3Client, { sink_memory_cost(sink) })
             }
             Some(AnyControlledSink::FetchRequestBodySink(sink)) => {
-                removable_body!(Fetch, Abort, { sink_memory_cost(sink) })
+                removable_body_behind_value!(Fetch, { sink_memory_cost(sink) })
             }
         }
     }
@@ -657,21 +657,21 @@ impl ReadableSinkController {
         match sink {
             AnyControlledSink::FileSink(sink) => controller_detached(sink, controller),
             AnyControlledSink::RewriterPipe(sink) => {
-                removable_body!(HtmlRewriter, Abort, {
+                removable_body_behind_value!(HtmlRewriter, {
                     controller_detached(sink, controller)
                 })
             }
             AnyControlledSink::HTTPResponseSink(sink) => {
-                removable_body!(Serve, Abort, { controller_detached(sink, controller) })
+                removable_body_behind_value!(Serve, { controller_detached(sink, controller) })
             }
             AnyControlledSink::HTTPSResponseSink(sink) => {
-                removable_body!(Serve, Abort, { controller_detached(sink, controller) })
+                removable_body_behind_value!(Serve, { controller_detached(sink, controller) })
             }
             AnyControlledSink::NetworkSink(sink) => {
-                removable_body!(S3Client, Abort, { controller_detached(sink, controller) })
+                removable_body_behind_value!(S3Client, { controller_detached(sink, controller) })
             }
             AnyControlledSink::FetchRequestBodySink(sink) => {
-                removable_body!(Fetch, Abort, { controller_detached(sink, controller) })
+                removable_body_behind_value!(Fetch, { controller_detached(sink, controller) })
             }
         }
         Some(sink)
@@ -733,19 +733,19 @@ impl ReadableSinkController {
         let result = match sink {
             AnyControlledSink::FileSink(sink) => close_sink(sink, global, reason),
             AnyControlledSink::RewriterPipe(sink) => {
-                removable_body!(HtmlRewriter, Abort, { close_sink(sink, global, reason) })
+                removable_body_behind_value!(HtmlRewriter, { close_sink(sink, global, reason) })
             }
             AnyControlledSink::HTTPResponseSink(sink) => {
-                removable_body!(Serve, Abort, { close_sink(sink, global, reason) })
+                removable_body_behind_value!(Serve, { close_sink(sink, global, reason) })
             }
             AnyControlledSink::HTTPSResponseSink(sink) => {
-                removable_body!(Serve, Abort, { close_sink(sink, global, reason) })
+                removable_body_behind_value!(Serve, { close_sink(sink, global, reason) })
             }
             AnyControlledSink::NetworkSink(sink) => {
-                removable_body!(S3Client, Abort, { close_sink(sink, global, reason) })
+                removable_body_behind_value!(S3Client, { close_sink(sink, global, reason) })
             }
             AnyControlledSink::FetchRequestBodySink(sink) => {
-                removable_body!(Fetch, Abort, { close_sink(sink, global, reason) })
+                removable_body_behind_value!(Fetch, { close_sink(sink, global, reason) })
             }
         };
         self.detach_and_return(global, reason, result)
@@ -767,19 +767,19 @@ impl ReadableSinkController {
         match sink {
             AnyControlledSink::FileSink(sink) => flush_sink(sink, cx, wait),
             AnyControlledSink::RewriterPipe(sink) => {
-                removable_body!(HtmlRewriter, Abort, { flush_sink(sink, cx, wait) })
+                removable_body_behind_value!(HtmlRewriter, { flush_sink(sink, cx, wait) })
             }
             AnyControlledSink::HTTPResponseSink(sink) => {
-                removable_body!(Serve, Abort, { flush_sink(sink, cx, wait) })
+                removable_body_behind_value!(Serve, { flush_sink(sink, cx, wait) })
             }
             AnyControlledSink::HTTPSResponseSink(sink) => {
-                removable_body!(Serve, Abort, { flush_sink(sink, cx, wait) })
+                removable_body_behind_value!(Serve, { flush_sink(sink, cx, wait) })
             }
             AnyControlledSink::NetworkSink(sink) => {
-                removable_body!(S3Client, Abort, { flush_sink(sink, cx, wait) })
+                removable_body_behind_value!(S3Client, { flush_sink(sink, cx, wait) })
             }
             AnyControlledSink::FetchRequestBodySink(sink) => {
-                removable_body!(Fetch, Abort, { flush_sink(sink, cx, wait) })
+                removable_body_behind_value!(Fetch, { flush_sink(sink, cx, wait) })
             }
         }
     }
@@ -792,19 +792,19 @@ impl ReadableSinkController {
         let result = match sink {
             AnyControlledSink::FileSink(sink) => end_sink(sink, cx),
             AnyControlledSink::RewriterPipe(sink) => {
-                removable_body!(HtmlRewriter, Abort, { end_sink(sink, cx) })
+                removable_body_behind_value!(HtmlRewriter, { end_sink(sink, cx) })
             }
             AnyControlledSink::HTTPResponseSink(sink) => {
-                removable_body!(Serve, Abort, { end_sink(sink, cx) })
+                removable_body_behind_value!(Serve, { end_sink(sink, cx) })
             }
             AnyControlledSink::HTTPSResponseSink(sink) => {
-                removable_body!(Serve, Abort, { end_sink(sink, cx) })
+                removable_body_behind_value!(Serve, { end_sink(sink, cx) })
             }
             AnyControlledSink::NetworkSink(sink) => {
-                removable_body!(S3Client, Abort, { end_sink(sink, cx) })
+                removable_body_behind_value!(S3Client, { end_sink(sink, cx) })
             }
             AnyControlledSink::FetchRequestBodySink(sink) => {
-                removable_body!(Fetch, Abort, { end_sink(sink, cx) })
+                removable_body_behind_value!(Fetch, { end_sink(sink, cx) })
             }
         };
         self.detach_and_return(cx.global(), None, result)
@@ -826,19 +826,19 @@ impl ReadableSinkController {
                 start_sink(sink, cx, config)
             }
             AnyControlledSink::RewriterPipe(sink) => {
-                removable_body!(HtmlRewriter, Abort, { start_sink(sink, cx, chunk_size) })
+                removable_body_behind_value!(HtmlRewriter, { start_sink(sink, cx, chunk_size) })
             }
             AnyControlledSink::HTTPResponseSink(sink) => {
-                removable_body!(Serve, Abort, { start_sink(sink, cx, chunk_size) })
+                removable_body_behind_value!(Serve, { start_sink(sink, cx, chunk_size) })
             }
             AnyControlledSink::HTTPSResponseSink(sink) => {
-                removable_body!(Serve, Abort, { start_sink(sink, cx, chunk_size) })
+                removable_body_behind_value!(Serve, { start_sink(sink, cx, chunk_size) })
             }
             AnyControlledSink::NetworkSink(sink) => {
-                removable_body!(S3Client, Abort, { start_sink(sink, cx, chunk_size) })
+                removable_body_behind_value!(S3Client, { start_sink(sink, cx, chunk_size) })
             }
             AnyControlledSink::FetchRequestBodySink(sink) => {
-                removable_body!(Fetch, Abort, { start_sink(sink, cx, chunk_size) })
+                removable_body_behind_value!(Fetch, { start_sink(sink, cx, chunk_size) })
             }
         }
     }
@@ -862,19 +862,19 @@ impl ReadableSinkController {
         match sink {
             AnyControlledSink::FileSink(sink) => write_chunk(sink, cx, data),
             AnyControlledSink::RewriterPipe(sink) => {
-                removable_body!(HtmlRewriter, Abort, { write_chunk(sink, cx, data) })
+                removable_body_behind_value!(HtmlRewriter, { write_chunk(sink, cx, data) })
             }
             AnyControlledSink::HTTPResponseSink(sink) => {
-                removable_body!(Serve, Abort, { write_chunk(sink, cx, data) })
+                removable_body_behind_value!(Serve, { write_chunk(sink, cx, data) })
             }
             AnyControlledSink::HTTPSResponseSink(sink) => {
-                removable_body!(Serve, Abort, { write_chunk(sink, cx, data) })
+                removable_body_behind_value!(Serve, { write_chunk(sink, cx, data) })
             }
             AnyControlledSink::NetworkSink(sink) => {
-                removable_body!(S3Client, Abort, { write_chunk(sink, cx, data) })
+                removable_body_behind_value!(S3Client, { write_chunk(sink, cx, data) })
             }
             AnyControlledSink::FetchRequestBodySink(sink) => {
-                removable_body!(Fetch, Abort, { write_chunk(sink, cx, data) })
+                removable_body_behind_value!(Fetch, { write_chunk(sink, cx, data) })
             }
         }
     }
@@ -929,16 +929,16 @@ impl Drop for ReadableSinkController {
                 AnyControlledSink::FileSink(sink) => controller_finalize(sink),
                 AnyControlledSink::RewriterPipe(sink) => controller_finalize(sink),
                 AnyControlledSink::HTTPResponseSink(sink) => {
-                    removable_body!(Serve, Abort, { controller_finalize(sink) })
+                    removable_body_behind_value!(Serve, { controller_finalize(sink) })
                 }
                 AnyControlledSink::HTTPSResponseSink(sink) => {
-                    removable_body!(Serve, Abort, { controller_finalize(sink) })
+                    removable_body_behind_value!(Serve, { controller_finalize(sink) })
                 }
                 AnyControlledSink::NetworkSink(sink) => {
-                    removable_body!(S3Client, Abort, { controller_finalize(sink) })
+                    removable_body_behind_value!(S3Client, { controller_finalize(sink) })
                 }
                 AnyControlledSink::FetchRequestBodySink(sink) => {
-                    removable_body!(Fetch, Abort, { controller_finalize(sink) })
+                    removable_body_behind_value!(Fetch, { controller_finalize(sink) })
                 }
             }
         }

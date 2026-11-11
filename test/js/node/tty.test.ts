@@ -544,4 +544,10 @@ describe("WriteStream.prototype.getColorDepth", () => {
   it("empty", () => {
     expect(WriteStream.prototype.getColorDepth.call(undefined, {})).toBe(isWindows ? 24 : 1);
   });
+
+  // The same in a debug build, a release build and a compiled program.
+  it("has no name", () => {
+    expect(WriteStream.prototype.getColorDepth.name).toBe("");
+    expect(WriteStream.prototype.getColorDepth.length).toBe(0);
+  });
 });

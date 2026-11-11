@@ -3,8 +3,8 @@ use super::folder::{Effects, Folded, Folder};
 use super::inputs::RuntimeValueKind;
 use super::{Constant, Decision, literal_constant};
 use crate::atom::{Atom, known};
-use crate::bind::CommonJsVariable;
-use crate::hir::{BinOp, Branches, ExprId, ExprKind, IdList, UnOp};
+use crate::bind::{Binding, CommonJsVariable};
+use crate::hir::{BinOp, Branches, Chain, ExprId, ExprKind, IdList, UnOp};
 use crate::import_sites::is_free_common_js;
 
 #[derive(Copy, Clone)]
@@ -26,11 +26,25 @@ impl<'s> Folder<'_, 's> {
                 }
                 folded
             }
-            ExprKind::Binary { op, left, right } => self.fold_binary(e, op, left, right),
+            ExprKind::Binary { op, left, right } => {
+                if self.bound.may_name_own_path()
+                    && let (BinOp::Add, ExprKind::String(end)) = (op, hir[right].kind)
+                {
+                    self.note_path_written_from_own_directory(e, end);
+                }
+                self.fold_binary(e, op, left, right)
+            }
             ExprKind::Cond { test, branches } => {
                 self.fold_conditional(e, test, hir.branches(branches))
             }
-            ExprKind::Template { exprs } => self.fold_template(exprs),
+            ExprKind::Template { exprs } => {
+                if self.bound.may_name_own_path()
+                    && let Some(end) = hir.ids(hir.template_texts(exprs)).next_back()
+                {
+                    self.note_path_written_from_own_directory(e, end);
+                }
+                self.fold_template(e, exprs)
+            }
             ExprKind::As { expr, .. }
             | ExprKind::Satisfies { expr, .. }
             | ExprKind::AsConst(expr)
@@ -38,15 +52,28 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::Instantiation { expr, .. } => self.fold_cast(e, expr),
             ExprKind::Ident(name) => self.fold_ident(e, name),
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
-                match self.fold_short_circuit(e, obj, chain) {
+                let short_circuited = match chain {
+                    Chain::No => None,
+                    Chain::Start | Chain::Continue => self.fold_short_circuit(e, obj, chain),
+                };
+                match short_circuited {
                     Some(folded) => folded,
                     None => self.fold_member(e, chain),
                 }
             }
             ExprKind::ImportMeta => self.fold_import_meta(e),
             ExprKind::This => self.fold_this(e),
-            ExprKind::Call(call) => self.fold_call(e, hir[call]),
+            ExprKind::Call(call) => {
+                if self.bound.may_name_own_path()
+                    && let Some(last) = hir.ids(hir[call].args).next_back()
+                    && let ExprKind::String(end) = hir[last].kind
+                {
+                    self.note_path_written_from_own_directory(e, end);
+                }
+                self.fold_call(e, hir[call])
+            }
             ExprKind::ImportCall { args } => self.fold_import_call(args),
+            ExprKind::New(call) => self.fold_construction(e, hir[call]),
             ExprKind::Array(items) => {
                 self.note_array_literal(e, items);
                 self.conditions.insert(e, true);
@@ -111,23 +138,52 @@ impl<'s> Folder<'_, 's> {
         if op == UnOp::Typeof
             && let Some(type_name) = type_of_literal
         {
-            // Making a closure or a pattern does nothing that a program can see.
             let type_name = Value::from(Constant::String(type_name));
             return Folded::new(type_name, Effects::None);
         }
+        let effects = match op {
+            UnOp::Not => self.effects_where_unused(operand, |folder| {
+                folder.tells_condition_without_effects(operand)
+                    || folder.is_removed_if_unused_by_bun_run(operand)
+            }),
+            UnOp::Void => self.effects_where_unused(operand, |folder| {
+                folder.is_removed_if_unused_by_bun_run(operand)
+            }),
+            _ => self.folded(operand).effects,
+        };
         if op == UnOp::Not
             && let Some(&is_truthy) = self.conditions.get(&operand)
         {
-            let effects = self.folded(operand).effects;
             return Folded::new(Value::from(Constant::Boolean(!is_truthy)), effects);
         }
-        let operand = self.folded(operand);
-        Folded::new(self.evaluator.unary(op, operand.value), operand.effects)
+        Folded::new(
+            self.evaluator.unary(op, self.folded(operand).value),
+            effects,
+        )
     }
 
     fn fold_binary(&mut self, e: ExprId, op: BinOp, left: ExprId, right: ExprId) -> Folded {
         match op {
-            BinOp::Add => self.fold_addition(e),
+            BinOp::Add => {
+                let sum = self.fold_addition(e);
+                if let (Value::Unknown, Some(text)) =
+                    (sum.value, self.find_text_joined_with_nothing(left, right))
+                {
+                    self.copy_condition(e, text);
+                    self.mark_folded_under_minify_syntax_alone(e);
+                }
+                let operands = [(left, right), (right, left)];
+                if matches!(sum.value, Value::Unknown)
+                    && operands.iter().any(|&(text, constructor)| {
+                        matches!(self.hir[text].kind, ExprKind::String(_))
+                            && (self.find_text_written_for_constructor(constructor)).is_some()
+                    })
+                {
+                    self.conditions.insert(e, true);
+                    self.mark_folded_under_minify_syntax_alone(e);
+                }
+                sum
+            }
             BinOp::And | BinOp::Or | BinOp::Nullish => {
                 self.note_nullish_logical_result(e, op, left, right);
                 let operator = match op {
@@ -139,8 +195,13 @@ impl<'s> Folder<'_, 's> {
             }
             BinOp::Comma => {
                 self.copy_condition(e, right);
-                let (left, right) = (self.folded(left), self.folded(right));
-                Folded::new(right.value, left.effects.min(right.effects))
+                let right = self.folded(right);
+                let effects_of_left = self.effects_where_unused(left, |folder| {
+                    matches!(right.value, Value::Known(_))
+                        && folder.minifies_syntax()
+                        && folder.removes_unused_value(left)
+                });
+                Folded::new(right.value, effects_of_left.min(right.effects))
             }
             BinOp::EqEq | BinOp::EqEqEq => match self.find_main_module_equality(e) {
                 Some(is_equal) => self.decide_main_module_equality(e, is_equal),
@@ -151,6 +212,17 @@ impl<'s> Folder<'_, 's> {
                 None => self.fold_equality(op, left, right, false),
             },
             BinOp::In => self.fold_membership(left, right),
+            BinOp::Pow => {
+                let power = self.fold_operands(op, left, right);
+                if let (Value::Unknown, Some(is_truthy)) = (
+                    power.value,
+                    (self.evaluator)
+                        .is_power_truthy(self.folded(left).value, self.folded(right).value),
+                ) {
+                    self.conditions.insert(e, is_truthy);
+                }
+                power
+            }
             _ => self.fold_operands(op, left, right),
         }
     }
@@ -231,20 +303,43 @@ impl<'s> Folder<'_, 's> {
         };
         match is_decided_by_left {
             Some(true) => {
-                let is_excluded_by_bun_run = match op {
+                let is_excluded_by_bun_run = |folder: &Self| match op {
                     LogicalOperator::And | LogicalOperator::Or => {
-                        self.is_truthy_in_bun_run(left).is_some()
+                        folder.is_truthy_in_bun_run(left).is_some()
                     }
-                    LogicalOperator::Nullish => self.is_nullish_in_bun_run(left).is_some(),
+                    LogicalOperator::Nullish => folder.is_nullish_in_bun_run(left).is_some(),
                 };
+                if is_excluded_by_bun_run(self) {
+                    self.stands_alone_in_bun_run.insert(left.idx());
+                }
                 self.exclude_operand(right, is_excluded_by_bun_run);
                 self.copy_condition(e, left);
                 self.folded(left)
             }
             Some(false) => {
+                self.goes_on_to_the_right.push(e);
+                let is_left_out_by_bun_run = match op {
+                    LogicalOperator::And | LogicalOperator::Or => {
+                        self.is_truthy_in_bun_run(left).is_some()
+                            && self.tells_condition_without_effects(left)
+                    }
+                    LogicalOperator::Nullish => {
+                        self.is_nullish_in_bun_run(left) == Some(true)
+                            && self.is_literal_to_bun_run(left)
+                    }
+                };
+                if is_left_out_by_bun_run {
+                    self.stands_alone_in_bun_run.insert(right.idx());
+                }
                 self.copy_condition(e, right);
-                let (left, right) = (self.folded(left), self.folded(right));
-                Folded::new(right.value, left.effects.min(right.effects))
+                let effects_of_left = self.effects_where_unused(left, |folder| match op {
+                    LogicalOperator::And | LogicalOperator::Or => {
+                        folder.tells_condition_without_effects(left)
+                    }
+                    LogicalOperator::Nullish => false,
+                });
+                let right = self.folded(right);
+                Folded::new(right.value, effects_of_left.min(right.effects))
             }
             None => {
                 let condition_where_left_is_result = match op {
@@ -262,7 +357,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    fn is_left_addend(&self, e: ExprId) -> bool {
+    pub(super) fn is_left_addend(&self, e: ExprId) -> bool {
         let parent = self.parent_expr(e).map(|parent| self.hir[parent].kind);
         matches!(parent, Some(ExprKind::Binary { op: BinOp::Add, left, .. }) if left == e)
     }
@@ -272,10 +367,44 @@ impl<'s> Folder<'_, 's> {
             return Folded::UNKNOWN;
         }
         let addends = self.collect_addends(outermost);
-        let addends = addends.iter().map(|&addend| self.folded(addend));
+        let is_text = |addend: &ExprId| matches!(self.folded(*addend).value, Value::Known(value) if self.evaluator.is_string(value));
+        let first_text = addends.iter().position(is_text);
+        let addends = addends.iter().enumerate().map(|(index, &addend)| {
+            let stands_beside_text = first_text.is_some_and(|text| text < index || text == 1);
+            match stands_beside_text.then(|| self.find_text_of_pattern(addend)) {
+                Some(Some(text)) => Folded::new(text, Effects::None),
+                _ => self.folded(addend),
+            }
+        });
         let effects = addends.clone().map(|addend| addend.effects).min();
-        let sum = self.evaluator.add_all(addends.map(|addend| addend.value));
+        let values = addends.map(|addend| addend.value);
+        let sum = match self.is_pattern_of_reg_exp(outermost) {
+            true => {
+                let max_bytes = self.evaluator.max_pattern_bytes();
+                self.evaluator.add_all_within(max_bytes, values)
+            }
+            false => self.evaluator.add_all(values),
+        };
         Folded::new(sum, effects.unwrap_or(Effects::Unknown))
+    }
+
+    fn is_pattern_of_reg_exp(&self, text: ExprId) -> bool {
+        let hir = self.hir;
+        let mut argument = text;
+        let mut parent = self.parent_expr(argument);
+        while let Some(cast) = parent.filter(|&it| hir.type_assertion_operand(it) == Some(argument))
+        {
+            argument = cast;
+            parent = self.parent_expr(cast);
+        }
+        let Some(ExprKind::Call(call) | ExprKind::New(call)) = parent.map(|it| hir[it].kind) else {
+            return false;
+        };
+        let call = hir[call];
+        let callee = hir.skip_type_assertions(call.callee);
+        hir.ids(call.args).next() == Some(argument)
+            && matches!(hir[callee].kind, ExprKind::Ident(known::RegExp))
+            && matches!(self.bound.binding(callee), Binding::Free)
     }
 
     fn fold_conditional(&mut self, e: ExprId, test: ExprId, branches: Branches) -> Folded {
@@ -284,13 +413,20 @@ impl<'s> Folder<'_, 's> {
         };
         let Branches { yes, no } = branches;
         let (selected, excluded) = if is_true { (yes, no) } else { (no, yes) };
-        self.exclude_operand(excluded, self.is_truthy_in_bun_run(test).is_some());
+        self.exclude_operand(excluded, |folder| {
+            folder.is_test_truthy_in_bun_run(test).is_some()
+        });
+        if self.is_test_truthy_in_bun_run(test).is_some() && self.leaves_out_known_test(test) {
+            self.stands_alone_in_bun_run.insert(selected.idx());
+        }
         self.copy_condition(e, selected);
-        let (test, selected) = (self.folded(test), self.folded(selected));
-        Folded::new(selected.value, test.effects.min(selected.effects))
+        let effects_of_test =
+            self.effects_where_unused(test, |folder| folder.leaves_out_known_test(test));
+        let selected = self.folded(selected);
+        Folded::new(selected.value, effects_of_test.min(selected.effects))
     }
 
-    fn fold_template(&self, exprs: IdList<ExprId>) -> Folded {
+    fn fold_template(&self, e: ExprId, exprs: IdList<ExprId>) -> Folded {
         let hir = self.hir;
         let mut values = Vec::with_capacity(exprs.len());
         let mut effects = Effects::None;
@@ -303,7 +439,15 @@ impl<'s> Folder<'_, 's> {
             effects = effects.min(substitution.effects);
         }
         let texts: Vec<Atom> = hir.ids(hir.template_texts(exprs)).collect();
-        Folded::new(self.evaluator.concatenate(&texts, &values), effects)
+        let joined = match self.is_pattern_of_reg_exp(e) {
+            true => {
+                let max_bytes = self.evaluator.max_pattern_bytes();
+                self.evaluator
+                    .concatenate_within(max_bytes, &texts, &values)
+            }
+            false => self.evaluator.concatenate(&texts, &values),
+        };
+        Folded::new(joined, effects)
     }
 
     fn fold_cast(&mut self, e: ExprId, operand: ExprId) -> Folded {

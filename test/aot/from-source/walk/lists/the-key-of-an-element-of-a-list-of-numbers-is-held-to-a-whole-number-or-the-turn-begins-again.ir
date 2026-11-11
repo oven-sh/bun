@@ -1,0 +1,59 @@
+# `this.cells[square + step]` in a loop over written steps. `square` is declared a number, so the key is a number of which nothing says that it is whole. An element read under such a key had no typed form: its level was
+# unknown, it might run other code, and in the typed copy of the loop the walk began the turn again in the copy as written AT THE READ, ON THE USUAL WAY: the first square on the board ended the typed copy for the rest of the loop.
+# Now, in a turn of a typed copy that may still begin again, the key of an element of a list DECLARED TO HOLD NUMBERS ALONE is asked for an int32; where it is none (1.5, NaN, 2 ** 32) the turn begins again as written; behind
+# the test the read is typed as under any whole key (made).
+# A key that goes round the loop, the head's own parameter or a step of it, is left to the counters, which hold it to an int32 by themselves (round). A list of texts has no such form: nothing is asked (texts).
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(...values: unknown[]): void;
+# const STEPS = [-33, -31, -18, -14, 14, 18, 31, 33];
+# class Field {
+#   cells: number[] = [];
+#   names: string[] = [];
+#   constructor() { for (let i = 0; i < 128; i++) { this.cells.push(i % 7); this.names.push("n" + i % 7); } }
+#   made(square: number, want: number): number {
+#     let seen = 0;
+#     for (const step of STEPS) {
+#       const from = square + step;
+#       if (!(from & 0x88) && this.cells[from] === want) return from * 1000 + seen;
+#       seen++;
+#     }
+#     return -1 - seen;
+#   }
+#   round(from: number, by: number): number {
+#     let sum = 0;
+#     for (let at = from; at >= 0; at--) sum = sum * by + this.cells[at]!;
+#     return sum;
+#   }
+#   texts(square: number, want: string): number {
+#     let seen = 0;
+#     for (const step of STEPS) {
+#       const from = square + step;
+#       if (!(from & 0x88) && this.names[from] === want) return from * 1000 + seen;
+#       seen++;
+#     }
+#     return -1 - seen;
+#   }
+# }
+# const field = new Field();
+# (field.cells as any)["38.5"] = 90;
+# hand(field);
+# print(field.made(52, 3), field.made(52, 99), field.made(52.5, 90), field.made(52.5, 3), field.made(NaN, 3), field.made(2 ** 32 + 52, 3), field.made(-0, 0), field.round(5, 0.5), field.round(2.5, 0.5), field.texts(52, "n3"), field.texts(52.5, "n3"));
+# -- end of source
+# f2 = made, f3 = round, f4 = texts
+# RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
+# One for each kind of storage that the turn tells apart.
+# EVENT: statistic NumberKeysGuardedInIterations 3
+# RUN(MADE): walk f2 mechanisms=all
+# MADE-LABEL: code f2:Body
+# MADE: = TypeTest {{*}}testedType=i32
+# MADE: = NumberToInteger
+# MADE: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral]
+# RUN(ROUND): walk f3 mechanisms=all
+# ROUND-LABEL: code f3:Body
+# ROUND-NOT: = NumberToInteger
+# RUN(TEXTS): walk f4 mechanisms=all
+# TEXTS-LABEL: code f4:Body
+# TEXTS-NOT: testedType=i32
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 38003 -9 38503 -9 -9 -9 -9 1.78125 NaN 38003 -9

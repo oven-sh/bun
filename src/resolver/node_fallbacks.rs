@@ -99,7 +99,7 @@ macro_rules! fallback_spec {
     };
 }
 
-static SPECS: [FallbackSpec; 23] = [
+static SPECS: [FallbackSpec; 24] = [
     fallback_spec!("assert", "node-fallbacks/assert.js"),
     fallback_spec!("buffer", "node-fallbacks/buffer.js"),
     fallback_spec!("console", "node-fallbacks/console.js"),
@@ -119,6 +119,7 @@ static SPECS: [FallbackSpec; 23] = [
     fallback_spec!("string_decoder", "node-fallbacks/string_decoder.js"),
     fallback_spec!("sys", "node-fallbacks/sys.js"),
     fallback_spec!("timers", "node-fallbacks/timers.js"),
+    fallback_spec!("timers/promises", "node-fallbacks/timers.promises.js"),
     fallback_spec!("tty", "node-fallbacks/tty.js"),
     fallback_spec!("url", "node-fallbacks/url.js"),
     fallback_spec!("util", "node-fallbacks/util.js"),
@@ -196,9 +197,10 @@ pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
     debug_assert!(path.starts_with(IMPORT_PATH));
 
+    // `<module name>/<file>`, and the module name itself can hold a `/` (`timers/promises`).
     let module_name = &path[IMPORT_PATH.len()..];
     let module_name = &module_name
-        [..bun_core::strings::index_of_char_usize(module_name, b'/').unwrap_or(module_name.len())];
+        [..bun_core::strings::last_index_of_char(module_name, b'/').unwrap_or(module_name.len())];
 
     if let Some(module) = map().get(module_name) {
         return Some((module.code)().as_bytes());

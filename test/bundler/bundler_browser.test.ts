@@ -618,6 +618,247 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("browser/NodeTimersPromises", {
+    files: {
+      "/entry.js": /* js */ `
+        import { setTimeout as sleep } from "node:timers/promises";
+        import promises from "node:timers/promises";
+        import * as namespace from "node:timers/promises";
+        import { setTimeout as bare } from "timers/promises";
+        import * as timers from "node:timers";
+        import required from "./required.cjs";
+
+        const imported = await import("node:timers/promises");
+        const routes = {
+          "named import": sleep,
+          "default import": promises.setTimeout,
+          "namespace import": namespace.setTimeout,
+          "bare specifier": bare,
+          "import()": imported.setTimeout,
+          "require()": required.promises.setTimeout,
+          "node:timers": timers.promises.setTimeout,
+          'require("node:timers")': required.timers.promises.setTimeout,
+        };
+        for (const [route, timer] of Object.entries(routes)) {
+          console.log(route + ":", timer === sleep, await timer(1, "resolved"));
+        }
+        console.log(Object.keys(namespace).sort().join());
+        console.log("callback timer:", await new Promise(resolve => timers.setTimeout(resolve, 1, "fired")));
+      `,
+      "/required.cjs": /* js */ `
+        module.exports = { promises: require("node:timers/promises"), timers: require("node:timers") };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        named import: true resolved
+        default import: true resolved
+        namespace import: true resolved
+        bare specifier: true resolved
+        import(): true resolved
+        require(): true resolved
+        node:timers: true resolved
+        require("node:timers"): true resolved
+        default,scheduler,setImmediate,setInterval,setTimeout
+        callback timer: fired
+      `,
+    },
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("out.js"))).toEqual([]);
+    },
+  });
+  // Node.js v26.3.0 prints the same lines for these two files, except the last one: it does not use the global timers.
+  itBundled("browser/NodeTimersPromisesBehavior", {
+    files: {
+      "/entry.js": /* js */ `
+        import { hostIntervals } from "./host-intervals.js";
+        import { setTimeout as sleep, setImmediate as immediate, setInterval as every, scheduler } from "node:timers/promises";
+
+        const outcome = promise =>
+          promise.then(
+            value => "resolved " + value,
+            error => "rejected " + error.name + " " + error.code + " cause=" + error.cause,
+          );
+        const abortLater = (start, reason) => {
+          const controller = new AbortController();
+          const promise = start(controller.signal);
+          controller.abort(reason);
+          return outcome(promise);
+        };
+
+        console.log("value:", await outcome(sleep(1, "value")));
+        console.log("unref:", (await Promise.all([sleep(1, "unref", { ref: false }), sleep(5)]))[0]);
+        console.log("aborted before:", await outcome(sleep(1, "v", { signal: AbortSignal.abort("before") })));
+        console.log("aborted later:", await abortLater(signal => sleep(60_000, "v", { signal }), "later"));
+        console.log("immediate aborted later:", await abortLater(signal => immediate("v", { signal }), "later"));
+        console.log("delay:", await outcome(sleep("1", "v")));
+        console.log("options:", await outcome(sleep(1, "v", 5)));
+        console.log("options.signal:", await outcome(sleep(1, "v", { signal: "s" })));
+        console.log("options.ref:", await outcome(sleep(1, "v", { ref: "r" })));
+
+        every(1, "never iterated");
+        console.log("return() before next():", JSON.stringify(await every(1, "v").return()));
+        console.log("interval options:", await outcome(every(1, "v", 5).next()));
+        console.log("host intervals started:", hostIntervals.started);
+
+        const ticks = [];
+        for await (const tick of every(1, "tick")) {
+          if (ticks.push(tick) === 3) break;
+        }
+        console.log("for await:", ticks.join());
+
+        const controller = new AbortController();
+        const interval = every(1, "tick", { signal: controller.signal });
+        console.log("first tick:", JSON.stringify(await interval.next()));
+        controller.abort("between ticks");
+        console.log("aborted between ticks:", await outcome(interval.next()));
+        console.log("after the abort:", JSON.stringify(await interval.next()));
+        console.log("host intervals live:", hostIntervals.live.size);
+
+        console.log("scheduler:", await scheduler.wait(1), await scheduler.yield());
+        try {
+          const { wait } = scheduler;
+          wait(1);
+        } catch (error) {
+          console.log("detached scheduler.wait:", error.name);
+        }
+
+        const hostSetTimeout = globalThis.setTimeout;
+        globalThis.setTimeout = () => {
+          throw new Error("the replaced setTimeout was called");
+        };
+        console.log("setTimeout replaced after load:", await outcome(sleep(1, "not used")));
+        globalThis.setTimeout = hostSetTimeout;
+
+        // A browser has no setImmediate.
+        delete globalThis.setImmediate;
+        delete globalThis.clearImmediate;
+        console.log("no setImmediate:", await outcome(immediate("value")), await scheduler.yield());
+        console.log("no setImmediate, aborted later:", await abortLater(signal => immediate("v", { signal }), "later"));
+
+        console.log("host intervals started in total:", hostIntervals.started);
+      `,
+      // Imported before the polyfill, which reads the host's timers once when it loads.
+      "/host-intervals.js": /* js */ `
+        const hostSetInterval = globalThis.setInterval;
+        const hostClearInterval = globalThis.clearInterval;
+        export const hostIntervals = { started: 0, live: new Set() };
+        globalThis.setInterval = (...args) => {
+          const interval = hostSetInterval(...args);
+          hostIntervals.started++;
+          hostIntervals.live.add(interval);
+          return interval;
+        };
+        globalThis.clearInterval = interval => {
+          hostIntervals.live.delete(interval);
+          hostClearInterval(interval);
+        };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        value: resolved value
+        unref: unref
+        aborted before: rejected AbortError ABORT_ERR cause=before
+        aborted later: rejected AbortError ABORT_ERR cause=later
+        immediate aborted later: rejected AbortError ABORT_ERR cause=later
+        delay: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        options: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        options.signal: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        options.ref: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        return() before next(): {"done":true}
+        interval options: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        host intervals started: 0
+        for await: tick,tick,tick
+        first tick: {"value":"tick","done":false}
+        aborted between ticks: rejected AbortError ABORT_ERR cause=between ticks
+        after the abort: {"done":true}
+        host intervals live: 0
+        scheduler: undefined undefined
+        detached scheduler.wait: TypeError
+        setTimeout replaced after load: resolved not used
+        no setImmediate: resolved value undefined
+        no setImmediate, aborted later: rejected AbortError ABORT_ERR cause=later
+        host intervals started in total: 2
+      `,
+    },
+  });
+  // `external` names decide a bare "timers/promises", by that name or by "timers". The polyfill of node:timers keeps its own.
+  for (const [id, external, backend] of [
+    ["browser/NodeTimersPromisesExternal", "timers/promises", "cli"],
+    ["browser/NodeTimersPromisesExternalParent", "timers", "api"],
+  ] as const) {
+    itBundled(id, {
+      files: {
+        "/entry.js": /* js */ `
+          import { setTimeout as external } from "timers/promises";
+          import { promises } from "node:timers";
+          console.log(await external(1, "external"), await promises.setTimeout(1, "polyfill"));
+        `,
+      },
+      target: "browser",
+      backend,
+      external: [external],
+      run: {
+        stdout: "external polyfill",
+      },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(api.readFile("out.js"))).toContainEqual({
+          kind: "import-statement",
+          path: "timers/promises",
+        });
+      },
+    });
+  }
+  itBundled("browser/NodeTimersPromisesBrowserField", {
+    // A "browser" key is normalized to the platform's separators. On Windows `timers\\promises` does not match this import.
+    todo: process.platform === "win32",
+    files: {
+      "/entry.js": /* js */ `
+        import { setTimeout } from "node:timers/promises";
+        import fromPackage from "pkg";
+        console.log(await setTimeout(1, "polyfill"), fromPackage);
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "timers/promises": "./shim.js"
+          }
+        }
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        module.exports = [require("node:timers/promises").setTimeout, require("timers/promises").setTimeout].join();
+      `,
+      "/node_modules/pkg/shim.js": /* js */ `
+        exports.setTimeout = "shim";
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "polyfill shim,shim",
+    },
+  });
+  itBundled("browser/NodeTimersWithoutPromises", {
+    files: {
+      "/entry.js": /* js */ `
+        import { setTimeout } from "node:timers";
+        setTimeout(console.log, 1, "fired");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "fired",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("(() => ({}))");
+      api.expectFile("out.js").not.toContain("ABORT_ERR");
+    },
+  });
+
   itBundled("browser/AwaitUsingStatement", {
     files: {
       "/entry.js": `

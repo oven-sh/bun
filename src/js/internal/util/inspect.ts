@@ -1953,8 +1953,11 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
   const name = err.name != null ? String(err.name) : "Error";
   let stack = getStackString(err);
 
-  //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
+  // JavaScriptCore makes the stack at the first use of `stack`, `line`, `column` or `sourceURL` and when the error's
+  // keys are listed. V8 makes it at the first read of `stack`. A name that is set between the two goes on it here.
+  if (name !== "Error" && StringPrototypeStartsWith.$call(stack, "Error: ")) {
+    stack = `${name}${StringPrototypeSlice.$call(stack, 5)}`;
+  }
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 

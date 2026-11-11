@@ -782,6 +782,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
+    vm.setOnComputeCollectedErrorInfoJSValue(computeCollectedErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
 
     if (executionContextId > -1) {

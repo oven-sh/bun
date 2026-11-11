@@ -1183,6 +1183,206 @@ test("a name that throws: the default Error.prepareStackTrace throws, error.stac
   });
 });
 
+// The first line of error.stack is Error.prototype.toString() of the error at the first read, as in V8:
+// a Get of name, then of message, wherever on the prototype chain they are and whatever kind of property.
+test("error.stack starts with the name and the message that Error.prototype.toString() reads", () => {
+  class BelowTypeError extends TypeError {}
+  class TwoBelowTypeError extends BelowTypeError {}
+  class FourBelowTypeError extends (class extends TwoBelowTypeError {}) {}
+  class BelowNamed extends Error {}
+  BelowNamed.prototype.name = "Named";
+  class TwoBelowNamed extends BelowNamed {}
+  class NameGetter extends Error {
+    get name() {
+      return "FromGetter";
+    }
+  }
+  class BelowNameGetter extends NameGetter {}
+  class MessageGetter extends Error {
+    get message() {
+      return "from a getter";
+    }
+  }
+  class BelowMessage extends Error {}
+  BelowMessage.prototype.message = "from the prototype";
+  function ReflectConstructed() {}
+  ReflectConstructed.prototype = Object.create(TypeError.prototype);
+  const shapes = {
+    "a class below TypeError": [() => new BelowTypeError("boom"), "TypeError: boom"],
+    "two classes below TypeError": [() => new TwoBelowTypeError("boom"), "TypeError: boom"],
+    "four classes below TypeError": [() => new FourBelowTypeError("boom"), "TypeError: boom"],
+    "a class below RangeError": [() => new (class extends RangeError {})("boom"), "RangeError: boom"],
+    "a class below SyntaxError": [() => new (class extends SyntaxError {})("boom"), "SyntaxError: boom"],
+    "a class below EvalError": [() => new (class extends EvalError {})("boom"), "EvalError: boom"],
+    "a class below URIError": [() => new (class extends URIError {})("boom"), "URIError: boom"],
+    "a class below ReferenceError": [() => new (class extends ReferenceError {})("boom"), "ReferenceError: boom"],
+    "a class below AggregateError": [() => new (class extends AggregateError {})([], "boom"), "AggregateError: boom"],
+    "a class below a class with a name on its prototype": [() => new TwoBelowNamed("boom"), "Named: boom"],
+    "Reflect.construct with another prototype": [
+      () => Reflect.construct(TypeError, ["boom"], ReflectConstructed),
+      "TypeError: boom",
+    ],
+    "a prototype set before the first read": [
+      () => Object.setPrototypeOf(new Error("boom"), BelowTypeError.prototype),
+      "TypeError: boom",
+    ],
+    "a name set before the first read": [
+      () => Object.assign(new BelowTypeError("boom"), { name: "Renamed" }),
+      "Renamed: boom",
+    ],
+    "no message below TypeError": [() => new BelowTypeError(), "TypeError"],
+    "a name getter of the class": [() => new NameGetter("boom"), "FromGetter: boom"],
+    "a name getter two prototypes up": [() => new BelowNameGetter("boom"), "FromGetter: boom"],
+    "a name that is an object": [
+      () => Object.assign(new BelowTypeError("boom"), { name: { toString: () => "FromToString" } }),
+      "FromToString: boom",
+    ],
+    "a null name": [() => Object.assign(new Error("boom"), { name: null }), "null: boom"],
+    "a message getter of the class": [() => new MessageGetter(), "Error: from a getter"],
+    "a message on the prototype": [() => new BelowMessage(), "Error: from the prototype"],
+    "a message that is an object": [
+      () => Object.assign(new Error(), { message: { toString: () => "from toString" } }),
+      "Error: from toString",
+    ],
+    "an own message that is undefined": [
+      () => Object.assign(new BelowTypeError("boom"), { message: undefined }),
+      "TypeError",
+    ],
+    "a null message": [() => Object.assign(new Error(), { message: null }), "Error: null"],
+    "a structuredClone of a class below TypeError": [
+      () => structuredClone(new BelowTypeError("boom")),
+      "TypeError: boom",
+    ],
+    "Error.captureStackTrace after the first read": [
+      () => {
+        const error = new BelowTypeError("boom");
+        void error.stack;
+        Error.captureStackTrace(error);
+        return error;
+      },
+      "TypeError: boom",
+    ],
+  };
+  // With the builtin Error.prepareStackTrace, with a function that calls it, and with none.
+  const formatters = {
+    builtin: origPrepareStackTrace,
+    wrapped: (error, callSites) => origPrepareStackTrace(error, callSites),
+    unset: undefined,
+  };
+  const headers = {};
+  for (const [formatter, prepareStackTrace] of Object.entries(formatters)) {
+    Error.prepareStackTrace = prepareStackTrace;
+    headers[formatter] = {};
+    for (const [shape, [make]] of Object.entries(shapes)) headers[formatter][shape] = make().stack.split("\n")[0];
+  }
+  const expected = Object.fromEntries(Object.entries(shapes).map(([shape, [, header]]) => [shape, header]));
+  expect(headers).toEqual({ builtin: expected, wrapped: expected, unset: expected });
+});
+
+test("error.stack reads the name and then the message, once, when it is first read", () => {
+  const calls = [];
+  class Counted extends Error {
+    get name() {
+      calls.push("name");
+      return "Counted";
+    }
+    get message() {
+      calls.push("message");
+      return "boom";
+    }
+  }
+  const error = new Counted();
+  const atConstruction = calls.length;
+  Error.captureStackTrace(error);
+  const atCapture = calls.length;
+  const header = error.stack.split("\n")[0];
+  const atTheFirstRead = [...calls];
+  void error.stack;
+  expect({ atConstruction, atCapture, header, atTheFirstRead, atTheSecondRead: calls.length - atTheFirstRead.length }).toEqual({
+    atConstruction: 0,
+    atCapture: 0,
+    header: "Counted: boom",
+    atTheFirstRead: ["name", "message"],
+    atTheSecondRead: 0,
+  });
+
+  // A Proxy on the prototype chain is asked for the name. The message is the error's own.
+  const gets = [];
+  class BelowAProxy extends Error {}
+  Object.setPrototypeOf(
+    BelowAProxy.prototype,
+    new Proxy(TypeError.prototype, {
+      get(target, key, receiver) {
+        gets.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+    }),
+  );
+  expect([new BelowAProxy("boom").stack.split("\n")[0], gets.filter(key => key === "name" || key === "message")]).toEqual([
+    "TypeError: boom",
+    ["name"],
+  ]);
+});
+
+test("a name getter that captures or reads the stack of its error does not run again", () => {
+  let captures = 0;
+  class Captures extends Error {
+    get name() {
+      captures++;
+      Error.captureStackTrace(this);
+      return "Captures";
+    }
+  }
+  let reads = 0;
+  class Reads extends Error {
+    get name() {
+      if (++reads === 1) void this.stack;
+      return "Reads";
+    }
+  }
+  expect({
+    captures: [new Captures("boom").stack.split("\n")[0], captures],
+    reads: new Reads("boom").stack.split("\n")[0],
+  }).toEqual({
+    captures: ["Captures: boom", 1],
+    reads: "Reads: boom",
+  });
+});
+
+// JavaScriptCore makes the stack at each of these. V8 makes it at the read only, and runs the getter only there.
+test("an operation that makes the stack throws what the name getter throws", () => {
+  class Throws extends Error {
+    get name() {
+      throw new RangeError("from name");
+    }
+  }
+  const operations = {
+    "read": error => error.stack,
+    "descriptor": error => Object.getOwnPropertyDescriptor(error, "stack"),
+    "in": error => "stack" in error,
+    "delete": error => delete error.stack,
+    "own property names": error => Object.getOwnPropertyNames(error),
+  };
+  const rows = {};
+  for (const [name, operation] of Object.entries(operations)) {
+    const error = new Throws("boom");
+    try {
+      operation(error);
+      rows[name] = "did not throw";
+    } catch (thrown) {
+      rows[name] = [thrown.message, typeof error.stack];
+    }
+  }
+  const thrown = ["from name", "undefined"];
+  expect(rows).toEqual({
+    "read": thrown,
+    "descriptor": thrown,
+    "in": thrown,
+    "delete": thrown,
+    "own property names": thrown,
+  });
+});
+
 test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const prepare = mock((e, s) => {
@@ -1614,6 +1814,22 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
       "AggregateError": () => new AggregateError([new Error("inner")], "boom"),
       "with a cause": () => new RangeError("boom", { cause: new Error("why") }),
       "from a node:vm context": () => vm.runInNewContext("new TypeError('boom')"),
+      // Both are what a Get finds: further up the prototype chain, or a getter.
+      "a class below TypeError": () => new (class Below extends TypeError {})("boom"),
+      "a class below TypeError from a node:vm context": () => vm.runInNewContext("new (class Below extends TypeError {})('boom')"),
+      "a name on a prototype further up": () => {
+        class Named extends Error {}
+        Named.prototype.name = "Named";
+        return new (class Below extends Named {})("boom");
+      },
+      "a name getter of the class": () => new (class extends Error { get name() { return "FromGetter"; } })("boom"),
+      "a message getter of the class": () => new (class extends Error { get message() { return "from a getter"; } })(),
+      "a message on the prototype": () => {
+        class WithMessage extends Error {}
+        WithMessage.prototype.message = "from the prototype";
+        return new WithMessage();
+      },
+      "a name getter that throws": () => new (class extends Error { get name() { throw new RangeError("from name"); } })("boom"),
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
       "created by eval code": () => (0, eval)("new Error('boom')"),
@@ -1711,6 +1927,13 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     "AggregateError": row("AggregateError: boom"),
     "with a cause": row("RangeError: boom"),
     "from a node:vm context": row("TypeError: boom"),
+    "a class below TypeError": row("TypeError: boom"),
+    "a class below TypeError from a node:vm context": row("TypeError: boom"),
+    "a name on a prototype further up": row("Named: boom"),
+    "a name getter of the class": row("FromGetter: boom"),
+    "a message getter of the class": row("Error: from a getter"),
+    "a message on the prototype": row("Error: from the prototype"),
+    "a name getter that throws": row("throws from name"),
     "created in a constructor": row("Error: boom", ["at new Widget"]),
     "created by eval code": row("Error: boom", ["at <anonymous>"]),
     "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),
@@ -1784,6 +2007,7 @@ test.concurrent("a stack that a collection materializes reads the same in a Work
       const shapes = {
         "TypeError with a message": () => new TypeError("boom"),
         "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+        "a class below TypeError with a message getter": () => new (class Below extends TypeError { get message() { return "from a getter"; } })(),
       };
       const rows = {};
       for (const [shape, make] of Object.entries(shapes)) {
@@ -1815,6 +2039,11 @@ test.concurrent("a stack that a collection materializes reads the same in a Work
     "created in a constructor": {
       materializedByACollection: true,
       firstTwoLines: ["Error: boom", "at new Widget"],
+      sameText: true,
+    },
+    "a class below TypeError with a message getter": {
+      materializedByACollection: true,
+      firstTwoLines: ["TypeError: from a getter", "at new Below"],
       sameText: true,
     },
   });

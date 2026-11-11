@@ -75,6 +75,48 @@ static WTF::String stackTraceHeaderMessage(JSC::VM& vm, JSC::JSGlobalObject* lex
     RELEASE_AND_RETURN(scope, messageValue.toWTFString(lexicalGlobalObject));
 }
 
+// How the first line of `.stack` reads the error. Observable is the two Gets above, which run the error's getters.
+// NoScript is for a reader that one of those getters can be inside of: Error.captureStackTrace() on an error that is
+// materialized or is being materialized.
+enum class HeaderRead : bool { Observable,
+    NoScript };
+
+// What a Get of `name` gives when it runs no script: the first `name` on the prototype chain, if it is a data property.
+static WTF::String stackTraceHeaderNameWithoutScript(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ErrorInstance* error)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nameValue;
+    {
+        // Scoped, because a VMInquiry slot forbids entering the VM while it's alive.
+        PropertySlot slot(error, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = error->getNonIndexPropertySlot(lexicalGlobalObject, vm.propertyNames->name, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (found && slot.isValue())
+            nameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
+    }
+    if (!nameValue || !nameValue.isPrimitive() || nameValue.isUndefined())
+        return "Error"_s;
+    RELEASE_AND_RETURN(scope, nameValue.toWTFString(lexicalGlobalObject));
+}
+
+// The name and the message that head `.stack`, for every way the frames under them were formatted.
+static void readStackTraceHeader(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ErrorInstance* error, HeaderRead headerRead, WTF::String& name, WTF::String& message)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A getter cannot run inside a VM inquiry: the stack is then headed with what needs none.
+    if (headerRead == HeaderRead::Observable && !vm.disallowVMEntryCount) [[likely]] {
+        name = stackTraceHeaderName(vm, lexicalGlobalObject, error);
+        RETURN_IF_EXCEPTION(scope, );
+        message = stackTraceHeaderMessage(vm, lexicalGlobalObject, error);
+        RETURN_IF_EXCEPTION(scope, );
+        return;
+    }
+    name = stackTraceHeaderNameWithoutScript(vm, lexicalGlobalObject, error);
+    RETURN_IF_EXCEPTION(scope, );
+    message = error->sanitizedMessageString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, HeaderThrow headerThrow)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -491,16 +533,15 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     OrdinalNumber& line,
     OrdinalNumber& column,
     String& sourceURL,
-    JSObject* errorInstance)
+    JSObject* errorInstance,
+    HeaderRead headerRead)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String name = "Error"_s;
     WTF::String message;
 
     if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-        name = instance->sanitizedNameString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        message = instance->sanitizedMessageString(lexicalGlobalObject);
+        readStackTraceHeader(vm, lexicalGlobalObject, instance, headerRead, name, message);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -598,7 +639,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
+static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, HeaderRead headerRead)
 {
 
     Zig::GlobalObject* globalObject = nullptr;
@@ -637,14 +678,14 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
+    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, headerRead);
     RETURN_IF_EXCEPTION(scope, {});
     return jsString(vm, result);
 }
 
-static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
+static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, HeaderRead headerRead)
 {
-    return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
+    return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, headerRead);
 }
 
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL)
@@ -675,7 +716,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
+    // The frames only: computeCollectedErrorInfoWrapperToJSValue() heads them when the stack is read.
     WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
@@ -740,7 +781,7 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
         return jsUndefined();
     }
 
-    JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance);
+    JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance, HeaderRead::Observable);
 
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
@@ -750,6 +791,23 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     if (!result) [[unlikely]]
         return jsUndefined();
     return result;
+}
+
+JSC::JSValue computeCollectedErrorInfoWrapperToJSValue(JSC::VM& vm, const WTF::String& frames, JSC::JSObject* errorInstance)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* error = uncheckedDowncast<ErrorInstance>(errorInstance);
+    WTF::String name;
+    WTF::String message;
+    readStackTraceHeader(vm, error->globalObject(), error, HeaderRead::Observable, name, message);
+    // undefined, as computeErrorInfoWrapperToJSValue() returns when it throws.
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+
+    // The name and the message come from JS. Past `String::MaxLength` makeString() calls `CRASH()`.
+    WTF::String stack = tryMakeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message, frames);
+    if (stack.isNull()) [[unlikely]]
+        stack = stackTraceHeaderOnly(name, message);
+    return jsString(vm, WTF::move(stack));
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -828,9 +886,11 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     auto stackTrace = errorObject->stackTrace();
 
     JSValue result;
+    // A getter of the error's name that reads `stack` while the stack is materialized comes here.
+    HeaderRead headerRead = errorObject->hasMaterializedErrorInfo() ? HeaderRead::NoScript : HeaderRead::Observable;
     if (stackTrace == nullptr) {
         WTF::Vector<JSC::StackFrame> emptyTrace;
-        result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject);
+        result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, headerRead);
     } else {
         // Re-entered from materializeErrorInfoIfNeeded's formatter, which still reads *stackTrace: copy, do not move.
         bool isBeingMaterialized = errorObject->hasMaterializedErrorInfo();
@@ -843,7 +903,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject);
+        result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject, headerRead);
         if (!isBeingMaterialized)
             errorObject->setStackFrames(vm, {});
     }
@@ -900,7 +960,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             OrdinalNumber line;
             OrdinalNumber column;
             String sourceURL;
-            JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
+            // A getter of the error's name can be the caller, while the stack is materialized.
+            JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, HeaderRead::NoScript);
             RETURN_IF_EXCEPTION(scope, {});
             errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
@@ -921,7 +982,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         OrdinalNumber line;
         OrdinalNumber column;
         String sourceURL;
-        JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
+        JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, HeaderRead::NoScript);
         RETURN_IF_EXCEPTION(scope, {});
         putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         RETURN_IF_EXCEPTION(scope, {});

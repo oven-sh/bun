@@ -19,6 +19,7 @@ a[Abc].ddddddddddddddddddddddd()
   .eeeeeeeeeeeeeeeeeeeeeeee()
   .ffffffffffffffffffffffffff()
   .gggggggggggggggggg();
+const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = require("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
 -------------------
 { printWidth: 100 }
@@ -37,5 +38,6 @@ a[Abc].ddddddddddddddddddddddd()
   .eeeeeeeeeeeeeeeeeeeeeeee()
   .ffffffffffffffffffffffffff()
   .gggggggggggggggggg();
+const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = require("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
 ===================== End =====================

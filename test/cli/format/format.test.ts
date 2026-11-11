@@ -1479,8 +1479,10 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  // Whether a property breaks after the `:` depends on the width of its key. Prettier measures the key as printed:
-  // `\u{61}` is `a`, `[.5]` is `[0.5]`, `[ 5 ]` is `[5]`. A file that `bun fmt` wrote passes `bun fmt --check`.
+  // Whether a property breaks after the `:` depends on the width of its key. Prettier 3.9.9 measures the key as
+  // printed: `\u{61}` is `a`, `[.5]` is `[0.5]`, `[ 5 ]` is `[5]`. oxfmt 0.72 measures the key as written, so it
+  // prints `[0.5]:` with the value on the next line, then `[0.5]: "..."` on one line the next time it runs. `bun fmt`
+  // measures the key as printed in both flavors, so a file that it wrote passes `bun fmt --check`.
   describe("a key that is printed differently than it is written", () => {
     const value = `"this string is too long to fit on one line, even when it is on a line by itself"`;
     // A key narrower than the indentation plus 3 columns is short: the value stays on its line.
@@ -1492,22 +1494,29 @@ describe.concurrent("bun fmt", () => {
       ["['\\'']", `["'"]`, 3, true],
       ["[!'\\'']", `[!"'"]`, 4, true],
     ];
-    for (const [key, printed, tabWidth, isShort] of rows) {
-      test(`${key} is measured as ${printed}`, async () => {
-        const indent = " ".repeat(tabWidth);
-        const property = isShort
-          ? `${indent}${printed}: ${value},\n`
-          : `${indent}${printed}:\n${indent}${indent}${value},\n`;
-        const expected = `const o = {\n${property}};\n`;
-        const first = await format({ "key.js": `const o = { ${key}: ${value} };\n` }, [`--tab-width=${tabWidth}`], {
-          reads: ["key.js"],
+    const flavors = [
+      ["Prettier", {}],
+      ["oxfmt", { ".oxfmtrc.json": `{ "printWidth": 80 }` }],
+    ] as const;
+    for (const [flavor, config] of flavors) {
+      for (const [key, printed, tabWidth, isShort] of rows) {
+        test(`${key} is measured as ${printed} (${flavor})`, async () => {
+          const indent = " ".repeat(tabWidth);
+          const property = isShort
+            ? `${indent}${printed}: ${value},\n`
+            : `${indent}${printed}:\n${indent}${indent}${value},\n`;
+          const expected = `const o = {\n${property}};\n`;
+          const args = [`--tab-width=${tabWidth}`];
+          const first = await format({ ...config, "key.js": `const o = { ${key}: ${value} };\n` }, args, {
+            reads: ["key.js"],
+          });
+          expect(first.files["key.js"]).toBe(expected);
+          expect(first.exitCode).toBe(0);
+          const check = await format({ ...config, "key.js": expected }, ["--check", ...args, "key.js"]);
+          expect(check.stdout).not.toContain("key.js");
+          expect(check.exitCode).toBe(0);
         });
-        expect(first.files["key.js"]).toBe(expected);
-        expect(first.exitCode).toBe(0);
-        const check = await format({ "key.js": expected }, ["--check", `--tab-width=${tabWidth}`]);
-        expect(check.stdout).toBe("");
-        expect(check.exitCode).toBe(0);
-      });
+      }
     }
   });
 

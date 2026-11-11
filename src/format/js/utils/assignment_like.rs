@@ -84,7 +84,7 @@ enum LeftSide {
     /// A key that Prettier prints as one string. It's short if the elements written for it are narrower than
     /// [`text_width_for_break`]: [`is_short_text`].
     OneString,
-    /// oxfmt measures the key in the source text, and finds it short.
+    /// oxfmt measures the key without the comments around it, and finds it short.
     Short,
 }
 
@@ -122,21 +122,40 @@ fn is_short_text(elements: &[FormatElement], threshold: u32) -> bool {
 
 /// See [`LeftSide`]: the computed `key`, which has just been written with its brackets.
 ///
-/// oxfmt measures the source text in the brackets, whatever it is, without the comments around it.
+/// oxfmt measures the source text in the brackets, whatever it is, without the comments around it. That text can be
+/// wider or narrower than what is printed (`[.5]`, `[\u{61}]`, `['\'']`), so oxfmt lays the property out differently
+/// on its second run. Here a key that is one piece of text is measured as printed, like the rest of the document, so
+/// that the second run agrees with the first.
 fn computed_key_side<'a>(key: Key<'a>, f: &Formatter<'a>) -> LeftSide {
-    if f.options().flavor.is_oxfmt() {
+    let is_one_string = is_computed_key_one_string(key, f);
+    if f.options().flavor.is_oxfmt() && (!is_one_string || computed_key_has_comments(key, f)) {
         let width = f.source_text().span_width(key.inner_span(f.file())) + 2;
         return LeftSide::measured(width, f);
     }
-    match is_computed_key_one_string(key, f) {
+    match is_one_string {
         true => LeftSide::OneString,
         false => LeftSide::NotShort,
     }
 }
 
-/// See [`LeftSide`]: a key that isn't computed, which [`write_member_name`] has just written and measured as `width`.
+/// True if a comment is inside the brackets of the computed `key`.
+fn computed_key_has_comments<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() {
+        return false;
+    }
+    match key.kind() {
+        KeyKind::Computed(e) => has_comments(e, f),
+        _ => {
+            let comments = f.comments().of_name(key.inner_span(f.file()).start);
+            !comments.leading.is_empty() || !comments.trailing.is_empty()
+        }
+    }
+}
+
+/// See [`LeftSide`]: a key that isn't computed, which [`write_member_name`] has just written and measured as `width`,
+/// the name as printed.
 ///
-/// oxfmt only looks at the name. Prettier also sees the comments around it, which are in the written elements.
+/// oxfmt only looks at the name, not at the comments around it. Prettier sees both, and they are in the written elements.
 fn member_name_side(width: usize, f: &Formatter<'_>) -> LeftSide {
     match f.options().flavor.is_oxfmt() {
         true => LeftSide::measured(width, f),
@@ -145,9 +164,9 @@ fn member_name_side(width: usize, f: &Formatter<'_>) -> LeftSide {
 }
 
 /// True if the computed `key`, with its brackets, is printed as a single piece of text, with no group in it and nothing
-/// that can break. Prettier checks that `cleanDoc(keyDoc)` is a string. The IR here has no group around `{}`, `[]` or a
-/// function where Prettier's document has one, so that is decided from the syntax, and only the width is read off the
-/// elements.
+/// that can break. Prettier checks that `cleanDoc(keyDoc)` is a string. The IR here has no group around `{}`, `[]`, a
+/// function or a template where Prettier's document has one, so that is decided from the syntax, and only the width is
+/// read off the elements. A group that the IR does have, around the operand of `-` with a comment, is in the elements.
 fn is_computed_key_one_string<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
     if let KeyKind::Computed(e) = key.kind() {
         return is_plain_expression(e, f);
@@ -177,10 +196,6 @@ fn is_plain_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             | ExprKind::Regex(_)
             | ExprKind::ImportMeta
             | ExprKind::NewTarget => return true,
-            // An operand with comments is in a group.
-            ExprKind::Unary { operand, .. } if !f.is_quiet() && has_comments(operand, f) => {
-                return false;
-            }
             ExprKind::Unary { operand, .. } => operand,
             ExprKind::NonNull(inner) => inner,
             ExprKind::Await(argument) => argument,
@@ -573,9 +588,7 @@ impl<'a> AssignmentLike<'a> {
             if e.tag() == ExprTag::Call
                 && !is_type_cast
                 && let AstNodes::CallExpression(call) = e.as_ast_nodes()
-                && call.callee().is_some_and(|callee| {
-                    callee.tag() == ExprTag::Ident && callee.text() == b"require"
-                })
+                && call.callee().is_some_and(is_require)
             {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
@@ -925,8 +938,12 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
 /// `require("a")`
 fn is_require_call(e: Expr<'_>) -> bool {
     e.tag() == ExprTag::Call
-        && matches!(e.as_ast_nodes(), AstNodes::CallExpression(call)
-            if call.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident && callee.text() == b"require"))
+        && matches!(e.as_ast_nodes(), AstNodes::CallExpression(call) if call.callee().is_some_and(is_require))
+}
+
+/// The name `require`, however it's escaped in the source.
+fn is_require(callee: Expr<'_>) -> bool {
+    matches!(callee.kind(), ExprKind::Ident(name) if name.is("require"))
 }
 
 impl<'a> AssignmentLike<'a> {

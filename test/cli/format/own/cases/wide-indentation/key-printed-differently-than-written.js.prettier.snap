@@ -31,6 +31,14 @@ x = {
       "this string is too long to fit on one line, even when it is on a line by itself",
    [`a`]:
       "this string is too long to fit on one line, even when it is on a line by itself",
+   [a /* c */++]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [++/* c */ a]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a /* c */--]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [-(/* c */ 1)]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
 };
 
 --------------------------------
@@ -55,6 +63,11 @@ x = {
    [[]]: "this string is too long to fit on one line, even when it is on a line by itself",
    [a()]: "this string is too long to fit on one line, even when it is on a line by itself",
    [`a`]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a /* c */++]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [++/* c */ a]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a /* c */--]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [-(/* c */ 1)]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
 };
 
 -------------------------------
@@ -88,6 +101,14 @@ x = {
         "this string is too long to fit on one line, even when it is on a line by itself",
     [`a`]:
         "this string is too long to fit on one line, even when it is on a line by itself",
+    [a /* c */++]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [++/* c */ a]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a /* c */--]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [-(/* c */ 1)]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
 };
 
 --------------------------------
@@ -113,6 +134,14 @@ x = {
     [[]]: "this string is too long to fit on one line, even when it is on a line by itself",
     [a()]: "this string is too long to fit on one line, even when it is on a line by itself",
     [`a`]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a /* c */++]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [++/* c */ a]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a /* c */--]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [-(/* c */ 1)]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
 };
 
 --------------------------------
@@ -142,6 +171,14 @@ x = {
                     "this string is too long to fit on one line, even when it is on a line by itself",
           [`a`]:
                     "this string is too long to fit on one line, even when it is on a line by itself",
+          [a /* c */++]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [++/* c */ a]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a /* c */--]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [-(/* c */ 1)]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
 };
 
 ---------------------------------
@@ -167,6 +204,14 @@ x = {
           [[]]: "this string is too long to fit on one line, even when it is on a line by itself",
           [a()]: "this string is too long to fit on one line, even when it is on a line by itself",
           [`a`]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a /* c */++]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [++/* c */ a]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a /* c */--]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [-(/* c */ 1)]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
 };
 
 ===================== End =====================

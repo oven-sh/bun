@@ -1583,3 +1583,7 @@ wide-indentation/key-printed-differently-than-written.js
 671 678 L Identifier 679 680 -
 771 778 T NumericLiteral 769 770 -
 871 878 T StringLiteral 867 870 -
+1542 1549 T Identifier 1540 1541 -
+1644 1651 L Identifier 1652 1653 -
+1744 1751 T Identifier 1742 1743 -
+1845 1852 L NumericLiteral 1853 1854 -

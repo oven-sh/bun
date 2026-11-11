@@ -1230,7 +1230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     REQUIRE_DB_OPEN(self);
     auto nameUtf8 = tryUTF8(globalObject, scope, name);
     RETURN_IF_EXCEPTION(scope, {});
-    int r = SqliteUserAggregate<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs }, startV, stepFn, inverseFn, resultFn);
+    int r = SqliteUserAggregate<NodeSqliteCallbacks>::create(self->connection(), nameUtf8.legacyCStringPointer(), argc, textRep, { globalObject, useBigIntArgs }, self, self->m_callbacks.accumulators(self), startV, stepFn, inverseFn, resultFn);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};

@@ -2606,6 +2606,57 @@ describe("GC lifetime", () => {
     expect(delta).toBeLessThanOrEqual(10);
   });
 
+  test("a window aggregate's accumulator that reaches the parked statement does not pin it forever", () => {
+    const countCells = () => {
+      Bun.gc(true);
+      const { DatabaseSync = 0, StatementSync = 0 } = heapStats().objectTypeCounts;
+      return DatabaseSync + StatementSync;
+    };
+    const before = countCells();
+    for (let i = 0; i < 50; i++) {
+      const db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1), (2), (3)");
+      const held: unknown[] = [];
+      db.aggregate("g", {
+        start: () => held as any,
+        step: (acc, _a) => acc,
+        inverse: (acc, _a) => acc,
+        result: () => 1,
+      });
+      const stmt = db.prepare("SELECT g(a) OVER (ORDER BY a ROWS 1 PRECEDING) AS v FROM t");
+      const rows = stmt.iterate();
+      held.push(stmt, rows);
+      Bun.gc(i % 10 === 0);
+      expect(rows.next().value).toEqual({ v: 1 });
+    }
+    let delta = Infinity;
+    for (let i = 0; i < 10 && delta > 20; i++) {
+      delta = countCells() - before;
+    }
+    expect(delta).toBeLessThanOrEqual(20);
+  });
+
+  test("the accumulators of a parked window query and of one that runs meanwhile stay alive", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1), (2), (3), (4)");
+    db.aggregate("g", {
+      start: () => [] as any,
+      step: (acc: any, a) => (Bun.gc(true), [...acc, a]),
+      inverse: (acc: any) => acc.slice(1),
+      result: (acc: any) => acc.join(),
+    });
+    const window = db.prepare("SELECT g(a) OVER (ORDER BY a ROWS 1 PRECEDING) AS v FROM t");
+    const rows = window.iterate();
+    expect(rows.next().value).toEqual({ v: "1" });
+    expect(db.prepare("SELECT g(a) AS v FROM t GROUP BY a % 2 ORDER BY v").all()).toEqual([{ v: "1,3" }, { v: "2,4" }]);
+    const others = [1, 2, 3].map(() => db.prepare(window.sourceSQL).iterate());
+    for (const other of others) expect(other.next().value).toEqual({ v: "1" });
+    Bun.gc(true);
+    expect([...rows].map(row => row.v)).toEqual(["1,2", "2,3", "3,4"]);
+    for (const other of others) expect([...other].map(row => row.v)).toEqual(["1,2", "2,3", "3,4"]);
+    db.close();
+  });
+
   test("re-registering a function/aggregate name replaces the previous registration", () => {
     // Each re-registration reuses the slots that root the superseded callback;
     // the latest callback is the one SQLite invokes.

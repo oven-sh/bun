@@ -905,8 +905,10 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     // specific writer, then it would cause it to never start
     // flowing again.
     // So, if this is awaiting a drain, then we just call it now.
-    // If we don't know, then assume that we are waiting for one.
-    if (ondrain && state.awaitDrainWriters && (!dest._writableState || dest._writableState.needDrain)) ondrain();
+    // needDrain is not asked: a write that fails in its own call returns false and leaves it clear. With two or
+    // more pipes awaitDrainWriters is a Set, truthy when empty, so this also resumes a source that the program paused.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/readable.js#L1049-L1060
+    if (ondrain && state.awaitDrainWriters) ondrain();
   }
 
   function pause() {
@@ -1018,7 +1020,10 @@ function pipeOnDrain(src, dest) {
     }
 
     if ((!state.awaitDrainWriters || state.awaitDrainWriters.size === 0) && (state[kState] & kDataListening) !== 0) {
-      src.resume();
+      // Node's resume() does nothing on a destroyed stream and ours does (see resume()), so a source that destroy()
+      // tore down is left as it is. One that only flagged itself destroyed right before push(null) still flushes.
+      const flags = state[kState];
+      if ((flags & kDestroyed) === 0 || (flags & (kEnded | kEndEmitted | kClosed)) === kEnded) src.resume();
     }
   };
 }

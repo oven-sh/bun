@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 26a4a653d8f942a822a4a5b79b8005d8725ed9562c1b0e5b742392e74be9e862.
+// Written against that file with the SHA-256 f2e899d592c12a4871a0a4490618f009fe8e4512e69ae8245f7f6586e2ee068c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -1221,8 +1221,10 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     // specific writer, then it would cause it to never start
     // flowing again.
     // So, if this is awaiting a drain, then we just call it now.
-    // If we don't know, then assume that we are waiting for one.
-    if (ondrain && state.awaitDrainWriters && (!dest._writableState || dest._writableState.needDrain)) ondrain();
+    // needDrain is not asked: a write that fails in its own call returns false and leaves it clear. With two or
+    // more pipes awaitDrainWriters is a Set, truthy when empty, so this also resumes a source that the program paused.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/readable.js#L1049-L1060
+    if (ondrain && state.awaitDrainWriters) ondrain();
   }
 
   function pause() {
@@ -1356,7 +1358,12 @@ function pipeOnDrain(src: $Node.Readable, dest: $Node.AnyStream) {
       (!state.awaitDrainWriters || (state.awaitDrainWriters as Set<$Node.AnyStream>).size === 0) &&
       (state[kState] & Flag.DataListening) !== 0
     ) {
-      src.resume();
+      // Node's resume() does nothing on a destroyed stream and ours does (see resume()), so a source that destroy()
+      // tore down is left as it is. One that only flagged itself destroyed right before push(null) still flushes.
+      const flags = state[kState];
+      if ((flags & Flag.Destroyed) === 0 || (flags & (Flag.Ended | Flag.EndEmitted | Flag.Closed)) === Flag.Ended) {
+        src.resume();
+      }
     }
   };
 }

@@ -35,6 +35,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
@@ -5829,6 +5830,70 @@ static std::optional<size_t> recordBodyMock(Zig::GlobalObject* globalObject, JSC
 }
 #endif
 
+// The source text of the code that called. A module and a copy of it under another key have one source origin, so callerPath() names both alike.
+static JSC::SourceProvider* callerSourceProvider(JSC::VM& vm, JSC::CallFrame* callframe)
+{
+    JSC::SourceProvider* provider = nullptr;
+    JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock)
+            return WTF::IterationStatus::Continue;
+        if (auto* function = dynamicDowncast<JSC::FunctionExecutable>(codeBlock->ownerExecutable()); function && function->isPrivateBuiltinFunction())
+            return WTF::IterationStatus::Continue;
+        provider = codeBlock->source().provider();
+        return WTF::IterationStatus::Done;
+    });
+    return provider;
+}
+
+// Whether the caller's code is of the private copy of a module that a running factory got, see redirectedModuleKey().
+static bool isCalledByCopyForRunningFactory(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    auto& runningModuleMocks = globalObject->onLoadPlugins.runningModuleMocks;
+    if (runningModuleMocks.isEmpty()) [[likely]]
+        return false;
+    auto& vm = JSC::getVM(globalObject);
+    String path = callerPath(vm, callframe);
+    JSC::SourceProvider* caller = nullptr;
+    for (auto& running : runningModuleMocks) {
+        if (!running.importChainWithoutQuery.contains(path))
+            continue;
+        for (auto& key : running.importChain) {
+            if (key.length() == path.length() || withoutOriginalModuleQuery(key) != path)
+                continue;
+            auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key));
+            auto* record = entry ? dynamicDowncast<JSC::JSModuleRecord>(entry->record()) : nullptr;
+            if (!record)
+                continue;
+            if (!caller)
+                caller = callerSourceProvider(vm, callframe);
+            if (record->sourceCode().provider() == caller)
+                return true;
+        }
+    }
+    return false;
+}
+
+// Whether `factory` is the function that `mock` has, or one that another evaluation of the same module text made.
+static bool isSameFactory(JSModuleMock* mock, JSValue factory)
+{
+    JSValue made = mock->factory.get();
+    if (!made || !factory)
+        return false;
+    if (made == factory)
+        return true;
+    auto* first = dynamicDowncast<JSC::JSFunction>(made);
+    auto* second = dynamicDowncast<JSC::JSFunction>(factory);
+    if (!first || !second || first->isHostOrBuiltinFunction() || second->isHostOrBuiltinFunction())
+        return false;
+    const JSC::SourceCode& firstSource = first->jsExecutable()->source();
+    const JSC::SourceCode& secondSource = second->jsExecutable()->source();
+    if (firstSource.startOffset() != secondSource.startOffset() || firstSource.endOffset() != secondSource.endOffset())
+        return false;
+    String file = fileOfFunction(first);
+    return !file.isNull() && file == fileOfFunction(second);
+}
+
 __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ModuleMockFunction function)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -5892,6 +5957,15 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         return {};
     }
 #endif
+
+    // The private copy that a running factory gets of a module makes the mock calls of that module a second time. A mock that the module itself
+    // has made stays the module's, as it does where the module makes the call after its copy. vi.doMock() returns what ends its mock, so it is made.
+    if (function != ModuleMockFunction::ViDoMock && isCalledByCopyForRunningFactory(globalObject, callframe)) [[unlikely]] {
+        if (auto* made = registeredModuleMock(globalObject, specifier); made && isSameFactory(made, factory)) {
+            bool returnsJest = function == ModuleMockFunction::JestMock || function == ModuleMockFunction::JestDoMock;
+            return JSValue::encode(returnsJest ? callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()) : jsUndefined());
+        }
+    }
 
     if (!factory && !spy) {
         if (JSC::JSString* manualMock = findManualModuleMock(globalObject, callerPath(vm, callframe), written, specifier))
@@ -7925,8 +7999,30 @@ static bool isCompiledFileNotImporting(Zig::GlobalObject* globalObject, const St
 #endif
 }
 
+// The import() calls that have yet to settle: the loader's promise of each, and the key that it asked for. didStartDynamicImport() keeps them
+// for vi.dynamicImportSettled(), with a key while there are module mocks.
+static Vector<std::pair<JSC::JSPromise*, String>, 4> pendingImportCalls(Zig::GlobalObject* globalObject)
+{
+    Vector<std::pair<JSC::JSPromise*, String>, 4> pending;
+    JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
+    if (!dynamicImports)
+        return pending;
+    auto& vm = JSC::getVM(globalObject);
+    auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(dynamicImports), JSC::IterationKind::Entries);
+    while (true) {
+        auto [import, key] = iterator->nextWithAdvance(vm);
+        if (!import)
+            break;
+        auto* promise = uncheckedDowncast<JSC::JSPromise>(import);
+        if (promise->status() == JSC::JSPromise::Status::Pending && key.isString())
+            pending.append({ promise, asString(key)->tryGetValue().data });
+    }
+    return pending;
+}
+
 // Whether `start` can't finish evaluating until `target`, the module `running` mocks, has. If it can, `unfinished` gets the modules that must
 // finish first and aren't in the import chain yet. A waiting module keeps waiting while the factory runs, so waitingModules caches the answer.
+// A module waits for what its import statements name, and for what it has called import() for and awaits.
 __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& start, const String& target, Vector<String>& unfinished)
 {
     if (running.waitingModules.contains(start))
@@ -7942,7 +8038,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
     ModuleImporters importersOf;
     Vector<String> waiting;
     UncheckedKeyHashSet<String> seen;
-    auto add = [&](const String& key) {
+    auto add = [&](const String& key, bool isAwaitedImport = false) {
         if (!seen.add(key).isNewEntry)
             return;
         if (key == target || running.waitingModules.contains(key)) {
@@ -7958,9 +8054,11 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         } else if (auto* mock = registeredModuleMock(globalObject, key); mock && mock->state == JSModuleMock::State::Settled && !mock->importsOriginal) {
             // What is being fetched is the mock's own module, which imports nothing.
             return;
-        } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); entry && isBeingFetchedWithoutFactory(globalObject, entry) && (!isInNodeModules(key) || isInNodeModules(target)) && !isCompiledFileNotImporting(globalObject, key, target)) {
+        } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); !isAwaitedImport && entry && isBeingFetchedWithoutFactory(globalObject, entry) && (!isInNodeModules(key) || isInNodeModules(target)) && !isCompiledFileNotImporting(globalObject, key, target)) {
             // Another load is fetching it, and it may import the mock. In the chain it would get the original, for that load too, so treat it as waiting.
             // A package doesn't import the project's modules. A copy of it would only run its side effects a second time.
+            // Not so for what a module awaits an import() of: its copy would call import() under the module's own name (importChainWithoutQuery),
+            // and the module itself would get the original from then on.
             running.waitingModules.add(key);
             waiting.append(key);
             return;
@@ -7968,6 +8066,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         unfinished.append(key);
     };
 
+    std::optional<Vector<std::pair<JSC::JSPromise*, String>, 4>> importCalls;
     add(start);
     for (size_t i = 0; i < unfinished.size(); ++i) {
         String importer = unfinished[i];
@@ -7984,6 +8083,19 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
             const String& key = loaded.m_module->moduleKey().string();
             addImporter(importersOf, importer, key);
             add(key);
+        }
+        // The record has no request for an import() that its body awaits. The promise of the call leads to the body: JSC asks the same of it to
+        // find an import() cycle. The factory's own file is left out: JSC lets what the factory imports go on without that file.
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating || importer == running.file)
+            continue;
+        if (!importCalls)
+            importCalls = pendingImportCalls(globalObject);
+        for (auto& [promise, key] : *importCalls) {
+            if (!JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(promise, cyclic))
+                continue;
+            addImporter(importersOf, importer, key);
+            add(key, true);
         }
     }
 

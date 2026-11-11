@@ -183,6 +183,7 @@ const wrong: typeof kept = 5;
 const alsoWrong: typeof either = "em";
 `,
     errors: ["(10,7): TS2322", "(11,7): TS2322"],
+    bare: ["2 /* High */"],
   },
   "constant-that-holds-an-enum-member-and-is-used-twice": {
     files: {
@@ -601,6 +602,48 @@ const wrong: 1 = Si.Kilo;
 `,
     errors: ["(5,7): TS2322"],
   },
+  "annotated-constant-that-holds-an-enum-member": {
+    files: {
+      "index.ts": `export enum Kind { A = "a", B = "b" }
+export enum Limit { Max = 5 }
+const DEFAULT: Kind.A = Kind.A;
+const WIDE: Kind = Kind.A;
+const LIMIT: number = Limit.Max;
+export const pair = [DEFAULT];
+export const wide = [WIDE];
+export const limits = [LIMIT];
+export function pick(kind = DEFAULT) { return kind; }
+`,
+    },
+    caller: `import { Kind, limits, pair, pick, wide } from "LIBRARY";
+limits.push(7);
+const a: Kind.A = pick();
+pair.push(Kind.B);
+wide.push(Kind.B);
+pick(Kind.B);
+`,
+    errors: ["(4,11): TS2345", "(5,11): TS2345", "(6,6): TS2345"],
+  },
+  "template-that-reads-the-enum-of-another-file": {
+    files: {
+      "kind.ts": `export enum Kind { A = "a", B = "b" }\nexport enum Level { Low = 1, High = 2 }\n`,
+      "index.ts": `import { Kind, Level } from "./kind";
+export const name = \`\${Kind.A}-x\`;
+export const both = \`\${Kind.A}-\${Level.High}\`;
+export function tag(n: number) { return \`\${n}:\${Kind.B}\` as const; }
+export let loose = \`\${Kind.B}!\`;
+`,
+    },
+    caller: `import { both, loose, name, tag } from "LIBRARY";
+const a: "a-x" = name;
+const b: "a-2" = both;
+const c: \`\${number}:b\` = tag(1);
+const d: string = loose;
+const wrong: "b-x" = name;
+`,
+    errors: ["(6,7): TS2322"],
+    bare: ['"a" /* A */', '"a" /* A */', "2 /* High */", '"b" /* B */', '"b" /* B */'],
+  },
   "enum-merged-with-a-namespace-of-types-and-values": {
     files: {
       "index.ts": `export enum Unit { Px, Em }
@@ -636,6 +679,7 @@ const acrossFiles = [
 const minified = [
   "enum-member-in-an-expression-that-a-build-can-fold",
   "constant-that-holds-an-enum-member-and-is-used-twice",
+  "annotated-constant-that-holds-an-enum-member",
   "enum-member-given-to-a-const-type-parameter",
   "numeric-enum-member-in-a-default-object",
   "template-that-reads-an-enum-member",
@@ -818,9 +862,7 @@ export class Box {
 }
 `,
 };
-// A default value under a cast gives its parameter the type of the cast: `useCell` takes `null`, and `useText` any text.
-// A function that its place types keeps the parameters of that type: `useLabel`, and the callback of `useLabels`.
-// The source's own `NonNullable` is not the one that `useHeld` needs, and `size` of `useSized` is no parameter of the output.
+// `--react-compiler` moves the default value of each parameter of these hooks into the function body.
 const movedCaller = (
   library: string,
 ) => `import { Box, Unit, useBoth, useCell, useHeld, useLabel, useLabels, useOnly, useSized, useText } from "${library}";

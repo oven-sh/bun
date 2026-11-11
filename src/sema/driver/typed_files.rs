@@ -1569,10 +1569,7 @@ impl Written<'_, '_> {
         self.text(start, end).trim_ascii().to_vec()
     }
 
-    /// The type that a read of an enum member under `chain` gives a parameter as its default value: the type of the
-    /// outermost `as`, without `null` and `undefined` under a `!` outside it, or the type of the member under `as const`,
-    /// else the enum. A type with a `typeof` is not taken: in the parameter list of the output its name can be another
-    /// variable, or none. The enum stands for it, as for every default value before.
+    /// The type that a read of an enum member under `chain` gave a parameter as its default value.
     fn type_of_default(&self, chain: &CastChain, member: &ReadMember, twin: &[u8]) -> Vec<u8> {
         let mut is_non_null = false;
         for &cast in chain.casts.iter().rev() {
@@ -1580,12 +1577,14 @@ impl Written<'_, '_> {
                 ExprKind::As { ty, .. } => {
                     let (start, end) = self.syntax.type_span(ty);
                     let asserted = self.text(start, end);
-                    let names_a_value = bun_core::strings::contains(&asserted, b"typeof");
+                    // In the parameter list of the output, a `typeof` can name another variable than in the source.
+                    let names_a_value = self.syntax.file.types.iter().any(|inside| {
+                        matches!(inside.kind, TypeNodeKind::Typeof { .. })
+                            && (start..end).contains(&inside.pos)
+                    });
                     return match (names_a_value, is_non_null) {
                         (true, _) => twin.to_vec(),
-                        (false, true) => {
-                            [&b"globalThis.NonNullable<"[..], &asserted, b">"].concat()
-                        }
+                        (false, true) => [LIBRARY, b"NonNullable<", &asserted, b">"].concat(),
                         (false, false) => asserted,
                     };
                 }
@@ -3692,6 +3691,10 @@ impl<'a> Transfer<'_, 'a, '_> {
             let constants: FxHashSet<ExprId> = constants.collect();
             let holders: FxHashSet<ExprId> =
                 (constants.iter().copied().chain(fields).chain(defaults)).collect();
+            let annotated: FxHashMap<ExprId, TypeNodeId> = (file.var_decls.iter().take(all))
+                .filter(|declaration| declaration.kind == VarKind::Const)
+                .filter_map(|declaration| Some((declaration.init, declaration.ty.some()?)))
+                .collect();
             let parameters: FxHashMap<ExprId, u32> = (file.params.iter().take(all))
                 .filter(|parameter| {
                     parameter.ty.is_none() && matches!(file[parameter.pat].kind, PatKind::Ident(_))
@@ -3750,10 +3753,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                     if is_read && is_literal(operand) && !with_member_cast.insert(operand) {
                         continue;
                     }
-                    // TypeScript reads the key of `table[Kind.A]` and of `{ [Kind.A]: 1 }` by its syntax: a cast is no key.
-                    let is_key = keys.contains(&chain.outermost)
-                        || places[chain.outermost.idx()].is_some_and(|(parent, place)| {
-                            place == 1 && matches!(file[parent].kind, ExprKind::Index { .. })
+                    // TypeScript reads a key (`table[Kind.A]`, `{ [Kind.A]: 1 }`) and a span of a template by their syntax.
+                    let parent = places[chain.outermost.idx()];
+                    let is_read_by_syntax = keys.contains(&chain.outermost)
+                        || parent.is_some_and(|(parent, place)| match file[parent].kind {
+                            ExprKind::Index { .. } => place == 1,
+                            ExprKind::Template { .. } => true,
+                            _ => false,
                         });
                     let is_number = matches!(output_file[operand].kind, ExprKind::Number(_));
                     let is_constant = match output_file[operand].kind {
@@ -3766,7 +3772,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     };
                     // A number picks the member of a union as the read does. No cast does.
                     let member = read_of(chain.operand).filter(|read| {
-                        !is_key && is_constant && !(read.2.is_discriminant && is_number)
+                        !is_read_by_syntax && is_constant && !(read.2.is_discriminant && is_number)
                     });
                     if member.is_none() && chain.casts.is_empty() {
                         continue;
@@ -3791,10 +3797,18 @@ impl<'a> Transfer<'_, 'a, '_> {
                         let is_held_otherwise = !is_copy
                             && holders.contains(&chain.outermost)
                             && !output_holders.contains(&operand);
-                        if read.is_in_const_context || is_held_otherwise {
+                        // Where a build puts the value of a `const` that has a type, the value has that type.
+                        let declared = (annotated.get(&chain.outermost))
+                            .filter(|_| is_copy && !read.is_in_const_context);
+                        if read.is_in_const_context || is_held_otherwise || declared.is_some() {
                             let ty = member.member_type(twin);
                             suffix.extend_from_slice(&[&b" as "[..], &ty].concat());
                             level = Level::Compare;
+                            if let Some(&declared) = declared {
+                                let (start, end) = syntax.type_span(declared);
+                                let declared = module.text(start, end);
+                                suffix.extend_from_slice(&[&b" as "[..], &declared].concat());
+                            }
                         } else {
                             // `("px" as Unit2_Px)!` has a read's type. A cast that is the whole expression never widens.
                             if declared_member_types.insert(&ty[..]) {
@@ -3808,7 +3822,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                             level = Level::Member;
                         }
                         // A default value that the build moved out of the parameter list no longer types the parameter.
-                        // A parameter of a contextually typed function never had its type from there.
                         let moved = (parameters.get(&chain.outermost)).filter(|_| {
                             !is_copy
                                 && !read.is_default_of_contextual_parameter
@@ -4468,6 +4481,9 @@ pub enum EnumOf {
     Nested(u32),
 }
 
+/// Stands before the name of a type of the default library: a bundle can declare a type of that name.
+const LIBRARY: &[u8] = b"globalThis.";
+
 /// A member of an enum that a module reads.
 pub struct ReadMember {
     /// An index of `EnumFacts::enums`.
@@ -4485,13 +4501,12 @@ impl ReadMember {
     }
 
     /// The member's type as a type never widens: `Twin.Member`, or what `Extract` finds of the twin for another name.
-    /// `globalThis.`: a bundle can declare a type `Extract` of its own.
     fn member_type(&self, twin: &[u8]) -> Vec<u8> {
         match self.is_identifier {
             true => [twin, b".", &self.name].concat(),
             false => {
                 let property = self.property_type(twin);
-                [&b"globalThis.Extract<"[..], twin, b", ", &property, b">"].concat()
+                [LIBRARY, b"Extract<", twin, b", ", &property, b">"].concat()
             }
         }
     }
@@ -4517,8 +4532,7 @@ pub struct EnumRead {
     pub is_in_const_context: bool,
     /// The value of a property in an object literal for a union: TypeScript picks the member by the value's syntax.
     pub is_discriminant: bool,
-    /// The default value of a parameter that has its type from the contextual type of its function, and none from the
-    /// default value: `getContextuallyTypedParameterType`.
+    /// `getContextuallyTypedParameterType`: the default value of a parameter that the context of its function types.
     pub is_default_of_contextual_parameter: bool,
 }
 
@@ -4726,18 +4740,33 @@ fn note_enum_reads(
     // A `const` that holds a read is a read of the same member wherever a build puts its value.
     let mut copies: FxHashMap<SymbolRef, u32> = FxHashMap::default();
     let mut names: FxHashSet<Atom> = FxHashSet::default();
+    // The value of a `const` whose type annotation it narrows to the member: the `const` is that member where it is used.
+    let mut narrowed: FxHashSet<(u32, u32)> = FxHashSet::default();
     for declaration in hir.var_decls.iter() {
-        let is_copy = declaration.kind == VarKind::Const && declaration.ty.is_none();
-        let member = (declaration.init.some())
-            .filter(|_| is_copy)
-            .and_then(|value| read_by.get(&value));
-        let (PatKind::Ident(name), Some(&member)) = (hir[declaration.pat].kind, member) else {
+        let value = (declaration.init.some()).filter(|_| declaration.kind == VarKind::Const);
+        let member = value.and_then(|value| Some((value, *read_by.get(&value)?)));
+        let (PatKind::Ident(name), Some((value, member))) = (hir[declaration.pat].kind, member)
+        else {
             continue;
         };
+        if let Some(annotation) = declaration.ty.some() {
+            let node = hir.node(annotation);
+            let declared = services.type_from_type_node(NodeRef { file, node });
+            if is_narrowed_to_member(services, declared) {
+                narrowed.insert((hir[value].pos, hir[value].end));
+            }
+            continue;
+        }
         let node = hir.node(declaration.pat);
         if let Some(symbol) = services.symbol_at_location(NodeRef { file, node }) {
             copies.insert(symbol, member);
             names.insert(name);
+        }
+    }
+    if !narrowed.is_empty() {
+        let reads = facts.reads.iter_mut();
+        for read in reads.filter(|read| narrowed.contains(&(read.pos, read.end))) {
+            read.is_in_const_context = true;
         }
     }
     // Only a file with such a `const` has its names looked at.
@@ -4755,6 +4784,17 @@ fn note_enum_reads(
         }
     }
     facts.reads.shared_sort_by_key(|read| read.end);
+}
+
+/// Whether a member of an enum as the value of a `const` narrows this declared type to itself: `Kind`, `Kind.A | null`.
+fn is_narrowed_to_member(services: &mut Services<'_, '_, '_>, declared: TypeId) -> bool {
+    let narrowable = TypeFlags::ENUM_LITERAL | TypeFlags::NULL | TypeFlags::UNDEFINED;
+    let flags = services.type_flags(declared);
+    if !flags.contains(TypeFlags::UNION) {
+        return flags.contains(TypeFlags::ENUM_LITERAL);
+    }
+    let parts = services.constituents(declared).to_vec();
+    (parts.into_iter()).all(|part| services.type_flags(part).intersects(narrowable))
 }
 
 fn note_read(

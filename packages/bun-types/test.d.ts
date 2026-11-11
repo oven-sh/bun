@@ -20,8 +20,8 @@ declare module "bun:test" {
    * `T` with every nested function and class typed as a {@link Mock}. It's still a `T`, because `jest.mocked(value)`
    * returns `value` itself.
    *
-   * Where a member or an array element is a union of object types, only a method that every type of the union has is
-   * a {@link Mock}.
+   * Where a member or an array element is a union of object types, only a method that every type of the union has
+   * gets the members of a mock, such as `mockReturnValue()`.
    */
   export type Mocked<T> = T extends readonly unknown[]
     ? // The mocked elements come first, so that a callback of `forEach()` or `map()` receives them.
@@ -64,14 +64,22 @@ declare module "bun:test" {
     // What a member or an element adds to its own type.
     type MocksOfMember<V> =
       IsUnion<Extract<V, object>> extends false ? MocksOf<V> : MocksOfUnion<Extract<V, object>> | Exclude<V, object>;
-    // One type for a union of object types: a `Mock` for each method that all of them have. A union of N mocked
-    // types, intersected with the member of `T`, would make N * N types. `Keys` is a parameter, because TypeScript
-    // maps each type of a union by itself if a mapped type names `keyof U`.
+    // One type for a union of object types: the mock members of each method that all of them have. A union of N
+    // mocked types, intersected with the member of `T`, would make N * N types. `Keys` is a parameter, because
+    // TypeScript maps each type of a union by itself if a mapped type names `keyof U`.
+    //
+    // A `SpiedFunction` has no call signature. With one more signature in each type of the union, TypeScript
+    // can't call a method like `then()` of `Promise<A> | Promise<B>`.
     type MocksOfUnion<U, Keys extends keyof U = keyof U> = [U] extends [(...args: any[]) => any]
-      ? Mock<Extract<U, (...args: any[]) => any>>
-      : {
-          [K in Keys as U[K] extends (...args: any[]) => any ? K : never]: Mock<Extract<U[K], (...args: any[]) => any>>;
-        };
+      ? jest.SpiedFunction<Extract<U, (...args: any[]) => any>>
+      : [U] extends [readonly unknown[]]
+        ? // A union of arrays is like one array: it has the elements, and the members of `Array` aren't mocks.
+          { [K in Keys as K extends Exclude<keyof unknown[], number> ? never : K]: MocksOfMember<U[K]> }
+        : {
+            [K in Keys as U[K] extends (...args: any[]) => any ? K : never]: jest.SpiedFunction<
+              Extract<U[K], (...args: any[]) => any>
+            >;
+          };
     // An array type that is written with `[]`: TypeScript works out its element type only when that is used.
     type MockedArray<T extends readonly unknown[]> = T extends unknown[]
       ? MockedElement<T[number]>[]

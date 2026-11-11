@@ -226,6 +226,9 @@ declare const holder: {
   shapes: (Circle | Square)[];
   caches: (Store | Cache)[];
   handler: ((id: number) => string) | ((key: string) => number);
+  ids: string[] | number[];
+  lists: Store[] | readonly Store[];
+  pending: Promise<string> | Promise<number>;
   expires: Date | string;
   cache: Store | false;
   config: Json;
@@ -361,6 +364,16 @@ jest.mocked(holder).shape.area.mockReturnValue(1);
 jest.mocked(holder).shapes[0]!.area.mockReturnValue(1);
 jest.mocked(holder.shapes)[0]!.area.mockReturnValue(1);
 jest.mocked(holder).handler.mockClear();
+// @ts-expect-error A call is still a call of `T`, and no function of this union takes a number.
+jest.mocked(holder).handler(1);
+jest.mocked(holder).pending.then(value => expectType(value).is<string | number>());
+// A union of arrays is like one array: the members of `Array` aren't mocks.
+jest.mocked(holder).ids = ["a"];
+expectType(jest.mocked(holder).ids.map(id => String(id))).is<string[]>();
+const mockedIds = jest.mocked(holder).ids;
+// @ts-expect-error
+mockedIds.push.mockClear();
+jest.mocked(holder).lists[0]!.get.mockReturnValue("x");
 const mockedShape = jest.mocked(holder).shape;
 // @ts-expect-error A method that only one type of the union has isn't a mock.
 if (mockedShape.kind === "circle") mockedShape.radius.mockReturnValue(1);

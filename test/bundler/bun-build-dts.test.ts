@@ -383,7 +383,7 @@ ${more}`,
 
   // The check without the types of Bun has an error at `emit`, which they clear. With them fetch has a member more, so
   // they have an error at `get`, where the check without them has none. A program that installs the package would have it.
-  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  // On Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)("an error that only the types of Bun report is named as theirs", async () => {
     using dir = nodeProject(
       "build-dts-node-types-fetch",
@@ -458,7 +458,7 @@ export function isMac(): boolean {
     expect(typedFile(dir)).toContain("const timer: number = setTimeout(run, 1);");
   });
 
-  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  // On Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)(
     "an error that the types of Bun keep is named, not one that they clear before it",
     async () => {
@@ -477,7 +477,7 @@ export function isMac(): boolean {
 
   // The types of Bun have an error at `timer`, before the two copies. The check without them has none there, so a build
   // with only that line writes the files. The error to repair is the one that both checks have.
-  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  // On Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)("an error of both checks is named, not one of the types of Bun before it", async () => {
     using dir = tempDir("build-dts-error-of-both", {
       "tsconfig.json": withoutTypes(["esnext", "dom"]),
@@ -500,7 +500,7 @@ export function read`,
 
   // A program that loads the file reads it as a script, because it only declares: there `declare global` is an error. The
   // check with the types of Bun would read a module, so it does not decide.
-  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  // On Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)("a file that only declares is left out as before", async () => {
     using dir = tempDir("build-dts-only-declares", {
       "tsconfig.json": withoutTypes(["esnext"]),
@@ -521,7 +521,7 @@ export {};
     expect(written(dir)).toEqual(["index.d.ts", "index.js"]);
   });
 
-  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  // On Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)("an @types/bun that is installed without its files clears no error", async () => {
     using dir = tempDir("build-dts-types-of-bun-without-files", {
       "tsconfig.json": withoutTypes(["esnext"]),
@@ -543,7 +543,7 @@ export {};
   // The third entry point has neither import nor export, so the check without the types of Bun reads it as a script, where
   // `await` is a name. It stops there and judges no file. The check with them reads a module, and finds the two copies:
   // only that check reports them, so the error is named as its own.
-  // TODO: on Windows the build says nothing, as in compile-library.test.ts.
+  // On Windows the build says nothing, as in compile-library.test.ts.
   test.todoIf(isWindows)(
     "where the first check stops at a file that it reads as a script, the check with the types of Bun decides",
     async () => {

@@ -329,6 +329,7 @@ async function rerunCommonJSTestFiles(flags: string[]) {
 
 const sharedGlobalModes: [string, string[]][] = [
   ["by default", []],
+  ["with --isolate=modules", ["--isolate=modules"]],
   ["with --parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
 ];
 const isolatedModes: [string, string[]][] = [
@@ -336,7 +337,7 @@ const isolatedModes: [string, string[]][] = [
   ["with --parallel", ["--parallel=2"]],
 ];
 
-// Without --isolate the reruns of a file share one module cache, so dep.cjs stays cached and counts every evaluation.
+// In these modes the reruns of a file share one module cache, so dep.cjs stays cached and counts every evaluation.
 test.concurrent.each(sharedGlobalModes)(
   "--rerun-each evaluates a CommonJS test file again for every rerun %s",
   async (_, flags) => {

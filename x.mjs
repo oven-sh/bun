@@ -1,0 +1,10 @@
+import cp from "node:child_process";
+const N = +(process.env.NTH || 2), ev = [];
+process.on("uncaughtException", () => ev.push("uncaughtException"));
+process.on("unhandledRejection", () => ev.push("unhandledRejection"));
+let got = 0, n = 0;
+const ch = cp.spawn("sh", ["-c", "for i in 1 2 3 4 5 6 7 8 9 10; do head -c 65536 /dev/zero; sleep 0.02; done"]);
+ch.stdout.on("data", d => { got += d.length; if (++n === N) throw new Error("boom"); });
+ch.on("exit", c => ev.push("child exit " + c));
+process.on("exit", c => console.log("EXIT", c, "| read", got, "of 655360 |", ev.join(" | ")));
+setTimeout(() => console.log("STILL ALIVE at 4 s | read", got, "of 655360 |", ev.join(" | ")), 4000).unref();

@@ -1,0 +1,10 @@
+import http from "node:http"; import { Readable } from "node:stream";
+const H = process.env.H || "ur", ev = [];
+if (H !== "ur") process.on("uncaughtException", (e, origin) => ev.push("uncaughtException(" + origin + ")"));
+if (H !== "ue") process.on("unhandledRejection", () => ev.push("unhandledRejection"));
+const srv = http.createServer(async (req, res) => { for (let i = 0; i < 10; i++) { res.write(Buffer.alloc(65536)); await new Promise(r => setTimeout(r, 20)); } res.end(); });
+await new Promise(r => srv.listen(0, "127.0.0.1", r));
+let got = 0, n = 0;
+process.on("exit", c => console.log("exit listener saw", c, "| read", got, "of 655360 |", ev.join(" | ")));
+Readable.fromWeb((await fetch(`http://127.0.0.1:${srv.address().port}/`)).body).on("data", d => { got += d.length; if (++n === 2) throw new Error("boom"); });
+setTimeout(() => srv.close(), 600); setTimeout(() => srv.closeAllConnections(), 700);

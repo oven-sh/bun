@@ -1,0 +1,11 @@
+import cp from "node:child_process";
+const K = +(process.env.K || 3), H = process.env.H || "ue", ev = [];
+process.on("uncaughtException", () => ev.push("uncaughtException"));
+if (H === "both") process.on("unhandledRejection", () => ev.push("unhandledRejection"));
+let got = 0, n = 0;
+const ch = cp.spawn("head", ["-c", "13107200", "/dev/zero"]);
+ch.stdout.on("data", d => { got += d.length; if (++n <= K) throw new Error("boom " + n); });
+ch.on("exit", c => ev.push("child exit " + c));
+const tally = () => { const t = {}; for (const e of ev) t[e] = (t[e] || 0) + 1; return Object.entries(t).map(([k, v]) => k + " x" + v).join(" | "); };
+process.on("exit", c => console.log("EXIT", c, "| read", got, "of 13107200 |", tally()));
+setTimeout(() => console.log("STILL ALIVE at 4 s | read", got, "of 13107200 |", tally()), 4000).unref();

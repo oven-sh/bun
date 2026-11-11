@@ -1,0 +1,11 @@
+const events = require("node:events");
+events.captureRejections = true;
+const { spawn } = require("node:child_process");
+const c = spawn(process.execPath, ["-e", "process.stdout.write(String(1))"]);
+const ev = [];
+c.stdout.on("error", e => ev.push("stream error: " + e.message));
+c.stdout.on("data", async () => { ev.push("data"); throw new Error("async-boom"); });
+c.stdout.on("close", () => ev.push("stream close"));
+process.on("unhandledRejection", e => ev.push("unhandledRejection: " + e.message));
+process.on("uncaughtException", e => ev.push("uncaughtException: " + e.message));
+c.on("close", () => setTimeout(() => console.log(ev.join(" | ") + " | own emit: " + Object.hasOwn(c.stdout, "emit")), 100));

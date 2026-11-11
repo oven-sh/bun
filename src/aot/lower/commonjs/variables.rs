@@ -3,7 +3,7 @@ use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Parent, ScopeKi
 use bun_sema::fold::{Decisions, FoldedValue};
 use bun_sema::hir::{self, BinOp, Chain, ExprId, ExprKind, StmtId, StmtKind, UnOp};
 use bun_sema::import_sites::WHERE_FILE_LIES;
-use bun_sema::program::FileId;
+use bun_sema::program::{CompiledModule, FileId};
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
 
@@ -22,11 +22,12 @@ use crate::load::contents::worker_entries::{
 };
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::parsed_source;
+use crate::lower::context::CreatedRequire;
 use crate::lower::member::PropertyName;
-use crate::lower::scope::{ArgumentsObject, ScopeSlot};
+use crate::lower::scope::{ArgumentsObject, BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, module};
 use crate::module_keys::is_name_of_text;
-use crate::modules::{ModuleKind, ModuleRef, Shape, SpelledModule};
+use crate::modules::{ModuleGraph, ModuleKind, ModuleRef, Shape, SpelledModule};
 
 const fn variable_of(parameter: CommonJsParameter) -> CommonJsVariable {
     match parameter {
@@ -62,6 +63,42 @@ pub(in crate::lower) fn undeclared_wrapper_parameters(
     parameters.filter(move |&variable| !redeclared.iter().any(|entry| entry.1 == variable))
 }
 
+#[derive(Copy, Clone, Default, Debug)]
+pub(in crate::lower) struct WrapperSlots(u8);
+
+impl WrapperSlots {
+    pub(in crate::lower) fn of(
+        bound: &Bound<'_>,
+        decisions: &Decisions<'_>,
+        may_be_reevaluated: bool,
+    ) -> WrapperSlots {
+        let mut direct_evals = bound.runtime.eval_scopes().iter();
+        let mut scopes = bound.scopes.iter();
+        let holds_all = may_be_reevaluated
+            || bound.file_uses_arguments()
+            || direct_evals.any(|&(call, _)| !decisions.is_dead_expr(call))
+            || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)));
+        let is_stored = |variable: CommonJsVariable| {
+            let mut stores = bound.runtime.unbound_name_stores().iter();
+            stores.any(|&(target, _)| {
+                bound.binding(target) == Binding::CommonJs(variable)
+                    && !decisions.is_dead_expr(target)
+            })
+        };
+        let mut slots = WrapperSlots::default();
+        for variable in WRAPPER_PARAMETERS {
+            if holds_all || variable == CommonJsVariable::Exports || is_stored(variable) {
+                slots.0 |= 1 << wrapper_parameter_index(variable);
+            }
+        }
+        slots
+    }
+
+    pub(in crate::lower) fn contains(self, variable: CommonJsVariable) -> bool {
+        self.0 & (1 << wrapper_parameter_index(variable)) != 0
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub(in crate::lower) enum BodyForm {
     #[default]
@@ -85,7 +122,6 @@ enum VariableSource {
     MappedWrapperParameter,
     ModuleValue(BuiltinId),
     ModuleExports,
-    FirstExports,
     NoObject,
     ImportMetaMember(&'static [u8]),
     ModuleVariable,
@@ -101,27 +137,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ModuleKind::Runtime | ModuleKind::External => {
                 unreachable!("a module of this kind has no file")
             }
-        }
-    }
-
-    fn may_replace_exports(&self, module_name: ExprId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let Parent::Expr(access) = bound.parent_of_expr(module_name) else {
-            return true;
-        };
-        let key = hir.member_key(access);
-        if !key.is_some_and(|(object, _)| object == module_name) {
-            return true;
-        }
-        match self.builtins.of_expr(access) {
-            Some(Resolved::Builtin(path)) if path.id == BuiltinId::ModuleObjectExports => {
-                let written = bound.outermost_type_assertion(hir, access);
-                let is_deleted = matches!(bound.parent_of_expr(written), Parent::Expr(user)
-                    if matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-                is_deleted || bound.is_stored_to(hir, access)
-            }
-            Some(Resolved::Builtin(_)) => false,
-            Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => true,
         }
     }
 
@@ -169,44 +184,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 ..CommonJsState::default()
             };
         }
-        let own_module = ModuleRef::File(self.file);
-        let assigns_exports =
-            |statement: StmtId| matches!(hir[statement].kind, StmtKind::ExportAssign(_));
-        let mut replaces_exports = self.inputs.modules.keeps_module_object(own_module)
-            || self.inputs.modules.may_be_mocked(own_module)
-            || self.inputs.modules.may_be_evicted(own_module)
-            || hir.ids(hir.body).any(assigns_exports)
-            || bound.export_assignments_in_namespaces(hir).next().is_some();
-        let mut names_exports = false;
-        let analysis = &self.compiled.analysis;
-        for binding in analysis.bindings_read_without_expression(hir, bound) {
-            names_exports |= binding == Binding::CommonJs(CommonJsVariable::Exports);
-            replaces_exports |= binding == Binding::CommonJs(CommonJsVariable::Module);
-        }
-        for &(name, binding) in bound.ident_bindings() {
-            if self.decisions().is_dead_expr(name) {
-                continue;
-            }
-            match binding {
-                Binding::CommonJs(CommonJsVariable::Exports) => names_exports = true,
-                Binding::CommonJs(CommonJsVariable::Module) => {
-                    replaces_exports |= self.may_replace_exports(name);
-                }
-                Binding::CommonJs(
-                    CommonJsVariable::Require
-                    | CommonJsVariable::Filename
-                    | CommonJsVariable::Dirname,
-                )
-                | Binding::Symbol(_)
-                | Binding::Arguments(_)
-                | Binding::Free => {}
-            }
-        }
         CommonJsState {
             form: BodyForm::Plain,
-            keeps_first_exports: replaces_exports
-                && names_exports
-                && !self.inputs.modules.runs_again(self.file),
+            keeps_first_exports: keeps_first_exports(
+                self.file,
+                hir,
+                bound,
+                self.compiled,
+                self.inputs.modules,
+                self.builtins,
+            ),
             has_source_path,
             names_source_path,
             ..CommonJsState::default()
@@ -218,7 +205,12 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn has_values_of_each_run(&self) -> bool {
-        self.body_form() == BodyForm::Plain && self.inputs.modules.runs_again(self.file)
+        self.body_form() == BodyForm::Plain && self.inputs.modules.may_be_reevaluated(self.file)
+    }
+
+    pub(super) fn is_passed_by_wrapper(&self, variable: CommonJsVariable) -> bool {
+        variable == CommonJsVariable::Exports
+            || self.scopes.arguments_object(CodeUnit::File) != ArgumentsObject::None
     }
 
     fn find_plain_source(&self, variable: CommonJsVariable) -> VariableSource {
@@ -226,11 +218,11 @@ impl FileLowering<'_, '_, '_, '_> {
         match variable {
             CommonJsVariable::Exports => match modules.shape(ModuleRef::File(self.file)) {
                 Shape::Names | Shape::EsModule => VariableSource::NoObject,
-                Shape::Value | Shape::AsToday if self.has_values_of_each_run() => {
+                Shape::Value | Shape::AsToday
+                    if self.has_values_of_each_run()
+                        || self.modules.commonjs.keeps_first_exports =>
+                {
                     VariableSource::WrapperParameter
-                }
-                Shape::Value | Shape::AsToday if self.modules.commonjs.keeps_first_exports => {
-                    VariableSource::FirstExports
                 }
                 Shape::Value | Shape::AsToday => VariableSource::ModuleExports,
             },
@@ -246,8 +238,13 @@ impl FileLowering<'_, '_, '_, '_> {
             BodyForm::Wrapped => {
                 return match self.scopes.arguments_object(CodeUnit::File) {
                     ArgumentsObject::Mapped => VariableSource::MappedWrapperParameter,
-                    ArgumentsObject::None | ArgumentsObject::Unmapped => {
+                    ArgumentsObject::None | ArgumentsObject::Unmapped
+                        if self.scopes.wrapper_slots().contains(variable) =>
+                    {
                         VariableSource::WrapperParameter
+                    }
+                    ArgumentsObject::None | ArgumentsObject::Unmapped => {
+                        self.find_plain_source(variable)
                     }
                 };
             }
@@ -294,10 +291,31 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(in crate::lower) fn find_text_made_of_own_path(
         &self,
-        expression: ExprId,
+        mut expression: ExprId,
     ) -> Option<Vec<u8>> {
+        let mut right_operands = Vec::new();
+        loop {
+            expression = self.skip_type_syntax(expression);
+            let ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } = self.hir[expression].kind
+            else {
+                break;
+            };
+            right_operands.push(right);
+            expression = left;
+        }
+        let mut text = self.find_own_path_operand(expression)?;
+        while let Some(right) = right_operands.pop() {
+            text.extend(self.find_text_made_of_own_path(right)?);
+        }
+        Some(text)
+    }
+
+    fn find_own_path_operand(&self, expression: ExprId) -> Option<Vec<u8>> {
         let hir = self.hir;
-        let expression = self.skip_type_syntax(expression);
         match hir[expression].kind {
             ExprKind::String(text) => Some(self.queries.atom_bytes(text).to_vec()),
             ExprKind::Dot {
@@ -325,15 +343,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     known::url => write_url_of_path(&path),
                     _ => None,
                 }
-            }
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } => {
-                let mut text = self.find_text_made_of_own_path(left)?;
-                text.extend(self.find_text_made_of_own_path(right)?);
-                Some(text)
             }
             ExprKind::Template { exprs } => {
                 let mut parts = hir.template_parts(expression).iter();
@@ -409,10 +418,15 @@ impl FileLowering<'_, '_, '_, '_> {
         for directory in &directories {
             let directory = with_forward_slashes(directory.clone());
             for (place, candidate) in candidates.iter().enumerate() {
-                let parts = [directory.clone(), spelling_of(candidate)];
-                let Some(joined) = resolve_paths(&parts) else {
+                let written = spelling_of(candidate);
+                let names_folder =
+                    bun_core::strings::without_trailing_slash(&written).len() < written.len();
+                let Some(mut joined) = resolve_paths(&[directory.clone(), written]) else {
                     continue;
                 };
+                if names_folder && joined.last() != Some(&b'/') {
+                    joined.push(b'/');
+                }
                 let joined = with_separators_of_host(&joined, is_windows);
                 let seen = match directories.iter().find(|it| joined.starts_with(it)) {
                     Some(cut) => {
@@ -506,7 +520,7 @@ pub(in crate::lower) fn find_wrapper_path(
     }
 }
 
-fn directory_of_source(path: &[u8]) -> &[u8] {
+pub(super) fn directory_of_source(path: &[u8]) -> &[u8] {
     let separator = if cfg!(windows) { b'\\' } else { b'/' };
     let first = bun_core::strings::index_of_char_usize(path, separator);
     match bun_core::strings::last_index_of_char(path, separator) {
@@ -552,6 +566,73 @@ fn reads_paths_out_of_sight(bound: &Bound<'_>, decisions: &Decisions<'_>) -> boo
         || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)))
 }
 
+fn may_replace_exports(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    builtins: &ResolvedBuiltins,
+    module_name: ExprId,
+) -> bool {
+    let Parent::Expr(access) = bound.parent_of_expr(module_name) else {
+        return true;
+    };
+    let key = hir.member_key(access);
+    if !key.is_some_and(|(object, _)| object == module_name) {
+        return true;
+    }
+    match builtins.of_expr(access) {
+        Some(Resolved::Builtin(path)) if path.id == BuiltinId::ModuleObjectExports => {
+            let written = bound.outermost_type_assertion(hir, access);
+            let is_deleted = matches!(bound.parent_of_expr(written), Parent::Expr(user)
+                if matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
+            is_deleted || bound.is_stored_to(hir, access)
+        }
+        Some(Resolved::Builtin(_)) => false,
+        Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => true,
+    }
+}
+
+pub(in crate::lower) fn keeps_first_exports(
+    file: FileId,
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    compiled: &CompiledModule<'_>,
+    modules: &ModuleGraph,
+    builtins: &ResolvedBuiltins,
+) -> bool {
+    let own_module = ModuleRef::File(file);
+    let assigns_exports =
+        |statement: StmtId| matches!(hir[statement].kind, StmtKind::ExportAssign(_));
+    let mut replaces_exports = modules.keeps_module_object(own_module)
+        || modules.may_be_mocked(own_module)
+        || modules.may_be_evicted(own_module)
+        || hir.ids(hir.body).any(assigns_exports)
+        || bound.export_assignments_in_namespaces(hir).next().is_some();
+    let mut names_exports = false;
+    let analysis = &compiled.analysis;
+    for binding in analysis.bindings_read_without_expression(hir, bound) {
+        names_exports |= binding == Binding::CommonJs(CommonJsVariable::Exports);
+        replaces_exports |= binding == Binding::CommonJs(CommonJsVariable::Module);
+    }
+    for &(name, binding) in bound.ident_bindings() {
+        if analysis.decisions.is_dead_expr(name) {
+            continue;
+        }
+        match binding {
+            Binding::CommonJs(CommonJsVariable::Exports) => names_exports = true,
+            Binding::CommonJs(CommonJsVariable::Module) => {
+                replaces_exports |= may_replace_exports(hir, bound, builtins, name);
+            }
+            Binding::CommonJs(
+                CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname,
+            )
+            | Binding::Symbol(_)
+            | Binding::Arguments(_)
+            | Binding::Free => {}
+        }
+    }
+    replaces_exports && names_exports && !modules.may_be_reevaluated(file)
+}
+
 pub(in crate::lower) fn keeps_wrapper(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -587,6 +668,9 @@ pub(in crate::lower) fn keeps_wrapper(
 
 pub(in crate::lower) fn prepare(file: &mut FileLowering<'_, '_, '_, '_>) {
     file.modules.commonjs = file.compute_state();
+    if file.modules.commonjs.names_source_path {
+        file.modules.path_comparisons = file.find_path_comparisons();
+    }
 }
 
 const fn builtin_of(variable: CommonJsVariable) -> BuiltinId {
@@ -746,6 +830,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.key != FunctionKey::ModuleBody(self.file.file) && self.file.has_values_of_each_run()
     }
 
+    pub(in crate::lower) fn find_requirer_object(&mut self) -> Option<ValueId> {
+        match self.created_require_of_site {
+            Some(CreatedRequire::Variable(require)) => return Some(self.lower_expression(require)),
+            Some(CreatedRequire::Value(require)) => return Some(require),
+            Some(CreatedRequire::Callee) | None => {}
+        }
+        let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+        let stored = BindingRef::Slot(module::file_scope(self.file), slot);
+        (self.is_function_of_file_that_runs_again() && self.reaches_stored(stored))
+            .then(|| self.get_commonjs_variable(CommonJsVariable::Module))
+    }
+
     fn find_source(&self, variable: CommonJsVariable) -> VariableSource {
         match variable {
             CommonJsVariable::Module | CommonJsVariable::Require
@@ -771,10 +867,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return self.emit_value_of_module(self.file.file, builtin);
             }
             VariableSource::ModuleExports => self.get_own_exports(),
-            VariableSource::FirstExports => {
-                let first = ensure_path_variable(self.file, variable);
-                self.builder.get_module_variable(first)
-            }
             VariableSource::NoObject => return self.builder.boolean(true),
             VariableSource::ImportMetaMember(name) => {
                 let meta = self.emit_value_of_module(self.file.file, BuiltinId::ImportMeta);
@@ -816,20 +908,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_set(meta, PropertyName::Constant(key), value);
             }
             VariableSource::ModuleExports | VariableSource::NoObject => {}
-            VariableSource::FirstExports | VariableSource::ModuleVariable => {
+            VariableSource::ModuleVariable => {
                 let variable = ensure_path_variable(self.file, variable);
                 self.builder.put_module_variable(variable, value);
             }
             VariableSource::FreeName => {
                 self.emit_free_name_set(variable.name(), value);
             }
-        }
-    }
-
-    pub(super) fn store_first_exports(&mut self, first_exports: ValueId) {
-        if self.file.modules.commonjs.keeps_first_exports {
-            let variable = ensure_path_variable(self.file, CommonJsVariable::Exports);
-            self.builder.put_module_variable(variable, first_exports);
         }
     }
 
@@ -915,8 +1000,13 @@ pub(super) fn emit_entry_value(
         FunctionKey::WrappedModuleBody(lowering.file.file),
         "the wrapper's parameters are entry values of the function that holds the text"
     );
-    let index = wrapper_parameter_index(variable);
-    let value = lowering.builder.parameter(index);
+    let value = match lowering.file.is_passed_by_wrapper(variable) {
+        true => {
+            let index = wrapper_parameter_index(variable);
+            lowering.builder.parameter(index)
+        }
+        false => lowering.emit_passed_value(variable),
+    };
     lowering.expect_variable(variable, value)
 }
 

@@ -1,6 +1,6 @@
 // `o.m()` on an object whose class, prototype link and own properties code may change: what the class wrote under the name is called directly only while it still lies there, nothing hides it and the object stands below its class.
 // Each change has classes of its own for each shape of site, because a guard that has ended stays ended: between two calls, in the middle of a loop, and in front of the first call.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 let log = "", calls = 0;
 const nameOfOwn = ["o", "w", "n"].join(""), nameOfM = String.fromCharCode(109);

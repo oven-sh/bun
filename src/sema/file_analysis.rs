@@ -5,7 +5,7 @@ mod top_level_await;
 
 pub use top_level_await::has_live_await;
 use top_level_await::has_live_top_level_await;
-pub(crate) use top_level_await::has_written_top_level_await;
+pub(crate) use top_level_await::{find_first_top_level_await, has_written_top_level_await};
 
 use crate::atom::{Atom, Interner};
 use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};
@@ -13,8 +13,9 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImport,
-    JsxImportSet, JsxMode, ResolvedForm, ResolvedFrom,
+    CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
+    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlArgument, ResolvedForm, ResolvedFrom,
+    WorkerName,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -39,12 +40,19 @@ pub struct FileAnalysis<'s> {
     alternatives: &'s [ImportSpecifier],
     paths_from_own_directory: &'s [ExprId],
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
-    names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    names_of_workers: &'s [WorkerName],
     pub paths_of_changed_files: &'s [ChangedPath],
+    pub module_relative_reads: &'s [(ExprId, Atom)],
+    pub caller_relative_reads: &'s [CallerRelativeRead],
+    pub known_load_names: &'s [(ExprId, Atom)],
+    pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
-    pub asked_of_other_files: &'s [(Atom, Atom)],
-    pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub names_out_of_data_files: &'s [(Atom, ExprId)],
+    pub other_file_queries: &'s [(Atom, Atom)],
+    pub data_file_queries: &'s [(Atom, Atom)],
+    pub own_export_queries: &'s [Atom],
+    pub names_from_data_files: &'s [(Atom, ExprId, bool)],
+    pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
+    pub options_of_resolves_with_unread_folders: &'s [ExprId],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
@@ -73,6 +81,13 @@ impl FileAnalysis<'_> {
         self.jsx_imports.contains(JsxImport::JsxDev)
     }
 
+    pub fn known_load_names_at(&self, argument: ExprId) -> impl Iterator<Item = Atom> {
+        let names = self.known_load_names;
+        let names = &names[names.partition_point(|it| it.0 < argument)..];
+        let names = names.iter().take_while(move |it| it.0 == argument);
+        names.map(|it| it.1)
+    }
+
     pub fn alternatives_of<'a>(&'a self, specifier: &'a ImportSpecifier) -> &'a [ImportSpecifier] {
         match *specifier {
             ImportSpecifier::OneOf(range) => {
@@ -96,10 +111,10 @@ impl FileAnalysis<'_> {
         index.ok().map(|index| answers[index].1)
     }
 
-    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&ImportSpecifier> {
+    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&WorkerName> {
         let names = self.names_of_workers;
-        let index = names.binary_search_by_key(&argument, |&(argument, _)| argument);
-        index.ok().map(|index| &names[index].1)
+        let index = names.binary_search_by_key(&argument, |it| it.argument);
+        index.ok().map(|index| &names[index])
     }
 
     pub fn find_key_stored_in_cache(&self, key: ExprId) -> Option<&ImportSpecifier> {
@@ -170,6 +185,16 @@ pub fn analyze_file<'s>(
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
     analyze::run(hir, options, inputs, &file, atoms, arena)
+}
+
+pub fn bind_file<'s>(
+    hir: &mut File<'s>,
+    options: BindOptions,
+    inputs: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    analyze::bind(hir, options, inputs, atoms, arena)
 }
 
 pub struct AnalyzedAgain<'s> {

@@ -1,4 +1,4 @@
-// COUNTER: FieldsLeftSlotByDelete >= 1
+// COUNTER: FieldsEvictedByDelete >= 1
 type R = { x?: number; y: number };
 function use(p: R): string {
   return (p.x ?? 10) + p.y + ":" + Object.keys(p).join();

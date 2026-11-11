@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Kept(fn) { this.fn = fn; }
+# function Emitter() { this.events = {}; }
+# Emitter.prototype.on = function (name, fn) { var kept = new Kept(fn); if (!this.events[name]) this.events[name] = kept; else if (!this.events[name].fn) this.events[name].push(kept); else this.events[name] = [this.events[name], kept]; return this; };
+# Emitter.prototype.emit = function (name, a) { var l = this.events[name]; if (!l) return false; if (l.fn) return l.fn(a), true; for (var i = 0; i < l.length; i++) l[i].fn(a); return true; };
+# var e = new Emitter(), total = 0;
+# e.on("one", function (n) { total += n; }); e.on("two", function (n) { total += n; }); e.on("two", function (n) { total -= n >> 1; });
+# function turn(t) { total = t & 7; for (var i = 0; i < 16; i++) { e.emit("one", i); e.emit("two", i); } return total & 1023; }
+# print(turn(1)); print(turn(2));
+# -- end of source
+# Under a name lies one record or a list of them, and Link holds both of the read. One question cannot tell the two, and asked for both at once it tells nothing. The loop asks the value for its length and its elements under an index: that use lies within what is held, so it narrows it: the value is asked in front of the turns whether it is a list.
+# f5 = emit
+# RUN(HELD): link held accesses mechanisms=all
+# HELD: read f5 v{{*}} proven=undefined|null|L0|Array
+# The turns are built twice behind that one question, typed and as written.
+# RUN(FORM): walk f5 mechanisms=all
+# FORM-LABEL: code f5:Body
+# FORM-NOT: testedType=L0|Array
+# FORM: = TypeTest {{*}} testedType=Array
+# FORM-NOT: testedType=L0|Array
+# FORM: frequency=Rare isLoopHead=true
+# FORM: isInLoop=true isLoopHead=true

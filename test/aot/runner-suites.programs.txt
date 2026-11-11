@@ -3,15 +3,18 @@
 # Most of it is what an executable refuses on purpose, as `bun build --compile` does too:
 #   a query string in an import path (?raw ?url, ?worker in a require(), import.meta.glob's `query`) . code that a path computed at run time names . plugins of the run time . a fixture in TypeScript with a type error
 #   (one such fixture stands behind the 110 lines of "ES decorators lowering matrix > .ts") . the words of a syntax error or of a failed resolution, which are the checker's.
+#   Such a fixture too: `catch (e) { e.name }` in a .ts file: TS18046 (two of css-loader.test.ts, one of import-meta-glob.test.ts).
 # The faults among them: CSS modules . hoisted mocks and coverage with import.meta.glob . `.cjs` for `.cts` inside node_modules . import.meta.glob as a value (plain's --compile too).
 test/js/bun/css/css-loader.test.ts: css module exports > :local and :global
 test/js/bun/css/css-loader.test.ts: css module exports > CSS the bundler only warns about doesn't throw
+test/js/bun/css/css-loader.test.ts: css module exports > a file that was deleted after it was resolved
 test/js/bun/css/css-loader.test.ts: css module exports > a module without classes or ids
 test/js/bun/css/css-loader.test.ts: css module exports > classes and ids, wherever they appear
 test/js/bun/css/css-loader.test.ts: css module exports > composes
 test/js/bun/css/css-loader.test.ts: css module exports > composes cycle that the exported class is not part of
 test/js/bun/css/css-loader.test.ts: css module exports > import, import(), require()
 test/js/bun/css/css-loader.test.ts: css module exports > names depend on the path relative to the working directory
+test/js/bun/css/css-loader.test.ts: css module: a composes chain too deep for the stack is an error
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?init instantiates a WebAssembly module
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline in import.meta.glob and static imports returns a URL that fetch() can read
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on a file that cannot be read
@@ -51,22 +54,12 @@ test/js/bun/resolve/resolve.test.ts: require() of a file written after its direc
 test/js/bun/resolve/resolve.test.ts: tsconfig paths skip `.d.ts` substitutions > a `.d.ts`-only alias with no real module still reports the original specifier
 test/js/bun/resolve/resolve.test.ts: wildcard exports with extensionless target > explicit-extension wildcard target does not double-probe extensions
 test/js/bun/resolve/resolve.test.ts: wildcard exports with extensionless target > truly missing subpath still errors
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { as: "other" }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { eager: !1, exhaustive: !0, caseSensitive: !!1 }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { import: "not an identifier" }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: "?x", import: "setup" }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: "?x=1" }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: "x=1" }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { "a b": "c&d/é~!*'()" } }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { "k=": "v=;,?:@$-_.|`^#+%", empty: "", zero: 0, no: false } }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { big: 1e21, neg: -0, small: 1e-7 } }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { minus: -1, plus: +2, not: !0 } }
-test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { x: 1, y: "z", b: true, f: 1.5 } }
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a module that calls it is not restored from the transpiler cache
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a module whose call couldn't be replaced isn't restored from the cache either
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a pattern or base that is too long
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > feature detection succeeds in modules whose calls are replaced
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a CommonJS module > an eager call throws when it is reached, and the others are replaced
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a CommonJS module > feature detection around an eager call takes the fallback
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a virtual module from a plugin
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > names > that no import path can have are skipped: { import: 'default' }
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > names > that no import path can have are skipped: { import: 'default', eager: true }
@@ -408,3 +401,10 @@ trims test/bundler/compile-corrupted-embed.test.ts: doesn't crash at startup whe
 ~ test/bundler/compile-asset-streams.test.ts: files embedded with --asset --aot > are served in ranges
 test/bundler/compile-node-compile-cache.test.ts: NODE_COMPILE_CACHE is ignored by compiled executables and honored by bun
 test/bundler/compile-sourcemap-internal.test.ts: compile --sourcemap remaps stack frames to original line:col
+# fake-timers.test.ts. `delete Date.prototype.constructor` throws in an executable: built-in objects are read-only, as docs/compiler/compatibility.mdx says.
+test/js/bun/test/fake-timers/fake-timers.test.ts: the functions useFakeTimers() replaces > useRealTimers() doesn't crash after Date.prototype.constructor was deleted
+# These give a child 50 ms to be killed in. harness/children-under-aot.ts gives every child that it compiles two minutes: nothing of --aot.
+test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawn({ timeout }) armed under fake timers survives useRealTimers()
+test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawn({ timeout }) kills the child while fake timers are active
+test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawnSync({ timeout }) times out while fake timers are active
+test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > child_process.spawnSync({ timeout }) times out while fake timers are active

@@ -67,7 +67,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 let function_type = self.find_class_function_type(class);
                 self.intern_checked(Type::function(function_type))
             }
-            ShapeKind::Function(signatures) => match self.find_function_type(signatures) {
+            ShapeKind::Function(signatures) => match self.find_function_type(signatures.declared) {
                 Some(function_type) => self.intern_checked(Type::function(function_type)),
                 None => Mapped::checked(TypeTable::FUNCTION),
             },
@@ -82,6 +82,12 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Class(class) => {
                 let layout = self.class_type_layout(class, ty);
                 self.map_object(ty, Some(layout))
+            }
+            ShapeKind::ConstructorFunctionInstance(function) => {
+                match self.declare_constructor_function_layout(function) {
+                    Some(layout) => Mapped::expected(self.fragment.types.intern_layout(layout)),
+                    None => Mapped::UNKNOWN,
+                }
             }
             ShapeKind::Object => {
                 let layout = self.object_type_layout(ty);

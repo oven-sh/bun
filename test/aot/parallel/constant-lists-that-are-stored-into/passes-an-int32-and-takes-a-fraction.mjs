@@ -1,0 +1,1 @@
+function grow(k) { const list = [2147483646, 0, 0, 0]; for (let i = 0; i < 4; i++) list[i & 1]++; const halves = [0, 0, 0, 0]; for (let i = 0; i < 4; i++) halves[i & 3] += k / 2; return list.join() + ' ' + halves.join(); } console.log(grow(1), grow(3));

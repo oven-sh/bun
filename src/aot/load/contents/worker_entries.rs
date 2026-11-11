@@ -51,6 +51,7 @@ pub(crate) struct WorkerStart {
     pub name: ImportSpecifier,
     pub form: WorkerNameForm,
     pub place: PlaceOfName,
+    pub is_on_trust: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -189,6 +190,30 @@ fn begins_with_scheme(text: &[u8]) -> bool {
     text[0].is_ascii_alphabetic() && text[..end].iter().all(is_of_scheme)
 }
 
+fn decode_relative_url(url: &[u8]) -> Option<Vec<u8>> {
+    let end = strings::index_of_any(url, b"?#").unwrap_or(url.len());
+    let mut rest = &url[..end];
+    let mut path = Vec::with_capacity(rest.len());
+    while let [byte, following @ ..] = rest {
+        rest = following;
+        if *byte != b'%' {
+            path.push(*byte);
+            continue;
+        }
+        let [high, low, following @ ..] = rest else {
+            return None;
+        };
+        let digit = |digit: u8| (digit as char).to_digit(16);
+        let decoded = (digit(*high)? * 16 + digit(*low)?) as u8;
+        if matches!(decoded, b'/' | b'\\' | b'%' | b'?' | b'#') || decoded.is_ascii_control() {
+            return None;
+        }
+        path.push(decoded);
+        rest = following;
+    }
+    is_plain_relative_path(&path).then_some(path)
+}
+
 fn is_plain_relative_path(text: &[u8]) -> bool {
     let (Some(&first), Some(&last)) = (text.first(), text.last()) else {
         return false;
@@ -262,6 +287,7 @@ impl ContentsScan<'_, '_> {
             name,
             form,
             place: PlaceOfName::Elsewhere,
+            is_on_trust: false,
         });
     }
 
@@ -744,33 +770,41 @@ impl ContentsScan<'_, '_> {
             self.add_preloads(construction, options);
         }
         let (name, form) = self.find_name_given_to_worker(argument);
-        let is_text_put_together = self.add_code_given_to_worker(argument, options, &name);
+        let is_code_known = self.add_code_given_to_worker(argument, options, &name);
         let callee = hir.skip_type_assertions(hir[call].callee);
         let builtin = self.find_builtin_that_may_be_named(callee);
         let is_of_web = builtin.is_some_and(|builtin| {
             Some(table::canonical_id(builtin)) == worker_builtins().constructor
         });
         let is_told_to_evaluate = options.is_some_and(|it| self.is_told_to_evaluate(it));
-        let may_be_out_of_sight = is_told_to_evaluate || self.may_be_out_of_sight(&name);
-        if !is_of_web && may_be_out_of_sight && !is_text_put_together {
-            self.found
-                .node_workers_out_of_sight
-                .push(NodeWorkerOutOfSight {
-                    at: NodeData::Expr(construction),
-                    is_told_to_evaluate,
-                });
+        let is_name_in_sight = form == WorkerNameForm::OwnFile || !self.may_be_out_of_sight(&name);
+        let may_be_out_of_sight = is_told_to_evaluate || !is_name_in_sight;
+        match (may_be_out_of_sight, is_code_known) {
+            (true, true) => self.found.known_code_workers.push(construction),
+            (true, false) if !is_of_web => {
+                self.found
+                    .node_workers_out_of_sight
+                    .push(NodeWorkerOutOfSight {
+                        at: NodeData::Expr(construction),
+                        is_told_to_evaluate,
+                    });
+            }
+            (false, _) if !is_of_web => self.found.named_node_workers.push(construction),
+            _ => {}
         }
         if self.is_inline_worker_source(&name) {
             self.found.starts_worker_out_of_sight = true;
             return;
         }
-        self.found.starts_worker_out_of_sight |= self.may_be_out_of_sight(&name);
+        let is_on_trust = self.is_worker_named_on_trust(argument, form);
+        self.found.starts_worker_out_of_sight |= !is_name_in_sight || is_on_trust;
         self.found.worker_starts.push(WorkerStart {
             at: construction,
             name_node: argument,
             name,
             form,
             place: PlaceOfName::Constructor,
+            is_on_trust,
         });
     }
 
@@ -817,6 +851,7 @@ impl ContentsScan<'_, '_> {
                     name: ImportSpecifier::Constant(text),
                     form: WorkerNameForm::AsWritten,
                     place: PlaceOfName::Preload,
+                    is_on_trust: false,
                 });
             }
         }
@@ -842,7 +877,7 @@ impl ContentsScan<'_, '_> {
             return (name, WorkerNameForm::EmbeddedFile(site as u32));
         }
         let name = match analysis.find_name_of_worker(argument) {
-            Some(&name) => name,
+            Some(found) => found.name,
             None => match self.find_constant_text(argument) {
                 Some(text) => ImportSpecifier::Constant(text),
                 None => analysis.decisions.specifier(argument),
@@ -851,10 +886,19 @@ impl ContentsScan<'_, '_> {
         if name == ImportSpecifier::Unknown
             && let ExprKind::New(call) = hir[hir.skip_type_assertions(argument)].kind
             && self.find_constructor_called(call) == Some(Constructor::Url)
-            && let Some((_, name)) = self.find_file_named_by_own_url(call)
+            && let Some((_, name)) = self.find_file_by_url(call)
         {
             let name = ImportSpecifier::Constant(name);
             return (name, WorkerNameForm::FromOwnFolder);
+        }
+        let mut names = analysis.alternatives_of(&name).iter();
+        if names.any(|name| *name == ImportSpecifier::Unknown) {
+            if self.spells_own_file(argument) {
+                return (ImportSpecifier::Unknown, WorkerNameForm::OwnFile);
+            }
+            if is_in_node_modules(self.request.path) {
+                return (ImportSpecifier::Unknown, WorkerNameForm::AsWritten);
+            }
         }
         let form = match analysis.find_resolved_form(argument) {
             Some(form) => WorkerNameForm::Resolved(form),
@@ -862,6 +906,66 @@ impl ContentsScan<'_, '_> {
             None => WorkerNameForm::AsWritten,
         };
         (name, form)
+    }
+
+    fn is_worker_named_on_trust(&self, argument: ExprId, form: WorkerNameForm) -> bool {
+        let &FinishedFile {
+            bound, analysis, ..
+        } = self.request;
+        match analysis.find_name_of_worker(argument) {
+            Some(found) => found.is_on_trust,
+            None => {
+                let names_own_folder = matches!(
+                    form,
+                    WorkerNameForm::OwnFile | WorkerNameForm::FromOwnFolder
+                );
+                names_own_folder && bound.import_meta_may_be_modified()
+            }
+        }
+    }
+
+    pub(super) fn look_at_path_stored(&mut self, op: Option<BinOp>, target: ExprId) {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let target = hir.skip_type_assertions(target);
+        let Some((
+            object,
+            MemberKey::Name(known::meta_dir | known::meta_dirname | known::meta_filename),
+        )) = hir.member_key(target)
+        else {
+            return;
+        };
+        let is_parameter = matches!(bound.binding(hir.skip_type_assertions(object)), Binding::Symbol(symbol)
+            if matches!(bound.symbol(symbol).decls, [Decl::Param(_)]));
+        let is_stored = !matches!(op, Some(BinOp::Nullish | BinOp::Or));
+        self.found.stores_path_of_parameter |= is_parameter && is_stored;
+    }
+
+    fn spells_own_file(&self, written: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        if bound.writes_import_meta_path() {
+            return false;
+        }
+        let follow = |written: ExprId| {
+            let written = hir.skip_type_assertions(written);
+            let is_stored_again = matches!(hir[written].kind, ExprKind::Ident(_))
+                && (self.find_symbol_read(written))
+                    .is_some_and(|symbol| !bound.is_stable_binding(symbol));
+            match is_stored_again {
+                true => written,
+                false => self.find_value_under_name(written),
+            }
+        };
+        let mut passed = Vec::new();
+        let mut value = follow(written);
+        while let ExprKind::Call(call) | ExprKind::New(call) = hir[value].kind
+            && self.spells_same_file(call)
+            && let Some(given) = hir.ids(hir[call].args).next()
+            && !passed.contains(&value)
+        {
+            passed.push(value);
+            value = follow(given);
+        }
+        self.names_own_url(value)
     }
 
     fn is_inline_worker_source(&self, name: &ImportSpecifier) -> bool {
@@ -947,22 +1051,29 @@ impl ContentsScan<'_, '_> {
     }
 
     fn find_file_named_by_own_url(&self, call: CallId) -> Option<(ExprId, Atom)> {
+        let (written, name) = self.find_file_by_url(call)?;
+        let text = self.find_constant_text(written)?;
+        let text = self.request.atoms.bytes(text);
+        is_plain_relative_path(text).then_some((written, name))
+    }
+
+    fn find_file_by_url(&self, call: CallId) -> Option<(ExprId, Atom)> {
         let &FinishedFile {
             hir, bound, atoms, ..
         } = self.request;
         let mut arguments = hir.ids(hir[call].args);
         let (written, base) = (arguments.next()?, arguments.next()?);
-        if !self.names_own_url(base) || bound.import_meta_may_be_modified() {
+        if !self.names_own_url(base) || bound.writes_import_meta_path() {
             return None;
         }
-        let text = self.find_constant_text(written)?;
-        let bytes = atoms.bytes(text);
-        if !is_plain_relative_path(bytes) {
-            return None;
-        }
-        let name = match bytes.starts_with(b"./") {
-            true => text,
-            false => atoms.intern(&[&b"./"[..], bytes].concat()),
+        let text = match self.find_constant_text(written) {
+            Some(text) => atoms.bytes(text).to_vec(),
+            None => self.find_text(written, &mut Vec::new())?,
+        };
+        let path = decode_relative_url(&text)?;
+        let name = match path.starts_with(b"./") {
+            true => atoms.intern(&path),
+            false => atoms.intern(&[&b"./"[..], &path].concat()),
         };
         Some((written, name))
     }

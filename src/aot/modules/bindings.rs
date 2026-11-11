@@ -140,6 +140,7 @@ pub struct RequiredName {
     pub asked_by: Option<ExportStatement>,
     pub is_found_unless_mocked: bool,
     pub drops_export_if_absent: bool,
+    pub is_requested_by_star_export: bool,
 }
 
 impl RequiredName {
@@ -150,6 +151,7 @@ impl RequiredName {
             asked_by: None,
             is_found_unless_mocked: false,
             drops_export_if_absent: false,
+            is_requested_by_star_export: false,
         }
     }
 }
@@ -163,6 +165,41 @@ pub struct ModuleRequest {
     pub kind: ModuleRequestKind,
     pub completes: bool,
     pub is_hoisted: bool,
+    pub star_place: u32,
+}
+
+pub const NO_STAR_PLACE: u32 = u32::MAX;
+
+pub(super) fn list_in_order_of_stars(requests: &[ModuleRequest]) -> Vec<ModuleRequest> {
+    let stars = requests.iter();
+    let mut stars: Vec<&ModuleRequest> =
+        stars.filter(|it| it.star_place != NO_STAR_PLACE).collect();
+    stars.sort_by_key(|it| it.star_place);
+    let mut is_mentioned = vec![false; stars.len()];
+    let mut listed = Vec::with_capacity(requests.len() + stars.len());
+    let mut next = 0;
+    for request in requests {
+        if request.star_place == NO_STAR_PLACE {
+            listed.push(*request);
+            continue;
+        }
+        let rank = stars.partition_point(|it| it.star_place < request.star_place);
+        is_mentioned[rank] = true;
+        if rank != next {
+            listed.push(ModuleRequest {
+                is_star_export: false,
+                is_dynamic_star_export: false,
+                star_place: NO_STAR_PLACE,
+                ..*request
+            });
+            continue;
+        }
+        while next < stars.len() && is_mentioned[next] {
+            listed.push(*stars[next]);
+            next += 1;
+        }
+    }
+    listed
 }
 
 impl ModuleRequest {
@@ -175,6 +212,7 @@ impl ModuleRequest {
             kind: ModuleRequestKind::Import,
             completes: true,
             is_hoisted: false,
+            star_place: NO_STAR_PLACE,
         }
     }
 

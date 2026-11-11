@@ -88,8 +88,8 @@ for (const line of aotRunEveryLibraryModule()) console.log(line);
   expect(built.exitCode).toBe(0);
 
   const { stdout, stderr, exitCode } = await run([executable], cwd, env);
-  // "AOT: f12 at 34:5: what a variable holds is not of the type that the compiler has proven of it."
-  expect(stderr).not.toContain("AOT: f");
+  // "bun: internal AOT error: type check failed at node:path:34:5 (join)"
+  expect(stderr).not.toContain("internal AOT error");
   expect(exitCode).toBe(0);
   const ran = stdout.trimEnd().split("\n");
   expect(ran.filter(line => line.includes(" "))).toEqual([]);

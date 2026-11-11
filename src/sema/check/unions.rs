@@ -109,6 +109,16 @@ impl Growth {
     pub(super) const MIN_MEMBERS: usize = 8;
 }
 
+pub(super) const MANY_MEMBERS: usize = 16;
+
+#[derive(Copy, Clone)]
+pub(super) struct Loss {
+    pub(super) from: TypeId,
+    pub(super) at: usize,
+    pub(super) name: Atom,
+    pub(super) key: TypeId,
+}
+
 /// A member of a union that's being merged, with the data `CompareTypes` looks at first.
 #[derive(Copy, Clone)]
 struct Ranked<'p> {
@@ -503,6 +513,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_ex(types, true)
     }
 
+    pub(super) fn has_many_members(&self, ty: TypeId) -> bool {
+        matches!(self.data(ty), TypeData::Union(members) if members.len() >= MANY_MEMBERS)
+    }
+
     /// `merge_constrained`: true if `T & P1 | T & P2` reduces to `T`. It doesn't for intersections created without
     /// inspecting `T`'s constraint, which lack `ObjectFlagsIsConstrainedTypeVariable`.
     fn union_ex(&mut self, types: &[TypeId], merge_constrained: bool) -> TypeId {
@@ -544,9 +558,17 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(known) = self.recent_unions.get(a.0, b.0) {
                 return (TypeId(known), false);
             }
+            let is_large = self.has_many_members(a) || self.has_many_members(b);
+            if is_large && let Some(&known) = self.unions_of_large_unions.get(&(a, b)) {
+                self.recent_unions.put(a.0, b.0, known.0);
+                return (known, false);
+            }
             let (union, inspected) = self.create_union(types, merge_constrained);
             if inspected != Inspected::Constraints {
                 self.recent_unions.put(a.0, b.0, union.0);
+                if is_large {
+                    self.unions_of_large_unions.insert((a, b), union);
+                }
             }
             return (union, inspected == Inspected::Members);
         }
@@ -1513,6 +1535,11 @@ impl<'p, 's> Checker<'p, 's> {
             true => self.union_as_object(apparent),
             false => apparent,
         };
+        if self.class_members_by_name.is_on
+            && let Some(found) = self.first_unit_property_of_unlisted_class(apparent)
+        {
+            return found;
+        }
         let members = self.members(apparent)?;
         for prop in &members.shape().props {
             let prop_type = self.type_of_prop(prop, members.mapper);
@@ -1638,7 +1665,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_class_instance(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => self.files().flags(*target).contains(SymFlags::CLASS),
+            TypeData::Synth(shape) => shape.constructed_by.0.is_some(),
+            _ => false,
+        }
     }
 
     /// The result of `filter` for the union `ty` of `members`, of which `kept` remain.
@@ -1914,16 +1945,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `addTypesToIntersection`, `addTypeToIntersection`. Preserves the order, which matters for overloads, and only
     /// removes duplicates. Returns `found` plus what the types add.
-    fn add_types_to_intersection(
+    fn add_types_to_intersection<const IS_LONG: bool>(
         &mut self,
         set: &mut Flat,
+        members: &mut FxHashSet<TypeId>,
         mut found: MembersByFlags,
         types: &[TypeId],
     ) -> MembersByFlags {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
-                found = self.add_types_to_intersection(set, found, inner);
+                found = if IS_LONG {
+                    self.add_types_to_intersection::<true>(set, members, found, inner)
+                } else if inner.len() > set.inline_size() {
+                    members.clear();
+                    members.extend(set.iter().copied());
+                    self.add_types_to_intersection::<true>(set, members, found, inner)
+                } else {
+                    self.add_types_to_intersection::<false>(set, members, found, inner)
+                };
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
@@ -1951,7 +1991,11 @@ impl<'p, 's> Checker<'p, 's> {
                 if member != ty {
                     found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
-                if !set.contains(&member) {
+                let is_new = match IS_LONG {
+                    true => members.insert(member),
+                    false => !set.contains(&member),
+                };
+                if is_new {
                     set.push(member);
                 }
                 found.add(one);
@@ -2034,7 +2078,11 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let mut set = Flat::with_capacity(types.len());
-        let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
+        let (mut members, found) = (FxHashSet::default(), MembersByFlags::default());
+        let found = match types.len() > set.inline_size() {
+            true => self.add_types_to_intersection::<true>(&mut set, &mut members, found, types),
+            false => self.add_types_to_intersection::<false>(&mut set, &mut members, found, types),
+        };
         let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {

@@ -43,6 +43,7 @@ pub(crate) mod socket;
 #[path = "webcore.rs"]
 pub(crate) mod webcore;
 
+pub(crate) mod aot_source_compression;
 pub(crate) mod bake;
 pub(crate) mod cli;
 pub(crate) mod shell;

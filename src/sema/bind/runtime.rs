@@ -157,7 +157,7 @@ pub enum BindingInitializer {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct FunctionFlags: u8 {
+    pub struct FunctionFlags: u16 {
         const HAS_PARAMETER_EXPRESSIONS = 1 << 0;
         const USES_ARGUMENTS = 1 << 1;
         const HAS_DIRECT_EVAL = 1 << 2;
@@ -166,6 +166,7 @@ bitflags::bitflags! {
         const HANDS_ARGUMENTS_ON = 1 << 5;
         const READS_ELEMENTS_OF_ARGUMENTS = 1 << 6;
         const MAY_READ_ABOVE_ARGUMENTS = 1 << 7;
+        const MENTIONS_OWN_NAME = 1 << 8;
     }
 }
 

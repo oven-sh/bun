@@ -41,7 +41,6 @@
 # console.log(said);
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: @Int32 = GetSlot {{*}}key="tag"
 # CHECK: = PropGet {{*}}key="tag"
@@ -51,12 +50,10 @@
 # CHECK: = StrictEq {{*}}form=Int32AndValue
 # CHECK-NOT: = Box
 # RUN(READ): walk f2 mechanisms=all
-# REQUIRES(READ): entries-of-bun
 # READ-LABEL: code f2:Body
 # READ-NOT: = TypeTest {{*}}testedType=i32
 # READ: @JSValue
 # READ: Switch
 # RUN(WITHHELD): walk f1 mechanisms=-Guesses
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD: [[read]]: {{*}} = PropGet {{*}}key="tag"
 # WITHHELD: Switch [[read]]

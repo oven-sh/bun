@@ -1,0 +1,49 @@
+# Bun.spawn(["true"], { ipc: message => message }); setImmediate(() => {})
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+layout L0 fields=[{key="ipc" declared={type=anything}}, {key="stdout" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setImmediate" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v5 = Builtin builtin=Bun
+    v6 = PropGet v5 key="spawn"
+    v7 = Convert v6 declared={type=builtin(BunSpawn) flags=[IsExpected]}
+    v8 = String string="true"
+    v9 = NewArray v8 contents=anything
+    v10 = NewObject layout=L0
+    v11 = NewClosure function=f4
+    PropDefine v10, v11 key="ipc"
+    v13 = FinishObject v10
+    v14 = Call v7, v5, v9, v13 calleeKey="spawn" calleeName="Bun.spawn"
+    Return v14
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="scan" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="toJSON" module=m2 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m0 kind=Arrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,0 +1,15 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(list, n) { for (var i = 0; i < n; i++) list[i] = i & 3; return list.join(); } };
+# var words = []; for (var k = 0; k < 16; k++) words.push("w" + k);
+# var wholes = []; for (var k = 0; k < 16; k++) wholes.push(k);
+# var halves = []; for (var k = 0; k < 16; k++) halves.push(k + 0.5);
+# print(T[key](wholes, 16), T[key](words, 16), T[key](halves, 16));
+# -- end of source
+# The front of turns that STORE whole numbers asks whether the list holds boxed elements and may be written: int32s or values, it is one store. The check of the lane held such a list to int32s alone, which is
+# more than the front had asked: a list of texts that is filled with whole numbers stopped, and nothing was wrong: nine stored programs of 18,189. A list that is stored into is held to the very question of its front.
+# RUN: run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
+# CHECK: 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3
+# CHECK-NEXT: exited with 0
+# RUN(COUNT): compile UnrolledLoopTypeProofsChecked mechanisms=all testing=CheckBoundsInEmittersOnly
+# COUNT: statistic UnrolledLoopTypeProofsChecked 48

@@ -201,6 +201,10 @@ pub struct VirtualMachine {
     pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
+    // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
+    // `bun_runtime` is a forward dep of this crate; stored type-erased and
+    // cast back by the `bun_runtime` consumers.
+    pub node_fs: Option<*mut c_void>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
@@ -3045,6 +3049,10 @@ pub struct RuntimeHooks {
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<bun_boringssl::c::OwnedSslCtx>,
+    /// Lazy `NodeFS` creation.
+    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
+    /// the type-erased pointer. Stored back into `vm.node_fs`.
+    pub create_node_fs: fn(vm: &mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `bun_aot::module_keys::name_of_text` of the text behind an object URL.
@@ -5083,6 +5091,21 @@ impl VirtualMachine {
         }
     }
 
+    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
+    /// field is stored type-erased and the lazy boxed allocation goes through
+    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
+    /// returned pointer back to `*mut node::fs::NodeFS`.
+    #[inline]
+    pub fn node_fs(&mut self) -> *mut c_void {
+        if let Some(existing) = self.node_fs {
+            return existing;
+        }
+        let hooks = runtime_hooks().expect("runtime hooks not installed");
+        let new = (hooks.create_node_fs)(self);
+        self.node_fs = Some(new);
+        new
+    }
+
     /// Returns the next debugger async-task id, or 0 when no debugger is attached.
     pub(crate) fn next_async_task_id(&mut self) -> u64 {
         let Some(debugger) = self.debugger.as_deref_mut() else {
@@ -5526,6 +5549,10 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                    // Not found on disk. Look it up in the executable.
+                    if core::mem::take(&mut self.transpiler.resolver.resolves_for_code_from_disk) {
+                        continue;
+                    }
                     if !retry_on_not_found {
                         if let Some(chai) = self.resolve_chai_next_to_vitest(
                             normalized_specifier,
@@ -5675,6 +5702,18 @@ impl VirtualMachine {
             ResultUnion::Success(chai) => Some(chai),
             _ => None,
         }
+    }
+
+    /// Whether the importing module at `source` is a file that the executable loaded from disk.
+    fn is_code_from_disk(&self, source: &[u8]) -> bool {
+        let graph = self.standalone_module_graph;
+        let program = graph.and_then(|graph| graph.compiled_program());
+        program.is_some_and(|program| {
+            program.allows_code_from_disk
+                && !program.preserves_source_paths
+                && bun_paths::is_absolute(source)
+                && !bun_options_types::standalone_path::is_bun_standalone_file_path(source)
+        })
     }
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with
@@ -5909,6 +5948,10 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
+        if mode == ResolveMode::Esm {
+            jsc_vm.transpiler.resolver.resolves_for_code_from_disk =
+                jsc_vm.is_code_from_disk(source_utf8.slice());
+        }
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
@@ -5917,6 +5960,9 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
+        if mode == ResolveMode::Esm {
+            jsc_vm.transpiler.resolver.resolves_for_code_from_disk = false;
+        }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -7158,6 +7204,9 @@ impl VirtualMachine {
                 }
                 // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
                 let top_path = frames[top].source_url.to_utf8();
+                if crate::compiled_program::is_build_relative_path(top_path.slice()) {
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
@@ -8266,6 +8315,7 @@ struct OnResolveScope<'a> {
     vm: &'a VirtualMachine,
     was_in_on_resolve: bool,
     custom_dir_paths: Option<&'static [bun_core::String]>,
+    resolves_for_code_from_disk: bool,
 }
 
 impl<'a> OnResolveScope<'a> {
@@ -8274,6 +8324,9 @@ impl<'a> OnResolveScope<'a> {
             vm,
             was_in_on_resolve: vm.is_in_on_resolve.replace(true),
             custom_dir_paths: vm.as_mut().transpiler.resolver.custom_dir_paths.take(),
+            resolves_for_code_from_disk: core::mem::take(
+                &mut vm.as_mut().transpiler.resolver.resolves_for_code_from_disk,
+            ),
         }
     }
 }
@@ -8281,7 +8334,9 @@ impl<'a> OnResolveScope<'a> {
 impl Drop for OnResolveScope<'_> {
     fn drop(&mut self) {
         self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
-        self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
+        let resolver = &mut self.vm.as_mut().transpiler.resolver;
+        resolver.custom_dir_paths = self.custom_dir_paths;
+        resolver.resolves_for_code_from_disk = self.resolves_for_code_from_disk;
     }
 }
 

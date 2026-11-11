@@ -1063,6 +1063,8 @@ impl TypedArrayType {
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
     pub owns_buffer: bool,
+    /// The bytes are from [`bun_sys::private_copy::map`].
+    pub is_private_copy: bool,
 }
 
 /// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
@@ -1078,6 +1080,7 @@ impl MarkedArrayBuffer {
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
+            is_private_copy: false,
             buffer: ArrayBuffer::from_array_buffer(ctx, value),
         }
     }
@@ -1094,12 +1097,29 @@ impl MarkedArrayBuffer {
             // An empty boxed slice has no backing allocation (dangling ptr):
             // nothing to own, so `destroy()` must not free it.
             owns_buffer: !bytes.is_empty(),
+            is_private_copy: false,
             buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
+        }
+    }
+
+    /// `copy` is what [`bun_sys::private_copy::map`] returned for `len` bytes.
+    pub fn from_private_copy(copy: core::ptr::NonNull<u8>, len: usize) -> MarkedArrayBuffer {
+        MarkedArrayBuffer {
+            owns_buffer: true,
+            is_private_copy: true,
+            buffer: ArrayBuffer {
+                len,
+                byte_len: len,
+                typed_array_type: JSType::Uint8Array,
+                ptr: copy.as_ptr(),
+                ..Default::default()
+            },
         }
     }
 
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
+        is_private_copy: false,
         buffer: ArrayBuffer::EMPTY,
     };
 
@@ -1114,6 +1134,13 @@ impl MarkedArrayBuffer {
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
+            if self.is_private_copy {
+                bun_sys::private_copy::unmap(
+                    self.buffer.ptr.cast(),
+                    core::ptr::without_provenance_mut(self.buffer.byte_len),
+                );
+                return;
+            }
             // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
             unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
         }
@@ -1126,6 +1153,18 @@ impl MarkedArrayBuffer {
         // copy the descriptor and project a mutable slice.
         self.owns_buffer = false;
         let mut buf = self.buffer;
+        if self.is_private_copy {
+            let len = buf.byte_len;
+            // SAFETY: the mapping is live, and only the deallocator unmaps it.
+            return unsafe {
+                JSValue::create_buffer_with_ctx(
+                    global,
+                    core::ptr::NonNull::from(buf.byte_slice_mut()),
+                    core::ptr::without_provenance_mut(len),
+                    bun_sys::private_copy::unmap,
+                )
+            };
+        }
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 }

@@ -346,9 +346,10 @@ fn nothing_names_what_a_placeholder_declares() {
     let second =
         "import { First } from \"./index\";\nconsole.log(2);\nexport class Second extends First {}";
     let files = [
+        ("main.ts", "import { start } from \"./page\";\nstart();"),
         (
-            "main.ts",
-            "import { Second } from \"./three\";\nconsole.log(new Second());",
+            "page.ts",
+            "import { Second } from \"./three\";\nexport const start = () => console.log(new Second());",
         ),
         ("three/index.ts", barrel),
         ("three/first.ts", first),
@@ -1178,7 +1179,8 @@ fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
 fn skipped_star_barrel_still_imports_listed_side_effects() {
     let manifest = r#"{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": ["./polyfill.js", "./listed.js"] }"#;
     let linked = link_successfully(&[
-        ("main.js", "import { a } from \"lib\";\na();\n"),
+        ("main.js", "import \"./page.js\";\n"),
+        ("page.js", "import { a } from \"lib\";\na();\n"),
         ("node_modules/lib/package.json", manifest),
         (
             "node_modules/lib/index.js",
@@ -1198,8 +1200,8 @@ fn skipped_star_barrel_still_imports_listed_side_effects() {
         let path = program.strings.get(program.modules[module.index()].path);
         BStr::new(path.rsplit_str("/").next().unwrap_or_default()).to_string()
     };
-    let main = (0..program.modules.len()).find(|&index| name_of(ModuleId::new(index)) == "main.js");
-    let requests = &program.modules[main.expect("the entry point has a record")].requests;
+    let page = (0..program.modules.len()).find(|&index| name_of(ModuleId::new(index)) == "page.js");
+    let requests = &program.modules[page.expect("the importer has a record")].requests;
     let requested: Vec<String> = requests.iter().map(|it| name_of(it.target)).collect();
     assert_eq!(requested, ["polyfill.js", "a.js", "listed.js"]);
 }

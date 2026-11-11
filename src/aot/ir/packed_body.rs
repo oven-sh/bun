@@ -1,8 +1,8 @@
 use super::generated::Body;
+use bun_core::strings;
 use core::mem::MaybeUninit;
 
 const PACKED: u32 = u32::MAX;
-const HEAD_WORDS: usize = 2;
 const WORDS_PER_CONTROL: usize = 4;
 
 const LENGTHS: [usize; 4] = [0, 1, 2, 4];
@@ -106,18 +106,16 @@ fn pack_group(words: &[u32; WORDS_PER_CONTROL], bytes: &mut [u8], at: usize) -> 
     (control, at + usize::from(group.bytes))
 }
 
-fn pack_words(words: &[u32], scratch: &mut Vec<u8>) -> Vec<u32> {
+pub(super) fn pack_words(before: &[u32], words: &[u32], scratch: &mut Vec<u8>) -> Vec<u32> {
     let control_bytes = words.len().div_ceil(WORDS_PER_CONTROL);
     let most = control_bytes * (1 + BYTES_OF_FULL_GROUP) + 8;
     if scratch.len() < most {
         scratch.resize(most, 0);
     }
     let scratch = &mut scratch[..];
-    let mut at = control_bytes;
     let (full, rest) = words.as_chunks::<WORDS_PER_CONTROL>();
-    for (number, group) in full.iter().enumerate() {
-        (scratch[number], at) = pack_group(group, scratch, at);
-    }
+    let (controls, data) = scratch.split_at_mut(control_bytes);
+    let mut at = control_bytes + strings::pack_words(full, &mut controls[..full.len()], data);
     if !rest.is_empty() {
         let mut last = [0; WORDS_PER_CONTROL];
         last[..rest.len()].copy_from_slice(rest);
@@ -125,8 +123,8 @@ fn pack_words(words: &[u32], scratch: &mut Vec<u8>) -> Vec<u32> {
     }
     let end = at.next_multiple_of(4);
     scratch[at..end].fill(0);
-    let mut packed = Vec::with_capacity(HEAD_WORDS + end / 4);
-    packed.push(PACKED);
+    let mut packed = Vec::with_capacity(before.len() + 1 + end / 4);
+    packed.extend_from_slice(before);
     packed.push(u32::try_from(words.len()).expect("a body fits 32 bits"));
     let fours = scratch[..end].as_chunks().0;
     packed.extend(fours.iter().map(|&four| u32::from_le_bytes(four)));
@@ -139,28 +137,63 @@ fn bytes_of(words: &[u32]) -> &[u8] {
     unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 4) }
 }
 
-impl Body {
-    fn is_packed(&self) -> bool {
-        self.code.first() == Some(&PACKED)
-    }
+pub(super) fn unpacked_count(packed: &[u32]) -> usize {
+    packed[0] as usize
+}
 
+pub(super) fn unpack_words<'a>(packed: &[u32], to: &'a mut [MaybeUninit<u32>]) -> &'a [u32] {
+    debug_assert_eq!(to.len(), unpacked_count(packed));
+    let bytes = bytes_of(&packed[1..]);
+    let (controls, mut data) = bytes.split_at(to.len().div_ceil(WORDS_PER_CONTROL));
+    let (full, rest) = to.as_chunks_mut::<WORDS_PER_CONTROL>();
+    let (full_controls, rest_control) = controls.split_at(full.len());
+    let (unpacked, used) = strings::unpack_words(full_controls, data, full);
+    data = &data[used..];
+    for (&control, words) in full_controls[unpacked..].iter().zip(&mut full[unpacked..]) {
+        let group = &GROUPS[usize::from(control)];
+        let unpacked = match data.first_chunk() {
+            Some(bytes) => unpack_group(group, bytes),
+            None => unpack_group(group, &padded(data)),
+        };
+        words[0].write(unpacked[0]);
+        words[1].write(unpacked[1]);
+        words[2].write(unpacked[2]);
+        words[3].write(unpacked[3]);
+        data = &data[usize::from(group.bytes)..];
+    }
+    if let &[control] = rest_control {
+        let unpacked = unpack_group(&GROUPS[usize::from(control)], &padded(data));
+        rest.write_copy_of_slice(&unpacked[..rest.len()]);
+    }
+    // SAFETY: the full groups and the rest are all of `to`, and each word of them was written.
+    unsafe { to.assume_init_ref() }
+}
+
+fn packed_words(code: &[u32]) -> Option<&[u32]> {
+    match code {
+        [PACKED, packed @ ..] => Some(packed),
+        _ => None,
+    }
+}
+
+impl Body {
     pub fn word_count(&self) -> usize {
-        match self.is_packed() {
-            true => self.code[1] as usize,
-            false => self.code.len(),
-        }
+        packed_words(&self.code).map_or(self.code.len(), unpacked_count)
     }
 
     pub fn pack(&mut self, scratch: &mut Vec<u8>) {
-        assert!(!self.is_packed(), "a body begins with the head of a block");
-        let packed = pack_words(&self.code, scratch);
+        assert!(
+            packed_words(&self.code).is_none(),
+            "a body begins with the head of a block"
+        );
+        let packed = pack_words(&[PACKED], &self.code, scratch);
         if packed.len() < self.code.len() {
             self.code = packed;
         }
     }
 
     pub fn unpack(&mut self) {
-        if !self.is_packed() {
+        if packed_words(&self.code).is_none() {
             return;
         }
         let count = self.word_count();
@@ -173,31 +206,10 @@ impl Body {
 
     pub fn unpack_into<'a>(&self, to: &'a mut [MaybeUninit<u32>]) -> &'a [u32] {
         assert_eq!(to.len(), self.word_count());
-        if !self.is_packed() {
-            return to.write_copy_of_slice(&self.code);
+        match packed_words(&self.code) {
+            Some(packed) => unpack_words(packed, to),
+            None => to.write_copy_of_slice(&self.code),
         }
-        let bytes = bytes_of(&self.code[HEAD_WORDS..]);
-        let (controls, mut data) = bytes.split_at(to.len().div_ceil(WORDS_PER_CONTROL));
-        let (full, rest) = to.as_chunks_mut::<WORDS_PER_CONTROL>();
-        let (full_controls, rest_control) = controls.split_at(full.len());
-        for (&control, words) in full_controls.iter().zip(full) {
-            let group = &GROUPS[usize::from(control)];
-            let unpacked = match data.first_chunk() {
-                Some(bytes) => unpack_group(group, bytes),
-                None => unpack_group(group, &padded(data)),
-            };
-            words[0].write(unpacked[0]);
-            words[1].write(unpacked[1]);
-            words[2].write(unpacked[2]);
-            words[3].write(unpacked[3]);
-            data = &data[usize::from(group.bytes)..];
-        }
-        if let &[control] = rest_control {
-            let unpacked = unpack_group(&GROUPS[usize::from(control)], &padded(data));
-            rest.write_copy_of_slice(&unpacked[..rest.len()]);
-        }
-        // SAFETY: the full groups and the rest are all of `to`, and each word of them was written.
-        unsafe { to.assume_init_ref() }
     }
 }
 

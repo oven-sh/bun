@@ -646,7 +646,7 @@ impl FileLowering<'_, '_, '_, '_> {
         fields.finish()
     }
 
-    fn find_base_class(&mut self, derived: ClassRef) -> Option<ClassRef> {
+    pub(in crate::lower) fn find_base_class(&mut self, derived: ClassRef) -> Option<ClassRef> {
         let extends = self.hir[derived.class].extends.some()?;
         let ty = self.queries.expression_type(extends).ok()?;
         match self.queries.type_shape(ty).ok()?.kind {

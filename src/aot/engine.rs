@@ -41,7 +41,7 @@ pub use crate::ir::generated::{
     FormBytesRecord, FunctionNameRecord, InternalErrorRecord, LayoutNameRecord, LocaleUseRecord,
     MissingFunctionRecord, MissingModuleRecord, ModuleBytesRecord, ObfuscatedSiteRecord,
     SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, Witness,
-    WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
+    WorkerEntryRecord, WorkerStartRecord, WorkerURLStartRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, OutputOptions,
@@ -490,7 +490,7 @@ result_records! {
     locales_used: LocaleUseRecord = LocalesUsed,
     worker_entries: WorkerEntryRecord = WorkerEntries,
     worker_starts_without_name: WorkerStartRecord = WorkerStartsWithoutName,
-    worker_urls: WorkerURLRecord = WorkerURLs,
+    worker_starts_from_urls: WorkerURLStartRecord = WorkerStartsFromURLs,
     missing_library_functions: MissingFunctionRecord = MissingLibraryFunctions,
     missing_library_modules: MissingModuleRecord = MissingLibraryModules,
     obfuscated_sites: ObfuscatedSiteRecord = ObfuscatedSites,

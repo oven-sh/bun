@@ -168,8 +168,12 @@ impl FileLowering<'_, '_, '_, '_> {
             | ScopeSlot::Class(ClassSlot::DecoratorState | ClassSlot::PrivateMethod(_)) => {
                 DeclaredType::untyped()
             }
-            ScopeSlot::Callee | ScopeSlot::Class(ClassSlot::ClassObject) => {
-                DeclaredType::from_compiler(TypeTable::FUNCTION)
+            ScopeSlot::Callee => DeclaredType::from_compiler(TypeTable::FUNCTION),
+            ScopeSlot::Class(ClassSlot::ClassObject) => {
+                let ScopeKind::Class(class) = self.bound.scopes[scope.idx()].kind else {
+                    unreachable!("a class slot belongs to the scope of its class");
+                };
+                self.class_object_position(class)
             }
             ScopeSlot::CommonJs(variable) => {
                 if variable == CommonJsVariable::Exports

@@ -8,10 +8,7 @@
 # sink(written(limits[0] | 0), spread(limits[0] | 0));
 # -- end of source
 # Every object that `state` holds is written out with a whole number in each of its four fields, so a read of one is a load and the sum stays on integers.
-# `other` never meets `state`. But a record is one layout for each set of names, and the literal that begins with a spread is born as that layout with fields that may be
-# absent: the fields of the layout are then undefined | int for every reader, the loop of `written` asks each of its three reads whether it found anything, and the sum runs on
-# numbers: 51 instructions a turn alone, 88 beside the spread. Where the spread has names of its own nothing of that happens.
-# TODO: Link: a literal that begins with a spread shares the layout, and what is proven of its fields, with the record that is written out under the same names
+# `other` never meets `state`. But a record is one layout for each set of names, so the literal that begins with a spread has to fill every field: it copies an object of its own layout.
 # f1 = written
 # RUN: walk f1 mechanisms=all
 # CHECK-NOT: GetSlotOrUndefined

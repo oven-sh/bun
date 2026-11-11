@@ -91,7 +91,7 @@ impl StdAllocator {
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
-pub use mimalloc_arena::{ChunkOfBlocks, MimallocArena};
+pub use mimalloc_arena::{BlockChunk, FreeInProgress, MimallocArena};
 pub type Arena = MimallocArena;
 mod baby_vec;
 pub use baby_vec::BabyVec;

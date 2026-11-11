@@ -37,9 +37,12 @@ const kinds: Record<string, string> = {
   calls: `alone --scene sceneOfUnlikeCallSites --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   changes: `alone --scene sceneOfAChange --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   loops: `alone --scene sceneOfALoop --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  layouts: `alone --scene sceneOfLayouts,sceneOfLayouts,sceneOfFieldLoops,sceneOfCallbacksInLoops,sceneOfAllocationsBeforeLoops,sceneOfCoroutines,sceneOfCoroutines,sceneOfLinkedObjects,sceneOfClassChains,sceneOfNumberLoops,sceneOfNumberLoops,sceneOfCallChains,sceneOfStringWork --together 10 --changes-draws 20 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
+  // Many scenes in one program use the same names of fields, so that what the compiler learns in one part concerns the others.
+  mixed: `alone --scene sceneOfLayouts,sceneOfLayouts,sceneOfFieldLoops,sceneOfFieldLoops,sceneOfCallbacksInLoops,sceneOfAllocationsBeforeLoops,sceneOfCoroutines,sceneOfLinkedObjects,sceneOfClassChains,sceneOfNumberLoops,sceneOfCallChains,sceneOfStringWork,sceneOfALoop,sceneOfMakers,sceneOfDispatch,sceneOfUnlikeCallSites,sceneOfAChange,sceneOfParsedData,sceneOfStepsOnOneObject,sceneOfTypedPlaces,sceneOfIdioms --scenes-in-one 7 --changes-draws 10 --checks-proofs 25 --writes-straight 10 --shuffles-costs 25`,
   // How one file loads another: rows of two or three deeds as test runs, by run-loads.ts. The test files are the worlds, and each is held against `bun test` by itself.
   loads: `loads --rows 2,3 --in-company 50`,
-  crowds: `alone --scene sceneOfASingleDeed,sceneOfASingleDeed,sceneOfALoop,sceneOfALoop,sceneOfALoop,sceneOfTypedPlaces,sceneOfHiddenEffects --together 10 --changes-draws 30 --checks-proofs 25 --writes-straight 10 --shuffles-costs 50`,
+  crowds: `alone --scene sceneOfASingleDeed,sceneOfLayouts,sceneOfFieldLoops,sceneOfALoop,sceneOfALoop,sceneOfALoop,sceneOfTypedPlaces,sceneOfHiddenEffects --together 10 --changes-draws 30 --checks-proofs 25 --writes-straight 10 --shuffles-costs 50`,
   few: `${drawn} --count 1 --together 50 --few-to-a-build 100 --families 25 --slow 10 --ignores-type-errors 100 --compares-errors --options-of-the-project 30 --writes-straight 50`,
   many: `${drawn} ${rewritten} --count 400 --together 32 --scenes-of-every-size 50 --families 50 --collects 100 --writes-straight 50`,
   packages: `${drawn} ${rewritten} --count 4,12,40 --splits 100 --collects 100`,

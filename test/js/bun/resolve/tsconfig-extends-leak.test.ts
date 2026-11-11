@@ -15,6 +15,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
+import { unsupported as aotUnsupported } from "../../../aot/harness/compiler";
 
 // The allocation log is only emitted in builds with Environment.allow_assert
 // (debug/ReleaseSafe). Release CI lanes skip this; the gate runs under bun bd
@@ -205,7 +206,7 @@ describe("tsconfig 'extends' decorator options", () => {
   });
 
   // The compiled program of --debug-aot takes its decorator options through another reader of tsconfig.json.
-  test.concurrent(
+  test.concurrent.skipIf(!!aotUnsupported)(
     "experimentalDecorators set in the extending file survives for a compiled program",
     async () => {
       const { stdout, stderr, exitCode } = await run(

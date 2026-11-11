@@ -94,3 +94,103 @@ test.skipIf(isWindows)(
   },
   120_000,
 );
+
+// Same pending pipe at exit, but the stream is first read off the Subprocess
+// before the pipe reaches EOF. That detaches the pipe from the Subprocess, so
+// its EOF no longer re-evaluates the wrapper: the getter has to.
+//
+// The background `cat` holds stdout and stderr open until its stdin ends. Bun
+// closes that stdin while it handles the child's exit, after the read that has
+// to find the pipes still open, so no timing is involved. (A shell gives a
+// background job /dev/null for stdin, hence the dup.)
+test.skipIf(isWindows).concurrent.each([
+  {
+    name: "stdout after exited",
+    body: `const p = Bun.spawn({ cmd, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+           await p.exited;
+           recordHeld();
+           return text(p.stdout);`,
+    output: ["out\n"],
+    held: [1, 1, 1],
+  },
+  {
+    name: "stderr after exited",
+    body: `const p = Bun.spawn({ cmd, stdin: "pipe", stdout: "ignore", stderr: "pipe" });
+           await p.exited;
+           recordHeld();
+           return text(p.stderr);`,
+    output: ["err\n"],
+    held: [1, 1, 1],
+  },
+  {
+    name: "stderr, then stdout after exited",
+    body: `const p = Bun.spawn({ cmd, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+           await p.exited;
+           recordHeld();
+           return text(p.stderr, p.stdout);`,
+    output: ["err\n", "out\n"],
+    held: [1, 1, 1],
+  },
+  {
+    name: "stdout, then stderr in onExit",
+    body: `const { promise, resolve } = Promise.withResolvers();
+           const onExit = p => {
+             recordHeld();
+             resolve([p.stdout, p.stderr]);
+           };
+           Bun.spawn({ cmd, stdin: "pipe", stdout: "pipe", stderr: "pipe", onExit });
+           return text(...(await promise));`,
+    output: ["out\n", "err\n"],
+    held: [1, 1, 1],
+  },
+  {
+    // With under three entries, the streams are created when the child exits,
+    // before any callback that could look at the Subprocess.
+    name: "node:child_process with two stdio entries",
+    body: `await once(spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe"] }), "close");
+           return [];`,
+    output: [],
+    held: [],
+  },
+])("Subprocess is released when a pending stream is first read after exit: $name", async ({ body, output, held }) => {
+  const script = /* js */ `
+    import { heapStats } from "bun:jsc";
+    import { spawn } from "node:child_process";
+    import { once } from "node:events";
+    const cmd = ["/bin/sh", "-c", "exec 3<&0; cat <&3 & echo out; echo err >&2"];
+    const text = (...streams) => Promise.all(streams.map(stream => stream.text()));
+    const strong = () => heapStats().protectedObjectTypeCounts.Subprocess ?? 0;
+
+    // Recorded just before the first read: 0 here would mean that the pipe was
+    // no longer pending, which is not the case under test.
+    const held = [];
+    const recordHeld = () => held.push(strong());
+
+    async function run() {
+      ${body}
+    }
+
+    const outputs = [];
+    for (let i = 0; i < 3; i++) outputs.push(await run());
+    console.log(JSON.stringify({ outputs, held, leaked: strong() }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect({ stdout, exitCode }).toEqual({
+    stdout: JSON.stringify({ outputs: [output, output, output], held, leaked: 0 }) + "\n",
+    exitCode: 0,
+  });
+});

@@ -502,9 +502,18 @@ impl Subprocess<'_> {
         }
         self.observable_getters
             .set(self.observable_getters.get() | ObservableGetter::Stderr);
-        let exited = self.has_exited();
+        self.readable_to_js(&self.stderr, cx)
+    }
+
+    /// Ownership of the pipe or its buffered output moves to the returned value, which the
+    /// wrapper caches; `out` itself is closed from here on.
+    fn readable_to_js(&self, out: &JsCell<Readable>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         // The stream is the script's that reads the property.
-        self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
+        let result = out.with_mut(|s| s.to_js(&cx.js_thread()));
+        // A detached pipe no longer reaches `on_close_io`, so after the process has exited
+        // this may be the last chance to release the wrapper.
+        self.update_has_pending_activity();
+        result
     }
 
     pub(crate) fn get_stdin(&self, cx: &mut JsScope<'_>) -> JSValue {
@@ -526,12 +535,7 @@ impl Subprocess<'_> {
         }
         self.observable_getters
             .set(self.observable_getters.get() | ObservableGetter::Stdout);
-        // NOTE: ownership of internal buffers is transferred to the JSValue, which
-        // gets cached on JSSubprocess (created via bindgen). This makes it
-        // re-accessable to JS code but not via `self.stdout`, which is now `.closed`.
-        let exited = self.has_exited();
-        // The stream is the script's that reads the property.
-        self.stdout.with_mut(|s| s.to_js(&cx.js_thread(), exited))
+        self.readable_to_js(&self.stdout, cx)
     }
 
     pub(crate) fn async_dispose(

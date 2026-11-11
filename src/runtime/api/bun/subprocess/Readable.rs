@@ -211,7 +211,7 @@ impl Readable {
         }
     }
 
-    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match self {
             // should only be reachable when the entire output is buffered.
             #[cfg(any(target_os = "linux", target_os = "android"))]

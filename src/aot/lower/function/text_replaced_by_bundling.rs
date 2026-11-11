@@ -455,18 +455,35 @@ impl Finder<'_, '_> {
         }
     }
 
-    fn would_be_reference(&self, expression: ExprId, mut kept: ExprId) -> bool {
+    fn would_be_reference(&self, expression: ExprId, kept: ExprId) -> bool {
         let hir = self.hir;
-        let Parent::Expr(parent) = self.bound.parent_of_expr(expression) else {
-            return false;
+        let mut asserted = expression;
+        let user = loop {
+            let Parent::Expr(parent) = self.bound.parent_of_expr(asserted) else {
+                return false;
+            };
+            if hir.type_assertion_operand(parent).is_none() {
+                break hir[parent].kind;
+            }
+            asserted = parent;
         };
-        let user = hir[parent].kind;
         let is_callee = matches!(
             user,
-            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == expression
+            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == asserted
         );
+        let is_operand_of_delete_or_typeof = matches!(
+            user,
+            ExprKind::Unary {
+                op: UnOp::Delete | UnOp::Typeof,
+                ..
+            }
+        );
+        if !is_callee && !is_operand_of_delete_or_typeof {
+            return false;
+        }
+        let mut kept = hir.skip_type_assertions(kept);
         while let Some(operand) = self.find_operand_printed(kept) {
-            kept = operand;
+            kept = hir.skip_type_assertions(operand);
         }
         match (hir[kept].kind, user) {
             (ExprKind::Dot { .. } | ExprKind::Index { .. }, ExprKind::Unary { op, .. }) => {

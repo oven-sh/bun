@@ -2202,6 +2202,9 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `printList`
     fn print_list(&mut self, id: NodeId, list: &'a Node) -> Doc<'a> {
         let alignment_before = std::mem::take(&mut self.alignment_before_list);
+        // The first item of a list that starts its parent item shares the parent marker's line.
+        let is_on_parent_marker_line =
+            list.previous == NONE && self.kind(list.parent) == Some(Kind::ListItem);
         let uses_alternate_marker = self.uses_alternate_marker(id);
         let is_git_diff_friendly = self.is_git_diff_friendly(list);
         // Prettier's `requiredIndent`: before indented code, the content has to be indented deeper than the code.
@@ -2240,8 +2243,7 @@ impl<'a> Printer<'a, '_> {
             };
             index += 1;
             let node = printer.node(item)?;
-            // Such an item's content starts one space after the marker, and the rest is code (CommonMark 5.2, rule 2).
-            // Prettier pads its marker like the others' (`100.  `), which adds a space to the code.
+            // Prettier's padding (`100.  `) is code here: content starts one space after the marker (CommonMark 5.2).
             let starts_with_indented_code =
                 is_indented_code(printer.original, printer.tree, node.first_child);
             if (list.is_aligned || (printer.is_mdx && list.checked != 0))
@@ -2263,19 +2265,24 @@ impl<'a> Printer<'a, '_> {
                         prefix.resize(prefix.len() + trailing, b' ');
                         (min_indent - prefix.len()).min(3)
                     }
-                    // Prettier's trailing spaces (`1.        x`) would be code here, so the marker gets leading
-                    // spaces only: at most three with those before a nested list, since four make it indented code.
+                    // Prettier's trailing spaces (`1.        x`) would be code here: leading spaces instead.
                     true => {
-                        // Only the last item decides whether the code after the list joins it. If three cannot reach
-                        // it because the marker got narrower, the number as written is wide enough.
-                        if node.next == NONE && prefix.len() + 3 < min_indent {
+                        let room = match is_on_parent_marker_line && node.previous == NONE {
+                            // They would move the parent's content column.
+                            true => 0,
+                            // Four, with those before a nested list, make the marker indented code.
+                            false => 3usize.saturating_sub(alignment_before),
+                        };
+                        // Only the last item keeps the following code out of the list.
+                        if node.next == NONE && prefix.len() + room < min_indent {
+                            // Its number as written was wide enough.
                             let digits = ordered_item_digits(printer.original, printer.tree, item);
                             prefix
                                 .splice(0..prefix.len().saturating_sub(2), digits.iter().copied());
                         }
                         min_indent
                             .saturating_sub(alignment_before + prefix.len())
-                            .min(3usize.saturating_sub(alignment_before))
+                            .min(room)
                     }
                 };
                 prefix.splice(0..0, std::iter::repeat_n(b' ', leading));
@@ -2337,6 +2344,7 @@ impl<'a> Printer<'a, '_> {
                 printer.alignment_before_list = alignment;
             }
             let doc = printer.indented(alignment, |printer| printer.print(child));
+            printer.alignment_before_list = 0;
             Some(docs![
                 spaces(alignment),
                 align_with_spaces(alignment as u32, doc)

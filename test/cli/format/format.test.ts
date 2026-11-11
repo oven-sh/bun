@@ -2019,9 +2019,9 @@ describe.concurrent("bun fmt", () => {
     // space is part of the code. Prettier 3.9.9 pads the marker of such an ordered item to a multiple of `tabWidth`
     // like the others' (`100.  `), so the code gains a space. Before an indented code block that follows the list, it
     // pads the marker with trailing spaces (`1.        x`). Bun pads that marker with leading spaces, at most three
-    // together with the indentation of a nested list, and the last item keeps its number as written if three are not
-    // enough. A later child of such an item goes in the column after the marker and one space, where Prettier puts it
-    // on its second run. Each row is the text, Bun's output, Prettier's, the flags of both, and the extension of the
+    // together with the indentation of a nested list and none on the line of the parent's marker, and the last item
+    // keeps its number as written if those are not enough. A later child of such an item goes in the column after the
+    // marker and one space, where Prettier puts it on its second run. Each row is the text, Bun's output, Prettier's, the flags of both, and the extension of the
     // file. `Bun.markdown.html` checks the meaning, in the oxfmt flavor too.
     test.each([
       ["99. a\n99.       x\n", "99. a\n100.       x\n", "99. a\n100.        x\n", []],
@@ -2047,6 +2047,18 @@ describe.concurrent("bun fmt", () => {
         "- a\n\n    10.      x\n\n       y\n",
         "- a\n\n    10.      x\n\n       y\n",
         "- a\n\n    10.        x\n\n       y\n",
+        ["--tab-width=4"],
+      ],
+      [
+        "- 1.      x\n  100. b\n\n      code\n",
+        "- 1.      x\n  2.   b\n\n      code\n",
+        "- 1.        x\n  2.   b\n\n      code\n",
+        [],
+      ],
+      [
+        "- a\n\n  <!-- prettier-ignore -->\n  - b\n\n1.  a\n\n   10.      x\n\n      b\n",
+        "- a\n\n  <!-- prettier-ignore -->\n    - b\n\n 1.    a\n\n   10.      x\n\n      b\n",
+        "- a\n\n  <!-- prettier-ignore -->\n    - b\n\n 1.    a\n\n 2.         x\n\n      b\n",
         ["--tab-width=4"],
       ],
       ["1. a\n1.      x\n", "1.  a\n1.      x\n", "1.  a\n1.       x\n", [], "mdx"],

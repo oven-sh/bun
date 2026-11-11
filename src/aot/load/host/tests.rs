@@ -313,13 +313,24 @@ fn with_host_under<R>(
     in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     then: impl FnOnce(&Fixture<'_, '_>) -> R,
 ) -> R {
+    let entry_points = [&b"main.ts"[..], b"tool", b"with.dots.in-its-name"].map(<[u8]>::to_vec);
+    let names = entry_points.to_vec();
+    with_host_of_entry_points(aot, root, in_memory_files, (&entry_points, names), then)
+}
+
+fn with_host_of_entry_points<R>(
+    aot: AotOptions,
+    root: &[u8],
+    in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
+    (entry_points, entry_point_names): (&[Vec<u8>], Vec<Vec<u8>>),
+    then: impl FnOnce(&Fixture<'_, '_>) -> R,
+) -> R {
     let mut load = LoadOptions::new(root.to_vec());
     load.in_memory_files = in_memory_files;
     load.runs_tests = aot.runs_tests;
     load.externals.packages = vec![b"claimed-package".to_vec(), b"react".to_vec()];
     load.loaders.push((b".vue".to_vec(), Loader::Tsx));
     load.loaders.sort_by(|a, b| a.0.cmp(&b.0));
-    let entry_points = [&b"main.ts"[..], b"tool", b"with.dots.in-its-name"].map(<[u8]>::to_vec);
     let options = Options {
         aot: &aot,
         executable_identity: ExecutableIdentity([0; 16]),
@@ -331,7 +342,7 @@ fn with_host_under<R>(
         paths: PathOptions {
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: root.to_vec(),
-            entry_point_names: entry_points.to_vec(),
+            entry_point_names,
             entry_point_file_names: Vec::new(),
         },
         removable: RemovableOptions::default(),
@@ -434,6 +445,35 @@ fn file_named_as_in_the_executable_is_looked_for_under_its_native_path() {
             fixture.resolve(b"file:///$bunfs/root/job.mjs", b"/\0/C:/project/main.ts");
             let looked_for = fixture.provider.looked_for.lock();
             assert_eq!(*looked_for, [b"/C:/project/job.mjs".to_vec()]);
+        },
+    );
+}
+
+#[test]
+fn file_that_two_written_entry_points_name_goes_by_the_name_of_the_first() {
+    let entry_points = [&b"main.ts"[..], b"./main.ts", b"tool.ts"].map(<[u8]>::to_vec);
+    let names = [&b"first.ts"[..], b"second.ts", b"third.ts"].map(<[u8]>::to_vec);
+    let files = in_memory_files_of(&[("main.ts", ""), ("tool.ts", ""), ("other.ts", "")]);
+    let written = (&entry_points[..], names.to_vec());
+    with_host_of_entry_points(
+        AotOptions::default(),
+        b"/project",
+        files,
+        written,
+        |fixture| {
+            let path_of = |file: &[u8]| fixture.host.find_path_at_run_time(file, None);
+            assert_eq!(
+                path_of(b"/project/main.ts"),
+                Ok(b"/$bunfs/root/first.ts".to_vec())
+            );
+            assert_eq!(
+                path_of(b"/project/tool.ts"),
+                Ok(b"/$bunfs/root/third.ts".to_vec())
+            );
+            assert_eq!(
+                path_of(b"/project/other.ts"),
+                Ok(b"/$bunfs/root/other.ts".to_vec())
+            );
         },
     );
 }

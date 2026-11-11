@@ -170,6 +170,8 @@ pub(crate) struct LoadHost<'a> {
     modules_with_queries: ModulesWithQueries,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    /// For each of `entry_point_paths`, the place of the first written entry point that goes by it.
+    places_of_entry_points: Vec<usize>,
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
@@ -205,20 +207,41 @@ enum ServedBy {
     Disk,
 }
 
+/// The path that the disk has for a written entry point, and the path that it is written by.
+fn paths_of_entry_point(disk: &Disk, options: &Options<'_>, entry_point: &[u8]) -> [Vec<u8>; 2] {
+    let is_case_sensitive = disk.is_case_sensitive();
+    let path = from_argument(&options.code.working_directory, entry_point);
+    let on_disk = to_path(&disk.realpath(&path), is_case_sensitive).into_owned();
+    [on_disk, to_path(&path, is_case_sensitive).into_owned()]
+}
+
 fn collect_entry_point_paths(
     disk: &Disk,
     options: &Options<'_>,
     entry_points: &[Vec<u8>],
 ) -> Vec<Vec<u8>> {
-    let is_case_sensitive = disk.is_case_sensitive();
     let mut paths = Vec::with_capacity(2 * entry_points.len());
     for entry_point in entry_points {
-        let path = from_argument(&options.code.working_directory, entry_point);
-        paths.push(to_path(&disk.realpath(&path), is_case_sensitive).into_owned());
-        paths.push(to_path(&path, is_case_sensitive).into_owned());
+        paths.extend(paths_of_entry_point(disk, options, entry_point));
     }
     paths.shared_sort_unstable();
     paths.dedup();
+    paths
+}
+
+/// The paths of `collect_entry_point_paths`, each with the place of the first entry point that goes by it.
+fn collect_entry_points_by_path(
+    disk: &Disk,
+    options: &Options<'_>,
+    entry_points: &[Vec<u8>],
+) -> Vec<(Vec<u8>, usize)> {
+    let mut paths = Vec::with_capacity(2 * entry_points.len());
+    for (place, entry_point) in entry_points.iter().enumerate() {
+        let of_entry_point = paths_of_entry_point(disk, options, entry_point);
+        paths.extend(of_entry_point.map(|path| (path, place)));
+    }
+    paths.shared_sort_unstable();
+    paths.dedup_by(|later, earlier| later.0 == earlier.0);
     paths
 }
 
@@ -365,7 +388,9 @@ impl<'a> LoadHost<'a> {
         let (disk, provider, messages) = (input.disk, input.provider, input.messages);
         let options = input.options;
         let load = &options.load;
-        let entry_point_paths = collect_entry_point_paths(disk, options, &options.entry_points);
+        let by_path = collect_entry_points_by_path(disk, options, &options.entry_points);
+        let (entry_point_paths, places_of_entry_points): (Vec<Vec<u8>>, Vec<usize>) =
+            by_path.into_iter().unzip();
         let is_binary = |path: &&Vec<u8>| {
             loader_named_by_path(&load.loaders, path).is_none()
                 && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
@@ -397,6 +422,7 @@ impl<'a> LoadHost<'a> {
             entry_points_that_run_despite_their_names,
             entry_points_by_file: collect_entry_points_by_file(options),
             entry_point_paths,
+            places_of_entry_points,
             outfile: provider.outfile().map(from_native),
             other_products: (options.aot.other_products.iter())
                 .map(|path| from_native(path))
@@ -629,15 +655,7 @@ impl<'a> LoadHost<'a> {
             return Err(0..0);
         }
         let options = self.input.options;
-        let is_written_as = |entry_point: &Vec<u8>| {
-            let written = std::slice::from_ref(entry_point);
-            let paths = collect_entry_point_paths(self.disk, options, written);
-            self.is_among(&paths, path)
-        };
-        let index = match self.is_among(&self.entry_point_paths, path) {
-            true => options.entry_points.iter().position(is_written_as),
-            false => None,
-        };
+        let index = self.find_written_entry_point(path);
         let paths = &options.paths;
         let below_root = match index {
             Some(index) => Some(paths.entry_point_names[index].clone()),
@@ -679,6 +697,15 @@ impl<'a> LoadHost<'a> {
     fn runs_despite_its_name(&self, path: &[u8]) -> bool {
         is_declaration_file_name(path)
             && self.is_among(&self.entry_points_that_run_despite_their_names, path)
+    }
+
+    /// The place of the first written entry point that goes by `path`.
+    fn find_written_entry_point(&self, path: &[u8]) -> Option<usize> {
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
+        let paths = &self.entry_point_paths;
+        let found = paths.binary_search_by(|entry| entry.as_slice().cmp(&path[..]));
+        Some(self.places_of_entry_points[found.ok()?])
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {

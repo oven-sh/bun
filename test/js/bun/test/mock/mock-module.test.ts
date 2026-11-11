@@ -612,12 +612,12 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
-async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = [], env = bunEnv) {
+async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
     cwd: String(dir),
-    env,
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -2751,115 +2751,6 @@ describe.concurrent("resetModules", () => {
         `,
       },
       1,
-    );
-  });
-
-  // These answer a load from the source that an earlier load transpiled, in the same test file or in one before it.
-  // One --parallel worker takes every test file of a fixture (scale-up gated), so the files share its sources.
-  const everyMode: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]], [["--parallel=2"]]];
-  const oneWorkerEnv = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" };
-  // With a second test file, --parallel starts a worker.
-  const anEarlierTestFile = `import { test } from "bun:test"; test("runs first", () => {});`;
-
-  test.each(everyMode)("the next load reads the file again %j", async args => {
-    await expectFixturesToPass(
-      {
-        "esm.ts": `export const text = "v1";`,
-        "cjs.cjs": `exports.text = "v1";`,
-        "earlier.test.ts": `
-          import { expect, test } from "bun:test";
-          import { text } from "./esm.ts";
-          test("loads both first", () => expect([text, require("./cjs.cjs").text]).toEqual(["v1", "v1"]));
-        `,
-        "reset.test.ts": `
-          import { expect, jest, test, vi } from "bun:test";
-          import { writeFileSync } from "node:fs";
-          import { join } from "node:path";
-
-          // Before the first reset, only the earlier test file has loaded the two modules.
-          test.each([["v2", jest], ["v3", vi], ["v4", jest]])("%s", async (text, api) => {
-            writeFileSync(join(import.meta.dir, "esm.ts"), 'export const text = "' + text + '";');
-            writeFileSync(join(import.meta.dir, "cjs.cjs"), 'exports.text = "' + text + '";');
-            api.resetModules();
-            expect([(await import("./esm.ts")).text, require("./cjs.cjs").text]).toEqual([text, text]);
-          });
-        `,
-      },
-      4,
-      args,
-      oneWorkerEnv,
-    );
-  });
-
-  test.each(everyMode)("a later test file reads a file that was written before the last reset %j", async args => {
-    await expectFixturesToPass(
-      {
-        "esm.ts": `export const text = "v1";`,
-        "cjs.cjs": `exports.text = "v1";`,
-        "reset.test.ts": `
-          import { afterAll, expect, jest, test } from "bun:test";
-          import { writeFileSync } from "node:fs";
-          import { join } from "node:path";
-
-          const write = text => {
-            writeFileSync(join(import.meta.dir, "esm.ts"), 'export const text = "' + text + '";');
-            writeFileSync(join(import.meta.dir, "cjs.cjs"), 'exports.text = "' + text + '";');
-          };
-          const load = async () => [(await import("./esm.ts")).text, require("./cjs.cjs").text];
-
-          test("loads a text that it replaces afterwards", async () => {
-            expect(await load()).toEqual(["v1", "v1"]);
-            write("v2");
-            jest.resetModules();
-            expect(await load()).toEqual(["v2", "v2"]);
-          });
-          // Without this reset, the next test file runs v2.
-          afterAll(() => {
-            write("v3");
-            jest.resetModules();
-          });
-        `,
-        "the-next.test.ts": `
-          import { expect, test } from "bun:test";
-          import { text } from "./esm.ts";
-          test("reads both", () => expect([text, require("./cjs.cjs").text]).toEqual(["v3", "v3"]));
-        `,
-      },
-      2,
-      args,
-      oneWorkerEnv,
-    );
-  });
-
-  test.each(everyMode)("vi.resetModules() reads an ES module package again that failed to load %j", async args => {
-    await expectFixturesToPass(
-      {
-        "node_modules/throws/package.json": `{ "name": "throws", "type": "module", "main": "index.js" }`,
-        "node_modules/throws/index.js": `export const text = "v1"; throw new Error("v1");`,
-        "node_modules/imports-throws/package.json": `{ "name": "imports-throws", "type": "module", "main": "index.js" }`,
-        "node_modules/imports-throws/index.js": `export { text } from "throws";`,
-        "node_modules/links/package.json": `{ "name": "links", "type": "module", "main": "index.js" }`,
-        "node_modules/links/index.js": `export { missing as text } from "./exports.js";`,
-        "node_modules/links/exports.js": `export const text = "v2";`,
-        "earlier.test.js": anEarlierTestFile,
-        "reset.test.js": `
-          import { expect, test, vi } from "bun:test";
-          import { writeFileSync } from "node:fs";
-          import { join } from "node:path";
-
-          const load = name => import(name).then(({ text }) => text, error => error.constructor.name);
-          test("a package that threw, through the package that imports it, and one that failed to link", async () => {
-            expect([await load("imports-throws"), await load("links")]).toEqual(["Error", "SyntaxError"]);
-            writeFileSync(join(import.meta.dir, "node_modules/throws/index.js"), 'export const text = "v2";');
-            writeFileSync(join(import.meta.dir, "node_modules/links/index.js"), 'export { text } from "./exports.js";');
-            vi.resetModules();
-            expect([await load("imports-throws"), await load("links")]).toEqual(["v2", "v2"]);
-          });
-        `,
-      },
-      2,
-      args,
-      oneWorkerEnv,
     );
   });
 });

@@ -76,6 +76,7 @@ pub(crate) struct NamedLoads {
     pub unknown_names_at: Vec<u32>,
     pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub written_arms_of_unknown_names: Vec<(Atom, bool)>,
+    pub followed_names: Vec<(Atom, bool)>,
     pub guessed_arms: Vec<Atom>,
     pub arms_of_makers_called_first: Vec<Atom>,
     pub files_missing_at_build_at: Vec<u32>,
@@ -1131,7 +1132,8 @@ impl ContentsScan<'_, '_> {
         let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
         let known = analysis.known_load_names_at(name);
         let known = known.filter(|it| !arms.contains(it));
-        let arms = arms.iter().copied().chain(known);
+        (names.followed_names).extend(known.map(|name| (name, requires)));
+        let arms = arms.iter().copied();
         (names.written_arms_of_unknown_names).extend(arms.map(|arm| (arm, requires)));
     }
 

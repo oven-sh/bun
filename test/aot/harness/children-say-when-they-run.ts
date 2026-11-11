@@ -68,7 +68,9 @@ function listRuns(flags: string[], stderr: string, { exitCode, signalCode }: End
   if (cutOffBy) {
     const says = `the ${flags.length ? "compiled" : "plain"} copy ${cutOffBy}: what it ran is no list of runs`;
     appendFileSync(process.env.AOT_CHILDREN_STOPPED!, says + "\n");
-    throw new Error(says + "\n" + stderr.slice(-2000));
+    // What stopped it and the stack stand in front. Behind them a sanitizer prints the memory around the fault.
+    const stop = stderr.search(/ERROR: AddressSanitizer|ASSERTION FAILED|^panic/m);
+    throw new Error(says + "\n" + (stop < 0 ? stderr.slice(-2000) : stderr.slice(stop, stop + 8000)));
   }
   const realms = new Map<string, number>();
   const numberOf = (realm: string) => realms.get(realm) ?? realms.set(realm, realms.size + 1).size;

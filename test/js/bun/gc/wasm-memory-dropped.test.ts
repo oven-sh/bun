@@ -9,14 +9,17 @@ async function run(shape: "dropped" | "ring" | "grown", options: Record<string, 
   const script = `
     const pages = 64, rounds = 256, ring = new Array(8);
     const before = process.memoryUsage.rss();
+    let peak = before;
     for (let i = 0; i < rounds; i++) {
       const memory = new WebAssembly.Memory({ initial: pages });
       let buffer = memory.buffer;
       new Uint8Array(buffer).fill(i);
       if (${shape === "grown"}) { memory.grow(1); buffer = memory.buffer; }
       if (${shape === "ring"}) ring[i & 7] = buffer;
+      peak = Math.max(peak, process.memoryUsage.rss());
     }
-    console.log("grew", Math.round((process.resourceUsage().maxRSS * 1024 - before) / 1048576), "MB");
+    // Not maxRSS: on Linux that begins at the peak of the process that spawned this one.
+    console.log("grew", Math.round((peak - before) / 1048576), "MB");
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],

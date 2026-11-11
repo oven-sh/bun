@@ -8,7 +8,7 @@ use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
 use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
-use bun_alloc::ChunkOfBlocks;
+use bun_alloc::BlockChunk;
 use std::borrow::Cow;
 use std::hint::cold_path;
 use std::marker::PhantomData;
@@ -600,8 +600,8 @@ pub struct ListBlock<'s> {
     /// In bytes.
     size: usize,
     used: usize,
-    /// `Arena::lay`. Null: the block lies by itself.
-    chunk: *mut ChunkOfBlocks,
+    /// `Arena::alloc_block`. Null: the block lies by itself.
+    chunk: *mut BlockChunk,
     arena: PhantomData<&'s Arena>,
 }
 
@@ -635,7 +635,7 @@ impl<'s> ListBlock<'s> {
         if size == 0 {
             return ListBlock::default();
         }
-        if let Some((first, chunk)) = arena.lay(size) {
+        if let Some((first, chunk)) = arena.alloc_block(size) {
             return ListBlock {
                 first: first.as_ptr().cast(),
                 size,
@@ -730,9 +730,9 @@ impl Drop for ListBlock<'_> {
         if self.first.is_null() {
             return;
         }
-        if let Some(chunk) = NonNull::new(self.chunk) {
+        if let (Some(chunk), Some(first)) = (NonNull::new(self.chunk), NonNull::new(self.first)) {
             // SAFETY: `new_in` has laid the block in it, and the arena outlives `'s`.
-            return unsafe { ChunkOfBlocks::stop_using(chunk) };
+            return unsafe { BlockChunk::free_block(chunk, first.cast(), self.size) };
         }
         let words = self.size / ListBlock::ALIGNMENT;
         // SAFETY: it is the block of `new_in`.
@@ -907,6 +907,8 @@ pub struct Lazy<'s> {
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: LazyCell<crate::node::Parents>,
+    /// `File::nearest_holder`
+    pub(crate) nearest_holders: LazyCell<Box<[crate::node::Node]>>,
     /// `File::kind`
     pub(crate) kinds: LazyCell<Box<[AtomicU16]>>,
     /// `FnId::to_node`, `ClassId::to_node`
@@ -969,6 +971,7 @@ impl<T> LazyCell<T> {
 /// The cells of every file without nodes. What's computed from such a file is the same for all of them.
 static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     parents: LazyCell::new(),
+    nearest_holders: LazyCell::new(),
     kinds: LazyCell::new(),
     owners: LazyCell::new(),
     ambient_or_type_ranges: LazyCell::new(),
@@ -4217,6 +4220,7 @@ impl<'s> File<'s> {
         // SAFETY: caller contract.
         unsafe {
             cells.parents.clear();
+            cells.nearest_holders.clear();
             cells.kinds.clear();
             cells.owners.clear();
             cells.ambient_or_type_ranges.clear();

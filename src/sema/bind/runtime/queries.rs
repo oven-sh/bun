@@ -419,6 +419,13 @@ impl Bound<'_> {
         binding.map_or(Binding::Free, |&binding| self.binding_under_goal(binding))
     }
 
+    pub fn is_named_by_export(&self, symbol: SymbolId) -> bool {
+        let binding = Binding::Symbol(symbol);
+        let references = &self.runtime.references;
+        (references.exported_bindings.iter()).any(|entry| entry.1 == binding)
+            || (references.entity_root_bindings.iter()).any(|entry| entry.1 == binding)
+    }
+
     pub fn exports_value(&self, statement: StmtId) -> bool {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::ExportExpr(statement)) != Some(SymbolId::NONE)
@@ -577,6 +584,10 @@ impl Bound<'_> {
 
     pub fn import_meta_may_be_modified(&self) -> bool {
         self.runtime.import_meta_may_be_modified
+    }
+
+    pub fn writes_import_meta_path(&self) -> bool {
+        self.runtime.writes_import_meta_path
     }
 
     #[inline]

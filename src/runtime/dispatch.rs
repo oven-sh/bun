@@ -649,8 +649,14 @@ pub(crate) fn run_task(
                 global: &JSGlobalObject = global,
                 vm: &mut VirtualMachine = vm,
             ) {
+                let test_isolation_generation = vm.test_isolation_generation;
                 // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *store }.run_from_js_thread(el.into(), global, vm.into());
+                unsafe { &mut *store }.run_from_js_thread(
+                    el.into(),
+                    global,
+                    vm.into(),
+                    test_isolation_generation,
+                );
             }
         ),
 

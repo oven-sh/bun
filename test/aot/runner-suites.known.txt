@@ -68,12 +68,23 @@ test/cli/test/isolation.test.ts: --isolate parses the source of an internal modu
 test/cli/test/isolation.test.ts: --isolate: code is generated once for the modules every file loads, however many there are
 test/cli/test/isolation.test.ts: --isolate: require(esm) caches a BunTranspiledModule SourceProvider
 test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, cached module records keep short, Latin-1 and UTF-16 names
+# The next four reset while a.ts loads, and await that the next import() reads again what a.ts imports. In a compiled run it gets what was loaded. With a flag they also ask `isolatedModuleCacheSourceType()` for a.ts in the cache of sources, and a compiled file never gets there.
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > --isolate: a module that was being transpiled at the reset is read again
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > --isolate=modules: a module that was being transpiled at the reset is read again
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > --parallel worker: a module that was being transpiled at the reset is read again
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > no flag: a module that was being transpiled at the reset is read again
+# The next three write to a file that only an earlier test file has loaded, reset, and await that the load reads it. In a compiled run, a test file's first load of a file is the compiled one.
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > --isolate: the next load reads the file again
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > --isolate=modules: the next load reads the file again
+test/cli/test/isolation.test.ts: resetModules() empties the SourceProvider cache > --parallel worker: the next load reads the file again
 # --isolate=modules runs like --isolate in a compiled run, as docs/compiler/debugging.mdx says: each test file gets a global object and builtin modules of its own.
 # One of them also writes to members that stay read-only, and one asks how often the JIT has compiled a function.
 test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the code that was compiled for the files before it
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
+# And one awaits that a test file gets the module that the file before it began to load through the loader of the global object that they share.
+test/cli/test/isolation.test.ts: --isolate: a finished file's late completions do not run in the next file > --isolate=modules: a load through the realm's own loader outlives its test file
 # With --isolate a test file can't require() another test file that imports from "vitest" and from two more files.
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it

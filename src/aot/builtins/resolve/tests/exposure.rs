@@ -668,6 +668,20 @@ fn left_of_instanceof_is_handed_to_the_method_of_the_right_where_the_program_can
             assert!(!case.resolved.hands_builtins_to_hooks_of_instanceof());
         });
     }
+    let test_script = Setup {
+        runs_tests: true,
+        ..SCRIPT
+    };
+    for (source, is_exposed) in [
+        ("process instanceof exports;", true),
+        ("process instanceof module.exports;", true),
+        ("const e = exports; process instanceof e;", true),
+        ("process instanceof Object;", false),
+    ] {
+        with_case(test_script, source, |case| {
+            assert_eq!(case.exposes(BuiltinId::Process), is_exposed, "{source}");
+        });
+    }
 }
 
 #[test]
@@ -762,6 +776,51 @@ fn in_a_test_run_a_file_notes_the_names_that_a_named_object_is_asked_for_and_doe
     ] {
         with_case(TEST_RUN, source, |case| {
             assert!(noted(case).is_empty(), "{source}")
+        });
+    }
+}
+
+#[test]
+fn replaced_member_receivers_are_exposed() {
+    const IMPORTS: &str = "import { jest, mock, spyOn, vi } from 'bun:test'; ";
+    for source in [
+        "Object.defineProperty(process, 'exit', { value() { return super.valueOf(); } });",
+        "Object.defineProperty(process, 'exit', { value() { return (() => this)(); } });",
+        "Object.defineProperty(process, 'exit', { get() { return this; } });",
+        "const g = function () { return this; }; Object.defineProperty(process, 'exit', { value: g });",
+        "Reflect.defineProperty(process, 'exit', { value() { return super.valueOf(); } });",
+        "Object.defineProperties(process, { exit: { value() { return this; } } });",
+        "Object.assign(process, { exit() { return super.valueOf(); } });",
+        "Reflect.set(process, 'exit', function () { return this; });",
+        "spyOn(process, 'exit').mockImplementation(function () { return this; });",
+        "const spy = spyOn(process, 'exit'); spy.mockImplementationOnce(function () { f(this); });",
+        "jest.spyOn(process, 'exit').mockReturnThis();",
+        "const spy = vi.spyOn(process, 'exit'); f(spy.mock.contexts[0]);",
+        "let spy; spy = spyOn(process, 'exit'); f(spy.mock.instances);",
+    ] {
+        let source = format!("{IMPORTS}{source}");
+        with_case(TEST_RUN, &source, |case| {
+            assert!(case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+    for source in [
+        "Object.defineProperty(process, 'exit', { value: 1 });",
+        "Object.defineProperty(process, 'exit', { value: () => {}, get: () => 1 });",
+        "Object.defineProperty(process, 'exit', { value() {} });",
+        "Object.defineProperty(process, 'exit', f);",
+        "Object.assign(process, { exit: 1, title() {} });",
+        "Reflect.set(process, 'exit', f);",
+        "spyOn(process, 'exit').mockImplementation(() => {});",
+        "spyOn(process, 'exit').mockImplementation(function () {});",
+        "spyOn(process, 'exit'); spyOn(f, 'exit').mockImplementation(function () { return this; });",
+        "spyOn(process, 'exit'); const spy = spyOn(f, 'exit').mockName('a'); spy.mockReturnThis();",
+        "spyOn(process, 'exit'); mock().mockImplementation(function () { return this; });",
+        "spyOn(process, 'exit'); jest.fn().mockName('a').mockImplementation(function () { return this; });",
+        "const spy = spyOn(process, 'exit'); f(spy.mock.calls, spy.mock.results, g.instances);",
+    ] {
+        let source = format!("{IMPORTS}{source}");
+        with_case(TEST_RUN, &source, |case| {
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
         });
     }
 }

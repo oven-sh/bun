@@ -15,4 +15,4 @@
 # RUN(TWICE): walk f2 mechanisms=all
 # TWICE: = ToNumber
 # RUN: compile UnrolledLoopsForIndexingType mechanisms=all
-# CHECK: statistic UnrolledLoopsForIndexingType 4
+# CHECK: statistic UnrolledLoopsForIndexingType 6

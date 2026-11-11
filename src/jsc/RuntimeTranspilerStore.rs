@@ -197,7 +197,7 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    /// Counts the times `IsolatedModuleCache` was emptied: a job dispatched under an earlier count read its file before.
+    /// Counts the times `IsolatedModuleCache` was emptied: a job scheduled under an earlier count read its file before.
     pub(crate) source_cache_clears: Cell<u32>,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
@@ -282,22 +282,23 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
+    // `test_isolation_generation` is the VM's, as it is now.
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
+        test_isolation_generation: u32,
     ) {
         let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
-        // SAFETY: as above; a scalar field, read on the JS thread.
-        let test_isolation_generation = unsafe { (*vm.as_ptr()).test_isolation_generation };
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;
         while !job.is_null() {
-            // A finished test file's loader is gone, and nothing waits for what it fetched. A `Bun.ModuleGraph` that the running file disposed rejects its import below.
+            // The swap was the finished file's exit, as in `job::complete_erased`: its fetch into a retired realm or a disposed graph is released unsettled, and no macro of it runs under the next file.
+            // A `Bun.ModuleGraph` that the running file disposed rejects its import below.
             // SAFETY: `job` is a live job popped from the intrusive queue, and its promise keeps its global object alive.
             let loader_is_gone = unsafe {
                 (*job).test_isolation_generation != test_isolation_generation
@@ -309,6 +310,7 @@ impl RuntimeTranspilerStore {
             if loader_is_gone {
                 // SAFETY: as above; released exactly once, here.
                 unsafe { self.release_unrun_job(job) };
+                // `bun test --aot` holds a compiled import until this count reaches the `jobs_scheduled` of its request.
                 self.jobs_completed += 1;
                 job = iter.next();
                 continue;
@@ -597,7 +599,7 @@ impl TranspilerJob {
                     in_standalone_executable,
                     &self.path_text,
                 );
-                // SAFETY: as above; the count is a field of the store beside its job slots, so it is not in `self`.
+                // SAFETY: as above; scalar fields of the VM and of its store, outside the job slots, so not in `self`.
                 resolved_source.from_earlier_generation = unsafe {
                     self.test_isolation_generation != (*vm).test_isolation_generation
                         || self.source_cache_clears

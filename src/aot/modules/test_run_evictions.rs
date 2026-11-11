@@ -9,6 +9,7 @@ use crate::builtins::RuntimeModule;
 use crate::load::{SourceKind, is_in_node_modules};
 use crate::test_run_report::{say_es_packages_that_mocks_name, say_reloadable_files};
 use bun_core::strings::{contains, last_index_of_char};
+use bun_sema::components::strongly_connected_components;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
 use bun_sema::util::{FxHashSet, SharedSort};
@@ -79,6 +80,85 @@ fn find_importers_by_statements(input: &BindInput<'_, '_>, scans: &Scans) -> Vec
     importers
 }
 
+pub(super) fn find_files_whose_statements_ask(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+) -> Option<Vec<bool>> {
+    let loads = &input.run.loads;
+    if !input.runs_in_several_realms
+        || input.entry_points_run_again
+        || loads.is_any_file_taken_out
+        || loads.why_every_file.is_empty()
+    {
+        return None;
+    }
+    let files = input.files;
+    let count = files.modules.len();
+    let mut loaders: Vec<Vec<FileId>> = vec![Vec::new(); count];
+    let mut importers: Vec<Vec<FileId>> = vec![Vec::new(); count];
+    let mut lays_mocks = vec![false; count];
+    for &file in files.compiled_files() {
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        let add = |above: &mut [Vec<FileId>], module: ModuleRef| {
+            if let ModuleRef::File(below) | ModuleRef::Facade(below) = module {
+                above[below.idx()].push(file);
+            }
+        };
+        for request in &scan.requests {
+            add(&mut importers, request.target);
+            add(&mut loaders, request.target);
+        }
+        for &candidate in &scan.candidates {
+            add(&mut loaders, candidate);
+        }
+        let sites = files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scan.sites) {
+            lays_mocks[file.idx()] |= matches!(site.kind, ImportSiteKind::MockModule(_));
+            if let &ScannedSite::Module(module) = answer {
+                add(&mut loaders, module);
+            }
+        }
+    }
+    let find_above = |above: &[Vec<FileId>], mut pending: Vec<FileId>| {
+        let mut is_found = vec![false; count];
+        while let Some(file) = pending.pop() {
+            if !replace(&mut is_found[file.idx()], true) {
+                pending.extend_from_slice(&above[file.idx()]);
+            }
+        }
+        is_found
+    };
+    let makers = loads.why_every_file.iter().map(|maker| maker.0).collect();
+    let comes_to_maker = find_above(&loaders, makers);
+    let mut preloads = input.run.preloads.iter();
+    if preloads.any(|preload| comes_to_maker[preload.idx()]) {
+        return None;
+    }
+    let runs_before_statements = |file: &&FileId| {
+        comes_to_maker[file.idx()]
+            && (scans.find(**file)).is_some_and(|scan| scan.interop.kind == ModuleKind::CommonJs)
+    };
+    let run_before = files.compiled_files().iter().filter(runs_before_statements);
+    let mut asks = find_above(&importers, run_before.copied().collect());
+    for &file in files.compiled_files() {
+        asks[file.idx()] |= lays_mocks[file.idx()] && comes_to_maker[file.idx()];
+    }
+    let mut loaded_by: Vec<Vec<FileId>> = vec![Vec::new(); count];
+    for (loaded, loaders) in loaders.iter().enumerate() {
+        for loader in loaders {
+            loaded_by[loader.idx()].push(FileId(loaded as u32));
+        }
+    }
+    let asking = files.entry_points().iter().filter(|file| asks[file.idx()]);
+    let is_loaded_beside = find_above(&loaded_by, asking.copied().collect());
+    for (asks, is_loaded_beside) in asks.iter_mut().zip(is_loaded_beside) {
+        *asks |= is_loaded_beside;
+    }
+    Some(asks)
+}
+
 pub(super) fn find_es_packages_that_mocks_name(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -110,7 +190,7 @@ pub(super) fn find_es_packages_that_mocks_name(
     found.into_iter().map(ModuleRef::File).collect()
 }
 
-fn find_modules_named_by_mocks(
+pub(super) fn find_modules_named_by_mocks(
     input: &BindInput<'_, '_>,
     scans: &Scans,
 ) -> Option<FxHashSet<ModuleRef>> {
@@ -292,6 +372,34 @@ pub(super) fn fill_plan_of_loads(
     plan.test_run.is_changed_on_disk_by_run = is_changed_on_disk_by_run;
 }
 
+fn find_mocked_import_cycles(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    mocked: &MockedModules,
+) -> Vec<ModuleRef> {
+    let mut imports = vec![Vec::new(); input.files.modules.len()];
+    for (named, importer) in find_importers_by_statements(input, scans) {
+        imports[importer.idx()].push(named.0);
+    }
+    let (component_of, components) = strongly_connected_components(&imports);
+    let mut has_mocked_file = vec![false; components.len()];
+    for &module in mocked.iter() {
+        if let ModuleRef::File(file) = module {
+            has_mocked_file[component_of[file.idx()] as usize] = true;
+        }
+    }
+    let with_mocked_file = components.iter().zip(has_mocked_file);
+    let cycles =
+        with_mocked_file.filter(|(files, has_mocked_file)| *has_mocked_file && files.len() > 1);
+    cycles
+        .flat_map(|(files, _)| {
+            files
+                .iter()
+                .map(|&file| ModuleRef::File(FileId(file as u32)))
+        })
+        .collect()
+}
+
 #[derive(Default)]
 pub(super) struct NamedByCopies {
     is_every_file: bool,
@@ -350,8 +458,13 @@ pub(super) fn fill_plan_of_copies(
             }
         }
     }
+    let in_cycles = if is_every_file || !is_any_module_mocked {
+        Vec::new()
+    } else {
+        find_mocked_import_cycles(input, scans, mocked)
+    };
     let copies = evicted.modules().iter().chain(mocked.iter());
-    let copies = copies.chain(&copied_under_queries);
+    let copies = copies.chain(&copied_under_queries).chain(&in_cycles);
     for &module in copies.chain(&asked_of_test_runner) {
         let ModuleRef::File(file) = module else {
             continue;

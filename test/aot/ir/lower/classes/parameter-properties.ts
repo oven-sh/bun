@@ -11,12 +11,11 @@
 // CHECK-NOT: PropSet
 // CHECK: [[derived]] = SuperConstruct
 // CHECK: [[convertedDerived]] = Convert [[derived]] declared={type=L{{*}}} @
+// CHECK: = IsUnlockedInstance [[convertedDerived]] testedType=L{{*}} @
+// CHECK: PropDefine [[convertedDerived]], {{*}}key="d"
+// CHECK: [[first]] = Undefined
+// CHECK-NEXT: PropDefine [[convertedDerived]], [[first]] key="d"
 // CHECK: PropSet [[convertedDerived]], {{*}}key="d"
-
-// RUN(FIELDS): lower
-// FIELDS-LABEL: function {{*}}kind=Initializer
-// FIELDS: [[first]] = Undefined
-// FIELDS-NEXT: PropDefine [[self]], [[first]] key="d"
 
 declare function initial(): number;
 

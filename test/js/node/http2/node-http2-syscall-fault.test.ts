@@ -3,7 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
 import path from "node:path";
+import http2utils from "./helpers";
 
 const skip = !fault.available() || isWindows;
 
@@ -234,6 +236,116 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
       expect(exitCode).toBe(0);
     },
   );
+});
+
+// The session gives such a transport up, and the socket layer closes it. Before that close the session
+// has to get what the peer sent, and the close has to reach it as the close of any socket does.
+describe.skipIf(skip)("node:http2 after a send() that the kernel rejects", () => {
+  test("reads what a peer that stays connected sent before", async () => {
+    // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+    const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+    // Two complete requests and a GOAWAY in one segment.
+    const burst = Buffer.concat([
+      http2utils.kClientMagic,
+      new http2utils.SettingsFrame().data,
+      new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data,
+      new http2utils.HeadersFrame(3, requestBlock, 0, true, true).data,
+      new http2utils.GoAwayFrame(0, 0).data,
+    ]);
+    const events: string[] = [];
+    const streams: Promise<string>[] = [];
+    const server = http2.createServer();
+    server.on("sessionError", err => events.push(`sessionError:${(err as NodeJS.ErrnoException).code}`));
+    const accepted = Promise.withResolvers<number>();
+    server.on("connection", socket => accepted.resolve((socket as any)._handle.fd));
+    const sessionOpened = Promise.withResolvers<http2.ServerHttp2Session>();
+    const sessionClosed = Promise.withResolvers<void>();
+    server.on("session", session => {
+      session.on("goaway", code => events.push(`goaway:${code}`));
+      session.on("close", sessionClosed.resolve);
+      sessionOpened.resolve(session);
+    });
+    server.on("stream", stream => {
+      events.push(`stream:${stream.id}`);
+      const closed = Promise.withResolvers<string>();
+      const ended: string[] = [];
+      stream.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      stream.on("aborted", () => ended.push("aborted"));
+      stream.on("close", () => closed.resolve(`${stream.id}:${[...ended, `close:${stream.rstCode}`].join(",")}`));
+      streams.push(closed.promise);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    socket.on("error", () => {});
+    try {
+      const [fd, session] = await Promise.all([accepted.promise, sessionOpened.promise]);
+      // The server's SETTINGS have left, so the rule fails what the server sends from here on.
+      await once(socket, "data");
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd });
+      // The server writes in the turn in which the peer writes, so its send fails before the loop reads.
+      socket.write(burst);
+      session.ping(() => {});
+      // The session closes with no error. The requests and the GOAWAY have to come first.
+      await sessionClosed.promise;
+      events.push(...(await Promise.all(streams)));
+    } finally {
+      fault.clear();
+      socket.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+    expect(events).toEqual(["stream:1", "stream:3", "goaway:0", "1:aborted,close:8", "3:aborted,close:8"]);
+  });
+
+  // The parser closed such a socket inside the deferred task queue, and no checkpoint follows that queue:
+  // with the socket as the last handle the process exited 0 with no 'close' on the stream or on the session.
+  // The fault rules are process-global, so the client runs in a subprocess and its raw peer lives here.
+  test("delivers 'close' to the stream and to the session of a process with no other handle", async () => {
+    const fixture = `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const http2 = require("node:http2");
+      const seen = { streamClosed: false, sessionClosed: false };
+      // The connect flush sends the preface, then the queued request's HEADERS: fail the second send.
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: 1, repeat: -1 });
+      const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
+      session.on("error", () => {});
+      session.on("close", () => (seen.sessionClosed = true));
+      const req = session.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("close", () => (seen.streamClosed = true));
+      req.resume();
+      req.end();
+      process.on("exit", () => console.log(JSON.stringify(seen)));
+    `;
+    const accepted: net.Socket[] = [];
+    const peer = net.createServer(socket => {
+      accepted.push(socket);
+      socket.on("error", () => {});
+      // A peer that reads answers the client's FIN with its own.
+      socket.resume();
+      // An empty SETTINGS: the client owes an ACK, so a send follows the preface in any case.
+      socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]));
+    });
+    peer.listen(0, "127.0.0.1");
+    await once(peer, "listening");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, H2_PEER_PORT: String((peer.address() as net.AddressInfo).port) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ seen: stdout.trim(), stderr, exitCode }).toEqual({
+        seen: JSON.stringify({ streamClosed: true, sessionClosed: true }),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      for (const socket of accepted) socket.destroy();
+      peer.close();
+    }
+  });
 });
 
 describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {

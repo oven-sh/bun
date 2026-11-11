@@ -16,6 +16,39 @@ namespace node {
 
 typedef double async_id;
 
+// The enumerators of Node's `enum encoding` (src/node.h), in Node's order.
+enum encoding {
+    ASCII,
+    UTF8,
+    BASE64,
+    UCS2,
+    BINARY,
+    HEX,
+    BUFFER,
+    BASE64URL,
+    LATIN1 = BINARY,
+    UTF16LE = UCS2,
+};
+
+// Node's C++ Buffer API. A "Buffer" is any ArrayBufferView, as in Node.
+namespace Buffer {
+
+BUN_EXPORT bool HasInstance(v8::Local<v8::Value> val);
+BUN_EXPORT bool HasInstance(v8::Local<v8::Object> val);
+// Data() and Length() abort on a value that is not an ArrayBufferView, like Node's CHECK.
+BUN_EXPORT char* Data(v8::Local<v8::Value> val);
+BUN_EXPORT char* Data(v8::Local<v8::Object> val);
+BUN_EXPORT size_t Length(v8::Local<v8::Value> val);
+BUN_EXPORT size_t Length(v8::Local<v8::Object> val);
+
+// A new Buffer with a copy of the bytes. Empty with an OutOfMemoryError pending if the allocation fails.
+BUN_EXPORT v8::MaybeLocal<v8::Object> Copy(v8::Isolate* isolate, const char* data, size_t len);
+
+// A new Buffer with the string encoded as `enc`. Empty with an exception pending on failure.
+BUN_EXPORT v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, v8::Local<v8::String> string, enum encoding enc = UTF8);
+
+} // namespace Buffer
+
 struct async_context {
     ::node::async_id async_id;
     ::node::async_id trigger_async_id;

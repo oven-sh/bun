@@ -42,8 +42,20 @@ public:
 
     BUN_EXPORT std::shared_ptr<BackingStore> GetBackingStore();
 
+    BUN_EXPORT size_t ByteLength() const;
+    BUN_EXPORT void* Data() const;
+
 private:
     ArrayBuffer();
+};
+
+class SharedArrayBuffer : public Object {
+public:
+    BUN_EXPORT size_t ByteLength() const;
+    BUN_EXPORT void* Data() const;
+
+private:
+    SharedArrayBuffer();
 };
 
 class ArrayBufferView : public Object {

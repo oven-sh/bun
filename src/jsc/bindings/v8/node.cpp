@@ -1,9 +1,14 @@
 #include "node.h"
 #include "V8HandleScope.h"
+#include "JSBuffer.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ThrowScope.h"
+#include "JavaScriptCore/ArrayBuffer.h"
+#include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/JSArrayBufferViewInlines.h"
+#include "JavaScriptCore/JSTypedArrays.h"
 
 #include "node/node_version.h"
 
@@ -26,6 +31,164 @@ extern "C" struct uv_loop_s* Bun__VirtualMachine__uvLoop(void* bunVM);
 #endif
 
 namespace node {
+
+namespace Buffer {
+
+static JSC::JSArrayBufferView* viewOf(v8::Local<v8::Value> val, const char* caller)
+{
+    auto* view = val->localToObjectPointer<JSC::JSArrayBufferView>();
+    RELEASE_ASSERT(view, "%s: not an ArrayBufferView", caller);
+    return view;
+}
+
+bool HasInstance(v8::Local<v8::Value> val)
+{
+    return val->IsArrayBufferView();
+}
+
+bool HasInstance(v8::Local<v8::Object> val)
+{
+    return val->IsArrayBufferView();
+}
+
+char* Data(v8::Local<v8::Value> val)
+{
+    auto* view = viewOf(val, "node::Buffer::Data");
+    // A small view made by JS has no ArrayBuffer yet and moves its bytes when one is
+    // made. Make it now, so the address stays valid for the view's lifetime, as in Node
+    // (napi_get_buffer_info does the same).
+    RELEASE_ASSERT(view->possiblySharedBuffer(), "node::Buffer::Data: out of memory");
+    return static_cast<char*>(view->vector());
+}
+
+char* Data(v8::Local<v8::Object> val)
+{
+    return Data(val.reinterpret<v8::Value>());
+}
+
+size_t Length(v8::Local<v8::Value> val)
+{
+    return viewOf(val, "node::Buffer::Length")->byteLength();
+}
+
+size_t Length(v8::Local<v8::Object> val)
+{
+    return Length(val.reinterpret<v8::Value>());
+}
+
+// A Buffer over its own ArrayBuffer, as napi_create_buffer makes one, so the address Data()
+// returns stays valid for the buffer's lifetime, as in Node. Null with an OutOfMemoryError
+// pending if the allocation fails. The caller owns the boundary exception scope.
+static JSC::JSUint8Array* createBufferOverArrayBuffer(Zig::GlobalObject* globalObject, size_t length, RefPtr<JSC::ArrayBuffer>& arrayBuffer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(length, 1);
+    if (!arrayBuffer) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, globalObject->JSBufferSubclassStructure(), arrayBuffer.copyRef(), 0, length));
+}
+
+static void throwStringNotReadable(Zig::GlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::throwOutOfMemoryError(globalObject, scope);
+}
+
+v8::MaybeLocal<v8::Object> Copy(v8::Isolate* isolate, const char* data, size_t len)
+{
+    auto* globalObject = isolate->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    RefPtr<JSC::ArrayBuffer> arrayBuffer;
+    auto* buffer = createBufferOverArrayBuffer(globalObject, len, arrayBuffer);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (len > 0) {
+        memcpy(arrayBuffer->data(), data, len);
+    }
+    return isolate->currentHandleScope()->createLocal<v8::Object>(vm, buffer);
+}
+
+// Node's StringBytes::Write: ASCII writes the low byte of each code unit like
+// LATIN1, and BUFFER writes UTF-8.
+static WebCore::BufferEncodingType toBufferEncoding(enum encoding enc)
+{
+    switch (enc) {
+    case UTF8:
+    case BUFFER:
+        return WebCore::BufferEncodingType::utf8;
+    case BASE64:
+        return WebCore::BufferEncodingType::base64;
+    case UCS2:
+        return WebCore::BufferEncodingType::ucs2;
+    case HEX:
+        return WebCore::BufferEncodingType::hex;
+    case BASE64URL:
+        return WebCore::BufferEncodingType::base64url;
+    case ASCII:
+    case BINARY:
+        return WebCore::BufferEncodingType::latin1;
+    }
+    RELEASE_ASSERT_NOT_REACHED("node::Buffer::New: unknown encoding %d", static_cast<int>(enc));
+}
+
+v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, v8::Local<v8::String> string, enum encoding enc)
+{
+    auto* globalObject = isolate->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSString* jsString = string->localToJSString();
+    WebCore::BufferEncodingType encoding = toBufferEncoding(enc);
+
+    // Like Node: size the store from the string, write, and keep the bytes written.
+    std::optional<size_t> maybeLength = Bun::byteLength(jsString, globalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!maybeLength) [[unlikely]] {
+        // byteLength() could not read the string (a rope that failed to resolve).
+        throwStringNotReadable(globalObject);
+        return {};
+    }
+    size_t length = *maybeLength;
+
+    RefPtr<JSC::ArrayBuffer> arrayBuffer;
+    auto* buffer = createBufferOverArrayBuffer(globalObject, length, arrayBuffer);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (length > 0) {
+        auto view = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* to = static_cast<unsigned char*>(arrayBuffer->data());
+        size_t written = 0;
+        if (encoding == WebCore::BufferEncodingType::utf8) {
+            written = v8::shim::writeUtf8(view, reinterpret_cast<char*>(to), length, nullptr);
+        } else if (view->is8Bit()) {
+            const auto span = view->span8();
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), to, length, static_cast<Encoding>(encoding));
+        } else {
+            const auto span = view->span16();
+            written = Bun__encoding__writeUTF16(span.data(), span.size(), to, length, static_cast<Encoding>(encoding));
+        }
+        ASSERT(written <= length);
+        if (written < length) {
+            // A hex or base64 string can decode to fewer bytes than its size bound. Like
+            // Node, copy them into a store of the exact size.
+            RefPtr<JSC::ArrayBuffer> exact;
+            buffer = createBufferOverArrayBuffer(globalObject, written, exact);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (written > 0) {
+                memcpy(exact->data(), to, written);
+            }
+        }
+    }
+
+    return isolate->currentHandleScope()->createLocal<v8::Object>(vm, buffer);
+}
+
+} // namespace Buffer
 
 void AddEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),

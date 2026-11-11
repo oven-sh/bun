@@ -8,6 +8,7 @@
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::ArrayBuffer)
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::SharedArrayBuffer)
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::ArrayBufferView)
 ASSERT_V8_ENUM_MATCHES(BackingStoreInitializationMode, kZeroInitialized)
 ASSERT_V8_ENUM_MATCHES(BackingStoreInitializationMode, kUninitialized)
@@ -49,6 +50,35 @@ std::shared_ptr<BackingStore> ArrayBuffer::GetBackingStore()
     return std::shared_ptr<BackingStore>(
         reinterpret_cast<BackingStore*>(backing),
         [](BackingStore* p) { delete reinterpret_cast<shim::BackingStoreImpl*>(p); });
+}
+
+size_t ArrayBuffer::ByteLength() const
+{
+    auto* jsBuffer = localToObjectPointer<JSC::JSArrayBuffer>();
+    RELEASE_ASSERT(jsBuffer, "v8::ArrayBuffer::ByteLength: not an ArrayBuffer");
+    return jsBuffer->impl()->byteLength();
+}
+
+void* ArrayBuffer::Data() const
+{
+    auto* jsBuffer = localToObjectPointer<JSC::JSArrayBuffer>();
+    RELEASE_ASSERT(jsBuffer, "v8::ArrayBuffer::Data: not an ArrayBuffer");
+    return jsBuffer->impl()->data();
+}
+
+// JSC has one cell type for ArrayBuffer and SharedArrayBuffer.
+size_t SharedArrayBuffer::ByteLength() const
+{
+    auto* jsBuffer = localToObjectPointer<JSC::JSArrayBuffer>();
+    RELEASE_ASSERT(jsBuffer, "v8::SharedArrayBuffer::ByteLength: not a SharedArrayBuffer");
+    return jsBuffer->impl()->byteLength();
+}
+
+void* SharedArrayBuffer::Data() const
+{
+    auto* jsBuffer = localToObjectPointer<JSC::JSArrayBuffer>();
+    RELEASE_ASSERT(jsBuffer, "v8::SharedArrayBuffer::Data: not a SharedArrayBuffer");
+    return jsBuffer->impl()->data();
 }
 
 Local<ArrayBuffer> ArrayBufferView::Buffer()

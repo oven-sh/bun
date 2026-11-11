@@ -11,13 +11,18 @@ class ObjectTemplate;
 
 namespace shim {
 
+class FunctionTemplate;
+
 class ObjectTemplate : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
     DECLARE_INFO;
 
-    static ObjectTemplate* create(JSC::VM& vm, JSC::Structure* structure);
+    // `constructor` is the FunctionTemplate whose instances this template makes
+    // (its InstanceTemplate, or the argument of ObjectTemplate::New). Null for a
+    // template with no constructor.
+    static ObjectTemplate* create(JSC::VM& vm, JSC::Structure* structure, FunctionTemplate* constructor);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -35,6 +40,8 @@ public:
 
     int internalFieldCount() const { return m_internalFieldCount; }
 
+    FunctionTemplate* constructor() const { return m_constructor.get(); }
+
     void setInternalFieldCount(int newInternalFieldCount) { m_internalFieldCount = newInternalFieldCount > 0 ? newInternalFieldCount : 0; }
 
     WTF::Vector<TemplateProperty>& properties() { return m_properties; }
@@ -46,6 +53,7 @@ public:
 private:
     // Number of internal fields to allocate space for on objects created by this template
     int m_internalFieldCount = 0;
+    JSC::WriteBarrier<FunctionTemplate> m_constructor;
     WTF::Vector<TemplateProperty> m_properties;
     WTF::Vector<TemplateAccessor> m_accessors;
     // Structure used to allocate objects with this template (different than
@@ -58,7 +66,7 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM& vm);
+    void finishCreation(JSC::VM& vm, FunctionTemplate* constructor);
 };
 
 } // namespace shim

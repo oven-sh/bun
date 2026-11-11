@@ -14,11 +14,9 @@ const JSC::ClassInfo InternalFieldObject::s_info = {
     CREATE_METHOD_TABLE(InternalFieldObject)
 };
 
-InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
+InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* structure, ObjectTemplate* objectTemplate, int internalFieldCount)
 {
-    // TODO figure out how this works with __internals
-    // maybe pass a Local<ObjectTemplate>
-    auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, internalFieldCount);
+    auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, objectTemplate, internalFieldCount);
     object->finishCreation(vm);
     return object;
 }
@@ -30,6 +28,7 @@ void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    visitor.append(thisObject->m_objectTemplate);
     for (auto& value : thisObject->m_fields) {
         visitor.append(value);
     }

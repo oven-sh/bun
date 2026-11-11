@@ -10,21 +10,19 @@ namespace v8 {
 
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTemplate> constructor)
 {
-    // The constructor argument is accepted and ignored; Bun's shim doesn't yet
-    // link ObjectTemplates created this way back to their FunctionTemplate.
-    (void)constructor;
     auto* globalObject = isolate->globalObject();
     auto& vm = JSC::getVM(globalObject);
     auto* globalInternals = globalObject->V8GlobalInternals();
     auto* structure = globalInternals->objectTemplateStructure(globalObject);
-    auto* objectTemplate = shim::ObjectTemplate::create(vm, structure);
+    // Instances of this template answer constructor->HasInstance(). V8 also
+    // gives them the constructor's prototype, which is not done here.
+    auto* constructorTemplate = constructor.IsEmpty() ? nullptr : constructor->Data::localToObjectPointer<shim::FunctionTemplate>();
+    auto* objectTemplate = shim::ObjectTemplate::create(vm, structure, constructorTemplate);
     return globalInternals->currentHandleScope()->createLocal<ObjectTemplate>(vm, objectTemplate);
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 {
-    // TODO handle constructor
-    // TODO handle interceptors?
 
     auto& vm = context->vm();
     auto* thisObj = localToObjectPointer();

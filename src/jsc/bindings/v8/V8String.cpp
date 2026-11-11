@@ -6,6 +6,9 @@
 #include "headers-handwritten.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String)
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String::Utf8Value)
+// The inline length() reads length_ as a size_t (it was an int in older V8).
+static_assert(std::is_same_v<decltype(real_v8::String::Utf8Value::length_), size_t>, "String::Utf8Value::length_ is not a size_t in V8");
 
 ASSERT_V8_ENUM_MATCHES(NewStringType, kNormal)
 ASSERT_V8_ENUM_MATCHES(NewStringType, kInternalized)
@@ -224,6 +227,32 @@ void String::WriteOneByteV2(Isolate* isolate, uint32_t offset, uint32_t length, 
     }
 }
 
+size_t shim::writeUtf8(WTF::StringView str, char* buffer, size_t capacity, size_t* read)
+{
+    if (str.isEmpty()) {
+        if (read) {
+            *read = 0;
+        }
+        return 0;
+    }
+    // TextEncoder__encodeInto never writes partial UTF-8 sequences, and replaces
+    // unpaired surrogates with U+FFFD (same byte length as the WTF-8 encoding V8
+    // uses when kReplaceInvalidUtf8 is not set, so the result size matches either
+    // way).
+    TextEncoderEncodeIntoResult result;
+    if (str.is8Bit()) {
+        const auto span = str.span8();
+        result = TextEncoder__encodeInto8(span.data(), span.size(), buffer, capacity);
+    } else {
+        const auto span = str.span16();
+        result = TextEncoder__encodeInto16(span.data(), span.size(), buffer, capacity);
+    }
+    if (read) {
+        *read = result.read;
+    }
+    return result.written;
+}
+
 size_t String::WriteUtf8V2(Isolate* isolate, char* buffer, size_t capacity, int flags, size_t* processed_characters_return) const
 {
     auto jsString = localToObjectPointer<JSString>();
@@ -235,29 +264,8 @@ size_t String::WriteUtf8V2(Isolate* isolate, char* buffer, size_t capacity, int 
         writableCapacity--;
     }
 
-    size_t read = 0;
-    size_t written = 0;
-    if (!str->isEmpty()) {
-        // TextEncoder__encodeInto never writes partial UTF-8 sequences, and replaces
-        // unpaired surrogates with U+FFFD (same byte length as the WTF-8 encoding V8
-        // uses when kReplaceInvalidUtf8 is not set, so the result size matches either
-        // way).
-        if (str->is8Bit()) {
-            const auto span = str->span8();
-            TextEncoderEncodeIntoResult result = TextEncoder__encodeInto8(span.data(), span.size(), buffer, writableCapacity);
-            read = result.read;
-            written = result.written;
-        } else {
-            const auto span = str->span16();
-            TextEncoderEncodeIntoResult result = TextEncoder__encodeInto16(span.data(), span.size(), buffer, writableCapacity);
-            read = result.read;
-            written = result.written;
-        }
-    }
+    size_t written = shim::writeUtf8(str, buffer, writableCapacity, processed_characters_return);
 
-    if (processed_characters_return) {
-        *processed_characters_return = read;
-    }
     if (flags & WriteFlags::kNullTerminate) {
         buffer[written] = '\0';
         written++;
@@ -265,20 +273,17 @@ size_t String::WriteUtf8V2(Isolate* isolate, char* buffer, size_t capacity, int 
     return written;
 }
 
-size_t String::Utf8LengthV2(Isolate* isolate) const
+size_t shim::utf8Length(WTF::StringView str)
 {
-    auto jsString = localToObjectPointer<JSString>();
-    if (jsString->length() == 0) {
+    if (str.isEmpty()) {
         return 0;
     }
-
-    auto str = jsString->view(isolate->globalObject());
-    if (str->is8Bit()) {
-        const auto span = str->span8();
+    if (str.is8Bit()) {
+        const auto span = str.span8();
         return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(span.data()), span.size());
     }
 
-    const auto span = str->span16();
+    const auto span = str.span16();
     // simdutf's answer is implementation-defined for invalid UTF-16, so only use it
     // for valid input. Otherwise count exactly: V8 charges an unpaired surrogate 3
     // bytes, the size both writers produce for it (U+FFFD or its WTF-8 encoding).
@@ -300,6 +305,63 @@ size_t String::Utf8LengthV2(Isolate* isolate) const
         }
     }
     return len;
+}
+
+size_t String::Utf8LengthV2(Isolate* isolate) const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return 0;
+    }
+    return shim::utf8Length(jsString->view(isolate->globalObject()));
+}
+
+String::Utf8Value::Utf8Value(Isolate* isolate, Local<v8::Value> obj)
+    : str_(nullptr)
+    , length_(0)
+{
+    if (obj.IsEmpty()) {
+        return;
+    }
+    auto* globalObject = isolate->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue value = obj->localToJSValue();
+    // V8 runs ToString inside its own TryCatch and leaves an empty value on a throw. An
+    // exception that is already pending belongs to the addon and stays: a string needs
+    // no JS to convert, and JSC cannot run JS for anything else.
+    bool hadException = !!scope.exception();
+    JSString* jsString = nullptr;
+    if (value.isString()) {
+        jsString = JSC::asString(value);
+    } else {
+        if (hadException) {
+            return;
+        }
+        jsString = value.toString(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+            return;
+        }
+    }
+    auto str = jsString->view(globalObject);
+    if (!hadException && scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+
+    size_t length = shim::utf8Length(str);
+    // The buffer is freed by ~Utf8Value, which is also Bun's, so any allocator works.
+    str_ = static_cast<char*>(fastMalloc(length + 1));
+    length_ = shim::writeUtf8(str, str_, length, nullptr);
+    ASSERT(length_ == length);
+    str_[length_] = '\0';
+}
+
+String::Utf8Value::~Utf8Value()
+{
+    fastFree(str_);
 }
 
 int String::Length() const

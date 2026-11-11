@@ -5,6 +5,7 @@
 #include "V8ObjectTemplate.h"
 #include "shim/FunctionTemplate.h"
 #include "shim/ObjectTemplate.h"
+#include "shim/InternalFieldObject.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::FunctionTemplate)
@@ -93,6 +94,23 @@ void FunctionTemplate::SetClassName(Local<String> name)
     auto* functionTemplate = localToObjectPointer();
     auto& vm = JSC::getVM(functionTemplate->globalObject());
     functionTemplate->setClassName(vm, name->localToJSString());
+}
+
+bool FunctionTemplate::HasInstance(Local<Value> object)
+{
+    // V8 asks the object's map for the template that made it, and does not walk
+    // the prototype chain: `new F()` and `F->InstanceTemplate()->NewInstance()`
+    // are instances, `Object.create(F.prototype)` is not.
+    JSC::JSValue value = object->localToJSValue();
+    if (!value.isCell()) {
+        return false;
+    }
+    auto* instance = dynamicDowncast<shim::InternalFieldObject>(value.asCell());
+    if (!instance) {
+        return false;
+    }
+    auto* objectTemplate = instance->objectTemplate();
+    return objectTemplate && objectTemplate->constructor() == localToObjectPointer();
 }
 
 } // namespace v8

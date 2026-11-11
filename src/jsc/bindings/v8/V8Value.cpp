@@ -1,13 +1,17 @@
 #include "V8Value.h"
 #include "V8Isolate.h"
+#include "V8Object.h"
 #include "V8String.h"
 #include "V8Integer.h"
 #include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/RegExpObject.h>
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Value)
 
@@ -124,6 +128,45 @@ bool Value::IsUint8Array() const
     return value.isCell() && value.inherits<JSC::JSUint8Array>();
 }
 
+// Like IsArray, the next four are instance type checks in V8 that never unwrap a Proxy.
+// JSC has one cell type for ArrayBuffer and SharedArrayBuffer.
+bool Value::IsArrayBuffer() const
+{
+    auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(localToJSValue());
+    return buffer && !buffer->isShared();
+}
+
+bool Value::IsArrayBufferView() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::JSArrayBufferView>();
+}
+
+bool Value::IsSharedArrayBuffer() const
+{
+    auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(localToJSValue());
+    return buffer && buffer->isShared();
+}
+
+bool Value::IsRegExp() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::RegExpObject>();
+}
+
+MaybeLocal<Object> Value::ToObject(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // null and undefined throw a TypeError; a primitive gets its wrapper object.
+    JSC::JSObject* object = localToJSValue().toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
+
+    return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(vm, object));
+}
+
 MaybeLocal<String> Value::ToString(Local<Context> context) const
 {
     Zig::GlobalObject* globalObject = context->globalObject();
@@ -168,6 +211,31 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
         return Just(value);
     }
     return Nothing<uint32_t>();
+}
+
+Maybe<double> Value::NumberValue(Local<Context> context) const
+{
+    JSC::JSValue value = localToJSValue();
+    // Like V8, a number converts even while an exception is pending.
+    if (value.isNumber()) {
+        return Just(value.asNumber());
+    }
+
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // JSC cannot run JS while an exception is pending.
+    RETURN_IF_EXCEPTION(scope, Nothing<double>());
+
+    double number = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<double>());
+
+    return Just(number);
+}
+
+bool Value::BooleanValue(Isolate* isolate) const
+{
+    return localToJSValue().toBoolean(isolate->globalObject());
 }
 
 bool Value::StrictEquals(Local<Value> that) const

@@ -25,6 +25,20 @@ struct TemplateAccessor {
     unsigned attributes { 0 };
 };
 
+// Define one native-data accessor on `target`: a JSC accessor property whose
+// getter and setter call the V8 callbacks with a PropertyCallbackInfo frame.
+// Shared by the accessors recorded on a template and by
+// Object::SetNativeDataProperty. Returns what putDirectAccessor returns. Can
+// throw (ToPropertyKey of the name, an index key): the caller checks.
+bool defineNativeAccessor(
+    JSC::JSGlobalObject* globalObject,
+    JSC::JSObject* target,
+    JSC::JSValue name,
+    JSC::JSValue data,
+    AccessorNameGetterCallback getter,
+    AccessorNameSetterCallback setter,
+    unsigned attributes);
+
 // Install the recorded properties and native-data accessors of a template onto
 // a JSC object (the prototype object from GetFunction, or an instance from
 // ObjectTemplate::NewInstance).

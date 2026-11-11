@@ -3769,6 +3769,43 @@ mod v8_api {
         pub(super) fn _ZNK2v814CpuProfileNode8GetChildEi() -> *mut c_void;
         pub(super) fn _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
         pub(super) fn _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal8MakeWeakEPPm() -> *mut c_void;
+        pub(super) fn _ZN2v816FunctionTemplate11HasInstanceENS_5LocalINS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object14CallAsFunctionENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86Object14SetPrototypeV2ENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86Object21SetNativeDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS5_NS1_IS7_EERKNS6_IvEEESD_NS_17PropertyAttributeENS_14SideEffectTypeESK_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86String9Utf8ValueD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v86Symbol11GetIteratorEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v89Exception10RangeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Exception11SyntaxErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_6ObjectEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer3NewEPN2v87IsolateENS1_5LocalINS1_6StringEEENS_8encodingE()
+        -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer4CopyEPN2v87IsolateEPKcm() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer4DataEN2v85LocalINS1_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer4DataEN2v85LocalINS1_6ObjectEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer6LengthEN2v85LocalINS1_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer6LengthEN2v85LocalINS1_6ObjectEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZNK2v817SharedArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v817SharedArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12BooleanValueEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value13IsArrayBufferEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value17IsArrayBufferViewEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value19IsSharedArrayBufferEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8IsRegExpEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8ToObjectENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v86RegExp8GetFlagsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86RegExp9GetSourceEv() -> *mut c_void;
         // NOTE: return type omitted to match the `uv_functions_to_export` declarations
         // below (avoids `clashing_extern_declarations`); only the symbol address is used.
         pub(super) fn uv_os_getpid();
@@ -4182,6 +4219,68 @@ mod v8_api {
         pub(super) fn v8_Map_Set() -> *mut c_void;
         #[link_name = "?Delete@Map@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
         pub(super) fn v8_Map_Delete() -> *mut c_void;
+        #[link_name = "??0Utf8Value@String@v8@@QEAA@PEAVIsolate@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_String_Utf8Value_ctor() -> *mut c_void;
+        #[link_name = "??1Utf8Value@String@v8@@QEAA@XZ"]
+        pub(super) fn v8_String_Utf8Value_dtor() -> *mut c_void;
+        #[link_name = "?BooleanValue@Value@v8@@QEBA_NPEAVIsolate@2@@Z"]
+        pub(super) fn v8_Value_BooleanValue() -> *mut c_void;
+        #[link_name = "?ByteLength@ArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_ArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?ByteLength@SharedArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_SharedArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?CallAsFunction@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV52@@Z"]
+        pub(super) fn v8_Object_CallAsFunction() -> *mut c_void;
+        #[link_name = "?Copy@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEBD_K@Z"]
+        pub(super) fn node_Buffer_Copy() -> *mut c_void;
+        #[link_name = "?Data@ArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_ArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "?Data@Buffer@node@@YAPEADV?$Local@VObject@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Data_Object() -> *mut c_void;
+        #[link_name = "?Data@Buffer@node@@YAPEADV?$Local@VValue@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Data_Value() -> *mut c_void;
+        #[link_name = "?Data@SharedArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_SharedArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "?GetFlags@RegExp@v8@@QEBA?AW4Flags@12@XZ"]
+        pub(super) fn v8_RegExp_GetFlags() -> *mut c_void;
+        #[link_name = "?GetIterator@Symbol@v8@@SA?AV?$Local@VSymbol@v8@@@2@PEAVIsolate@2@@Z"]
+        pub(super) fn v8_Symbol_GetIterator() -> *mut c_void;
+        #[link_name = "?GetSource@RegExp@v8@@QEBA?AV?$Local@VString@v8@@@2@XZ"]
+        pub(super) fn v8_RegExp_GetSource() -> *mut c_void;
+        #[link_name = "?HasInstance@Buffer@node@@YA_NV?$Local@VObject@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_HasInstance_Object() -> *mut c_void;
+        #[link_name = "?HasInstance@Buffer@node@@YA_NV?$Local@VValue@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_HasInstance_Value() -> *mut c_void;
+        #[link_name = "?HasInstance@FunctionTemplate@v8@@QEAA_NV?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_FunctionTemplate_HasInstance() -> *mut c_void;
+        #[link_name = "?IsArrayBuffer@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsArrayBuffer() -> *mut c_void;
+        #[link_name = "?IsArrayBufferView@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsArrayBufferView() -> *mut c_void;
+        #[link_name = "?IsRegExp@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsRegExp() -> *mut c_void;
+        #[link_name = "?IsSharedArrayBuffer@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsSharedArrayBuffer() -> *mut c_void;
+        #[link_name = "?Length@Buffer@node@@YA_KV?$Local@VObject@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Length_Object() -> *mut c_void;
+        #[link_name = "?Length@Buffer@node@@YA_KV?$Local@VValue@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Length_Value() -> *mut c_void;
+        #[link_name = "?MakeWeak@api_internal@v8@@YAXPEAPEA_K@Z"]
+        pub(super) fn v8_api_internal_MakeWeak_phantom() -> *mut c_void;
+        #[link_name = "?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@V?$Local@VString@v8@@@4@W4encoding@2@@Z"]
+        pub(super) fn node_Buffer_New() -> *mut c_void;
+        #[link_name = "?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_NumberValue() -> *mut c_void;
+        #[link_name = "?RangeError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_RangeError() -> *mut c_void;
+        #[link_name = "?SetNativeDataProperty@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VName@v8@@@2@P6AX1AEBV?$PropertyCallbackInfo@VValue@v8@@@2@@ZP6AX1V?$Local@VValue@v8@@@2@AEBV?$PropertyCallbackInfo@X@2@@Z4W4PropertyAttribute@2@W4SideEffectType@2@8@Z"]
+        pub(super) fn v8_Object_SetNativeDataProperty() -> *mut c_void;
+        #[link_name = "?SetPrototypeV2@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_Object_SetPrototypeV2() -> *mut c_void;
+        #[link_name = "?SyntaxError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_SyntaxError() -> *mut c_void;
+        #[link_name = "?ToObject@Value@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToObject() -> *mut c_void;
     }
 }
 
@@ -5182,6 +5281,37 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v814CpuProfileNode8GetChildEi,
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
+            _ZN2v812api_internal8MakeWeakEPPm,
+            _ZN2v816FunctionTemplate11HasInstanceENS_5LocalINS_5ValueEEE,
+            _ZN2v86Object14CallAsFunctionENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_,
+            _ZN2v86Object14SetPrototypeV2ENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
+            _ZN2v86Object21SetNativeDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS5_NS1_IS7_EERKNS6_IvEEESD_NS_17PropertyAttributeENS_14SideEffectTypeESK_,
+            _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE,
+            _ZN2v86String9Utf8ValueD1Ev,
+            _ZN2v86Symbol11GetIteratorEPNS_7IsolateE,
+            _ZN2v89Exception10RangeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v89Exception11SyntaxErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_5ValueEEE,
+            _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_6ObjectEEE,
+            _ZN4node6Buffer3NewEPN2v87IsolateENS1_5LocalINS1_6StringEEENS_8encodingE,
+            _ZN4node6Buffer4CopyEPN2v87IsolateEPKcm,
+            _ZN4node6Buffer4DataEN2v85LocalINS1_5ValueEEE,
+            _ZN4node6Buffer4DataEN2v85LocalINS1_6ObjectEEE,
+            _ZN4node6Buffer6LengthEN2v85LocalINS1_5ValueEEE,
+            _ZN4node6Buffer6LengthEN2v85LocalINS1_6ObjectEEE,
+            _ZNK2v811ArrayBuffer10ByteLengthEv,
+            _ZNK2v811ArrayBuffer4DataEv,
+            _ZNK2v817SharedArrayBuffer10ByteLengthEv,
+            _ZNK2v817SharedArrayBuffer4DataEv,
+            _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value12BooleanValueEPNS_7IsolateE,
+            _ZNK2v85Value13IsArrayBufferEv,
+            _ZNK2v85Value17IsArrayBufferViewEv,
+            _ZNK2v85Value19IsSharedArrayBufferEv,
+            _ZNK2v85Value8IsRegExpEv,
+            _ZNK2v85Value8ToObjectENS_5LocalINS_7ContextEEE,
+            _ZNK2v86RegExp8GetFlagsEv,
+            _ZNK2v86RegExp9GetSourceEv,
         );
         // Data symbol: keep_symbols! only takes function paths.
         ::core::hint::black_box(&raw const _ZN2v88Function19kLineOffsetNotFoundE);
@@ -5385,6 +5515,37 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_CpuProfileNode_GetChild,
             v8_Map_Set,
             v8_Map_Delete,
+            v8_String_Utf8Value_ctor,
+            v8_String_Utf8Value_dtor,
+            v8_Value_BooleanValue,
+            v8_ArrayBuffer_ByteLength,
+            v8_SharedArrayBuffer_ByteLength,
+            v8_Object_CallAsFunction,
+            node_Buffer_Copy,
+            v8_ArrayBuffer_Data,
+            node_Buffer_Data_Object,
+            node_Buffer_Data_Value,
+            v8_SharedArrayBuffer_Data,
+            v8_RegExp_GetFlags,
+            v8_Symbol_GetIterator,
+            v8_RegExp_GetSource,
+            node_Buffer_HasInstance_Object,
+            node_Buffer_HasInstance_Value,
+            v8_FunctionTemplate_HasInstance,
+            v8_Value_IsArrayBuffer,
+            v8_Value_IsArrayBufferView,
+            v8_Value_IsRegExp,
+            v8_Value_IsSharedArrayBuffer,
+            node_Buffer_Length_Object,
+            node_Buffer_Length_Value,
+            v8_api_internal_MakeWeak_phantom,
+            node_Buffer_New,
+            v8_Value_NumberValue,
+            v8_Exception_RangeError,
+            v8_Object_SetNativeDataProperty,
+            v8_Object_SetPrototypeV2,
+            v8_Exception_SyntaxError,
+            v8_Value_ToObject,
         );
         ::core::hint::black_box(&raw const v8_Function_kLineOffsetNotFound);
     }

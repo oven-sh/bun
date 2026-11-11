@@ -80,7 +80,7 @@ ObjectTemplate* FunctionTemplate::ensureInstanceTemplate(JSC::JSGlobalObject* gl
     auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     auto* structure = zigGlobal->V8GlobalInternals()->objectTemplateStructure(globalObject);
-    auto* objectTemplate = ObjectTemplate::create(vm, structure);
+    auto* objectTemplate = ObjectTemplate::create(vm, structure, this);
     m_instanceTemplate.set(vm, this, objectTemplate);
     return objectTemplate;
 }
@@ -92,7 +92,7 @@ ObjectTemplate* FunctionTemplate::ensurePrototypeTemplate(JSC::JSGlobalObject* g
     auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     auto* structure = zigGlobal->V8GlobalInternals()->objectTemplateStructure(globalObject);
-    auto* objectTemplate = ObjectTemplate::create(vm, structure);
+    auto* objectTemplate = ObjectTemplate::create(vm, structure, nullptr);
     m_prototypeTemplate.set(vm, this, objectTemplate);
     return objectTemplate;
 }

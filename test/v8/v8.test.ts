@@ -504,6 +504,74 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  // The members that the npm `re2` addon (node-re2) imports. https://github.com/oven-sh/bun/issues/48600
+  describe("Object::SetNativeDataProperty", () => {
+    it("defines a native accessor on a function, a plain object and with a symbol name", async () => {
+      const output = await checkSameOutput("test_v8_object_set_native_data_property");
+      expect(output).toContain("ctor.level = function-data");
+      expect(output).toContain("setter calls = 2");
+    });
+  });
+
+  describe("FunctionTemplate::HasInstance", () => {
+    it("answers from the creating template, not the prototype chain", async () => {
+      const output = await checkSameOutput("test_v8_function_template_has_instance");
+      expect(output).toContain("Object.create(F.prototype) = false");
+      expect(output).toContain("reparented instance = true");
+    });
+  });
+
+  describe("node::Buffer", () => {
+    it("HasInstance, Data, Length, Copy and New match Node", async () => {
+      const output = await checkSameOutput("test_v8_node_buffer");
+      expect(output).toContain("node::Buffer::Data(big) == before = 1");
+      expect(output).toContain("Buffer.alloc(32) stable = true");
+    });
+  });
+
+  describe("String::Utf8Value", () => {
+    it("holds the UTF-8 of ToString and is empty when ToString throws", async () => {
+      await checkSameOutput("test_v8_string_utf8_value");
+    });
+  });
+
+  describe("Exception::RangeError and Exception::SyntaxError", () => {
+    it("create errors of those classes", async () => {
+      const output = await checkSameOutput("test_v8_exception_range_and_syntax");
+      expect(output).toContain("caught RangeError true thrown range error");
+    });
+  });
+
+  describe("RegExp", () => {
+    it("IsRegExp, GetSource and GetFlags match Node for every flag", async () => {
+      await checkSameOutput("test_v8_regexp");
+    });
+  });
+
+  describe("Symbol::GetIterator", () => {
+    it("is Symbol.iterator and drives an iterator through CallAsFunction", async () => {
+      await checkSameOutput("test_v8_symbol_get_iterator");
+    });
+  });
+
+  describe("Object::SetPrototypeV2 and Object::CallAsFunction", () => {
+    it("set a prototype, refuse a cycle or a frozen target, and call with a receiver", async () => {
+      await checkSameOutput("test_v8_object_set_prototype_and_call");
+    });
+  });
+
+  describe("Value conversions", () => {
+    it("ToObject, NumberValue, BooleanValue and the ArrayBuffer type checks match Node", async () => {
+      await checkSameOutput("test_v8_value_conversions");
+    });
+  });
+
+  describe("Global reset cycle", () => {
+    it("resets, weakens and clears Globals over strings and Buffers", async () => {
+      await checkSameOutput("test_v8_global_reset_cycle");
+    });
+  });
+
   describe("uv_os_getpid", () => {
     it.skipIf(isWindows)("returns the same result as getpid on POSIX", async () => {
       await checkSameOutput("test_uv_os_getpid");

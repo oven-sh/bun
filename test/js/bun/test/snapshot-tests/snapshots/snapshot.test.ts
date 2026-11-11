@@ -1358,7 +1358,7 @@ describe.concurrent("the fixtures and snapshot files that another runner wrote",
     using dir = copyOf("older-bun");
     const before = contentsOf(String(dir));
     const { stderr, exitCode, pass, fail } = await run(String(dir), { CI: "true" });
-    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 14, stderr: "" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 18, stderr: "" });
     expect(contentsOf(String(dir))).toEqual(before);
     expect(exitCode).toBe(0);
   });

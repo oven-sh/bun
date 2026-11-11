@@ -1,5 +1,37 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`a hook (unnamed) 1`] = `"bun"`;
+
+exports[`a hook (unnamed) 2`] = `"bun"`;
+
+exports[`a hook > first 1`] = `"node"`;
+
+exports[`a hook > first 2`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`a hook > second 1`] = `"node"`;
+
+exports[`a hook > second 2`] = `
+{
+  "a": 2,
+}
+`;
+
+exports[`a hook first 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`a hook second 1`] = `
+{
+  "a": 2,
+}
+`;
+
 exports[`at the top level 1`] = `
 {
   "a": 1,

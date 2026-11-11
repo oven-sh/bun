@@ -154,7 +154,7 @@ public:
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
         // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
         unsigned testFile = 1;
-        // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
+        // The modules that have called mock.module(), vi.mock() and the like since the running test file started, and those whose body was running at such a call.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.

@@ -95,7 +95,7 @@ use std::sync::OnceLock;
 use synthetic_exports::{ReplacedNames, number_synthetic_exports};
 use test_run_names_handed_on::NamesHandedOn;
 use unloadable::{
-    UnloadableModule, drop_errors_of_unloadable_modules, find_files_that_sites_name,
+    NamedByMocks, UnloadableModule, drop_errors_of_unloadable_modules, find_files_that_sites_name,
     find_unloadable_modules, let_late_commonjs_files_fail_at_load,
     let_unlinkable_modules_fail_at_load,
 };
@@ -151,19 +151,30 @@ pub struct BoundModules {
 
 type Draft<'a> = (FileId, Vec<ModuleRequest>, Option<&'a mut FileImports>);
 
-pub struct ScannedModules {
+struct ScannedModules {
     scans: Scans,
     unloadable: Vec<UnloadableModule>,
     evicted: EvictedModules,
     modules: ModuleSet,
     run_again: Vec<ModuleRef>,
+    binds_statements_that_may_be_left: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum StatementsLeft {
+    ThoseThatAsk,
+    All,
 }
 
 pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
-    bind_scanned_modules(input, scan_modules(input))
+    let scanned = scan_modules(input, StatementsLeft::ThoseThatAsk);
+    bind_scanned_modules(input, scanned).unwrap_or_else(|| {
+        let scanned = scan_modules(input, StatementsLeft::All);
+        bind_scanned_modules(input, scanned).expect("no statement is bound that may be left")
+    })
 }
 
-pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
+fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModules {
     let mut steps = StepClock::new(Stage::BindModules);
     let mut scans = scan_files(input);
     let folders_of_databases = request_folders_of_databases_first(input, &mut scans);
@@ -172,18 +183,27 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
     let unloadable = find_unloadable_modules(input, &mut scans);
     let evicted = find_evicted_modules(input, &scans);
     steps.end("bind: unloadable and evicted modules");
-    let may_load_again = |file: FileId| {
-        evicted.contains(ModuleRef::File(file))
-            && match input.sources.kind(file) {
+    let whose_statements_ask = match left {
+        StatementsLeft::ThoseThatAsk if evicted.is_every_module() => {
+            test_run_evictions::find_files_whose_statements_ask(input, &scans)
+        }
+        StatementsLeft::ThoseThatAsk | StatementsLeft::All => None,
+    };
+    let asks_loader = |importer: FileId, imported: FileId| {
+        let mut asks = whose_statements_ask.iter();
+        let is_answered_at_run_time = evicted.leaves(ModuleRef::File(imported))
+            || (evicted.is_every_module() && asks.all(|asks| asks[importer.idx()]));
+        is_answered_at_run_time
+            && match input.sources.kind(imported) {
                 SourceKind::Program => {
-                    let kind = file_interop(input.files, input.sources, file).kind;
+                    let kind = file_interop(input.files, input.sources, imported).kind;
                     matches!(kind, ModuleKind::SourceText | ModuleKind::CommonJs)
                 }
                 SourceKind::Data => true,
                 _ => false,
             }
     };
-    leave_imports_of_test_files_to_loader(input, &mut scans, &may_load_again);
+    leave_imports_of_test_files_to_loader(input, &mut scans, &asks_loader);
     let ((mut run_again, texts_listed_ahead), mut modules) = run_steps_beside(
         input.beside,
         &mut steps,
@@ -209,16 +229,21 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
         evicted,
         modules,
         run_again,
+        binds_statements_that_may_be_left: whose_statements_ask.is_some(),
     }
 }
 
-pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) -> BoundModules {
+fn bind_scanned_modules(
+    input: &BindInput<'_, '_>,
+    scanned: ScannedModules,
+) -> Option<BoundModules> {
     let ScannedModules {
         scans,
         mut unloadable,
         evicted,
         mut modules,
         run_again,
+        binds_statements_that_may_be_left,
     } = scanned;
     let file_count = input.files.modules.len();
     let mut steps = StepClock::new(Stage::BindModules);
@@ -251,6 +276,9 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             (mocked, begun)
         },
     );
+    if binds_statements_that_may_be_left && order.leaves_cycles_to_loader() {
+        return None;
+    }
     let commonjs_input = CommonJsInput {
         bind: input,
         scans: &scans,
@@ -552,6 +580,10 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         &files_that_sites_name,
         &mut pending,
         &mut imports,
+        &match mocks_any_module {
+            true => NamedByMocks::AnyFile,
+            false => NamedByMocks::Files(&named_by_mocks),
+        },
         &mut unloadable,
     );
     drop_errors_of_unloadable_modules(&mut pending, &unloadable);
@@ -873,7 +905,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         move || drop((scans, tables, sites, imports)),
         || graph.finish(),
     );
-    BoundModules { graph }
+    Some(BoundModules { graph })
 }
 
 fn find_modules_behind_stars(

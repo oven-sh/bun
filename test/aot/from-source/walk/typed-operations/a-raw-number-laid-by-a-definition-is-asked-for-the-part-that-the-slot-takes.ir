@@ -20,8 +20,8 @@
 # PLACED: "size" JSValue {{*}}doors=int|string
 # RUN(ASKED): walk f2 mechanisms=all-Inlining
 # ASKED-LABEL: code f2:Body
-# ASKED: [[given]]: int @Double = CallDirect {{*}}function=f1
-# ASKED: CheckProof [[given]] checkedType=int typeWithoutProof=number source=Field
+# ASKED: [[given]]: int[0, 4294967295] @Double = CallDirect {{*}}function=f1
+# ASKED: CheckProof [[given]] checkedType=int[0, 4294967295] typeWithoutProof=number source=Field
 # ASKED: PutSlotOrAdd {{*}}key="size"
 # ASKED-NOT: DefineOwnProperty
 # RUN(RIGHT): run-in-shell

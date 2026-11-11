@@ -2985,6 +2985,30 @@ impl CommonJsExports {
         true
     }
 
+    fn has_getter_over_unknown_names(&self, text: &ModuleText) -> bool {
+        let mut getters = text.aliases.iter().filter(|alias| alias.is_enumerable);
+        getters.any(|alias| self.reads_unknown_name(alias.target))
+    }
+
+    fn reads_unknown_name(&self, mut target: AliasTarget) -> bool {
+        for _ in 0..=self.modules.len() {
+            let AliasTarget::Member { module, name } = target else {
+                return false;
+            };
+            let Some(text) = self.text_of(module) else {
+                return false;
+            };
+            if !text.has_names {
+                return true;
+            }
+            let Some(alias) = text.alias_of(name) else {
+                return false;
+            };
+            target = alias.target;
+        }
+        true
+    }
+
     fn look_at_modules_whose_getters_read_copies(&mut self) {
         let reads_copy = |(&(module, name), &target): (&(ModuleRef, Atom), &Target)| match target {
             Target::Name(owner, owner_name) => {

@@ -56,7 +56,10 @@ pub(in crate::lower) fn lower_tagged_template(
         strings.push(TemplateString { cooked, raw });
     }
     let mut arguments: SmallVec<[ValueId; 4]> = SmallVec::with_capacity(site.args.len() + 1);
-    arguments.push(lowering.builder.new_template_object(&strings));
+    let object = lowering.builder.emit_at_site(hir[template].pos, |builder| {
+        builder.new_template_object(&strings)
+    });
+    arguments.push(object);
     for substitution in hir.ids(site.args) {
         arguments.push(lowering.lower_expression(substitution));
     }

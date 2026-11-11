@@ -10,7 +10,7 @@ use crate::link::run_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
-    collect_program_contents,
+    collect_program_contents, find_named_workers,
 };
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
@@ -363,40 +363,38 @@ fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<
     start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
 }
 
-fn find_starts_that_led_to_files(
+fn find_worker_positions(
     files: &Files<'_>,
     sources: &Sources,
-    contents: &ProgramContents,
+    workers: &[(FileId, ExprId)],
 ) -> Vec<(Vec<u8>, u32)> {
     let mut places = Vec::new();
-    let starts = contents.found_entry_points.iter();
-    for &(file, start) in starts.flat_map(|found| &found.starts) {
+    for &(file, start) in workers {
         let hir = &files.module(file).hir;
-        let ExprKind::New(call) = hir[ExprId(start)].kind else {
+        let ExprKind::New(call) = hir[start].kind else {
             continue;
         };
         let callee = hir.skip_type_assertions(hir[call].callee);
-        for expression in [ExprId(start), callee] {
-            places.push((sources.diagnostic_path(file).to_vec(), hir[expression].pos));
+        let last_name = match hir[callee].kind {
+            ExprKind::Dot { .. } => hir.name_pos(callee),
+            ExprKind::Index { index, .. } => hir[index].pos,
+            _ => hir[callee].pos,
+        };
+        for position in [hir[start].pos, last_name] {
+            places.push((sources.diagnostic_path(file).to_vec(), position));
         }
     }
     places
 }
 
-fn find_node_workers_that_led_to_no_file(
-    files: &Files<'_>,
-    contents: &ProgramContents,
-) -> Vec<Diagnostic> {
+fn find_unknown_node_workers(files: &Files<'_>, contents: &ProgramContents) -> Vec<Diagnostic> {
     let mut said = Vec::new();
     for &file in files.compiled_files() {
         let Some(source) = parsed_source(files, file) else {
             continue;
         };
         for start in &source.contents.node_workers_out_of_sight {
-            let mut found = contents.found_entry_points.iter();
-            let led_to_file = matches!(start.at, NodeData::Expr(at)
-                if found.any(|found| found.starts.contains(&(file, at.0))));
-            if led_to_file {
+            if matches!(start.at, NodeData::Expr(at) if contents.is_followed_worker(file, at)) {
                 continue;
             }
             let code = match start.is_told_to_evaluate {
@@ -404,6 +402,22 @@ fn find_node_workers_that_led_to_no_file(
                 false => Code::WorkerStartedFromUnknownValue,
             };
             let span = Span::of_node(&files.module(file).hir, file, start.at);
+            said.push(Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    said
+}
+
+fn find_missing_node_workers(files: &Files<'_>, contents: &ProgramContents) -> Vec<Diagnostic> {
+    let mut said = Vec::new();
+    for &file in files.compiled_files() {
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        let starts = source.contents.named_node_workers.iter();
+        for &at in starts.filter(|&&at| !contents.is_followed_worker(file, at)) {
+            let span = Span::of_node(&files.module(file).hir, file, NodeData::Expr(at));
+            let code = Code::WorkerStartedFromUnknownValue;
             said.push(Diagnostic::new(code, Some(span), &[]));
         }
     }
@@ -523,6 +537,7 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 #[derive(Default)]
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
+    followed_workers: Vec<(FileId, ExprId)>,
     names_written: Vec<EntryPointPaths>,
 }
 
@@ -723,7 +738,11 @@ impl<'a> Build<'a> {
         let (application, found) = match options.aot.checks_only {
             true => {
                 let application = self.load_application(shared, project, request)?;
-                (application, FoundByLoad::default())
+                let found = FoundByLoad {
+                    followed_workers: find_named_workers(application.files()),
+                    ..FoundByLoad::default()
+                };
+                (application, found)
             }
             false => {
                 let finder = EntryPointFinder::new(FinderInput {
@@ -738,8 +757,11 @@ impl<'a> Build<'a> {
                 };
                 let application = self.load_application(shared, project, &request_that_finds)?;
                 let names_written = finder.take_names_written();
+                let (entry_points, followed_workers) =
+                    finder.finish(application.files(), options.entry_points.len());
                 let found = FoundByLoad {
-                    entry_points: finder.finish(application.files(), options.entry_points.len()),
+                    entry_points,
+                    followed_workers,
                     names_written,
                 };
                 (application, found)
@@ -769,6 +791,7 @@ impl<'a> Build<'a> {
             files,
             options,
             found_entry_points: found.entry_points,
+            followed_workers: found.followed_workers,
             any_file_may_become_main_module: host.may_any_file_become_main_module(),
             is_every_text_asked: !host.has_file_that_asks_for_what_unseen_code_finds(),
             builtin_names: shared.builtin_names,
@@ -805,7 +828,13 @@ impl<'a> Build<'a> {
                     && may_run_code_outside_image(files, file)
             });
         let session = shared.sessions.runtime;
-        let inputs = self.create_runtime_load_inputs(shared, session, &roots, &contents);
+        let evaluates_text = options.aot.loads_code_from_disk
+            && !options.load.runs_tests
+            && (files.compiled_files().iter())
+                .filter_map(|&file| parsed_source(files, file))
+                .any(|source| source.builtins.mentions_evaluator());
+        let inputs =
+            self.create_runtime_load_inputs(shared, session, &roots, &contents, evaluates_text);
         let takes_known_regions = Cell::new(true);
         let runtime_request = self.create_runtime_request(shared, &inputs, &roots.paths);
         let RuntimeLoadInputs {
@@ -845,8 +874,11 @@ impl<'a> Build<'a> {
             sources: &sources.application,
         };
         if !options.load.runs_tests {
-            for diagnostic in find_node_workers_that_led_to_no_file(files, &contents) {
+            for diagnostic in find_unknown_node_workers(files, &contents) {
                 self.diagnostics.add(Some(view), diagnostic);
+            }
+            if !options.aot.checks_only {
+                self.missing_node_workers = find_missing_node_workers(files, &contents);
             }
         }
         if !options.aot.checks_only && !options.aot.runs_in_place {
@@ -868,10 +900,14 @@ impl<'a> Build<'a> {
         };
         self.diagnostics
             .read_ignore_comments(view, ignore_comment_options);
+        self.started_workers.followed_at =
+            find_worker_positions(files, &sources.application, &contents.followed_workers);
+        if options.aot.loads_code_from_disk {
+            self.started_workers.named_at =
+                find_worker_positions(files, &sources.application, &find_named_workers(files));
+        }
         if !options.aot.checks_only {
             self.started_workers.code = code_of_workers(&contents);
-            self.started_workers.named_at =
-                find_starts_that_led_to_files(files, &sources.application, &contents);
             self.started_workers.levels_above_root = sources.application.levels_above_root();
             let (names, said) = collect_entry_point_aliases(
                 files,
@@ -928,10 +964,12 @@ impl<'a> Build<'a> {
         session: &'s Session,
         roots: &'c RuntimeRoots,
         contents: &'c ProgramContents,
+        evaluates_text: bool,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
-        let makes_names = contents.loads_by_unknown_path
+        let makes_names = evaluates_text
+            || contents.loads_by_unknown_path
             || (contents.loads_by_unknown_name && !options.load.runs_tests);
         let loads_code_by_unknown_names_alone =
             !is_told_of_code && makes_names && options.aot.loads_code_from_disk;

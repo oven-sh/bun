@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 72800a9a7786f4fdcc65253fca8311cf9b6e46351010e090969b64597ed02a59.
+// Written against that file with the SHA-256 9cb3b095847b3cf0643d1b1f6c8bb8cc228aaff6697163a22a2702b41fba812c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -295,7 +295,6 @@ declare global {
       [kSyncWriteFd]?: number;
       [kUserUnrefed]?: boolean;
       [kPausedUnref]?: boolean;
-      [kBoundedHandle]?: SocketHandle<Socket | ConnectData>;
       [kOnreadTail]?: Uint8Array;
       [kOnreadDraining]?: boolean;
       [kOnreadBuffer]?: Uint8Array | true;
@@ -710,7 +709,8 @@ function onUpgradeWriteClose(this: $Node.Socket, callback: WriteCallback) {
   callback($ERR_SOCKET_CLOSED());
 }
 const kUpgradeAttached = Symbol("kUpgradeAttached");
-const kBoundedHandle = Symbol("kBoundedHandle");
+// On a handle that reads as libuv does: syncReadSize().
+const kNodeStreamReads = Symbol("kNodeStreamReads");
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
@@ -900,14 +900,14 @@ function adoptTLSPair(
   pair: [raw: SocketHandle, tls: SocketHandle] | undefined,
 ) {
   if (!pair) throw new Error("Invalid socket");
+  // The pair reads the descriptor of this handle, with the size of read that was set on it.
+  const nodeStreamReads = connection._handle![kNodeStreamReads];
   const raw = (connection._handle = pair[0]);
   raw[kAdoptedTLSRaw] = self;
   self.once("end", self[kCloseRawConnection]);
   raw.connecting = false;
   const handle = (self._handle = pair[1]);
-  // It reads the descriptor of `connection`, with what that socket set on it.
-  setNodeStreamReads(handle, true);
-  self[kBoundedHandle] = handle;
+  if (nodeStreamReads) handle[kNodeStreamReads] = true;
   syncReadSize(self, handle);
 }
 function attachClientTLS(
@@ -1362,15 +1362,18 @@ const SocketHandlers = {
 // (us_socket_set_node_stream_reads in libusockets.h). What the socket reads goes to its own stream, or to the
 // message of the HTTP parser on it. An `onread` buffer is no stream.
 function syncReadSize(self: $Node.Socket, handle: SocketHandle) {
-  const parser: { incoming?: $Node.Readable | null } | null | undefined = (self as $Node.Socket & { parser?: any })
-    .parser;
-  const stream = parser ? parser.incoming : self;
-  const bounded =
-    self[kOnreadBuffer] === undefined && !(stream?._readableState !== undefined && takesWholeChunks(stream));
-  if ((self[kBoundedHandle] === handle) === bounded) return;
+  let bounded = false;
+  if (self[kOnreadBuffer] === undefined) {
+    const parser: { incoming?: $Node.Readable | null } | null | undefined = (self as $Node.Socket & { parser?: any })
+      .parser;
+    const stream = parser ? parser.incoming : self;
+    const state = stream?._readableState;
+    bounded = state === undefined || !takesWholeChunks(state, stream!);
+  }
+  if ((handle[kNodeStreamReads] === true) === bounded) return;
   // The raw half of a TLS pair shares the descriptor of the TLS socket, which decides for it.
   if (handle[kAdoptedTLSRaw]) return;
-  self[kBoundedHandle] = bounded ? handle : undefined;
+  handle[kNodeStreamReads] = bounded;
   setNodeStreamReads(handle, bounded);
 }
 
@@ -3091,6 +3094,7 @@ const resumeOfSocket = function resume(this: $Node.Socket) {
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
   const handle = this._handle;
+  // An HTTP message resumes the socket when its reader asks for more, and when it is over.
   if (handle) syncReadSize(this, handle);
   if (!this.connecting && !drainOnreadTail(this)) {
     handle?.resume?.();
@@ -3156,10 +3160,8 @@ Socket.prototype[kUpgradeClientTLS] = function (
 Socket.prototype.read = function read(this: $Node.Socket, size?: number) {
   // See resume(): an ended readable side never restarts the handle.
   if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
-    const handle = this._handle;
-    if (handle) syncReadSize(this, handle);
-    handle?.resume?.();
-    restorePausedHold(this, handle);
+    this._handle?.resume?.();
+    restorePausedHold(this, this._handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };

@@ -19,8 +19,8 @@ const {
   emitEOFIncomingMessage,
   onDataIncomingMessage,
   kAbortController,
-  syncReadSize,
 } = require("internal/http");
+const { takesWholeChunks } = require("internal/shared");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Function | undefined = (
@@ -331,6 +331,7 @@ IncomingMessage.prototype._read = function _read(_n) {
 
   // Native server path.
   const socket = this.socket;
+  let readsOfSocketAreItsOwn = false;
   if (socket && socket.readable) {
     if (this.upgrade || socket[kHandoffResponse] !== undefined) {
       // Upgrade request with a body (Node 26 semantics): reading the request
@@ -341,8 +342,8 @@ IncomingMessage.prototype._read = function _read(_n) {
       // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
       onIncomingMessageResumeNodeHTTPResponse.$call(this);
     } else {
-      if (!this[eofInProgress]) syncReadSize(socket, this);
       readStart(socket);
+      readsOfSocketAreItsOwn = true;
     }
   }
 
@@ -361,6 +362,11 @@ IncomingMessage.prototype._read = function _read(_n) {
   // A dumped or aborted request is not complete: it ends only at its real last chunk, like Node.
   if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
     emitEOFIncomingMessage(this);
+  } else if (readsOfSocketAreItsOwn) {
+    // More of the body is to come. While its reader may leave part of a chunk unread, a read holds what libuv gives
+    // Node, at most 64 KiB (us_socket_set_node_stream_reads in libusockets.h). HttpContext.h opens every connection
+    // that way and goes back to it behind the last chunk of a body.
+    socket[kHandle]?.setNodeStreamReads(!takesWholeChunks(this._readableState, this));
   }
 
   if (!handle.ondata) {

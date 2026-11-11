@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 530ad9d4018180bda21ba58049765f89e3ea1c37f6eefd45c33ff53d08c73924.
+// Written against that file with the SHA-256 d1bcf7072f19edb252fd6f3e46a7c8e109eaa280022b81da794375c552517a79.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -265,7 +265,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     try {
       $assert(readerForThisRead);
       // FileReader.rs `PullMode`: a stream that may leave part of a chunk unread gets what libuv gives Node's, at most 64 KiB a read.
-      source?.setFlowing?.(true, takesWholeChunks(stream) ? 0 : 2);
+      source?.setFlowing?.(true, takesWholeChunks(stream._readableState, stream) ? 0 : 2);
       ({ value } = await readerForThisRead.read());
     } catch (err) {
       if (readerForThisRead !== reader) {

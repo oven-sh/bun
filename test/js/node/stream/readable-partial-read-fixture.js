@@ -192,8 +192,29 @@ const tlsConnect = (server, { cert }) =>
   require("node:tls").connect({ port: server.address().port, host: "127.0.0.1", ca: cert, servername: "localhost" });
 const tcpConnect = server => require("node:net").connect(server.address().port, "127.0.0.1");
 
-// Both ends in this process: the reader has the socket that the server accepted, or the one that connected
-// (`readsConnected`). The first megabyte flows, so that the kernel hands over the payload in one piece.
+// Both ends of `stream` are in this process. The first megabyte flows, so that the kernel hands over the payload in
+// one piece.
+async function afterWarmUp(stream, writer, reader) {
+  let warm = 0;
+  const warmedUp = Promise.withResolvers();
+  const onWarmUp = chunk => {
+    warm += chunk.length;
+    if (warm < WARM_UP) return;
+    stream.off("data", onWarmUp);
+    stream.pause();
+    warmedUp.resolve();
+  };
+  stream.on("data", onWarmUp);
+  writer.write(Buffer.alloc(WARM_UP, "w"));
+  await warmedUp.promise;
+  const written = () => new Promise(done => writer.write(Buffer.alloc(PAYLOAD, "a"), done));
+  const result = await run(stream, reader, written, () => writer.end());
+  stream.destroy();
+  writer.destroy();
+  return result;
+}
+
+// The reader has the socket that the server accepted, or the one that connected (`readsConnected`).
 function overSocket(reader, listen, listenArgs, connect, readsConnected = false) {
   const { promise, resolve } = Promise.withResolvers();
   let connected;
@@ -201,22 +222,7 @@ function overSocket(reader, listen, listenArgs, connect, readsConnected = false)
     const [stream, writer] = readsConnected ? [connected, accepted] : [accepted, connected];
     writer.on("error", () => {});
     writer.resume();
-    let warm = 0;
-    const warmedUp = Promise.withResolvers();
-    const onWarmUp = chunk => {
-      warm += chunk.length;
-      if (warm < WARM_UP) return;
-      stream.off("data", onWarmUp);
-      stream.pause();
-      warmedUp.resolve();
-    };
-    stream.on("data", onWarmUp);
-    writer.write(Buffer.alloc(WARM_UP, "w"));
-    await warmedUp.promise;
-    const written = () => new Promise(done => writer.write(Buffer.alloc(PAYLOAD, "a"), done));
-    const result = await run(stream, reader, written, () => writer.end());
-    stream.destroy();
-    writer.destroy();
+    const result = await afterWarmUp(stream, writer, reader);
     server.close(() => resolve(result));
   });
   server.listen(...listenArgs, () => {
@@ -290,8 +296,34 @@ const sources = {
   },
   "tls-accepted": overTLS(false),
   "tls-connected": overTLS(true),
+  // TLS starts on a socket that is connected already.
+  "tls-over-socket"(reader, dir) {
+    const options = tlsOptions(dir);
+    const listen = onSocket => require("node:tls").createServer(options, onSocket);
+    const connect = server =>
+      require("node:tls").connect({ socket: tcpConnect(server), ca: options.cert, servername: "localhost" });
+    return overSocket(reader, listen, [0, "127.0.0.1"], connect, true);
+  },
   "http-request": httpRequest(false),
   "https-request": httpRequest(true),
+  // The socket of an 'upgrade' event, which takes what the client sends behind the head of its request.
+  "http-upgrade"(reader) {
+    const { promise, resolve } = Promise.withResolvers();
+    let client;
+    const server = require("node:http").createServer();
+    server.on("upgrade", async (req, socket) => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+      const result = await afterWarmUp(socket, client, reader);
+      server.close(() => resolve(result));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      client = tcpConnect(server);
+      client.on("error", () => {});
+      client.resume();
+      client.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+    });
+    return promise;
+  },
   // The same for the second response of a connection.
   "http-response"(reader) {
     const http = require("node:http");

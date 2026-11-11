@@ -455,12 +455,12 @@ declare global {
   }
 }
 
-// Whether `stream` takes all of every chunk it is given: it flows, or only its own async iterator listens for
-// 'readable'. Any other reader may leave part of a chunk in the stream, which announces that rest again only while
-// it is no more than highWaterMark bytes. So for it the native source reads as libuv reads for Node: at most
-// 64 KiB a time, handed over from the event loop.
-function takesWholeChunks(stream: { _readableState: { flowing: boolean | null }; _events?: Record<string, any> }) {
-  return stream._readableState.flowing === true || stream._events?.readable?.[kAsyncIteratorListener] === true;
+// Whether `stream`, whose _readableState is `state`, takes all of every chunk it is given: it flows, or only its own
+// async iterator listens for 'readable'. Any other reader may leave part of a chunk in the stream, which announces
+// that rest again only while it is no more than highWaterMark bytes. So for it the native source reads as libuv
+// reads for Node: at most 64 KiB a time, handed over from the event loop.
+function takesWholeChunks(state: { flowing: boolean | null }, stream: { _events?: Record<string, any> }) {
+  return state.flowing === true || stream._events?.readable?.[kAsyncIteratorListener] === true;
 }
 
 // Filled by the module that writes the functions. What lies in a public prototype object when another module loads may be a program's patch.

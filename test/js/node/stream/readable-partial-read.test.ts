@@ -53,6 +53,8 @@ describe.skipIf(isWindows)("a stream that was read in part announces the rest", 
     ["unix-accepted", "swap"],
     ["tls-accepted", "swap"],
     ["tls-connected", "swap"],
+    ["tls-over-socket", "swap"],
+    ["http-upgrade", "swap"],
   ])("%s, reader %s", async (source, reader) => {
     expect(await readInPart(source, reader)).toEqual(deliveredAll(reader));
   });

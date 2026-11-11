@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_incoming.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7685e927400f4fb92da736f2c29e775c19923746ce00dbe824aaed7975741b43.
+// Written against that file with the SHA-256 1b608973438b746bc23c5dd497020f4eca645f17087f41c57963e65f6bdae1a0.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_incoming"
@@ -18,6 +18,7 @@ const EventEmitterPrototype = require("node:events").prototype;
 const kDecoderValue: typeof streamState.kDecoderValue = streamState.kDecoderValue;
 const { errorOrDestroy } = require("internal/streams/destroy");
 const shared = require("internal/shared");
+const { takesWholeChunks } = shared;
 const {
   nextTick: originalNextTick,
   enqueueTick1,
@@ -39,7 +40,6 @@ const {
   emitEOFIncomingMessageOuter,
   clearServerParserIncoming,
   onDataIncomingMessage,
-  syncReadSize,
   takeRequestTrailers,
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
@@ -52,7 +52,6 @@ const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kMadeOverHandle: typeof http.kMadeOverHandle = http.kMadeOverHandle;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
-const kLargeReads: typeof http.kLargeReads = http.kLargeReads;
 const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 const noBodySymbol: typeof http.noBodySymbol = http.noBodySymbol;
 const kReqShouldKeepAlive: typeof http.kReqShouldKeepAlive = http.kReqShouldKeepAlive;
@@ -584,31 +583,32 @@ IncomingMessage.prototype.setTimeout = function setTimeout(
   return this;
 };
 
-function resumeConnection(req: $Node.IncomingMessage) {
+// Answers the socket when what it reads from here on is the body of `req`.
+function resumeConnection(req: $Node.IncomingMessage): $Node.HttpSocket | undefined {
   const socket = req.socket;
-  if (socket && socket.readable) resumeReadableConnection(req, socket);
+  if (socket && socket.readable && resumeReadableConnection(req, socket)) return socket;
 }
 
 function resumeIfReadable(socket: $Node.HttpSocket) {
   if (socket.readable) socket.resume();
 }
 
-function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket) {
+function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket): boolean {
   if (req.upgrade || socket[kHandoffResponse] !== undefined) {
     ("unlikely");
     // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
-  } else {
-    if (!req[eofInProgress]) syncReadSize(socket, req);
-    if (!socket._paused) {
-      if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, true);
-      else {
-        ("unlikely");
-        if (IS_COMPILED_AHEAD_OF_TIME) $callNoInline(resumeIfReadable, undefined, socket);
-        else resumeIfReadable(socket);
-      }
+    return false;
+  }
+  if (!socket._paused) {
+    if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, true);
+    else {
+      ("unlikely");
+      if (IS_COMPILED_AHEAD_OF_TIME) $callNoInline(resumeIfReadable, undefined, socket);
+      else resumeIfReadable(socket);
     }
   }
+  return true;
 }
 
 const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: number) {
@@ -636,7 +636,7 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
   }
 
   // Native server path.
-  resumeConnection(this);
+  const socketOfBody = resumeConnection(this);
 
   if (this[eofInProgress]) {
     // There is a nextTick pending that will emit EOF
@@ -653,6 +653,11 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
   // A dumped or aborted request is not complete: it ends only at its real last chunk, like Node.
   if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
     emitEOFIncomingMessage(this);
+  } else if (socketOfBody !== undefined) {
+    // More of the body is to come. While its reader may leave part of a chunk unread, a read holds what libuv gives
+    // Node, at most 64 KiB (us_socket_set_node_stream_reads in libusockets.h). HttpContext.h opens every connection
+    // that way and goes back to it behind the last chunk of a body.
+    socketOfBody[kHandle]?.setNodeStreamReads(!takesWholeChunks(this._readableState, this));
   }
 
   if (!handle.ondata) {
@@ -1441,11 +1446,14 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
   state[kState] = asked;
   try {
     req._consuming = true;
-    resumeConnection(req);
+    const socketOfBody = resumeConnection(req);
     const bodyReadState = handle.hasBody;
     if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
       ("unlikely");
       emitEOFIncomingMessage(req);
+    } else if (socketOfBody !== undefined) {
+      // As incomingMessageRead does.
+      socketOfBody[kHandle]?.setNodeStreamReads(!takesWholeChunks(state, req));
     }
   } catch (err) {
     errorOrDestroy(stream, err as Error);
@@ -1558,7 +1566,6 @@ function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, 
       socket.resume();
     }
   }
-  if (socket?.[kLargeReads]) socket[kLargeReads] = false;
 }
 
 // As readable's addChunk() adds a chunk at the end, less its look for more, which the caller takes.

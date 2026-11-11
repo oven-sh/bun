@@ -1,5 +1,4 @@
 const { isIPv4 } = require("internal/net/isIP");
-const { takesWholeChunks } = require("internal/shared");
 
 const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
@@ -45,8 +44,6 @@ const kRequest = Symbol("request");
 const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
-// On the socket of a native server: syncReadSize().
-const kLargeReads = Symbol("kLargeReads");
 // Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
 const kRememberPeer = Symbol("kRememberPeer");
 // Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
@@ -180,16 +177,6 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
-// `stream` takes what the connection of `socket` reads: a request body, or the socket itself as a tunnel. While it
-// may leave part of a chunk unread, a read is what libuv gives Node, at most 64 KiB (us_socket_set_node_stream_reads
-// in libusockets.h). HttpContext.h opens every connection that way and goes back to it behind the last chunk of a body.
-function syncReadSize(socket, stream) {
-  const largeReads = takesWholeChunks(stream);
-  if (socket[kLargeReads] === largeReads) return;
-  socket[kLargeReads] = largeReads;
-  socket[kHandle]?.setNodeStreamReads?.(!largeReads);
-}
-
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
   if (aborted === NodeHTTPResponseAbortEvent.readParsed) {
     const socket = this.socket;
@@ -236,7 +223,6 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
-    if (socket?.[kLargeReads]) socket[kLargeReads] = false;
   }
 }
 
@@ -578,7 +564,6 @@ export {
   kHasQueuedReads,
   kHeaderSource,
   kInternalSocketData,
-  kLargeReads,
   kNeedDrain,
   kOnReadParsed,
   kOutHeaders,
@@ -600,7 +585,6 @@ export {
   setServerAppFlags,
   setServerCustomOptions,
   setServerMaxHeadersCount,
-  syncReadSize,
   tlsSymbol,
   utcDate,
 };

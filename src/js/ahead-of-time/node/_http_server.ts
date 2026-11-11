@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 8c5ff562470c14b1240c32d1d8a8e0b3c7b7fa8d36136c004a8af52a3ed7b20b.
+// Written against that file with the SHA-256 06e1a0aee2131a531e4c89491b3e031871c2fe6a5a5b72932039d7e07e51e913.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -59,6 +59,7 @@ const {
   stopPerf,
   kInternalSendOptions,
   isStoppedModuleGraphRunning,
+  takesWholeChunks,
 } = require("internal/shared");
 const shared = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
@@ -75,7 +76,6 @@ const {
   setServerMaxHeadersCount,
   getMaxHTTPHeaderSize,
   http1ServerPipeline,
-  syncReadSize,
 } = http;
 const enum NodeHTTPResponseAbortEvent {
   none = 0,
@@ -113,7 +113,6 @@ const kMadeOverHandle: typeof http.kMadeOverHandle = http.kMadeOverHandle;
 const kResponseMadeOverHandle = { __proto__: null } as $Node.ServerResponseOptions;
 const kOnReadParsed: typeof http.kOnReadParsed = http.kOnReadParsed;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
-const kLargeReads: typeof http.kLargeReads = http.kLargeReads;
 const kHasQueuedReads: typeof http.kHasQueuedReads = http.kHasQueuedReads;
 const kRealListen: typeof http.kRealListen = http.kRealListen;
 const tlsSymbol: typeof http.tlsSymbol = http.tlsSymbol;
@@ -2437,7 +2436,6 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     timeout = 0;
     parser: $Node.HttpServerParserShim | null = null;
     [kStreamingEnabled] = false;
-    [kLargeReads] = false;
     [kBoundOnAbort]: ((event: number) => void) | null = null;
     [kKeepAliveIdleStart]: number | undefined = undefined;
     $pipelinedResponses: $Node.PipelinedResponse[] | undefined = undefined;
@@ -2870,7 +2868,8 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       const handle = this[kHandle];
       // A tunnel reads again: response.resume() below does nothing for it.
       if (readStart && this[kStreamingEnabled]) {
-        syncReadSize(this, this);
+        // What it reads goes to this stream. See IncomingMessage.prototype._read.
+        handle?.setNodeStreamReads(!takesWholeChunks(this._readableState, this));
         handle?.readStart();
       }
       const response = handle?.response;

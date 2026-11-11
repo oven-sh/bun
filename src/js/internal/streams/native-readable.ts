@@ -62,7 +62,7 @@ function pullMode(stream) {
   const state = stream._readableState;
   if (state.flowing === true) return 0;
   if (!state.readableListening) return state.length === 0 ? 2 : 3;
-  return takesWholeChunks(stream) ? 1 : 3;
+  return takesWholeChunks(state, stream) ? 1 : 3;
 }
 
 let debugId = 0;

@@ -3117,7 +3117,10 @@ declare module "bun:test" {
       /**
        * Returns the lines that differ between two values, or between two strings.
        *
-       * Returns `null` for two numbers, two bigints, two booleans, or an asymmetric matcher.
+       * Returns `null` for two numbers, two bigints, or two booleans.
+       *
+       * Also returns `null` when `expected` is an asymmetric matcher: a matcher of `expect`, such as
+       * `expect.any(Number)`, or a plain object or class instance with an `asymmetricMatch()` method.
        *
        * @param options accepted for compatibility with Jest, but ignored
        */

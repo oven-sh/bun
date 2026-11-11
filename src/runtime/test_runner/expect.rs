@@ -608,6 +608,16 @@ impl Expect {
         }
     }
 
+    /// Whether deep equality reads `value` as a matcher: a built-in one, or an object with an `asymmetricMatch()` method.
+    pub(crate) fn is_matcher_in_equality(value: JSValue, global_this: &JSGlobalObject) -> bool {
+        // The built-in matchers are DOM wrappers, and the method is only looked up on plain objects and class instances.
+        if value.js_type() == bun_jsc::JSType::DOMWrapper {
+            Self::is_asymmetric_matcher(value)
+        } else {
+            value.has_asymmetric_match_method(global_this)
+        }
+    }
+
     pub(crate) fn is_asymmetric_matcher(value: JSValue) -> bool {
         if ExpectCustomAsymmetricMatcher::from_js(value).is_some() { return true; }
         if ExpectAny::from_js(value).is_some() { return true; }
@@ -2995,7 +3005,8 @@ impl ExpectMatcherUtils {
             HintColor::Dim.paint(&mut out, NO_VISUAL_DIFFERENCE);
             return bun_string_jsc::create_utf8_for_js(global_this, &out);
         }
-        if Expect::is_asymmetric_matcher(expected) {
+        // jest-diff reads `expected.asymmetricMatch` here. Deep equality's lookup runs no user code and keeps one definition of a matcher.
+        if Expect::is_matcher_in_equality(expected, global_this) {
             return Ok(JSValue::NULL);
         }
         let (expected_type, received_type) = (Self::type_name(expected), Self::type_name(received));

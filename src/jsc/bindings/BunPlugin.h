@@ -25,6 +25,10 @@ namespace JSC {
 class AbstractModuleRecord;
 }
 
+namespace Bun {
+class JSCommonJSModule;
+}
+
 namespace Zig {
 
 using namespace JSC;
@@ -171,8 +175,16 @@ public:
         WTF::UncheckedKeyHashSet<String> modulesToEvictWithCallers = {};
         // The pending loads those modules are waiting for, and the evaluations that `modulesLeftForLater` waits for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
-        // The ES and CommonJS modules that a walk left because a module was being evaluated: see `waits` in evictModulesAndTheirImporters(). Weak, as in ImportCallers.
+        // The ES and CommonJS modules that a walk left because a module was being loaded or evaluated: see `waits` in evictModulesAndTheirImporters(). Weak, as in ImportCallers.
         WTF::UncheckedKeyHashMap<JSC::JSCell*, JSC::Weak<JSC::JSCell>> modulesLeftForLater = {};
+        // One of them waits for a load that has yet to settle: the runner lets it settle before the next test file, as for `modulesToEvictOnceLoaded`.
+        bool hasModulesLeftThatLoad = false;
+        // The job that takes them has yet to run: see evictModulesLeftInJob().
+        bool hasJobForModulesLeft = false;
+        // The ES modules that left the registry before their evaluation had ended. They can still import one of `modulesLeftForLater`.
+        WTF::UncheckedKeyHashMap<JSC::JSCell*, JSC::Weak<JSC::JSCell>> modulesEvictedUnfinished = {};
+        // Under `bun test`: the CommonJS modules whose bodies run, innermost last. Each is on the stack of evaluateCommonJSModuleOnce().
+        WTF::Vector<Bun::JSCommonJSModule*, 8> commonJSModulesBeingEvaluated = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
@@ -200,6 +212,8 @@ public:
             importCalls.clear();
             importCallsOfCommonJS.clear();
             modulesLeftForLater.clear();
+            hasModulesLeftThatLoad = false;
+            modulesEvictedUnfinished.clear();
             testFilesToReplace.clear();
         }
 
@@ -388,6 +402,8 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 void didCallImport(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& importer, const String& key);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
+// Under `bun test`, before the body of an ES module begins to run.
+void willEvaluateModule(Zig::GlobalObject*, JSC::JSValue moduleRecord);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

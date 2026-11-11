@@ -5180,6 +5180,525 @@ describe.concurrent("a module that got a mock from import() is evaluated again w
     },
   );
 
+  // A module that has loaded is not evaluated while the load of a module above it is pending, and a reaction on its load runs before the loader evaluates the graph.
+  // Taken then, the loader would evaluate the record that left the registry, and the next import of the module would evaluate another one inside that load.
+  const callsImportOfM = `const p = import("./m"); p.catch(() => {});`;
+  const endsMockDuringLoadOf = (root: string, whileItIsPending = "") => `
+    const gate = Promise.withResolvers<void>(), mayLoad = Promise.withResolvers<void>();
+    vi.doMock("./m", () => ({ m: "fake m" }));
+    vi.doMock("./gate", async () => (gate.resolve(), await mayLoad.promise, { g: "fake g" }));
+    await import("./c");
+    const first = import("./${root}");
+    await gate.promise;
+    vi.doUnmock("./m");
+    ${whileItIsPending}
+    mayLoad.resolve();
+    await first;
+    globalThis.ran.push("first load ended");
+    await import("./${root}");
+  `;
+  const factoryStopsDuringLoadOfP = `
+    vi.doMock("./m", ${factoryThatLoads()});
+    await import("./p");
+    globalThis.ran.push("first load ended");
+    await import("./p");
+  `;
+  const factoryChainCallsImport = {
+    "uses-m.ts": `import { m } from "./m"; import "./c"; export const seen = () => m;`,
+    "c.ts": `${ran("c")} const p = import("./uses-m"); p.catch(() => {}); export {};`,
+    "again.ts": `${ran("again")} import "./p"; export {};`,
+    "x.ts": `export const x = "x";`,
+  };
+  test.each([
+    [
+      "the load of its importer is pending when the mock ends",
+      {
+        "c.ts": `${ran("c")} ${callsImportOfM} export {};`,
+        "mid.ts": `${ran("mid")} import "./c"; require("./again.ts"); ${ran("mid ended")} export {};`,
+        "again.ts": `${ran("again")} import "./mid"; export {};`,
+        "p.ts": `${ran("p")} import "./mid"; import "./gate"; export {};`,
+      },
+      endsMockDuringLoadOf("p"),
+      ["c", "mid", "again", "mid ended", "p"],
+    ],
+    [
+      "a module of its graph requires it",
+      {
+        "c.ts": `${ran("c")} ${callsImportOfM} export {};`,
+        "p.ts": `${ran("p")} import "./c"; import "./gate"; export {};`,
+        "s.ts": `${ran("s")} require("./p.ts"); export {};`,
+        "r.ts": `${ran("r")} import "./p"; import "./s"; export {};`,
+      },
+      endsMockDuringLoadOf("r"),
+      ["c", "p", "s", "r"],
+    ],
+    [
+      "a factory stops inside its load, and a require() of an ES module ends in its body",
+      {
+        ...factoryChainCallsImport,
+        "p.ts": `${ran("p")} import { m } from "./m"; import "./c"; require("./x.ts"); require("./again.ts"); ${ran("p ended")} export const seen = () => m;`,
+      },
+      factoryStopsDuringLoadOfP,
+      ["c", "p", "again", "p ended"],
+    ],
+    [
+      "a factory stops inside its load, and it waits at a top-level await",
+      {
+        ...factoryChainCallsImport,
+        "p.ts": `${ran("p")} import { m } from "./m"; import "./c"; await 0; await import("./again.ts"); ${ran("p ended")} export const seen = () => m;`,
+      },
+      factoryStopsDuringLoadOfP,
+      ["c", "p", "again", "p ended"],
+    ],
+    [
+      "require() evaluates it while the load above it is pending",
+      {
+        "c.ts": `${ran("c")} ${callsImportOfM} export {};`,
+        "l.ts": `${ran("l")} import "./c"; export {};`,
+        "again.ts": `${ran("again")} import "./l"; export {};`,
+        "r.ts": `${ran("r")} import "./l"; import "./gate"; require("./l.ts"); require("./again.ts"); ${ran("r ended")} export {};`,
+      },
+      endsMockDuringLoadOf("r", `require("./l.ts");`),
+      ["c", "l", "r", "again", "r ended"],
+    ],
+    [
+      "another import gets it while the load above it is pending",
+      {
+        "c.ts": `${ran("c")} ${callsImportOfM} export {};`,
+        "l.ts": `${ran("l")} import "./c"; export {};`,
+        "other.ts": `${ran("other")} import "./l"; export {};`,
+        "r.ts": `${ran("r")} import "./l"; import "./gate"; await import("./other"); ${ran("r ended")} export {};`,
+      },
+      endsMockDuringLoadOf("r", `await import("./other");`),
+      ["c", "l", "other", "r", "r ended"],
+      ["c", "l", "r", "other", "r ended"],
+    ],
+  ])(
+    "a module that has loaded is left until it was evaluated: %s",
+    async (_, modules, steps, bodies, again = bodies) => {
+      await expectFixturesToPass(
+        {
+          "m.ts": `export const m = "real m";`,
+          "gate.ts": `export const g = "real g";`,
+          ...modules,
+          "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("each body runs once while the first load is under way", async () => {
+            ${steps}
+            expect(globalThis.ran).toEqual(${JSON.stringify([...bodies, "first load ended", ...again])});
+          });
+        `,
+        },
+        1,
+      );
+    },
+  );
+
+  // The shape that Vitest's documentation shows: the test file imports the module, and the mock is hoisted above that import.
+  test("a hoisted mock whose factory loads an importer of the mocked module: the first load runs each body once", async () => {
+    await expectFixturesToPass(
+      {
+        "m.ts": `export const m = "real m";`,
+        ...factoryChainCallsImport,
+        "p.ts": `${ran("p")} import { m } from "./m"; import "./c"; require("./x.ts"); require("./again.ts"); ${ran("p ended")} export const seen = () => m;`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { seen } from "./p";
+          vi.mock("./m", ${factoryThatLoads()});
+          globalThis.ran.push("first load ended");
+          test("the modules that called import() are evaluated again at the next import", async () => {
+            await import("./p");
+            expect(seen()).toBe("fake m");
+            expect(globalThis.ran).toEqual(["c", "p", "again", "p ended", "first load ended", "c", "p", "again", "p ended"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // The first load of w.ts goes on outside the registry: w.ts left it when its load settled, and waits at its await.
+  test("a module that was left is not taken while the module that it goes with waits at a top-level await", async () => {
+    await expectFixturesToPass(
+      {
+        "k.ts": `export const k = "real k";`,
+        "gate.ts": `export const g = "real g";`,
+        "caller.ts": `${ran("caller")} ${callsImport} export {};`,
+        "dep.ts": `${ran("dep")} require("./caller.ts"); export {};`,
+        "w.ts": `
+          ${ran("w")}
+          import { k } from "./k";
+          import "./dep";
+          import "./gate";
+          export const seen = () => k;
+          await 0;
+          await import("./dep");
+          ${ran("w ended")}
+        `,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("each body runs once while the first load is under way", async () => {
+            const gate = Promise.withResolvers<void>();
+            vi.doMock("./k", () => ({ k: "fake k" }));
+            vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
+            await import("./k");
+            const first = import("./w");
+            await gate.promise;
+            vi.doUnmock("./k");
+            const seen = [(await first).seen()];
+            globalThis.ran.push("first load ended");
+            seen.push((await import("./w")).seen());
+            expect(seen).toEqual(["fake k", "real k"]);
+            expect(globalThis.ran).toEqual(["dep", "caller", "w", "w ended", "first load ended", "dep", "caller", "w", "w ended"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // The end of the mock of k.ts takes p.ts while its body runs, as it takes every importer of a mocked module. again.ts then loads p.ts a second time.
+  // That second p.ts called import() for m.ts, and it stands under the key of a body that still runs.
+  test("a module under the key of a body that still runs is left", async () => {
+    await expectFixturesToPass(
+      {
+        "k.ts": `export const k = "real k";`,
+        "m.ts": `export const m = "real m";`,
+        "p.ts": `
+          ${ran("p")}
+          import { k } from "./k";
+          ${callsImportOfM}
+          if (globalThis.endMocks) {
+            const { ofK, ofM } = globalThis.endMocks;
+            globalThis.endMocks = undefined;
+            ofK();
+            require("./again.ts");
+            ofM();
+            require("./again2.ts");
+          }
+          ${ran("p ended")}
+          export const seen = () => k;
+        `,
+        "again.ts": `${ran("again")} import "./p"; export {};`,
+        "again2.ts": `${ran("again2")} import "./p"; export {};`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("the second p.ts runs once while the first load is under way", async () => {
+            vi.doMock("./k", () => ({ k: "fake k" }));
+            vi.doMock("./m", () => ({ m: "fake m" }));
+            await import("./k");
+            await import("./m");
+            globalThis.endMocks = { ofK: () => vi.doUnmock("./k"), ofM: () => vi.doUnmock("./m") };
+            await import("./p");
+            globalThis.ran.push("first load ended");
+            await import("./p");
+            expect(globalThis.ran).toEqual(["p", "p", "p ended", "again", "again2", "p ended", "first load ended", "p", "p ended"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // The body of a CommonJS module is not always a frame that names it: a tail call in strict mode ends the frame of the wrapper, the wrapper can be a bound function,
+  // and another module can stand under its key in require.cache.
+  const endsMockAndIsRequiredBack = `globalThis.unmock(); require("./again.cjs"); ${ran("x ended")}`;
+  test.each([
+    [
+      "ends with a tail call in strict mode",
+      `"use strict"; ${ran("x")} ${callsImportOfM} function rest() { ${endsMockAndIsRequiredBack} } return rest();`,
+    ],
+    [
+      "runs in a wrapper that is a bound function",
+      `${ran("x")} ${callsImportOfM} ${endsMockAndIsRequiredBack}`,
+      `require("module").wrapper[1] = "\\n}).bind(null)";`,
+    ],
+    [
+      "has put another module under its key in require.cache",
+      `
+        ${ran("x")}
+        ${callsImportOfM}
+        const stand = new (require("module"))(__filename, module.parent);
+        Object.assign(stand, { filename: __filename, exports: module.exports, loaded: true });
+        require.cache[__filename] = stand;
+        ${endsMockAndIsRequiredBack}
+      `,
+    ],
+  ])(
+    "a CommonJS module that ends a mock in its body is left until that body has ended, when it %s",
+    async (_, body, setup = "") => {
+      await expectFixturesToPass(
+        {
+          "m.ts": `export const m = "real m";`,
+          "x.cjs": body,
+          "again.cjs": `${ran("again")} require("./x.cjs");`,
+          "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("the body runs again at the next require()", async () => {
+            vi.doMock("./m", () => ({ m: "fake m" }));
+            await import("./m");
+            globalThis.unmock = () => vi.doUnmock("./m");
+            ${setup}
+            require("./x.cjs");
+            globalThis.ran.push("first load ended");
+            const { m } = await import("./m");
+            require("./x.cjs");
+            expect(m).toBe("real m");
+            expect(globalThis.ran).toEqual(["x", "again", "x ended", "first load ended", "x", "again", "x ended"]);
+          });
+        `,
+        },
+        1,
+      );
+    },
+  );
+
+  // dep.ts calls import() for w.ts, and the walk leaves it because its body runs. What takes it later is a walk that no call of the program asked for.
+  const leftWhileItsBodyRuns = (more = "") => ({
+    "k.ts": `${ran("k")} export const k = "real k";`,
+    "gate.ts": `export const g = "real g";`,
+    "x.ts": `export const x = "x";`,
+    "w.ts": `${ran("w")} import { k } from "./k"; import "./dep"; import "./gate"; export const seen = () => k;`,
+    "dep.ts": `import { vi } from "bun:test"; ${ran("dep")} ${callsImport} require("./x.ts"); ${more} export {};`,
+  });
+  const endsMockDuringLoadOfW = `
+    const gate = Promise.withResolvers<void>();
+    vi.doMock("./k", () => ({ k: "fake k" }));
+    vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
+    await import("./k");
+    const first = import("./w");
+    await gate.promise;
+    vi.doUnmock("./k");
+    const seen = [(await first).seen()];
+    globalThis.ran.push("first load ended");
+  `;
+  test("a module that was left is not taken once it has made a mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...leftWhileItsBodyRuns(`vi.doMock("./z", () => ({ z: "z of dep.ts" }));`),
+        "z.ts": `export const z = "real z";`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("dep.ts does not lay its mock a second time", async () => {
+            ${endsMockDuringLoadOfW}
+            vi.doMock("./z", () => ({ z: "z of the test" }));
+            seen.push((await import("./w")).seen(), (await import("./z")).z);
+            expect(seen).toEqual(["fake k", "real k", "z of the test"]);
+            expect(globalThis.ran).toEqual(["dep", "w", "first load ended", "k", "w"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // u.ts imports none of them, so it is no load of theirs that is under way.
+  test("a module that was left is not held up by the top-level await of another module", async () => {
+    await expectFixturesToPass(
+      {
+        ...leftWhileItsBodyRuns(),
+        "u.ts": `globalThis.started.resolve(); await new Promise(() => {}); export {};`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("u.ts waits while the mock ends", async () => {
+            globalThis.started = Promise.withResolvers<void>();
+            import("./u");
+            await globalThis.started.promise;
+            ${endsMockDuringLoadOfW}
+            seen.push((await import("./w")).seen());
+            expect(seen).toEqual(["fake k", "real k"]);
+            expect(globalThis.ran).toEqual(["dep", "w", "first load ended", "k", "dep", "w"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // The test file waits at its own top-level await. Its body is the program, not a load of p.ts that is under way.
+  test("a module that was left is not held up by the top-level await of the test file", async () => {
+    await expectFixturesToPass(
+      {
+        "m.ts": `export const m = "real m";`,
+        "gate.ts": `export const g = "real g";`,
+        "c.ts": `${ran("c")} let m; export const seen = async () => (await (m ??= import("./m"))).m;`,
+        "mid.ts": `${ran("mid")} export { seen } from "./c";`,
+        "p.ts": `${ran("p")} export { seen } from "./mid"; import "./gate";`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          const gate = Promise.withResolvers<void>();
+          vi.doMock("./m", () => ({ m: "fake m" }));
+          vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
+          const seen = [await (await import("./c")).seen()];
+          const first = import("./p");
+          await gate.promise;
+          vi.doUnmock("./m");
+          seen.push(await (await first).seen());
+          globalThis.ran.push("first load ended");
+          seen.push(await (await import("./p")).seen());
+          test("the second import at the top level evaluates them again", () => {
+            expect(seen).toEqual(["fake m", "fake m", "real m"]);
+            expect(globalThis.ran).toEqual(["c", "mid", "p", "first load ended", "c", "mid", "p"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // l.js has loaded when its test file ends, and r.js above it still waits for a plugin. The runner waits for that load too: the next file would join it otherwise.
+  test("the next file reads no ended mock through a module whose importer was loading when its test file ended", async () => {
+    await expectFixturesToPass(
+      {
+        "m.js": `export const m = "real";`,
+        "slow1.js": `export const slow = 1;`,
+        "slow2.js": `export const slow = 2;`,
+        "c.js": `let m; export const run = async () => (await (m ??= import("./m.js"))).m;`,
+        "l.js": `import { run } from "./c.js"; import { slow } from "./slow1.js"; export const seen = async () => (await run()) + slow;`,
+        "r.js": `import { seen as inner } from "./l.js"; import { slow } from "./slow2.js"; export const seen = async () => (await inner()) + slow;`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("leaves an import that waits for a plugin at two levels", async () => {
+            const called = [Promise.withResolvers(), Promise.withResolvers()];
+            const turn = () => new Promise(resolve => setImmediate(resolve));
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow[12]\.js$/ }, async ({ path }) => {
+                  const outer = path.endsWith("slow2.js");
+                  called[+outer].resolve();
+                  await turn();
+                  if (outer) await turn();
+                });
+              },
+            });
+            vi.doMock("./m.js", () => ({ m: "mock" }));
+            expect(await (await import("./c.js")).run()).toBe("mock");
+            void import("./r.js");
+            await Promise.all(called.map(load => load.promise));
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./r.js";
+          test("the next file gets the original", async () => {
+            expect(await seen()).toBe("real12");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  // vi.doMock() patches the package in place for the test file that runs, so x.ts stays: it is not a module that the walk leaves for later.
+  test("a module that runs when vi.doMock() patches a package that it imports stays one instance", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", type: "module", main: "./index.js" }),
+        "node_modules/pkg/index.js": `export const name = "real pkg";`,
+        "calls-import.ts": `export const other = import("./other");`,
+        "other.ts": `export {};`,
+        "x.ts": `${counted} import { name } from "pkg"; globalThis.mockPkg(); export const seen = () => name;`,
+        "1.test.ts": `
+          import { test } from "bun:test";
+          import "pkg";
+          test("an earlier file loads the package", () => {});
+        `,
+        "2.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("x.ts mocks the package in its body", async () => {
+            await (await import("./calls-import")).other;
+            globalThis.mockPkg = () => vi.doMock("pkg", () => ({ name: "fake pkg" }));
+            const first = await import("./x");
+            const again = await import("./x");
+            expect([first === again, globalThis.appLoads, first.seen()]).toEqual([true, 1, "fake pkg"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // h.cjs is left because t.ts waits at its top-level await. vi.doMock() then moves h.cjs to another key until the mock ends.
+  test("the next file reads no ended mock through a module that was left, and that vi.doMock() mocks after that", async () => {
+    await expectFixturesToPass(
+      {
+        "k.ts": `export const k = "real k";`,
+        "gate.ts": `export const g = "real g";`,
+        "w.ts": `import { k } from "./k"; import "./gate"; export const seen = () => k;`,
+        "h.cjs": `let w; exports.run = async () => (await (w ??= import("./w.ts"))).seen();`,
+        "t.ts": `globalThis.started.resolve(); await new Promise(() => {}); export {};`,
+        "1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("w.ts waits for its load when the mock of k.ts ends", async () => {
+            globalThis.started = Promise.withResolvers<void>();
+            const gate = Promise.withResolvers<void>();
+            vi.doMock("./k", () => ({ k: "fake k" }));
+            vi.doMock("./gate", () => (gate.resolve(), { g: "fake g" }));
+            await import("./k");
+            const helper = require("./h.cjs");
+            import("./t");
+            await globalThis.started.promise;
+            const first = import("./w");
+            await gate.promise;
+            vi.doUnmock("./k");
+            const late = helper.run();
+            expect([(await first).seen(), await late]).toEqual(["fake k", "fake k"]);
+            vi.doMock("./h.cjs", () => ({ run: async () => "a mock of h.cjs" }));
+          });
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          test("the next file", async () => {
+            expect(await require("./h.cjs").run()).toBe("real k");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // user.js imports h.js, which called import() for the mocked module. Its load waits for a plugin when the test file ends, and the runner waits for it as for any load in flight.
+  test("the next file reads no ended mock through a module that was loading when its test file ended", async () => {
+    await expectFixturesToPass(
+      {
+        "k.js": `export const x = "real";`,
+        "slow.js": `export const slow = "slow";`,
+        "h.js": `let k; export const run = async () => (await (k ??= import("./k.js"))).x;`,
+        "user.js": `import { run } from "./h.js"; import { slow } from "./slow.js"; export const seen = async () => (await run()) + "/" + slow;`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("leaves an import that waits for a plugin", async () => {
+            const called = Promise.withResolvers();
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow\\.js$/ }, async () => {
+                  called.resolve();
+                  await new Promise(resolve => setImmediate(resolve));
+                });
+              },
+            });
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            expect(await (await import("./h.js")).run()).toBe("mock");
+            void import("./user.js");
+            await called.promise;
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./user.js";
+          test("the next file gets the original", async () => {
+            expect(await seen()).toBe("real/slow");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
   test("another key of its file stays loaded", async () => {
     const twin = (n: number, mocked: boolean) => `
       import { expect, mock, test } from "bun:test";

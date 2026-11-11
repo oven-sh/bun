@@ -364,7 +364,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
+    if (isBunTest) [[unlikely]]
+        globalObject->onLoadPlugins.commonJSModulesBeingEvaluated.append(moduleObject);
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    if (isBunTest) [[unlikely]]
+        globalObject->onLoadPlugins.commonJSModulesBeingEvaluated.removeLast();
     RETURN_IF_EXCEPTION(scope, false);
 
     if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {

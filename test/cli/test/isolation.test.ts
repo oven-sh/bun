@@ -2500,7 +2500,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           const m = join(import.meta.dir, "m.ts");
           void new Function("path", "return import(path)")(m);
           // m.ts comes back, and then its import of d.ts goes out.
-          const deadline = Date.now() + 4000;
+          const deadline = Date.now() + 20_000;
           while (isolatedModuleCacheSourceType(m) === null) {
             if (Date.now() > deadline) throw new Error("m.ts did not come back");
             await new Promise(resolve => setImmediate(resolve));
@@ -2520,7 +2520,8 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
       `,
     });
     const files = ["./a-realm.test.ts", "./b-realm.test.ts"];
-    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], files, {
+    // A debug build takes seconds for the transpile of d.ts.
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules", "--timeout=30000"], files, {
       ...bunEnv,
       ...transpilesOnThePool,
     });

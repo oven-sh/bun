@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9cb3b095847b3cf0643d1b1f6c8bb8cc228aaff6697163a22a2702b41fba812c.
+// Written against that file with the SHA-256 8470137d6e01ff0e7d4df7a90bd9f056b3811856bab20f77a00c8d400b72ccf5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -901,7 +901,7 @@ function adoptTLSPair(
 ) {
   if (!pair) throw new Error("Invalid socket");
   // The pair reads the descriptor of this handle, with the size of read that was set on it.
-  const nodeStreamReads = connection._handle![kNodeStreamReads];
+  const nodeStreamReads = connection._handle?.[kNodeStreamReads];
   const raw = (connection._handle = pair[0]);
   raw[kAdoptedTLSRaw] = self;
   self.once("end", self[kCloseRawConnection]);
@@ -3093,14 +3093,14 @@ const resumeOfSocket = function resume(this: $Node.Socket) {
   // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
-  const handle = this._handle;
   // An HTTP message resumes the socket when its reader asks for more, and when it is over.
+  const handle = this._handle;
   if (handle) syncReadSize(this, handle);
   if (!this.connecting && !drainOnreadTail(this)) {
-    handle?.resume?.();
+    this._handle?.resume?.();
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
-  restorePausedHold(this, handle);
+  restorePausedHold(this, this._handle);
   return ret;
 };
 Socket.prototype.resume = resumeOfSocket;

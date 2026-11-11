@@ -422,7 +422,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinAdd => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(E::Number::new(vals[0] + vals[1]), v.loc);
@@ -440,7 +440,7 @@ impl BinaryExpressionVisitor {
 
                     // "(x + 'abc') + 'xyz'" => "'abcxyz'"
                     if let Some(left) = e_.left.data.e_binary() {
-                        if left.op == Op::Code::BinAdd {
+                        if left.op == Op::Code::BinAdd && !p.keeps_enum_read(&left.right.data) {
                             if let Some(result) = fold_string_addition(
                                 left.right,
                                 e_.right,
@@ -461,7 +461,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinSub => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(E::Number::new(vals[0] - vals[1]), v.loc);
@@ -469,7 +469,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinMul => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(E::Number::new(vals[0] * vals[1]), v.loc);
@@ -477,7 +477,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinDiv => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(E::Number::new(vals[0] / vals[1]), v.loc);
@@ -485,7 +485,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinRem => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
@@ -499,7 +499,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinPow => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p
@@ -508,7 +508,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinShl => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         let left = float_to_int32(vals[0]);
@@ -519,7 +519,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinShr => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         let left = float_to_int32(vals[0]);
@@ -531,7 +531,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinUShr => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         let left: u32 = float_to_int32(vals[0]) as u32;
@@ -542,7 +542,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinBitwiseAnd => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
@@ -555,7 +555,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinBitwiseOr => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
@@ -568,7 +568,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinBitwiseXor => {
-                if p.should_fold_typescript_constant_expressions {
+                if p.folds_constants_of(e_) {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(

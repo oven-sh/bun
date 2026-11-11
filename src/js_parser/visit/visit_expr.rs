@@ -793,7 +793,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // When mangling, inline string values into the template literal. Note that
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
-        if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
+        if p.should_fold_typescript_constant_expressions
+            || p.options.features.inlining
+            || p.folds_enum_reads_of(&e_)
+        {
             *e = e_.fold(p.arena, expr.loc);
             return;
         }
@@ -1138,7 +1141,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let index = e_.index.unwrap_inlined();
 
         // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        if p.options.features.minify_syntax
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !p.keeps_enum_read(&e_.target.data)
+            && !p.keeps_enum_read(&e_.index.data)
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1353,7 +1360,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     Op::UnCpl => {
-                        if p.should_fold_typescript_constant_expressions {
+                        if p.should_fold_typescript_constant_expressions
+                            && !p.keeps_enum_read(&e_.value.data)
+                        {
                             if let Some(value) = SideEffects::to_number(&e_.value.data) {
                                 *e = p.new_expr(
                                     E::Number::new(f64::from(!float_to_int32(value))),
@@ -1370,13 +1379,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     Op::UnPos => {
-                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                        if let Some(num) = SideEffects::to_number(&e_.value.data)
+                            && !p.keeps_enum_read(&e_.value.data)
+                        {
                             *e = p.new_expr(E::Number::new(num), expr.loc);
                             return;
                         }
                     }
                     Op::UnNeg => {
-                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                        if let Some(num) = SideEffects::to_number(&e_.value.data)
+                            && !p.keeps_enum_read(&e_.value.data)
+                        {
                             *e = p.new_expr(E::Number::new(-num), expr.loc);
                             return;
                         }
@@ -1921,9 +1934,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Restored manually before each return.
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
+        let prev_computes_enum_reads = core::mem::replace(&mut p.computes_enum_reads, true);
 
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
+        p.computes_enum_reads = prev_computes_enum_reads;
 
         // Already transposed (this is a re-visit, e.g. after the minifier
         // substituted the expression into a later use): the import record and
@@ -2199,6 +2214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Restored manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
+            let old_computes_enum_reads = p.computes_enum_reads;
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
             // We want to forcefully fold constants inside of
@@ -2214,6 +2230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.options.ignore_dce_annotations = true;
                 p.should_fold_typescript_constant_expressions = true;
+                p.computes_enum_reads = true;
             }
 
             // When a value is targeted by `--drop`, it will be removed.
@@ -2259,6 +2276,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.options.ignore_dce_annotations = old_ce;
             p.should_fold_typescript_constant_expressions =
                 old_should_fold_typescript_constant_expressions;
+            p.computes_enum_reads = old_computes_enum_reads;
 
             if method_call_should_be_replaced_with_undefined {
                 p.is_control_flow_dead = old_is_control_flow_dead;

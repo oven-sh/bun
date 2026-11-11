@@ -302,6 +302,7 @@ impl BuildCommand {
         this_transpiler.options.split_require = ctx.bundler_options.split_require;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.is_library = ctx.bundler_options.dts;
+        this_transpiler.options.writes_typed_files = writes_typed_files;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;

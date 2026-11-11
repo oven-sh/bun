@@ -181,7 +181,7 @@ pub struct VirtualMachine {
     /// every case the storage outlives this VM but is not Rust-`'static`.
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
-    main: Option<bun_ptr::RawSlice<u8>>,
+    pub(crate) main: Option<bun_ptr::RawSlice<u8>>,
     pub main_entry_point: MainEntryPoint,
     pub did_look_for_server: bool,
     pub main_resolved_path: bun_core::String,

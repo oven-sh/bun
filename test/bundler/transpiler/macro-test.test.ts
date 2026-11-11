@@ -920,3 +920,52 @@ describe("macro VM env loader", () => {
     expect(withMacro).toEqual(withoutMacro);
   });
 });
+
+// A module that `import()` loads is transpiled on a pool thread, from a copy of the main thread's
+// transpiler. Its first macro waits there until the main thread has replaced the list of extensions,
+// and the second is resolved after that: "./the-macro.js" is found after each extension was tried.
+test("assigning to require.extensions while a pool thread resolves a macro", async () => {
+  using dir = tempDir("macro-require-extensions", {
+    "the-macro.ts": `export function macro() {\n  return "found";\n}\n`,
+    "gate.ts": `
+      import { existsSync, writeFileSync } from "node:fs";
+      export function gate() {
+        writeFileSync("started", "");
+        while (!existsSync("go")) Bun.sleepSync(1);
+      }
+    `,
+    "uses.ts": `
+      import { gate } from "./gate.ts" with { type: "macro" };
+      import { macro } from "./the-macro.js" with { type: "macro" };
+      gate();
+      export const value = macro();
+    `,
+    "main.cjs": `
+      const { existsSync, writeFileSync } = require("node:fs");
+      const extensions = require("node:module")._extensions;
+      extensions[".before"] = () => {};
+      (async () => {
+        const uses = import("./uses.ts");
+        while (!existsSync("started")) await Promise.race([uses, new Promise(resolve => setImmediate(resolve))]);
+        for (let i = 0; i < 10; i++) extensions[".during" + i] = () => {};
+        for (let i = 0; i < 10; i += 2) delete extensions[".during" + i];
+        writeFileSync("go", "");
+        console.log((await uses).value);
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds also print "[macro] call <name>" to stdout.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr, exitCode }).toEqual({
+    lastLine: "found",
+    stderr: "",
+    exitCode: 0,
+  });
+});

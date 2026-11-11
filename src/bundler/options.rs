@@ -1357,7 +1357,7 @@ pub struct BundleOptions<'a> {
     pub(crate) main_field_extension_order: &'static [&'static [u8]],
     /// This list applies to all extension resolution cases. The runtime uses
     /// this for implementing `require.extensions`
-    pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
+    pub(crate) extra_cjs_extensions: Option<std::sync::Arc<[Box<[u8]>]>>,
     pub out_extensions: StringHashMap<&'static [u8]>,
     pub import_path_format: ImportPathFormat,
     pub(crate) defines_loaded: bool,
@@ -1881,7 +1881,7 @@ impl<'a> BundleOptions<'a> {
             public_path: Box::default(),
             extension_order: ResolveFileExtensions::default(),
             main_field_extension_order: bundle_options_defaults::MAIN_FIELD_EXTENSION_ORDER,
-            extra_cjs_extensions: Box::default(),
+            extra_cjs_extensions: None,
             import_path_format: ImportPathFormat::Relative,
             defines_loaded: false,
             polyfill_node_globals: false,

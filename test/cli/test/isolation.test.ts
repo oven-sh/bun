@@ -1554,7 +1554,7 @@ describe.concurrent("bun test --isolate=modules", () => {
   });
 
   test("what a file defines without \`configurable\` is undone too", async () => {
-    const state = `JSON.stringify(["fixed" in Array.prototype, "fixedGlobal" in globalThis, typeof Math.min, Object.getOwnPropertyDescriptor(Math, "min").configurable, "after" in Array.prototype, Response.json.name, Object.getOwnPropertyDescriptor(Response, "json").writable])`;
+    const state = `JSON.stringify(["fixed" in Array.prototype, "fixedGlobal" in globalThis, typeof Math.min, Object.getOwnPropertyDescriptor(Math, "min").configurable, "after" in Array.prototype])`;
     const files = {
       "a.test.js": `test("a", () => {
         console.log(${state});
@@ -1562,13 +1562,31 @@ describe.concurrent("bun test --isolate=modules", () => {
         Array.prototype.after = 1;
         Object.defineProperty(globalThis, "fixedGlobal", { value: 1 });
         Object.defineProperty(Math, "min", { value: 1, writable: false, configurable: false });
-        // It was never configurable: only a delete makes it writable again.
-        Object.defineProperty(Response, "json", { value() {}, writable: false });
       });`,
       "b.test.js": `test("b", () => { console.log(${state}); });`,
     };
     const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
-    expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false, "json", true])));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false])));
+  });
+
+  test("what a file replaces and makes read-only is undone, where the property was never configurable", async () => {
+    // Only a delete makes such a property writable again.
+    const state = `JSON.stringify([
+      Response.json.name, Object.getOwnPropertyDescriptor(Response, "json").writable,
+      Request.prototype.json.name, Object.getOwnPropertyDescriptor(Request.prototype, "json").writable,
+      Bun.file.name, Object.getOwnPropertyDescriptor(Bun, "file").writable,
+    ])`;
+    const files = {
+      "a.test.js": `test("a", () => {
+        console.log(${state});
+        Object.defineProperty(Response, "json", { value: function replaced() {}, writable: false });
+        Object.defineProperty(Request.prototype, "json", { value: function replaced() {}, writable: false });
+        Object.defineProperty(Bun, "file", { value: function replaced() {}, writable: false });
+      });`,
+      "b.test.js": `test("b", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify(["json", true, "json", true, "file", true])));
   });
 
   test("restores a global that a file redefined as writable but not configurable, and the properties after it", async () => {
@@ -1763,6 +1781,8 @@ describe.concurrent("bun test --isolate=modules", () => {
       `for (const [holder, name] of [[expect.prototype, "toEqual"], [expect, "anything"], [Object.getPrototypeOf(expect.not), "anything"]])
          Object.defineProperty(holder, name, { value() {}, writable: false });`,
       `expect.extend({ toBeNil${matcher("a")} }); Object.defineProperty(expect.prototype, "toBeNil", { get() {}, configurable: false });`,
+      // The same for a key that was a getter to begin with.
+      `expect.extend({ not${matcher("a")} }); Object.defineProperty(expect.prototype, "not", { writable: false, configurable: false });`,
       `expect(1).not.toBe(2); expect(() => expect(1).toEqual(2)).toThrow("Expected: 2"); expect("a").toEqual(expect.not.stringContaining("b"));`,
     ];
     const files = Object.fromEntries(
@@ -1784,28 +1804,37 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(stdout).toContain("dictionaries false,false,false,true\n");
   });
 
-  test("no built-in matcher is lost on an object that a file froze, and expect.extend() is still undone there", async () => {
+  test("nothing is lost on an object that a file froze, and expect.extend() is still undone there", async () => {
     const names = `JSON.stringify([expect, expect.prototype, Object.getPrototypeOf(expect.not)].map(holder => Reflect.ownKeys(holder).map(String).sort()))`;
+    const kept = `JSON.stringify([typeof expect(1).toEqual, typeof Math.max, typeof Object.getOwnPropertyDescriptor(Map.prototype, "size")?.get])`;
     const files = {
       // The restore can't define a property again on an object that is not extensible, so it must not delete one there.
       "a.test.js": `test("a", () => {
         console.log(${names});
         expect.prototype.toEqual = function ${matcher("a")};
+        Object.defineProperty(expect, "name", { value: "of a" });
+        expect.extend({ toBeOfA${matcher("a")} });
         for (const holder of [expect, expect.prototype, Object.getPrototypeOf(expect.not)]) Object.freeze(holder);
+        Math.max = () => 0;
+        Object.freeze(Math);
+        Object.defineProperty(Map.prototype, "size", { get() { return 0; } });
+        Object.freeze(Map.prototype);
       });`,
+      // expect.extend() writes to a frozen object too, and leaves the property configurable: so after this file the built-in can be put back.
       "b.test.js": `test("b", () => {
         console.log(${names});
-        console.log(JSON.stringify([typeof expect(1).toEqual]));
+        console.log(${kept});
         expect.extend({ toEqual${matcher("b")}, toBeLeft${matcher("b")} });
       });`,
       "c.test.js": `test("c", () => {
         console.log(${names});
         expect(() => expect(1).toEqual(2)).toThrow("Expected: 2");
-        console.log(JSON.stringify([typeof expect(1).toEqual]));
+        console.log(${kept});
       });`,
     };
     const lines = (await passes(files, 3)).split("\n").filter(line => line.startsWith("["));
-    expect(lines).toEqual([lines[0], lines[0], `["function"]`, lines[0], `["function"]`]);
+    const all = JSON.stringify(["function", "function", "function"]);
+    expect(lines).toEqual([lines[0], lines[0], all, lines[0], all]);
     expect(lines[0]).toContain(`"toEqual"`);
   });
 

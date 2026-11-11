@@ -140,19 +140,16 @@ function restoreProperties(object: object, properties: Properties, size: number)
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
     if (!$getByIdDirect(current, "configurable")) {
-      if (saved.writable) {
-        // A test file can make it read-only. Once deleted it can be defined again, if the object is still extensible.
-        if (!tryDefineProperty(object, key, saved) && isExtensible(object) && deleteOwnProperty(object, key))
-          defineProperty(object, key, saved);
-        continue;
-      }
-      if (saved.configurable) deleteOwnProperty(object, key);
       // Some builtins have a read-only property that gives a new value each time it's read.
-      else if (!$getByIdDirect(current, "writable")) continue;
+      if (saved.writable === false && !saved.configurable && !$getByIdDirect(current, "writable")) continue;
+      // A test file can leave it read-only or not configurable. A delete lets it be defined again, while extensible.
+      if (!tryDefineProperty(object, key, saved) && isExtensible(object) && deleteOwnProperty(object, key))
+        defineProperty(object, key, saved);
+      continue;
     }
     defineProperty(object, key, saved);
   }
-  if (found === size) return;
+  if (found === size || !isExtensible(object)) return;
   properties.$forEach((saved, key) => {
     if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
   });

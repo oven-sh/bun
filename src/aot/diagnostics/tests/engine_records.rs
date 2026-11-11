@@ -5,8 +5,8 @@ use super::super::Diagnostics;
 use super::super::engine_records::{
     internal_error_text, log_locales_left_out, package_with_slow_code,
 };
-use super::super::ignore_comments::IgnoreComment;
 use super::{describe, kinds_and_texts, text, written};
+use crate::builtins::table::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::engine::testing::ResultRecords;
 use crate::engine::{
@@ -436,31 +436,24 @@ fn locale_use(kind: LocaleUseKind, tag: TextRange, location: SourceLocation) -> 
     LocaleUseRecord {
         kind,
         tag,
-        builtin: ABSENT_WORD,
+        builtin: BuiltinId::IntlNumberFormat.to_wire(),
         witness: witness(location),
     }
 }
 
-fn written_locales_with_silenced(
-    records: &[LocaleUseRecord],
-    plans: &[&TrimPlan],
-    silenced: &[u32],
-    lists_silenced: bool,
-) -> Log {
+fn written_locales_left_out(records: &[LocaleUseRecord], plans: &[&TrimPlan]) -> Log {
     let records = ResultRecords {
         text: TAGS,
         locales_used: records,
         ..ResultRecords::default()
     };
     let mut log = Log::init();
-    records.with_result(|engine| {
-        log_locales_left_out(engine, &texts(), plans, silenced, lists_silenced, &mut log);
-    });
+    records.with_result(|engine| log_locales_left_out(engine, &texts(), plans, &mut log));
     log
 }
 
-fn written_locales_left_out(records: &[LocaleUseRecord], plans: &[&TrimPlan]) -> Log {
-    written_locales_with_silenced(records, plans, &[], false)
+fn locale_sentence(tag: &[u8]) -> String {
+    sentence_of(Code::LocaleDataLeftOut, &[tag, b"Intl.NumberFormat"])
 }
 
 #[test]
@@ -473,11 +466,11 @@ fn constant_locale_that_a_plan_leaves_out_warns_where_it_is_passed() {
         locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
     ];
     let log = written_locales_left_out(&records, &[&TrimPlan::leaving_out(&["de", "fr"])]);
-    let french = sentence_of(Code::LocaleDataLeftOut, &[b"fr"]);
+    let french = locale_sentence(b"fr");
     assert_eq!(
         describe(&log),
         [
-            "/p/a.ts:2:1 Warn TS100203: compile.trim.locales leaves out the data of \"de-DE\". A call that needs it exits the process with code 70 if it runs. Add \"de-DE\" to the list".to_owned(),
+            "/p/a.ts:2:1 Warn TS100203: compile.trim.locales leaves out the data of \"de-DE\", and Intl.NumberFormat gets that locale here. A call that needs the data exits the process with code 70. Other calls may pass \"de-DE\" too: the build names one place for each locale. Add \"de-DE\" to the list".to_owned(),
             format!("/p/node_modules/b/b.js:1:1 Warn {french}"),
         ]
     );
@@ -485,10 +478,11 @@ fn constant_locale_that_a_plan_leaves_out_warns_where_it_is_passed() {
 }
 
 #[test]
-fn constant_locale_without_a_place_warns_without_one() {
-    let records = [locale_use(LocaleUseKind::Constant, DE_DE, NO_LOCATION)];
-    let log = written_locales_left_out(&records, &[&TrimPlan::leaving_out(&["de"])]);
-    let sentence = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE"]);
+fn constant_locale_without_a_place_or_a_built_in_warns_without_them() {
+    let mut record = locale_use(LocaleUseKind::Constant, DE_DE, NO_LOCATION);
+    record.builtin = ABSENT_WORD;
+    let log = written_locales_left_out(&[record], &[&TrimPlan::leaving_out(&["de"])]);
+    let sentence = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE", b"a built-in"]);
     assert_eq!(kinds_and_texts(&log), [(Kind::Warn, sentence)]);
     assert!(log.msgs[0].data.location.is_none());
 }
@@ -511,7 +505,7 @@ fn locale_that_one_of_two_plans_leaves_out_warns_once() {
     let records = [locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7))];
     let german_left_out = TrimPlan::leaving_out(&["de"]);
     let french_left_out = TrimPlan::leaving_out(&["fr"]);
-    let sentence = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE"]);
+    let sentence = locale_sentence(b"de-DE");
     for plans in [
         [&french_left_out, &german_left_out],
         [&german_left_out, &german_left_out],
@@ -523,58 +517,22 @@ fn locale_that_one_of_two_plans_leaves_out_warns_once() {
     }
 }
 
+// The engine keeps one record for each tag. Were it to keep one for each place, each would warn.
 #[test]
-fn silenced_locale_warns_nowhere_and_is_listed_where_asked() {
+fn each_record_of_a_locale_warns_at_its_own_place() {
     let records = [
-        locale_use(LocaleUseKind::Constant, FR, at(DEPENDENCY, 0)),
+        locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 0)),
         locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
-        locale_use(LocaleUseKind::Constant, EN_US, at(PROGRAM, 0)),
+        locale_use(LocaleUseKind::Constant, DE_DE, at(DEPENDENCY, 0)),
     ];
-    let plan = TrimPlan::leaving_out(&["de", "fr"]);
-    let french = sentence_of(Code::LocaleDataLeftOut, &[b"fr"]);
-    let german = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE"]);
-    let warned = format!("/p/node_modules/b/b.js:1:1 Warn {french}");
-    // The comment on the English one silences nothing here: the plan keeps English.
-    let log = written_locales_with_silenced(&records, &[&plan], &[1, 2], false);
-    assert_eq!(describe(&log), [warned.clone()]);
-    let log = written_locales_with_silenced(&records, &[&plan], &[1, 2], true);
+    let log = written_locales_left_out(&records, &[&TrimPlan::leaving_out(&["de"])]);
+    let sentence = locale_sentence(b"de-DE");
     assert_eq!(
         describe(&log),
         [
-            format!("/p/a.ts:2:1 Note Silenced by bun-ignore: {german}"),
-            warned,
+            format!("/p/a.ts:1:1 Warn {sentence}"),
+            format!("/p/a.ts:2:1 Warn {sentence}"),
+            format!("/p/node_modules/b/b.js:1:1 Warn {sentence}"),
         ]
     );
-    assert_eq!((log.errors, log.warnings), (0, 1));
-}
-
-#[test]
-fn comment_on_the_line_of_a_constant_locale_silences_its_warning() {
-    let records = [
-        locale_use(LocaleUseKind::Constant, FR, at(DEPENDENCY, 0)),
-        locale_use(LocaleUseKind::HostDefault, NO_TEXT, at(PROGRAM, 7)),
-        locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
-        locale_use(LocaleUseKind::Constant, EN_US, at(PROGRAM, 0)),
-    ];
-    let records = ResultRecords {
-        text: TAGS,
-        locales_used: &records,
-        ..ResultRecords::default()
-    };
-    let number = Code::LocaleDataLeftOut.number();
-    let mut diagnostics = Diagnostics::new();
-    let silenced = |diagnostics: &mut Diagnostics| {
-        records.with_result(|engine| diagnostics.find_silenced_locales(engine, &texts()))
-    };
-    assert!(silenced(&mut diagnostics).is_empty());
-
-    let comments = &mut diagnostics.ignore_comments;
-    comments.push(IgnoreComment::on_line(b"/p/a.ts", 2, number));
-    // The English locale stands on this line: the comment names another warning.
-    comments.push(IgnoreComment::on_line(
-        b"/p/a.ts",
-        1,
-        Code::ShadowRealmIsAbsent.number(),
-    ));
-    assert_eq!(silenced(&mut diagnostics), [2]);
 }

@@ -27,30 +27,6 @@ struct IgnoredCode {
     error_complaint: Option<Msg>,
 }
 
-#[cfg(test)]
-impl IgnoreComment {
-    pub(super) fn on_line(file: &[u8], line: i64, number: u32) -> IgnoreComment {
-        let silenced_code = Span {
-            file: FileId(0),
-            start: 0,
-            end: 0,
-        };
-        let code = IgnoredCode {
-            number,
-            has_silenced: false,
-            has_met_error: false,
-            complaint: None,
-            error_complaint: None,
-        };
-        IgnoreComment {
-            file: file.to_vec(),
-            line,
-            silenced_code,
-            codes: vec![code],
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub(crate) struct IgnoreCommentOptions {
     pub(crate) should_report_stale: bool,
@@ -59,8 +35,15 @@ pub(crate) struct IgnoreCommentOptions {
 
 const COMPUTED_IMPORT_PATH: u32 = 100_064;
 
+/// `LocaleDataLeftOut` stands for every call that passes its locale, not for a line.
+const NEVER_SILENCED: [Code; 2] = [Code::IgnoreCommentSilencesNothing, Code::LocaleDataLeftOut];
+
+fn is_never_silenced(number: u32) -> bool {
+    NEVER_SILENCED.iter().any(|code| code.number() == number)
+}
+
 fn can_be_silenced(number: u32) -> bool {
-    (100_000..=100_999).contains(&number) && number != Code::IgnoreCommentSilencesNothing.number()
+    (100_000..=100_999).contains(&number) && !is_never_silenced(number)
 }
 
 fn text_after_marker(text: &[u8], (marker, end): (u32, u32)) -> Option<&[u8]> {
@@ -177,7 +160,7 @@ fn is_edited_by_user(origin: FileOrigin) -> bool {
     )
 }
 
-pub(super) fn silence(comments: &mut [IgnoreComment], entry: &Entry) -> bool {
+fn silence(comments: &mut [IgnoreComment], entry: &Entry) -> bool {
     let (_, file, line, _, number, _) = &entry.key;
     if !can_be_silenced(*number) {
         return false;
@@ -195,15 +178,6 @@ pub(super) fn silence(comments: &mut [IgnoreComment], entry: &Entry) -> bool {
         }
     }
     is_silenced
-}
-
-/// How `--explain` lists a warning that a comment silenced.
-pub(super) fn to_silenced_note(mut message: Msg) -> Msg {
-    message.kind = Kind::Note;
-    let mut text = b"Silenced by bun-ignore: ".to_vec();
-    text.extend_from_slice(&message.data.text);
-    message.data.text = text.into();
-    message
 }
 
 impl Diagnostics {
@@ -274,7 +248,7 @@ impl Diagnostics {
         let complain_if_edited =
             |reason: String| can_complain.then(|| complain(reason.as_bytes())).flatten();
         let codes = numbers.into_iter().map(|number| {
-            let reason = if number == Code::IgnoreCommentSilencesNothing.number() {
+            let reason = if is_never_silenced(number) {
                 Some(format!("TS{number} can't be silenced"))
             } else if can_be_silenced(number) {
                 options.should_report_stale.then(|| {
@@ -335,9 +309,12 @@ impl Diagnostics {
             if !silence(&mut comments, &entry) {
                 self.entries.push(entry);
             } else if should_list_silenced {
-                let number = entry.key.4;
-                self.entries
-                    .push(Entry::new(number, to_silenced_note(entry.message)));
+                let (number, mut message) = (entry.key.4, entry.message);
+                message.kind = Kind::Note;
+                let mut text = b"Silenced by bun-ignore: ".to_vec();
+                text.extend_from_slice(&message.data.text);
+                message.data.text = text.into();
+                self.entries.push(Entry::new(number, message));
             }
         }
         for code in comments.into_iter().flat_map(|it| it.codes) {

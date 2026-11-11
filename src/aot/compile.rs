@@ -101,9 +101,6 @@ pub struct Compilation {
     pub(crate) holds_source_paths: bool,
     #[cfg(not(test))]
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
-    /// `Diagnostics::find_silenced_locales`
-    #[cfg(not(test))]
-    pub(crate) silenced_locales: Vec<u32>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
@@ -418,10 +415,6 @@ pub fn compile(
     }
     let engine = build.run_engine(bytes, &engine_options, &output);
     build.finish_started_workers(&engine, &output);
-    #[cfg(not(test))]
-    let silenced_locales = build
-        .diagnostics
-        .find_silenced_locales(&engine, &output.texts);
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
     #[cfg(not(test))]
@@ -442,8 +435,6 @@ pub fn compile(
         holds_source_paths,
         #[cfg(not(test))]
         names_added_to_builtins,
-        #[cfg(not(test))]
-        silenced_locales,
     };
     match has_errors {
         false => Ok(compilation),

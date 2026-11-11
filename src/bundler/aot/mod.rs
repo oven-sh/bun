@@ -83,8 +83,6 @@ pub struct AotBuild {
     pub names_plugin: bool,
     /// `Compilation::names_added_to_builtins`
     pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
-    /// `Compilation::silenced_locales`
-    pub silenced_locales: Vec<u32>,
     /// `Resolver::find_further_package_names`
     pub further_package_names: Vec<FurtherPackageName>,
     /// `CompiledProgram::refused_data`

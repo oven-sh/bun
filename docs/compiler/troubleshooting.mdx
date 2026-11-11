@@ -44,7 +44,7 @@ An `error` stops the build. After a `warn` you still get an executable, but the 
 | `TS100064: this import path isn't a constant`   | The build may not find the file. [Pass it as another entry point](/compiler/compatibility#a-file-that-isnt-in-the-executable), then [silence the warning](#silence-a-warning) |
 | `TS100064: this call loads a module`            | Import the `node:` or `bun:` module by name somewhere in your program                                                                                                         |
 | `TS100080`, `TS100091`, `TS100092`, `TS100093`  | [Loader hooks and `require.cache`](/compiler/compatibility#loader-hooks-and-the-module-cache) don't reach compiled modules                                                    |
-| `TS100203: compile.trim.locales leaves out ...` | [Add the locale to `--trim-locales`](/compiler/size#make-it-smaller). If the call needs no locale data, [silence the warning](#silence-a-warning)                             |
+| `TS100203: compile.trim.locales leaves out ...` | [Add the locale to `--trim-locales`](/compiler/size#make-it-smaller). The warning stands for every call that passes that locale                                               |
 | `bun compile can't cross-compile`               | Build on that platform, or pass `--no-aot`                                                                                                                                    |
 | `--aot does not apply to a package.json script` | Put `--aot` on the `bun` command inside the script                                                                                                                            |
 | `this build of Bun doesn't support --trim`      | Use a release of Bun, not one you built                                                                                                                                       |
@@ -62,7 +62,7 @@ const found = Bun.resolveSync("./plugin.js", import.meta.dir); // bun-ignore TS1
 
 - Any text after the codes is yours, so say why.
 - To silence several warnings on one line, list their codes: `// bun-ignore TS100064, TS100099`. No form silences every warning.
-- It silences the compiler's own warnings and notes, `TS100000` to `TS100999`. It never silences a type error, an error that stops the build, or a warning that isn't about a line, such as `TS100308`.
+- It silences the compiler's own warnings and notes, `TS100000` to `TS100999`. It never silences a type error, an error that stops the build, or a warning that isn't about a line, such as `TS100308`. It never silences `TS100203` either, which stands for every call that passes a locale.
 - A comment that silences nothing gets a warning of its own, `TS100073`, so stale comments don't pile up. A comment in code that this build leaves out, such as a function it never calls, isn't stale: another build of the same file may need it. A build that stops at an error calls no comment stale.
 - It works in `.js`, `.ts`, `.jsx` and `.tsx` files, and in dependencies. Between JSX elements, write `{/* bun-ignore TS100064 */}`.
 - `--explain` still lists each warning that a comment silenced.

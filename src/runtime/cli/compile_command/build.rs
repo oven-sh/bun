@@ -15,7 +15,7 @@ use bun_exe_format::identity::{
     read_stamp_of_builtin_modules,
 };
 use bun_options_types::Format;
-use bun_options_types::aot_options::{AotOptions, ExplainSet};
+use bun_options_types::aot_options::AotOptions;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver::compiled_program::{
     PathForFileSystemAlone, encode_files_for_file_system_alone, folders_up_to,
@@ -108,17 +108,9 @@ pub(crate) fn compile_to_executable(
     if options.trim.locales.is_some() {
         let untrimmed_plan = untrimmed.as_ref().and_then(|(_, plan)| plan.as_ref());
         let plans: Vec<&TrimPlan> = trimming.plan().into_iter().chain(untrimmed_plan).collect();
-        let lists_silenced = options.explain.contains(ExplainSet::TEXT);
         // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
         let log = unsafe { &mut *request.log };
-        log_locales_left_out(
-            &build.engine,
-            &build.texts,
-            &plans,
-            &build.silenced_locales,
-            lists_silenced,
-            log,
-        );
+        log_locales_left_out(&build.engine, &build.texts, &plans, log);
     }
     log_part_outside_stages("behind the engine: used features, trimming");
     let mut outcome =

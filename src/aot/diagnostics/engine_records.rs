@@ -3,15 +3,14 @@ use bun_core::strings;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_trim::TrimPlan;
 
-use super::ignore_comments::{silence, to_silenced_note};
 use super::int32_flows::write_int32_message;
 use super::sink::{append_location, to_driver_diagnostic, to_log_message};
-use super::{
-    COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, Entry, Severity, new_driver_diagnostic,
-};
+use super::{COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, Severity, new_driver_diagnostic};
+use crate::builtins::table;
 use crate::diagnostic_codes::Code;
 use crate::engine::{
-    EngineResult, InternalErrorRecord, LocaleUseRecord, Position, UserDiagnosticRecord, position_of,
+    EngineResult, InternalErrorRecord, LocaleUseRecord, Position, UserDiagnosticRecord, builtin_of,
+    position_of,
 };
 use crate::ir::ModuleId;
 use crate::ir::generated::{DiagnosticSeverity, LocaleUseKind, UserDiagnosticKind, Witness};
@@ -69,7 +68,15 @@ fn locale_warning(
     locator: &mut ModuleLocator<'_>,
 ) -> Msg {
     let tag = engine.text(record.tag);
-    message_at_witness(Code::LocaleDataLeftOut, &[tag], &record.witness, locator)
+    let builtin = builtin_of(record.builtin).map(table::text_of);
+    let builtin = builtin.as_deref().unwrap_or("a built-in");
+    let arguments = [tag, builtin.as_bytes()];
+    message_at_witness(
+        Code::LocaleDataLeftOut,
+        &arguments,
+        &record.witness,
+        locator,
+    )
 }
 
 /// `plans`: one for each executable that the build writes.
@@ -77,24 +84,16 @@ pub fn log_locales_left_out(
     engine: &EngineResult,
     texts: &SourceTexts,
     plans: &[&TrimPlan],
-    silenced_locales: &[u32],
-    lists_silenced: bool,
     log: &mut Log,
 ) {
     let number = Code::LocaleDataLeftOut.number();
     let mut locator = ModuleLocator::new(texts);
     let mut diagnostics = Diagnostics::new();
-    for (index, record) in (0..).zip(engine.locales_used()) {
+    for record in engine.locales_used() {
         let tag = engine.text(record.tag);
         let is_left_out = || plans.iter().any(|plan| plan.leaves_out_locale(tag));
-        if record.kind != LocaleUseKind::Constant || !is_left_out() {
-            continue;
-        }
-        let warning = locale_warning(engine, record, &mut locator);
-        if silenced_locales.binary_search(&index).is_err() {
-            diagnostics.add_message(number, warning);
-        } else if lists_silenced {
-            diagnostics.add_message(number, to_silenced_note(warning));
+        if record.kind == LocaleUseKind::Constant && is_left_out() {
+            diagnostics.add_message(number, locale_warning(engine, record, &mut locator));
         }
     }
     diagnostics.write_to(log);
@@ -134,30 +133,6 @@ impl Diagnostics {
         let mut locator = ModuleLocator::new(texts);
         let message = message_at_witness(code, arguments, witness, &mut locator);
         self.add_message(code.number(), message);
-    }
-
-    /// By position in `EngineResult::locales_used`, for `log_locales_left_out`, which runs when the comments are gone.
-    pub(crate) fn find_silenced_locales(
-        &mut self,
-        engine: &EngineResult,
-        texts: &SourceTexts,
-    ) -> Vec<u32> {
-        if self.ignore_comments.is_empty() {
-            return Vec::new();
-        }
-        let number = Code::LocaleDataLeftOut.number();
-        let mut locator = ModuleLocator::new(texts);
-        let mut silenced = Vec::new();
-        for (index, record) in (0..).zip(engine.locales_used()) {
-            if record.kind != LocaleUseKind::Constant {
-                continue;
-            }
-            let warning = Entry::new(number, locale_warning(engine, record, &mut locator));
-            if silence(&mut self.ignore_comments, &warning) {
-                silenced.push(index);
-            }
-        }
-        silenced
     }
 
     pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {

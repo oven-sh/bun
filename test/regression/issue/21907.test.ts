@@ -106,9 +106,9 @@ test("CSS parser should handle extremely large floating-point values without cra
     }
 
     .test-percentages {
-      width: 1000000050000000000%;
+      width: 1000000000000000000%;
       height: -999999999999999999%;
-      top: -1000000050000000000%;
+      top: -1000000000000000000%;
     }
 
     .test-boundaries {

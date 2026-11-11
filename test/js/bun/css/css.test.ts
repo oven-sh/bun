@@ -8567,6 +8567,87 @@ describe("math functions", () => {
     minify_test("a{margin-left:round(2.5px,1px)}", "a{margin-left:3px}");
   });
 
+  // 30% / 1% is 30, as 30px / 1px is. Chrome computes each input as the expected value.
+  describe("round(), rem() and mod() step on the percentages as written", () => {
+    minify_test("a{width:round(up,30%,1%)}", "a{width:30%}");
+    minify_test("a{width:round(up,9%,1%)}", "a{width:9%}");
+    minify_test("a{width:round(up,15%,1%)}", "a{width:15%}");
+    minify_test("a{width:round(down,65%,5%)}", "a{width:65%}");
+    minify_test("a{width:round(65%,10%)}", "a{width:70%}");
+    minify_test("a{width:mod(70%,10%)}", "a{width:0%}");
+    minify_test("a{width:rem(65%,5%)}", "a{width:0%}");
+    minify_test("a{margin-left:round(-97%,2%)}", "a{margin-left:-96%}");
+    minify_test("a{margin-left:round(down,-98%,1%)}", "a{margin-left:-98%}");
+    minify_test("a{margin-left:round(to-zero,-65%,5%)}", "a{margin-left:-65%}");
+    minify_test("a{margin-left:round(up,9%,-1%)}", "a{margin-left:9%}");
+    minify_test("a{margin-left:mod(-70%,10%)}", "a{margin-left:0%}");
+    // Not a multiple, and two types.
+    minify_test("a{width:round(up,30.5%,1%)}", "a{width:31%}");
+    minify_test("a{width:round(up,30%,1px)}", "a{width:round(up,30%,1px)}");
+
+    test("every whole percent from -100% to 100%", () => {
+      const rows: [string, number][] = [];
+      for (const step of [1, 5, 10]) {
+        for (let value = -100; value <= 100; value++) {
+          const lower = Math.floor(value / step) * step;
+          const upper = Math.ceil(value / step) * step;
+          const towardZero = Math.trunc(value / step) * step;
+          rows.push(
+            [`round(${value}%,${step}%)`, value - lower < upper - value ? lower : upper],
+            [`round(up,${value}%,${step}%)`, upper],
+            [`round(down,${value}%,${step}%)`, lower],
+            [`round(to-zero,${value}%,${step}%)`, towardZero],
+            [`rem(${value}%,${step}%)`, value - towardZero],
+            [`mod(${value}%,${step}%)`, value - lower],
+          );
+        }
+      }
+      // One stylesheet. The `z-index` keeps rules with the same margin apart.
+      const css = rows.map(([fn], i) => `.r${i}{margin-left:${fn};z-index:${i}}`).join("");
+      const folded = Array.from(minify_test_with_options(css, "").matchAll(/margin-left:([^;}]+)/g), m => m[1]);
+      // The sign of a zero is not what this checks.
+      expect(rows.map(([fn], i) => `${fn} is ${folded[i]?.replace("-0%", "0%")}`)).toEqual(
+        rows.map(([fn, result]) => `${fn} is ${result + 0}%`),
+      );
+    });
+  });
+
+  describe("every value that takes a percentage steps the same way", () => {
+    minify_test("a{opacity:round(up,30%,1%)}", "a{opacity:.3}");
+    minify_test("a{color:rgb(round(up,30%,1%) 0 0)}", "a{color:#4d0000}");
+    minify_test("a{color:lab(mod(70%,10%) 20 30)}", "a{color:lab(0% 20 30)}");
+    minify_test(
+      "a{background:conic-gradient(red round(up,30%,1%),blue)}",
+      "a{background:conic-gradient(red 30%,#00f)}",
+    );
+    minify_test("a{font-stretch:round(up,30%,1%)}", "a{font-stretch:30%}");
+    minify_test("a{transform:scale(round(up,30%,1%))}", "a{transform:scale(.3)}");
+    minify_test("@keyframes k{round(up,30%,1%){opacity:0}}", "@keyframes k{30%{opacity:0}}");
+  });
+
+  describe("a percentage that calc() made is the same number as the literal", () => {
+    minify_test("a{width:round(up,calc(10% + 20%),1%)}", "a{width:30%}");
+    minify_test("a{width:round(up,7% * 3,1%)}", "a{width:21%}");
+    minify_test("a{width:round(up,calc(100% - 90%),1%)}", "a{width:10%}");
+    minify_test("a{width:round(down,calc(16% - 15%),1%)}", "a{width:1%}");
+    minify_test("a{width:round(up,round(up,30%,1%),5%)}", "a{width:30%}");
+    minify_test("a{width:calc(round(up,30%,1%) + 1px)}", "a{width:calc(30% + 1px)}");
+    minify_test("a{width:calc(2 * round(up,30%,1%))}", "a{width:60%}");
+    minify_test("a{margin-left:calc(16% - 15%)}", "a{margin-left:1%}");
+    minify_test("a{margin:20% round(down,20%,1%)}", "a{margin:20%}");
+  });
+
+  describe("calc() divides by the number written", () => {
+    minify_test("a{width:round(up,calc(77px / 7),1px)}", "a{width:11px}");
+    minify_test("a{width:round(up,calc(77% / 7),1%)}", "a{width:11%}");
+    minify_test("a{transition-delay:round(up,calc(77s / 7),1s)}", "a{transition-delay:11s}");
+    minify_test("a{rotate:round(up,calc(77deg / 7),1deg)}", "a{rotate:11deg}");
+    minify_test("a{line-height:round(up,calc(77 / 7),1)}", "a{line-height:11}");
+    minify_test("a{width:calc((1em + 7px) / 7)}", "a{width:calc(.142857em + 1px)}");
+    minify_test("a{width:calc(min(1em,7px) / 7)}", "a{width:calc(min(1em,7px)/7)}");
+    minify_test("a{width:calc(41 * min(1em,7px) / 41)}", "a{width:calc(min(1em,7px))}");
+  });
+
   describe("min() and max() of one sum or product keep a function", () => {
     minify_test("a{width:max(100% - 20px)}", "a{width:calc(100% - 20px)}");
     minify_test("a{width:min(1em + 2px)}", "a{width:calc(1em + 2px)}");
@@ -8580,12 +8661,71 @@ describe("math functions", () => {
     minify_test("a{border-radius:4px}a{border-top-left-radius:calc(0px - 1px)}", "a{border-radius:0 4px 4px}");
     minify_test("a{border-radius:calc(0px - 1px) 4px/2px}", "a{border-radius:0 4px/2px}");
     minify_test("a{width:rem(-18px,5px)}", "a{width:0}");
+    minify_test("a{width:rem(-30%,7%)}", "a{width:0%}");
     minify_test("a{max-height:calc(10% - 20%)}", "a{max-height:0%}");
     // Not known before layout, not a math function, not such a range.
     minify_test("a{width:max(-2px,-1em)}", "a{width:max(-2px,-1em)}");
     minify_test("a{width:-5px}", "a{width:-5px}");
     minify_test("a{margin-left:calc(0px - 1px)}", "a{margin-left:-1px}");
   });
+});
+
+describe("a percentage that stands for a keyword, a default or a fraction", () => {
+  describe.each([
+    ["ultra-condensed", "50%"],
+    ["extra-condensed", "62.5%"],
+    ["condensed", "75%"],
+    ["semi-condensed", "87.5%"],
+    ["normal", "100%"],
+    ["semi-expanded", "112.5%"],
+    ["expanded", "125%"],
+    ["extra-expanded", "150%"],
+    ["ultra-expanded", "200%"],
+  ])("font-stretch: %s", (keyword, percentage) => {
+    minify_test(`a{font-stretch:${keyword}}`, `a{font-stretch:${percentage}}`);
+  });
+  minify_test("@keyframes k{100%{opacity:0}}", "@keyframes k{to{opacity:0}}");
+  minify_test("@keyframes k{calc(50% * 2){opacity:0}}", "@keyframes k{to{opacity:0}}");
+  minify_test("@keyframes k{99%{opacity:0}}", "@keyframes k{99%{opacity:0}}");
+  minify_test("a{background-position:50% 50%}", "a{background-position:50%}");
+  minify_test("a{background-position:right bottom}", "a{background-position:100% 100%}");
+  minify_test("a{background:url(a.png) 0% 0%}", "a{background:url(a.png)}");
+  minify_test("a{flex:2 2 0%}", "a{flex:2 2}");
+  minify_test("a{border-image:url(a.png) 100%}", "a{border-image:url(a.png)}");
+  minify_test("a{opacity:33.3%}", "a{opacity:.333}");
+  minify_test("a{transform:scale(33.3%)}", "a{transform:scale(.333)}");
+  minify_test("a{color:rgb(50% 25% 75% / 33.3%)}", "a{color:#8040bf55}");
+  minify_test("a{color:color-mix(in srgb,red 30%,blue)}", "a{color:#4d00b3}");
+  minify_test(
+    "a{background:-webkit-gradient(linear,0% 0%,0% 100%,color-stop(33.3%,red),to(blue))}",
+    "a{background:-webkit-gradient(linear,0 0,0 100%,color-stop(.333,red),to(#00f))}",
+  );
+  prefix_test(
+    "a{background-image:linear-gradient(to top right,red,lime 30%,blue)}",
+    `a {
+      background-image: -webkit-gradient(linear, 0 100%, 100% 0, from(red), color-stop(.3, #0f0), to(#00f));
+      background-image: -webkit-linear-gradient(bottom left, red, #0f0 30%, #00f);
+      background-image: linear-gradient(to top right, red, #0f0 30%, #00f);
+    }`,
+    { chrome: 8 << 16 },
+  );
+  prefix_test("a{--c:hsl(120 30.5% 40.25% / var(--a))}", "a { --c: hsla(120, 30.5%, 40.25%, var(--a)); }", {
+    chrome: 48 << 16,
+  });
+});
+
+describe("percentage serialization", () => {
+  minify_test("a{width:87.23404255319149%}", "a{width:87.234%}");
+  minify_test("a{width:123456.7%}", "a{width:123456.7%}");
+  minify_test("a{width:1234567%}", "a{width:1234567%}");
+  minify_test("a{margin-left:-.5%}", "a{margin-left:-.5%}");
+  minify_test("a{width:.25%}", "a{width:.25%}");
+  minify_test("a{width:.0000001%}", "a{width:1e-7%}");
+  minify_test("a{width:33.3333333%}", "a{width:33.3333%}");
+  // A percentage kept as a token.
+  minify_test("a{--x:50.0%}", "a{--x:50.0%}");
+  minify_test("a{--x:30.0%}", "a{--x:30.0%}");
+  minify_test("a{--x:33.3333333%}", "a{--x:33.3333%}");
 });
 
 describe("a number is not a length", () => {

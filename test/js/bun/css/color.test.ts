@@ -782,6 +782,13 @@ describe("numbers in a color", () => {
     ["color(display-p3 -0.9999999 0 0)", "color(display-p3 -1 0 0)"],
     ["lab(50% rem(-40, 7) 30)", "lab(50% -5 30)"],
     ["lab(50% mod(-40, 7) 30)", "lab(50% 2 30)"],
+    // A whole percentage is a multiple of a whole step.
+    ["rgb(round(up, 30%, 1%) 0 0)", "#4d0000"],
+    ["rgb(0 0 0 / round(up, 30%, 1%))", "#0000004d"],
+    ["hsl(120 round(down, 65%, 5%) 50%)", "#2dd22d"],
+    ["lab(round(up, 30%, 1%) 20 30)", "lab(30% 20 30)"],
+    ["lab(mod(70%, 10%) 20 30)", "lab(0% 20 30)"],
+    ["oklch(rem(65%, 5%) .1 20)", "oklch(0% .1 20)"],
   ])("%s is %s, which reads back as itself", (input, expected) => {
     expect(color(input, "css")).toBe(expected);
     expect(color(expected, "css")).toBe(expected);

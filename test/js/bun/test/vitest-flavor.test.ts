@@ -3471,6 +3471,40 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     test.each([
       ["--globals=vitest", files, ["--globals=vitest"], bothFail],
       [
+        "a getter that throws once: the file after the failed one passes",
+        {
+          ...files,
+          "a.test.js": `
+            const vitest = require("vitest");
+            test("arms the getter", () => {
+              const { describe } = vitest;
+              let reads = 0;
+              delete globalThis.describe;
+              Object.defineProperty(vitest, "describe", {
+                configurable: true,
+                enumerable: true,
+                get() {
+                  if (reads++ === 0) throw new Error("thrown by the getter");
+                  return describe;
+                },
+              });
+            });
+          `,
+        },
+        ["--globals=vitest"],
+        [
+          ...armed,
+          "b.test.js:",
+          thrown,
+          "c.test.js:",
+          "(pass) passes",
+          " 2 pass",
+          " 1 fail",
+          " 1 error",
+          "Ran 3 tests across 3 files.",
+        ],
+      ],
+      [
         // A preload that failed is loaded again for the next file. A file with environment options loads it in the project's environment first.
         "a file with environment options, which loads the preloads in the project's environment",
         {

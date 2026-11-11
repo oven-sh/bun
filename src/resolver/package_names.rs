@@ -730,7 +730,7 @@ impl Resolver<'_> {
             .collect();
         packages.sort_unstable();
         packages.dedup();
-        let places = list_places(folders);
+        let mut places = list_places(folders);
         let by_source_path = BySourcePath::new(entry_points);
 
         // A name that leads nowhere is no error of the build.
@@ -782,6 +782,13 @@ impl Resolver<'_> {
                 hides_other_paths: false,
                 is_hidden_from_require: false,
                 is_hidden_from_import: false,
+            });
+        }
+        // A folder without `node_modules` holds no package.
+        if !packages.is_empty() {
+            places.retain(|place| {
+                self.read_dir_info_ignore_error(place.source_path)
+                    .is_some_and(|directory| directory.has_node_modules())
             });
         }
         for (place, package) in places

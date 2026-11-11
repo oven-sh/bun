@@ -1166,19 +1166,15 @@ describe.concurrent("test environment", () => {
       async flag => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
-          // Like the real happy-dom, abort() waits on timers from the setTimeout it captured at load. Here, until the file's timer ran.
+          // Like the real happy-dom, abort() settles after the runner turned the event loop. Here, when the file's timer ran.
           "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
-            const { setTimeout } = globalThis;
             const { Window } = exports;
             exports.Window = class extends Window {
               constructor(...args) {
                 super(...args);
-                const { document } = this;
-                this.happyDOM.abort = () =>
-                  new Promise(resolve => {
-                    const poll = () => (document.leftTimerRan ? resolve() : setTimeout(poll, 1));
-                    setTimeout(poll, 1);
-                  });
+                const { promise, resolve } = Promise.withResolvers();
+                this.document.leftTimerRan = resolve;
+                this.happyDOM.abort = () => promise;
               }
             };`,
           "1.test.js": `// ${VITEST} happy-dom
@@ -1189,7 +1185,7 @@ describe.concurrent("test environment", () => {
                 setTimeout(() => {
                   setTimeout(() => {
                     console.log("timer", typeof document);
-                    page.leftTimerRan = true;
+                    page.leftTimerRan();
                   }, 0);
                   resolve();
                 }, 0);

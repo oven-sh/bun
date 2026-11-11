@@ -229,12 +229,15 @@ for (const target of ["request", "response", "socket"] as const) {
       attempt("reading", () => response.resume());
     });
     watch("request", request, ["close", "error", "finish"]);
+    const requestClosed = new Promise<void>(resolve => request.on("close", () => resolve()));
     request.end("body");
     if (target === "request") request = close(request);
     await withinReason("the response's close", ended.promise);
     await turns();
     server.closeAllConnections();
     await withinReason("the server's close", new Promise<void>(resolve => void server.close(() => resolve())));
+    // The client's socket completes its end() a loop turn after the server's close: its 'close' is this case's.
+    await withinReason("the request's close", requestClosed);
   };
 }
 

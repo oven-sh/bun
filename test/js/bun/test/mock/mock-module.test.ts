@@ -3160,6 +3160,360 @@ describe.concurrent("a mocked module's exports are read from the object the fact
   });
 });
 
+describe.concurrent("a spy on an export that a mock has copied into a loaded module", () => {
+  // A mock of a module that is already loaded writes what its factory returned into the module's exports, once.
+  // require() returns the factory's object. The modules that imported the module, `import * as` and import() read the module.
+  const files = {
+    "dep.ts": `
+      export function greet(q) { return "real:" + q; }
+      export function left(q) { return "real-left:" + q; }
+    `,
+    "importer.ts": `
+      import { greet, left } from "./dep";
+      export const viaImport = q => greet(q);
+      export const leftViaImport = q => left(q);
+    `,
+    "lazy.cjs": `exports.viaRequire = q => require("./dep").greet(q);`,
+  };
+  const head = `
+    import { afterEach, beforeAll, beforeEach, expect, jest, mock, spyOn, test, vi } from "bun:test";
+    import { createRequire } from "node:module";
+    import * as ns from "./dep";
+    import { viaImport, leftViaImport } from "./importer";
+    const { viaRequire } = require("./lazy.cjs");
+    const read = () => [viaImport("q"), ns.greet("q"), viaRequire("q")];
+  `;
+  // vi.doMock() leaves a loaded module as it is.
+  const ways: [string, string][] = [
+    ["mock.module", "spyOn"],
+    ["jest.mock", "jest.spyOn"],
+    ["jest.doMock", "jest.spyOn"],
+    ["vi.mock", "vi.spyOn"],
+  ];
+
+  const each = (name: string, source: (mockIt: string, spyOnIt: string) => string, of = ways) =>
+    Object.fromEntries(of.map(([mockIt, spyOnIt]) => [`${name}.${mockIt}.test.ts`, source(mockIt, spyOnIt)]));
+
+  // Each mock function in one realm, and one of them in the others.
+  test.each(isolationFlags)("reaches every reader, through every handle %j", async args => {
+    const of = args.length ? ways.slice(1, 2) : ways;
+    // With --aot, the entry that an earlier test file left in require.cache is still there in the next one.
+    const handles = [
+      `["require()", () => require("./dep")]`,
+      `["import.meta.require()", () => import.meta.require("./dep")]`,
+      `["createRequire()", () => createRequire(import.meta.url)("./dep")]`,
+      ...(of.length > 1 ? [] : [`["require.cache", () => require.cache[require.resolve("./dep")].exports]`]),
+      `["jest.requireMock()", () => jest.requireMock("./dep")]`,
+      `["the factory", () => fake]`,
+      `["import * as", () => ns]`,
+      `["import()", () => import("./dep")]`,
+    ];
+    await expectFixturesToPass(
+      {
+        ...files,
+        ...each(
+          "handles",
+          (mockIt, spyOnIt) => `
+            ${head}
+            const fake = { greet: q => "mock:" + q };
+            // In a hook, where no call is hoisted above the imports.
+            beforeAll(() => void ${mockIt}("./dep", () => fake));
+
+            test.each([${handles}])("a spy on what %s gives", async (_, handle) => {
+              expect(read()).toEqual(["mock:q", "mock:q", "mock:q"]);
+              const spy = ${spyOnIt}(await handle(), "greet").mockReturnValue("spy");
+              expect(read()).toEqual(["spy", "spy", "spy"]);
+              expect(spy).toHaveBeenCalledTimes(3);
+              expect([require("./dep").greet, ns.greet, fake.greet]).toEqual([spy, spy, spy]);
+              spy.mockRestore();
+              expect(read()).toEqual(["mock:q", "mock:q", "mock:q"]);
+              expect(ns.greet).toBe(fake.greet);
+            });
+          `,
+          of,
+        ),
+      },
+      handles.length * of.length,
+      args,
+    );
+  });
+
+  test("in every test, with the mock in beforeEach", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        ...each(
+          "each",
+          (mockIt, spyOnIt) => `
+            ${head}
+            beforeEach(() => void ${mockIt}("./dep", () => ({ greet: q => "mock:" + q })));
+            afterEach(() => void jest.restoreAllMocks());
+
+            test.each(["first", "second", "third"])("%s", () => {
+              expect(read()).toEqual(["mock:q", "mock:q", "mock:q"]);
+              const spy = ${spyOnIt}(require("./dep"), "greet").mockReturnValue("spy");
+              expect(read()).toEqual(["spy", "spy", "spy"]);
+              expect(spy).toHaveBeenCalledTimes(3);
+            });
+          `,
+        ),
+      },
+      3 * ways.length,
+    );
+  });
+
+  test("in a module that require() had loaded before the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "holder.cjs": `
+          const dep = require("./dep");
+          exports.viaHeld = q => dep.greet(q);
+        `,
+        ...each(
+          "held",
+          (mockIt, spyOnIt) => `
+            ${head}
+            const { viaHeld } = require("./holder.cjs");
+            beforeAll(() => void ${mockIt}("./dep", () => ({ greet: q => "mock:" + q })));
+
+            test.each([
+              ["require()", () => require("./dep")],
+              ["import * as", () => ns],
+            ])("a spy on what %s gives", (_, handle) => {
+              const spy = ${spyOnIt}(handle(), "greet").mockReturnValue("spy");
+              expect([...read(), viaHeld("q")]).toEqual(["spy", "spy", "spy", "spy"]);
+              spy.mockRestore();
+              expect([...read(), viaHeld("q")]).toEqual(["mock:q", "mock:q", "mock:q", "mock:q"]);
+            });
+          `,
+        ),
+      },
+      2 * ways.length,
+    );
+  });
+
+  test("whatever the factory's object is", async () => {
+    const dep = `export function greet(q) { return "real:" + q; }`;
+    await expectFixturesToPass(
+      {
+        "getter.ts": dep,
+        "namespace.ts": dep,
+        "awaited.ts": dep,
+        "shared-1.ts": dep,
+        "shared-2.ts": dep,
+        "fake.ts": `export function greet(q) { return "mock:" + q; }`,
+        "importer.ts": `
+          import * as getter from "./getter";
+          import * as namespace from "./namespace";
+          import * as awaited from "./awaited";
+          import * as shared1 from "./shared-1";
+          import * as shared2 from "./shared-2";
+          export const via = { getter, namespace, awaited, "shared-1": shared1, "shared-2": shared2 };
+        `,
+        "shapes.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          import { via } from "./importer";
+          const greet = q => "mock:" + q;
+          const read = name => [via[name].greet("q"), require("./" + name).greet("q")];
+
+          test("an export that the factory defines with a getter, which is called once", () => {
+            let reads = 0;
+            mock.module("./getter", () => ({ get greet() { reads++; return greet; }, plain: greet }));
+            expect(reads).toBe(1);
+            const spy = spyOn(require("./getter"), "greet").mockReturnValue("spy");
+            expect(read("getter")).toEqual(["spy", "spy"]);
+            spy.mockRestore();
+            expect(via.getter.greet("q")).toBe("mock:q");
+
+            // A spy on another export reads no getter, whichever object it is installed on.
+            reads = 0;
+            spyOn(require("./getter"), "plain").mockRestore();
+            expect(reads).toBe(0);
+          });
+
+          test("the namespace object of another module", () => {
+            mock.module("./namespace", () => require("./fake"));
+            const spy = spyOn(require("./namespace"), "greet").mockReturnValue("spy");
+            expect(read("namespace")).toEqual(["spy", "spy"]);
+            spy.mockRestore();
+            expect(read("namespace")).toEqual(["mock:q", "mock:q"]);
+          });
+
+          test("what an async factory resolves to", async () => {
+            await mock.module("./awaited", async () => (await Promise.resolve(), { greet }));
+            const spy = spyOn(require("./awaited"), "greet").mockReturnValue("spy");
+            expect(read("awaited")).toEqual(["spy", "spy"]);
+            spy.mockRestore();
+            expect(read("awaited")).toEqual(["mock:q", "mock:q"]);
+          });
+
+          test("one object for two modules", () => {
+            const shared = { greet };
+            mock.module("./shared-1", () => shared);
+            mock.module("./shared-2", () => shared);
+            const spy = spyOn(shared, "greet").mockReturnValue("spy");
+            expect([...read("shared-1"), ...read("shared-2")]).toEqual(["spy", "spy", "spy", "spy"]);
+            spy.mockRestore();
+            expect([...read("shared-1"), ...read("shared-2")]).toEqual(["mock:q", "mock:q", "mock:q", "mock:q"]);
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("is restored to what the mock copied, and only while that mock stands", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "again.ts": files["dep.ts"],
+        "unmocked.ts": files["dep.ts"],
+        "reset.ts": files["dep.ts"],
+        "others.ts": `
+          import * as again from "./again";
+          import * as unmocked from "./unmocked";
+          import * as reset from "./reset";
+          export const via = { again, unmocked, reset };
+        `,
+        "restore.test.ts": `
+          ${head}
+          import { via } from "./others";
+          const greet = q => "mock:" + q;
+
+          test("mock.restore() and jest.restoreAllMocks()", () => {
+            mock.module("./dep", () => ({ greet }));
+            for (const [restore, handle] of [[() => mock.restore(), () => require("./dep")], [() => jest.restoreAllMocks(), () => ns]]) {
+              const spy = spyOn(handle(), "greet").mockReturnValue("spy");
+              expect(read()).toEqual(["spy", "spy", "spy"]);
+              restore();
+              expect(read()).toEqual(["mock:q", "mock:q", "mock:q"]);
+              expect(require("./dep").greet).toBe(greet);
+            }
+          });
+
+          test("a second mock of the module takes the place of the spy", () => {
+            mock.module("./again", () => ({ greet }));
+            const spy = spyOn(require("./again"), "greet").mockReturnValue("spy");
+            mock.module("./again", () => ({ greet: q => "again:" + q }));
+            expect([via.again.greet("q"), require("./again").greet("q")]).toEqual(["again:q", "again:q"]);
+            spy.mockRestore();
+            expect([via.again.greet("q"), require("./again").greet("q")]).toEqual(["again:q", "again:q"]);
+          });
+
+          test("the module is the original again once the mock is removed", () => {
+            mock.module("./unmocked", () => ({ greet }));
+            const spy = spyOn(require("./unmocked"), "greet").mockReturnValue("spy");
+            vi.doUnmock("./unmocked");
+            expect([via.unmocked.greet("q"), require("./unmocked").greet("q")]).toEqual(["real:q", "real:q"]);
+            spy.mockRestore();
+            expect([via.unmocked.greet("q"), require("./unmocked").greet("q")]).toEqual(["real:q", "real:q"]);
+          });
+
+          test("jest.resetModules() leaves the spy where the importers read it", () => {
+            mock.module("./reset", () => ({ greet }));
+            const spy = spyOn(require("./reset"), "greet").mockReturnValue("spy");
+            jest.resetModules();
+            expect(via.reset.greet("q")).toBe("spy");
+            spy.mockRestore();
+            expect(via.reset.greet("q")).toBe("mock:q");
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test.each(isolationFlags)("is gone when the test file ends %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "1.test.ts": `
+          ${head}
+          test("both spies stay installed", () => {
+            mock.module("./dep", () => ({ greet: q => "mock:" + q, left: q => "mock-left:" + q }));
+            spyOn(require("./dep"), "greet").mockReturnValue("spy");
+            spyOn(ns, "left").mockReturnValue("spy");
+            expect([...read(), leftViaImport("q"), require("./dep").left("q")]).toEqual(["spy", "spy", "spy", "spy", "spy"]);
+          });
+        `,
+        "2.test.ts": `
+          ${head}
+          test("the next file gets the original", () => {
+            expect([...read(), leftViaImport("q"), require("./dep").left("q")]).toEqual(["real:q", "real:q", "real:q", "real-left:q", "real-left:q"]);
+            const spy = spyOn(require("./dep"), "greet").mockReturnValue("spy");
+            expect(read()).toEqual(["spy", "spy", "spy"]);
+          });
+        `,
+      },
+      2,
+      args,
+    );
+  });
+
+  test("is restored after Bun.plugin.clearAll(), which leaves the mock's exports in the module", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "cleared.test.ts": `
+          ${head}
+          test.each([["require()", () => require("./dep")], ["import * as", () => ns]])("a spy on what %s gives", (_, handle) => {
+            const greet = q => "mock:" + q;
+            mock.module("./dep", () => ({ greet }));
+            const target = handle();
+            const spy = spyOn(target, "greet").mockReturnValue("spy");
+            Bun.plugin.clearAll();
+            expect([viaImport("q"), ns.greet("q")]).toEqual(["spy", "spy"]);
+            spy.mockRestore();
+            expect([viaImport("q"), ns.greet("q"), target.greet("q")]).toEqual(["mock:q", "mock:q", "mock:q"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("leaves alone what the mock did not copy", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "alone.test.ts": `
+          ${head}
+          const fake = { greet: q => "mock:" + q, flag: "mock-flag" };
+          beforeAll(() => void mock.module("./dep", () => fake));
+
+          test("another object that has the same function", () => {
+            const other = { greet: fake.greet };
+            const spy = spyOn(other, "greet").mockReturnValue("spy");
+            expect([other.greet("q"), ...read()]).toEqual(["spy", "mock:q", "mock:q", "mock:q"]);
+            spy.mockRestore();
+          });
+
+          test("a function that the test assigned after the mock", () => {
+            const assigned = q => "assigned:" + q;
+            fake.greet = assigned;
+            const spy = spyOn(fake, "greet").mockReturnValue("spy");
+            expect([fake.greet("q"), viaImport("q"), ns.greet("q")]).toEqual(["spy", "mock:q", "mock:q"]);
+            spy.mockRestore();
+            expect(fake.greet).toBe(assigned);
+          });
+
+          test("a property of the factory's object that the test has made read-only", () => {
+            const readOnly = q => "read-only:" + q;
+            Object.defineProperty(fake, "greet", { value: readOnly, writable: false });
+            mock.module("./dep", () => fake);
+            const spy = spyOn(ns, "greet").mockReturnValue("spy");
+            expect([viaImport("q"), ns.greet("q"), fake.greet("q")]).toEqual(["spy", "spy", "read-only:q"]);
+            spy.mockRestore();
+            expect([viaImport("q"), ns.greet("q"), fake.greet("q")]).toEqual(["read-only:q", "read-only:q", "read-only:q"]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+});
+
 describe.concurrent("a factory that returns a module namespace object", () => {
   const files = {
     "a.ts": `export const a = "real-a";`,

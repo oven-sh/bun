@@ -391,6 +391,25 @@ test("async factory", () => {
 { "foo": "baz" }
 ```
 
+After such an update, `require()` of the module returns the object the factory returned, and the modules that imported it read the module itself. A spy on a function of the mock replaces it in both. It doesn't matter whether you call `spyOn()` on what `require()` returns, on `import * as` or on what `import()` gives. `mockRestore()` puts back the function the mock had there.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock, spyOn } from "bun:test";
+import { welcome } from "./welcome"; // imports { greet } from "./greeter"
+
+mock.module("./greeter", () => ({ greet: () => "mocked" }));
+
+test("spy on a mocked module", () => {
+  const spy = spyOn(require("./greeter"), "greet").mockReturnValue("spied");
+  expect(welcome()).toBe("spied");
+
+  spy.mockRestore();
+  expect(welcome()).toBe("mocked");
+});
+```
+
+An assignment to the object the factory returned changes only that object. The modules that imported the mocked module keep the value they have.
+
 ### Keeping Part of the Original Module
 
 The factory is passed a function that loads the original module. Spread its result to replace only some exports.

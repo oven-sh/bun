@@ -158,6 +158,11 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // The loaded ES modules whose exports a mock has overwritten with copies of what its factory returned, until the mock ends. Null if there are none.
+        // A spy on such an export, or on the property it was copied from, replaces both: see Bun::storeSpyInPatchedModule().
+        struct PatchedModules;
+        PatchedModules* patchedModules = nullptr;
+        static void destroy(PatchedModules*);
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -190,6 +195,7 @@ public:
             loadRootFetches.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            destroy(std::exchange(patchedModules, nullptr));
 #if ENABLE(AOT)
             pendingCompiledMocks.clear();
             compiledMockFactories.clear();
@@ -354,6 +360,11 @@ JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModu
 // The same for the namespace object of a compiled module. Null for any other object.
 JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
 #endif
+// `spy` has replaced the function `replaced` as `name` of `target`. If a mock copied that function out of `target` into an export of a loaded module,
+// or `target` is the namespace object of such a module, the spy replaces the other one too. Returns whether it did.
+bool storeSpyInPatchedModule(Zig::GlobalObject*, JSC::JSObject* target, const JSC::Identifier& name, JSC::JSValue replaced, JSC::JSObject* spy);
+// Puts the mock's copy back where storeSpyInPatchedModule() stored `spy`, unless the mock has ended or another one has taken its place.
+void removeSpyFromPatchedModules(Zig::GlobalObject*, JSC::JSObject* spy, const JSC::Identifier& name);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);

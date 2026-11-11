@@ -456,6 +456,8 @@ public:
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
+    // Bun::storeSpyInPatchedModule() has stored the spy in a second place, which clearSpy() restores too.
+    static constexpr unsigned SpyAttributeInPatchedModule = 1 << 22;
 
     JSString* jsName()
     {
@@ -865,6 +867,13 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
+    // The spy has replaced `replaced` on `target`. A module mock may have copied that function into a loaded module, or out of `target` into one.
+    void storeInPatchedModule(Zig::GlobalObject* globalObject, JSObject* target, JSValue replaced)
+    {
+        if (Bun::storeSpyInPatchedModule(globalObject, target, m_spyIdentifier, replaced, this))
+            m_spyAttributes |= SpyAttributeInPatchedModule;
+    }
+
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -874,6 +883,15 @@ public:
             RETURN_IF_EXCEPTION(scope, );
         }
 
+        // Not through the target: the module outlives what the factory returned.
+        if (m_spyAttributes & SpyAttributeInPatchedModule) [[unlikely]] {
+            Bun::removeSpyFromPatchedModules(uncheckedDowncast<Zig::GlobalObject>(this->globalObject()), this, m_spyIdentifier);
+            if (scope.exception()) [[unlikely]] {
+                enter(List::Spies);
+                return;
+            }
+            m_spyAttributes &= ~SpyAttributeInPatchedModule;
+        }
         if (auto* target = m_spyTarget.get()) {
             this->putBackOriginal(globalObject, target);
             if (scope.exception()) [[unlikely]] {
@@ -3202,6 +3220,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);
+        if (globalObject->onLoadPlugins.patchedModules && value.isCallable()) [[unlikely]] {
+            mock->storeInPatchedModule(globalObject, object, value);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         return JSValue::encode(mock);
     }
 
@@ -3284,6 +3306,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     RETURN_IF_EXCEPTION(scope, {});
 
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
+    // A getter of the factory's object returned this function when the mock copied it.
+    if (globalObject->onLoadPlugins.patchedModules && access == SpyAccess::Value) [[unlikely]] {
+        mock->storeInPatchedModule(globalObject, object, original);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return JSValue::encode(mock);
 }
 

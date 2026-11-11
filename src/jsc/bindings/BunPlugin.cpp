@@ -2902,6 +2902,211 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
+// One loaded ES module that a mock has overwritten the exports of.
+struct PatchedModule : public RefCounted<PatchedModule> {
+    // Null for a compiled module.
+    JSC::Strong<JSObject> moduleNamespace;
+    // The object that the copies were read from, which is what require() returns.
+    JSC::Strong<JSObject> source;
+    // By export name: the copy, and the spy that stands in for it, installed on `source` or on the namespace object.
+    // An export whose name is an array index has no entry, and is left to the spy alone.
+    JSC::Strong<JSObject> copies;
+    JSC::Strong<JSObject> spiesOnSource;
+    JSC::Strong<JSObject> spiesOnNamespace;
+#if ENABLE(AOT)
+    std::optional<uint32_t> compiledModule;
+    String specifier;
+#endif
+};
+
+struct BunPlugin::OnLoad::PatchedModules {
+    Vector<Ref<PatchedModule>> all;
+    // Each `moduleNamespace` and `source` of them: one lookup tells that the target of a spy is neither.
+    UncheckedKeyHashSet<JSObject*> objects;
+
+    PatchedModule* find(JSC::JSModuleNamespaceObject* moduleNamespace)
+    {
+        for (auto& patched : all) {
+            if (patched->moduleNamespace.get() == moduleNamespace)
+                return patched.ptr();
+        }
+        return nullptr;
+    }
+
+#if ENABLE(AOT)
+    PatchedModule* find(JSC::AOT::ModuleID compiledModule)
+    {
+        for (auto& patched : all) {
+            if (patched->compiledModule == compiledModule.index())
+                return patched.ptr();
+        }
+        return nullptr;
+    }
+
+    PatchedModule* findCompiled(const String& specifier)
+    {
+        for (auto& patched : all) {
+            if (patched->compiledModule && patched->specifier == specifier)
+                return patched.ptr();
+        }
+        return nullptr;
+    }
+#endif
+
+    // `object` was the namespace object or the source of one that has gone or has another now.
+    void didRelease(JSObject* object)
+    {
+        if (object && !all.containsIf([&](auto& patched) { return patched->moduleNamespace.get() == object || patched->source.get() == object; }))
+            objects.remove(object);
+    }
+};
+
+void BunPlugin::OnLoad::destroy(PatchedModules* patchedModules)
+{
+    delete patchedModules;
+}
+
+__attribute__((minsize)) static PatchedModule& ensurePatchedModule(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, [[maybe_unused]] std::optional<JSC::AOT::ModuleID> compiledModule, [[maybe_unused]] const String& specifier)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (!plugins.patchedModules)
+        plugins.patchedModules = new BunPlugin::OnLoad::PatchedModules;
+    auto& patchedModules = *plugins.patchedModules;
+#if ENABLE(AOT)
+    PatchedModule* patched = moduleNamespace ? patchedModules.find(moduleNamespace) : patchedModules.find(*compiledModule);
+#else
+    PatchedModule* patched = patchedModules.find(moduleNamespace);
+#endif
+    if (patched)
+        return *patched;
+    patched = new PatchedModule;
+    patchedModules.all.append(adoptRef(*patched));
+    if (moduleNamespace) {
+        patched->moduleNamespace.set(JSC::getVM(globalObject), moduleNamespace);
+        patchedModules.objects.add(moduleNamespace);
+    }
+#if ENABLE(AOT)
+    else {
+        patched->compiledModule = compiledModule->index();
+        patched->specifier = specifier;
+    }
+#endif
+    return *patched;
+}
+
+static JSValue recordedValue(JSC::VM& vm, JSObject* record, const JSC::Identifier& name)
+{
+    JSValue value = record ? record->getDirect(vm, name) : JSValue();
+    return value ? value : jsUndefined();
+}
+
+__attribute__((minsize)) static void setRecordedValue(Zig::GlobalObject* globalObject, JSC::Strong<JSObject>& record, const JSC::Identifier& name, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (!record)
+        record.set(vm, JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
+    record->putDirect(vm, name, value);
+}
+
+__attribute__((minsize)) static void storeInPatchedModule(Zig::GlobalObject* globalObject, PatchedModule& patched, const JSC::Identifier& name, JSValue value)
+{
+    if (auto* moduleNamespace = dynamicDowncast<JSC::JSModuleNamespaceObject>(patched.moduleNamespace.get())) {
+        moduleNamespace->overrideExportValue(globalObject, name, value);
+        return;
+    }
+#if ENABLE(AOT)
+    if (patched.compiledModule)
+        JSC::AOT::mockExport(globalObject, JSC::AOT::ModuleID(*patched.compiledModule), name.impl(), value);
+#endif
+}
+
+// Replaces `from` as the own property `name` of what the exports were copied from. Only a plain data property that still has it is written:
+// not an accessor, a read-only property, one that script has changed since, or anything of a Proxy or a module namespace object.
+__attribute__((minsize)) static void replaceInSourceOfPatchedModule(Zig::GlobalObject* globalObject, PatchedModule& patched, const JSC::Identifier& name, JSValue from, JSValue to)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* source = patched.source.get();
+    if (!source || parseIndex(name) || source->inherits<JSC::JSModuleNamespaceObject>() || source->type() == JSC::ProxyObjectType || source->isGlobalObject())
+        return;
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && (JSC::AOT::isModuleNamespace(source) || source->structure()->mayHaveImmutableProperties()))
+        return;
+#endif
+    JSC::PropertySlot slot(source, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isOwn = source->methodTable()->getOwnPropertySlot(source, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isOwn || !slot.isValue() || slot.isTaintedByOpaqueObject() || slot.slotBase() != source || (slot.attributes() & PropertyAttribute::ReadOnly))
+        return;
+    JSValue current = slot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, );
+    if (current != from)
+        return;
+    source->putDirect(vm, name, to, slot.attributes() & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete));
+}
+
+// Takes the spies that were installed on the namespace object out of what the exports were copied from. A test may pass that object to its next mock.
+__attribute__((minsize)) static void removeSpiesFromSourceOfPatchedModule(Zig::GlobalObject* globalObject, PatchedModule& patched)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* spies = patched.spiesOnNamespace.get();
+    if (!spies)
+        return;
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    spies->getOwnPropertyNames(spies, globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (auto& name : names) {
+        JSValue spy = recordedValue(vm, spies, name);
+        if (!spy.isCell())
+            continue;
+        replaceInSourceOfPatchedModule(globalObject, patched, name, spy, recordedValue(vm, patched.copies.get(), name));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// `patched` is the module that a mock has written `values` to, which it read from `source`.
+__attribute__((minsize)) static void didPatchModule(Zig::GlobalObject* globalObject, PatchedModule& patched, JSObject* source, const Vector<JSC::Identifier, 4>& names, const MarkedArgumentBuffer& values)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& patchedModules = *globalObject->onLoadPlugins.patchedModules;
+    if (JSObject* earlier = patched.source.get(); earlier != source) {
+        removeSpiesFromSourceOfPatchedModule(globalObject, patched);
+        RETURN_IF_EXCEPTION(scope, );
+        patched.source.set(vm, source);
+        patchedModules.objects.add(source);
+        patchedModules.didRelease(earlier);
+    }
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (parseIndex(names[i]))
+            continue;
+        JSValue value = values.at(i);
+        // The factory's object has a spy from before, which the mock has copied again. It still stands in for the earlier copy.
+        bool isStandingSpy = value.isCell() && (recordedValue(vm, patched.spiesOnSource.get(), names[i]) == value || recordedValue(vm, patched.spiesOnNamespace.get(), names[i]) == value);
+        if (isStandingSpy)
+            continue;
+        setRecordedValue(globalObject, patched.copies, names[i], value);
+        if (patched.spiesOnSource)
+            setRecordedValue(globalObject, patched.spiesOnSource, names[i], jsUndefined());
+        if (patched.spiesOnNamespace)
+            setRecordedValue(globalObject, patched.spiesOnNamespace, names[i], jsUndefined());
+    }
+}
+
+// The mock that wrote to `patched` has ended, and the module has its own exports again.
+__attribute__((minsize)) static void forgetPatchedModule(Zig::GlobalObject* globalObject, PatchedModule& patched)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    Ref protect { patched };
+    plugins.patchedModules->all.removeFirstMatching([&](auto& other) { return other.ptr() == &patched; });
+    plugins.patchedModules->didRelease(patched.source.get());
+    plugins.patchedModules->didRelease(patched.moduleNamespace.get());
+    if (plugins.patchedModules->all.isEmpty())
+        BunPlugin::OnLoad::destroy(std::exchange(plugins.patchedModules, nullptr));
+    removeSpiesFromSourceOfPatchedModule(globalObject, patched);
+}
+
 __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3048,6 +3253,24 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             RETURN_IF_EXCEPTION(scope, );
         }
 #endif
+        // From here on a spy has to replace an export together with the property that it is a copy of. A builtin has live exports instead.
+        JSValue source = exports;
+        if (commonJSExports && !names.isEmpty()) {
+            source = commonJSExports->exportsObject();
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        if (!names.isEmpty() && source.isObject() && !isBuiltinModuleKey(specifier)) {
+            if (moduleNamespaceObject && source != moduleNamespaceObject) {
+                didPatchModule(globalObject, ensurePatchedModule(globalObject, moduleNamespaceObject, std::nullopt, specifier), asObject(source), names, values);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#if ENABLE(AOT)
+            if (mocksCompiledModule) {
+                didPatchModule(globalObject, ensurePatchedModule(globalObject, nullptr, loaded.compiledModule, specifier), asObject(source), names, values);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#endif
+        }
     }
 
     if (auto* moduleObject = loaded.commonJSModule) {
@@ -3699,6 +3922,11 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
         virtualModules->remove(specifier);
 #if ENABLE(AOT)
+    // The run time gives a compiled module its own exports back.
+    while (auto* patched = globalObject->onLoadPlugins.patchedModules ? globalObject->onLoadPlugins.patchedModules->findCompiled(specifier) : nullptr) {
+        forgetPatchedModule(globalObject, *patched);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     Vector<JSC::AOT::ModuleID, 1> pendingMockModules;
     globalObject->onLoadPlugins.pendingCompiledMocks.removeAllMatching([&](const auto& waiting) {
         if (waiting.second.get() != mock)
@@ -3779,6 +4007,10 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     if (auto* patched = mock->patchedNamespace.get(); patched && saved) {
         restoreOverwrittenExports(globalObject, patched, saved);
         RETURN_IF_EXCEPTION(scope, );
+        if (auto* record = globalObject->onLoadPlugins.patchedModules ? globalObject->onLoadPlugins.patchedModules->find(patched) : nullptr) {
+            forgetPatchedModule(globalObject, *record);
+            RETURN_IF_EXCEPTION(scope, );
+        }
     }
     // A record with live exports was loaded as a mock, so it isn't the module that was patched.
     JSObject* overwritten = loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports() ? nullptr : mock->originalExports.get();
@@ -8230,6 +8462,73 @@ JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject* globalObject, JSC::
 }
 #endif
 
+__attribute__((minsize)) bool storeSpyInPatchedModule(Zig::GlobalObject* globalObject, JSC::JSObject* target, const JSC::Identifier& name, JSC::JSValue replaced, JSC::JSObject* spy)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* patchedModules = globalObject->onLoadPlugins.patchedModules;
+    if (!patchedModules)
+        return false;
+    bool isKnown = patchedModules->objects.contains(target);
+#if ENABLE(AOT)
+    // The loader holds no namespace object of a compiled module.
+    std::optional<JSC::AOT::ModuleID> compiledModule;
+    if (vm.hasCompiledCode() && JSC::AOT::isModuleNamespace(target)) {
+        auto* record = JSC::AOT::moduleRecordForNamespace(globalObject, target);
+        RETURN_IF_EXCEPTION(scope, false);
+        compiledModule = record ? JSC::AOT::compiledModuleForRecord(globalObject, record) : std::nullopt;
+        isKnown |= !!compiledModule;
+    }
+#endif
+    if (!isKnown)
+        return false;
+
+    bool isStored = false;
+    for (size_t i = 0; i < patchedModules->all.size(); ++i) {
+        Zig::PatchedModule& patched = patchedModules->all[i].get();
+        bool isSource = patched.source.get() == target;
+        bool isNamespace = patched.moduleNamespace.get() == target;
+#if ENABLE(AOT)
+        isNamespace |= compiledModule && patched.compiledModule == compiledModule->index();
+#endif
+        // Only where both still have what the mock copied: script may have assigned to either since, and another spy may stand there.
+        if ((!isSource && !isNamespace) || Zig::recordedValue(vm, patched.copies.get(), name) != replaced || Zig::recordedValue(vm, patched.spiesOnSource.get(), name).isCell() || Zig::recordedValue(vm, patched.spiesOnNamespace.get(), name).isCell())
+            continue;
+        if (isSource) {
+            Zig::storeInPatchedModule(globalObject, patched, name, spy);
+            RETURN_IF_EXCEPTION(scope, isStored);
+            Zig::setRecordedValue(globalObject, patched.spiesOnSource, name, spy);
+        } else {
+            Zig::replaceInSourceOfPatchedModule(globalObject, patched, name, replaced, spy);
+            RETURN_IF_EXCEPTION(scope, isStored);
+            Zig::setRecordedValue(globalObject, patched.spiesOnNamespace, name, spy);
+        }
+        isStored = true;
+    }
+    return isStored;
+}
+
+__attribute__((minsize)) void removeSpyFromPatchedModules(Zig::GlobalObject* globalObject, JSC::JSObject* spy, const JSC::Identifier& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* patchedModules = globalObject->onLoadPlugins.patchedModules;
+    for (size_t i = 0; patchedModules && i < patchedModules->all.size(); ++i) {
+        Zig::PatchedModule& patched = patchedModules->all[i].get();
+        JSValue copy = Zig::recordedValue(vm, patched.copies.get(), name);
+        if (Zig::recordedValue(vm, patched.spiesOnSource.get(), name) == JSValue(spy)) {
+            Zig::storeInPatchedModule(globalObject, patched, name, copy);
+            RETURN_IF_EXCEPTION(scope, );
+            Zig::setRecordedValue(globalObject, patched.spiesOnSource, name, jsUndefined());
+        }
+        if (Zig::recordedValue(vm, patched.spiesOnNamespace.get(), name) == JSValue(spy)) {
+            Zig::replaceInSourceOfPatchedModule(globalObject, patched, name, spy, copy);
+            RETURN_IF_EXCEPTION(scope, );
+            Zig::setRecordedValue(globalObject, patched.spiesOnNamespace, name, jsUndefined());
+        }
+    }
+}
+
 } // namespace Bun
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -8257,11 +8556,14 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     auto runningModuleMocks = std::exchange(plugins.runningModuleMocks, {});
     auto waitingModuleMocks = std::exchange(plugins.waitingModuleMocks, {});
     auto moduleMocksWithTurn = std::exchange(plugins.moduleMocksWithTurn, {});
+    // The modules keep what the mocks wrote to them, so a spy on one of those exports is still restored in both places.
+    auto* patchedModules = std::exchange(plugins.patchedModules, nullptr);
     plugins.clear();
     plugins.moduleMocksBeingLoaded = WTF::move(moduleMocksBeingLoaded);
     plugins.runningModuleMocks = WTF::move(runningModuleMocks);
     plugins.waitingModuleMocks = WTF::move(waitingModuleMocks);
     plugins.moduleMocksWithTurn = WTF::move(moduleMocksWithTurn);
+    plugins.patchedModules = patchedModules;
     global->onResolvePlugins.clear();
 #if ENABLE(AOT)
     if (global->vm().hasCompiledCode())

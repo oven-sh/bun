@@ -905,6 +905,8 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
         napi_instance->napiRef = nullptr;
     } else {
         const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+        // A Proxy's [[Delete]] leaves the property on the Proxy's own cell.
+        uncheckedDowncast<Bun::NapiExternal>(jsc_object->getDirect(vm, propertyName))->m_value = nullptr;
         jsc_object->deleteProperty(globalObject, propertyName);
     }
 

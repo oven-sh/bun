@@ -173,6 +173,17 @@ static napi_value unref_wrapped_value(const Napi::CallbackInfo &info) {
   return undefined;
 }
 
+// delete_wrap_ref(): undefined
+static napi_value delete_wrap_ref(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  NODE_API_CALL(env, napi_delete_reference(env, ref_to_wrapped_object));
+  ref_to_wrapped_object = nullptr;
+
+  napi_value undefined;
+  NODE_API_CALL(env, napi_get_undefined(env, &undefined));
+  return undefined;
+}
+
 static napi_value was_wrap_finalize_called(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   return Napi::Boolean::New(env, wrap_finalize_called);
@@ -243,6 +254,7 @@ void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, get_wrap_data_from_ref);
   REGISTER_FUNCTION(env, exports, remove_wrap);
   REGISTER_FUNCTION(env, exports, unref_wrapped_value);
+  REGISTER_FUNCTION(env, exports, delete_wrap_ref);
   REGISTER_FUNCTION(env, exports, was_wrap_finalize_called);
   REGISTER_FUNCTION(env, exports, try_wrap);
   REGISTER_FUNCTION(env, exports, try_unwrap);

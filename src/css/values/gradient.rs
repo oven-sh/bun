@@ -772,18 +772,18 @@ impl WebKitGradient {
                 Some(WebKitGradient::Linear(WebKitGradientLinear {
                     from: WebKitGradientPoint {
                         x: WebKitGradientPointComponent::Number(NumberOrPercentage::Percentage(
-                            Percentage { v: from.0 },
+                            Percentage::from_unit_value(from.0),
                         )),
                         y: WebKitGradientPointComponent::Number(NumberOrPercentage::Percentage(
-                            Percentage { v: from.1 },
+                            Percentage::from_unit_value(from.1),
                         )),
                     },
                     to: WebKitGradientPoint {
                         x: WebKitGradientPointComponent::Number(NumberOrPercentage::Percentage(
-                            Percentage { v: to.0 },
+                            Percentage::from_unit_value(to.0),
                         )),
                         y: WebKitGradientPointComponent::Number(NumberOrPercentage::Percentage(
-                            Percentage { v: to.1 },
+                            Percentage::from_unit_value(to.1),
                         )),
                     },
                     stops: convert_stops_to_webkit(bump, &linear.items)?,
@@ -1095,7 +1095,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
                 }
             }
             WebKitGradientPointComponent::Number(lp) => {
-                if matches!(lp, NumberOrPercentage::Percentage(p) if p.v == 0.0) {
+                if matches!(lp, NumberOrPercentage::Percentage(p) if p.is_zero()) {
                     dest.write_char(b'0')
                 } else {
                     lp.to_css(dest)
@@ -1154,9 +1154,9 @@ impl WebKitColorStop {
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
             let position: f32 = crate::match_ignore_ascii_case! { function, {
                 b"color-stop" => {
-                    let p: NumberOrPercentage = NumberOrPercentage::parse(i)?;
+                    let p = NumberOrPercentage::parse_unit_value(i)?;
                     i.expect_comma()?;
-                    p.into_f32()
+                    p
                 },
                 b"from" => 0.0,
                 b"to" => 1.0,
@@ -1486,7 +1486,7 @@ fn convert_stops_to_webkit(
                 // webkit stops must always be percentage based, not length based.
                 let position: f32 = if let Some(pos) = &stop.position {
                     match pos {
-                        LengthPercentage::Percentage(percentage) => percentage.v,
+                        LengthPercentage::Percentage(percentage) => percentage.unit_value(),
                         _ => {
                             return None;
                         }

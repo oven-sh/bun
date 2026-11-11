@@ -162,7 +162,9 @@ impl Flex {
             grow: grow.unwrap_or(1.0),
             shrink: shrink.unwrap_or(1.0),
             basis: basis.unwrap_or(LengthPercentageOrAuto::Length(
-                LengthPercentage::Percentage(css::css_values::percentage::Percentage { v: 0.0 }),
+                LengthPercentage::Percentage(
+                    css::css_values::percentage::Percentage::from_unit_value(0.0),
+                ),
             )),
         })
     }

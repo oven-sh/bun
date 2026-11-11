@@ -9,22 +9,44 @@ use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Percentage {
-    pub(crate) v: CSSNumber,
+    v: CSSNumber,
 }
 
 impl Percentage {
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
-        if let Ok(calc_value) = input.try_parse(Calc::<Percentage>::parse) {
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
-            }
-            // Handle calc() expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
-            // Return an error since we can't determine the percentage value at parse time
-            return Err(input.new_custom_error(ParserError::invalid_value));
-        }
+    /// The percentage that a fraction of one stands for: 0.5 is `50%`.
+    pub(crate) const fn from_unit_value(unit_value: CSSNumber) -> Percentage {
+        Percentage { v: unit_value }
+    }
 
-        let percent = input.expect_percentage()?;
-        Ok(Percentage { v: percent })
+    /// The value as a fraction of one: `50%` is 0.5.
+    pub(crate) const fn unit_value(self) -> CSSNumber {
+        self.v
+    }
+
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
+        match Self::parse_calc(input) {
+            Some(calc) => calc,
+            None => input.expect_percentage(),
+        }
+    }
+
+    /// Parses a percentage that the caller reads as a fraction of one.
+    pub(crate) fn parse_unit_value(input: &mut css::Parser) -> CssResult<CSSNumber> {
+        match Self::parse_calc(input) {
+            Some(calc) => calc.map(Percentage::unit_value),
+            None => input.expect_percentage_unit_value(),
+        }
+    }
+
+    /// `None` if the input does not start with a math function.
+    fn parse_calc(input: &mut css::Parser) -> Option<CssResult<Percentage>> {
+        let calc_value = input.try_parse(Calc::<Percentage>::parse).ok()?;
+        if let Calc::Value(v) = calc_value {
+            return Some(Ok(*v));
+        }
+        // Handle calc() expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
+        // Return an error since we can't determine the percentage value at parse time
+        Some(Err(input.new_custom_error(ParserError::invalid_value)))
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -448,6 +470,14 @@ impl NumberOrPercentage {
         Percentage::parse(input).map(NumberOrPercentage::Percentage)
     }
 
+    /// Parses a number or a percentage into one number: `50%` is 0.5.
+    pub(crate) fn parse_unit_value(input: &mut css::Parser) -> CssResult<CSSNumber> {
+        if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
+            return Ok(n);
+        }
+        Percentage::parse_unit_value(input)
+    }
+
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(*n, dest),
@@ -458,7 +488,7 @@ impl NumberOrPercentage {
     pub(crate) fn into_f32(&self) -> f32 {
         match self {
             Self::Number(n) => *n,
-            Self::Percentage(p) => p.v,
+            Self::Percentage(p) => p.unit_value(),
         }
     }
 }

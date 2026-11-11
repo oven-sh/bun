@@ -13,12 +13,8 @@ pub struct AlphaValue {
 
 impl AlphaValue {
     pub(crate) fn parse(input: &mut Parser) -> Result<AlphaValue> {
-        let val: NumberOrPercentage = NumberOrPercentage::parse(input)?;
-        let final_ = match val {
-            NumberOrPercentage::Percentage(percent) => AlphaValue { v: percent.v },
-            NumberOrPercentage::Number(num) => AlphaValue { v: num },
-        };
-        Result::Ok(final_)
+        let v = NumberOrPercentage::parse_unit_value(input)?;
+        Result::Ok(AlphaValue { v })
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

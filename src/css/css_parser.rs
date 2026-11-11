@@ -22,6 +22,8 @@ use bun_ast::Index as SrcIndex;
 type SymbolList = Vec<bun_ast::Symbol>;
 use bun_ast::{ImportKind, ImportRecord};
 
+use crate::values::percentage::Percentage;
+
 pub use crate::compat::{self, Feature};
 pub use crate::css_modules::{
     self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
@@ -3427,7 +3429,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(crate) fn expect_percentage(&mut self) -> CssResult<f32> {
+    pub(crate) fn expect_percentage(&mut self) -> CssResult<Percentage> {
+        self.expect_percentage_unit_value()
+            .map(Percentage::from_unit_value)
+    }
+
+    /// A percentage as a fraction of one: 0.5 for `50%`.
+    pub(crate) fn expect_percentage_unit_value(&mut self) -> CssResult<f32> {
         let start_location = self.current_source_location();
         let non_negative = self.flags.non_negative();
         let tok = self.next()?;

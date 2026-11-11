@@ -417,9 +417,9 @@ impl BorderImageSlice {
 
     fn default() -> BorderImageSlice {
         BorderImageSlice {
-            offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage {
-                v: 1.0,
-            })),
+            offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(
+                Percentage::from_unit_value(1.0),
+            )),
             fill: false,
         }
     }

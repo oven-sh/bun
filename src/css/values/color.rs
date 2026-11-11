@@ -1881,10 +1881,8 @@ impl ComponentParser {
 
         if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
             Ok(NumberOrPercentage::Number { value })
-        } else if let Ok(value) = input.try_parse(Percentage::parse) {
-            Ok(NumberOrPercentage::Percentage {
-                unit_value: value.v,
-            })
+        } else if let Ok(unit_value) = input.try_parse(Percentage::parse_unit_value) {
+            Ok(NumberOrPercentage::Percentage { unit_value })
         } else if self.allow_none {
             input.expect_ident_matching(b"none")?;
             Ok(NumberOrPercentage::Number { value: f32::NAN })
@@ -1920,8 +1918,8 @@ impl ComponentParser {
     }
 
     fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
-        if let Ok(val) = input.try_parse(Percentage::parse) {
-            Ok(val.v)
+        if let Ok(val) = input.try_parse(Percentage::parse_unit_value) {
+            Ok(val)
         } else if self.allow_none {
             input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
@@ -2065,14 +2063,14 @@ impl RelativeComponentParser {
         if let Ok(value) = input.try_parse(|i| {
             match Calc::<Percentage>::parse_with(i, &|ident| {
                 let (v, _) = this.get_ident(ident, ChannelType::PERCENTAGE)?;
-                Some(Calc::Value(Box::new(Percentage { v })))
+                Some(Calc::Value(Box::new(Percentage::from_unit_value(v))))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
                 _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
             }
         }) {
             return Ok(NumberOrPercentage::Percentage {
-                unit_value: value.v,
+                unit_value: value.unit_value(),
             });
         }
 
@@ -2290,19 +2288,19 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     let hue_method = hue_method_.unwrap_or(HueInterpolationMethod::Shorter);
     input.expect_comma()?;
 
-    let first_percent_ = input.try_parse(|i| i.expect_percentage());
+    let first_percent_ = input.try_parse(|i| i.expect_percentage_unit_value());
     let first_color = CssColor::parse(input)?;
     let first_percent: Option<f32> = match first_percent_ {
         Ok(v) => Some(v),
-        Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
+        Err(_) => input.try_parse(|i| i.expect_percentage_unit_value()).ok(),
     };
     input.expect_comma()?;
 
-    let second_percent_ = input.try_parse(|i| i.expect_percentage());
+    let second_percent_ = input.try_parse(|i| i.expect_percentage_unit_value());
     let second_color = CssColor::parse(input)?;
     let second_percent: Option<f32> = match second_percent_ {
         Ok(v) => Some(v),
-        Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
+        Err(_) => input.try_parse(|i| i.expect_percentage_unit_value()).ok(),
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
@@ -2515,7 +2513,7 @@ pub(crate) fn write_components(
     if a.is_nan() {
         dest.write_str("none")?;
     } else {
-        Percentage { v: a }.to_css(dest)?;
+        Percentage::from_unit_value(a).to_css(dest)?;
     }
     dest.write_char(b' ')?;
     write_component(b, dest)?;

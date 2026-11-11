@@ -227,7 +227,7 @@ impl Position {
         }
 
         let zero = LengthPercentage::zero();
-        let fifty = DimensionPercentage::Percentage(Percentage { v: 0.5 });
+        let fifty = DimensionPercentage::Percentage(Percentage::from_unit_value(0.5));
         let x_len: Option<&LengthPercentage> = 'x_len: {
             match &self.x {
                 PositionComponent::Side(side) => {
@@ -313,8 +313,12 @@ impl Position {
 impl Default for Position {
     fn default() -> Self {
         Position {
-            x: HorizontalPosition::Length(DimensionPercentage::Percentage(Percentage { v: 0.0 })),
-            y: VerticalPosition::Length(DimensionPercentage::Percentage(Percentage { v: 0.0 })),
+            x: HorizontalPosition::Length(DimensionPercentage::Percentage(
+                Percentage::from_unit_value(0.0),
+            )),
+            y: VerticalPosition::Length(DimensionPercentage::Percentage(
+                Percentage::from_unit_value(0.0),
+            )),
         }
     }
 }
@@ -395,7 +399,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
             PositionComponent::Center => return true,
             PositionComponent::Length(l) => {
                 if let DimensionPercentage::Percentage(p) = l {
-                    return p.v == 0.5;
+                    return *p == Percentage::from_unit_value(0.5);
                 }
             }
             _ => {}
@@ -417,7 +421,7 @@ impl HorizontalPositionKeyword {
         match self {
             HorizontalPositionKeyword::Left => LengthPercentage::zero(),
             HorizontalPositionKeyword::Right => {
-                DimensionPercentage::Percentage(Percentage { v: 1.0 })
+                DimensionPercentage::Percentage(Percentage::from_unit_value(1.0))
             }
         }
     }
@@ -436,7 +440,7 @@ impl VerticalPositionKeyword {
         match self {
             VerticalPositionKeyword::Top => LengthPercentage::zero(),
             VerticalPositionKeyword::Bottom => {
-                DimensionPercentage::Percentage(Percentage { v: 1.0 })
+                DimensionPercentage::Percentage(Percentage::from_unit_value(1.0))
             }
         }
     }

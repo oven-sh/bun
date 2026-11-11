@@ -312,7 +312,7 @@ impl FontStretchKeyword {
             FontStretchKeyword::ExtraExpanded => 1.5,
             FontStretchKeyword::UltraExpanded => 2.0,
         };
-        Percentage { v: val }
+        Percentage::from_unit_value(val)
     }
 }
 

@@ -1706,7 +1706,7 @@ macro_rules! dim_pct_protocol {
                         Some(DimensionPercentage::Dimension(<$D as protocol::TryOp>::try_op(a, b, ctx, f)?))
                     }
                     (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
-                        Some(DimensionPercentage::Percentage(Percentage { v: f(ctx, a.v, b.v) }))
+                        Some(DimensionPercentage::Percentage(Percentage::try_op(*a, *b, ctx, f)?))
                     }
                     _ => None,
                 }
@@ -1717,7 +1717,7 @@ macro_rules! dim_pct_protocol {
                         <$D as protocol::TryOpTo>::try_op_to(a, b, ctx, f)
                     }
                     (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
-                        Some(f(ctx, a.v, b.v))
+                        Some(Percentage::op_to(*a, *b, ctx, f))
                     }
                     _ => None,
                 }

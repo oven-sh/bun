@@ -128,7 +128,7 @@ impl KeyframeSelector {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             KeyframeSelector::Percentage(p) => {
-                if dest.minify && p.v == 1.0 {
+                if dest.minify && *p == Percentage::from_unit_value(1.0) {
                     dest.write_str("to")?;
                 } else {
                     p.to_css(dest)?;

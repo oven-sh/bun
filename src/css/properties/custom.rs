@@ -764,9 +764,9 @@ impl UnresolvedColor {
                     dest.write_str("hsla(")?;
                     CSSNumberFns::to_css(*h, dest)?;
                     dest.delim(b',', false)?;
-                    Percentage { v: *s }.to_css(dest)?;
+                    Percentage::from_unit_value(*s).to_css(dest)?;
                     dest.delim(b',', false)?;
-                    Percentage { v: *l }.to_css(dest)?;
+                    Percentage::from_unit_value(*l).to_css(dest)?;
                     dest.delim(b',', false)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
@@ -776,9 +776,9 @@ impl UnresolvedColor {
                 dest.write_str("hsl(")?;
                 CSSNumberFns::to_css(*h, dest)?;
                 dest.write_char(b' ')?;
-                Percentage { v: *s }.to_css(dest)?;
+                Percentage::from_unit_value(*s).to_css(dest)?;
                 dest.write_char(b' ')?;
-                Percentage { v: *l }.to_css(dest)?;
+                Percentage::from_unit_value(*l).to_css(dest)?;
                 dest.delim(b'/', true)?;
                 alpha.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')

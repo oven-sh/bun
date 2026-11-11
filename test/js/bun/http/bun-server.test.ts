@@ -1143,7 +1143,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
 
   test("a response completing inside another socket's parse window still closes its drained connection", async () => {
     // internalEnd's post-uncork close gate must key on WHICH socket the
-    // parser is on, not the context-wide isParsingHttp bit: B's parked
+    // parser is on, not a context-wide bit: B's parked
     // response below completes in the microtask drain inside A's onData
     // (A's body completion resolves it), and B gets no later gate of its
     // own. With the context-wide bit, B lingered until idleTimeout and

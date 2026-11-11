@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
@@ -899,13 +899,19 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
 // An async plugin setup() makes Bun.build() run the event loop until it settles, under the handler that calls it. What
 // the outer dispatch still reads of its socket has to survive the reads of the nested ticks.
 describe("a handler that runs the event loop", () => {
+  // Whether each runEventLoop() returned only after what it waits for.
+  let waited: boolean[] = [];
+  beforeEach(() => void (waited = []));
+  afterEach(() => expect(waited).toEqual([true]));
   function runEventLoop(until: () => Promise<unknown>) {
+    let settled = false;
     const built = Bun.build({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
       throw: false,
-      plugins: [{ name: "wait", setup: async () => void (await until()) }],
+      plugins: [{ name: "wait", setup: async () => void (await until().finally(() => (settled = true))) }],
     });
     built.catch(() => {});
+    waited.push(settled);
   }
 
   async function open(port: number, secure: boolean) {
@@ -1006,6 +1012,77 @@ describe("a handler that runs the event loop", () => {
     socket.write(Buffer.concat(["first", "second", "third"].map(frame)));
     await done.promise;
     expect(messages).toEqual(["first", "second", "third"]);
+  });
+
+  // The connection is upgraded in the middle of a parse, which must not be taken for the end of the nested one.
+  it.each(["before upgrade()", "after upgrade()", "in open()"])("upgrades its own connection (%s)", async when => {
+    let runOnce = true;
+    const nested = (here: string) => {
+      if (!runOnce || here !== when) return;
+      runOnce = false;
+      runEventLoop(() => {
+        other.write(request("/other", "other"));
+        return other.has("<other>");
+      });
+    };
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (!req.headers.has("upgrade")) return new Response("<other>");
+        nested("before upgrade()");
+        const upgraded = server.upgrade(req);
+        nested("after upgrade()");
+        return upgraded ? undefined : new Response("<not upgraded>");
+      },
+      websocket: {
+        open: () => nested("in open()"),
+        message: (ws, message) => void ws.send("<" + message + ">"),
+      },
+    });
+    using other = await open(server.port!, false);
+    using socket = await open(server.port!, false);
+    // The frame comes in the read of the request, whose parse hands it to the WebSocket.
+    socket.write(Buffer.concat([Buffer.from(upgrade), frame("frame")]));
+    expect((await socket.has("<frame>")).match(/<.*?>/g)).toEqual(["<frame>"]);
+    other.write(request("/again", "other"));
+    expect((await other.has("<other>", 2)).match(/<.*?>/g)).toEqual(["<other>", "<other>"]);
+  });
+
+  // Something in the nested parse upgrades the connection of the outer one: the handler of a request, or of a WebSocket
+  // frame that came in the read of the request it belongs to.
+  it.each(["request", "frame"])("is told of an upgrade() of its connection by the handler of another %s", async by => {
+    let outer: Request | undefined;
+    let upgraded: boolean | undefined;
+    const upgradeOuter = () => void (upgraded = server.upgrade(outer!));
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (outer) {
+          if (by === "request") return (upgradeOuter(), new Response("<other>"));
+          return server.upgrade(req, { data: "other" }) ? undefined : new Response("<not upgraded>");
+        }
+        outer = req;
+        runEventLoop(() => {
+          if (by === "request") other.write(request("/other", "other"));
+          else other.write(Buffer.concat([Buffer.from(upgrade), frame("go")]));
+          return other.has("<other>");
+        });
+        return upgraded ? undefined : new Response("<not upgraded>");
+      },
+      websocket: {
+        message(ws, message) {
+          if (ws.data !== "other") return void ws.send("<" + message + ">");
+          upgradeOuter();
+          ws.send("<other>");
+        },
+      },
+    });
+    using other = await open(server.port!, false);
+    using socket = await open(server.port!, false);
+    socket.write(Buffer.concat([Buffer.from(upgrade), frame("frame")]));
+    expect((await socket.has("<frame>")).match(/<.*?>/g)).toEqual(["<frame>"]);
   });
 });
 

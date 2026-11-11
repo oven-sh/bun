@@ -369,7 +369,8 @@ it("process.hrtime()", async () => {
   await Bun.sleep(16);
   const end2 = process.hrtime();
 
-  expect(end2[1] > start[1]).toBe(true);
+  // The whole times, not the nanoseconds alone: a second can end between the two reads.
+  expect(end2[0] * 1e9 + end2[1]).toBeGreaterThan(start[0] * 1e9 + start[1]);
 });
 
 it("process.hrtime.bigint()", () => {

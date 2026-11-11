@@ -898,12 +898,15 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
     }
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, span.start, f);
+    let keeps_terminator =
+        has_semicolon && print::semicolon::block_follows_bodiless_declaration(statement);
     f.track_cursor(span, |f| {
         write!(
             f,
             [
                 needs_leading_semicolon.then_some(";"),
-                FormatSuppressedNode(span)
+                FormatSuppressedNode(span),
+                keeps_terminator.then_some(";")
             ]
         )
     });
@@ -974,6 +977,7 @@ fn ends_with_terminator(statement: Stmt<'_>) -> bool {
             | StmtKind::ExportAssign(_)
             | StmtKind::ExportAsNamespace(_) => true,
             StmtKind::Fn(func) => !func.has_body(),
+            StmtKind::Module(module) => !module.innermost().has_body(),
             _ => ends_before_semicolon(last),
         };
     }

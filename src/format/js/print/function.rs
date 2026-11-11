@@ -106,24 +106,10 @@ pub(crate) fn write_function<'a>(
             ]
         );
     } else {
-        match declaration_statement(func) {
+        match func.owner().as_stmt() {
             Some(statement) => write!(f, BodilessDeclarationSemicolon(statement)),
             None => write!(f, OptionalSemicolon),
         }
-    }
-}
-
-/// The statement that declares `func`: its own, or the `export default` around it.
-fn declaration_statement(func: Func<'_>) -> Option<Stmt<'_>> {
-    match func.owner() {
-        Node::Stmt(statement) => Some(statement),
-        Node::Expr(e) => match e.parent() {
-            Node::Stmt(statement) if matches!(statement.kind(), StmtKind::ExportDefault(_)) => {
-                Some(statement)
-            }
-            _ => None,
-        },
-        _ => None,
     }
 }
 

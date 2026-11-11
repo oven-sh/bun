@@ -978,6 +978,14 @@ describe.concurrent("bun fmt", () => {
           "// prettier-ignore\nfunction f(): void;\n{ a() }\n",
           "// prettier-ignore\nfunction f(): void;\n{\n  a()\n}\n",
         ],
+        "ignored-export.ts": [
+          "// prettier-ignore\nexport function f(): void;\n{ a() }\n",
+          "// prettier-ignore\nexport function f(): void;\n{\n  a()\n}\n",
+        ],
+        "ignored-module.ts": [
+          '// prettier-ignore\nexport declare module "x";\n{ a() }\n',
+          '// prettier-ignore\nexport declare module "x";\n{\n  a()\n}\n',
+        ],
         // Before anything else, the `;` goes, as in Prettier.
         "implementation.ts": [
           "function f(): void;\nfunction f() {}\nexport function g(): void;\nexport function g() {}\n",

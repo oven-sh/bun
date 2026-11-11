@@ -1628,6 +1628,14 @@ interface BuildMetafile {
 }
 ```
 
+A build for `target: "bun"` or `"node"` bundles an HTML file for the browser: a page that server code [imports](/bundler/fullstack), or a page in `entrypoints`. A file that server code and the page both import is then two modules. When `inputs` has a record for both:
+
+- The server's module has the file path as its key.
+- The browser's module has the key `<path> (browser)`, for example `shared.ts (browser)`.
+- Where `imports[].path`, `imports[].entryPoint`, `outputs[...].inputs`, or `outputs[...].entryPoint` names an input, it has the key of that input.
+
+A module that the bundler drops as unused has no record, for example an unused import from a package with `"sideEffects": false`. The other module of its file then has the file path as its key, and an import of the dropped module has that path too. The manifest that the server bundle holds in place of an imported HTML file has no record either: `outputs[...].inputs` lists the manifest under the key of the HTML file.
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

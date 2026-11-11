@@ -2177,8 +2177,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         // Like Node, an http2 session reports a failed read, not a send that the kernel rejected.
-        let err = if SSL
-            && matches!(this.native_callback.get(), NativeCallbacks::H2(_))
+        let err = if matches!(this.native_callback.get(), NativeCallbacks::H2(_))
             && socket.rejected_send_error() != 0
         {
             0

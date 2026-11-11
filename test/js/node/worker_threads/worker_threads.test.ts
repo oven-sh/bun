@@ -253,7 +253,7 @@ test("receiveMessageOnPort works across threads", async () => {
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
   await worker.terminate();
-}, 9999999);
+});
 
 test("receiveMessageOnPort works as FIFO", () => {
   const { port1, port2 } = new MessageChannel();

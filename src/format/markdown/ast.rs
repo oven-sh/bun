@@ -127,8 +127,8 @@ pub struct Node {
     pub next: NodeId,
     pub first_child: NodeId,
     pub last_child: NodeId,
-    /// `value`, `url`, or a reference's `label`. For fenced code and math, `null` means that there is no line between
-    /// the fences, and an empty string that there is one empty line. mdast has `""` for both, and so does [`Tree::str`].
+    /// `value`, `url`, or a reference's `label`. Fenced code with no line between its fences has `null`, with one
+    /// empty line `""`. mdast has `""` for both.
     pub value: Str,
     /// `lang`, `title`, or a definition's `label`.
     pub second: Str,

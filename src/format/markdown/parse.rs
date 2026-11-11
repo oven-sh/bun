@@ -890,8 +890,8 @@ impl Builder<'_> {
                 .and_then(|it| it.last())
                 .is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
         {
-            // An empty line ends a container's math without a line break after it. For code, that line is a line of
-            // the code: `> ```\n> a\n>\n` is `a\n\n`. Prettier 3.9.9 and mdast drop it, and so print `a\n`.
+            // The empty line that ends a container's code is a line of the code: `> ```\n> a\n>\n` is `a\n\n`.
+            // Prettier 3.9.9 drops it, and so does math here.
             self.segments.pop();
         }
         let value = self.joined_value(first_segment);

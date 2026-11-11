@@ -675,7 +675,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         read.extend_from_slice(data);
         this.handle_data_loop(&held.0);
         if paused() {
-            this.hold(&read);
+            // Ahead of what those listeners held.
+            let mut read = read;
+            if let Some(later) = this.initial_data.take() {
+                bun_core::handle_oom(read.try_reserve(later.0.len()));
+                read.extend_from_slice(&later.0);
+            }
+            this.initial_data.set(Some(Box::new(InitialData(read))));
             return;
         }
         this.handle_data_loop(&read);

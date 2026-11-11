@@ -126,12 +126,8 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   return chunk;
 }
 
-// `_read()` is readStart, as on net.Socket: it resumes the native reader and
-// schedules one pull on a later tick. It never pushes. Node's native sources
-// (libuv pipes, fs.read) all push from a later event loop turn, and Readable's
-// state machine relies on that: a `push()` inside `_read()` while `needReadable`
-// is false lands in the buffer without a 'readable' event, and a flowing stream
-// holds that chunk behind the one it is about to emit.
+// `_read()` is readStart, as on net.Socket: the pull and its push run on a
+// later tick, never inside `_read()`. Readable expects that of a native source.
 function read(this: NativeReadable) {
   $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
   const ptr = this.$bunNativePtr;
@@ -145,10 +141,8 @@ function read(this: NativeReadable) {
   process.nextTick(pump, this);
 }
 
-// One pull from the native source. `kPendingRead` is set until the result is
-// in hand, and cleared before any push, so a 'data' listener that throws
-// leaves the stream able to pull again. Readable asks for the next pull
-// (`maybeReadMore`, `flow()`), as it does for Node's async sources.
+// One pull. `kPendingRead` is cleared before the push, so a listener that
+// throws leaves the stream able to pull again.
 function pump(stream: NativeReadable) {
   const ptr = stream.$bunNativePtr;
   if (stream.destroyed) {
@@ -212,8 +206,7 @@ function pump(stream: NativeReadable) {
         try {
           deliver(stream, result, chunk, stream[kCloseState][0]);
         } catch (err) {
-          // Leave the promise so the throw reaches 'uncaughtException', as a
-          // throw from a libuv read callback does.
+          // Out of the promise, so it is an uncaughtException, not a rejection.
           process.nextTick(rethrow, err);
         }
       },
@@ -228,9 +221,7 @@ function pump(stream: NativeReadable) {
   deliver(stream, result, chunk, stream[kCloseState][0]);
 }
 
-// Pushes one pull result. A listener that throws out of `push()` leaves
-// before Readable asks for more (`maybeReadMore`), so ask on its behalf:
-// Node's native sources keep reading after such a throw.
+// A listener that throws out of `push()` skips `maybeReadMore`: ask for more here.
 function deliver(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   try {
     handleResult(stream, result, chunk, isClosed);
@@ -248,9 +239,7 @@ function rethrow(err: any) {
   throw err;
 }
 
-// Stores the unused part of `chunk` for the next pull before it pushes, so a
-// throw from a listener cannot hand that part out again. EOF is queued after
-// the push, so the last chunk's 'readable' runs before the stream ends.
+// Stores the unused part of `chunk` before the push, and queues EOF after it.
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);

@@ -2314,10 +2314,10 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs,
-            commonjs_module_exports_assigned_deoptimized: ast
-                .flags
-                .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
+            // The dev server does not link, so it has no wrap verdict.
+            commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs
+                || (self.options.output_format == Format::InternalBakeDev
+                    && ast.exports_kind == ExportsKind::Cjs),
             // .const_values = c.graph.const_values,
             ts_enums: Some(&self.graph.ts_enums),
             import_member_bindings: Some(&self.graph.import_member_bindings),

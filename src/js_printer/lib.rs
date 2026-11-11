@@ -1335,8 +1335,9 @@ pub struct Options<'a> {
     /// Borrowed from `BundledAst.commonjs_named_exports`; the printer only
     /// reads from it.
     pub commonjs_named_exports: Option<&'a CommonJSNamedExports>,
+    /// This file has a CommonJS module object: `exports.x` and `module.exports`
+    /// print as the source wrote them.
     pub commonjs_named_exports_deoptimized: bool,
-    pub commonjs_module_exports_assigned_deoptimized: bool,
     pub commonjs_named_exports_ref: Ref,
     pub commonjs_module_ref: Ref,
 
@@ -1413,7 +1414,6 @@ impl<'a> Default for Options<'a> {
             input_files_for_dev_server: None,
             commonjs_named_exports: None,
             commonjs_named_exports_deoptimized: false,
-            commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_ref: Ref::NONE,
             commonjs_module_ref: Ref::NONE,
             minify_whitespace: false,
@@ -3356,13 +3356,8 @@ pub(crate) mod __gated_printer {
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
-                        if self.options.commonjs_module_exports_assigned_deoptimized {
-                            if self.options.commonjs_module_ref.is_valid() {
-                                self.print_symbol(self.options.commonjs_module_ref);
-                            } else {
-                                self.print(b"module");
-                            }
-                            self.print(b".exports");
+                        if self.options.commonjs_named_exports_deoptimized {
+                            self.print_module_dot_exports();
                         } else {
                             self.print_symbol(self.options.commonjs_named_exports_ref);
                         }
@@ -4612,6 +4607,19 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// A source `module.exports` in a file that has a module object. The
+        /// file can replace that property at run time, so the `exports`
+        /// binding cannot stand in for it.
+        fn print_module_dot_exports(&mut self) {
+            debug_assert!(self.options.commonjs_module_ref.is_valid());
+            if self.options.commonjs_module_ref.is_valid() {
+                self.print_symbol(self.options.commonjs_module_ref);
+            } else {
+                self.print(b"module");
+            }
+            self.print(b".exports");
+        }
+
         /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
         fn print_commonjs_export_identifier(
             &mut self,
@@ -4648,12 +4656,10 @@ pub(crate) mod __gated_printer {
                 self.print_symbol(binding);
                 return;
             }
-            if self.options.commonjs_module_exports_assigned_deoptimized
+            if self.options.commonjs_named_exports_deoptimized
                 && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
-                && self.options.commonjs_module_ref.is_valid()
             {
-                self.print_symbol(self.options.commonjs_module_ref);
-                self.print(b".exports");
+                self.print_module_dot_exports();
             } else {
                 self.print_symbol(self.options.commonjs_named_exports_ref);
             }

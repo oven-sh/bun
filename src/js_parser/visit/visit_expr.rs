@@ -260,10 +260,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ),
                     ),
                 }
-            } else if p.exports_ref.eql(e_.ref_) {
-                // Assigning to `exports` in a CommonJS module must be tracked to undo the
-                // `module.exports` -> `exports` optimization.
-                p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
             p.record_assignment(result.r#ref);

@@ -4279,29 +4279,34 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
 
-// evaluateCommonJSModuleOnce() hands the body its module object as `module`. A frame that the DFG inlined shows the arguments of the frame it is inlined into.
-static bool isBodyOfCommonJSModule(JSC::StackVisitor& visitor)
-{
-    if (visitor->isInlinedDFGFrame())
-        return false;
-    JSC::CallFrame* frame = visitor->callFrame();
-    JSValue module = frame->argumentCount() > 2 ? frame->uncheckedArgument(2) : JSValue();
-    return module && dynamicDowncast<Bun::JSCommonJSModule>(module);
-}
-
-// A function of another module may make a call of mock.module(), vi.mock() and the like for the module that calls it. A module whose body is on the stack makes
-// the call again when it runs again. One that only has a function there passed the call on, and need not run again.
+// A module whose body is on the stack makes the call again when it runs again. One that only has a function there passed the call on, and stays loaded.
 __attribute__((minsize)) static void addModulesWhoseBodyRuns(JSC::VM& vm, JSC::CallFrame* callframe, const String& file, WTF::UncheckedKeyHashSet<String>& modules)
 {
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         JSC::CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock || (codeBlock->codeType() != JSC::ModuleCode && !isBodyOfCommonJSModule(visitor)))
+        if (!codeBlock)
             return WTF::IterationStatus::Continue;
         const JSC::SourceOrigin& sourceOrigin = codeBlock->ownerExecutable()->sourceOrigin();
         const URL& url = sourceOrigin.url();
-        // Most calls are made by a body itself, and `file` is in the set already.
-        if (!sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() && url.path() != file)
-            modules.add(url.fileSystemPath());
+        if (sourceOrigin.isNull() || !url.isValid() || !url.protocolIsFile())
+            return WTF::IterationStatus::Continue;
+        if (codeBlock->codeType() == JSC::ModuleCode) {
+            // The key that the loader has the module under can end in a query, which the path of its file leaves out.
+            auto* callee = visitor->callee().isCell() ? dynamicDowncast<JSC::JSCallee>(visitor->callee().asCell()) : nullptr;
+            auto* environment = callee ? dynamicDowncast<JSC::JSModuleEnvironment>(callee->scope()) : nullptr;
+            modules.add(environment ? environment->moduleRecord()->moduleKey().string() : url.fileSystemPath());
+            return WTF::IterationStatus::Continue;
+        }
+        // evaluateCommonJSModuleOnce() calls the body of a CommonJS module with its module object as `module`.
+        JSC::CallFrame* frame = visitor->callFrame();
+        auto* commonJSModule = frame->argumentCount() > 2 ? dynamicDowncast<Bun::JSCommonJSModule>(frame->uncheckedArgument(2)) : nullptr;
+        JSValue filename = commonJSModule ? commonJSModule->filename() : JSValue();
+        // Any function can be handed a module object: the body is the frame that runs that module's file. `file` is in the set already.
+        if (filename && filename.isString() && url.path() != file) {
+            String path = url.fileSystemPath();
+            if (asString(filename)->tryGetValue().data == path)
+                modules.add(WTF::move(path));
+        }
         return WTF::IterationStatus::Continue;
     });
 }

@@ -7682,6 +7682,15 @@ describe.concurrent("a module whose top-level code mocks through a function of a
         args: viaPreload,
       },
     ],
+    [
+      "a function of a preload, from a module that is imported with a query",
+      {
+        files: { ...preloaded(), "setup.ts": setup },
+        loads: { wrapper: 1, setup: 2 },
+        head: `import "./setup.ts?query";`,
+        args: viaPreload,
+      },
+    ],
   ])(
     "mocks for every test file that imports it: %s",
     async (_, { files, loads, head = `import "./setup";`, args = [] }) => {
@@ -7768,6 +7777,30 @@ describe.concurrent("a module whose top-level code mocks through a function of a
     }
     await expectFixturesToPass(
       { ...files, ...testFiles(head, { wrapper: 1, setup: 2, pass: 1, users: 10 }) },
+      3,
+      viaPreload,
+    );
+  });
+
+  // The function of register.cjs gets the arguments that the body of a CommonJS module gets.
+  test("is run again without a module whose function is handed its module object", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        ...preloaded(),
+        "register.cjs": `
+          const { join } = require("node:path");
+          ${count("register")}
+          module.exports = (exports, require, module) => {
+            globalThis.mockModule(join(__dirname, "dep.ts"), ${factory});
+          };
+        `,
+        "setup.cjs": `
+          ${count("setup")}
+          require("./register.cjs")(exports, require, module);
+        `,
+        ...testFiles(`import "./setup.cjs";`, { wrapper: 1, setup: 2, register: 1 }),
+      },
       3,
       viaPreload,
     );
@@ -7864,6 +7897,34 @@ describe.concurrent("a module whose top-level code mocks through a function of a
     );
   });
 });
+
+// The loader has such a module under a key that ends in the query, which the path of its file leaves out.
+test.concurrent(
+  "a module that mocks and is imported with a query mocks for every test file that imports it",
+  async () => {
+    const file = (mocks: boolean, loads: number) => `
+      ${mocks ? `import "./setup.ts?query";` : ""}
+      import { expect, test } from "bun:test";
+      test("the module", async () => {
+        expect([(await import("./dep")).who(), globalThis.loads]).toEqual(${JSON.stringify([mocks ? "mock" : "real", loads])});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export function who() { return "real"; }`,
+        "setup.ts": `
+          import { mock } from "bun:test";
+          globalThis.loads = (globalThis.loads ?? 0) + 1;
+          mock.module("./dep.ts", () => ({ who: () => "mock" }));
+        `,
+        "1.test.ts": file(true, 1),
+        "2.test.ts": file(false, 1),
+        "3.test.ts": file(true, 2),
+      },
+      3,
+    );
+  },
+);
 
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.
 test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a valid UTF-8 escape", async () => {

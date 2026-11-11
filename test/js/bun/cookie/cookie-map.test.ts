@@ -382,6 +382,16 @@ describe("Cookie name field is immutable", () => {
       ]
     `);
   });
+  test("remove the domain of a cookie in the map", () => {
+    const cookieMap = new Bun.CookieMap();
+    const first = new Bun.Cookie("first", "1", { domain: "example.com" });
+    const second = new Bun.Cookie("second", "2", { domain: "example.com" });
+    cookieMap.set(first);
+    cookieMap.set(second);
+    first.domain = undefined;
+    second.domain = null;
+    expect(cookieMap.toSetCookieHeaders()).toEqual(["first=1; Path=/; SameSite=Lax", "second=2; Path=/; SameSite=Lax"]);
+  });
 });
 
 describe("iterator", () => {

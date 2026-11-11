@@ -274,6 +274,17 @@ cookie.maxAge; // number | undefined - Max age in seconds
 cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
 ```
 
+To remove the `Domain` attribute, assign `null` or `undefined` to `domain`.
+
+```ts title="cookie-remove-domain.ts" icon="/icons/typescript.svg"
+const cookie = new Bun.Cookie("session", "abc123", { domain: "example.com" });
+
+cookie.domain = null;
+
+console.log(cookie.domain); // null
+console.log(cookie.toString()); // "session=abc123; Path=/; SameSite=Lax"
+```
+
 ### Methods
 
 #### `isExpired(): boolean`
@@ -383,7 +394,8 @@ const cookie = Bun.Cookie.from("session", "abc123", {
 interface CookieInit {
   name?: string;
   value?: string;
-  domain?: string;
+  /** `null` means no `Domain` attribute, the same as `undefined`. */
+  domain?: string | null;
   /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
   path?: string;
   expires?: number | Date | string;
@@ -415,7 +427,8 @@ class Cookie {
 
   readonly name: string;
   value: string;
-  domain: string | null;
+  get domain(): string | null;
+  set domain(value: string | null | undefined);
   path: string;
   expires?: Date;
   secure: boolean;
@@ -428,7 +441,7 @@ class Cookie {
 
   serialize(): string;
   toString(): string;
-  toJSON(): CookieInit;
+  toJSON(): CookieInit & { domain?: string };
 
   static parse(cookieString: string): Cookie;
   static from(name: string, value: string, options?: CookieInit): Cookie;

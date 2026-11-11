@@ -11070,7 +11070,8 @@ declare module "bun" {
   interface CookieInit {
     name?: string;
     value?: string;
-    domain?: string;
+    /** `null` means no `Domain` attribute, the same as `undefined`. */
+    domain?: string | null;
     /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
     path?: string;
     expires?: number | Date | string;
@@ -11136,9 +11137,12 @@ declare module "bun" {
     value: string;
 
     /**
-     * The cookie's `Domain` attribute, or `undefined` if not set
+     * The cookie's `Domain` attribute, or `null` if not set.
+     *
+     * Assign `null` or `undefined` to remove the attribute.
      */
-    domain?: string;
+    get domain(): string | null;
+    set domain(value: string | null | undefined);
 
     /**
      * The cookie's `Path` attribute. Defaults to `/`.
@@ -11201,9 +11205,10 @@ declare module "bun" {
     toString(): string;
 
     /**
-     * Returns the cookie's name, value, and attributes as a plain object
+     * Returns the cookie's name, value, and attributes as a plain object.
+     * The object has no `domain` key when the cookie has no `Domain` attribute.
      */
-    toJSON(): CookieInit;
+    toJSON(): CookieInit & { domain?: string };
 
     /**
      * Parses a serialized cookie string into a `Cookie`

@@ -3112,36 +3112,30 @@ describe.concurrent("the arguments of a matcher that expect.extend() made, in Vi
   });
 
   // Under one matcher, Bun prints a value again only while the attempts that were replaced have 536,870,888 bytes or
-  // fewer, where a retry counts as 10,000 bytes at least. Vitest 5.0.3 has no limit: it calls toJSON() of the third
-  // argument 4 times and prints the matcher. Not beside the other tests: this one prints 536 MB.
+  // fewer. A retry inside another retry, which is where the work doubles, counts as 10,000 bytes at least. Vitest
+  // 5.0.3 has no limit: it calls the second toJSON() 4 times and prints the matcher. Not beside the other tests: this
+  // one prints 536 MB.
   test.serial("a value is not printed again once the attempts that were replaced have 536,870,888 bytes", async () => {
     const { log, stderr, exitCode } = await logOf(`
       const calls = [0, 0];
+      const throwsOnce = message => ({
+        toJSON() {
+          throw new Error(message);
+        },
+      });
       // 255 second prints of 2,100,000 characters leave about 1,370,000 bytes.
       const long = Buffer.alloc(2_100_000, "x").toString();
       const first = expect.toBeFoo(expect.toBeFoo(expect.toBeFoo({ toJSON: () => (calls[0]++, long) })));
-      // 63 retries count as 630,000 bytes.
-      let second = "innermost";
-      for (let i = 0; i < 6; i++) {
-        second = expect.toBeFoo([
-          second,
-          {
-            toJSON() {
-              throw new Error("not thrown");
-            },
-          },
-        ]);
-      }
+      // 100 retries beside each other count as what their attempts printed, which is nothing.
+      const beside = Array.from({ length: 100 }, () => expect.toBeFoo(throwsOnce("not thrown")));
+      // Of these 63 retries, 57 are inside another retry: 570,000 bytes.
+      let inEachOther = "innermost";
+      for (let i = 0; i < 6; i++) inEachOther = expect.toBeFoo([inEachOther, throwsOnce("not thrown")]);
       // A second print of 1,000,000 characters is more than what is left, so this one is printed once.
       const shorter = Buffer.alloc(1_000_000, "x").toString();
-      const third = { toJSON: () => (calls[1]++, shorter) };
+      const once = { toJSON: () => (calls[1]++, shorter) };
       // The retry is not made, so what toJSON() threw is thrown.
-      const fourth = {
-        toJSON() {
-          throw new Error("thrown");
-        },
-      };
-      const printed = print(expect.toBeFoo(first, second, third, fourth));
+      const printed = print(expect.toBeFoo(first, beside, inEachOther, once, throwsOnce("thrown")));
       console.log(JSON.stringify([...calls, printed]));
     `);
     expect({ log, stderr, exitCode }).toEqual({ log: [[256, 1, "thrown"]], stderr: "", exitCode: 0 });

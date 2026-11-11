@@ -3688,13 +3688,10 @@ impl JestPrettyFormat {
             };
             match print(printed, true) {
                 // Vitest retries once with `callToJSON: false`, whatever was thrown.
-                Err(JsError::Thrown) if may_retry(printed) && global.clear_exception_except_termination() => {
-                    let retried = print(printed, false);
-                    if let (Err(_), Some(runs)) = (&retried, runs) {
-                        runs.failed_retries.set(runs.failed_retries.get() + 1);
-                    }
-                    retried?
-                }
+                Err(JsError::Thrown) if may_retry(printed) && global.clear_exception_except_termination() => match runs {
+                    Some(runs) => runs.retry(|| print(printed, false))?,
+                    None => print(printed, false)?,
+                },
                 result => result?,
             }
             if max_depth <= 1 || strings::element_length_utf8_into_utf16(&printed[start..]) < max_length || !may_print_again(printed) {
@@ -3757,6 +3754,8 @@ enum Stringify {
 pub(crate) struct ArgumentRuns {
     /// Retries that threw as well. Each matcher around a print that keeps throwing doubles them.
     failed_retries: core::cell::Cell<u32>,
+    /// Retries that have not ended. Each of them makes the retries inside it once more.
+    retries_in_flight: core::cell::Cell<u32>,
     /// Bytes of the attempts that another attempt replaced. A matcher around a print of 10,000 characters has 4 times as many, and around one that throws once, 2 times.
     dropped: core::cell::Cell<usize>,
 }
@@ -3769,9 +3768,20 @@ impl ArgumentRuns {
         self.dropped.get() <= MAX_LENGTH
     }
 
-    /// An attempt that threw counts as one that was long enough to print again, however little it printed.
+    /// Inside another retry, an attempt that threw counts as one that was long enough to print again, however little it printed.
     fn may_retry(&self, dropped: usize) -> bool {
-        self.failed_retries.get() < Self::MAX_FAILED_RETRIES && self.may_print_again(dropped.max(JestPrettyFormat::STRINGIFY_MAX_LENGTH))
+        let dropped = if self.retries_in_flight.get() == 0 { dropped } else { dropped.max(JestPrettyFormat::STRINGIFY_MAX_LENGTH) };
+        self.failed_retries.get() < Self::MAX_FAILED_RETRIES && self.may_print_again(dropped)
+    }
+
+    fn retry<T>(&self, print: impl FnOnce() -> JsResult<T>) -> JsResult<T> {
+        self.retries_in_flight.set(self.retries_in_flight.get() + 1);
+        let retried = print();
+        self.retries_in_flight.set(self.retries_in_flight.get() - 1);
+        if retried.is_err() {
+            self.failed_retries.set(self.failed_retries.get() + 1);
+        }
+        retried
     }
 }
 

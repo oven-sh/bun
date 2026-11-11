@@ -1,5 +1,8 @@
 // The `type: "direct"` lifecycle contract: every consumer sees the bytes written before the end signal, the same error, and cancel() only on abort. One-shot consumers call pull() once; a reader calls it again on demand.
 
+import { Response as NodeFetchResponse } from "node-fetch";
+import { Duplex, Readable } from "node:stream";
+
 export type Tally = { pulls: number; cancels: unknown[] };
 
 export type Shape = {
@@ -266,6 +269,12 @@ for (const [label, arg] of [
 const decoder = new TextDecoder();
 const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as NodeJS.ArrayBufferView));
 
+async function nodeStreamText(stream: Readable) {
+  let out = "";
+  for await (const v of stream) out += text(v);
+  return out;
+}
+
 /** In-process consumers: each takes a stream and resolves to its full text (or rejects). */
 export const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {
   "new Response(s).text()": s => new Response(s).text(),
@@ -305,6 +314,11 @@ export const consumers: Record<string, (s: ReadableStream) => Promise<string>> =
     if (ta !== tb) throw new Error(`tee branches differ: ${JSON.stringify(ta)} vs ${JSON.stringify(tb)}`);
     return ta;
   },
+  // The node:stream adapters read through a read request of the stream, as pipeTo() and for await do.
+  "Readable.fromWeb(s)": s => nodeStreamText(Readable.fromWeb(s as any)),
+  "Duplex.fromWeb({ readable: s })": s =>
+    nodeStreamText(Duplex.fromWeb({ readable: s as any, writable: new WritableStream() as any })),
+  "node-fetch: new Response(s).body": s => nodeStreamText(new NodeFetchResponse(s as any).body as any),
 };
 
 /** Consumers that read through a reader: pull() is their demand signal. */
@@ -314,6 +328,9 @@ export const readerConsumers = new Set([
   "pipeTo(WritableStream)",
   "pipeThrough(identity TransformStream)",
   "tee(): both branches",
+  "Readable.fromWeb(s)",
+  "Duplex.fromWeb({ readable: s })",
+  "node-fetch: new Response(s).body",
 ]);
 
 /** Runs one cell of the matrix and returns what a test should compare against `expected(shape)`. */

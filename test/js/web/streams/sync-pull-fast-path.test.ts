@@ -108,3 +108,48 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
     exitCode: 0,
   });
 });
+
+// node:stream's Readable.fromWeb() and Duplex.fromWeb() read through a read request of their own kind, which delivers
+// the chunk to the node stream: no promise, no {value, done} object and no closure per chunk. With reader.read() and
+// a reaction on its promise, each chunk cost 2 promises and 2 functions. Their writes still make a promise each.
+test.each([
+  ["Readable.fromWeb", "Readable.fromWeb(web)"],
+  ["Duplex.fromWeb", "Duplex.fromWeb({ readable: web, writable: new WritableStream() })"],
+])("a read of %s allocates no promise and no function per chunk", async (_, adapter) => {
+  const src = `
+    const { heapStats } = require("bun:jsc");
+    const { Readable, Duplex } = require("node:stream");
+    const READS = 2000;
+    const chunk = new Uint8Array(1);
+    function drain() {
+      let i = 0;
+      const web = new ReadableStream({
+        pull(c) {
+          if (i++ < READS) c.enqueue(chunk);
+          else c.close();
+        },
+      });
+      const stream = ${adapter};
+      return new Promise(resolve => stream.on("data", () => {}).on("end", resolve));
+    }
+    await drain();
+    const before = heapStats().objectTypeCounts;
+    await drain();
+    const after = heapStats().objectTypeCounts;
+    const perChunk = name => Math.round((((after[name] || 0) - (before[name] || 0)) / READS) * 10) / 10;
+    console.log(JSON.stringify({ Promise: perChunk("Promise"), Function: perChunk("Function") }));
+  `;
+  // Without a collection between the two counts, the difference is what the second drain allocated.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, BUN_JSC_useGC: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ perChunk: stdout.trim() === "" ? stdout : JSON.parse(stdout), stderr, exitCode }).toEqual({
+    perChunk: { Promise: 0, Function: 0 },
+    stderr: "",
+    exitCode: 0,
+  });
+});

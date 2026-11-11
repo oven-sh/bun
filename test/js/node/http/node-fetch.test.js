@@ -129,6 +129,14 @@ test("node-fetch gives a fetched response without a body an empty stream", async
     }
     expect(chunks).toEqual([]);
     expect(await result.text()).toBe("");
+
+    // One read() of the paused body ends it and closes it, as with node-fetch 2.7.0 and 3.3.2 on Node.js v26.12.1.
+    const paused = (await fetch2(new URL(path, server.url), init)).body;
+    const events = [];
+    const closed = new Promise(resolve => paused.on("end", () => events.push("end")).on("close", resolve));
+    expect(paused.read()).toBeNull();
+    await closed;
+    expect(events).toEqual(["end"]);
   }
 
   expect(new Response(null, { status: 204 }).body).toBeNull();

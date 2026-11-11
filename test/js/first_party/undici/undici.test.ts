@@ -274,6 +274,15 @@ describe("undici", () => {
       const chunks: Uint8Array[] = [];
       for await (const chunk of (await request(`${hostUrl}${path}`, init)).body) chunks.push(chunk);
       expect(chunks).toEqual([]);
+
+      // One read() of the paused body ends it and closes it, as with undici 5.20.0, 6.13.0 and 7.30.2 on Node.js
+      // v26.12.1. How soon 'close' follows 'end' differs between those releases.
+      const paused = (await request(`${hostUrl}${path}`, init)).body;
+      const events: string[] = [];
+      const closed = new Promise(resolve => paused.on("end", () => events.push("end")).on("close", resolve));
+      expect(paused.read()).toBeNull();
+      await closed;
+      expect(events).toEqual(["end"]);
     });
 
     it("should allow a query string to be passed", async () => {

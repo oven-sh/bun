@@ -11,6 +11,8 @@
 //   work and is meaningful as throughput.
 // Consumer scenarios (arrayBuffer/text/readableStreamTo*) always materialize
 // their output, so they report MB/s.
+import { Duplex, Readable } from "node:stream";
+
 const CHUNK = 64 * 1024;
 const CHUNKS = 512; // 32 MiB
 const RUNS = 5;
@@ -74,6 +76,16 @@ const drain = async rs => {
   }
 };
 
+// A node:stream adapter over a web stream, read through its 'data' events.
+const drainNodeStream = stream =>
+  new Promise((resolve, reject) => {
+    let n = 0;
+    stream
+      .on("data", c => (n += c.length))
+      .on("end", () => resolve(n))
+      .on("error", reject);
+  });
+
 // Scenario names listed here are reference-passing ("shared chunk") and are
 // reported as chunks/sec instead of MB/s.
 const SHARED_CHUNK_SCENARIOS = new Set([
@@ -84,6 +96,8 @@ const SHARED_CHUNK_SCENARIOS = new Set([
   "pipeTo(WritableStream, HWM 16) (shared chunk)",
   "pipeThrough(TransformStream) (shared chunk)",
   "tee + drain both (shared chunk)",
+  "Readable.fromWeb (shared chunk)",
+  "Duplex.fromWeb (shared chunk)",
 ]);
 
 const scenarios = {
@@ -159,6 +173,10 @@ const scenarios = {
     const [x] = await Promise.all([drain(a), drain(b)]);
     return x;
   },
+  "Readable.fromWeb (shared chunk)": () => drainNodeStream(Readable.fromWeb(byteSource())),
+  "Readable.fromWeb (fresh buffers)": () => drainNodeStream(Readable.fromWeb(freshSource())),
+  "Duplex.fromWeb (shared chunk)": () =>
+    drainNodeStream(Duplex.fromWeb({ readable: byteSource(), writable: new WritableStream() })),
   "new Response(stream).arrayBuffer()": async () => (await new Response(byteSource()).arrayBuffer()).byteLength,
   "byte source (byobRequest) default reader": () => drain(byobSource()),
   "byte source (byobRequest) BYOB reader": async () => {

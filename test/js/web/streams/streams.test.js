@@ -20,6 +20,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
+import { Response as NodeFetchResponse } from "node-fetch";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
@@ -1727,6 +1728,21 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       for await (const chunk of new Response(rs).textStream()) parts.push(chunk);
       return parts.join("");
     };
+    // The node:stream adapters read through a read request too. Each resolves to the 'data' chunks of its node
+    // stream and how the stream ended.
+    const nodeStreamChunks = stream =>
+      new Promise(resolve => {
+        const chunks = [];
+        stream
+          .on("data", chunk => chunks.push(decoder.decode(chunk)))
+          .on("end", () => resolve([...chunks, "end"]))
+          .on("error", error => resolve([...chunks, `error: ${error.message}`]));
+      });
+    const nodeStreamAdapters = {
+      "Readable.fromWeb()": rs => Readable.fromWeb(rs),
+      "Duplex.fromWeb()": rs => Duplex.fromWeb({ readable: rs, writable: new WritableStream() }),
+      "a node-fetch body": rs => new NodeFetchResponse(rs).body,
+    };
 
     describe.each(["end", "close"])("finishing with %s()", finish => {
       const mk = () =>
@@ -1767,7 +1783,71 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       it("Response.textStream()", async () => {
         expect(await textStreamText(mk())).toBe("helloworld");
       });
+
+      it.each(Object.keys(nodeStreamAdapters))("%s", async adapter => {
+        expect(await nodeStreamChunks(nodeStreamAdapters[adapter](mk()))).toEqual(["hello", "world", "end"]);
+      });
     });
+
+    // What a pull() wrote after its first flush() waits in the stream for the next read. An error of the next
+    // pull() is ahead of it, as controller.error() is ahead of the queue of a default stream.
+    it.each(Object.keys(nodeStreamAdapters))(
+      "%s gets each flush() as a chunk, and the error of a later pull() ahead of what still waits",
+      async adapter => {
+        const twoPulls = second => {
+          let pulls = 0;
+          return new ReadableStream({
+            type: "direct",
+            pull(c) {
+              if (++pulls > 1) return second(c);
+              c.write("a");
+              c.flush();
+              c.write("bb");
+              c.flush();
+            },
+          });
+        };
+        const sources = {
+          "the next pull() closes": () => twoPulls(c => c.close()),
+          "the next pull() writes and fails": () => twoPulls(c => (c.write("cc"), c.close(new Error("boom")))),
+          "the next pull() throws": () =>
+            twoPulls(() => {
+              throw new Error("boom");
+            }),
+          "the pull() fails after its flush()": () =>
+            new ReadableStream({
+              type: "direct",
+              pull(c) {
+                c.write("abc");
+                c.flush();
+                c.close(new Error("boom"));
+              },
+            }),
+        };
+        const forAwaitChunks = async rs => {
+          const chunks = [];
+          try {
+            for await (const chunk of rs) chunks.push(decoder.decode(chunk));
+            return [...chunks, "end"];
+          } catch (error) {
+            return [...chunks, `error: ${error.message}`];
+          }
+        };
+        const got = {};
+        const forAwait = {};
+        for (const [name, source] of Object.entries(sources)) {
+          got[name] = await nodeStreamChunks(nodeStreamAdapters[adapter](source()));
+          forAwait[name] = await forAwaitChunks(source());
+        }
+        expect(got).toEqual({
+          "the next pull() closes": ["a", "bb", "end"],
+          "the next pull() writes and fails": ["a", "error: boom"],
+          "the next pull() throws": ["a", "error: boom"],
+          "the pull() fails after its flush()": ["abc", "error: boom"],
+        });
+        expect(got).toEqual(forAwait);
+      },
+    );
 
     it("a second flush() in the same pull() is delivered to the consumer's next read", async () => {
       const mk = () => {
@@ -1790,7 +1870,18 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
         pipeTo: await pipeToText(mk()),
         tee: await Promise.all([readableStreamToText(a), readableStreamToText(b)]),
         forAwait: await forAwaitText(mk()),
-      }).toEqual({ reader: "ab", pipeTo: "ab", tee: ["ab", "ab"], forAwait: "ab" });
+        fromWeb: await nodeStreamChunks(Readable.fromWeb(mk())),
+        duplexFromWeb: await nodeStreamChunks(nodeStreamAdapters["Duplex.fromWeb()"](mk())),
+        nodeFetch: await nodeStreamChunks(nodeStreamAdapters["a node-fetch body"](mk())),
+      }).toEqual({
+        reader: "ab",
+        pipeTo: "ab",
+        tee: ["ab", "ab"],
+        forAwait: "ab",
+        fromWeb: ["a", "b", "end"],
+        duplexFromWeb: ["a", "b", "end"],
+        nodeFetch: ["a", "b", "end"],
+      });
     });
 
     it("a pull() that throws rejects only the consumer, with no stray unhandled rejection", async () => {

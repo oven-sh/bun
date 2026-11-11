@@ -2015,6 +2015,48 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // Each row is the text, Bun's output and Prettier 3.9.9's output. In a paragraph with `[[` and `]]`, Prettier
+    // does not split the text into words, so that wrapping cannot make a wiki link. It then takes such a text for a
+    // block: after a link, code or a wiki link in an emphasis, a strong, a strikethrough or a link label, it puts an
+    // empty line before the text. That ends the paragraph and leaves the markers as text. It also sees no word in such
+    // a text, so an emphasis inside a word gets `_`, which does not open an emphasis there.
+    test.each([
+      [
+        "as [[a, b], [c, d]] and snake*case*word.\n",
+        "as [[a, b], [c, d]] and snake*case*word.\n",
+        "as [[a, b], [c, d]] and snake_case_word.\n",
+      ],
+      ["as [[a, b], [c, d]] à*b*é\n", "as [[a, b], [c, d]] à*b*é\n", "as [[a, b], [c, d]] à_b_é\n"],
+      ["*[a](b)[[]]*\n", "_[a](b)[[]]_\n", "_[a](b)\n\n[[]]_\n"],
+      ["**[a](b)[[]]**\n", "**[a](b)[[]]**\n", "**[a](b)\n\n[[]]**\n"],
+      ["~~[a](b)[[]]~~\n", "~~[a](b)[[]]~~\n", "~~[a](b)\n\n[[]]~~\n"],
+      ["*[a](b)[[]] c*\n", "_[a](b)[[]] c_\n", "_[a](b)\n\n[[]] c_\n"],
+      ["*`c`[[]]*\n", "_`c`[[]]_\n", "_`c`\n\n[[]]_\n"],
+      ["*[[x]] [a](b)[[]]*\n", "_[[x]] [a](b)[[]]_\n", "_[[x]]\n\n [a](b)\n\n[[]]_\n"],
+      ["[*a*[[]]](b)\n", "[_a_[[]]](b)\n", "[_a_\n\n[[]]](b)\n"],
+      ["> *[a](b)[[]]*\n", "> _[a](b)[[]]_\n", "> _[a](b)\n>\n> [[]]_\n"],
+      ["*[a](b)\n[[]]*\n", "_[a](b)\n[[]]_\n", "_[a](b)\n\n\n[[]]_\n"],
+      [
+        "as [[*a*, *b*], [*c*, *d*]], for an [*x*-e](#f), it is [*a*, *c*].\n",
+        "as [[_a_, _b_], [_c_, _d_]], for an [_x_-e](#f), it is [_a_, _c_].\n",
+        "as [[_a_, _b_], [_c_, _d_]], for an [_x_\n\n-e](#f), it is [_a_, _c_].\n",
+      ],
+    ])("%j", async (before, after, byPrettier) => {
+      const html = Bun.markdown.html(before);
+      expect(Bun.markdown.html(after)).toBe(html);
+      expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+      const files = { "a.md": before, "b.md": after };
+      const names = Object.keys(files);
+      const [result, asOxfmt] = await Promise.all([
+        format(files, [], { reads: names }),
+        format(files, ["--flavor=oxfmt"], { reads: names }),
+      ]);
+      expect(result.files).toEqual({ "a.md": after, "b.md": after });
+      expect(result.exitCode).toBe(0);
+      expect(asOxfmt.files).toEqual({ "a.md": after, "b.md": after });
+      expect(asOxfmt.exitCode).toBe(0);
+    });
+
     // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output
     // differently. All are emphasis nested three deep, or runs of `*` and `_` that are text inside an emphasis. Telling
     // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.

@@ -570,10 +570,14 @@ impl<'a> Printer<'a, '_> {
             .is_some_and(|next| self.end_line(item) + 1 < self.start_line(next))
     }
 
+    /// Prettier's `INLINE_NODE_TYPES`, and `Text`: the text of a paragraph that `[[` and `]]` make risky to wrap,
+    /// which `preprocess` keeps whole. To Prettier 3.9.9 it is a block, so after a link in an emphasis it prints an
+    /// empty line before it: `*[a](b)[[]]*` becomes `_[a](b)`, an empty line, `[[]]_`, two paragraphs and no emphasis.
     fn is_inline(kind: Kind) -> bool {
         matches!(
             kind,
-            Kind::LiquidNode
+            Kind::Text
+                | Kind::LiquidNode
                 | Kind::InlineCode
                 | Kind::Emphasis
                 | Kind::EsComment
@@ -600,9 +604,7 @@ impl<'a> Printer<'a, '_> {
         let is_inline_node =
             Self::is_inline(node.kind) && !(node.kind == Kind::LiquidNode && !is_in_wrapper);
         let is_inline_html = node.kind == Kind::Html && is_in_wrapper;
-        // Prettier treats text that it hasn't split into words as a block.
-        let is_text = node.kind == Kind::Text && self.options.flavor.is_oxfmt();
-        !is_inline_node && !is_inline_html && !is_text
+        !is_inline_node && !is_inline_html
     }
 
     fn should_pre_print_double_hardline(&self, node: &Node) -> bool {
@@ -1267,7 +1269,21 @@ impl<'a> Printer<'a, '_> {
     fn has_word_next_to(&self, node: &Node) -> bool {
         // For the word at that end of the sentence `sibling`: whether it has punctuation there, and the character.
         let word = |sibling: NodeId, is_last: bool| -> Option<(bool, char)> {
-            let sentence = self.node(sibling).filter(|it| it.kind == Kind::Sentence)?;
+            let sentence = self
+                .node(sibling)
+                .filter(|it| matches!(it.kind, Kind::Sentence | Kind::Text))?;
+            if sentence.kind == Kind::Text {
+                // The text of a risky paragraph (see `is_inline`), which has not been split into words. Prettier 3.9.9
+                // sees no word in it, and prints `snake*case*word` as `snake_case_word`, which is not an emphasis.
+                let text = self.str(sentence.value);
+                let (c, _) = if is_last {
+                    last_char(text)
+                } else {
+                    first_char(text)
+                }?;
+                return (!matches!(c, '\t' | '\n' | ' '))
+                    .then_some((preprocess::is_punctuation_unit(Some(c)), c));
+            }
             if sentence.number == preprocess::PLAIN {
                 let text = self.str(sentence.value);
                 let byte = *if is_last { text.last() } else { text.first() }?;

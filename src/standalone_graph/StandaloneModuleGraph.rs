@@ -195,6 +195,10 @@ impl StandaloneModuleGraph {
         if !is_bun_standalone_file_path(name) {
             return self.find_at_source_path(name);
         }
+        // What the program has written is on the disk: `find_written_file`.
+        if compiled_program::find_written_file(name).is_some() {
+            return None;
+        }
         self.lookup_file(name)
             .filter(|file| !compiled_program::is_removed_by_program(file.name))
             .filter(|file| !self.has_file_vanished(file.name))
@@ -334,7 +338,7 @@ impl StandaloneModuleGraph {
                 push(key, true);
             }
         }
-        self.for_each_renamed_file(&mut |key| {
+        let mut push_with_folders = |key: &[u8]| {
             let mut end = prefix.len();
             while recursive
                 && key.starts_with(&prefix)
@@ -345,7 +349,9 @@ impl StandaloneModuleGraph {
                 end += 1;
             }
             push(key, false);
-        });
+        };
+        self.for_each_renamed_file(&mut push_with_folders);
+        compiled_program::for_each_written_file(name, &mut push_with_folders);
         if let Some(program) = &self.compiled_program {
             let mut source_path: Vec<u8> = Vec::new();
             for entry_point in program.entry_points_in_directory(name) {

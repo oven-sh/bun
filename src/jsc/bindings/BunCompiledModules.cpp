@@ -2194,8 +2194,18 @@ static bool printsDataFileAsJavaScript(JSGlobalObject* globalObject, const Strin
 extern "C" void Bun__compiledProgramWillRunTextOfFile(JSGlobalObject* globalObject, const BunString* specifier)
 {
     String path = specifier->toWTFString(BunString::ZeroCopy);
-    if (auto module = hasCompiledModules() ? compiledModuleForPath(path) : std::nullopt; module && !AOT::isDataFile(*module) && AOT::isEvicted(globalObject, *module))
+    auto module = hasCompiledModules() ? compiledModuleForPath(path) : std::nullopt;
+    if (!module || !AOT::isEvicted(globalObject, *module))
+        return;
+    if (!AOT::isDataFile(*module)) {
         recordFileRunFromSource(globalObject, path, "it was loaded a second time, or it changed on disk after the build"_s);
+        return;
+    }
+    auto& plugins = defaultGlobalObject(globalObject)->onLoadPlugins;
+    if (auto reset = plugins.dataFilesResetUnderMocks.find(path); reset != plugins.dataFilesResetUnderMocks.end() && reset->value != plugins.testFile) {
+        plugins.dataFilesResetUnderMocks.remove(reset);
+        recordRepeatedFileRun(globalObject, path, "the modules were reset while a mock was over it"_s);
+    }
 }
 
 static void evictCachedSource(JSGlobalObject* globalObject, const String& path)

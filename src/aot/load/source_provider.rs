@@ -264,7 +264,10 @@ pub trait SourceProvider: Sync {
         Vec::new()
     }
 
-    /// Embeds `source_path`, which `module_path` reads through a path known at build time, and returns true. Only a file inside `node_modules` and the `package.json` nearest above `entry_path` qualify. Everything else of the application needs `--asset`. `is_query`: the call asks about the file and doesn't read its contents. A file that no call reads is embedded without its bytes.
+    /// The program reads a file whose path isn't known at build time. It may be any that it has found there.
+    fn note_reads_of_unknown_paths(&self) {}
+
+    /// Embeds `source_path`, which `module_path` reads through a path known at build time, and returns true. Only a file inside `node_modules` and the `package.json` nearest above `entry_path` qualify. Everything else of the application needs `--asset`. `is_query`: the call asks about the file and doesn't read its contents. A file that no call reads is embedded without its bytes, unless the program reads a path that isn't known.
     fn embed_file_implicitly(
         &self,
         _entry_path: &[u8],

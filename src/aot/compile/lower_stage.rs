@@ -49,6 +49,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Above this, the checker's types are freed once, halfway through the files. Nine in ten of them are read by no later file.
 const TEXT_BYTES_OF_ONE_PASS: u64 = 256 << 20;
 
+/// The errors that a name repeats another. TypeScript's types keep the halves of a surrogate pair apart where constants
+/// join them, so `bun check` may see two names.
+const REPEATED_NAME_CODES: [u32; 4] = [1117, 1118, 2300, 2717];
+
 pub(crate) struct LoweredUnit {
     pub unit: Box<LinkUnit>,
     pub diagnostics: DiagnosticBuffer,
@@ -630,7 +634,9 @@ impl Build<'_> {
         };
         self.keep_what_project_itself_reports(&mut found, &views, |it| {
             let file = it.diagnostic.file;
-            brings_declarations || file.is_some_and(|file| files.hir(file).is_script_for_project)
+            brings_declarations
+                || REPEATED_NAME_CODES.contains(&it.diagnostic.code)
+                || file.is_some_and(|file| files.hir(file).is_script_for_project)
         });
         self.report_check_diagnostics(found, &checked.incomplete);
         self.diagnostics.add_load_messages(loaded.messages);
@@ -698,12 +704,17 @@ impl Build<'_> {
     ) {
         let read_texts_of_build = views.read_texts_of_build;
         let is_asked = |it: &BuildDiagnostic| {
-            matches!(
-                it.diagnostic.class,
+            let is_about_types = match it.diagnostic.class {
                 DiagnosticClass::Semantic
-                    | DiagnosticClass::MissingDeclaration
-                    | DiagnosticClass::Style
-            ) && matches!(it.effect, Effect::StopsBuild | Effect::Warns)
+                | DiagnosticClass::MissingDeclaration
+                | DiagnosticClass::Style => true,
+                DiagnosticClass::TypeScriptGrammar => {
+                    REPEATED_NAME_CODES.contains(&it.diagnostic.code)
+                }
+                _ => false,
+            };
+            is_about_types
+                && matches!(it.effect, Effect::StopsBuild | Effect::Warns)
                 && !it.diagnostic.path.is_empty()
                 && is_seen_otherwise_by_project(it)
         };

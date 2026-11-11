@@ -729,7 +729,11 @@ fn warn_about_unembedded_reads(
         let mut unknown = files.analysis(file).unknown_path_reads.iter().copied();
         let is_run = |&operand: &ExprId| !is_in_left_out_code(files, left_out, file, operand);
         let find_handed_on = || find_forwarded_folder(files, graph, left_out, file);
-        if let Some(operand) = unknown.find(is_run).or_else(find_handed_on) {
+        let unknown = unknown.find(is_run);
+        if unknown.is_some() {
+            provider.note_reads_of_unknown_paths();
+        }
+        if let Some(operand) = unknown.or_else(find_handed_on) {
             let added = provider.embed_package_json_files(path_of(file));
             searched.extend(added.into_iter().map(|path| (file, operand, path)));
         }

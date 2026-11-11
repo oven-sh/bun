@@ -1421,6 +1421,14 @@
     "aot/test-runs-in-folders-14.test.ts",
     "aot/test-runs-in-folders-15.test.ts",
     "aot/test-runs-in-folders-16.test.ts",
+    "aot/test-runs-in-folders-17.test.ts",
+    "aot/test-runs-in-folders-18.test.ts",
+    "aot/test-runs-in-folders-19.test.ts",
+    "aot/test-runs-in-folders-20.test.ts",
+    "aot/test-runs-in-folders-21.test.ts",
+    "aot/test-runs-in-folders-22.test.ts",
+    "aot/test-runs-in-folders-23.test.ts",
+    "aot/test-runs-in-folders-24.test.ts",
     "aot/the-frames-of-a-stack-trace-are-not-held-to-plain-bun.test.ts",
     "aot/the-warnings-of-a-rejection-come-where-nothing-names-promise.test.ts",
     "aot/what-a-constant-of-the-build-rules-out-is-not-in-the-executable.test.ts",
@@ -1849,6 +1857,8 @@
     "aot/a-file-that-a-hook-of-a-preload-loads-is-named-where-it-runs-again.test.ts",
     "aot/suites-as-people-write-them.test.ts",
     "aot/a-mock-that-import-names-again-is-called-ahead-of-a-commonjs-file-or-named.test.ts",
-    "aot/a-require-of-a-patched-file-while-a-later-mock-waits-is-told.test.ts"
+    "aot/a-require-of-a-patched-file-while-a-later-mock-waits-is-told.test.ts",
+    "aot/a-data-file-under-a-mock-at-a-reset-is-named-where-its-next-load-shows-another-object.test.ts",
+    "aot/leaf-constants-in-test-runs.test.ts"
   ]
 }

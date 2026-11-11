@@ -818,6 +818,11 @@ struct Follower<'i, 'a, 's> {
     met_in_progress: MetInProgress,
     visited: FxHashSet<FollowedKey>,
     revisits_left: u32,
+    has_revisited: bool,
+    /// What `find_value_by_itself()` has not found. Remembered once something is followed again.
+    plain_expressions: FxHashSet<ExprId>,
+    /// The same of calls: their callees are names, and only what those hold tells what they return.
+    plain_calls: FxHashSet<ExprId>,
     has_run_out: Cell<bool>,
     was_ever_exhausted: Cell<bool>,
     places_in_progress: Vec<PlaceInProgress>,
@@ -899,6 +904,9 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             met_in_progress: MetInProgress::NONE,
             visited: FxHashSet::default(),
             revisits_left: max_revisited_expressions(inputs.hir, written_names.5.get()),
+            has_revisited: false,
+            plain_expressions: FxHashSet::default(),
+            plain_calls: FxHashSet::default(),
             has_run_out: Cell::new(false),
             was_ever_exhausted: Cell::new(false),
             places_in_progress: Vec::new(),
@@ -1723,6 +1731,7 @@ impl Follower<'_, '_, '_> {
                 return None;
             };
             self.revisits_left = left;
+            self.has_revisited = true;
         }
         let opened = self.open_parameters.len();
         let (variables, functions) = (
@@ -1780,31 +1789,31 @@ impl Follower<'_, '_, '_> {
         values
     }
 
-    fn values_of_written(&mut self, e: ExprId) -> Option<Values> {
+    /// What `e` holds wherever it stands.
+    fn find_value_by_itself(&self, e: ExprId) -> Option<Held> {
         let &ScanInputs {
             hir,
             bound,
             decisions,
             ..
         } = self.inputs;
-        let e = hir.skip_type_assertions(e);
         match decisions.constant(hir, e) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
-                return Some(vec![self.held_constant(constant)]);
+                return Some(self.held_constant(constant));
             }
             FoldedValue::Unknown => {}
         }
         if self.names_own_directory(e) {
-            return Some(vec![Held::Text(Text {
+            return Some(Held::Text(Text {
                 starts_at_own_directory: true,
                 ..Text::whole(b".")
-            })]);
+            }));
         }
         if let Some(own_file) = self.find_own_file(e) {
-            return Some(vec![Held::Text(own_file)]);
+            return Some(Held::Text(own_file));
         }
         if is_process(hir, bound, e, &[known::globalThis, known::global]) {
-            return Some(vec![Held::Process]);
+            return Some(Held::Process);
         }
         let may_be_export = matches!(
             expr_kind(hir, e),
@@ -1817,12 +1826,23 @@ impl Follower<'_, '_, '_> {
             )
         );
         if may_be_export && self.names_path_separator(e) {
-            return Some(vec![Held::Text(Text::whole(b"/"))]);
+            return Some(Held::Text(Text::whole(b"/")));
         }
-        if (self.follows_key || self.trusts_import_meta)
-            && is_free_name(hir, bound, e, &[known::undefined])
-        {
-            return Some(vec![Held::Primitive(Constant::Undefined)]);
+        ((self.follows_key || self.trusts_import_meta)
+            && is_free_name(hir, bound, e, &[known::undefined]))
+        .then_some(Held::Primitive(Constant::Undefined))
+    }
+
+    fn values_of_written(&mut self, e: ExprId) -> Option<Values> {
+        let hir = self.inputs.hir;
+        let e = hir.skip_type_assertions(e);
+        if !self.plain_expressions.contains(&e) {
+            if let Some(value) = self.find_value_by_itself(e) {
+                return Some(vec![value]);
+            }
+            if self.has_revisited {
+                self.plain_expressions.insert(e);
+            }
         }
         let is_born_here = matches!(
             expr_kind(hir, e)?,
@@ -6300,6 +6320,10 @@ impl Follower<'_, '_, '_> {
 
     fn values_of_call(&mut self, e: ExprId, call: Call) -> Option<Values> {
         let hir = self.inputs.hir;
+        if self.plain_calls.contains(&e) {
+            return self.values_returned_by_callee(call);
+        }
+        let left = self.expressions_left.get();
         if let Some((table, listing)) = self.find_listing_of_object(call) {
             return self.values_of_listing(table, listing);
         }
@@ -6368,6 +6392,15 @@ impl Follower<'_, '_, '_> {
         {
             return self.values_of_joined_lists(&lists, call.args);
         }
+        let is_name = matches!(expr_kind(hir, callee), Some(ExprKind::Ident(_)));
+        if self.has_revisited && is_name && left != 0 && self.expressions_left.get() == left {
+            self.plain_calls.insert(e);
+        }
+        self.values_returned_by_callee(call)
+    }
+
+    fn values_returned_by_callee(&mut self, call: Call) -> Option<Values> {
+        let callee = self.inputs.hir.skip_type_assertions(call.callee);
         let Some(callees) = self.values_of(callee) else {
             return self.guess_own_folder(call);
         };

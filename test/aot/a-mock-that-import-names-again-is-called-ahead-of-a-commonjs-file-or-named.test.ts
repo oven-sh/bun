@@ -17,6 +17,8 @@ const bodies = {
   "never named": `await import("./other.mjs");\n  lay("first");`,
 };
 const said = (text: string) => text.split("\n").filter(line => line.startsWith("SAID"));
+const isCalledAhead = (text: string) => text.lastIndexOf("factory") < text.indexOf("run c,");
+const sorted = (text: string) => said(text)[0]?.split(/, | /).sort();
 
 for (const [what, body] of Object.entries(bodies)) {
   test(what, async () => {
@@ -31,7 +33,9 @@ for (const [what, body] of Object.entries(bodies)) {
     expect(said(plain.stdout).length).toBe(1);
     expect(compiled.exitCode).toBe(plain.exitCode);
     const isNamed = /^ {2}dep\.mjs: .*\bran$/m.test(compiled.stderr);
-    if (!isNamed) expect(said(compiled.stdout)).toEqual(said(plain.stdout));
-    else expect(said(compiled.stdout)).not.toEqual(said(plain.stdout));
+    expect(sorted(compiled.stdout)).toEqual(sorted(plain.stdout));
+    // Where nothing named the file before, plain Bun calls the factory behind the CommonJS file. Elsewhere it does so in a few runs.
+    if (what === "never named") expect([plain, compiled].map(ran => isCalledAhead(ran.stdout))).toEqual([false, false]);
+    expect(isNamed).toBe(what !== "never named" && !isCalledAhead(compiled.stdout));
   });
 }

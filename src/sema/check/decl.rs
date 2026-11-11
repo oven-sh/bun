@@ -620,8 +620,8 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         let (hir, index) = (self.hir(file), index + 1);
                         let literal = hir.id_at(hir.template_texts(exprs), index);
-                        strings::push_wtf8(&mut text, self.constant_text(value));
-                        strings::push_wtf8(&mut text, self.atoms().bytes(literal));
+                        self.append_constant_text(&mut text, self.constant_text(value));
+                        self.append_constant_text(&mut text, self.atoms().bytes(literal));
                         template_result.resolved_other_files |= result.resolved_other_files;
                         template_result.has_external_references |= result.has_external_references;
                         template_result.run_time_inputs |= result.run_time_inputs;
@@ -682,7 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (Some(a), Some(b), Some(BinOp::Add)) => {
                 let mut text = self.constant_text(a).to_vec();
-                strings::push_wtf8(&mut text, self.constant_text(b));
+                self.append_constant_text(&mut text, self.constant_text(b));
                 Some(EnumValue::String(self.atoms().intern(&text)))
             }
             _ => None,
@@ -2837,6 +2837,16 @@ impl<'p, 's> Checker<'p, 's> {
             EnumValue::Number(bits) => self.number_name(f64::from_bits(bits)),
         };
         self.atoms().bytes(atom)
+    }
+
+    /// `text += more`. Two halves of a surrogate pair that meet are one character in a compiled program.
+    /// TypeScript's types keep them apart.
+    fn append_constant_text(&self, text: &mut Vec<u8>, more: &[u8]) {
+        if self.files().is_compile_build() {
+            strings::push_wtf8(text, more);
+        } else {
+            text.extend_from_slice(more);
+        }
     }
 
     /// `isConstantVariable(symbol)` and the conditions `evaluateEntity` checks on its

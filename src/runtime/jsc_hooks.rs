@@ -5138,6 +5138,10 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return None;
     }
 
+    if let Some(path) = bun_standalone_graph::find_written_file(input_path) {
+        out_buf.get_mut(..path.len())?.copy_from_slice(&path);
+        return Some(path.len());
+    }
     let file = bun_standalone_graph::Graph::get_ref()?.find_data(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
 

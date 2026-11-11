@@ -16,6 +16,14 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-data-file-under-a-mock-at-a-reset-is-named-where-its-next-load-shows-another-object.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/leaf-constants-in-test-runs.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-mock-that-import-names-again-is-called-ahead-of-a-commonjs-file-or-named.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2893,68 +2901,100 @@
     "asan": 240000
   },
   "aot/test-runs-in-folders-1.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-10.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-11.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-12.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-13.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-14.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-15.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-16.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-17.test.ts": {
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-18.test.ts": {
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-19.test.ts": {
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-2.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-20.test.ts": {
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-21.test.ts": {
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-22.test.ts": {
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-23.test.ts": {
+    "default": 80000,
+    "asan": 150000
+  },
+  "aot/test-runs-in-folders-24.test.ts": {
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-3.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-4.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-5.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-6.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-7.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-8.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-runs-in-folders-9.test.ts": {
-    "default": 60000,
-    "asan": 240000
+    "default": 80000,
+    "asan": 150000
   },
   "aot/test-setup-import.test.ts": {
     "default": 600,

@@ -598,6 +598,82 @@ exports.start = async () => {
     expect(compiled).toEqual(plain);
   });
 
+  test("a file that a package has written is the one on the disk for every reader", async () => {
+    using dir = tempDir("aot-written-file-by-every-reader", {
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { $ } from "bun";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, name);
+const readers = {
+  mmap: file => (process.platform === "win32" ? fs.readFileSync(file, "utf8") : new TextDecoder().decode(Bun.mmap(file))),
+  "the shell": async file => (await $\`cat < \${file}\`.text()).trim(),
+  open: file => {
+    const descriptor = fs.openSync(file);
+    try {
+      return fs.readFileSync(descriptor, "utf8");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  },
+  "a file object": file => Bun.file(file).text(),
+};
+export const start = async () => {
+  const said = [fs.readdirSync(own("data")).sort().join()];
+  const read = async (label, name) => {
+    for (const [reader, text] of Object.entries(readers)) said.push(label + " " + reader + " " + (await text(own(name))));
+  };
+  for (const name of ["a", "b", "c", "d", "e", "f"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
+  await read("embedded", "data/a.txt");
+  fs.writeFileSync(below("data/a.txt"), "written");
+  await read("written", "data/a.txt");
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "store-"));
+  const made = name => (fs.writeFileSync(path.join(temporary, name), name), path.join(temporary, name));
+  fs.mkdirSync(below("data"), { recursive: true });
+  fs.cpSync(made("cpSync"), below("data/b.txt"));
+  await fs.promises.cp(made("cp"), below("data/c.txt"));
+  await $\`mv \${made("mv")} \${below("data/d.txt")}\`;
+  await Bun.write(below("data/e.txt"), "Bun.write");
+  fs.mkdirSync(path.join(temporary, "data"));
+  fs.writeFileSync(path.join(temporary, "data/f.txt"), "folder");
+  fs.cpSync(path.join(temporary, "data"), below("data"), { recursive: true });
+  for (const name of ["b", "c", "d", "e", "f"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
+  fs.rmSync(below("data/a.txt"));
+  fs.writeFileSync(below("data/a.txt"), "again");
+  await read("again", "data/a.txt");
+  said.push(fs.readdirSync(own("data")).sort().join());
+  fs.rmSync(temporary, { recursive: true });
+  return said.join("\\n");
+};
+`,
+      ...Object.fromEntries(
+        ["a", "b", "c", "d", "e", "f"].map(it => [`app/node_modules/store/data/${it}.txt`, "first"]),
+      ),
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+    });
+    const { plain, compiled } = await plainAfterBuild(String(dir));
+    const readers = ["mmap", "the shell", "open", "a file object"];
+    const files = "a.txt,b.txt,c.txt,d.txt,e.txt,f.txt";
+    expect(plain).toEqual({
+      stdout: [
+        files,
+        ...Array(6).fill("first"),
+        ...readers.map(it => `embedded ${it} first`),
+        ...readers.map(it => `written ${it} written`),
+        ...["cpSync", "cp", "mv", "Bun.write", "folder"],
+        ...readers.map(it => `again ${it} again`),
+        files,
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
   test("a file that a package has written is read by every form of its path", async () => {
     using dir = tempDir("aot-written-file-by-every-path-form", {
       "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
@@ -807,7 +883,7 @@ the application's file by a link in a package ENOENT
     120_000,
   );
 
-  test("a file that is only asked about has no bytes, and one read on another platform is not there", async () => {
+  test("a file that is only asked about has its bytes where a path is unknown, and one read on another platform is not there", async () => {
     const elsewhere = isWindows ? "linux" : "win32";
     using dir = tempDir("aot-package-files-only-asked-about", {
       "app/node_modules/starter/package.json": `{ "name": "starter", "main": "index.cjs" }`,
@@ -858,13 +934,13 @@ console.log("imported, it answers as a file that is left out", (await load("clie
     expect(plain.stdout).toBe(
       `${asked}is that file there true\nthe program's bytes MZ a program\nthe script's bytes a script\n${mapped("12")}\nit is listed helper.bin\nimported, it answers as a file that is left out false\n`,
     );
-    // Every question is answered as by plain Bun, so nothing is warned of.
+    // The program reads paths that aren't known, so what it finds there can be read. A program of machine code isn't there, and that is told.
     expect(compiled).toEqual({
-      stdout: `${asked}is that file there false\nthe program's bytes ENOENT\nthe script's bytes ENOENT\n${mapped("ENOENT")}\nit is listed helper.bin\nimported, it answers as a file that is left out true\n`,
+      stdout: `a program that is tested for false\nits size ENOENT\nmay it be read ENOENT\n${read}is that file there false\nthe program's bytes ENOENT\nthe script's bytes a script\n${mapped("ENOENT")}\nit is listed ENOENT\nimported, it answers as a file that is left out false\n`,
       stderr: "",
       exitCode: 0,
     });
-    expect(warnings(built)).toEqual([]);
+    expect(warnings(built)).toEqual(Array(3).fill("warn TS100098 node_modules/starter/vendor/helper.bin"));
   }, 120_000);
 
   // Whoever may open every file sees no difference.
@@ -1347,7 +1423,7 @@ say("the program's own file by its real path", () => fs.readFileSync(fs.realpath
       `${asked}the program's own page a page\nis what is only written there true\nthe bytes of what is only asked about real\nit can save function\nthe program's own file by its real path own\n`,
     );
     expect(compiled).toEqual({
-      stdout: `${asked}the program's own page ENOENT\nis what is only written there false\nthe bytes of what is only asked about ENOENT\nit can save function\nthe program's own file by its real path ENOENT\n`,
+      stdout: `${asked}the program's own page ENOENT\nis what is only written there false\nthe bytes of what is only asked about real\nit can save function\nthe program's own file by its real path ENOENT\n`,
       stderr: "",
       exitCode: 0,
     });

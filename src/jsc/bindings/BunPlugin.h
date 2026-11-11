@@ -157,6 +157,8 @@ public:
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
+        WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};

@@ -505,6 +505,7 @@ impl BundlerServices {
 
     /// `SourceProvider::embed_file_implicitly()` for a file of a kind that may be embedded.
     fn embed_eligible_file(&self, module_path: &[u8], source_path: &[u8], is_query: bool) -> bool {
+        let reads_unknown_paths = self.files_for_file_system.lock().reads_unknown_paths;
         let written_path = source_path;
         let module_path = &*with_platform_separators(module_path);
         let source_path = &*with_platform_separators(source_path);
@@ -527,11 +528,16 @@ impl BundlerServices {
         let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         let is_embedded = count_lexical_levels_above(root, source_path) <= highest
             && matches!(kind, Ok(bun_sys::ExistsAtType::File))
-            && (is_query || is_readable(source_path));
+            && match is_query {
+                // What finds it there may read it. A program of machine code is started, which needs the disk.
+                true if reads_unknown_paths => {
+                    is_readable(source_path) && !is_native_program(source_path)
+                }
+                is_query => is_query || is_readable(source_path),
+            };
         if is_embedded {
-            self.files_for_file_system
-                .lock()
-                .embed(source_path, is_query);
+            let has_no_bytes = is_query && !reads_unknown_paths;
+            (self.files_for_file_system.lock()).embed(source_path, has_no_bytes);
         }
         is_embedded
     }
@@ -687,6 +693,8 @@ pub struct FilesForFileSystem {
     embedded_index: FxHashSet<Box<[u8]>>,
     asked_about_index: FxHashSet<Box<[u8]>>,
     embedded_manifests: Vec<Box<[u8]>>,
+    /// `SourceProvider::note_reads_of_unknown_paths`.
+    reads_unknown_paths: bool,
     /// A data file's path and the warning if `node:fs` can't find it. Sorted, without duplicates.
     pub warnings_if_not_embedded: Vec<(Box<[u8]>, Msg)>,
 }
@@ -1061,6 +1069,10 @@ impl SourceProvider for BundlerServices {
             folder = bun_paths::dirname(current).filter(|above| above.len() < current.len());
         }
         added
+    }
+
+    fn note_reads_of_unknown_paths(&self) {
+        self.files_for_file_system.lock().reads_unknown_paths = true;
     }
 
     fn embed_file_implicitly(

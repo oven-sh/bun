@@ -4103,6 +4103,9 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         loaded.esmNamespace->moduleRecord()->setLiveExportsSource(vm, restoredMock);
     // Also for a file that was evicted under the mock.
     auto compiledModule = globalObject->vm().hasCompiledCode() ? JSC::AOT::findVariantToMock(globalObject, specifier, Bun::findMockedModule(specifier)) : std::nullopt;
+    // Its original was loaded behind the reset. It moves under the key of the file.
+    if (auto reset = globalObject->onLoadPlugins.dataFilesResetUnderMocks.find(specifier); reset != globalObject->onLoadPlugins.dataFilesResetUnderMocks.end() && Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(specifier))))
+        reset->value = 0;
     // After a mock ends, the file itself may be loaded, which ends the fetch that the factory blocked. A mock that replaces it keeps the fetch blocked.
     for (auto& each : globalObject->onLoadPlugins.latestCompiledFactoryCalls) {
         if (compiledModule && !laterMock && each.first == compiledModule->index()) {
@@ -7063,6 +7066,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             if (!mock || (evict.exceptPackages && isOfPackage))
                 continue;
             mock->lostOriginalsToReset = true;
+            if (!mock->isFromPreload && (mock->didStashCompiledModule || mock->replacesRequiredDataFile)) {
+                String path = mock->specifier->tryGetValue().data;
+                // The mock that takes its place below restores nothing.
+                if (callFactoriesAgain && mock->state == JSModuleMock::State::Settled)
+                    globalObject->onLoadPlugins.dataFilesResetUnderMocks.remove(path);
+                else if (auto file = Bun::compiledModuleForPath(path); file && JSC::AOT::isDataFile(*file) && JSC::AOT::isImportedByStatement(globalObject, *file))
+                    globalObject->onLoadPlugins.dataFilesResetUnderMocks.set(path, globalObject->onLoadPlugins.testFile);
+            }
             // evictModulesAndTheirImporters() only finds registered keys, and compiled files have none.
             if (std::exchange(mock->wouldBeInRegistry, false))
                 mock->originalNamespace.clear();

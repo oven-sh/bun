@@ -510,6 +510,10 @@ fn write_embedded_entries(
     target: &[u8],
 ) -> Maybe<()> {
     let write_file = |path: &[u8], target: Vec<u8>| -> Maybe<()> {
+        if let Some(path) = bun_standalone_graph::find_written_file(path) {
+            let path = bun_core::ZBox::from_vec(path.into_vec());
+            return Syscall::rename(&path, &bun_core::ZBox::from_vec(target));
+        }
         let (Some(file), Some(stat)) = (graph.find_data(path), graph.stat(path)) else {
             return Err(sys::Error::from_code(E::EROFS, sys::Tag::rename));
         };
@@ -686,8 +690,16 @@ pub(crate) fn find_embedded_shell_folder(cwd: &[u8], operand: &[u8]) -> Option<s
 /// What the program finds in the executable at an operand that the disk lacks.
 pub(crate) fn stat_embedded_shell_operand(cwd: &[u8], operand: &[u8]) -> Option<sys::Stat> {
     let path = resolve_shell_operand(cwd, operand);
+    if let Some(path) = bun_standalone_graph::find_written_file(&path) {
+        return Syscall::stat(&bun_core::ZBox::from_vec(path.into_vec())).ok();
+    }
     let graph = graph_after_disk(&path).filter(|graph| graph.may_answer_for(&path))?;
     graph.stat(&path)
+}
+
+/// As `note_written_file`, for the target of the shell's `mv`.
+pub(crate) fn note_written_shell_operand(cwd: &[u8], operand: &[u8]) {
+    note_written_file(&resolve_shell_operand(cwd, operand));
 }
 
 /// Lays `contents` at `path` whole or not at all: in a file of the same folder that is linked to `path` once it is written. So nobody finds a part of them at `path`, whoever opens it at the same moment or comes behind a write that failed, and a file that somebody else laid there in the meantime stays.
@@ -992,6 +1004,13 @@ fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
 /// `open()` of an embedded path that is not on disk.
 #[cold]
 fn open_embedded_path(flags: i32, path: &[u8]) -> Option<Maybe<FD>> {
+    if let Some(path) = bun_standalone_graph::find_written_file(path) {
+        return Some(Syscall::open(
+            &bun_core::ZBox::from_vec(path.into_vec()),
+            flags,
+            0,
+        ));
+    }
     let graph = compiled_program_graph()?;
     if let Some(file) = graph.find_data(path) {
         let opened = open_embedded_file(file.utf8_contents(), flags, path);
@@ -2801,6 +2820,7 @@ mod _async_tasks {
                 this.finish_concurrently(Err(error));
                 return;
             }
+            note_written_file(args.dest.slice());
             let mut src_buf = bun_paths::os_path_buffer_pool::get();
             let mut dest_buf = bun_paths::os_path_buffer_pool::get();
             let name_too_long = |path: &PathLike| sys::Error {
@@ -9272,6 +9292,7 @@ impl NodeFS {
         {
             return Err(error);
         }
+        note_written_file(args.dest.slice());
         let mut src_buf = bun_paths::os_path_buffer_pool::get();
         let mut dest_buf = bun_paths::os_path_buffer_pool::get();
         let name_too_long = |path: &PathLike| sys::Error {

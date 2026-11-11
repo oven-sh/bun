@@ -76,8 +76,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         throw new Error("Unsupported function in " + name);
       }
 
-      // A __name() call would run in every user bundle. https://github.com/oven-sh/bun/pull/40503 makes
-      // --keep-names add them. The build that keeps the names inline is then the one without --minify-syntax.
+      // https://github.com/oven-sh/bun/pull/40503 makes --keep-names add __name() calls, which run in user bundles.
       if (outfile.includes("__name(")) {
         throw new Error(
           `Unexpected __name() call in ${name}. If --keep-names added it, drop --minify-syntax and --keep-names.`,

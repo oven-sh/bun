@@ -166,8 +166,7 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // The polyfills are minified when bun is built (src/node-fallbacks/build-fallbacks.ts). That step must
-  // keep the function names. Node's test/parallel/test-event-emitter-method-names.js reads the method names.
+  // Node's test/parallel/test-event-emitter-method-names.js reads these names. build-fallbacks.ts must keep them.
   const NodeEventsMethodNames = itBundled("browser/NodeEventsMethodNames", {
     files: {
       "/entry.js": /* js */ `
@@ -202,8 +201,7 @@ describe("bundler", () => {
       `,
     },
   });
-  // The user's own --minify-syntax drops the names again, unless the user also passes --keep-names ("cli")
-  // or minify.keepNames ("api").
+  // The user's --minify-syntax drops the names again, unless --keep-names ("cli") or minify.keepNames ("api") is set.
   for (const backend of ["cli", "api"] as const) {
     itBundled(`browser/NodeEventsMethodNamesKeepNames-${backend}`, {
       ...NodeEventsMethodNames.options,
@@ -212,8 +210,7 @@ describe("bundler", () => {
       keepNames: true,
     });
   }
-  // A hand-written polyfill (buffer), a polyfill that ships as CommonJS (stream), and EventEmitter in a
-  // bundle where stream requires events.
+  // buffer is hand-written, stream ships as CommonJS, and stream's require("events") gives events an exports object.
   itBundled("browser/NodePolyfillFunctionNames", {
     files: {
       "/entry.js": /* js */ `
@@ -235,20 +232,38 @@ describe("bundler", () => {
       stdout: '["EventEmitter","EventEmitter","concat","toString","addAbortSignal","setDefaultEncoding"]',
     },
   });
-  // require() gives the bundle the exports object of each polyfill. The bundler then numbers each function
-  // expression that has the name of an export. The sources of events and http keep EventEmitter and get
-  // away from that.
+  // With an exports object, the bundler numbers a function expression named like an export (EventEmitter2, once2).
   itBundled("browser/NodePolyfillFunctionNamesRequire", {
     files: {
       "/entry.js": /* js */ `
-        const { EventEmitter } = require("node:events");
-        const { get } = require("node:http");
-        console.log(JSON.stringify([EventEmitter.name, new EventEmitter().constructor.name, get.name]));
+        const [events, http, util] = [require("node:events"), require("node:http"), require("node:util")];
+        const E = events.EventEmitter.prototype;
+        console.log(JSON.stringify([
+          events.EventEmitter.name,
+          new events.EventEmitter().constructor.name,
+          E.once.name,
+          E.listenerCount.name,
+          E.getMaxListeners.name,
+          E.setMaxListeners.name,
+          http.get.name,
+          util.inspect.name,
+          util.promisify.name,
+        ]));
       `,
     },
     target: "browser",
     run: {
-      stdout: '["EventEmitter","EventEmitter","get"]',
+      stdout: JSON.stringify([
+        "EventEmitter",
+        "EventEmitter",
+        "once",
+        "listenerCount",
+        "getMaxListeners",
+        "setMaxListeners",
+        "get",
+        "inspect",
+        "promisify",
+      ]),
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {

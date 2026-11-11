@@ -530,15 +530,21 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
+// The bundler numbers a function expression named like an export (`once2`). These exports have other binding names.
+const eventsGetMaxListeners = getMaxListeners,
+  eventsListenerCount = listenerCount,
+  eventsOnce = once,
+  eventsSetMaxListeners = setMaxListeners;
+
 export default EventEmitter;
 export {
   EventEmitter,
   addAbortListener,
   captureRejectionSymbol,
   getEventListeners,
-  getMaxListeners,
+  eventsGetMaxListeners as getMaxListeners,
   EventEmitter as init,
-  listenerCount,
-  once,
-  setMaxListeners,
+  eventsListenerCount as listenerCount,
+  eventsOnce as once,
+  eventsSetMaxListeners as setMaxListeners,
 };

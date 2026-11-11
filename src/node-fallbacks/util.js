@@ -122,7 +122,7 @@ export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debug
  * @param {Object} opts Optional options object that alters the output.
  */
 /* legacy: obj, showHidden, depth, colors*/
-export const inspect = /* @__PURE__ */ (i =>
+const inspect = /* @__PURE__ */ (i =>
   // http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
   (
     (i.colors = {
@@ -568,7 +568,7 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.util.promisify.custom")), x))(
+const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.util.promisify.custom")), x))(
   function promisify(original) {
     if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
 
@@ -672,6 +672,11 @@ export function callbackify(original) {
 
   return callbackified;
 }
+
+// The bundler numbers a function expression named like an export (`inspect2`). These exports have other binding names.
+const utilInspect = inspect,
+  utilPromisify = promisify;
+export { utilInspect as inspect, utilPromisify as promisify };
 
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;

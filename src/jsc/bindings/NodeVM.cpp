@@ -1156,9 +1156,7 @@ static bool isSafeToForwardToContextifiedObject(JSGlobalObject* globalObject, Th
     return false;
 }
 
-// V8's GetRealNamedPropertyAttributes(): [[GetOwnProperty]] up the prototype chain, which runs no getter and no `get` trap.
-// The two loops are those of JSObject::getPropertySlot() and JSObject::getNonIndexPropertySlot(), which never end when a Proxy is on its own prototype chain.
-// Here a Proxy ends the walk and declares every name, as in V8. So does the global of another context. The store or the definition then goes to the contextified object.
+// V8's GetRealNamedPropertyAttributes(): JSObject::getPropertySlot()'s two loops, except that a Proxy or another context's global ends the walk and declares every name.
 static ALWAYS_INLINE bool getDeclaredPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JSObject* contextifiedObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = JSC::getVM(globalObject);

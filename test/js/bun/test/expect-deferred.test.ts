@@ -343,7 +343,8 @@ describe.concurrent(".resolves and .rejects", () => {
             console.log(await outcome((async () => expect(laterReject(5)).rejects.toBe(6))()));
           });
           test("given to expect().rejects", async () => {
-            await expect((async () => expect(Promise.resolve(1)).resolves.toBe(2))()).rejects.toThrow();
+            const returned = (async () => expect(Promise.resolve(1)).resolves.toBe(2))();
+            await expect(returned).rejects.toThrow("expect(received).toBe(expected)");
           });
           test("in Promise.allSettled()", async () => {
             const double = vi.fn(async value => value * 2);
@@ -399,7 +400,7 @@ describe.concurrent(".resolves and .rejects", () => {
             await jobs();
             const passedOn = failed(matcher).finally(() => {});
             await jobs();
-            await expect(failed(passedOn)).rejects.toThrow();
+            await expect(failed(passedOn)).rejects.toThrow("expect(received).toBe(expected)");
           });
           test("next", () => {});
         `,

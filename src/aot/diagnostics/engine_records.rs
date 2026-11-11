@@ -72,13 +72,12 @@ fn locale_warning(
     message_at_witness(Code::LocaleDataLeftOut, &[tag], &record.witness, locator)
 }
 
-/// Runs behind the build: a plan is made of what the engine found.
-/// `plans`: one for each executable that the build writes. `silenced`: `Diagnostics::find_silenced_locales`.
+/// `plans`: one for each executable that the build writes.
 pub fn log_locales_left_out(
     engine: &EngineResult,
     texts: &SourceTexts,
     plans: &[&TrimPlan],
-    silenced: &[u32],
+    silenced_locales: &[u32],
     lists_silenced: bool,
     log: &mut Log,
 ) {
@@ -92,7 +91,7 @@ pub fn log_locales_left_out(
             continue;
         }
         let warning = locale_warning(engine, record, &mut locator);
-        if silenced.binary_search(&index).is_err() {
+        if silenced_locales.binary_search(&index).is_err() {
             diagnostics.add_message(number, warning);
         } else if lists_silenced {
             diagnostics.add_message(number, to_silenced_note(warning));
@@ -137,9 +136,7 @@ impl Diagnostics {
         self.add_message(code.number(), message);
     }
 
-    /// The constant locales, by their positions in `EngineResult::locales_used`, whose warning a `bun-ignore` comment silences.
-    /// `log_locales_left_out` makes that warning behind the build, where the comments are gone. Whether or not a list leaves
-    /// the locale out of this build, the comment silences something: the list of another build may.
+    /// By position in `EngineResult::locales_used`, for `log_locales_left_out`, which runs when the comments are gone.
     pub(crate) fn find_silenced_locales(
         &mut self,
         engine: &EngineResult,

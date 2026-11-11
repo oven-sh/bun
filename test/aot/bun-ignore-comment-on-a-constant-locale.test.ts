@@ -3,21 +3,16 @@
 // constant locale stands it silences something, whatever this build's list is. The list of another build may leave the locale out.
 // What the comment silences under a list is in test/bundler/compile-trim-locales.test.ts: only a Bun that can trim shows it.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "./harness/run";
 import { test } from "./supported";
 
 async function build(text: string) {
   using dir = tempDir("bun-ignore-locale", { "main.cjs": text });
   using out = tempDir("bun-ignore-locale-out", {});
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", join(String(out), "program")],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const cmd = [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", join(String(out), "program")];
+  const { stderr, exitCode } = await run(cmd, String(dir));
   return { said: stderr.match(/^(warn|error): TS\d+.*/gm) ?? [], exitCode };
 }
 

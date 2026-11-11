@@ -83,8 +83,8 @@ interface::define_linked_functions! {
         log_diagnostic(log, code, arguments);
     }
 
-    fn bun_aot_log_locales_left_out(engine: &interface::engine::EngineResult, texts: &interface::report::SourceTexts, plans: &[&TrimPlan], silenced: &[u32], lists_silenced: bool, log: &mut Log) {
-        log_locales_left_out(engine.0.get(), texts.0.get(), plans, silenced, lists_silenced, log);
+    fn bun_aot_log_locales_left_out(engine: &interface::engine::EngineResult, texts: &interface::report::SourceTexts, plans: &[&TrimPlan], silenced_locales: &[u32], lists_silenced: bool, log: &mut Log) {
+        log_locales_left_out(engine.0.get(), texts.0.get(), plans, silenced_locales, lists_silenced, log);
     }
 
     fn bun_aot_parse_json<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> Option<&'s DataValue<'s>> {

@@ -192,11 +192,13 @@ interface Circle {
   kind: "circle";
   area(): number;
   radius(): number;
+  label?(): string;
 }
 interface Square {
   kind: "square";
   area(): number;
   side(): number;
+  label(): string;
 }
 interface Batch extends Array<Store> {
   total: number;
@@ -361,6 +363,7 @@ const sameHolder: typeof holder = jest.mocked(holder);
 jest.mocked(holder).load.mockReturnValue("x");
 jest.mocked(holder).maybe?.get.mockReturnValue("x");
 jest.mocked(holder).shape.area.mockReturnValue(1);
+jest.mocked(holder).shape.label?.mockReturnValue("x");
 jest.mocked(holder).shapes[0]!.area.mockReturnValue(1);
 jest.mocked(holder.shapes)[0]!.area.mockReturnValue(1);
 jest.mocked(holder).handler.mockClear();
@@ -374,6 +377,7 @@ const mockedIds = jest.mocked(holder).ids;
 // @ts-expect-error
 mockedIds.push.mockClear();
 jest.mocked(holder).lists[0]!.get.mockReturnValue("x");
+for (const each of jest.mocked(holder).lists) each.get.mockReturnValue("x");
 const mockedShape = jest.mocked(holder).shape;
 // @ts-expect-error A method that only one type of the union has isn't a mock.
 if (mockedShape.kind === "circle") mockedShape.radius.mockReturnValue(1);

@@ -74,11 +74,13 @@ declare module "bun:test" {
       ? jest.SpiedFunction<Extract<U, (...args: any[]) => any>>
       : [U] extends [readonly unknown[]]
         ? // A union of arrays is like one array: it has the elements, and the members of `Array` aren't mocks.
-          { [K in Keys as K extends Exclude<keyof unknown[], number> ? never : K]: MocksOfMember<U[K]> }
+          { [K in Keys as K extends Exclude<keyof unknown[], number> ? never : K]: MocksOfMember<U[K]> } & Iterable<
+            MocksOfMember<U[number & keyof U]>
+          >
         : {
-            [K in Keys as U[K] extends (...args: any[]) => any ? K : never]: jest.SpiedFunction<
-              Extract<U[K], (...args: any[]) => any>
-            >;
+            // A method can be optional in a type of the union: `undefined` stays in its type.
+            [K in Keys as NonNullable<U[K]> extends (...args: any[]) => any ? K : never]:
+              jest.SpiedFunction<Extract<U[K], (...args: any[]) => any>> | Exclude<U[K], (...args: any[]) => any>;
           };
     // An array type that is written with `[]`: TypeScript works out its element type only when that is used.
     type MockedArray<T extends readonly unknown[]> = T extends unknown[]

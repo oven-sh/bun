@@ -79,6 +79,19 @@ const readers = {
       stream.on("readable", readBody(stream, counts));
     });
   },
+  // The same, and a read(0) behind the hand-over.
+  swapThenRead0(stream, counts) {
+    const header = () => {
+      const bytes = stream.read(HEADER);
+      if (bytes === null) return;
+      counts.headerCalls++;
+      counts.received += bytes.length;
+      stream.off("readable", header);
+      stream.on("readable", readBody(stream, counts));
+      stream.read(0);
+    };
+    stream.on("readable", header);
+  },
   // The header goes back, as in the parseHeader() example of the stream documentation.
   unshift(stream, counts) {
     const header = () => {
@@ -117,6 +130,16 @@ readers.iterateThenListen = async (stream, counts) => {
   stream.on("readable", readBody(stream, counts));
 };
 readers.iterateThenListen.startsLate = true;
+
+// The header is read with no listener, when the payload is there, and a listener takes the rest a promise job later.
+readers.readThenListen = async (stream, counts) => {
+  counts.headerCalls++;
+  const bytes = stream.read(HEADER);
+  counts.received += bytes ? bytes.length : 0;
+  await null;
+  stream.on("readable", readBody(stream, counts));
+};
+readers.readThenListen.startsLate = true;
 
 const newCounts = () => ({ received: 0, headerCalls: 0, largestPush: 0, stackedPushes: 0 });
 
@@ -296,6 +319,17 @@ const sources = {
   },
   "tls-accepted": overTLS(false),
   "tls-connected": overTLS(true),
+  // The writer sends records of 10,000 bytes: what one read decrypts does not end where a record ends.
+  "tls-small-records"(reader, dir) {
+    const options = tlsOptions(dir);
+    const listen = onSocket => require("node:tls").createServer(options, onSocket);
+    const connect = server => {
+      const socket = tlsConnect(server, options);
+      socket.once("secureConnect", () => socket.setMaxSendFragment(10_000));
+      return socket;
+    };
+    return overSocket(reader, listen, [0, "127.0.0.1"], connect);
+  },
   // TLS starts on a socket that is connected already.
   "tls-over-socket"(reader, dir) {
     const options = tlsOptions(dir);

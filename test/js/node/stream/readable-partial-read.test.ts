@@ -39,8 +39,10 @@ describe.skipIf(isWindows)("a stream that was read in part announces the rest", 
   test.each([
     ["child-stdout", "swap"],
     ["child-stdout", "once"],
+    ["child-stdout", "swapThenRead0"],
     ["child-stdout", "unshift"],
     ["child-stdout", "awaitSwap"],
+    ["child-stdout", "readThenListen"],
     ["child-stdout", "iterateThenListen"],
     ["child-stderr", "swap"],
     // macOS gives the socketpair of an extra descriptor about 8 KiB, which is too little for the payload to wait in.
@@ -53,6 +55,7 @@ describe.skipIf(isWindows)("a stream that was read in part announces the rest", 
     ["unix-accepted", "swap"],
     ["tls-accepted", "swap"],
     ["tls-connected", "swap"],
+    ["tls-small-records", "swap"],
     ["tls-over-socket", "swap"],
     ["http-upgrade", "swap"],
   ])("%s, reader %s", async (source, reader) => {

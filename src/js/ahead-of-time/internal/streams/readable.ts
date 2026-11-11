@@ -1607,6 +1607,14 @@ Readable.prototype.pause = function (this: $Node.Readable) {
 function flow(stream: $Node.Readable) {
   const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
   $debug("flow");
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    while (
+      (state[kState] & Flag.Flowing) !== 0 &&
+      ($findsDeclaredMember(stream, "read", Readable) ? read.$call(stream, stateOf(stream), NaN) : stream.read()) !==
+        null
+    );
+    return;
+  }
   while ((state[kState] & Flag.Flowing) !== 0 && stream.read() !== null);
 }
 

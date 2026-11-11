@@ -78,9 +78,11 @@ describe.skipIf(!!unsupported)("a walk that assumes every element use is arithme
           const silent = await build("silent", fault);
           if (expectFaultyBuild(silent, message)) expect(await outputOf("silent")).not.toBe(printed);
         }
-        const stopped = await build("stopped", "--aot-check=Validate", fault);
-        expect(stopped.stderr).toContain(message);
-        expect(stopped.exitCode).toBe(1);
+        for (const check of ["--aot-check=Validate", "--aot-harden=proof-checks"]) {
+          const stopped = await build("stopped", check, fault);
+          expect(stopped.stderr).toContain(message);
+          expect(stopped.exitCode).toBe(1);
+        }
       }),
     );
 });

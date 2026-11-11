@@ -86,7 +86,7 @@ pub trait CodeHost: Host {
         None
     }
 
-    fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
+    fn create_module_from_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
@@ -202,6 +202,10 @@ pub trait CodeHost: Host {
     }
 
     fn may_any_file_become_main_module(&self) -> bool {
+        false
+    }
+
+    fn may_start_workers(&self) -> bool {
         false
     }
 

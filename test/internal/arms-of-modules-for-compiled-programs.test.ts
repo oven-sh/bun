@@ -67,6 +67,8 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     ],
   ],
   "ahead-of-time/internal/streams/end-of-stream.ts": [
+    ["IS_COMPILED_AHEAD_OF_TIME &&", arm("plain-streams-and-their-sides.cjs")],
+    ["IS_COMPILED_AHEAD_OF_TIME && sides !== Sides.Unknown", arm("plain-streams-and-their-sides.cjs")],
     [
       '!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream as unknown as $Node.Stream, "on")) &&',
       arm("finished-is-asked-of-streams-of-node-and-of-the-web.cjs"),
@@ -126,6 +128,7 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     ],
   ],
   "ahead-of-time/internal/streams/readable.ts": [
+    ["if (IS_COMPILED_AHEAD_OF_TIME) {", arm("several-chunks-flow-at-once.cjs")],
     [
       "if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(this, Readable)) && !(this instanceof Readable)) {",
       "parallel/streams-ask-what-plain-bun-asks/what-a-readable-asks-of-its-state-its-chunks-and-itself.mjs",
@@ -172,6 +175,19 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     [
       "if (IS_COMPILED_AHEAD_OF_TIME) internals.isPlainReadableAlone = isPlainReadableAlone;",
       "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/a-readable-whose-pipe-is-taken-away.mjs",
+    ],
+  ],
+  "ahead-of-time/internal/streams/utils.ts": [
+    ["if (IS_COMPILED_AHEAD_OF_TIME && !strict) {", arm("plain-streams-and-their-sides.cjs")],
+    ["if (IS_COMPILED_AHEAD_OF_TIME) {", arm("plain-streams-and-their-sides.cjs")],
+    ["if (IS_COMPILED_AHEAD_OF_TIME) {", arm("plain-streams-and-their-sides.cjs")],
+    [
+      "const sides: number = IS_COMPILED_AHEAD_OF_TIME ? plainStreamSides(stream) : Sides.Unknown;",
+      arm("plain-streams-and-their-sides.cjs"),
+    ],
+    [
+      "const sides: number = IS_COMPILED_AHEAD_OF_TIME ? plainStreamSides(stream) : Sides.Unknown;",
+      arm("plain-streams-and-their-sides.cjs"),
     ],
   ],
   "ahead-of-time/internal/streams/state.ts": [
@@ -248,9 +264,13 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     ["closeSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
     ["chmodSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
     ["fstatSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
-    ["statSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
+    ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
+    ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
+    ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
+    ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
+    ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
     [
-      "return IS_COMPILED_AHEAD_OF_TIME ? fs.existsSync(_path) : fs.existsSync.$apply(fs, arguments);",
+      "return IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME",
       arm("exists-sync-with-no-operand-and-with-two.mjs"),
     ],
   ],
@@ -292,12 +312,6 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     [
       "const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = CAN_REPLACE_BUILT_IN_FUNCTIONS",
       "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
-    ],
-  ],
-  "ahead-of-time/node/events.ts": [
-    [
-      "let holder: object | null = CAN_REPLACE_BUILT_INS ? null : this;",
-      arm("an-emitter-is-born-below-what-lies-under-the-name-of-the-prototype.cjs"),
     ],
   ],
 };

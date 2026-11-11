@@ -5,12 +5,13 @@
 # print(f());
 # -- end of source
 # `T[k](i)`: T is a record written in the file, k a const of which nobody knows anything. A key that is only EXPECTED to be one of a few texts is told apart by tests at the run and the access walked by each name;
-# of such a key nothing was expected. Now the names of the one layout proven or expected of its holder are: one to four. Nothing is proven by it: a wrong guess fails its tests and the loop runs as written.
+# of such a key nothing was expected. Now the names of the one layout proven or expected of its holder are: one to four. Nothing is proven by it: a wrong guess fails its tests and the loop runs as
+# written. The access is told apart twice: in the loop whose iterations call nothing that nobody knows, and in the loop that it leaves for.
 # A thousand turns of `c = (c + T[k](i)) & 1023` over a small function: 43,048 > 4,458 instructions, plain Bun 5,056.
 # RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
-# EVENT: statistic AccessesDispatchedByKeyString 1
+# EVENT: statistic AccessesDispatchedByKeyString 2
 # RUN(CHECKED): compile AccessesDispatchedByKeyString mechanisms=all testing=CheckProofsAtRunTime
-# CHECKED: statistic AccessesDispatchedByKeyString 1
+# CHECKED: statistic AccessesDispatchedByKeyString 2
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 78
 # RIGHT-NEXT: exited with 0

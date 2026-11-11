@@ -73,6 +73,9 @@ fn find_text_of_run(
     let &FinishedFile {
         hir, bound, atoms, ..
     } = request;
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
     let mut text = hir.skip_type_assertions(text);
     let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::from_slice(led_here);
     loop {

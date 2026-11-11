@@ -1,10 +1,11 @@
-use super::import_uses::{ImportUses, compute_import_uses};
+use super::import_uses::{ImportUses, compute_import_uses, names_eval};
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, known};
 use crate::bind::{Bound, Decl, Parent, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldErrorKind, FoldInputs};
 use crate::hir::{
-    ExprId, File, Flags, ImportEqualsId, ImportEqualsTarget, ImportId, NodeData, StmtId, StmtKind,
+    ExprId, ExprKind, File, Flags, FnBody, Func, ImportEqualsId, ImportEqualsTarget, ImportId,
+    NodeData, PatKind, PropKey, StmtId, StmtKind, TypeNodeKind,
 };
 
 fn has_macro_type(hir: &File<'_>, attributes: ExprId) -> bool {
@@ -138,6 +139,159 @@ pub fn find_statement_sites(
         .collect()
 }
 
+pub struct SitesByName {
+    pub sites: Vec<(ImportSiteKind, Atom)>,
+    pub has_free_name: bool,
+}
+
+pub fn find_sites_by_name(
+    hir: &File<'_>,
+    inputs: &FoldInputs<'_>,
+    names: &[Atom],
+) -> Option<SitesByName> {
+    const MOST_EXPRS: usize = 20_000;
+    let is_ambient = |flags: Flags| flags.contains(Flags::AMBIENT);
+    let may_have_default = |func: &Func| {
+        func.params.iter().any(|it| {
+            hir[it].default.is_some() || !matches!(hir[hir[it].pat].kind, PatKind::Ident(_))
+        })
+    };
+    let is_simple = hir.has_module_syntax
+        && hir.with_bodies.is_empty()
+        && !hir.is_flow
+        && !hir.has_errors
+        && !hir.has_parse_diagnostics
+        && !hir.ran_out_of_stack
+        && hir.exprs.len() <= MOST_EXPRS
+        && hir.decorators.is_empty()
+        && hir.modules.is_empty()
+        && hir.enums.is_empty()
+        && hir.import_equals.is_empty()
+        && hir.jsx.is_empty()
+        && !hir.classes.iter().any(|it| is_ambient(it.flags))
+        && !(hir.members.iter()).any(|it| matches!(it.key, PropKey::Computed(_)))
+        && !(hir.fns.iter()).any(|it| matches!(it.body, FnBody::None) && may_have_default(it));
+    if !is_simple {
+        return None;
+    }
+    let imports = || (0..hir.imports.len() as u32).map(ImportId);
+    let locals_of = |import: ImportId| {
+        let import = &hir[import];
+        let named = import.named.iter();
+        let named = named
+            .filter(|&it| !hir[it].type_only)
+            .map(|it| hir[it].local);
+        let locals = [import.default, import.namespace].into_iter().chain(named);
+        locals.filter(|local| local.is_some())
+    };
+    let (mut imported, mut imported_types): (Vec<Atom>, Vec<Atom>) = (Vec::new(), Vec::new());
+    for import in imports() {
+        match hir[import].type_only {
+            true => imported_types.extend(locals_of(import)),
+            false => imported.extend(locals_of(import)),
+        }
+        let types = hir[import].named.iter().filter(|&it| hir[it].type_only);
+        imported_types.extend(types.map(|it| hir[it].local));
+    }
+    let deciding: Vec<Atom> = [names, &imported, &imported_types].concat();
+    let is_deciding = |name: Atom| deciding.contains(&name);
+    let declared_in_patterns = hir.pats.iter().filter_map(|it| match it.kind {
+        PatKind::Ident(name) => Some(name),
+        _ => None,
+    });
+    let mut declared = declared_in_patterns
+        .chain(hir.fns.iter().map(|it| it.name))
+        .chain(hir.classes.iter().map(|it| it.name))
+        .chain(hir.interfaces.iter().map(|it| it.name))
+        .chain(hir.aliases.iter().map(|it| it.name))
+        .filter(|name| name.is_some());
+    let is_imported_twice = (1..imported.len()).any(|at| imported[..at].contains(&imported[at]));
+    if is_imported_twice || declared.any(is_deciding) {
+        return None;
+    }
+    let root_of = |mut operand: ExprId| {
+        while let ExprKind::Dot { obj, .. } = hir[operand].kind {
+            operand = obj;
+        }
+        operand
+    };
+    let mut operands_of_types: Vec<ExprId> = Vec::new();
+    for base in hir.interfaces.iter().flat_map(|it| hir.ids(it.extends)) {
+        if let TypeNodeKind::Heritage { expr, .. } = hir[base].kind {
+            operands_of_types.push(root_of(expr));
+        }
+    }
+    for node in hir.types.iter() {
+        match node.kind {
+            TypeNodeKind::Typeof { expr, .. } => operands_of_types.push(root_of(expr)),
+            TypeNodeKind::Heritage { expr, .. } => {
+                let root = root_of(expr);
+                if matches!(hir[root].kind, ExprKind::Ident(name) if is_deciding(name))
+                    && !operands_of_types.contains(&root)
+                {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    operands_of_types.sort_unstable();
+    let mut is_used = vec![false; imported.len()];
+    let mut has_free_name = false;
+    for (e, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
+        if names_eval(node) {
+            return None;
+        }
+        let ExprKind::Ident(name) = node.kind else {
+            continue;
+        };
+        if !is_deciding(name) || operands_of_types.binary_search(&e).is_ok() {
+            continue;
+        }
+        match imported.iter().position(|&it| it == name) {
+            Some(place) => is_used[place] = true,
+            None if imported_types.contains(&name) => return None,
+            None => has_free_name = true,
+        }
+    }
+    for export in hir.exports.iter() {
+        if export.type_only || export.has_module_specifier {
+            continue;
+        }
+        for spec in export.items.iter().filter(|&it| !hir[it].type_only) {
+            match imported.iter().position(|&it| it == hir[spec].local) {
+                Some(place) => is_used[place] = true,
+                None if is_deciding(hir[spec].local) => return None,
+                None => {}
+            }
+        }
+    }
+    let drops_unused_imports = hir.has_typescript_semantics() && !inputs.preserves_unused_imports();
+    let is_dropped = |import: ImportId| {
+        let mut locals = locals_of(import).peekable();
+        let is_used = |local: Atom| {
+            imported
+                .iter()
+                .position(|&it| it == local)
+                .is_some_and(|place| is_used[place])
+        };
+        drops_unused_imports && locals.peek().is_some() && !locals.any(is_used)
+    };
+    let sites = hir.ids(hir.body).filter_map(|stmt| match hir[stmt].kind {
+        StmtKind::Import(id) => {
+            let import = &hir[id];
+            let is_site = !hir.is_type_only_import(id) && import.spec.is_some() && !is_dropped(id);
+            is_site.then_some((ImportSiteKind::Import(id), import.spec))
+        }
+        _ => statement_site_without_names(hir, stmt),
+    });
+    let sites = sites.collect();
+    Some(SitesByName {
+        sites,
+        has_free_name,
+    })
+}
+
 fn macro_export_error(kind: ImportSiteKind) -> Option<FoldErrorKind> {
     match kind {
         ImportSiteKind::ExportStar(_) => Some(FoldErrorKind::MacroInExportStar),
@@ -159,6 +313,12 @@ fn statement_site(
             let is_site = !hir.is_type_only_import(id) && import.spec.is_some() && !is_dropped;
             is_site.then_some((ImportSiteKind::Import(id), import.spec))
         }
+        _ => statement_site_without_names(hir, stmt),
+    }
+}
+
+fn statement_site_without_names(hir: &File<'_>, stmt: StmtId) -> Option<(ImportSiteKind, Atom)> {
+    match hir[stmt].kind {
         StmtKind::ExportNamed(id) => {
             let export = &hir[id];
             let is_site = export.has_module_specifier

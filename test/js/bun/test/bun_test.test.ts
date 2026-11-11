@@ -334,8 +334,9 @@ test.concurrent("a timeout before done() is called says which parameters to remo
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: normalizeBunSnapshot(stdout, dir), stderr: normalizeBunSnapshot(stderr, dir), exitCode };
   };
-  const [timedOut, removed] = await Promise.all([
-    run("--timeout", "1", "./bun.test.js", "./node.test.mjs"),
+  const [timedOut, nodeTimedOut, removed] = await Promise.all([
+    run("--timeout", "1", "./bun.test.js"),
+    run("--timeout", "1", "./node.test.mjs"),
     run("./removed/bun.test.js", "./removed/node.test.mjs"),
   ]);
   expect(timedOut).toMatchInlineSnapshot(`
@@ -352,24 +353,31 @@ test.concurrent("a timeout before done() is called says which parameters to remo
     (fail) hook > test
       ^ a beforeEach/afterEach hook timed out before its done callback was called. If a done callback was not intended, remove the parameters that the hook callback function gets no value for
 
-    node.test.mjs:
-    (fail) (unnamed)
-      ^ a beforeEach/afterEach hook timed out before its done callback was called. If a done callback was not intended, remove the parameters that the hook callback function gets no value for
-
      0 pass
-     5 fail
-    Ran 5 tests across 2 files."
+     4 fail
+    Ran 4 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)
     test: (function, undefined)
     each row of two values: (number, number, function, undefined)
     each row that is an object: (object, function)
-    hook: (function, undefined)
-    node:test hook: (object, function)"
+    hook: (function, undefined)"
     ,
     }
   `);
+  // The rest of this line names the wrong hook for node:test: https://github.com/oven-sh/bun/issues/42361
+  const nodeHints = nodeTimedOut.stderr
+    .split("\n")
+    .filter(line => line.includes("^ "))
+    .map(line => line.slice(line.indexOf("If a done callback")));
+  expect({ stdout: nodeTimedOut.stdout, hints: nodeHints, exitCode: nodeTimedOut.exitCode }).toEqual({
+    stdout: "bun test <version> (<revision>)\nnode:test hook: (object, function)",
+    hints: [
+      "If a done callback was not intended, remove the parameters that the hook callback function gets no value for",
+    ],
+    exitCode: 1,
+  });
   expect(removed).toMatchInlineSnapshot(`
     {
       "exitCode": 0,

@@ -1,0 +1,21 @@
+# f1 = next
+# -- source: count-up-a-static-field.ts
+# function next(): number {
+#   return Ticket.issued++;
+# }
+# class Ticket {
+#   static issued = 0;
+# }
+# declare const input: any;
+# for (let i = 0; i < input; i++) next();
+# (globalThis as any).answer = next();
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 20, patches 2, moves 4, unlikely or rare 22.
+# The read and the store went by name before: operations 11, patches 4, moves 5: fewer steps in line, some 25 instructions in a stub for each of the two, and the class object was made whole at the first of
+# them, so that no look at the variable of a static field passed any more, in any loop. Now each of the two looks at the variable. One look for both, and a number in place of anything, is what is left.
+# Link knows what the static field holds, so next() hands back a raw number; the walk still reads the field as anything, so it tests and unboxes at the return: three steps that go again once the read is typed.
+# RUN(X64): steps most:24 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 24

@@ -66,7 +66,7 @@ pub(crate) fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) ->
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct ToJSOptions {
+pub(crate) struct ToJSOptions {
     pub(crate) return_as_buffer: bool,
 }
 

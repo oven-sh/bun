@@ -2,13 +2,13 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{EncodedSlice, String as BunString};
-use bun_install::dependency::Dependency;
-use bun_install::{DependencyID, Resolution};
+use bun_core::{EncodedSlice, String as BunString, StringView};
+use bun_install::Resolution;
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
 use crate::bun_string_jsc;
+use crate::resolved_source::PrintedAst;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
@@ -27,6 +27,8 @@ pub struct InitOpts<'a> {
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// `ResolvedSource::is_static` of what `parse_result` is printed as.
+    pub is_static: bool,
 }
 
 pub struct AsyncModule {
@@ -46,6 +48,8 @@ pub struct AsyncModule {
     pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// See [`InitOpts::is_static`].
+    is_static: bool,
 
     // This is the specific state for making it async
     pub(crate) poll_ref: KeepAlive,
@@ -73,11 +77,7 @@ pub struct Queue {
     pub(crate) scheduled: u32,
 }
 
-/// What the resolver's `WakeHandler` carries as its opaque context: the
-/// module queue (for the JS-thread dependency-error callback) and the VM's
-/// weak handle (for wake-ups from the process-wide install / HTTP threads,
-/// which outlive any one VM). Allocated once per VM at registration and kept
-/// for the VM's lifetime.
+/// The `WakeHandler`'s context, kept for the VM's lifetime; the waking threads outlive any one VM.
 pub struct WakeContext {
     pub queue: *mut Queue,
     pub handle: crate::VmHandle,
@@ -268,7 +268,9 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 }
 
 impl Queue {
+    #[inline(never)]
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -278,57 +280,6 @@ impl Queue {
         // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
         self.vm().package_manager().drain_dependency_list();
-    }
-
-    /// # Safety
-    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
-    /// registered in `runtime::jsc_hooks`).
-    pub unsafe fn on_dependency_error(
-        ctx: *mut c_void,
-        dependency: &Dependency,
-        root_dependency_id: DependencyID,
-        err: &'static str,
-    ) {
-        // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
-        bun_core::scoped_log!(
-            AsyncModule,
-            "onDependencyError: {}",
-            bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
-        );
-
-        // retain_mut lets Drop free removed modules.
-        this.map.retain_mut(|module| {
-            for pending in module.parse_result.pending_imports.iter() {
-                if pending.root_dependency_id != root_dependency_id {
-                    continue;
-                }
-                let import_record_id = pending.import_record_id;
-                // S017: per-thread VM singleton (safe accessor) instead of
-                // `container_of`-derived `*mut`; provenance is the original
-                // allocation, disjoint from the `&mut module` borrow above.
-                let vm = VirtualMachine::get().as_mut();
-                // reshaped for borrowck — `lockfile.str()` ties the
-                // returned slice to `&vm`, which conflicts with passing
-                // `&mut vm` to `resolve_error`. The lockfile string buffer is
-                // stable across `resolve_error` (no realloc on the error
-                // path); detach the borrow via raw ptr.
-                let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
-                module.resolve_error(
-                    vm,
-                    import_record_id,
-                    &PackageResolveError {
-                        name: name.slice(),
-                        err,
-                        url: b"",
-                        version: dependency.version.clone(),
-                    },
-                );
-                return false; // continue :outer — drop this module
-            }
-            true
-        });
     }
 
     /// `WakeHandler::handler` — runs on install / HTTP-callback threads
@@ -346,17 +297,14 @@ impl Queue {
         }
     }
 
-    /// `WakeHandler::on_dependency_error` context accessor — JS thread.
-    ///
-    /// # Safety
-    /// `ctx` is the leaked `WakeContext` registered in `runtime/jsc_hooks.rs`.
-    pub unsafe fn queue_from_wake_context(ctx: *mut c_void) -> *mut Queue {
-        // SAFETY: fn contract.
-        unsafe { (*ctx.cast::<WakeContext>()).queue }
-    }
-
+    #[inline(never)]
     pub fn on_poll(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::on_poll);
         bun_core::scoped_log!(AsyncModule, "onPoll");
+        if self.map.is_empty() {
+            // A synchronous auto-install drains its own tasks; here their failures would be lost.
+            return;
+        }
         self.run_tasks();
         self.poll_modules();
     }
@@ -532,6 +480,7 @@ impl Queue {
 
                     let package = pm.lockfile.packages.get(package_id as usize);
                     debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
+                    let dependency = pm.lockfile.buffers.dependencies[root_id as usize].behavior;
 
                     let mut name_and_version_hash: Option<u64> = None;
                     let mut patchfile_hash: Option<u64> = None;
@@ -540,6 +489,7 @@ impl Queue {
                     // `&mut self`/`&self.lockfile` aliasing borrowck rejects.
                     match pm.determine_preinstall_state(
                         &package,
+                        dependency,
                         &mut name_and_version_hash,
                         &mut patchfile_hash,
                     ) {
@@ -628,6 +578,7 @@ impl AsyncModule {
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
+            is_static: opts.is_static,
             poll_ref: KeepAlive::default(),
         })
     }
@@ -661,8 +612,8 @@ impl AsyncModule {
             bun_io::AllocatorType::Js,
         ));
         let result = this.resume_loading_module(&mut log);
-        let spec = BunString::borrow_utf8(this.specifier());
-        let referrer = BunString::borrow_utf8(this.referrer());
+        let spec = StringView::borrow_utf8(this.specifier());
+        let referrer = StringView::borrow_utf8(this.referrer());
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
@@ -850,7 +801,6 @@ impl AsyncModule {
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        let _ = vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -876,8 +826,7 @@ impl AsyncModule {
 
         // `string_bytes` borrows the per-VM lockfile arena which outlives this
         // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
-        // extend the `&mut vm` borrow across the `match e` body (the `else`
-        // arm calls `vm.package_manager()` again).
+        // extend the `&mut vm` borrow across the `match e` body.
         let string_bytes = bun_ptr::RawSlice::new(
             vm.package_manager()
                 .lockfile
@@ -885,9 +834,11 @@ impl AsyncModule {
                 .string_bytes
                 .as_slice(),
         );
-        let resolution_fmt = result
-            .resolution
-            .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any);
+        let resolution_fmt = bun_core::fmt::redacted(
+            result
+                .resolution
+                .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any),
+        );
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
@@ -953,14 +904,7 @@ impl AsyncModule {
                 "{} downloading package '{}@{}'",
                 e,
                 bstr::BStr::new(result.name),
-                result.resolution.fmt(
-                    vm.package_manager()
-                        .lockfile
-                        .buffers
-                        .string_bytes
-                        .as_slice(),
-                    bun_core::fmt::PathSep::Any,
-                )
+                resolution_fmt
             );
         }
 
@@ -1052,7 +996,6 @@ impl AsyncModule {
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        let _ = vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -1072,22 +1015,12 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
-        // Take `parse_result` by value via `mem::take`, then restore below, to
-        // satisfy borrowck around `linker.link(&mut parse_result)` while
-        // `self` is also borrowed.
+        // `print_with_source_map` consumes the `ParseResult`, so take it by value.
         let arena = *self.parse_result.ast.parts.allocator();
         let mut parse_result =
             core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
-        // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
-        // stable for the lifetime of `*self`; this fn never replaces it, so
-        // slices into it remain valid across the `&mut self` reborrows below
-        // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
-        // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
-        // SAFETY: same `string_buf` stability invariant as `specifier` above —
-        // the backing `Box<[u8]>` is never replaced in this fn.
-        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
-        let path = Fs::Path::init(path_text);
+        let specifier = self.specifier();
+        let path = Fs::Path::init(self.path_text());
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
@@ -1120,62 +1053,34 @@ impl AsyncModule {
 
         // We _must_ link because:
         // - node_modules bundle won't be properly
-        // SAFETY: per-thread VM; `linker` is a value field of `transpiler`.
+        // SAFETY: per-thread VM; `linker` and `options` are distinct value fields of `transpiler`.
         unsafe {
             (*jsc_vm).transpiler.linker.link::<false, true>(
+                &(*jsc_vm).transpiler.options,
                 &path,
                 &mut parse_result,
                 &(*jsc_vm).origin,
                 bun_bundler::options::ImportPathFormat::AbsolutePath,
             )?;
         }
-        self.parse_result = parse_result;
-        // `print_with_source_map` consumes `ParseResult` by
-        // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // read (`is_commonjs_module`) above the move so we
-        // can `mem::take` instead of cloning.
-        let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
-            || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let arena = *self.parse_result.ast.parts.allocator();
-        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+        // Read before `print_with_source_map` moves `ast` into `print_ast`.
+        let printed_ast = PrintedAst::new(&parse_result.ast);
 
         // `VirtualMachine.source_code_printer` is a thread-local
-        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
-        // swap the buffer out and write it back via the `_writeback`
-        // guard — same observable effect (the thread-local's buffer is
-        // reused). Matches RuntimeTranspilerStore.rs.
+        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); the print reuses its buffer.
         let mut printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
             .get()
             .expect("source_code_printer not initialized");
-        // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let mut printer = core::mem::replace(
-            unsafe { printer_ptr.as_mut() },
-            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-        );
+        // SAFETY: thread-local owns the leaked Box; only this thread touches it,
+        // and nothing from here to the return reads the thread-local.
+        let printer = unsafe { printer_ptr.as_mut() };
         printer.ctx.reset();
-        // The writeback must fire at fn exit,
-        // *after* the `printer.ctx.get_written()` reads below. Declare the
-        // guard immediately after `printer` so it drops last (locals drop in
-        // reverse declaration order) and the buffer is still populated when
-        // read.
-        let _writeback =
-            scopeguard::guard((printer_ptr.as_ptr(), &raw mut printer), |(dst, src)| {
-                // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
-                // stack `printer`; both outlive this guard (it drops before
-                // `printer`). Move the buffer back into the thread-local slot.
-                unsafe {
-                    *dst = core::mem::replace(
-                        &mut *src,
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-                    )
-                };
-            });
 
         {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
-            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut printer) };
+            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut *printer) };
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
@@ -1186,7 +1091,7 @@ impl AsyncModule {
                     // in the per-VM `transpiler_arena`.
                     &self.arena,
                     parse_result,
-                    &mut printer,
+                    printer,
                     bun_js_printer::Format::EsmAscii,
                     mapper.get(),
                     None,
@@ -1210,28 +1115,13 @@ impl AsyncModule {
         // the enqueue, and the fd the parse opened may have been closed (and
         // the number recycled) by the transpile frame's fd guard.
 
-        // SAFETY: per-thread VM.
-        if unsafe { (*jsc_vm).is_watcher_enabled() } {
-            // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source(
-                    printer.ctx.get_written(),
-                    &BunString::from_bytes(specifier),
-                    path.text,
-                    None,
-                )
-            };
-
-            resolved_source.is_commonjs_module = is_commonjs_module;
-
-            return Ok(resolved_source);
-        }
-
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            source_url: BunString::from_bytes(path.text),
-            is_commonjs_module,
-            ..Default::default()
+            source_url: BunString::clone_utf8(path.text),
+            is_static: self.is_static,
+            ..ResolvedSource::printed(
+                printed_ast,
+                BunString::clone_latin1(printer.ctx.get_written()),
+            )
         })
     }
 }

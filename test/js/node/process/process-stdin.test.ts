@@ -34,6 +34,33 @@ test.concurrent("file does the right thing", async () => {
   expect(await result.exited).toBe(0);
 });
 
+test.concurrent("reading a file stdin to the end leaves fd 0 open", async () => {
+  // Bun destroys stdin after 'end'. That must not close the process's fd 0, or
+  // the next open() reuses it and children no longer inherit the real stdin.
+  const script = `
+    const fs = require("fs");
+    process.stdin.on("data", () => {});
+    process.stdin.on("close", () => {
+      setTimeout(() => {
+        fs.fstatSync(0);
+        const fd = fs.openSync(process.execPath, "r");
+        console.log(fd === 0 ? "fd 0 reused" : "fd 0 kept");
+      }, 10);
+    });
+  `;
+  const result = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    stdin: Bun.file(import.meta.path),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([result.stdout.text(), result.stderr.text(), result.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "fd 0 kept", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("stdin with 'readable' event handler should receive data when paused", async () => {
   const proc = Bun.spawn({
     cmd: [
@@ -115,7 +142,8 @@ test.concurrent("stdin with 'data' event handler should NOT receive data when pa
 // Drains the child; its stderr joins the comparison only when it failed, so a
 // crash shows up in the diff without asserting stderr empty on success (debug
 // builds write benign noise there).
-async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">) {
+type StdioResult = { stdout: string; exitCode: number; stderr?: string };
+async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">): Promise<StdioResult> {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr };
 }
@@ -384,13 +412,13 @@ test.concurrent("a throw from a 'data' listener is an uncaughtException, and std
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let stdout = "";
-  for (let r; !(r = await reader.read()).done; ) {
+  for (let r; !(r = await reader.read()).done;) {
     stdout += decoder.decode(r.value, { stream: true });
     if (stdout.includes("GOT1")) break;
   }
   proc.stdin.write("two");
   await proc.stdin.end();
-  for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({

@@ -444,4 +444,92 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  describe("bun test", () => {
+    const file = (name: string) => `
+      import { test } from "bun:test";
+      function ${name}(n) {
+        return n <= 1 ? n : ${name}(n - 1) + ${name}(n - 2);
+      }
+      test("${name}", () => {
+        const now = performance.now();
+        while (now + 100 > performance.now()) Bun.inspect(${name}(20));
+      });`;
+    const files = { "a.test.js": file("inFileA"), "b.test.js": file("inFileB") };
+    const functionNames = (dir: string, profile: string) =>
+      JSON.parse(readFileSync(join(dir, profile), "utf-8")).nodes.map((node: any) => node.callFrame.functionName);
+
+    // One process runs both files, and with --isolate each in its own global.
+    test.each([[[]], [["--isolate"]], [["--parallel=1"]]])("one profile of the whole run %j", async flags => {
+      using dir = tempDir("cpu-prof-test", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--cpu-prof", ...flags],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      const profiles = readdirSync(String(dir)).filter(name => name.endsWith(".cpuprofile"));
+      expect(profiles).toHaveLength(1);
+      expect(functionNames(String(dir), profiles[0])).toContain("inFileA");
+      expect(functionNames(String(dir), profiles[0])).toContain("inFileB");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--parallel: one profile for each worker, and none for the process that only hands out files", async () => {
+      using dir = tempDir("cpu-prof-test", files);
+      await using proc = Bun.spawn({
+        // 0: both workers start at once, so each gets a file.
+        cmd: [
+          bunExe(),
+          "test",
+          "--cpu-prof",
+          "--cpu-prof-md",
+          "--cpu-prof-dir=profiles",
+          "--parallel=2",
+          "--parallel-delay=0",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      const written = readdirSync(join(String(dir), "profiles"));
+      const profiles = written.filter(name => name.endsWith(".cpuprofile"));
+      expect(profiles).toHaveLength(2);
+      expect(written.filter(name => name.endsWith(".md"))).toHaveLength(2);
+      const names = profiles.flatMap(profile => functionNames(join(String(dir), "profiles"), profile));
+      expect(names).toContain("inFileA");
+      expect(names).toContain("inFileB");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // "%80" decodes to a byte that isn't valid UTF-8. Windows decodes it to U+FFFD.
+  test.skipIf(isWindows)("--cpu-prof-md prints a source's URL when the URL can't be converted to a path", async () => {
+    using dir = tempDir("cpu-prof-md-source-url", {
+      "test.js": `
+        const loop = require("node:vm").runInThisContext(
+          "(function loop() { const end = Date.now() + 300; let x = 0; while (Date.now() < end) { for (let i = 0; i < 1e4; i++) x += Math.sqrt(i); } return x; })",
+          { filename: "file:///%80.js" },
+        );
+        loop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof-md", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+    const mdFiles = readdirSync(String(dir)).filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+    expect({ exitCode, profiles: mdFiles.length }).toEqual({ exitCode: 0, profiles: 1 });
+    expect(readFileSync(join(String(dir), mdFiles[0]), "utf-8")).toContain("| `loop` | `file:///%80.js");
+  });
 });

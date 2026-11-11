@@ -1,0 +1,99 @@
+// On Windows process.env is a Proxy that Bun's own code makes (windowsEnv in src/js/builtins/ProcessObjectInternals.ts), so there
+// the compiler follows a proxy where other systems have an object of the host. What a program does to process.env is no use of
+// every built-in on any of them.
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { sayGoal } from "./harness/goals";
+import { test } from "./supported";
+
+const closed = {
+  "the descriptor of process": `console.log(typeof Object.getOwnPropertyDescriptor(globalThis, "process").value.report);`,
+  "a read": `console.log(process.env.HOME);`,
+  "a delete": `delete process.env.A; console.log(process.env.A);`,
+  "in and Object.keys": `console.log("A" in process.env, Object.keys(process.env).length > 0);`,
+  "Object.entries": `console.log(Object.entries(process.env).length > 0);`,
+  "for-in": `for (const name in process.env) console.log(name);`,
+  "Object.getOwnPropertyDescriptor": `console.log(Object.getOwnPropertyDescriptor(process.env, "A"));`,
+  "Object.hasOwn": `console.log(Object.hasOwn(process.env, "A"));`,
+  // The trap `set` hands its receiver to Reflect.set, which asks the receiver by the traps getOwnPropertyDescriptor and defineProperty.
+  "a store": `process.env.A = "b"; console.log(process.env.A);`,
+  "a store where nothing is": `process.env.A ??= "b"; console.log(process.env.A);`,
+  "Object.defineProperty": `Object.defineProperty(process.env, "A", { value: "b", writable: true, enumerable: true, configurable: true }); console.log(process.env.A);`,
+  "JSON.stringify": `console.log(JSON.stringify(process.env).length > 2);`,
+  "a method that every object inherits": `console.log(process.env.hasOwnProperty("A") === true);`,
+};
+// A copy, and a name of the command line, may hold or name whatever lies on Object.prototype and Function.prototype.
+const handsOutWhatEveryObjectHas = {
+  "a spread": `console.log({ ...process.env }.A);`,
+  "a spread with a name beside it": `const env = { ...process.env, A: "b" }; console.log(env.A);`,
+  "Object.assign": `console.log(Object.assign({}, process.env).A);`,
+  "a read under a name of the command line": `console.log(process.env[process.argv[2] ?? "A"]);`,
+  "a store under a name of the command line": `const name = process.argv[2] ?? "A"; process.env[name] = "b"; console.log(process.env[name]);`,
+};
+// TODO: windowsEnv lays a printer under Bun.inspect.custom on the target, and the formatter hands such a printer util.inspect.
+const openOnWindows = {
+  "console.log": `console.log(process.env);`,
+};
+
+async function escaped(text: string, sayHowMany?: (names: number) => void) {
+  using dir = tempDir("aot-process-env", { "main.js": text });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = (stdout + stderr).split("\n");
+  const all = lines.flatMap(line => /trim: uses (.*) \(escapes, so any member may be used\)$/.exec(line)?.[1] ?? []);
+  // On Windows the trap defineProperty throws errors with a code of Node's. Native code makes them, of any class of errors.
+  const names = all.filter(name => !name.endsWith("Error.prototype") && name !== "Function.prototype");
+  sayHowMany?.(names.length);
+  expect(lines).toContain("aot: trim: the compiler can see every API this program uses");
+  return names;
+}
+
+// `console` escapes wherever a program prints, and a listing hands out one object more.
+const few = 2;
+
+// Not met yet: what the compiler says of these today. Such a case runs every time and turns red the day it is met: then it goes out of this list.
+const notMetYet: Record<string, string> = isWindows
+  ? Object.fromEntries(
+      Object.keys({ ...closed, ...handsOutWhatEveryObjectHas }).map(what => [
+        what,
+        "on Windows about 3,650 names escape",
+      ]),
+    )
+  : {
+      "the descriptor of process": "the compiler does not see every API that the program uses, and 4,643 names escape",
+      "Object.assign": "3,684 names escape",
+      "a read under a name of the command line": "1,025 names escape",
+      "a store under a name of the command line": "3,684 names escape",
+    };
+const testOf = (what: string) => (what in notMetYet ? test.failing : test.concurrent);
+const sayingOf = (what: string, goal: string, bound: number) =>
+  what in notMetYet ? (names: number) => sayGoal(`${what} ${goal}`, names, bound) : undefined;
+const titleOf = (what: string, goal: string, bound: number) =>
+  what in notMetYet ? `${what} ${goal} (not met yet: ${notMetYet[what]}, the bound is ${bound})` : `${what} ${goal}`;
+
+for (const [what, text] of Object.entries(closed))
+  testOf(what)(titleOf(what, "lets nothing more escape", few), async () => {
+    const names = await escaped(text, sayingOf(what, "lets nothing more escape", few));
+    expect(names).not.toContain("globalThis");
+    expect(names.length).toBeLessThanOrEqual(few);
+  });
+
+for (const [what, text] of Object.entries(handsOutWhatEveryObjectHas))
+  testOf(what)(titleOf(what, "lets no more escape than every object has", 20), async () => {
+    const names = await escaped(text, sayingOf(what, "lets no more escape than every object has", 20));
+    expect(names).not.toContain("globalThis");
+    expect(names.length).toBeLessThanOrEqual(20);
+  });
+
+for (const [what, text] of Object.entries(openOnWindows))
+  (isWindows ? test.todo : test.concurrent)(`${what} lets nothing more escape`, async () => {
+    const names = await escaped(text);
+    expect(names).not.toContain("globalThis");
+    expect(names.length).toBeLessThanOrEqual(few);
+  });

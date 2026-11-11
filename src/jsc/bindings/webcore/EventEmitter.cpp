@@ -24,21 +24,16 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-
-    if (prepend) {
-        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
-            return false;
-    } else {
-        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), once))
-            return false;
-    }
+    if (prepend)
+        ensureEventEmitterData().eventListenerMap.prepend(eventType, WTF::move(listener), once);
+    else
+        ensureEventEmitterData().eventListenerMap.add(eventType, WTF::move(listener), once);
 
     eventListenersDidChange();
     if (this->onDidChangeListener)
         this->onDidChangeListener(*this, eventType, true);
-    return true;
 }
 
 void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
@@ -64,6 +59,22 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
         return false;
 
     if (data->eventListenerMap.remove(eventType, listener)) {
+        eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
+        return true;
+    }
+    return false;
+}
+
+bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    if (data->eventListenerMap.remove(eventType, registration)) {
         eventListenersDidChange();
 
         if (this->onDidChangeListener)
@@ -243,7 +254,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeListener(eventType, callback);
+            removeListener(eventType, *registeredListener);
 
         if (!jsFunction) [[unlikely]]
             continue;

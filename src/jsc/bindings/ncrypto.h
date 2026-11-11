@@ -321,6 +321,7 @@ public:
     struct CipherParams {
         int padding;
         Digest digest;
+        Digest mgf1_digest;
         const Buffer<const void> label;
     };
 
@@ -401,6 +402,8 @@ public:
 
     const PublicKey getPublicKey() const;
     const PrivateKey getPrivateKey() const;
+    // Check that n is the product of all private-key prime factors.
+    bool checkPrimeProduct() const;
     const std::optional<PssParams> getPssParams() const;
 
     bool setPublicKey(BignumPointer&& n, BignumPointer&& e);
@@ -419,7 +422,7 @@ private:
 
 class Ec final {
 public:
-    static int GetCurveIdFromName(const char* name);
+    static int GetCurveIdFromName(WTF::StringView name);
 };
 
 // A managed pointer to a buffer of data. When destroyed the underlying
@@ -673,6 +676,7 @@ public:
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
+    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);
@@ -813,6 +817,8 @@ public:
 
     int id() const;
     int base_id() const;
+    bool hasSmallOrderEdDsaPoint(
+        const Buffer<const unsigned char>& signature) const;
     size_t size() const;
 
     size_t rawPublicKeySize() const;
@@ -897,14 +903,9 @@ public:
 
     enum class CheckPublicKeyResult {
         NONE,
-#ifndef OPENSSL_IS_BORINGSSL
-        // Boringssl does not define DH_R_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
-        TOO_SMALL = DH_R_CHECK_PUBKEY_TOO_SMALL,
-        TOO_LARGE = DH_R_CHECK_PUBKEY_TOO_LARGE,
-        INVALID = DH_R_CHECK_PUBKEY_INVALID,
-#else
-        INVALID = DH_R_INVALID_PUBKEY,
-#endif
+        TOO_SMALL,
+        TOO_LARGE,
+        INVALID,
         CHECK_FAILED = 512,
     };
     // Check to see if the given public key is suitable for this DH instance.
@@ -958,6 +959,8 @@ public:
     BIOPointer getValidTo() const;
     std::optional<std::string_view> getSignatureAlgorithm() const;
     std::optional<std::string> getSignatureAlgorithmOID() const;
+    std::optional<int64_t> getValidFromTime() const;
+    std::optional<int64_t> getValidToTime() const;
     DataPointer getSerialNumber() const;
     Result<EVPKeyPointer, int> getPublicKey() const;
     StackOfASN1 getKeyUsage() const;
@@ -988,7 +991,7 @@ public:
     };
     CheckMatch checkHost(const std::span<const char> host,
         int flags,
-        DataPointer* peerName = nullptr) const;
+        WTF::String* peerName = nullptr) const;
     CheckMatch checkEmail(const std::span<const char> email, int flags) const;
     CheckMatch checkIp(const char* ip, int flags) const;
 
@@ -1258,6 +1261,14 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 
 const EVP_MD* getDigestByName(const WTF::StringView name);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
+
+// Not upstream.
+struct DigestName {
+    WTF::ASCIILiteral name;
+    const EVP_MD* (*digest)();
+};
+// The names in getHashes(). getDigestByName() looks through them first.
+std::span<const DigestName> getDigestNames();
 
 // Verify that the specified HKDF output length is valid for the given digest.
 // The maximum length for HKDF output for a given digest is 255 times the

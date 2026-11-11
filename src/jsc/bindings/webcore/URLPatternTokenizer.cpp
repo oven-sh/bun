@@ -28,6 +28,7 @@
 
 #include "ExceptionOr.h"
 #include "URLPatternParser.h"
+#include "VectorSizeLimit.h"
 #include <unicode/utf16.h>
 #include <wtf/text/MakeString.h>
 
@@ -69,8 +70,10 @@ void Tokenizer::seekNextCodePoint(size_t index)
 // https://urlpattern.spec.whatwg.org/#add-a-token
 void Tokenizer::addToken(TokenType currentType, size_t nextPosition, size_t valuePosition, size_t valueLength)
 {
-    m_tokenList.append(Token { currentType, m_index, m_input.substring(valuePosition, valueLength) });
-    m_index = nextPosition;
+    if (m_tokenList.size() >= Bun::maxVectorSize<Token>() || !m_tokenList.tryAppend(Token { currentType, m_index, m_input.substring(valuePosition, valueLength) }))
+        m_tokenAppendFailure = true;
+    else
+        m_index = nextPosition;
 }
 
 // https://urlpattern.spec.whatwg.org/#add-a-token-with-default-length
@@ -109,7 +112,7 @@ ExceptionOr<Vector<Token>> Tokenizer::tokenize()
 {
     ExceptionOr<void> maybeException;
 
-    while (m_index < m_input.length()) {
+    while (m_index < m_input.length() && !m_tokenAppendFailure) {
         if (m_policy == TokenizePolicy::Strict && maybeException.hasException())
             return maybeException.releaseException();
 
@@ -266,6 +269,10 @@ ExceptionOr<Vector<Token>> Tokenizer::tokenize()
     }
 
     addToken(TokenType::End, m_index, m_index);
+
+    if (m_tokenAppendFailure)
+        return Exception { ExceptionCode::TypeError, "URLPattern constructor: Failed to create URLPattern (from input string)"_s };
+
     return WTF::move(m_tokenList);
 }
 

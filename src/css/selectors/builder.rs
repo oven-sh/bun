@@ -99,6 +99,10 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         self.current_len += 1;
     }
 
+    pub(crate) fn last_simple_selector(&self) -> Option<&GenericComponent<Impl>> {
+        self.simple_selectors.last()
+    }
+
     pub(crate) fn add_nesting_prefix(&mut self) {
         self.combinators.insert(0, (Combinator::Descendant, 1));
         self.simple_selectors.insert(0, GenericComponent::Nesting);

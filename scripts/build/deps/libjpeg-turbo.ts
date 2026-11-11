@@ -90,7 +90,16 @@ export const libjpegTurbo: Dependency = {
     commit: LIBJPEG_TURBO_COMMIT,
   }),
 
-  patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
+  // fatal-clears-warning.patch: after tj3DecompressHeader() and tj3Decompress8(),
+  // TurboJPEG's warning flag stays set only for a call that ran to completion.
+  // codec_jpeg.rs commits the decoded rows on that signal. It reads the flag
+  // through tj3BunCompletedWithWarning(), which the patch adds, so the link
+  // fails without the patch.
+  patches: [
+    "patches/libjpeg-turbo/8bit-only.patch",
+    "patches/libjpeg-turbo/fatal-clears-warning.patch",
+    "patches/libjpeg-turbo/jbun_stubs.c",
+  ],
 
   build: cfg => {
     const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];

@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+f(function (
+  // a
+) {}, b);
+f(function (/* a */) {}, b);
+f(function () {} /* a */, b);
+f(
+  function () {}, // a
+  b,
+);
+f(/* a */ function () {}, b);
+const a = useCallback((b) /* a */ => {
+  c;
+}, []);
+!(function () {})(/* a */);
+!(function () {})(
+  // a
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+f(function (
+  // a
+) {}, b);
+f(function (/* a */) {}, b);
+f(function () {} /* a */, b);
+f(
+  function () {}, // a
+  b,
+);
+f(/* a */ function () {}, b);
+const a = useCallback((b) /* a */ => {
+  c;
+}, []);
+!(function () {})(/* a */);
+!(function () {})(
+  // a
+);
+
+===================== End =====================

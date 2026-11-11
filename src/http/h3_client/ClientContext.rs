@@ -16,6 +16,7 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
@@ -70,15 +71,16 @@ impl ClientContext {
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub(crate) fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get_or_create() -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);
-        // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
+        // SAFETY: HTTP-thread only, where `on_start` has set `uws_loop` to the
+        // thread's live `us_loop_t`.
         let qctx = unsafe {
             quic::Context::create_client(
-                loop_.as_ptr(),
+                crate::http_thread().uws_loop(),
                 0,
                 core::mem::size_of::<*mut ClientSession>() as c_uint,
                 core::mem::size_of::<*mut Stream>() as c_uint,
@@ -232,7 +234,7 @@ impl ClientContext {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -240,7 +242,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, ended) {
+            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
                 return;
             }
         }

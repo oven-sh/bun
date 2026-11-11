@@ -1,0 +1,14 @@
+import "./untouched.mjs";
+export let definedAsItIs = 1;
+export let definedAnew = 1;
+export let definedReadOnly = 1;
+export let askedToDefineAsItIs = 1;
+export let askedToDefineAnew = 1;
+export let askedToSet = 1;
+export let askedToDelete = 1;
+export let storedByStrictCode = 1;
+export let storedBySloppyCode = 1;
+export let deletedByStrictCode = 1;
+export let deletedBySloppyCode = 1;
+export let described = 1;
+export let lookedFor = 1;

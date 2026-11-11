@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function cacheOf(size: any): any { const made = new Array(size).fill(Symbol.for("empty")); return JSON.parse("1") ? made : size; }
+# function read(seen: any, name: any): any {
+#   const cells = cacheOf(seen) as any[];
+#   let made: any;
+#   if (cells[0] !== name) { made = name + cells.length; cells[0] = name; cells[1] = made; } else made = cells[1];
+#   return made;
+# }
+# print(read(2, "a"), read(3, "b"), read(JSON.parse("4"), JSON.parse('"c"')));
+# -- end of source
+# The stub of an element under a constant index takes the index as an integer, so the site needs no boxed number of ten bytes.
+# RUN(BYTES): bytes f2 mechanisms=all-Inlining
+# BYTES: relocation {{*}} Call Stub GetByValAtConstantIndex
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: a2 b3 c4

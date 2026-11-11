@@ -19,7 +19,7 @@ namespace Bun {
 using namespace JSC;
 using namespace ncrypto;
 
-int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
+int pqcKeyTypeToNid(const WTF::StringView& name)
 {
     static constexpr std::pair<ASCIILiteral, int> table[] = {
         { "ml-dsa-44"_s, EVP_PKEY_ML_DSA_44 },
@@ -29,7 +29,7 @@ int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
         { "ml-kem-1024"_s, EVP_PKEY_ML_KEM_1024 },
     };
     for (const auto& [candidate, nid] : table) {
-        if (ignoreCase ? WTF::equalIgnoringASCIICase(name, candidate) : name == candidate)
+        if (name == candidate)
             return nid;
     }
     return 0;
@@ -84,17 +84,20 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid)
 namespace ExternZigHash {
 struct Hasher;
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
+extern "C" Hasher* Bun__CryptoHasherExtern__getByName(const char* name, size_t nameLen);
+Hasher* getByName(const StringView& name)
 {
-    auto utf8 = name.utf8();
-    return Bun__CryptoHasherExtern__getByName(globalObject, utf8.data(), utf8.length());
+    auto utf8 = name.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return nullptr;
+    auto bytes = byteCast<char>(utf8->span());
+    return Bun__CryptoHasherExtern__getByName(bytes.data(), bytes.size());
 }
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher)
+extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Hasher* hasher);
+Hasher* getFromOther(Hasher* hasher)
 {
-    return Bun__CryptoHasherExtern__getFromOther(globalObject, hasher);
+    return Bun__CryptoHasherExtern__getFromOther(hasher);
 }
 
 extern "C" void Bun__CryptoHasherExtern__destroy(Hasher* hasher);
@@ -109,10 +112,10 @@ bool update(Hasher* hasher, std::span<const uint8_t> data)
     return Bun__CryptoHasherExtern__update(hasher, data.data(), data.size());
 }
 
-extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, Zig::GlobalObject* globalObject, uint8_t* out, size_t outLen);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out)
+extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, uint8_t* out, size_t outLen);
+uint32_t digest(Hasher* hasher, std::span<uint8_t> out)
 {
-    return Bun__CryptoHasherExtern__digest(hasher, globalObject, out.data(), out.size());
+    return Bun__CryptoHasherExtern__digest(hasher, out.data(), out.size());
 }
 
 extern "C" uint32_t Bun__CryptoHasherExtern__getDigestSize(Hasher* hasher);
@@ -196,7 +199,7 @@ JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
 WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
 {
     BufferEncodingType res = BufferEncodingType::buffer;
-    if (encodingValue.isUndefinedOrNull() || !encodingValue.isString()) {
+    if (!encodingValue.toBoolean(globalObject)) {
         return res;
     }
 
@@ -207,7 +210,13 @@ WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObjec
         return res;
     }
 
-    return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
+    auto encoding = parseEnumerationFromView<BufferEncodingType>(encodingString);
+    if (!encoding) {
+        ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+        return res;
+    }
+
+    return *encoding;
 }
 
 ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat)
@@ -312,8 +321,26 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Without a code from the caller, the oldest entry describes the error, like Node's CryptoErrorStore::ToException.
+    if (err == 0)
+        err = ERR_peek_error();
+
+    // Captures (and drains) the queue on construction.
     ncrypto::CryptoErrorList errorStack;
-    errorStack.capture();
+
+    if (errorStack.size() > 0) {
+        PutPropertySlot stackSlot(errorObject, false);
+        auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
+        RETURN_IF_EXCEPTION(scope, {});
+        // Most recent error first, like Node's CryptoErrorStore::Capture.
+        unsigned i = 0;
+        for (const WTF::String& error : errorStack) {
+            arr->putDirectIndex(globalObject, i++, jsString(vm, error));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // If there's an OpenSSL error code, decorate the error object with additional info
     if (err != 0) {
@@ -404,20 +431,6 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
         }
     }
 
-    // If there are multiple errors, add them to the error stack
-    if (errorStack.size() > 0) {
-        PutPropertySlot stackSlot(errorObject, false);
-        auto arr = JSC::constructEmptyArray(globalObject, nullptr, errorStack.size());
-        RETURN_IF_EXCEPTION(scope, {});
-        for (int32_t i = 0; i < errorStack.size(); i++) {
-            WTF::String error = errorStack.pop_back().value();
-            arr->putDirectIndex(globalObject, i, jsString(vm, error));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
     return errorObject;
 }
 
@@ -471,7 +484,7 @@ std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::Thr
 
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    if (!options.isObject() || options.asCell()->type() != JSC::JSType::FinalObjectType) {
+    if (!options.isObject() || options.isCallable()) {
         return DSASigEnc::DER;
     }
 
@@ -585,19 +598,34 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
 }
 
+// What Node's getArrayBufferOrView() makes Buffer.from() read a string with. Empty after throwing.
+std::optional<BufferEncodingType> getInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
+{
+    if (!encodingValue.isString()) {
+        return BufferEncodingType::utf8;
+    }
+
+    auto encodingView = asString(encodingValue)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (encodingView->isEmpty() || encodingView == "buffer"_s) {
+        return BufferEncodingType::utf8;
+    }
+
+    auto encoding = parseEnumerationFromView<BufferEncodingType>(encodingView);
+    if (!encoding) {
+        ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+    }
+    return encoding;
+}
+
 // maybe replace other getArrayBufferOrView
-GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly)
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue)
 {
     using Return = GCOwnedDataScope<std::span<const uint8_t>>;
 
     if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
         return { view, view->span() };
     }
-
-    if (arrayBufferViewOnly) {
-        ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
-        return { nullptr, {} };
-    };
 
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
         return { arrayBuffer, arrayBuffer->impl()->span() };
@@ -609,19 +637,10 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
         auto strView = str->view(globalObject);
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-        BufferEncodingType encoding = BufferEncodingType::utf8;
-        if (encodingValue.isString()) {
-            auto* encodingString = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
-            auto encodingView = encodingString->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+        auto encoding = getInputEncoding(globalObject, scope, encodingValue);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-            if (encodingView != "buffer"_s) {
-                encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-            }
-        }
-
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, encoding));
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, *encoding));
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(buffer)) {
@@ -639,19 +658,16 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto maybeEncoding = encodingValue.pureToBoolean() == TriState::True ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!maybeEncoding && !defaultBufferEncoding) {
-            ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
-            return {};
-        }
-
-        auto encoding = maybeEncoding.has_value() ? maybeEncoding.value() : BufferEncodingType::buffer;
-
-        if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
-            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
-            return {};
+        auto encoding = BufferEncodingType::utf8;
+        if (defaultBufferEncoding) {
+            if (encodingValue.isString()) {
+                encoding = WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue).value_or(BufferEncodingType::buffer);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        } else {
+            auto inputEncoding = getInputEncoding(globalObject, scope, encodingValue);
+            RETURN_IF_EXCEPTION(scope, {});
+            encoding = *inputEncoding;
         }
 
         auto dataView = dataString->view(globalObject);
@@ -675,9 +691,21 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return view;
     }
 
+    if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        RefPtr<JSC::ArrayBuffer> impl = arrayBuffer->impl();
+        if (impl->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+
+        auto* structure = globalObject->typedArrayStructure(JSC::TypeUint8, impl->isResizableOrGrowableShared());
+        size_t byteLength = impl->byteLength();
+        RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+    }
+
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     if (!view) {
-        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
+        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, value);
         return {};
     }
 
@@ -709,6 +737,16 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
     }
 
     return std::nullopt;
+}
+
+std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
+{
+    static_assert(WTF::isValidCapacityForVector<uint8_t>(INT32_MAX));
+    if (bytes.size() > INT32_MAX) [[unlikely]] {
+        throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, makeString(argName, " is too big"_s));
+        return std::nullopt;
+    }
+    return Vector<uint8_t>(bytes);
 }
 
 bool isStringOrBuffer(JSValue value)
@@ -918,6 +956,11 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!passphraseValue.isUndefined()) {
         JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
+        // BoringSSL's length parameter is an `int`.
+        if (passphraseView->byteLength() > INT_MAX) {
+            ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
+            return;
+        }
         config.passphrase = DataPointer::FromSpan(passphraseView->span());
     }
 
@@ -931,7 +974,7 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
                 RETURN_IF_EXCEPTION(scope, );
                 GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
-                config.cipher = getCipherByName(cipherView);
+                config.cipher = Cipher::FromName(cipherView);
                 if (config.cipher == nullptr) {
                     ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
                     return;

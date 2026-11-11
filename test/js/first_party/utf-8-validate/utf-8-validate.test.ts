@@ -5,3 +5,7 @@ test("utf-8-validate", () => {
   expect(isValidUTF8(Buffer.from("😀"))).toBeTrue();
   expect(isValidUTF8(Buffer.from([0xff]))).toBeFalse();
 });
+
+test("utf-8-validate is not a constructor", () => {
+  expect(() => Reflect.construct(isValidUTF8, [Buffer.from("x")])).toThrow(TypeError);
+});

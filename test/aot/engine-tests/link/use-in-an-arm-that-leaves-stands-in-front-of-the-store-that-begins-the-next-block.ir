@@ -1,0 +1,54 @@
+# A use in a block that not every way to a Return comes through counts at the END of the nearest block above it that every way does come through.
+# That end bore the number of the first operation of the next block in the stream. A store there counted as no later than the use, and Link took the variable for stored first: `typeof held` folded to the stored type.
+#   var held, early;  function peek() { return held }  function peekEarly() { return early }
+#   early = 1;  if (more()) { peek(); peekEarly(); throw 1 }  held = 1;  peek();
+#   g0: the arm reads it first: the block behind the branch BEGINS with the store.  g1: the block above the arm ENDS with the store: stored first.
+# LIBRARY: own
+# RUN: summary f0
+# CHECK: stores-first g0 at v7, g1 at v6
+# CHECK: uses-first f1 at the end in front of v7, f2 at the end in front of v7
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+# LINK-NEXT: variable g1 proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+
+variable g0 name="held" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="early" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="node:module" displayPath="node:module" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule body=f0
+module m1 path="main.js" displayPath="main.js" body=f3
+entry module=m1
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="more" [isFreeName]
+    v5 = Call v4 calleeName="more"
+    PutModuleVariable v0 variable=g1
+    Branch v5 -> taken b2(), notTaken b1()
+  b1():
+    PutModuleVariable v0 variable=g0
+    v8 = Call v1 calleeName="peek"
+    v9 = Undefined
+    Return v9
+  b2():
+    v10 = Call v1 calleeName="peek"
+    v11 = Call v2 calleeName="peekEarly"
+    Throw v0
+}
+function f1 name="peek" module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f2 name="peekEarly" module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}
+function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m0 referrer=m1 specifier="node:module"
+    v1 = Undefined
+    Return v1
+}

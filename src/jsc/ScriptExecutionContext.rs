@@ -209,6 +209,20 @@ impl ScriptExecutionContext {
                 .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
     }
 
+    /// As [`owns_nothing`](Self::owns_nothing), but for what only waits to be closed with the context.
+    pub(crate) fn owns_nothing_that_runs_script(&self) -> bool {
+        let mut handle = self.tail.get();
+        // SAFETY: a linked handle is live until it is unlinked.
+        while let Some(armed) = unsafe { handle.as_ref() } {
+            if !armed.only_waits_to_be_closed.get() {
+                return false;
+            }
+            handle = armed.prev.get();
+        }
+        self.socket_groups
+            .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
+    }
+
     /// The groups client sockets opened by a graph context's script join.
     pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
         self.socket_groups
@@ -290,6 +304,8 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
+    /// The owner never runs script by itself, like the sink of an idle `process.stdout`.
+    only_waits_to_be_closed: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -302,7 +318,12 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
+            only_waits_to_be_closed: core::cell::Cell::new(false),
         }
+    }
+
+    pub fn set_only_waits_to_be_closed(&self) {
+        self.only_waits_to_be_closed.set(true);
     }
 
     #[inline]
@@ -412,9 +433,15 @@ impl Drop for AbortHandle {
 /// [`arm_owner`](AbortHandle::arm_owner) / [`follow_owner`](AbortHandle::follow_owner)
 /// with the container-of recovery written once. Use [`impl_abort_handle_owner!`].
 pub trait AbortHandleOwner: Sized {
+    /// What keeps the owner alive while [`on_abort`](Self::on_abort) runs.
+    type KeepAlive;
+
     /// # Safety
     /// `this` is live.
     unsafe fn abort_handle(this: *mut Self) -> *mut AbortHandle;
+
+    /// SAFETY: `this` is live. Taken before anything else runs.
+    unsafe fn keep_alive(this: *mut Self) -> Self::KeepAlive;
 
     /// # Safety
     /// `handle` came from [`abort_handle`](Self::abort_handle) of a live `Self`.
@@ -430,7 +457,11 @@ pub trait AbortHandleOwner: Sized {
 impl AbortHandle {
     unsafe fn owner_aborted<O: AbortHandleOwner>(handle: *mut AbortHandle, cause: AbortCause) {
         // SAFETY: armed/followed through `*_owner::<O>`, so `handle` is `O`'s field.
-        unsafe { O::on_abort(O::from_abort_handle(handle), cause) }
+        unsafe {
+            let owner = O::from_abort_handle(handle);
+            let _keep_alive = O::keep_alive(owner);
+            O::on_abort(owner, cause)
+        }
     }
 
     /// Join `context` (JS thread): from here until the handle is disarmed,
@@ -459,8 +490,9 @@ impl AbortHandle {
 /// Generic owners: `impl_abort_handle_owner!([const N: bool] Owner<N>, field, ..)`.
 #[macro_export]
 macro_rules! impl_abort_handle_owner {
-    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
+    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
         impl<$($generics)*> $crate::script_execution_context::AbortHandleOwner for $Owner {
+            type KeepAlive = $KeepAlive;
             #[inline]
             unsafe fn abort_handle(
                 this: *mut Self,
@@ -468,6 +500,8 @@ macro_rules! impl_abort_handle_owner {
                 // SAFETY: caller contract — `this` is live.
                 unsafe { ::core::ptr::addr_of_mut!((*this).$field) }
             }
+            #[inline]
+            unsafe fn keep_alive($pinned: *mut Self) -> $KeepAlive $pin
             #[inline]
             unsafe fn from_abort_handle(
                 handle: *mut $crate::script_execution_context::AbortHandle,
@@ -482,6 +516,12 @@ macro_rules! impl_abort_handle_owner {
                 $body
             }
         }
+    };
+    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, |$this, $cause| $body);
+    };
+    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, |$this, $cause| $body);
     };
     ($Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
         $crate::impl_abort_handle_owner!([] $Owner, $field, |$this, $cause| $body);
@@ -505,31 +545,24 @@ unsafe extern "C" fn Bun__VirtualMachine__rootContext(
 
 /// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes
 /// `context` ([`ContextId::NONE`]: none). Returns the one to put back.
-///
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
+    vm: &crate::VirtualMachineRef,
     context: ContextId,
 ) -> ContextId {
-    // SAFETY: fn contract.
-    let vm = unsafe { &*vm };
     vm.entered_context
         .replace((context != ContextId::NONE).then_some(context))
         .unwrap_or(ContextId::NONE)
 }
 
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__ScriptExecutionContext__create(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__ScriptExecutionContext__create(
+    vm: &mut crate::VirtualMachineRef,
     dom_context: *mut core::ffi::c_void,
     identifier: u32,
 ) -> *mut ScriptExecutionContext {
-    // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context(dom_context, ContextId::from_raw(identifier)) }.as_ptr()
+    vm.create_graph_context(dom_context, ContextId::from_raw(identifier))
+        .as_ptr()
 }
 
 /// # Safety

@@ -18,7 +18,7 @@
  */
 
 import { spawn } from "bun";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 interface FlagInfo {
@@ -346,6 +346,24 @@ function parsePmSubcommands(helpText: string): Record<string, SubcommandInfo> {
             rm: {
               name: "rm",
               description: "clear the cache",
+            },
+            prune: {
+              name: "prune",
+              description: "remove the packages that are older than 30 days",
+              flags: [
+                {
+                  name: "max-age",
+                  description: "Remove cache entries older than this many days (default 30)",
+                  hasValue: true,
+                  valueType: "days",
+                  defaultValue: "30",
+                },
+                {
+                  name: "dry-run",
+                  description: "Print what would be removed without deleting anything",
+                  hasValue: false,
+                },
+              ],
             },
           };
         } else if (name === "pkg") {

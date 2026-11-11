@@ -942,7 +942,9 @@ static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
     heapProfiler.clearSnapshots();
 
     JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-    return builder.json();
+    WTF::String json = builder.json();
+    heapProfiler.clearSnapshots();
+    return json;
 }
 
 } // namespace Bun

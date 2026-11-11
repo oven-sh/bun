@@ -1,0 +1,17 @@
+# f2 = Grid.count
+# -- source: main.ts
+# class Grid { readonly cells: boolean[][] = []; constructor(readonly width: number) { for (let y = 0; y < 3; y++) { const row: boolean[] = []; for (let x = 0; x < 3; x++) row.push((x + y) % 2 === 0); this.cells.push(row); } }
+#   count(y: number): number { let n = 0; const row = this.cells[y % this.width]; if (row === undefined) return -1; for (let x = 0; x < 5; x += 0.5) if (row[x]) n++; return n; } }
+# const widths = JSON.parse("[3,2.5]") as number[];
+# const first = new Grid(widths[0]!), second = new Grid(widths[1]!);
+# print(first.count(1), first.count(5), second.count(1), second.count(3), second.count(7.5));
+# -- end of source
+# A branch on a checked boolean asks for false and for true. What is neither is checked behind that.
+# RUN: emit f2 mechanisms=all
+# REQUIRES: x86_64
+# CHECK-LABEL: unit f2:Body
+# CHECK: = Const64(6)
+# CHECK: = Const64(7)
+# CHECK: = Const64(-6)
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1 2 1 -1 2

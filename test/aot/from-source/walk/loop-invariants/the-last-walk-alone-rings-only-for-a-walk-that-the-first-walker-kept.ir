@@ -1,0 +1,49 @@
+# -- source: main.ts
+# let total = 5, last = 7.5, other = -1, at = 0, ends = 0, turn = 0, first = 99n;
+# let maybe: number | undefined;
+# const allBytes = new Uint8Array(40), allReals = new Float64Array(40), bits = new BigUint64Array(allReals.buffer), allMarks = new Uint8Array(64), allDivisors = new BigInt64Array(32), sink = new Float64Array(32);
+# let allWholes: number[] = [], allParts: number[] = [], allText = "";
+# function run(lo: number, hi: number, start: number, stop: number, upper: bigint): number { let t = start; let h = 7, big = first; const bytes = allBytes, reals = allReals, wholes = allWholes, parts = allParts, text = allText, marks = allMarks, divisors = allDivisors;
+#  for (let r = 0; r < 2; r++) {
+#   let i = lo;
+#   for (; i <= hi; i++) { if (i >= stop) return t; t = t + parts[i]; maybe = t; }
+#   at = i;
+#  }
+#   return t; }
+# const starts = "0 0.5 -0 3 NaN Infinity 4503599627370496 -4503599627370495 9007199254740992 1e300 -7 2147483647".split(" ").map(Number);
+# const said: string[] = [];
+# const say = (x: unknown): string => Object.is(x, -0) ? "-0" : String(x);
+# const state = (): (string | number | undefined)[] => [total, last, other, maybe, at, ends, sink[0], sink[7], sink[31]];
+# function makeList(hole: number, step: number): number[] { const list: number[] = []; for (let j = 0; j < 40; j++) list.push(j * step); if (hole >= 0) delete list[hole]; return list; }
+# function show(lo: number, hi: number, off: number): void {
+#   const start = starts[turn % starts.length], hole = [-1, 0, 7, 8, 31][turn % 5]; turn++;
+#   const stop = off < 0 ? Infinity : lo + off;
+#   allMarks.fill(3); allDivisors.fill(5n); first = off < 0 ? 99n : BigInt(off + 1);
+#   if (off >= 0) { for (let j = 0; j < 16; j++) allMarks[(stop + j) & 63] = 9; allDivisors[stop & 31] = 0n; }
+#   for (let j = 0; j < 40; j++) { allBytes[j] = j * 37; allReals[j] = j * 0.25; }
+#   if (turn % 5 === 4) bits[5] = 0xfffe000000000539n;
+#   allWholes = makeList(hole, 1); allParts = makeList(hole, 0.25);
+#   allText = turn % 3 === 2 ? "\u0416".repeat(40) : "x".repeat(20) + "yz".repeat(10);
+#   total = 5; last = 7.5; other = -1; maybe = undefined; at = 0; ends = 0; sink.fill(0);
+#   let result = "";
+#   try { result = say(run(lo, hi, start, stop, 1000n)); } catch (error) { result = (error as Error).name; }
+#   said.push(result + " " + state().map(x => say(x)).join(" "));
+# }
+# for (const len of [0, 9]) {
+#   const lo = 0;
+#   for (const off of [-1, 7]) if (off <= len) show(lo, lo + len, off);
+# }
+# for (const row of [] as string[]) for (const off of [-1,0,1,7,8,9,16]) {
+#   if (row === "0 Infinity" && off < 0) continue;
+#   const [lo, hi] = row.split(" ").map(Number);
+#   show(lo, hi, off);
+# }
+#
+# print(said.join("\n"));
+# -- end of source
+# OPTIONS: check=ReplayFinalLoopVisits
+# RUN(RIGHT): run-in-shell
+# RIGHT: 0 5 7.5 -1 0 1 0 0 0 0
+# RIGHT-NEXT: NaN 5 7.5 -1 NaN 10 0 0 0 0
+# RIGHT-NEXT: 5.25 5 7.5 -1 5.25 0 0 0 0 0
+# RIGHT-NEXT: exited with 0

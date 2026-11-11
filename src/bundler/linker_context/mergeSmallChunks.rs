@@ -4,7 +4,7 @@ use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
 use crate::linker_context_mod::debug;
-use crate::options::Target;
+use crate::options::{Loader, Target};
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
 
 bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
@@ -14,7 +14,7 @@ bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
 /// that do nothing at the top level but must survive for other reasons:
 /// `export * from` / `export {} from` (the re-exports are tracked separately),
 /// the linker's empty entry-point part, and a text loader's `export default "…"`.
-fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
+pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
     use bun_ast::StmtData;
     part.can_be_removed_if_unused
         || part.stmts.slice().iter().all(|stmt| match &stmt.data {
@@ -993,9 +993,15 @@ pub(crate) fn merge_small_chunks(
     // "exports-only"`). Chunks loaded together with it still fold into each
     // other. `--compile` leaves the chunks of user entry points alone too.
     let export_aliases = this.graph.meta.items_sorted_and_filtered_export_aliases();
+    let loaders = this.parse_graph().input_files.items_loader();
+    // The host can load such a file as `entry.js?v=1`; an `import "./entry.js"` in a chunk would then run it a second time.
+    let host_names_url = |source_index: usize| {
+        !this.options.entry_naming_has_hash && loaders[source_index] != Loader::Html
+    };
     let pin_entry_chunk = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;
-        (this.options.compile_mode.is_executable() && !is_dynamic_entry(entry_id))
+        (!is_dynamic_entry(entry_id)
+            && (this.options.compile_mode.is_executable() || host_names_url(source_index)))
             || flags[source_index].wrap == WrapKind::Cjs
             || flags[source_index].needs_synthetic_default_export
             || !export_aliases[source_index].is_empty()

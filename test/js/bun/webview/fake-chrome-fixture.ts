@@ -34,6 +34,21 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
+// `--malformed=<kind>` omits or corrupts a field that real Chrome always sends. One kind per run:
+//   attach-no-session-id   Target.attachToTarget replies with {}
+//   attach-bad-utf8        ... replies with a sessionId that isn't valid UTF-8
+//   attach-non-ascii       ... replies with a sessionId that's valid UTF-8 but not ASCII
+//   click-no-value         the click(selector) check replies without result.value
+//   click-huge-value       ... replies with a position too large for a double (1e999)
+//   detach-no-session-id   Target.detachedFromTarget arrives with params {}
+//   event-bad-utf8         a page event arrives with an invalid UTF-8 sessionId
+//   navigate-bad-utf8      Page.navigate replies with an errorText that isn't valid UTF-8
+const malformed = process.argv.find(a => a.startsWith("--malformed="))?.slice("--malformed=".length);
+
+// Placeholder that sendWithInvalidUtf8() corrupts after encoding, since
+// JSON.stringify can't emit invalid UTF-8.
+const BAD_UTF8 = "not-utf8";
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
@@ -56,12 +71,29 @@ Object.assign(globalThis, {
     closeSync(COMMANDS);
     setInterval(() => {}, 2 ** 30);
   },
+  // Returns every Input.dispatchMouseEvent this process has received, in order.
+  __fake_mouse_events() {
+    return mouseEvents;
+  },
 });
 
-function send(message: unknown) {
-  const bytes = Buffer.from(JSON.stringify(message) + "\0");
+const mouseEvents: { type: string; x: number; y: number }[] = [];
+
+function sendBytes(bytes: Buffer) {
   let written = 0;
   while (written < bytes.length) written += writeSync(REPLIES, bytes, written, bytes.length - written);
+}
+
+function send(message: unknown) {
+  sendBytes(Buffer.from(JSON.stringify(message) + "\0"));
+}
+
+// Sends the message with BAD_UTF8's first byte overwritten by 0xff, which is
+// never a valid UTF-8 byte.
+function sendWithInvalidUtf8(message: unknown) {
+  const bytes = Buffer.from(JSON.stringify(message) + "\0");
+  bytes[bytes.indexOf(BAD_UTF8)] = 0xff;
+  sendBytes(bytes);
 }
 
 let targets = 0;
@@ -81,21 +113,47 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Target.createTarget":
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
+      if (malformed === "attach-no-session-id") return reply({});
+      if (malformed === "attach-bad-utf8") return sendWithInvalidUtf8({ id, result: { sessionId: BAD_UTF8 } });
+      if (malformed === "attach-non-ascii") return reply({ sessionId: "S\u0100" });
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
+      if (malformed === "navigate-bad-utf8") {
+        return sendWithInvalidUtf8({ id, result: { frameId: "F", errorText: BAD_UTF8 }, sessionId });
+      }
       const loaderId = "L" + ++loads;
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
       event("Page.loadEventFired", { timestamp: loads });
+      // Send one stray event per load, with a missing or unusable sessionId.
+      if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
+      if (malformed === "event-bad-utf8") {
+        sendWithInvalidUtf8({ method: "Page.loadEventFired", params: {}, sessionId: BAD_UTF8 });
+      }
       return;
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
+    case "Input.dispatchMouseEvent":
+      mouseEvents.push({ type: params.type, x: params.x, y: params.y });
+      return reply({});
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
         if (noTitleReply) return;
         return reply({ result: { type: "string", value: "fake chrome" } });
+      }
+      // This is the click(selector) actionability check. It needs a DOM, so
+      // reply with a fixed [cx, cy] instead of running it.
+      if (params.expression.includes("elementFromPoint")) {
+        if (malformed === "click-no-value") return reply({ result: { type: "undefined" } });
+        // JSON.stringify encodes 1e999 (Infinity) as null, so splice the
+        // literal in by hand.
+        if (malformed === "click-huge-value") {
+          const frame = JSON.stringify({ id, result: { result: { type: "object", value: "HUGE" } }, sessionId });
+          return sendBytes(Buffer.from(frame.replace('"HUGE"', "[1e999,0]") + "\0"));
+        }
+        return reply({ result: { type: "object", value: [12, 34] } });
       }
       let value: unknown;
       try {

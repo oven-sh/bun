@@ -1,0 +1,11 @@
+import { test, vi, jest } from "bun:test";
+import "./resetter.js";
+import { sees } from "./late.js";
+void sees;
+test("asks again", async () => {
+  const said = [];
+  { const m = await import("./counter.js"); said.push("counter", m.run, m.sees || "-"); }
+  { const m = await import("./late.js"); said.push("late", m.run, m.sees || "-"); }
+  { const m = await import("./resetter.js"); said.push("resetter", m.run, m.sees || "-"); }
+  console.log(said.join(" "), JSON.stringify(globalThis.runs));
+});

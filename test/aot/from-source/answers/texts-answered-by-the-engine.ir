@@ -1,0 +1,56 @@
+# made of 9d315705e5f9d4c9
+# a method of strings on written operands whose answer no operand spells is asked of the engine in the realm of the build: a change of case, a padding, a repetition
+# what throws, what is handed a RegExp, and what may be longer than a text that folding makes, is left to the run
+# f1 = upper, f3 = padded, f6 = repeated, f12 = tooLong, f13 = grown, f14 = tell
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = String string=made "ABC"
+# RUN(PADDED): walk f3 mechanisms=all
+# PADDED-LABEL: code f3:Body
+# PADDED: = String string=made "007"
+# RUN(REPEATED): walk f6 mechanisms=all
+# REPEATED-LABEL: code f6:Body
+# REPEATED: = String string=made "ababab"
+# 140,000 characters: the count says so before anything is made
+# RUN(LONG): walk f12 mechanisms=all
+# LONG-NOT: string=made
+# some 300 characters, each replaced by what stands in front of it: some 45,000 in truth, which a fold may make, and some 180,000 by the bound that is asked before anything is made
+# RUN(GROWN): walk f13 mechanisms=all
+# GROWN-NOT: string=made
+# -- source: texts-answered-by-the-engine.ts
+# declare function report(value: unknown): void;
+# function upper() { return "abc".toUpperCase(); }
+# function lower() { return "ABC def".toLowerCase(); }
+# function padded() { return "7".padStart(3, "0"); }
+# function paddedBehind() { return "ab".padEnd(5, "xy"); }
+# function paddedWithNumber() { return "7".padStart(3, 0 as any); }
+# function repeated() { return "ab".repeat(3); }
+# function replaced() { return "a-b-c".replace(/-/g, "_"); }
+# function replacedOnce() { return "a-b-c".replace("-", "+"); }
+# function swapped() { return "a-b".replace(/(\w)-(\w)/, "$2-$1"); }
+# function searched() { return "a-b-c".search(/-/); }
+# function refused() { return "ab".repeat(-1); }
+# function tooLong() { return "ab".repeat(70000).length; }
+# function grown() { return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".replaceAll("a", "$`"); }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# tell(upper);
+# tell(lower);
+# tell(padded);
+# tell(paddedBehind);
+# tell(paddedWithNumber);
+# tell(repeated);
+# tell(replaced);
+# tell(replacedOnce);
+# tell(swapped);
+# tell(searched);
+# tell(refused);
+# tell(tooLong);
+# tell(grown);
+# tell(upper);
+# tell(replaced);
+# report("end");
+# -- end of source
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function upper() { return "abc".toUpperCase(); } function lower() { return "ABC def".toLowerCase(); } function padded() { return "7".padStart(3, "0"); } function paddedBehind() { return "ab".padEnd(5, "xy"); } function paddedWithNumber() { return "7".padStart(3, 0); } function repeated() { return "ab".repeat(3); } function replaced() { return "a-b-c".replace(/-/g, "_"); } function replacedOnce() { return "a-b-c".replace("-", "+"); } function swapped() { return "a-b".replace(/(\w)-(\w)/, "$2-$1"); } function searched() { return "a-b-c".search(/-/); } function refused() { return "ab".repeat(-1); } function tooLong() { return "ab".repeat(70000).length; } function grown() { return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".replaceAll("a", "$`"); } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } tell(upper); tell(lower); tell(padded); tell(paddedBehind); tell(paddedWithNumber); tell(repeated); tell(replaced); tell(replacedOnce); tell(swapped); tell(searched); tell(refused); tell(tooLong); tell(grown); tell(upper); tell(replaced); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 16 of 16 of 16
+# CHECK-NEXT: exited with 0

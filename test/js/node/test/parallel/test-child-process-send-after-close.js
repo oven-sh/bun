@@ -13,7 +13,7 @@ child.on('close', common.mustCall((code, signal) => {
 
   const testError = common.expectsError({
     name: 'Error',
-    // message: 'Channel closed',
+    message: 'Channel closed',
     code: 'ERR_IPC_CHANNEL_CLOSED'
   }, 2);
 

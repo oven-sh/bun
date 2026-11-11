@@ -127,3 +127,4 @@ unsafe impl Allocator for DefaultAlloc {
 
 bridge_allocator_api2!(DefaultAlloc);
 bridge_allocator_api2!(crate::ast_alloc::AstAlloc);
+bridge_allocator_api2!(&crate::MimallocArena);

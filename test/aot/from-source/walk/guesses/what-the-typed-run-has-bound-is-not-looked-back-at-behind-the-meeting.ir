@@ -1,0 +1,27 @@
+# `const floor = kit.math.floor; noise(); return floor(2.5);`: the guess at `kit` opens at `kit.math`, and its stretch is the two reads. The typed run is walked last: it binds `kit.math` to a read of a slot that holds Math.
+# The body mentions `floor` behind the stretch, so the meeting binds it anew, to a parameter that says nothing. It never mentions `kit.math` again, so what the typed run has bound stood.
+# The call looked back through the read of `floor`, found an object proven to be Math, and was built as Math.floor, folded to 2, with no test of the callee. An element out of unseen code takes the other arm.
+# f2 = read
+# -- source: kit.ts
+# const unseen = (0, eval)("(x) => x");
+# class Kit { math = Math; }
+# const kits: Kit[] = [new Kit(), new Kit(), new Kit(), new Kit()];
+# kits.push(unseen({ math: { floor: () => -1 } }));
+# function noise(): number { return unseen(0); }
+# function read(i: number): number {
+#   const kit = kits[i & 7];
+#   const floor = kit.math.floor;
+#   noise();
+#   return floor(2.5);
+# }
+# const run = unseen(read);
+# let total = 0;
+# for (let r = 0; r < 300; r++) total += run(r % 4);
+# console.log(total, run(4));
+# -- end of source
+# RUN(MEET): walk f2 mechanisms=all
+# MEET-LABEL: code f2:Body
+# MEET: = ShapeTest
+# MEET: = Call {{*}}calleeName="floor"
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = Integer integer=2

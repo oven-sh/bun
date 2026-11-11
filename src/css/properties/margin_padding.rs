@@ -840,7 +840,7 @@ impl SizeHandlerImpl {
 
         match (top, bottom, left, right) {
             (Some(top), Some(bottom), Some(left), Some(right))
-                if spec.shorthand_category != PropertyCategory::Logical || logical_supported =>
+                if spec.shorthand != PropertyIdTag::Inset || logical_supported =>
             {
                 dest.push((spec.make_shorthand)(top, bottom, left, right));
             }

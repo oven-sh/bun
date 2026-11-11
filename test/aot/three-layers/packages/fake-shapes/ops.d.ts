@@ -1,0 +1,12 @@
+export function sumForIn(o: any): string; export function copyForIn(o: any): any; export function countOwn(o: any): number;
+export const withSuper: any; export function setParent<T>(child: T, parent: any): T;
+export function slotAccessors(seed: number): { plain: number; got: number; readonly only: string };
+export function addAccessors<T>(o: T, name: string): T; export function addMethods<T>(o: T): T & { added(): string; computed(): number };
+export function jsonOf(o: any): string; export function jsonOfAll(list: any[]): string; export function templateOf(o: any): string;
+export function putPair(a: any, b: any, v: any): number; export function getPair(a: any, b: any): any; export function hasPair(key: string): boolean;
+export function passArguments(...args: any[]): IArguments; export function readArguments(a: any): unknown[]; export function sloppyArguments(a?: any, b?: any, ...rest: any[]): unknown[];
+export function applyTo(f: any, self: any, list: any): any; export function constructFrom(C: any, list: any[]): any;
+export function nameIt(key: PropertyKey, f: any): any; export function anonymous(): any[];
+export function startsWithPkg(s: string): unknown[]; export const constant: string; export function evalIn(text: string): any;
+export function add(a: any, b: any): any; export function less(a: any, b: any): boolean[]; export function negate(a: any): unknown[];
+export function libraryOfPackage(name: string): any; export function libraryByName(name: string): any;

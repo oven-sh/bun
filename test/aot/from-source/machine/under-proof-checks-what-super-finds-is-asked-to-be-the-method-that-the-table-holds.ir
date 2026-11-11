@@ -1,0 +1,33 @@
+# super.price(..) is called directly after two guards: one on the prototype link of the home class, and one on the method's name on the prototype object of the superclass.
+# Fault injection, testing=SkipSuperMethodGuard: the guard on the name is not built.
+# The method that the class records name is called even though another function has been stored over it.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime), the super base and the read through it are also built as written, after the guards.
+# Their result is checked to be the closure that the table holds. If it is not, the process crashes with a named error.
+# RUN(GUARDED): walk f4:Body mechanisms=all
+# GUARDED: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged {{*}}
+# GUARDED: = AreMembersUnchanged conditions=[{layout={{*}} key="price"}]
+# RUN(CHECKED): walk f4:Body mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: = SuperGet
+# CHECKED: = StrictEq
+# CHECKED: CheckProof {{*}}source=RememberedFact
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 7 7 101
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=SkipSuperMethodGuard
+# WRONG: 7 7 7
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipSuperMethodGuard,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed
+# HELD-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Ware { worth: number; constructor(worth: number) { this.worth = worth; } price(rate: number): number { return this.worth * rate; } }
+# class Boxed extends Ware { price(rate: number): number { return super.price(rate) + 1; } }
+# const thing: Ware = new Boxed(id(4));
+# const first = thing.price(1.5);
+# const second = thing.price(1.5);
+# (Ware.prototype as any)[id("price")] = function () { return 100; };
+# print(first, second, thing.price(1.5));
+# -- end of source

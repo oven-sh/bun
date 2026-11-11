@@ -1,0 +1,22 @@
+# -- source: main.ts
+# function count(view: Int32Array, record: { from: number }, bound: number) {
+#   let turns = 0, kept = 0, read = 0;
+#   let i = record.from;
+#   while (i < bound) {
+#     if (++turns) i += 2;
+#     read = view[i & 7];
+#     kept = (kept + 0) | 0;
+#   }
+#   return read + kept + turns;
+# }
+# count(0 as any, 0 as any, (() => 1) as any);
+# console.log(count(new Int32Array(8), { from: 9007199254740983 }, 9007199254740985));
+# export {};
+# -- end of source
+# The bound of a counter that is no number by its type is asked in front of the loop: for an int32, or else for a number, which is rounded and held against the greatest int32.
+# What arrives at `bound` is a function or 9007199254740985: never an int32. The arm that cannot be taken ends and the other arm goes on. The walk left at the first arm, and the
+# block of the second, which the branch leads to, had no end: the build stopped.
+# f1 = count
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=number
+# CHECK: = IntegerBound

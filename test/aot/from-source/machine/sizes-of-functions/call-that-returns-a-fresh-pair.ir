@@ -1,0 +1,18 @@
+# f2 = roundTrip
+# -- source: call-that-returns-a-fresh-pair.ts
+# function divide(dividend: number, divisor: number): { quotient: number; remainder: number } {
+#   return { quotient: Math.floor(dividend / divisor), remainder: dividend % divisor };
+# }
+# function roundTrip(dividend: number, divisor: number): number {
+#   const result = divide(dividend, divisor);
+#   return result.quotient * divisor + result.remainder;
+# }
+# declare const input: any;
+# (globalThis as any).answer = roundTrip(+input, +input);
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:9 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 9

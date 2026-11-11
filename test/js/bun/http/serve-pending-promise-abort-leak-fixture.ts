@@ -27,7 +27,7 @@ const server = Bun.serve({
   },
 });
 
-const port = server.port;
+const port = server.port!;
 
 function makeAbortedTcpRequest(): Promise<void> {
   return new Promise(resolve => {

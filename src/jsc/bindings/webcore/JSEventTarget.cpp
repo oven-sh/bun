@@ -109,15 +109,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstruc
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "EventTarget"_s);
+    auto* structure = structureForNewTarget<EventTarget>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = EventTarget::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<EventTarget>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<EventTarget>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<EventTarget>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSEventTargetDOMConstructorConstruct, JSEventTargetDOMConstructor::construct);
@@ -245,7 +245,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventTarget>::call<jsEventTargetPrototypeFunction_addEventListenerBody>(*lexicalGlobalObject, *callFrame, "addEventListener");
+    return IDLOperation<JSEventTarget>::callExposingReceiver<jsEventTargetPrototypeFunction_addEventListenerBody>(*lexicalGlobalObject, *callFrame, "addEventListener");
 }
 
 static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_removeEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventTarget>::ClassParameter castedThis)
@@ -294,7 +294,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_dispatchEventBo
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventTarget>::call<jsEventTargetPrototypeFunction_dispatchEventBody>(*lexicalGlobalObject, *callFrame, "dispatchEvent");
+    return IDLOperation<JSEventTarget>::callExposingReceiver<jsEventTargetPrototypeFunction_dispatchEventBody>(*lexicalGlobalObject, *callFrame, "dispatchEvent");
 }
 
 JSC::GCClient::IsoSubspace* JSEventTarget::subspaceForImpl(JSC::VM& vm)

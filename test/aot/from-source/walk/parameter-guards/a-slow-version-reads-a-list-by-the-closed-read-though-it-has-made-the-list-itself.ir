@@ -1,0 +1,17 @@
+# -- source: a-slow-version-reads-a-list-by-the-closed-read-though-it-has-made-the-list-itself.ts
+# declare function print(...values: unknown[]): void;
+# class Ledger { tint: number; twine: number; constructor(n: number) { this.tint = 0; this.twine = n; } }
+# const kept: Ledger[] = []; for (let i = 0; i < 20; i++) kept.push(new Ledger(i));
+# function overList(bag: any) { const list = [1.5, 2.5, 3.5]; let sum = 0; for (let i = 0; i < 3000; i++) sum += list[i % 3]!; return "" + sum + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
+# print(kept.length, overList(JSON.parse('{"twine":1}')));
+# -- end of source
+# A slow version must be right whatever Link says, so it never has the typed operations: typed reads of elements, of fields, typed iteration and the calls of built-ins stay shut there, for some of them ask Link's tables about the contents of
+# a list. What a slow version with a loop does have is the reckoning on what the walk has built in that very body: the counter is an integer, its remainder too; the read off the list is the closed read.
+# f1 = overList
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# SLOW: Mod {{*}} form=Integers
+# SLOW: ElemGet
+# RUN(TYPED): walk f1:SlowBody mechanisms=all
+# TYPED-NOT: GetArrayElement
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 20 750011111111111111111111

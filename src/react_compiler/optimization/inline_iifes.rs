@@ -40,11 +40,9 @@
 //!
 //! Analogous to TS `Inference/InlineImmediatelyInvokedFunctionExpressions.ts`.
 
-use std::collections::HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::hir::cfg_utils::{
-    create_temporary_place, get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
+    create_temporary_place, mark_instruction_ids, mark_predecessors, reverse_postorder_blocks,
 };
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
@@ -65,7 +63,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
     // Track all function expressions that are assigned to a temporary
     let mut functions: IdMap<IdentifierId, FunctionId> = IdMap::new();
     // Functions that are inlined (by identifier id of the callee)
-    let mut inlined_functions: HashSet<IdentifierId> = HashSet::new();
+    let mut inlined_functions: IdBitSet<IdentifierId> = IdBitSet::default();
 
     // Iterate the *existing* blocks from the outer component to find IIFEs
     // and inline them. During iteration we will modify `func` (by inlining the CFG
@@ -92,7 +90,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
 
         let num_instructions = block.instructions.len();
         for ii in 0..num_instructions {
-            let instr_id = func.body.blocks[&block_id].instructions[ii];
+            let instr_id = block.instructions[ii];
             let instr = &func.instructions[instr_id.0 as usize];
 
             match &instr.value {
@@ -281,10 +279,11 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                     queue.push(continuation_block_id);
                     continue 'queue;
                 }
+                _ if functions.is_empty() => {}
                 _ => {
                     // Any other use of a function expression means it isn't an IIFE
-                    for id in visitors::each_instruction_value_operand_ids(&instr.value, env) {
-                        functions.remove(id);
+                    for operand in visitors::operands(&instr.value, &env.functions) {
+                        functions.swap_remove(operand.identifier);
                     }
                 }
             }
@@ -296,16 +295,21 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
         for block in func.body.blocks.values_mut() {
             block.instructions.retain(|instr_id| {
                 let instr = &func.instructions[instr_id.0 as usize];
-                !inlined_functions.contains(&instr.lvalue.identifier)
+                !inlined_functions.contains(instr.lvalue.identifier)
             });
         }
 
         // If terminals have changed then blocks may have become newly unreachable.
         // Re-run minification of the graph (incl reordering instruction ids).
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        if let Err(invariant) = reverse_postorder_blocks(&mut func.body) {
+            return env.record_diagnostic(invariant);
+        }
         mark_instruction_ids(&mut func.body, &mut func.instructions);
         mark_predecessors(&mut func.body);
-        merge_consecutive_blocks(func, &mut env.functions);
+        // There are no phis yet.
+        if let Err(invariant) = merge_consecutive_blocks(func, &mut env.functions) {
+            env.record_diagnostic(invariant);
+        }
     }
 }
 

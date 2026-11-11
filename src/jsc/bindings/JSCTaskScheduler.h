@@ -21,6 +21,11 @@ public:
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket& ticket);
 
+    // After marking, before the sweep. Only its realm marks a ticket's cells, so the sweep frees
+    // those of a realm that died. DeferredWorkTimer::cancelPendingWork(VM&) cancels such tickets
+    // in the set it keeps, which is empty here: onAddPendingWork takes them.
+    static void cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientData, JSC::VM&);
+
     // Set once the owning VM's event loop has taken its last tick. After this,
     // onScheduleWorkSoon drops the task up front instead of posting it (~VM ->
     // WaiterListManager::unregister reaches it for every still-pending

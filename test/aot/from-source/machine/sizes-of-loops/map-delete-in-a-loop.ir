@@ -1,0 +1,21 @@
+# f1 = forget
+# -- source: map-delete-in-a-loop.ts
+# function forget(prices: Map<string, number>, names: string[]): number {
+#   let removed = 0;
+#   for (let k = 0; k < names.length; k++) if (prices.delete(names[k]!)) removed++;
+#   return removed;
+# }
+# declare const input: any;
+# const prices = new Map<string, number>();
+# prices.set(String(input), +input);
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = forget(prices, names);
+# -- end of source
+# The compiler before this one: 9 instructions, 3 of them patches.
+# When the bound was taken: loop: operations 15, patches 3, moves 8, unlikely 1 ; loop: operations 17, patches 3, moves 7, unlikely 1.
+# RUN(X64): loops most:23,24 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 23
+# X64-NEXT: loop: at most 24

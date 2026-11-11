@@ -1,0 +1,4 @@
+@background-color-light: fade(@white, 4%); // background of header and selected item
+.a {
+  z-index: var(--z-notifications-popover); // A bit above the navbar for a nicer experience when it is closed
+}

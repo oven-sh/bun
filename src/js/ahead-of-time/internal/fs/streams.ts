@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 1ddc94d535b5955be45b11782b2f163c8df12340682b2571bb72dbb9f781b40f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -7,7 +7,9 @@ const { Readable: StoredReadable, Writable: StoredWritable, finished } = require
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const fs = require("node:fs");
-const { read, write, fsync, writev } = fs;
+// Read a member at each call: internal/trace_events replaces them when tracing starts.
+const binding = require("internal/fs/binding");
+const { fromBinding } = require("internal/shared");
 // `bun run` loads node:fs/promises here. A test that has replaced a built-in function hears the calls of that load.
 if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("node:fs/promises");
 const fileHandles = require("internal/fs/file_handles");
@@ -120,7 +122,6 @@ let kUnref: FileHandleInternals["kUnref"];
 let kFd: FileHandleInternals["kFd"];
 let fileHandlePrototypeRead: FileHandle["read"];
 let fileHandlePrototypeWrite: FileHandle["write"];
-let fileHandlePrototypeFsync: undefined;
 let fileHandlePrototypeWritev: FileHandle["writev"];
 
 function takeFileHandleInternals(internals: FileHandleInternals) {
@@ -128,25 +129,78 @@ function takeFileHandleInternals(internals: FileHandleInternals) {
   kRef = internals.kRef;
   kUnref = internals.kUnref;
   kFd = internals.kFd;
-  ({
-    read: fileHandlePrototypeRead,
-    write: fileHandlePrototypeWrite,
-    fsync: fileHandlePrototypeFsync,
-    writev: fileHandlePrototypeWritev,
-  } = FileHandle.prototype as FileHandle & { fsync?: undefined });
+  fileHandlePrototypeRead = internals.handleRead;
+  fileHandlePrototypeWrite = internals.handleWrite;
+  fileHandlePrototypeWritev = internals.handleWritev;
 }
 
 const { internals } = fileHandles;
 if (internals) takeFileHandleInternals(internals);
 else fileHandles.whenLoaded = takeFileHandleInternals;
 
+// Node calls a stream on a FileHandle back from the reaction of a promise:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L87-L116
+// The job arm of the binding calls back as a microtask too, without the promise. Node reports what the callback
+// throws as an unhandled rejection. fromBinding() reports an uncaughtException, as for a stream on a path: Bun's
+// default mode hands an unhandled rejection to no 'uncaughtException' listener.
+function fileHandleStreamRead(
+  fd: number | null,
+  buf: Buffer,
+  offset: number,
+  length: number,
+  pos: number | undefined,
+  cb: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
+) {
+  binding.readJob((err, bytesRead) => fromBinding(cb, err, bytesRead, buf), fd as number, buf, offset, length, pos);
+}
+
+function fileHandleStreamWrite(
+  fd: number | null,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number | undefined,
+  cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
+) {
+  if (!$isTypedArrayView(buffer) && !ArrayBuffer.isView(buffer)) {
+    // objectMode lets any chunk through. Node gives it to handle.write(), which refuses what is no string with this
+    // text and writes every string at position 0. So would the binding, which takes (fd, string, position, encoding).
+    if (typeof buffer !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+    }
+    // A string is refused, as fs.write() refused it for these streams.
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], buffer);
+  }
+  binding.writeJob(
+    (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffer),
+    fd as number,
+    buffer,
+    offset,
+    length,
+    position,
+  );
+}
+
+function fileHandleStreamWritev(
+  fd: number | null,
+  buffers: Buffer[],
+  position: number | undefined,
+  cb: (error: Error | null, bytesWritten?: number, buffers?: Buffer[]) => void,
+) {
+  binding.writevJob(
+    (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffers),
+    fd as number,
+    buffers,
+    position,
+  );
+}
+
 const fileHandleStreamFs = (fh: FileHandle) => ({
-  // try to use the basic fs.read/write/fsync if available, since they are less
-  // abstractions. however, node.js allows patching the file handle, so this has
-  // to be checked for.
+  // node.js allows patching the file handle, on itself or on its prototype, so this has to be checked for: against
+  // the methods that node:fs/promises kept as it built the class.
   read:
     fh.read === fileHandlePrototypeRead
-      ? read
+      ? fileHandleStreamRead
       : function (
           fd: number | null,
           buf: Buffer,
@@ -162,7 +216,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
         },
   write:
     fh.write === fileHandlePrototypeWrite
-      ? write
+      ? fileHandleStreamWrite
       : function (
           fd: number | null,
           buffer: Buffer,
@@ -176,13 +230,10 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
             err => cb(err, 0, buffer),
           );
         },
-  writev: fh.writev === fileHandlePrototypeWritev ? writev : undefined,
-  fsync:
-    fh.sync === fileHandlePrototypeFsync
-      ? fsync
-      : function (fd: number, cb: ErrorCallback) {
-          return fh.sync().then(() => cb(), cb);
-        },
+  writev: fh.writev === fileHandlePrototypeWritev ? fileHandleStreamWritev : undefined,
+  fsync: function (fd: number, cb: ErrorCallback) {
+    return fh.sync().then(() => cb(), cb);
+  },
   close: streamFileHandleClose.bind(fh),
 });
 

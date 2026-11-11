@@ -193,7 +193,13 @@ const keptValue = (path: b.BuiltinPath) =>
 const bytesReadLater = b
   .instance("Promise")
   .holding({ value: b.f64, reason: b.union(b.instance("Error"), b.instance("RangeError")) }).fresh;
-const readingMethods = { read: bytesReadLater, readCb: b.undefined, readv: bytesReadLater, readvCb: b.undefined };
+const readingMethods = {
+  read: bytesReadLater,
+  readCb: b.undefined,
+  readJob: b.undefined,
+  readv: bytesReadLater,
+  readvCb: b.undefined,
+};
 const compressors = ["NativeZlib", "NativeBrotli", "NativeZstd"];
 // init is handed the two words that every later write fills in.
 const compressorMethods = ["init", "write", "writeSync"];

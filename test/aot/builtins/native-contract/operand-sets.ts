@@ -289,7 +289,7 @@ const writtenSets: [RegExp, string[][]][] = [
       ["descriptor", "filled:DataView", "primitive:0", "primitive:3", "primitive:0"],
     ],
   ],
-  [/%NodeJSFS%\.prototype\.readCb$/, [["callback:undefined", "descriptor", "large:Buffer", "primitive:0", "primitive:3", "primitive:0"]]],
+  [/%NodeJSFS%\.prototype\.read(Cb|Job)$/, [["callback:undefined", "descriptor", "large:Buffer", "primitive:0", "primitive:3", "primitive:0"]]],
   [/%NodeJSFS%\.prototype\.readv(Sync)?$/, [["descriptor", "buffers:Array", "primitive:0"], ["descriptor", "buffers:Array"]]],
   [/%NodeJSFS%\.prototype\.readvCb$/, [["callback:undefined", "descriptor", "buffers:Array", "primitive:0"]]],
   [
@@ -298,7 +298,7 @@ const writtenSets: [RegExp, string[][]][] = [
   ],
   [/%NativeZlib%\.prototype\.init$/, [["primitive:16", "primitive:3", "primitive:8", "primitive:0", "filled:Uint32Array", "callback:undefined", "primitive:undefined"]]],
   [/%NodeJSFS%\.prototype\.writev(Sync)?$/, [["descriptor", "buffers:Array", "primitive:0"], ["descriptor", "buffers:Array"]]],
-  [/%NodeJSFS%\.prototype\.writevCb$/, [["callback:undefined", "descriptor", "buffers:Array", "primitive:0"]]],
+  [/%NodeJSFS%\.prototype\.writev(Cb|Job)$/, [["callback:undefined", "descriptor", "buffers:Array", "primitive:0"]]],
   [/%NodeJSFS%\.prototype\.(access|unlink|rm|realpath|realpathNative|statfs)Sync$/, [["path:file"], ["path:file:Buffer"]]],
   [/%NodeJSFS%\.prototype\.l?chmodSync$/, [["path:file", "primitive:1"], ["path:file:Buffer", "primitive:1"]]],
   [/%NodeJSFS%\.prototype\.l?chownSync$/, [["path:file", "owner:user", "owner:group"], ["path:file:Buffer", "owner:user", "owner:group"]]],

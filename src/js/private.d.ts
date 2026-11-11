@@ -1953,6 +1953,17 @@ declare namespace $Node {
       position?: number | null,
       encoding?: string | null,
     ): void;
+    /** `xJob` is `xCb` with the callback run as a microtask: where Node calls back from a promise. */
+    readJob: NodeJSFSCallbacks["readCb"];
+    writeJob(
+      callback: (error: Error | null, bytesWritten: number) => unknown,
+      fd: number,
+      buffer: AnyView,
+      offset?: number | null,
+      length?: number | null,
+      position?: number | bigint | null,
+    ): void;
+    writevJob: NodeJSFSCallbacks["writevCb"];
     accessSync(path: PathLike, mode?: number): void;
     appendFileSync(path: PathLike | number, data: FileData, options?: WriteFileOptions): void;
     chmodSync(path: PathLike, mode: number | string): void;

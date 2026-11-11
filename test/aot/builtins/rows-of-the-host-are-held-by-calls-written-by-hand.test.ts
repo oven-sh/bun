@@ -761,6 +761,20 @@ const cases: Case[] = [
         }),
     },
   ]),
+  {
+    row: "%NodeJSFS%.prototype.readJob",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () =>
+      withDescriptors(async open => {
+        let value: unknown = "nothing yet";
+        await later(callback => {
+          value = fileSystem().readJob(callback, open, Buffer.alloc(4), 0, 4, 0);
+        });
+        return [{ value }];
+      }),
+  },
   ...(["this", 0, 1, 2, 3] as const).map((position): Case => ({
     row: "Bun.spawn",
     mode: "Call",
@@ -1119,6 +1133,29 @@ function defineTests() {
       const rows = overloadsOf({ row: "%NodeJSFS%.prototype.statCb", mode: "Call" } as Case);
       expect(rows).not.toBeEmpty();
       for (const row of rows) expect(row.callbacks.map(callback => callback.arguments.length).sort()).toEqual([1, 2]);
+    },
+  );
+
+  // node_fs.rs FsCompletion::reject() | resolve(). The job arm queues its callback with two operands, whatever the outcome.
+  test.skipIf(isWindows)(
+    "%NodeJSFS%.prototype.writeJob: the callback is handed the error and undefined, or null and the result, and the row lists both calls",
+    async () => {
+      const handedFor = (descriptor: number) =>
+        later(callback => fileSystem().writeJob(callback, descriptor, Buffer.from("text"), 0, 4, 0));
+      // The first is open for reading alone, so a write to it fails.
+      const [refused, written] = await withDescriptors(async (unwritable, open) => [
+        await handedFor(unwritable),
+        await handedFor(open),
+      ]);
+      expect([refused.length, refused[0] instanceof Error, refused[1], written]).toEqual([
+        2,
+        true,
+        undefined,
+        [null, 4],
+      ]);
+      const rows = overloadsOf({ row: "%NodeJSFS%.prototype.writeJob", mode: "Call" } as Case);
+      expect(rows).not.toBeEmpty();
+      for (const row of rows) expect(row.callbacks.map(callback => callback.arguments.length).sort()).toEqual([2, 2]);
     },
   );
 

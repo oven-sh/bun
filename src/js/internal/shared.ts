@@ -152,7 +152,8 @@ $putByIdDirectPrivate(kInternalSendOptions, "internal", true);
 ObjectFreeze(kInternalSendOptions);
 
 // Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
-// (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
+// (not unhandledRejection). Bun runs some of them from a promise reaction or a microtask, and native code reports a
+// throw that leaves a callback after the callback's async context is gone: the throw is caught in JavaScript.
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException: (error: unknown) => void = $newCppFunction(
   "BunProcess.cpp",
@@ -182,6 +183,22 @@ function guardCallback(callback: (...args: any[]) => unknown) {
       reportUncaughtException(e);
     }
   };
+}
+
+// guardCallback() without a closure, for a callback whose third operand the binding does not hand back:
+// `(err, count) => fromBinding(callback, err, count, subject)`.
+function fromBinding<Subject>(
+  callback: (err: Error | null, count: number, subject: Subject) => unknown,
+  err: Error | null,
+  count: number,
+  subject: Subject,
+) {
+  try {
+    if (err) callback(err, 0, subject);
+    else callback(null, count, subject);
+  } catch (e) {
+    reportUncaughtException(e);
+  }
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
@@ -476,6 +493,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  fromBinding,
   isInsideNodeModules,
   resistStopPropagation,
 

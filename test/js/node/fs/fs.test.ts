@@ -14,6 +14,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -58,6 +59,7 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
@@ -7794,8 +7796,8 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 describe("a process.nextTick queued by an fs callback runs before a microtask it queues", () => {
   type Start = (dir: string, callback: () => void) => void;
 
-  // The first process.nextTick() of a process runs right after the microtask
-  // that queued it, which hides a callback that runs inside a microtask.
+  // After process.nextTick is first read on a thread, the tick queue runs once right behind the next microtask
+  // that ends, whichever it is. That hides a callback that runs inside a microtask: this ends one first.
   function tickQueueExists() {
     return new Promise<void>(resolve => process.nextTick(resolve));
   }
@@ -7992,6 +7994,305 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir rm rmdir");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Node does the I/O of a stream on a FileHandle through the promise methods of the handle, so that stream calls back
+// from a promise job: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L87-L116
+describe("a microtask queued by a callback of a FileHandle stream runs before a process.nextTick it queues", () => {
+  const microtaskFirst = "callback microtask nextTick";
+  const nextTickFirst = "callback nextTick microtask";
+  // What fs-filehandle-stream-order-fixture.cjs prints under Node v26.3.0.
+  const orders = {
+    "handle.createReadStream(): 'data'": microtaskFirst,
+    "fs.createReadStream(null, { fd: handle }): 'data'": microtaskFirst,
+    "new fs.ReadStream(null, { fd: handle }): 'data'": microtaskFirst,
+    "handle.createReadStream(): 'readable' at the end of the file": microtaskFirst,
+    "handle.readLines(): 'line'": microtaskFirst,
+    "handle.createWriteStream(): the callback of write()": microtaskFirst,
+    "fs.createWriteStream(null, { fd: handle }): the callback of write()": microtaskFirst,
+    "new fs.WriteStream(null, { fd: handle }): the callback of write()": microtaskFirst,
+    "handle.createWriteStream(): the callback of a write() that fails": microtaskFirst,
+    "handle.createWriteStream(): 'drain'": microtaskFirst,
+    "handle.createWriteStream(): the callback of the last of two chunks": microtaskFirst,
+    "a handle whose writev() the program replaced: the callback of the last of two chunks": microtaskFirst,
+    "a handle whose read() the program replaced: 'data'": microtaskFirst,
+    "a handle whose write() the program replaced: the callback of write()": microtaskFirst,
+    // The stream emits these from a process.nextTick of its own.
+    "handle.createReadStream(): 'end'": nextTickFirst,
+    "handle.createWriteStream(): 'finish'": nextTickFirst,
+    "handle.createWriteStream(): the callback of end()": nextTickFirst,
+    // A stream on a path or on a descriptor uses the callbacks of node:fs.
+    "fs.createReadStream(path): 'data'": nextTickFirst,
+    "fs.createReadStream(null, { fd }): 'data'": nextTickFirst,
+    "fs.createReadStream(path): 'readable' at the end of the file": nextTickFirst,
+    "fs.createWriteStream(path): the callback of write()": nextTickFirst,
+    "fs.createWriteStream(null, { fd }): the callback of write()": nextTickFirst,
+    "fs.createWriteStream(path): the callback of the last of two chunks": nextTickFirst,
+  };
+  const fixture = join(import.meta.dir, "fs-filehandle-stream-order-fixture.cjs");
+
+  async function run(cmd: string[], cwd?: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const runScript = (script: string, ...flags: string[]) => run([bunExe(), ...flags, "-e", script]);
+
+  it("in each kind of stream on a handle, and in no other", async () => {
+    const { stdout, stderr, exitCode } = await run([bunExe(), fixture]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(orders);
+    expect(exitCode).toBe(0);
+  });
+
+  const node = nodeExeAtLeast("26.3.0");
+  it.skipIf(!node)("as node does in each of them", async () => {
+    const { stdout, exitCode } = await run([node!, fixture]);
+    expect(JSON.parse(stdout)).toEqual(orders);
+    expect(exitCode).toBe(0);
+  });
+
+  // The stream emits 'finish' from a process.nextTick of the write callback. The program continues from a microtask of it.
+  const awaitsFinish = (file: string) => `
+    const stream = handle.createWriteStream();
+    const written = new Promise(resolve => stream.write("a", resolve));
+    stream.end();
+    await written;
+    await new Promise(resolve => stream.once("finish", resolve));
+    console.log("finished");
+  `;
+
+  it("a program that awaits the callback of write() is in time for 'finish'", async () => {
+    using dir = tempDir("fs-filehandle-stream-finish", {});
+    const file = join(String(dir), "out.txt");
+    const result = await runScript(`
+      const fs = require("node:fs");
+      (async () => {
+        const handle = await fs.promises.open(${JSON.stringify(file)}, "w");
+        ${awaitsFinish(file)}
+      })();
+    `);
+    expect(result).toEqual({ stdout: "finished\n", stderr: "", exitCode: 0 });
+  });
+
+  // After process.nextTick is first read outside a microtask, the tick queue runs once behind the next microtask that
+  // ends, whichever it is. Here the stream is the first to load node:fs, in a timer, so that microtask is the write
+  // callback: 'finish' is emitted before the program listens, and it prints nothing.
+  it.todo("also where the stream is the first to read process.nextTick, outside a microtask", async () => {
+    using dir = tempDir("fs-filehandle-stream-finish", {
+      "main.mjs": `
+        import { open } from "node:fs/promises";
+        const handle = await open("out.txt", "w");
+        setTimeout(async () => {
+          ${awaitsFinish("out.txt")}
+        }, 1);
+      `,
+    });
+    const result = await run([bunExe(), "main.mjs"], String(dir));
+    expect(result).toEqual({ stdout: "finished\n", stderr: "", exitCode: 0 });
+  });
+
+  // Node's FileHandle streams call the methods of the handle, and never the functions that node:fs exports.
+  it.each([
+    ["an fs.read() or fs.write() that the program replaced is not called", "fs", "[]"],
+    [
+      "a read() or write() that the program put on FileHandle.prototype is called",
+      "prototype",
+      `["write","read","read"]`,
+    ],
+  ])("%s", async (_name, where, calls) => {
+    using dir = tempDir("fs-filehandle-stream-replaced", { "file.txt": "hello" });
+    const result = await runScript(`
+      const fs = require("node:fs");
+      (async () => {
+        const file = ${JSON.stringify(join(String(dir), "file.txt"))};
+        const opened = await fs.promises.open(file, "r");
+        const holder = ${where === "fs" ? "fs" : "Object.getPrototypeOf(opened)"};
+        await opened.close();
+        const calls = [];
+        for (const name of ["read", "write"]) {
+          const original = holder[name];
+          holder[name] = function (...args) {
+            calls.push(name);
+            return original.apply(this, args);
+          };
+        }
+        const closed = stream => new Promise(resolve => stream.on("close", resolve));
+        const written = (await fs.promises.open(file, "w")).createWriteStream();
+        written.end("a");
+        await closed(written);
+        await closed((await fs.promises.open(file, "r")).createReadStream().resume());
+        console.log(JSON.stringify(calls) + " " + fs.readFileSync(file, "utf8"));
+      })();
+    `);
+    expect(result).toEqual({ stdout: calls + " a\n", stderr: "", exitCode: 0 });
+  });
+
+  // Node gives a chunk of an objectMode stream to handle.write(): it refuses what is no string with the second
+  // text, through the write callback and an 'error' event, and writes every string at position 0.
+  it("write() refuses a chunk that is no view, behind a first chunk in objectMode", async () => {
+    using dir = tempDir("fs-filehandle-stream-object-mode", {});
+    const result = await runScript(`
+      const fs = require("node:fs");
+      (async () => {
+        const file = ${JSON.stringify(join(String(dir), "out.txt"))};
+        for (const chunk of ["bc", { d: 1 }]) {
+          const stream = (await fs.promises.open(file, "w")).createWriteStream({ objectMode: true });
+          await new Promise(resolve => stream.write(Buffer.from("a"), resolve));
+          try {
+            stream.write(chunk);
+          } catch (error) {
+            console.log(error.code + ": " + error.message);
+          }
+          console.log(fs.readFileSync(file, "utf8"));
+        }
+        process.exit(0);
+      })();
+    `);
+    expect(result.stdout.split("\n")).toEqual([
+      `ERR_INVALID_ARG_TYPE: The "buffer" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('bc')`,
+      "a",
+      `ERR_INVALID_ARG_TYPE: The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Object`,
+      "a",
+      "",
+    ]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("the callbacks run in the AsyncLocalStorage store of the code that made the stream", async () => {
+    using dir = tempDir("fs-filehandle-stream-store", { "file.txt": "hello" });
+    const storage = new AsyncLocalStorage<string>();
+    const stores: Array<string | undefined> = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+
+    const reader = await promises.open(join(String(dir), "file.txt"), "r");
+    const writer = await promises.open(join(String(dir), "out.txt"), "w");
+    storage.run("reader", () => {
+      reader.createReadStream().on("data", () => stores.push(storage.getStore()));
+    });
+    storage.run("writer", () => {
+      const stream = writer.createWriteStream();
+      stream.write("a", () => stores.push(storage.getStore()));
+      stream.write("b");
+      stream.end("c", () => stores.push(storage.getStore()));
+      stream.on("close", resolve);
+    });
+    await closed;
+
+    expect(stores.sort()).toEqual(["reader", "writer", "writer"]);
+  });
+
+  const throwers: Array<[string, string, string]> = [
+    ["a 'data' listener", "r", `handle.createReadStream().on("data", thrower)`],
+    ["the callback of write()", "w", `handle.createWriteStream().write("a", thrower)`],
+    [
+      "the callback of the last of two chunks",
+      "w",
+      `const stream = handle.createWriteStream(); stream.write("a"); stream.write("b", thrower)`,
+    ],
+  ];
+
+  // Node reports this throw as the unhandled rejection of its promise, behind the microtask and the process.nextTick:
+  //   callback, microtask, nextTick, unhandledRejection of boom in store
+  // Bun reports an uncaughtException where the callback throws, as it does for a stream on a path: without
+  // --unhandled-rejections it hands an unhandled rejection to no 'uncaughtException' listener.
+  it.each(throwers)(
+    "a throw from %s is an uncaughtException in the store of the stream",
+    async (_name, flags, made) => {
+      using dir = tempDir("fs-filehandle-stream-throw", { "file.txt": "hello" });
+      const result = await runScript(`
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const storage = new AsyncLocalStorage();
+      const seen = [];
+      const report = name => error => seen.push(name + " of " + error.message + " in " + storage.getStore());
+      process.on("uncaughtException", (error, origin) => report(origin)(error));
+      process.on("unhandledRejection", report("unhandledRejection"));
+      process.on("exit", () => console.log(seen.join(", ")));
+      function thrower() {
+        seen.push("callback");
+        queueMicrotask(() => seen.push("microtask"));
+        process.nextTick(() => seen.push("nextTick"));
+        throw new Error("boom");
+      }
+      require("node:fs").promises.open(${JSON.stringify(join(String(dir), "file.txt"))}, "${flags}").then(handle => {
+        // A handle that the collector finds open is an error of its own.
+        globalThis.handle = handle;
+        storage.run("store", () => {
+          ${made};
+        });
+      });
+    `);
+      expect(result).toEqual({
+        stdout: "callback, uncaughtException of boom in store, microtask, nextTick\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.each(throwers.slice(0, 2))(
+    "a throw from %s that nothing handles is printed as the error was made",
+    async (_name, flags, made) => {
+      using dir = tempDir("fs-filehandle-stream-throw", { "file.txt": "hello" });
+      const { stdout, stderr, exitCode } = await runScript(`
+      function makeStoredError() {
+        const error = new Error("stored", { cause: new Error("the " + "cause") });
+        error.detail = "built-" + 6 * 7;
+        return error;
+      }
+      const stored = makeStoredError();
+      const thrower = () => {
+        throw stored;
+      };
+      require("node:fs").promises.open(${JSON.stringify(join(String(dir), "file.txt"))}, "${flags}").then(handle => {
+        globalThis.handle = handle;
+        ${made};
+      });
+    `);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("at makeStoredError");
+      expect(stderr).toContain(`detail: "built-42"`);
+      expect(stderr).toContain("error: the cause");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // `early`: tracing is on when the process starts. `late`: the program turns it on after a stream has run.
+  it.each(["early", "late"])("each read and write is a node.fs.async span when tracing starts %s", async when => {
+    using dir = tempDir("fs-filehandle-stream-trace", { "file.txt": "hello" });
+    const traceFile = join(String(dir), "node_trace.log");
+    const result = await runScript(
+      `
+        const fs = require("node:fs");
+        const closed = stream => new Promise(resolve => stream.on("close", resolve));
+        (async () => {
+          const file = ${JSON.stringify(join(String(dir), "file.txt"))};
+          await closed((await fs.promises.open(file, "r")).createReadStream().resume());
+          if (${when === "late"}) require("node:trace_events").createTracing({ categories: ["node.fs.async"] }).enable();
+          const reader = await fs.promises.open(file, "r");
+          const writer = await fs.promises.open(${JSON.stringify(join(String(dir), "out.txt"))}, "w");
+          await closed(reader.createReadStream().resume());
+          const stream = writer.createWriteStream();
+          stream.end("a");
+          await closed(stream);
+        })();
+      `,
+      ...(when === "early" ? ["--trace-event-categories", "node.fs.async"] : []),
+      "--trace-event-file-pattern",
+      traceFile,
+    );
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+
+    const spans: Record<string, number> = {};
+    for (const event of JSON.parse(readFileSync(traceFile, "utf8")).traceEvents) {
+      if (event.name !== "read" && event.name !== "write") continue;
+      const key = `${event.name} ${event.ph}`;
+      spans[key] = (spans[key] ?? 0) + 1;
+    }
+    // A read for the data and one for the end of the file, twice when the first stream is traced too.
+    const reads = when === "early" ? 4 : 2;
+    expect(spans).toEqual({ "read b": reads, "read e": reads, "write b": 1, "write e": 1 });
   });
 });
 

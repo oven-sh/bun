@@ -287,6 +287,10 @@ const private_symbols: {
   kTransferList: typeof kTransferList;
   kDeserialize: typeof kDeserialize;
   FileHandle: $Node.FileHandleConstructor;
+  /** `FileHandle.prototype.read`, `write` and `writev` as the class is built, before a program can replace them. */
+  handleRead: $Node.FileHandle["read"];
+  handleWrite: $Node.FileHandle["write"];
+  handleWritev: $Node.FileHandle["writev"];
 } = {
   kRef,
   kUnref,
@@ -295,6 +299,9 @@ const private_symbols: {
   kTransferList,
   kDeserialize,
   FileHandle: null!,
+  handleRead: null!,
+  handleWrite: null!,
+  handleWritev: null!,
 };
 
 const _readFile = fs.readFile.bind(fs);
@@ -1626,6 +1633,11 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
   }
   private_symbols.FileHandle = FileHandle;
+  ({
+    read: private_symbols.handleRead,
+    write: private_symbols.handleWrite,
+    writev: private_symbols.handleWritev,
+  } = FileHandle.prototype);
   const fileHandles = require("internal/fs/file_handles");
   fileHandles.internals = private_symbols;
   fileHandles.whenLoaded?.(private_symbols);

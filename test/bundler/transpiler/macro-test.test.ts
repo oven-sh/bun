@@ -1,7 +1,8 @@
 import { escapeHTML } from "bun" with { type: "macro" };
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -419,6 +420,486 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+// A text body is inlined as the string `.text()` gives for its bytes. Escaping that string is the
+// printer's job, a UTF-8 byte-order mark is not part of the text, and a UTF-16LE one selects that encoding.
+test("a text Response or Blob returned from a macro is inlined as its text", async () => {
+  const body = 'line1\nline2 "quoted" back\\slash \t tab \0 nul é 😀\n';
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(body, { headers: { "content-type": "text/plain" } }),
+  });
+  using dir = tempDir("macro-text-body", {
+    "m.ts": [
+      `const body = ${JSON.stringify(body)};`,
+      `export function blob() {`,
+      `  return new Blob([body], { type: "text/plain" });`,
+      `}`,
+      `export function response() {`,
+      `  return new Response(body, { headers: { "content-type": "text/plain" } });`,
+      `}`,
+      `export function fetched() {`,
+      `  return fetch(process.env.MACRO_TEST_URL!);`,
+      `}`,
+      `export function utf8Bom() {`,
+      `  return new Blob([new Uint8Array([0xef, 0xbb, 0xbf]), body], { type: "text/plain" });`,
+      `}`,
+      `export function utf16Bom() {`,
+      `  return new Blob([new Uint8Array([0xff, 0xfe]), Buffer.from(body, "utf16le")], { type: "text/plain" });`,
+      `}`,
+      `export function malformed() {`,
+      `  return new Blob([new Uint8Array([0x61, 0xff, 0x62])], { type: "text/plain" });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { blob, response, fetched, utf8Bom, utf16Bom, malformed } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([blob(), response(), fetched(), utf8Bom(), utf16Bom(), malformed()]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, MACRO_TEST_URL: server.url.href },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([body, body, body, body, body, "a\uFFFDb"]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The strings of the object that a JSON body parses into point into the JSON text. The Blob that holds the
+// text is collected once the macro call is over, so the text has to be copied out of it first.
+test("a JSON Blob or Response returned from a macro does not have to outlive the macro call", async () => {
+  using dir = tempDir("macro-json-body-lifetime", {
+    "m.ts": [
+      `const body = JSON.stringify({ key: Buffer.alloc(4000, "A").toString() });`,
+      `export function blob() {`,
+      `  return new Blob([body], { type: "application/json" });`,
+      `}`,
+      `export function response() {`,
+      `  return new Response(body, { headers: { "content-type": "application/json" } });`,
+      `}`,
+      `export function collect() {`,
+      `  Bun.gc(true);`,
+      `  const sameSize = [];`,
+      `  for (let i = 0; i < 200; i++) sameSize.push(new Blob([Buffer.alloc(body.length, "Z")]));`,
+      `  return sameSize.length;`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { blob, response, collect } from "./m.ts" with { type: "macro" };`,
+      `const fromBlob = blob();`,
+      `const fromResponse = response();`,
+      `const count = collect();`,
+      `const expected = Buffer.alloc(4000, "A").toString();`,
+      `console.log(JSON.stringify([Object.keys(fromBlob), fromBlob.key === expected, Object.keys(fromResponse), fromResponse.key === expected, count]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([["key"], true, ["key"], true, 200]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// `Bun.file()` is a Blob whose bytes are on disk. The macro call reads a regular file where it is inlined,
+// on the thread that transpiles the caller. Anything else fails the build.
+describe.concurrent("a file-backed Blob returned from a macro", () => {
+  const text = 'line1\nline2 "quoted" back\\slash é 😀\n';
+  const json = { port: 8080, name: "é", list: [1, "two", null] };
+  const binary = Buffer.from([0, 1, 2, 254, 255]);
+  // More than the 256 KB that the first read asks for.
+  const large = Buffer.alloc(300_000, "0123456789abcde\n").toString();
+  const files = {
+    "banner.txt": text,
+    "config.json": JSON.stringify(json),
+    "utf16.json": Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify(json), "utf16le")]),
+    "data.bin": binary,
+    "large.txt": large,
+    "empty.txt": "",
+    "empty.json": "",
+    "empty.bin": "",
+  };
+
+  async function run(
+    tree: Record<string, string | Buffer>,
+    cmd: string[] = ["run", "index.ts"],
+    env: Record<string, string> = {},
+  ) {
+    using dir = tempDir("macro-file-blob", tree);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+  }
+
+  const macros = [
+    `import fs from "node:fs";`,
+    `const here = import.meta.dir + "/";`,
+    `export const textFile = () => Bun.file(here + "banner.txt");`,
+    `export const jsonFile = () => Bun.file(here + "config.json");`,
+    `export const utf16JsonFile = () => Bun.file(here + "utf16.json");`,
+    `export const binaryFile = () => Bun.file(here + "data.bin");`,
+    `export const largeFile = () => Bun.file(here + "large.txt");`,
+    `export const typeOption = () => Bun.file(here + "config.json", { type: "text/plain" });`,
+    `export const slice = () => Bun.file(here + "banner.txt").slice(6, 11);`,
+    `export const sliceOfNothing = () => Bun.file(here + "banner.txt").slice(3, 3);`,
+    `export const slicePastTheEnd = () => Bun.file(here + "banner.txt").slice(1000, 1010);`,
+    `export const fileUrl = () => Bun.file(Bun.pathToFileURL(here + "banner.txt"));`,
+    `export const descriptor = () => Bun.file(fs.openSync(here + "banner.txt", "r"), { type: "text/plain" });`,
+    `export const response = () => new Response(Bun.file(here + "banner.txt"));`,
+    `export const jsonResponse = () => new Response(Bun.file(here + "config.json"));`,
+    `export const request = () => new Request("http://localhost/", { method: "POST", body: Bun.file(here + "banner.txt") });`,
+    `export const fetched = () => fetch(Bun.pathToFileURL(here + "banner.txt"));`,
+    `export const streamed = () => new Response(Bun.file(here + "banner.txt").stream(), { headers: { "content-type": "text/plain" } });`,
+    `export const onePart = () => new Blob([Bun.file(here + "banner.txt")]);`,
+    `export const nested = () => ({ a: Bun.file(here + "banner.txt"), b: [Bun.file(here + "config.json")] });`,
+    `export const promised = async () => Bun.file(here + "banner.txt");`,
+    `export const twice = () => {`,
+    `  const file = Bun.file(here + "banner.txt");`,
+    `  return [file, file];`,
+    `};`,
+    `export const emptyText = () => Bun.file(here + "empty.txt");`,
+    `export const emptyJson = () => Bun.file(here + "empty.json");`,
+    `export const emptyBinary = () => Bun.file(here + "empty.bin");`,
+    `export const sliceOfEmpty = () => Bun.file(here + "empty.txt").slice(3, 9);`,
+    ``,
+  ].join("\n");
+  const names = [...macros.matchAll(/export const (\w+)/g)].map(match => match[1]);
+  const index = [
+    `import { ${names.join(", ")} } from "./m.ts" with { type: "macro" };`,
+    `console.log(JSON.stringify({ ${names.map(name => `${name}: ${name}()`).join(", ")} }));`,
+    ``,
+  ].join("\n");
+  const inlined = {
+    textFile: text,
+    jsonFile: json,
+    utf16JsonFile: json,
+    binaryFile: "data:application/octet-stream;base64," + binary.toString("base64"),
+    largeFile: large,
+    typeOption: JSON.stringify(json),
+    slice: "line2",
+    sliceOfNothing: "",
+    slicePastTheEnd: "",
+    fileUrl: text,
+    descriptor: text,
+    response: text,
+    jsonResponse: json,
+    request: text,
+    fetched: text,
+    streamed: text,
+    onePart: text,
+    nested: { a: text, b: [json] },
+    promised: text,
+    twice: [text, text],
+    emptyText: "",
+    emptyJson: {},
+    emptyBinary: "data:application/octet-stream;base64,",
+    sliceOfEmpty: "",
+  };
+
+  test("is inlined by its type, as an in-memory Blob of the same bytes is", async () => {
+    const { lastLine, stderr, exitCode } = await run({ ...files, "m.ts": macros, "index.ts": index });
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({ value: inlined, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("is inlined by `bun build`, so the bundle does not read the file", async () => {
+    using dir = tempDir("macro-file-blob-build", { ...files, "m.ts": macros, "index.ts": index });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./index.ts", "--target=bun", "--outfile=out/bundle.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ buildStderr, buildExitCode }).toEqual({ buildStderr: "", buildExitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "bundle.js"],
+      env: bunEnv,
+      cwd: path.join(String(dir), "out"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ value: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({ value: inlined, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Modules that are not the entry point are transpiled on the work pool. With as many of them as the
+  // pool has threads, a read that needed one more pool thread would never run.
+  test("is read on the transpiling thread, without a work pool thread", async () => {
+    const count = 4;
+    const modules = Array.from({ length: count }, (_, i) => i);
+    const { lastLine, stderr, exitCode } = await run(
+      {
+        "banner.txt": text,
+        "m.ts": `export const banner = () => Bun.file(import.meta.dir + "/banner.txt");\n`,
+        ...Object.fromEntries(
+          modules.map(i => [
+            `lib${i}.ts`,
+            `import { banner } from "./m.ts" with { type: "macro" };\nexport const value${i} = banner();\n`,
+          ]),
+        ),
+        "index.ts": [
+          ...modules.map(i => `import { value${i} } from "./lib${i}.ts";`),
+          `console.log(JSON.stringify([${modules.map(i => `value${i}`).join(", ")}]));`,
+          ``,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+      {
+        UV_THREADPOOL_SIZE: "2",
+        // detect_leaks=0: nothing collects the macro VM of a pool thread before exit, so LeakSanitizer reports each `Bun.file()` made there.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+    );
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
+      value: modules.map(() => text),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const failures: [name: string, macro: string, stderr: string[], files?: Record<string, string>][] = [
+    [
+      "a missing file",
+      `Bun.file(import.meta.dir + "/no-such-file.txt")`,
+      [
+        "failed to read the file returned by this macro: ENOENT: no such file or directory, open",
+        "no-such-file.txt",
+        "index.ts:2:24",
+      ],
+    ],
+    [
+      "a Response over a missing file",
+      `new Response(Bun.file(import.meta.dir + "/no-such-file.txt"))`,
+      [
+        "failed to read the file returned by this macro: ENOENT: no such file or directory, open",
+        "no-such-file.txt",
+        "index.ts:2:24",
+      ],
+    ],
+    [
+      "a directory",
+      `Bun.file(import.meta.dir)`,
+      ["failed to read the file returned by this macro: EISDIR: illegal operation on a directory", "index.ts:2:24"],
+    ],
+    [
+      "a JSON file that does not parse",
+      `Bun.file(import.meta.dir + "/bad.json")`,
+      ["Unexpected oops", "bad.json:2:8"],
+      { "bad.json": `{\n  "a": oops\n}\n` },
+    ],
+    [
+      "an S3 file",
+      `Bun.file("s3://bucket/key.txt")`,
+      [
+        'cannot inline S3 file "bucket/key.txt" returned by this macro',
+        'note: read the file in the macro and return the result, for example "await file.text()" or "await file.json()"',
+        "index.ts:2:24",
+      ],
+    ],
+  ];
+  // A read of a device does not end.
+  if (!isWindows) {
+    failures.push([
+      "a device",
+      `Bun.file("/dev/zero")`,
+      ["failed to read the file returned by this macro: ENODEV: no such device, read '/dev/zero'", "index.ts:2:24"],
+    ]);
+  }
+  test.each(failures)("%s fails the build", async (_name, macro, expected, extraFiles = {}) => {
+    const { lastLine, stderr, exitCode } = await run({
+      ...extraFiles,
+      "m.ts": `export const unread = () => ${macro};\n`,
+      "index.ts": `import { unread } from "./m.ts" with { type: "macro" };\nconsole.log("inlined", unread());\n`,
+    });
+    for (const part of expected) expect(stderr).toContain(part);
+    expect(lastLine).not.toContain("inlined");
+    expect(exitCode).toBe(1);
+  });
+
+  // The open of a FIFO that no process writes to does not return, unless it is non-blocking.
+  test.skipIf(isWindows)("a FIFO fails the build", async () => {
+    using dir = tempDir("macro-file-blob-fifo", {
+      "m.ts": `export const fifo = () => Bun.file(import.meta.dir + "/fifo");\n`,
+      "index.ts": `import { fifo } from "./m.ts" with { type: "macro" };\nconsole.log("inlined", fifo());\n`,
+    });
+    expect(Bun.spawnSync({ cmd: ["mkfifo", path.join(String(dir), "fifo")], env: bunEnv }).exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("failed to read the file returned by this macro: ENODEV: no such device, read");
+    expect(stdout).not.toContain("inlined");
+    expect(exitCode).toBe(1);
+  });
+
+  test("is only read when the macro returns it", async () => {
+    const { lastLine, stderr, exitCode } = await run({
+      "m.ts": `export function unused() {\n  Bun.file(import.meta.dir + "/no-such-file.txt");\n  return "not read";\n}\n`,
+      "index.ts": `import { unused } from "./m.ts" with { type: "macro" };\nconsole.log(unused());\n`,
+    });
+    expect({ lastLine, stderr }).toEqual({ lastLine: "not read", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // procfs reports a size of 0 for a file that has content, and a sysctl file gives all of it to one read only.
+  test.skipIf(!isLinux)("is read whole when it reports no size", async () => {
+    const procfs = ["/proc/version", "/proc/sys/kernel/random/boot_id"];
+    const { lastLine, stderr, exitCode } = await run({
+      "m.ts": `export const procfs = () => ${JSON.stringify(procfs)}.map(path => Bun.file(path, { type: "text/plain" }));\n`,
+      "index.ts": `import { procfs } from "./m.ts" with { type: "macro" };\nconsole.log(JSON.stringify(procfs()));\n`,
+    });
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
+      value: procfs.map(path => readFileSync(path, "utf8")),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // With a limit, the file reader stops at the size that the file reports. For this read it goes on to the
+  // end of the window. /proc/self/environ reports no size, and the test decides how long it is.
+  test.skipIf(!isLinux)("keeps its window when it reports no size", async () => {
+    const version = readFileSync("/proc/version", "utf8");
+    // More than the 256 KB that the first read asks for.
+    const [start, end] = [16, 300_016];
+    const { lastLine, stderr, exitCode } = await run(
+      {
+        "m.ts": [
+          `import fs from "node:fs";`,
+          `const text = { type: "text/plain" };`,
+          `export const long = () => Bun.file("/proc/self/environ", { type: "application/octet-stream" }).slice(${start}, ${end});`,
+          `export const pastTheEnd = () => Bun.file("/proc/version", text).slice(100_000, 100_010);`,
+          `export const twoOfOneDescriptor = () => {`,
+          `  const file = Bun.file(fs.openSync("/proc/version", "r"), text);`,
+          `  return [file.slice(0, 5), file.slice(6, 13)];`,
+          `};`,
+          ``,
+        ].join("\n"),
+        "index.ts": [
+          `import { readFileSync } from "node:fs";`,
+          `import { long, pastTheEnd, twoOfOneDescriptor } from "./m.ts" with { type: "macro" };`,
+          `const inlined = Buffer.from(long().slice("data:application/octet-stream;base64,".length), "base64");`,
+          `const expected = readFileSync("/proc/self/environ").subarray(${start}, ${end});`,
+          `console.log(JSON.stringify({`,
+          `  long: [inlined.length, inlined.equals(expected)],`,
+          `  pastTheEnd: pastTheEnd(),`,
+          `  twoOfOneDescriptor: twoOfOneDescriptor(),`,
+          `}));`,
+          ``,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+      // Four values, because one value cannot be longer than 128 KB.
+      Object.fromEntries(
+        [0, 1, 2, 3].map(i => [`MACRO_TEST_FILL_${i}`, Buffer.alloc(100_000, "0123456789abcdef").toString()]),
+      ),
+    );
+    expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
+      value: {
+        long: [end - start, true],
+        pastTheEnd: "",
+        twoOfOneDescriptor: [version.slice(0, 5), version.slice(6, 13)],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // On Linux, an open without O_NOCTTY makes a terminal the controlling terminal of a session leader that has none.
+  test.skipIf(!isLinux)("does not take a terminal as the controlling terminal", async () => {
+    const decls = {
+      openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      ptsname: { args: [FFIType.i32], returns: FFIType.cstring },
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    } as const;
+    const libc = isMusl
+      ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", decls).symbols
+      : {
+          ...dlopen("libutil.so.1", { openpty: decls.openpty }).symbols,
+          ...dlopen("libc.so.6", { ptsname: decls.ptsname, close: decls.close }).symbols,
+        };
+    const master = new Int32Array(1);
+    const slave = new Int32Array(1);
+    expect(libc.openpty(master, slave, null, null, null)).toBe(0);
+    try {
+      const terminal = String(libc.ptsname(master[0]));
+      using dir = tempDir("macro-file-blob-terminal", {
+        "m.ts": `export const terminal = () => Bun.file(${JSON.stringify(terminal)});\n`,
+        "uses.ts": `import { terminal } from "./m.ts" with { type: "macro" };\nconsole.log("inlined", terminal());\n`,
+        // Field 7 of /proc/self/stat is the controlling terminal. `require` transpiles on the main thread.
+        "index.ts": [
+          `import { readFileSync } from "node:fs";`,
+          `function controllingTerminal() {`,
+          `  const stat = readFileSync("/proc/self/stat", "utf8");`,
+          `  return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[4];`,
+          `}`,
+          `const before = controllingTerminal();`,
+          `let error = "";`,
+          `try {`,
+          `  require("./uses.ts");`,
+          `} catch (e) {`,
+          `  error = String(e.message).split("\\n")[0];`,
+          `}`,
+          `console.log(JSON.stringify({ before, after: controllingTerminal(), error }));`,
+          ``,
+        ].join("\n"),
+      });
+      // `detached` makes the child a session leader, and none of its stdio is a terminal.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        detached: true,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ value: JSON.parse(stdout.trim().split("\n").pop() || "null"), stderr }).toEqual({
+        value: {
+          before: "0",
+          after: "0",
+          error: `failed to read the file returned by this macro: ENODEV: no such device, read '${terminal}'`,
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      libc.close(master[0]);
+      libc.close(slave[0]);
+    }
+  });
 });
 
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which

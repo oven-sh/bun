@@ -171,6 +171,17 @@ export function getObject() {
 }
 ```
 
+`Bun.file()` returns a `Blob`, so a macro can return a file. Bun reads the file when it inlines the macro call. The `type` comes from the file extension, unless you pass one to `Bun.file()`.
+
+```ts title="macro.ts" icon="/icons/typescript.svg"
+export function getLogo() {
+  // inlined as "data:image/png;base64,..."
+  return Bun.file(import.meta.dir + "/logo.png");
+}
+```
+
+To inline a text or JSON file with a fixed path, import the file instead. See [loaders](/bundler/loaders). The build fails if the path is not a regular file that Bun can read. Bun does not read an S3 file that a macro returns. Read it in the macro and return the result, for example `await file.text()`.
+
 Functions and instances of most classes (except those listed earlier) are not serializable.
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"

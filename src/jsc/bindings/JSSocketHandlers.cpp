@@ -40,6 +40,8 @@ void JSSocketHandlers::finishCreation(JSC::VM& vm, const JSC::EncodedJSValue* ca
         Base::internalField(i).setWithoutWriteBarrier(value.isEmpty() ? jsUndefined() : value);
     }
     Base::internalField(static_cast<unsigned>(Field::Promise)).setWithoutWriteBarrier(jsUndefined());
+    // These stores came after the fence in Base::finishCreation.
+    vm.mutatorFence();
 }
 
 template<typename Visitor>

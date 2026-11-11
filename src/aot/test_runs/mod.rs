@@ -164,7 +164,7 @@ pub(crate) fn look_at_file_of_run(
     found.runs_unseen_code |= objects.evaluates_unknown_text;
     found.closed_holders_out_of_sight = objects.take_closed_holders();
     if let Some(texts) = texts {
-        (found.in_texts_written, found.in_texts_handed_on) = texts.finish();
+        (found.in_texts_written, found.in_texts_handed_on) = texts.finish(input.builtin_names);
     }
     names.finish(&mut found);
     found
@@ -187,6 +187,7 @@ pub(crate) struct RunContents {
     pub exports_spied_in_text: Vec<(Atom, Atom)>,
     pub mocks_any_module: bool,
     pub loader_functions_answer_requires: bool,
+    pub preloads: Vec<FileId>,
     pub names_added: Vec<(BuiltinId, Atom)>,
     pub members_written_as_reads: Arc<[u32]>,
     pub loads: LoadsOfRun,
@@ -464,6 +465,7 @@ pub(crate) fn collect_run_contents(
         whose,
         rejects_uncompiled_code,
         members_written_as_reads: list_members_written_as_reads(input.replaced_builtins),
+        preloads: find_files_listed_by_runner(&input).preloads,
         loads: collect_loads_of_run(files, input.options),
         ..RunContents::default()
     };

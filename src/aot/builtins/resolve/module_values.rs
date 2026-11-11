@@ -304,6 +304,9 @@ impl Resolver<'_, '_> {
             || self.has_direct_eval_in_es_module()
         {
             self.expose_commonjs_variable(variable);
+            if variable == CommonJsVariable::Require {
+                self.note_cache_of_unresolved_require(expr);
+            }
             return ExprState::Unresolved;
         }
         ExprState::of_path(self.commonjs.get(variable))

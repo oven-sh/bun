@@ -170,6 +170,8 @@ interface Internals {
   emitData?: (stream: $Node.Readable, chunk: unknown) => void;
   /** Only in what was compiled ahead of time. */
   isPlainReadableAlone?: (stream: $Node.AnyStream) => boolean;
+  /** Compiled code only. Returns one of `Sides` of internal/streams/utils. Unless it is `Unknown`, inspecting the stream runs no user code. */
+  plainStreamSides?: (stream: unknown) => number;
   /** Only in what was compiled ahead of time. */
   isPlainUnfinishedResponse?: (stream: $Node.AnyStream) => boolean;
   /** Only in what was compiled ahead of time. */
@@ -1122,6 +1124,11 @@ definePropertiesWhereBunRunDoes(WritableState.prototype, {
   },
 });
 
+// A separate function, so that the store does not shift the fields after it in the layout that the AOT compiler predicts.
+function storeDefaultEncoding(state: WritableState, defaultEncoding) {
+  state[kDefaultEncodingValue] = defaultEncoding;
+}
+
 function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   // Bit map field to store WritableState more efficiently with 1 bit per field instead of a V8 slot per field.
   this[kState] = WritableFlag.Sync | Flag.Constructed | Flag.EmitClose | Flag.AutoDestroy;
@@ -1149,7 +1156,7 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
     this[kState] |= WritableFlag.DefaultUTF8Encoding;
   } else if (Buffer.isEncoding(defaultEncoding)) {
     this[kState] &= ~WritableFlag.DefaultUTF8Encoding;
-    this[kDefaultEncodingValue] = defaultEncoding;
+    storeDefaultEncoding(this, defaultEncoding);
   } else {
     throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }

@@ -9,8 +9,11 @@
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = range(input | 0);
 # -- end of source
 # The compiler before this one: 5 instructions, 0 of them patches.
-# When the bound was taken: loop: operations 23, patches 1, moves 0, unlikely 0.
-# RUN(X64): loops most:23 f1 mechanisms=all-Inlining
+# Eight turns stand in each of the first two loops: 45 operations.
+# RUN(X64): loops most:45,52,16,23 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 45
+# X64-NEXT: loop: at most 52
+# X64-NEXT: loop: at most 16
 # X64-NEXT: loop: at most 23

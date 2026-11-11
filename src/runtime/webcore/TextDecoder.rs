@@ -483,6 +483,19 @@ impl TextDecoder {
 // `TextDecoder` wrapper cell, no `decode` prototype lookup, no per-chunk
 // `{stream: true}` options object) and drives it through these.
 
+/// Whether the next `decode()` without `{stream: true}` decodes its bytes as UTF-8 from the start of a new
+/// stream, so that it keeps no state for later calls.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn TextDecoder__startsUTF8(
+    decoder: &TextDecoder,
+    removes_byte_order_mark: &mut MaybeUninit<bool>,
+    replaces_invalid_bytes: &mut MaybeUninit<bool>,
+) -> bool {
+    removes_byte_order_mark.write(!decoder.ignore_bom);
+    replaces_invalid_bytes.write(!decoder.fatal);
+    matches!(decoder.encoding, EncodingLabel::Utf8) && !decoder.do_not_flush
+}
+
 /// Validates `label` (WebIDL DOMString coercion — may run user JS) and
 /// returns a fresh decoder configured for the matching encoding. Returns null
 /// with an exception pending on `global` on a bad label.

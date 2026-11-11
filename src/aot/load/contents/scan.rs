@@ -13,10 +13,11 @@ use bun_sema::util::{FxHashMap, SharedSort};
 use super::FileContents;
 use super::load_names::{find_modules_spelled_as_keys_in_data, find_modules_spelled_in_data};
 use crate::builtins::table::{self, ExportLookup};
-use crate::builtins::{BuiltinId, ResolvedBuiltins};
+use crate::builtins::{BuiltinId, BuiltinNames, ResolvedBuiltins};
 use crate::load::runtime_modules::RuntimeModules;
 
 pub(crate) struct ScanInput<'a> {
+    pub builtin_names: &'a BuiltinNames,
     pub runtime_modules: &'a RuntimeModules,
     pub runs_tests: bool,
     pub loads_code_from_disk: bool,
@@ -126,6 +127,7 @@ impl ContentsScan<'_, '_> {
                 self.look_at_folded_text(expression);
             }
             ExprKind::New(_) => self.look_at_construction(expression),
+            ExprKind::Assign { op, target, .. } => self.look_at_path_stored(op, target),
             ExprKind::Object(properties) => self.look_at_keys(properties),
             ExprKind::Call(call) => {
                 self.look_at_folded_text(expression);
@@ -155,7 +157,6 @@ impl ContentsScan<'_, '_> {
             | ExprKind::Class(_)
             | ExprKind::Unary { .. }
             | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
             | ExprKind::Cond { .. }
             | ExprKind::Spread(_)
             | ExprKind::Await(_)

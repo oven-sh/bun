@@ -691,6 +691,7 @@ fn ask_for_member_accesses(files: &[(&str, &str)], threads: usize) -> Vec<Option
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };
@@ -778,6 +779,7 @@ fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };

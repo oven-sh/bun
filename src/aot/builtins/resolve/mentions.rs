@@ -345,6 +345,34 @@ impl Resolver<'_, '_> {
         }
     }
 
+    pub(super) fn is_function_reading_this(&self, value: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut value = hir.skip_type_assertions(value);
+        for _ in 0..=MOST_VARIABLES_FOLLOWED {
+            match hir[value].kind {
+                ExprKind::Fn(function) => {
+                    return hir[function].kind != FnKind::Arrow && self.reads_this(function);
+                }
+                ExprKind::Ident(_) => {}
+                _ => return false,
+            }
+            let Binding::Symbol(name) = bound.binding(value) else {
+                return false;
+            };
+            match *bound.symbol(name).decls {
+                [Decl::Fn(function)] => return self.reads_this(function),
+                [Decl::Var(pattern)] => match bound.pat_parent[pattern.idx()] {
+                    PatParent::Var(declaration) if hir[declaration].init.is_some() => {
+                        value = hir.skip_type_assertions(hir[declaration].init);
+                    }
+                    _ => return false,
+                },
+                _ => return false,
+            }
+        }
+        false
+    }
+
     fn is_stored_over_by_what_may_read_this(&self, member: ExprId, id: BuiltinId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         if self.input.dialect != SourceDialect::Program || !keeps_what_is_laid_over_it(id) {

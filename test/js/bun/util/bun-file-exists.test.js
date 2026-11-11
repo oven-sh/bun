@@ -46,6 +46,7 @@ test("exists() is true for a file descriptor of the null device", async () => {
   }
 });
 
+// mkfifo and a socket on fd 0 are POSIX. The Unix socket cases are not verified on Windows.
 describe.skipIf(isWindows)("exists() for a file that is not a regular file", () => {
   test("a path to a FIFO or a socket is true, a directory is false", async () => {
     using dir = tempDir("bun-file-exists-kinds", { regular: "hello" });
@@ -99,12 +100,15 @@ describe.skipIf(isWindows)("exists() for a file that is not a regular file", () 
       env: bunEnv,
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
     proc.stdin.end();
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(JSON.parse(stdout)).toEqual({ socket: true, stdin: true, fd: true });
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ socket: true, stdin: true, fd: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

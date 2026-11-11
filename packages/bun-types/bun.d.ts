@@ -2757,6 +2757,10 @@ declare module "bun" {
      * opened, and a device may never end. To accept only regular files, use
      * `(await file.stat()).isFile()`. `stat()` rejects for a missing path.
      *
+     * The same rule applies to a file descriptor. `Bun.stdin.exists()` is
+     * true on a terminal, on `/dev/null`, and on a pipe or a socket. To find
+     * out whether stdin is piped, use `process.stdin.isTTY`.
+     *
      * A race condition can occur where the file is deleted or renamed after
      * this is called but before you open it.
      *

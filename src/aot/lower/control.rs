@@ -363,7 +363,7 @@ pub(crate) fn allows_tail_call_of(
 ) -> bool {
     let file = &lowering.file;
     let keeps_frame = file.inputs.options.runs_tests
-        && ends_in_call_that_reads_frame_of_caller(file.hir, file.bound, value);
+        && ends_in_call_that_reads_frame_of_caller(file.hir, file.bound, file.decisions(), value);
     !keeps_frame && allows_tail_call(lowering)
 }
 

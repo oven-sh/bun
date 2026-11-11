@@ -1,6 +1,8 @@
 // `vi.importActual("./dep")`, `jest.requireActual("./dep")`, `vi.doMock("./dep", ..)`, `expect(a).toMatchInlineSnapshot()`: native code of the test runner
 // finds the file or the position of the call in the frame of its caller. In a test run Bun's transpiler prints none of them as a tail call, which
 // would drop that frame, so a compiled test run makes none either. Plain `bun test` says what is right.
+// The transpiler asks behind its visit, where a key in brackets that it folds to one of these names is the name: `vi[key]("./dep")`
+// behind `const key = "importActual"` keeps the frame, and behind `let key` it does not.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -33,8 +35,30 @@ const project = {
     export const withoutName = () => vi.unmock();
     export const snapshot = (value: unknown) => expect(value).toMatchInlineSnapshot();
     export const snapshotOfError = (thrower: () => void) => expect(thrower).toThrowErrorMatchingInlineSnapshot();`,
+  "sub/keys.ts": `import { expect, jest, vi } from "bun:test";
+    enum Names { Import = "import", ImportActual = "importActual" }
+    export const written = () => vi["importActual"]("./dep");
+    export const writtenAsTemplate = () => vi[\`importActual\`]("./dep");
+    export function inlined() { const key = "importActual"; return vi[key]("./dep"); }
+    export const inlinedInArrow = () => { const key = "importActual"; return vi[key]("./dep"); };
+    export const joined = () => vi["import" + "Actual"]("./dep");
+    export function templated() { const part = "Actual"; return vi[\`import\${part}\`]("./dep"); }
+    export const chosen = () => vi[true ? "importActual" : "importMock"]("./dep");
+    export const behindComma = () => vi[(0, "importActual")]("./dep");
+    export const firstOfList = () => vi[["importActual"][0]]("./dep");
+    export const enumMember = () => vi[Names.ImportActual]("./dep");
+    export const joinedToEnumMember = () => vi[Names.Import + "Actual"]("./dep");
+    export function throughName() { const key = "importActual"; const loaded = vi[key]("./dep"); return loaded; }
+    export function required() { const key = "requireActual"; return jest[key]("./dep.cjs"); }
+    export function notInlined() { let key = "importActual"; return vi[key]("./dep"); }
+    export function behindStatement(count: number) { count++; const key = "importActual"; return vi[key]("./dep"); }
+    export const handed = (key: "importActual") => vi[key]("./dep");
+    export function mockIt() { const key = "doMock"; return vi[key]("./dep", () => ({ where: "mocked through a key" })); }
+    export function unmockIt() { const key = "doUnmock"; return vi[key]("./dep"); }
+    export function snapshot(value: unknown) { const key = "toMatchInlineSnapshot"; return expect(value)[key](); }`,
   "1.test.ts": `import { test } from "bun:test";
     import * as helper from "./sub/helper";
+    import * as keys from "./sub/keys";
     import "./dep";
     import "./dep.cjs";
     test("loads", async () => {
@@ -55,7 +79,7 @@ const project = {
       }
     });
     test("snapshots in another file", () => {
-      for (const ask of [() => helper.snapshot(1), () => helper.snapshotOfError(() => { throw new Error("boom"); })]) {
+      for (const ask of [() => helper.snapshot(1), () => helper.snapshotOfError(() => { throw new Error("boom"); }), () => keys.snapshot(1)]) {
         try {
           ask();
           console.log("taken");
@@ -63,6 +87,16 @@ const project = {
           console.log(String((error as Error).message).split("\\n").filter(line => line.trim()).slice(0, 2).join(" | "));
         }
       }
+    });
+    test("loads through keys", async () => {
+      for (const name of ["written", "writtenAsTemplate", "inlined", "inlinedInArrow", "joined", "templated", "chosen", "behindComma", "firstOfList", "enumMember", "joinedToEnumMember", "throughName", "required", "notInlined"] as const)
+        console.log(name + ":", (await keys[name]()).where);
+      console.log("behindStatement:", (await keys.behindStatement(1)).where, "handed:", (await keys.handed("importActual")).where);
+    });
+    test("mocks through keys", async () => {
+      keys.mockIt();
+      console.log("mocked through a key:", (await import("./sub/dep")).where, ".", (await import("./dep")).where);
+      keys.unmockIt();
     });`,
   "2.test.ts": `import { expect, test } from "bun:test";
     const check = (value: unknown) => expect(value).toMatchInlineSnapshot();
@@ -95,9 +129,14 @@ test("as one program", async () => {
     "pass mocks",
     "pass frames",
     "pass snapshots in another file",
+    "pass loads through keys",
+    "pass mocks through keys",
     "pass snapshots",
   ]);
   expect(plain.printed).toContain("arrow: beside the helper");
+  expect(plain.printed).toContain("inlined: beside the helper");
+  expect(plain.printed).toContain("notInlined: beside the test file");
+  expect(plain.printed).toContain("mocked through a key: mocked through a key . beside the test file");
   expect(plain.written).toContain("toMatchInlineSnapshot(`1`)");
   expect(await runTests(asOneProgram, "--aot")).toEqual(plain);
 });

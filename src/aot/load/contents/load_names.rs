@@ -1035,7 +1035,9 @@ fn find_name_sought_from_unknown_folder(
     let ImportSpecifier::Constant(name) = site.specifier else {
         return None;
     };
-    let keeps_frame = ends_in_call_that_reads_frame_of_caller(request.hir, request.bound, call);
+    let decisions = &request.analysis.decisions;
+    let keeps_frame =
+        ends_in_call_that_reads_frame_of_caller(request.hir, request.bound, decisions, call);
     (is_relative_path(request.atoms.bytes(name)) && !keeps_frame).then_some((name, requires))
 }
 

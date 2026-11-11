@@ -375,9 +375,32 @@ fn is_name_that_transpiler_knows(
     }
 }
 
-fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
+/// The transpiler looks at a callee behind its visit, which writes `a.b` for `a[k]` where it leaves the text "b" in
+/// place of `k`.
+fn find_member_that_transpiler_calls(
+    hir: &File<'_>,
+    decisions: &Decisions<'_>,
+    callee: ExprId,
+) -> Option<(ExprId, Atom)> {
+    match hir.member_key(callee)? {
+        (object, MemberKey::Name(name)) => Some((object, name)),
+        (object, MemberKey::Computed(key)) => {
+            let key = hir.skip_type_assertions(key);
+            let name = decisions.find_text_in_place_under_minify_syntax(hir, key)?;
+            Some((object, name))
+        }
+        (_, MemberKey::PrivateName(_)) => None,
+    }
+}
+
+fn reads_frame_of_caller(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    call: CallId,
+) -> bool {
     let callee = hir.skip_type_assertions(hir[call].callee);
-    let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
+    let Some((object, name)) = find_member_that_transpiler_calls(hir, decisions, callee) else {
         return false;
     };
     let holders: &[Atom] = match name {
@@ -414,11 +437,12 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
 pub fn ends_in_call_that_reads_frame_of_caller(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
     value: ExprId,
 ) -> bool {
-    let ends_so = |value| ends_in_call_that_reads_frame_of_caller(hir, bound, value);
+    let ends_so = |value| ends_in_call_that_reads_frame_of_caller(hir, bound, decisions, value);
     match expr_kind(hir, hir.skip_type_assertions(value)) {
-        Some(ExprKind::Call(call)) => reads_frame_of_caller(hir, bound, call),
+        Some(ExprKind::Call(call)) => reads_frame_of_caller(hir, bound, decisions, call),
         Some(ExprKind::Cond { branches, .. }) => {
             let Branches { yes, no } = hir.branches(branches);
             ends_so(yes) || ends_so(no)

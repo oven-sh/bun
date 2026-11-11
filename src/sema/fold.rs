@@ -190,6 +190,7 @@ pub struct Decisions<'s> {
     is_constant: NodeBits<'s>,
     strings_and_numbers_of_bun_run_alone: NodeBits<'s>,
     strings_and_numbers_under_minify_syntax: NodeBits<'s>,
+    texts_in_place_under_minify_syntax: &'s [(ExprId, Atom)],
     folded_with: FoldInputs<'s>,
     specifiers: &'s [(ExprId, ImportSpecifier)],
     paths_from_own_directory: &'s [ExprId],
@@ -324,6 +325,29 @@ impl<'s> Decisions<'s> {
                     && self.is_constant_under_minify_syntax(hir, expr)
             }
             FoldedValue::Unknown => self.strings_and_numbers_under_minify_syntax.has(expr.idx()),
+        }
+    }
+
+    /// The text that a bun run which minifies syntax has in place of `expr` behind its visit. Unlike `constant` it also
+    /// tells the text where that run leaves out what `expr` reads: an enum member, what is computed from one, a text
+    /// behind a read that nothing uses. The transpiler marks an enum member that it writes in place (`EInlinedEnum`),
+    /// so the answer is for a reader that looks behind the mark, as the key of `a[k]` does.
+    pub fn find_text_in_place_under_minify_syntax(
+        &self,
+        hir: &File<'_>,
+        expr: ExprId,
+    ) -> Option<Atom> {
+        match self.constant(hir, expr) {
+            FoldedValue::Constant(Constant::String(text))
+            | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => self
+                .is_constant_under_minify_syntax(hir, expr)
+                .then_some(text),
+            FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_) => None,
+            FoldedValue::Unknown => {
+                let texts = self.texts_in_place_under_minify_syntax;
+                let index = texts.binary_search_by_key(&expr, |entry| entry.0).ok()?;
+                Some(texts[index].1)
+            }
         }
     }
 

@@ -1504,6 +1504,73 @@ fn bun_build_writes_nothing_for_what_nobody_takes() {
     }
 }
 
+const TEXTS_IN_PLACE: &[(&str, &str, Option<&str>)] = &[
+    ("a.mjs", r#"v("a");"#, Some("a")),
+    ("a.mjs", r#"v("a" + "b");"#, Some("ab")),
+    (
+        "a.mjs",
+        r#"function g() { const X = "a"; v(X); }"#,
+        Some("a"),
+    ),
+    ("a.mjs", r#"v(([], "m"));"#, Some("m")),
+    ("a.mjs", r#"let x = f(); v(void x || "k");"#, Some("k")),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } v(Kind.User);"#,
+        Some("kind"),
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } v(Kind["User"]);"#,
+        Some("kind"),
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = Kind.User; v(KEY);"#,
+        Some("kind"),
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } const KEY = ([], Kind.User); v(KEY);"#,
+        Some("kind"),
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } v(1 ? Kind.User : "z");"#,
+        Some("kind"),
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } v(Kind.User + "s");"#,
+        Some("kinds"),
+    ),
+    (
+        "a.ts",
+        r#"enum Kind { User = "kind" } v(`${Kind.User}s`);"#,
+        Some("kinds"),
+    ),
+    ("a.ts", "enum Kind { One = 1 } v(Kind.One);", None),
+    ("a.mjs", r#"f(); const X = "a"; v(X);"#, None),
+    ("a.mjs", r#"let X = "a"; v(X);"#, None),
+    ("a.mjs", r#"v({} && "k");"#, None),
+    ("a.mjs", "v(1 + 2);", None),
+    ("a.mjs", "v(f());", None),
+];
+
+#[test]
+fn text_in_place_is_told_behind_what_bun_run_leaves_out() {
+    for &(path, text, expected) in TEXTS_IN_PLACE {
+        for fold in [Fold::NONE, Fold::MINIFIED] {
+            folded(path, text, fold, |s| {
+                let decisions = &s.analysis.decisions;
+                let found = decisions.find_text_in_place_under_minify_syntax(&s.hir, probe(s));
+                let found = found.map(|found| s.workspace.text(found));
+                assert_eq!(found, expected, "{text}");
+            });
+        }
+    }
+}
+
 const MADE_OF_WHAT_MINIFY_SYNTAX_COMPUTES: &[LiteralRow] = &[
     ("a.mjs", r#"v(`na${"me"}`);"#),
     ("a.mjs", "v(`n${null}`);"),

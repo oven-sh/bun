@@ -353,27 +353,33 @@ impl<'s> Folder<'_, 's> {
         constants
     }
 
+    /// `texts` gets the text of each string among them, and of each enum member that bun run writes in place.
     fn collect_strings_and_numbers_behind_what_is_left_out(
         &self,
         dead: &MarkedNodes,
         least: Effects,
+        mut texts: Option<&mut Vec<(ExprId, Atom)>>,
     ) -> PositionSet {
         let mut found = PositionSet::new(self.hir.exprs.len());
         for (index, &effects) in self.effects.iter().enumerate() {
             if effects < least || effects > Effects::LeftOutByBunRun || dead.exprs.contains(index) {
                 continue;
             }
-            if self.is_enum_member_written_in_place(ExprId(index as u32)) {
+            let e = ExprId(index as u32);
+            let Value::Known(value) = self.values[index] else {
+                continue;
+            };
+            let is_string = self.evaluator.is_string(value);
+            if !(is_string || self.values[index].is_number()) || !self.is_folded_by_bun_run(e) {
                 continue;
             }
-            let is_string_or_number = match self.values[index] {
-                Value::Known(value) => {
-                    self.values[index].is_number() || self.evaluator.is_string(value)
-                }
-                Value::Unknown => false,
-            };
-            if is_string_or_number && self.is_folded_by_bun_run(ExprId(index as u32)) {
+            if !self.is_enum_member_written_in_place(e) {
                 found.insert(index);
+            }
+            if let Some(texts) = texts.as_deref_mut()
+                && let Constant::String(text) = self.evaluator.to_constant(value)
+            {
+                texts.push((e, text));
             }
         }
         found
@@ -434,6 +440,14 @@ impl<'s> Folder<'_, 's> {
         let (dead_exprs_under_minify_syntax, dead_stmts_under_minify_syntax) =
             dead_under_minify_syntax.unwrap_or((dead_exprs_in_bun_run, dead_stmts_in_bun_run));
         let constants = self.collect_constants(&dead);
+        let mut texts_in_place = Vec::new();
+        let strings_and_numbers_under_minify_syntax = self.holds_under_minify_syntax(|folder| {
+            folder.collect_strings_and_numbers_behind_what_is_left_out(
+                &dead,
+                Effects::LeftOutUnderMinifySyntax,
+                Some(&mut texts_in_place),
+            )
+        });
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
             is_decided: NodeBits::of_ascending(
@@ -449,18 +463,15 @@ impl<'s> Folder<'_, 's> {
                 &self.collect_strings_and_numbers_behind_what_is_left_out(
                     &dead,
                     Effects::LeftOutByBunRun,
+                    None,
                 ),
                 arena,
             ),
             strings_and_numbers_under_minify_syntax: NodeBits::freeze(
-                &self.holds_under_minify_syntax(|folder| {
-                    folder.collect_strings_and_numbers_behind_what_is_left_out(
-                        &dead,
-                        Effects::LeftOutUnderMinifySyntax,
-                    )
-                }),
+                &strings_and_numbers_under_minify_syntax,
                 arena,
             ),
+            texts_in_place_under_minify_syntax: slice_in(&texts_in_place, arena),
             specifiers: slice_in(&self.specifiers, arena),
             paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),
             paths_made_by_calls: slice_in(&self.paths_made_by_calls, arena),

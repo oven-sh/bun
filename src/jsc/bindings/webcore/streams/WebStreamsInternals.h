@@ -361,6 +361,7 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 // before the tee records it, so a tee whose construction was cut short after that leaves reactions that run
 // against unset branch slots). Callers skip a terminal branch.
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+// Also nullptr for an errored branch: webStreamControllerError dropped its pull-into descriptors without setting its canceled flag.
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 // True if a chain of tees or text streams has used too much stack for the next link. The link then continues from a microtask.

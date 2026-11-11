@@ -5596,3 +5596,42 @@ describe.concurrent("a node:vm timeout inside a streams operation", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// These crashed, so each runs in a child process.
+describe.concurrent("addAbortSignal() on a branch of a byte tee", () => {
+  async function run(src) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it.each([
+    [
+      "a chunk",
+      "request.view[0] = 1; request.respond(1); abortController.abort();",
+      `[{"value":{"0":1},"done":false},"AbortError"]`,
+    ],
+    ["the end", "controller.close(); abortController.abort(); request.respond(0);", `[{"done":true},"AbortError"]`],
+  ])("addAbortSignal() on a tee branch whose BYOB read is about to get %s", async (_, abort, expected) => {
+    const result = await run(`
+      const { addAbortSignal } = require("node:stream");
+      let controller;
+      const source = new ReadableStream({ type: "bytes", start(c) { controller = c; } });
+      const [aborted, other] = source.tee();
+      const abortController = new AbortController();
+      addAbortSignal(abortController.signal, aborted);
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      await turn();
+      const read = aborted.getReader({ mode: "byob" }).read(new Uint8Array(16));
+      read.catch(() => {});
+      const otherRead = other.getReader().read();
+      await turn();
+      const request = controller.byobRequest;
+      ${abort}
+      console.log(JSON.stringify([await otherRead, await read.then(() => "fulfilled", e => e.name)]));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(expected);
+    expect(result).toMatchObject({ exitCode: 0, signalCode: null });
+  });
+});

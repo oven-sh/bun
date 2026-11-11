@@ -46,7 +46,6 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const {
-  constructors,
   kAcceptedTLS,
   kArmHandshakeTimeout,
   kDestroyOnRead,
@@ -1808,7 +1807,6 @@ function Socket(options?): void {
   }
 }
 $toClass(Socket, "Socket", Duplex);
-constructors.Socket = Socket;
 
 Socket.prototype.address = function address() {
   return {

@@ -43,12 +43,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const {
-  constructors: netConstructors,
-  kForeignListener,
-  kHandleClosed,
-  kSNIContexts,
-} = require("internal/net/symbols");
+const { kForeignListener, kHandleClosed, kSNIContexts } = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -2255,20 +2250,27 @@ function onSocketTimeoutTimerExpired(this: any) {
 let NetSocket;
 let TLSSocket;
 let assignablePeerAddress;
+function assignablePeerMember(name, member) {
+  return {
+    configurable: true,
+    // As net.Socket's getter, but for an object that got this one by a descriptor and is no socket.
+    get() {
+      const getPeerName = this._getpeername;
+      return getPeerName === undefined ? undefined : getPeerName.$call(this)[member];
+    },
+    set(value) {
+      Object.defineProperty(this, name, { value, writable: true, configurable: true, enumerable: true });
+    },
+  };
+}
 function loadNet(tls) {
   if (NetSocket === undefined) {
     NetSocket = require("node:net").Socket;
-    assignablePeerAddress = {};
-    for (const name of ["remoteAddress", "remotePort", "remoteFamily"]) {
-      assignablePeerAddress[name] = {
-        configurable: true,
-        // Of node:net's own class: one that a program has stored in `net.Socket` may inherit it.
-        get: Object.getOwnPropertyDescriptor(netConstructors.Socket.prototype, name)!.get,
-        set(value) {
-          Object.defineProperty(this, name, { value, writable: true, configurable: true, enumerable: true });
-        },
-      };
-    }
+    assignablePeerAddress = {
+      remoteAddress: assignablePeerMember("remoteAddress", "address"),
+      remotePort: assignablePeerMember("remotePort", "port"),
+      remoteFamily: assignablePeerMember("remoteFamily", "family"),
+    };
   }
   if (tls) TLSSocket ??= require("node:tls").TLSSocket;
 }

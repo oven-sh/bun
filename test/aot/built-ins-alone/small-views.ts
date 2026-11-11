@@ -196,6 +196,9 @@ const routes: Record<string, Route[]> = {
   "WebAssembly.validate": [[view => WebAssembly.validate(view), emptyModule]],
   "BigInt64Array": [[view => new BigInt64Array(view), () => new BigInt64Array(1)]],
   "BigUint64Array": [[view => new BigUint64Array(view), () => new BigUint64Array(1)]],
+  "%SecureContext%.prototype.setTicketKeys": [
+    [view => require("node:tls").createSecureContext().context.setTicketKeys(view), () => new Uint8Array(48)],
+  ],
   "Blob.prototype.write": [[view => Bun.file("written").write(view)]],
   "Bun.CryptoHasher": [[view => new Bun.CryptoHasher("sha256", view)]],
   "Bun.CryptoHasher.hash": [

@@ -578,44 +578,44 @@ defined anew true added true removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: freeze itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy with every trap, then used itself
-traps while closing: 126 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+traps while closing: 124 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy with every trap, then used as that
-traps while closing: 126 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+traps while closing: 124 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 565 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+traps while closing: 556 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a revoked Proxy, then used itself
@@ -633,63 +633,63 @@ asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: freeze a Proxy that traps defineProperty, then used itself
-traps while closing: 62 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+traps while closing: 61 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps getOwnPropertyDescriptor, then used itself
-traps while closing: 62 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+traps while closing: 61 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
-as that closed sealed frozen 62 keys, 62 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: seal itself, then used itself

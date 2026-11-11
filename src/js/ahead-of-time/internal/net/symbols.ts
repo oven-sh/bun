@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/net/symbols.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 367ea71dc5f761c11c4193795abccd0e09712f8fb5578f2db6fdf43444d1bd43.
+// Written against that file with the SHA-256 912e09c35380c27c0d8bcda419db0b456dcc309ae1c2a4cf3b214f373f2d0128.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 export default {

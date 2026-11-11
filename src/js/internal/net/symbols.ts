@@ -24,7 +24,4 @@ export default {
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),
   // True on a client-side `new tls.TLSSocket(socket)`. The TLSSocket constructor sets it.
   kStandaloneWrap: Symbol("kStandaloneWrap"),
-
-  // net.ts puts its own class in: a program may store another one in `net.Socket`.
-  constructors: { Socket: undefined as any },
 };

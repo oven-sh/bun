@@ -55,7 +55,7 @@ export const QuicStream = b.class({
     endWrite: { capability: "js" },
     getPriority: { returns: b.u32 },
     getReader: { returns: b.self, passThis: true },
-    initStreamingSource: { capability: "heap", throws: true },
+    initStreamingSource: { capability: "heap", throws: true, ...writesState },
     pull: { ...js, args: { callback: b.any } },
     resetStream: { args: { code: b.any }, returns: b.bool, capability: "js" },
     sendHeaders: { ...js, args: { kind: b.any, headers: b.any, flags: b.any }, returns: b.any.returning("boolean") },

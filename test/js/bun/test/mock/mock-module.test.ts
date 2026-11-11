@@ -43,6 +43,11 @@ test("spyOn", () => {
   expect(spyFixture.iSpy).toHaveBeenCalled();
 });
 
+test("spyOn does not call a native getter on the prototype that has it", () => {
+  using spy = spyOn(Map.prototype, "size", "get").mockReturnValue(7);
+  expect([new Map().size, spy.mock.calls.length]).toEqual([7, 1]);
+});
+
 // fs.ReadStream and https.Server are accessors on their module until the first read, which replaces them with the
 // class. spyOn reads them, so the spy lands on the class.
 test.concurrent.each([

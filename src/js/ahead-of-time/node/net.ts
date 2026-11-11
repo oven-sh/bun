@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c5bb9f6453dfa4f03d9123d911f7d1ff8afcf583dd63e30a11bc72a01a8d5d92.
+// Written against that file with the SHA-256 57912e487c6f3865dbae5d990747169f23ed4769207832f8927e461f377fee83.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"

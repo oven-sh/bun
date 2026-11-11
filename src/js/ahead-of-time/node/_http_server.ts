@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f14645fc6af6a16c956042871af63a64d9e96e9d5646368ab76f6ecf97ccffe8.
+// Written against that file with the SHA-256 5207cb4738d6ac8e096ab4bcca780a992b7a6cd7fcf4bfd501ec3e3db268cd31.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -203,6 +203,7 @@ const pushRenderedHeader = http.responseRoad.pushRenderedHeader!;
 const outgoingSetHeader = http.responseRoad.outgoingSetHeader!;
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const outgoingGetHeader = OutgoingMessagePrototype.getHeader;
+const failHeldWrites = OutgoingMessagePrototype[kFailHeldWrites];
 const outgoingHasHeader = OutgoingMessagePrototype.hasHeader;
 const outgoingSocketSetter: (this: $Node.OutgoingMessage, value: $Node.HttpSocket | null) => void =
   Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "socket")!.set!;
@@ -1383,6 +1384,14 @@ function listenInCluster(
   });
 }
 
+// By the prototypes alone: a read of a symbol off the server may be seen.
+function isHeirOfServer(server: object): boolean {
+  for (let level = ObjectGetPrototypeOf(server); level !== null; level = ObjectGetPrototypeOf(level)) {
+    if (level === Server.prototype || $isProxyObject(level)) return true;
+  }
+  return false;
+}
+
 Server.prototype[kRealListen] = function (
   this: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,
@@ -1416,7 +1425,7 @@ Server.prototype[kRealListen] = function (
       !this[kOptimizeEmptyRequests];
 
     // An https.Server is no heir of Server.
-    const isServerOfOwnClass = !this[isTlsSymbol];
+    const isServerOfOwnClass = !usesOwnClasses || isHeirOfServer(this);
 
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
@@ -3019,6 +3028,19 @@ let netSocketPrototype: object | undefined;
 const noMethod = {};
 let netSocketResume: Function | object = noMethod;
 let netSocketSetTimeout: unknown;
+function assignablePeerMember(name: string, member: "address" | "port" | "family"): PropertyDescriptor {
+  return {
+    configurable: true,
+    // As net.Socket's getter, but for an object that got this one by a descriptor and is no socket.
+    get(this: $Node.Socket) {
+      const getPeerName = this._getpeername;
+      return getPeerName === undefined ? undefined : getPeerName.$call(this)[member];
+    },
+    set(value) {
+      Object.defineProperty(this, name, { value, writable: true, configurable: true, enumerable: true });
+    },
+  };
+}
 function loadNet(tls: $Node.HttpServerTLSOptions | null) {
   if (NetSocket === undefined) {
     NetSocket = require("node:net").Socket;
@@ -3028,17 +3050,11 @@ function loadNet(tls: $Node.HttpServerTLSOptions | null) {
     const resumeOfSocket = netSymbols.resumeOfSocket;
     netSocketResume = typeof resumeOfSocket === "function" ? resumeOfSocket : noMethod;
     netSocketSetTimeout = ownPrototype.setTimeout;
-    assignablePeerAddress = {};
-    for (const name of ["remoteAddress", "remotePort", "remoteFamily"]) {
-      assignablePeerAddress[name] = {
-        configurable: true,
-        // Of node:net's own class: one that a program has stored in `net.Socket` may inherit it.
-        get: Object.getOwnPropertyDescriptor(ownPrototype, name)!.get,
-        set(value) {
-          Object.defineProperty(this, name, { value, writable: true, configurable: true, enumerable: true });
-        },
-      };
-    }
+    assignablePeerAddress = {
+      remoteAddress: assignablePeerMember("remoteAddress", "address"),
+      remotePort: assignablePeerMember("remotePort", "port"),
+      remoteFamily: assignablePeerMember("remoteFamily", "family"),
+    };
   }
   if (tls) TLSSocket ??= require("node:tls").TLSSocket;
 }
@@ -4824,7 +4840,14 @@ function emitsUnseen(res: $Node.ServerResponse): boolean {
 
 // Whether emit("close") would find nothing whose callbacks it has to fail first.
 function holdsNothing(res: $Node.ServerResponse): boolean {
-  return res.outputData.length === 0 && res[kChunkedBuffer].length === 0 && res[kPendingCallbacks].length === 0;
+  return (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $isPlainHeirOf(res, ServerResponse) &&
+    res[kFailHeldWrites] === failHeldWrites &&
+    res.outputData.length === 0 &&
+    res[kChunkedBuffer].length === 0 &&
+    res[kPendingCallbacks].length === 0
+  );
 }
 
 function resumesUnseen(socket: $Node.HttpServerSocket): boolean {

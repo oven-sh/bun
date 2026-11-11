@@ -3082,13 +3082,18 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     // A builtin module's lazy export (fs.ReadStream) is an accessor until its first read. Read it, then spy on the value.
-    if (object->type() != JSC::JSType::ProxyObjectType) {
+    if (access == SpyAccess::Value && object->type() != JSC::JSType::ProxyObjectType) {
         JSC::PropertySlot probe(object, JSC::PropertySlot::InternalMethodType::HasProperty);
         bool has = object->getPropertySlot(globalObject, propertyKey, probe);
         RETURN_IF_EXCEPTION(scope, {});
-        if (has && probe.isAccessor() && probe.slotBase() == object && Zig::isBunDefinedGetter(probe.getterSetter()->getter())) {
-            probe.getValue(globalObject, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
+        if (has && probe.isAccessor() && probe.slotBase() == object) {
+            JSObject* getter = probe.getterSetter()->getter();
+            // A getter in C++ (Map.prototype.size) asks its receiver, which a prototype is not.
+            auto* function = dynamicDowncast<JSFunction>(getter);
+            if (Zig::isBunDefinedGetter(getter) && !(function && function->isNonBoundHostFunction())) {
+                probe.getValue(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
     }
 

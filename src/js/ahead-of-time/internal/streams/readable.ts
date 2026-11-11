@@ -1795,7 +1795,7 @@ async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.Read
     while (true) {
       const chunk =
         IS_COMPILED_AHEAD_OF_TIME &&
-        $findsDeclaredMember(stream as unknown as $Node.IncomingMessage, "destroyed", Readable)
+        $findsDeclaredMember(stream, "destroyed", Readable)
           ? readUnlessDestroyed(stream)
           : stream.destroyed
             ? null

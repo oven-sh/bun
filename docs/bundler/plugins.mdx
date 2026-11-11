@@ -275,7 +275,7 @@ plugin({
       return undefined;
     });
 
-    build.onLoad({ filter: /stats\.json/ }, async ({ defer }) => {
+    build.onLoad({ filter: /[\\/]stats\.json$/ }, async ({ defer }) => {
       // Wait for all files to be loaded, ensuring
       // that every file goes through the above `onLoad()` function
       // and their imports tracked

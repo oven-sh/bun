@@ -1,0 +1,13 @@
+A mock with a factory, vi.resetModules(), a mock without one: what require() of the module itself answers.
+#### after-factory-itself.test.mjs
+import { jest, test, vi } from "bun:test";
+test("the module itself", () => {
+  jest.doMock("./flat.mjs", () => ({ a: "mocked", fn: () => 1 }));
+  console.log("| CASE", require("./flat.mjs").a);
+  vi.resetModules();
+  vi.doMock("./flat.mjs");
+  console.log("| CASE", require("./flat.mjs").a);
+});
+#### flat.mjs
+export const a = "real";
+export function fn() { return "real fn"; }

@@ -4,9 +4,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isMusl, tempDir } from "harness";
 import { join } from "path";
-import { countsInstructions, measureCommand } from "../analysis-scaling/measure-check";
+import { measureCommand } from "../analysis-scaling/measure-check";
+import { without } from "../harness/capabilities";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
-import { withSteadyCollections } from "../harness/counted-run";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "copies-in-cold-code");
@@ -20,15 +20,20 @@ const rows: [loop: string, baseline: string, allowance: number, iterations: numb
   ["a copy of a kind never met", "no copy of a kind never met", isMusl ? 4_700 : 3_700, 8_000],
 ];
 
-const skipped =
-  isDebug || isASAN
-    ? "a debug or ASAN build counts other instructions"
-    : !countsInstructions()
-      ? "instructions are not counted here"
-      : undefined;
-if (skipped) console.error(`SKIPPED: test/aot/perf/copies-in-cold-code.test.ts: ${skipped}`);
+// Collections come when so much has been allocated and at no other time, and the thread of the program does all their work. Otherwise what the
+// collector's threads get done beside the program differs by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
-describe.skipIf(!!skipped)("compile/aot/perf/copies-in-cold-code", () => {
+// A debug or ASAN build counts other instructions.
+const isSlowBuild = isDebug || isASAN;
+
+describe.skipIf(isSlowBuild || !!without("a counter of instructions"))("compile/aot/perf/copies-in-cold-code", () => {
   const folder = String(tempDir("aot-copies-in-cold-code", {}));
   const executable = join(folder, "main");
   const env = { ...bunEnv, ...withSteadyCollections };
@@ -42,7 +47,6 @@ describe.skipIf(!!skipped)("compile/aot/perf/copies-in-cold-code", () => {
           "build",
           "--compile",
           "--aot",
-          "--aot-heat=EverythingIsCold",
           ...withoutDebugInformation(),
           join(root, "main.ts"),
           "--outfile",

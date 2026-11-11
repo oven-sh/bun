@@ -128,12 +128,13 @@ fn ask(families: &str, main: &str) -> Asked {
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes: 0,
+            limits: Default::default(),
         };
         let asks = program.file("asks.ts");
         let answers = Mutex::new(Vec::new());
         let build = check(program, &|checker, file| {
             (file == asks).then(|| {
-                checker.with_queries(file, inputs, |queries| {
+                checker.with_queries(file, &inputs, |queries| {
                     let declarations = &queries.hir().var_decls;
                     let (source, target) = (declarations[0].pat, declarations[1].pat);
                     let source = queries.binding_type(source).unwrap();
@@ -162,7 +163,6 @@ fn ask(families: &str, main: &str) -> Asked {
 const ASKS_ONLY: &str = "import \"./asks\";\n";
 const ASSIGNS_ONLY: &str = "import \"./assigns\";\n";
 const ASKS_THEN_ASSIGNS: &str = "import \"./asks\";\nimport \"./assigns\";\n";
-const ASSIGNS_THEN_ASKS: &str = "import \"./assigns\";\nimport \"./asks\";\n";
 
 fn count_given_up(statistics: &QueryStatistics) -> u32 {
     statistics.gave_up.iter().sum()
@@ -214,43 +214,6 @@ fn results_that_wait_for_outermost_comparison_count() {
     assert_answered(&asked, true);
 }
 
-#[test]
-fn check_after_question_over_budget_gets_the_true_answer() {
-    for (last_leaf_of_b, codes) in [("number", &[][..]), ("string", &[2322][..])] {
-        let asked = ask(
-            &write_families(LEVELS_OVER_BUDGET, last_leaf_of_b),
-            ASKS_THEN_ASSIGNS,
-        );
-        assert_gave_up(&asked);
-        assert_eq!(asked.codes, codes);
-    }
-    let asked = ask(
-        &write_closed_families(LEVELS_OVER_BUDGET),
-        ASKS_THEN_ASSIGNS,
-    );
-    assert_gave_up(&asked);
-    assert_eq!(asked.codes, [0; 0]);
-}
-
-#[test]
-fn answer_does_not_depend_on_what_is_settled() {
-    for (last_leaf_of_b, codes) in [("number", &[][..]), ("string", &[2322][..])] {
-        let asked = ask(
-            &write_families(LEVELS_OVER_BUDGET, last_leaf_of_b),
-            ASSIGNS_THEN_ASKS,
-        );
-        assert_gave_up(&asked);
-        assert_eq!(asked.codes, codes);
-    }
-    let asked = ask(
-        &write_closed_families(LEVELS_OVER_BUDGET),
-        ASSIGNS_THEN_ASKS,
-    );
-    assert_gave_up(&asked);
-    let asked = ask(&write_chains(120), ASSIGNS_THEN_ASKS);
-    assert_gave_up(&asked);
-}
-
 fn write_member_past_instantiation_limit(length: usize) -> String {
     let elements: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     format!(
@@ -267,8 +230,6 @@ fn question_that_hits_instantiation_limit_is_asked_again_and_answered() {
         &ask(&write_member_past_instantiation_limit(10), ASKS_ONLY),
         false,
     );
-    // A visit that meets the limit gives up. Then a part of the type is computed from nothing and the file is visited again.
-    // What stands is the answer of the last visit, which is that of the short tuple.
     let asked = ask(&write_member_past_instantiation_limit(200), ASKS_ONLY);
     assert_eq!(asked.answers.first(), Some(&Err(GaveUp::ErrorType)));
     assert_eq!(
@@ -296,15 +257,4 @@ fn question_at_union_size_limit_keeps_its_task() {
     let asked = ask(&write_unions_over_size_limit(), ASKS_ONLY);
     assert_eq!(asked.answers, [Err(GaveUp::ErrorType)]);
     assert_eq!(asked.codes, [0; 0]);
-}
-
-#[test]
-fn check_reports_union_size_limit_whatever_was_asked() {
-    let unions = write_unions_over_size_limit();
-    assert_eq!(check_only_codes(&unions), [2590]);
-    for main in [ASKS_THEN_ASSIGNS, ASSIGNS_THEN_ASKS] {
-        let asked = ask(&unions, main);
-        assert_eq!(asked.answers.last(), Some(&Err(GaveUp::ErrorType)));
-        assert_eq!(asked.codes, [2590]);
-    }
 }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::load::runtime_modules::HOST_VALUE_MODULE;
 use crate::modules::commonjs_exports::{CommonJsInput, scan_commonjs_modules};
+use crate::modules::imports::find_mocked_modules;
 use crate::modules::module_set::collect_modules;
 use crate::modules::order::compute_order;
 use crate::modules::requests::scan_files;
@@ -80,14 +81,295 @@ fn with_export_tables(
             bind: input,
             scans: &scans,
             modules: &modules,
-            inner_modules: &|_| &[],
             half: &|module| order.half(module),
             half_at_link: &|module| order.half_at_link(module),
             is_prefix_root: &|_| true,
         });
         let entries = collect_export_entries(input, &scans, &modules);
-        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
+        let mocked = find_mocked_modules(input, &scans, &modules);
+        let tables = resolve_every_export(input.files, &scans, &modules, entries, &texts, &mocked);
         check(&tables, &modules, input);
+    });
+}
+
+fn star_names_with_a_place(files: &[(&str, &str)], asked: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    with_graph(files, |_, input| {
+        let scans = scan_files(input);
+        let modules = collect_modules(input, &scans);
+        let (order, _) = compute_order(input, &scans, &modules);
+        let texts = scan_commonjs_modules(&CommonJsInput {
+            bind: input,
+            scans: &scans,
+            modules: &modules,
+            half: &|module| order.half(module),
+            half_at_link: &|module| order.half_at_link(module),
+            is_prefix_root: &|_| true,
+        });
+        let entries = collect_export_entries(input, &scans, &modules);
+        let mocked = find_mocked_modules(input, &scans, &modules);
+        let tables = resolve_exports(input, &scans, &modules, entries, &texts, &mocked);
+        for file in asked {
+            let file = file_named(input, file);
+            let names = &tables.names(file)[tables.own_names(file).len()..];
+            let names = names.iter().map(|&(name, _)| input.files.atoms.bytes(name));
+            let names: Vec<String> = names.map(|name| BString::from(name).to_string()).collect();
+            found.push(names.join(" "));
+        }
+    });
+    found
+}
+
+const ROW: [(&str, &str); 3] = [
+    (
+        "m0.js",
+        "export const v0 = 0, u0 = 0; export function f0() {}",
+    ),
+    ("m1.js", "export * from './m0'; export const v1 = 1, u1 = 1"),
+    ("m2.js", "export * from './m1'; export const v2 = 2"),
+];
+
+fn star_names_of_row(others: &[(&str, &str)]) -> Vec<String> {
+    let files: Vec<(&str, &str)> = others.iter().chain(&ROW).copied().collect();
+    star_names_with_a_place(&files, &["m2.js", "m1.js"])
+}
+
+#[test]
+fn a_name_that_a_star_brings_has_a_place_where_somebody_asks_for_it() {
+    let by_name: [(&[(&str, &str)], [&str; 2]); 9] = [
+        (&[("main.js", "import './m2'")], ["", ""]),
+        (
+            &[(
+                "main.js",
+                "import * as all from './m2'; console.log(all.v0 + all.v2, typeof all.u1)",
+            )],
+            ["u1 v0", "v0"],
+        ),
+        (
+            &[("main.js", "import { v0, f0 as f } from './m2'; f(v0)")],
+            ["f0 v0", "f0 v0"],
+        ),
+        (
+            &[
+                ("main.js", "import './again'"),
+                ("again.js", "export { u0 as u } from './m2'"),
+            ],
+            ["u0", "u0"],
+        ),
+        (
+            &[("main.js", "import { v0 } from './m1'; import './m2'; v0")],
+            ["v0", "v0"],
+        ),
+        (
+            &[("main.js", "import * as all from './m2'; all.missing")],
+            ["", ""],
+        ),
+        (
+            &[("main.jsx", "import * as all from './m2'; <all.f0 />")],
+            ["f0", "f0"],
+        ),
+        (
+            &[(
+                "main.js",
+                "import * as all from './m2'; new all.f0(all?.v0.length); all.f0.call(null)",
+            )],
+            ["f0 v0", "f0 v0"],
+        ),
+        (
+            &[(
+                "main.ts",
+                "import * as all from './m2'; (all.u0 as number) + all['u1']",
+            )],
+            ["u1 u0", "u0"],
+        ),
+    ];
+    let differing: Vec<_> = by_name
+        .into_iter()
+        .map(|(others, expected)| (others, expected, star_names_of_row(others)))
+        .filter(|(_, expected, found)| found != expected)
+        .collect();
+    assert!(differing.is_empty(), "{differing:?}");
+}
+
+#[test]
+fn whoever_may_get_hold_of_the_object_of_a_file_asks_for_every_name() {
+    let every_name = ["v1 u1 f0 v0 u0", "f0 v0 u0"];
+    let askers: [&[(&str, &str)]; 24] = [
+        &[("main.js", "import * as all from './m2'; console.log(all)")],
+        &[("main.js", "import * as all from './m2'; all.f0()")],
+        &[("main.js", "import * as all from './m2'; all.f0?.()")],
+        &[("main.js", "import * as all from './m2'; all?.f0()")],
+        &[("main.js", "import * as all from './m2'; all.f0``")],
+        &[(
+            "main.js",
+            "import * as all from './m2'; console.log({ all })",
+        )],
+        &[(
+            "main.js",
+            "import * as all from './m2'; for (const name in all) name",
+        )],
+        &[("main.js", "import * as all from './m2'; delete all.v0")],
+        &[("main.js", "import * as all from './m2'; all['v' + 0]")],
+        &[("main.js", "import * as all from './m2'; const { v0 } = all")],
+        &[("main.js", "import * as all from './m2'; if (all) all.v0")],
+        &[("main.js", "import * as all from './m2'; 'v0' in all")],
+        &[("main.js", "import * as all from './m2'; all.__esModule")],
+        &[("main.js", "import * as all from './m2'; eval('all.v0')")],
+        &[(
+            "main.js",
+            "import * as all from './m2'; all.v1; (() => eval('all.v0'))()",
+        )],
+        &[(
+            "main.ts",
+            "import * as all from './m2'; (all as any).v0 = 1",
+        )],
+        &[("main.ts", "import * as all from './m2'; all!.v0")],
+        &[("main.js", "import * as all from './m2'; export { all }")],
+        &[
+            ("main.js", "import './holder'"),
+            ("holder.js", "export * as inner from './m2'"),
+        ],
+        &[("main.js", "import('./m2')")],
+        &[("main.js", "const name = './m' + 2; import(name)")],
+        &[("main.cjs", "require('./m2').v0")],
+        &[(
+            "main.ts",
+            "import * as all from './m2'; import v = all.v0; v",
+        )],
+        &[
+            ("main.js", "import './above'"),
+            (
+                "above.js",
+                "export * from './m2'; import * as self from './above'; console.log(self)",
+            ),
+        ],
+    ];
+    let askers = askers.into_iter();
+    let unseen: Vec<_> = askers
+        .filter(|others| star_names_of_row(others) != every_name)
+        .collect();
+    assert!(unseen.is_empty(), "{unseen:?}");
+}
+
+#[test]
+fn the_file_that_the_reach_takes_for_the_object_that_a_function_is_called_on_has_every_name() {
+    let space = ("space.js", "export let tell = function () { return this }");
+    let behind = ("behind.js", "export const unread = 1");
+    let files: [(&[(&str, &str)], &str); 4] = [
+        (
+            &[
+                ("main.js", "import { inner } from './asked'; inner.tell()"),
+                (
+                    "asked.js",
+                    "export * as inner from './space'; export * from './behind'",
+                ),
+            ],
+            "unread",
+        ),
+        (
+            &[
+                (
+                    "main.ts",
+                    "import { inner } from './asked'; (inner as any).tell!()",
+                ),
+                (
+                    "asked.js",
+                    "export * from './holder'; export * from './behind'",
+                ),
+                (
+                    "holder.js",
+                    "import * as inner from './space'; export { inner }",
+                ),
+            ],
+            "inner unread",
+        ),
+        (
+            &[
+                (
+                    "main.js",
+                    "import { renamed } from './asked'; renamed.tell``",
+                ),
+                (
+                    "asked.js",
+                    "export * from './between'; export * from './behind'",
+                ),
+                ("between.js", "export { inner as renamed } from './holder'"),
+                ("holder.js", "export * as inner from './space'"),
+            ],
+            "renamed unread",
+        ),
+        (
+            &[
+                (
+                    "main.js",
+                    "import * as outer from './outer'; outer.inner.told()",
+                ),
+                ("outer.js", "export * as inner from './hands_on'"),
+                ("hands_on.js", "export { told } from './asked'"),
+                (
+                    "asked.js",
+                    "export let told = function () { return this }; export * from './behind'",
+                ),
+            ],
+            "unread",
+        ),
+    ];
+    for (files, expected) in files {
+        let files: Vec<(&str, &str)> = files.iter().chain(&[space, behind]).copied().collect();
+        assert_eq!(
+            star_names_with_a_place(&files, &["asked.js"]),
+            [expected],
+            "{files:?}"
+        );
+    }
+    let only_read = [
+        (
+            "main.js",
+            "import { inner } from './asked'; inner.tell; new inner.tell(inner)",
+        ),
+        (
+            "asked.js",
+            "export * as inner from './space'; export * from './behind'",
+        ),
+        space,
+        behind,
+    ];
+    assert_eq!(star_names_with_a_place(&only_read, &["asked.js"]), [""]);
+}
+
+#[test]
+fn a_name_whose_place_says_more_than_where_a_variable_is_has_its_place() {
+    let files = [
+        ("main.js", "import './top'"),
+        ("top.js", "export * from './left'; export * from './right'"),
+        (
+            "left.js",
+            "export const both = 1, left = 1; export { a as handed } from './a'; export * as space from './a'",
+        ),
+        ("right.js", "export const both = 2, right = 2"),
+        ("a.js", "export const a = 1"),
+    ];
+    assert_eq!(
+        star_names_with_a_place(&files, &["top.js"]),
+        ["both handed space"]
+    );
+}
+
+#[test]
+#[should_panic(expected = "nobody was seen to ask for that name")]
+fn nobody_asks_for_a_name_that_was_left_out() {
+    let files: Vec<(&str, &str)> = [("main.js", "import './m2'")]
+        .iter()
+        .chain(&ROW)
+        .copied()
+        .collect();
+    with_graph(&files, |graph, input| {
+        let name = input.files.atoms.intern(b"v0");
+        graph.find_export(
+            ModuleRef::File(file_named(input, "m2.js")),
+            name,
+            &input.files.atoms,
+        );
     });
 }
 
@@ -140,6 +422,160 @@ fn required(resolution: Resolution, (module, name): NodeKey) -> ResolvedName {
 }
 
 #[test]
+fn a_file_that_may_be_mocked_has_every_name() {
+    let files = [
+        (
+            "main.test.js",
+            "import { mock } from 'bun:test'; mock.module('./mocked.js', () => ({}));\n\
+             import './barrel.js'; import './hands_on.js'; import './other.js'",
+        ),
+        ("mocked.js", "export const has = 1"),
+        (
+            "barrel.js",
+            "export * from './mocked.js'; export const own = 1",
+        ),
+        ("hands_on.js", "export { lacks } from './mocked.js'"),
+        ("other.js", "export const has = 1"),
+    ];
+    with_export_tables(&files, |tables, modules, input| {
+        let name = |name: &str| input.files.atoms.intern(name.as_bytes());
+        let resolve = |file: &str, asked: Atom| {
+            let file = file_named(input, file);
+            tables.resolve(modules, file, asked).resolution
+        };
+        let open_name = |file: &str, name: Atom| Resolution::DynamicStar {
+            module: file_named(input, file),
+            name,
+        };
+        let lacks = name("lacks");
+        assert!(matches!(
+            resolve("mocked.js", name("has")),
+            Resolution::Variable(_)
+        ));
+        assert_eq!(resolve("mocked.js", lacks), open_name("mocked.js", lacks));
+        assert_eq!(
+            resolve("mocked.js", known::default),
+            open_name("mocked.js", known::default)
+        );
+        assert_eq!(resolve("barrel.js", lacks), open_name("barrel.js", lacks));
+        assert_eq!(resolve("barrel.js", known::default), Resolution::NotFound);
+        assert_eq!(
+            resolve("hands_on.js", lacks),
+            Resolution::LiveName {
+                module: ModuleRef::File(file_named(input, "mocked.js")),
+                name: lacks,
+            }
+        );
+        assert_eq!(resolve("other.js", lacks), Resolution::NotFound);
+        assert!(
+            tables
+                .failures_of(file_named(input, "hands_on.js"))
+                .is_empty()
+        );
+    });
+}
+
+#[test]
+fn a_name_that_a_statement_takes_from_a_file_that_may_be_mocked_is_compared_at_run_time() {
+    let lay = |mock: &str| {
+        [
+            (
+                "main.test.js",
+                format!(
+                    "import {{ mock }} from 'bun:test'; {mock}\n\
+                     import './handed.js'; import './imported.js'; import './last.js';\n\
+                     import './by_star.js'; import './whole.js'"
+                ),
+            ),
+            ("mocked.js", "export const spare = 1, round = 2".to_owned()),
+            ("other.js", "export const round = 3".to_owned()),
+            (
+                "hands_on.js",
+                "export { spare as round } from './mocked.js'".to_owned(),
+            ),
+            (
+                "exports_again.js",
+                "import { spare } from './mocked.js'; export { spare as round }".to_owned(),
+            ),
+            ("stars.js", "export * from './mocked.js'".to_owned()),
+            (
+                "as_namespace.js",
+                "export * as round from './mocked.js'".to_owned(),
+            ),
+            (
+                "handed.js",
+                "export * from './hands_on.js'; export * from './other.js'".to_owned(),
+            ),
+            (
+                "imported.js",
+                "export * from './exports_again.js'; export * from './other.js'".to_owned(),
+            ),
+            (
+                "last.js",
+                "export * from './other.js'; export * from './hands_on.js'".to_owned(),
+            ),
+            (
+                "by_star.js",
+                "export * from './stars.js'; export * from './other.js'".to_owned(),
+            ),
+            (
+                "whole.js",
+                "export * from './as_namespace.js'; export * from './other.js'".to_owned(),
+            ),
+        ]
+    };
+    let look = |mock: &str, check: &dyn Fn(&str, ResolvedName, bool, Option<FileId>)| {
+        let files = lay(mock);
+        let files = files.each_ref().map(|(name, text)| (*name, text.as_str()));
+        with_export_tables(&files, |tables, modules, input| {
+            let round = input.files.atoms.intern(b"round");
+            for barrel in [
+                "handed.js",
+                "imported.js",
+                "last.js",
+                "by_star.js",
+                "whole.js",
+            ] {
+                let file = file_named(input, barrel);
+                let resolved = tables.resolve(modules, file, round);
+                let declared_in = match resolved.resolution {
+                    Resolution::Variable(symbol) => Some(symbol.file),
+                    _ => None,
+                };
+                let first = match barrel {
+                    "last.js" => "other.js",
+                    _ => "mocked.js",
+                };
+                let is_first = declared_in == Some(file_named(input, first));
+                check(
+                    barrel,
+                    resolved,
+                    tables.follows_every_star(file),
+                    declared_in,
+                );
+                assert!(declared_in.is_none() || is_first, "{barrel}");
+            }
+        });
+    };
+    look("", &|barrel, resolved, _, _| {
+        assert_eq!(resolved.resolution, Resolution::Ambiguous, "{barrel}");
+    });
+    look(
+        "mock.module('./mocked.js', () => ({}));",
+        &|barrel, resolved, follows_every_star, declared_in| match barrel {
+            "handed.js" | "imported.js" | "last.js" => {
+                assert!(declared_in.is_some(), "{barrel}");
+                assert!(
+                    resolved.can_be_ambiguous() && follows_every_star,
+                    "{barrel}"
+                );
+            }
+            _ => assert_eq!(resolved.resolution, Resolution::Ambiguous, "{barrel}"),
+        },
+    );
+}
+
+#[test]
 fn exports_follow_resolve_export() {
     let expected: [(&str, &[&str]); 21] = [
         ("collide.js", &["a = a.js#a star", "b = b.js#b star"]),
@@ -179,7 +615,15 @@ fn exports_follow_resolve_export() {
             &["Buffer = synthetic runtime:NodeBuffer Buffer"],
         ),
     ];
-    with_graph(&PROGRAM, |graph, input| {
+    let look = |(index, (file, _)): (usize, &(&str, &[&str]))| {
+        format!("import * as n{index} from './{file}'; console.log(n{index});\n")
+    };
+    let looks: String = expected.iter().enumerate().map(look).collect();
+    let main = format!("{}; import './looks.js'", PROGRAM[0].1);
+    let mut files = PROGRAM.to_vec();
+    files[0].1 = &main;
+    files.push(("looks.js", &looks));
+    with_graph(&files, |graph, input| {
         for (file, exports) in expected {
             let lines = lines_after("export ", &describe_module(graph, input, file));
             assert_eq!(lines, exports, "{file}");
@@ -325,7 +769,7 @@ fn names_of_commonjs_file_resolve_at_run_time() {
 #[test]
 fn json_keys_are_static_exports() {
     let main = "import { x } from './barrel.js'; import { absent } from './data.json';\n\
-                console.log(x, absent)";
+                import * as barrel from './barrel.js'; console.log(x, absent, barrel)";
     let files = [
         ("main.js", main),
         ("barrel.js", "export * from './data.json'"),
@@ -678,7 +1122,7 @@ fn ambiguous_name_hides_commonjs_star_name() {
     let files = [
         (
             "main.js",
-            "import './stars.js'; import './outer.js'; import './plain.js'",
+            "import './stars.js'; import './outer.js'; import * as plain from './plain.js'; console.log(plain)",
         ),
         ("a.js", "export const x = 1, a = 1"),
         ("b.js", "export const x = 2"),

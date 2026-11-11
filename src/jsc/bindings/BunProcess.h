@@ -34,6 +34,8 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
+    // A function of the library: it hands native code what it kept for a tick. No tick runs once the process exits.
+    WriteBarrier<JSObject> m_runsWhenProcessExits;
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -128,6 +130,16 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    inline void setRunsWhenProcessExits(JSC::JSObject* function)
+    {
+        m_runsWhenProcessExits.setMayBeNull(vm(), this, function);
+    }
+
+    inline JSC::JSObject* runsWhenProcessExits()
+    {
+        return m_runsWhenProcessExits.get();
+    }
+
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
@@ -142,6 +154,12 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
+
+// Its argument runs when the process or the worker starts to exit, in front of the 'exit' listeners and where none run. No program can list it.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRunWhenProcessExits);
+
+// node:events hands it EventEmitter.prototype, which goes above the native prototype of process.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

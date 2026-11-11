@@ -1,9 +1,9 @@
 use std::fmt::Write;
 
 use super::generated::{
-    AmbiguousExport, Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module,
-    ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry, SourceStamp,
-    TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, BuiltinUsedAtStart, Data, DeclaredRecord, Entry, EvalScope, ExpectedResult,
+    Function, Layout, Module, ModuleFailure, OpenedName, ProgramList, ReplaceableBuiltin,
+    RuntimeFunctionEntry, SourceStamp, TypeSite, Variable, WebAssemblyModule,
 };
 use super::ids::{FunctionId, Id};
 use super::program::{NameTables, Program};
@@ -11,11 +11,18 @@ use super::program::{NameTables, Program};
 pub struct Printer<'a> {
     pub out: &'a mut String,
     pub names: NameTables<'a>,
+    pub(super) hides_rewritten_types: bool,
 }
+
+pub const REWRITTEN_TYPE: char = '\u{2026}';
 
 impl<'a> Printer<'a> {
     pub fn new(names: NameTables<'a>, out: &'a mut String) -> Printer<'a> {
-        Printer { out, names }
+        Printer {
+            out,
+            names,
+            hides_rewritten_types: false,
+        }
     }
 
     pub fn print_separated<T>(
@@ -82,6 +89,10 @@ impl<'a> Printer<'a> {
             ProgramList::SourceStamps => {
                 self.print_lines(list, &program.source_stamps, SourceStamp::print_fields);
             }
+            ProgramList::DeclaredRecords => {
+                let records = &program.declared_records;
+                self.print_lines(list, records, DeclaredRecord::print_fields);
+            }
             ProgramList::EvalScopes => {
                 self.print_lines(list, &program.eval_scopes, EvalScope::print_fields);
             }
@@ -118,6 +129,13 @@ impl<'a> Printer<'a> {
             ProgramList::OpenedNames => {
                 self.print_lines(list, &program.opened_names, OpenedName::print_fields);
             }
+            ProgramList::BuiltinsUsedAtStart => {
+                self.print_lines(
+                    list,
+                    &program.builtins_used_at_start,
+                    BuiltinUsedAtStart::print_fields,
+                );
+            }
             _ => debug_assert!(list.keyword().is_none()),
         }
     }
@@ -126,6 +144,18 @@ impl<'a> Printer<'a> {
 pub fn print_program(program: &Program) -> String {
     let mut out = String::new();
     let mut printer = Printer::new(program.name_tables(), &mut out);
+    for list in ProgramList::ALL {
+        printer.print_list(program, list);
+    }
+    out
+}
+
+pub fn print_program_held_to_engine(program: &Program) -> String {
+    let mut out = String::new();
+    let mut printer = Printer {
+        hides_rewritten_types: true,
+        ..Printer::new(program.name_tables(), &mut out)
+    };
     for list in ProgramList::ALL {
         printer.print_list(program, list);
     }

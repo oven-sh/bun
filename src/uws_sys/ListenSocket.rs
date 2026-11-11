@@ -65,7 +65,12 @@ impl ListenSocket {
     /// `cb(user, hostname, abort_handshake, socket)` also runs for connections accepted before this listen socket closed, so `user` has to outlive them.
     pub fn on_server_name(
         &mut self,
-        cb: extern "C" fn(*mut c_void, *const c_char, *mut c_int, *mut us_socket_t) -> *mut SslCtx,
+        cb: extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            Option<&mut c_int>,
+            *mut us_socket_t,
+        ) -> *mut SslCtx,
         user: *mut c_void,
     ) {
         us_listen_socket_on_server_name(self, cb, user)
@@ -88,7 +93,12 @@ unsafe extern "C" {
     fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
-        cb: extern "C" fn(*mut c_void, *const c_char, *mut c_int, *mut us_socket_t) -> *mut SslCtx,
+        cb: extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            Option<&mut c_int>,
+            *mut us_socket_t,
+        ) -> *mut SslCtx,
         user: *mut c_void,
     );
 }

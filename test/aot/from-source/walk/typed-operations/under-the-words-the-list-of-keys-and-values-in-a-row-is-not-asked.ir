@@ -1,0 +1,18 @@
+# -- source: under-the-words-the-list-of-keys-and-values-in-a-row-is-not-asked.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# function gather(given: Record<string, number>): string { const out: string[] = []; for (const [key, value] of Object.entries(given)) out.push(key + "=" + value); return out.join(); }
+# print(id(gather)(id({ a: 1, b: 2 })));
+# -- end of source
+# LIBRARY: own
+# Object.entries() that a for-of takes apart at once gives one list of keys and values in a row, and the verifier lets only the reads of that loop name it. The list bears the note that it is as made, and the rows of those reads say `relies = Pristine`: under testing=CheckProofsAtRunTime the question once named the list too, and check=Validate stopped the build of every such loop. The program never sees that list, so nothing can be done to it: it is not asked.
+# RUN(FLAT): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# FLAT-LABEL: code f1:Body
+# FLAT: = CallBuiltin {{*}}overload=CompilerHelpersOwnEntriesFlat/0
+# FLAT-NOT: IsPristine
+# FLAT: = GetArrayLength
+# FLAT-NOT: IsPristine
+# FLAT: = GetArrayElement
+# RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# CHECK: a=1,b=2
+# CHECK-NEXT: exited with 0

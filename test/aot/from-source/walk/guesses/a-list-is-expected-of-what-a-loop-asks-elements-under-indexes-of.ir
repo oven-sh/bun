@@ -1,0 +1,17 @@
+# `for (let place = 0; place < count; place++) total = total + rows[place].v`: a list was expected of what a loop reads by key only where its `length` is read too. Here the bound is another number, so nothing was expected and every element was read by the stub.
+# Where nothing at all is named off the holder, nor off its place, and an element read under a key that is an index by its text is asked for a name, a list is expected: in functions without written types. `named` reads `rows.size` off the same place: nothing is expected there.
+# -- source: a-list-is-expected-of-what-a-loop-asks-elements-under-indexes-of.cjs
+# const rows = JSON.parse('[{"v":1},{"v":2},{"v":3},{"v":4.5}]');
+# function sum(count) { let total = 0; for (let place = 0; place < count; place++) total = total + rows[place].v; return total; }
+# function named(count) { let total = 0; for (let place = 0; place < count; place++) total = total + rows[place].v + (rows.size | 0); return total; }
+# print(sum([].length + 4), named([].length + 4));
+# -- end of source
+# f1 = sum, f2 = named
+# RUN(COUNT): compile ArraysSpeculatedFromElementUses mechanisms=all
+# COUNT-NOT: statistic ArraysSpeculatedFromElementUses 0
+# RUN(SUM): walk f1:Body mechanisms=all
+# SUM: testedType=Array
+# RUN(NAMED): walk f2:Body mechanisms=all
+# NAMED-NOT: testedType=Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 10.5 10.5

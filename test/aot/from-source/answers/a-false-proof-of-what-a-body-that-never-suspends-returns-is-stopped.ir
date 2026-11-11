@@ -1,0 +1,30 @@
+# -- source: a-false-proof-of-what-a-body-that-never-suspends-returns-is-stopped.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# async function give() { const got = id(7); print("got it"); return got; }
+# async function later() { await null; const got = id(7); print("got it later"); return got; }
+# async function useAtOnce() { const got = await give(); print(typeof got); }
+# async function useLater() { const got = await later(); print(typeof got); }
+# if (which === 1) useAtOnce();
+# if (which === 2) useLater();
+# print("went on");
+# -- end of source
+# What an async function returns to its caller, in a user's build: no switch that checks proofs is set.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, but a number arrives.
+# Nothing suspends in `give`, so code that awaits a call of `give` enters its body and takes the returned value straight from the register.
+# That result is checked against its type where it leaves the body, like the result of any function (Plan::typeHeldOfResult() of the unit).
+# The number is caught there, and the process crashes with a named error.
+# Something suspends in `later`, so the value arrives through its promise. Nothing trusts a proof of what `await` takes out of a promise, so the number comes out as a number.
+# When the proof was trusted unchecked, the first run printed "undefined" for a number and continued.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(ATONCE): run-in-shell mechanisms=all globalThis.which = 1;
+# ATONCE: got it
+# ATONCE-NEXT: bun: internal AOT error: type check failed
+# ATONCE-NEXT: found int32 in a call result
+# ATONCE-NOT: went on
+# ATONCE: crashed with
+# RUN(LATER): run-in-shell mechanisms=all globalThis.which = 2;
+# LATER: went on
+# LATER-NEXT: got it later
+# LATER-NEXT: number

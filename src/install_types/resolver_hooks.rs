@@ -1434,7 +1434,7 @@ pub trait AutoInstaller {
         &mut self,
         package_id: PackageID,
         resolution: &Resolution,
-        buf: &'b mut [u8],
+        buf: &'b mut bun_core::PathBuffer,
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
     /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is

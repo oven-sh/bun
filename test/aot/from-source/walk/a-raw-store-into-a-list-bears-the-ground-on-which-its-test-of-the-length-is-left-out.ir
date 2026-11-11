@@ -1,0 +1,15 @@
+# PutDoubleIndex and PutContiguousIndex store raw. Where the walk knows that the position lies inside the list it leaves `key < length` out in front of them.
+# It did so on a bare yes: the store bore no passed test, and the verifier's list of accesses did not hold the two: a false word there wrote memory unseen.
+# The store bears the ground now, as the reads do ([isInBounds]), and the verifier asks the prover about it again.
+# RUN(FRACTIONS): walk f1:Body mechanisms=all
+# FRACTIONS-COUNT-3: = PutDoubleIndex {{*}}[isInBounds]
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: 0.25,0.5,0.75,3.25,3.5,3.75,6.5 10,11,12,13,14,15,7 1.5 9
+# SAID-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function fractions(list: number[]): number[] { for (let at = 0; at + 2 < list.length; at += 3) { list[at] = at + 0.25; list[at + 1] = at + 0.5; list[at + 2] = at + 0.75; } return list; }
+# function whole(list: number[]): number[] { for (let at = 0; at + 2 < list.length; at += 3) { list[at] = at + 10; list[at + 1] = at + 11; list[at + 2] = at + 12; } return list; }
+# print(fractions([0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]).join(), whole([1, 2, 3, 4, 5, 6, 7]).join(), fractions([1.5]).join(), whole([9]).join());
+# -- end of source

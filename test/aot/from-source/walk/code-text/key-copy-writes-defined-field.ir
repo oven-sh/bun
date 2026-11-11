@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...all: unknown[]): void;
+# interface Options { host?: string; port?: number }
+# function bare(port: number): Options { const o: Options = { port }; Object.defineProperty(o, "host", { value: "defined" }); return o; }
+# function other(port: number): Options { const o: Options = { port }; return o; }
+# print(bare(1).host, other(2).port);
+# -- end of source
+# f1 = bare, f2 = other, L1 = Options. Only Object.defineProperty() gives "host" a value. Its slot is planned as read-only, not enumerable and not configurable, and the structure of L1 lists it that way.
+# A copy of own keys copies enumerable properties and creates plain data properties. It must not copy the raw contents of such a slot along with the others.
+# RUN: verify-code mechanisms=all
+# CHECK: {{*}}f2 Body b0 v5 (TryCopyFields): a copy of own keys writes a field that only definitions may write: L1.field0 "host"
+# -- code
+# code f2:Body {
+#   b0(v0: int[0, 2147483647] @Int32) entry=0:
+#     v1: int[0, 2147483647] @OptionalInt64 = Box v0
+#     v2: L1 @Cell = NewObject -, v1 layout=L1 fields=[1] traits=[mayCollect, mayTouchMemory]
+#     v3: L1 @Cell = NewObject layout=L1 traits=[mayCollect, mayTouchMemory]
+#     v4: L1 @JSValue = Box v3
+#     v5: boolean @Boolean = TryCopyFields v3, v2 layout=L1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Branch v5 -> taken b1(), notTaken b2()
+#   b1():
+#     Return v4
+#   b2():
+#     Return v4
+# }
+# -- end of code

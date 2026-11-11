@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { slot, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const app = `{
   root: process.cwd(),
@@ -39,7 +40,6 @@ const seen: Record<string, [string, string]> = {
     `${head}const server = Bun.serve({ port: 0, app: ${app} } as any);\n${asks}`,
   ],
 };
-const notSeen = ["the options are parsed at run time", "app is stored into the options behind their literal"];
 
 async function run(cmd: string[], cwd: string) {
   await using child = Bun.spawn({
@@ -81,6 +81,5 @@ async function run(cmd: string[], cwd: string) {
         600_000,
       );
     }
-    for (const name of notSeen) test.todo(name);
   },
 );

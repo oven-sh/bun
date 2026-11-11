@@ -1,0 +1,26 @@
+# no turn writes a list or runs other code, so the row in front of the loop asks the list whether it is as made and of the kind that is written. In the typed copy the read asks neither, and takes the storage and the length from in front of the head
+# the function and the list are handed to unseen code: nothing is proven of either but what the guard at the entry has tested
+# f1 = count
+# -- source: list-that-no-turn-writes-is-tested-in-front-of-the-loop.ts
+# declare function sink(...values: unknown[]): void; // @ts-expect-error
+# function count(names: string[] | null | undefined, turns: number) { let n = 0; for (let i = 0; i < turns; i++) n += names[i & 7] ? 1 : 0; return n; }
+# const names = ["a", "", "c", "d", "", "f", "g", "h"];
+# sink(count, names, count(names, 20));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Contiguous
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: [[storage]]: {{*}}= GetArrayStorage
+# CHECK: = GetArrayLength
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = GetArrayElement {{*}}[[storage]], {{*}}arrayStorage=Contiguous level=Proven
+# CHECK-NOT: = GetArrayStorage
+# CHECK-NOT: = GetArrayLength
+# RUN(FEWEST): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# FEWEST-LABEL: code f1:Body
+# FEWEST: = HasArrayStorage {{*}}arrayStorage=Contiguous
+# FEWEST: = GetArrayStorage
+# FEWEST: isInLoop=true isLoopHead=true
+# FEWEST: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven

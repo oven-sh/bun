@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="annotated"
 // CHECK: [[annotatedCall]] = Call
-// CHECK-NEXT: ReturnCall [[annotatedCall]] casts=[{declared={type=number site=[[annotation]]}}, {declared={type=number site=[[result]]}}]
+// CHECK-NEXT: ReturnCall [[annotatedCall]] casts=[{declared={type=number}}]
 // CHECK-LABEL: function {{*}}name="beforeUnreachableStatement"
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[unreachableValue]]

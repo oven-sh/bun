@@ -1,0 +1,13 @@
+# As promise-of-a-function-that-is-only-copied-in-line-does-not-vouch-for-itself.ir, through a chain: `outer()` hands on what `size()` gives, both are written `int32`, both are only ever copied in line.
+# f1 = size, f2 = outer, f3 = chain
+# -- source: promise-handed-on-through-two-copies-does-not-vouch-for-itself.ts
+# declare function sink(...values: unknown[]): void;
+# declare const box: { size: any };
+# function size(): Bun.int32 { return box.size; }
+# function outer(): Bun.int32 { return size(); }
+# function chain(): number { return outer() + 1; }
+# sink(chain);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f3 mechanisms=all
+# CHECK: the walk of f3:Body failed

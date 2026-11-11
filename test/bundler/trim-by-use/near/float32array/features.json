@@ -1,1 +1,1 @@
-{ "features": ["Float32Array"], "keptToday": true }
+{ "features": ["Float32Array"], "keptToday": ["Float32Array"] }

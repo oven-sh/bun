@@ -303,8 +303,30 @@ export function findPrimitiveMismatch(type: DumpedType, value: unknown): string 
   }
 }
 
+// Any value, but the objects that native code makes among them, and all that those hold, are of the classes that the type lists. What an operand brought is the program's.
+function findObjectOfUnlistedClass(context: TypeContext, type: DumpedType, value: unknown, depth: number): string | undefined {
+  if (!isObject(value) || depth > maxPlainDataDepth || context.visited.has(value) || context.run.log.originOf(value) !== undefined) return undefined;
+  const mismatch = findMismatch(context, { ...type, isAnything: false, isMadeOfListedClasses: false }, value);
+  if (mismatch !== undefined) return `${mismatch}, which is of none of the classes that the type lists`;
+  context.visited.add(value);
+  try {
+    const held = [
+      ...Reflect.ownKeys(value).map(key => Reflect.getOwnPropertyDescriptor(value, key)?.value),
+      ...internalsOf(value, context.run.log).map(internal => internal.value),
+    ];
+    for (const inner of held) {
+      const found = findObjectOfUnlistedClass(context, type, inner, depth + 1);
+      if (found !== undefined) return found;
+    }
+  } finally {
+    context.visited.delete(value);
+  }
+  return undefined;
+}
+
 // Undefined where the value lies in the type, else what the value is.
 export function findMismatch(context: TypeContext, type: DumpedType, value: unknown): string | undefined {
+  if (type.isMadeOfListedClasses) return findObjectOfUnlistedClass(context, type, value, 0);
   if (type.isAnything) return undefined;
   let mismatch: string | undefined;
   if (isObject(value)) {

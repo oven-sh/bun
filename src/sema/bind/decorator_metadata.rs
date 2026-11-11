@@ -162,16 +162,32 @@ pub fn find_metadata_binding(
     references: &[ImplicitReference],
     reference: MetadataReference,
 ) -> Option<Binding> {
+    find_metadata_reference(references, reference).map(|found| found.binding)
+}
+
+pub fn find_metadata_reference(
+    references: &[ImplicitReference],
+    reference: MetadataReference,
+) -> Option<ImplicitReference> {
     let found = references.binary_search_by_key(&Some(reference), |entry| match entry.kind {
         ImplicitReferenceKind::DecoratorMetadata(recorded) => Some(recorded),
-        ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => None,
+        ImplicitReferenceKind::JsxFactory
+        | ImplicitReferenceKind::JsxFragment
+        | ImplicitReferenceKind::DefinedPath => None,
     });
-    found.ok().map(|index| references[index].binding)
+    found.ok().map(|index| references[index])
 }
 
 pub fn is_legacy_decorated_member(hir: &File<'_>, member: MemberId) -> bool {
     is_decoratable_member(hir, member)
         && (has_decorators(hir, hir[member].modifiers) || has_parameter_decorator(hir, member))
+}
+
+pub fn is_field_moved_by_legacy_decorators(hir: &File<'_>, member: MemberId) -> bool {
+    let node = hir[member];
+    node.kind == MemberKind::Property
+        && !node.flags.contains(Flags::ACCESSOR)
+        && is_legacy_decorated_member(hir, member)
 }
 
 pub(super) fn has_decorators(hir: &File<'_>, modifiers: Span<ModifierId>) -> bool {
@@ -183,16 +199,9 @@ pub(super) fn has_decorators(hir: &File<'_>, modifiers: Span<ModifierId>) -> boo
 
 pub(super) fn is_decoratable_member(hir: &File<'_>, member: MemberId) -> bool {
     let node = hir[member];
-    if matches!(node.key, PropKey::Private(_)) {
-        return false;
-    }
-    match node.kind {
-        MemberKind::Property => true,
-        MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
-            node.func.is_some() && has_body(&hir[node.func])
-        }
-        _ => false,
-    }
+    !matches!(node.key, PropKey::Private(_))
+        && node.kind != MemberKind::StaticBlock
+        && has_runtime_member(hir, member)
 }
 
 pub(super) fn has_parameter_decorator(hir: &File<'_>, member: MemberId) -> bool {

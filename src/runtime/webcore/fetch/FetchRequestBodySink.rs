@@ -134,7 +134,7 @@ impl FetchRequestBodySink {
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
         if self.pending.state == PendingState::Pending {
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
+            return bun_sys::Result::Ok(self.pending.promise(cx));
         }
         if self.done || self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
@@ -146,7 +146,7 @@ impl FetchRequestBodySink {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
             self.pending.result = Writable::Owned(self.pending_bytes);
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
+            return bun_sys::Result::Ok(self.pending.promise(cx));
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             cx.global(),
@@ -222,8 +222,8 @@ impl FetchRequestBodySink {
 
     pub fn memory_cost(&self) -> usize {
         if let Some(task) = self.task.as_ref() {
-            if let Some(buf) = task.stream_buffer_mut() {
-                return buf.lock().size();
+            if let Some(buf) = task.request_body_streaming_buffer.as_deref() {
+                return buf.lock().buffer.size();
             }
         }
         0

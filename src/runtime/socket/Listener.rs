@@ -53,7 +53,7 @@ pub(crate) struct Listener {
     pub(crate) listener: Cell<ListenerType>,
 
     pub poll_ref: JsCell<KeepAlive>,
-    pub(crate) connection: UnixOrHost,
+    pub(crate) connection: JsCell<UnixOrHost>,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
@@ -189,7 +189,7 @@ impl Listener {
             handlers: Rc::clone(&config.handlers),
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
-            connection,
+            connection: JsCell::new(connection),
             group: JsCell::new(uws::SocketGroup::default()),
             secure_ctx: JsCell::new(secure_ctx),
             ssl: config.ssl.is_some(),
@@ -477,8 +477,7 @@ impl Listener {
         let js_value = this_value.to_js();
         let this: *mut Listener = this_value.payload_ptr().as_ptr();
         // SAFETY: the payload of `this_value`; every field touched through this
-        // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
-        // (`connection`, below) goes through the root pointer instead.
+        // borrow is `Cell`/`JsCell` or `&self`.
         let this_ref = unsafe { &*this };
         this_ref
             .group
@@ -617,10 +616,7 @@ impl Listener {
             return Err(cx.global().throw_value(err));
         }
 
-        // SAFETY: nothing else has the wrapper yet; scoped write through the
-        // root pointer so no `&mut Listener` is materialized (`this_ref` never
-        // reads `connection`).
-        unsafe { (*this).connection = connection };
+        this_ref.connection.with_mut(|c| *c = connection);
         this_ref.listener.set(ListenerType::Uws(listen_socket));
         if !default_data.is_empty() {
             this_ref
@@ -818,7 +814,7 @@ impl Listener {
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
     /// Unlinking after close would race with another process creating a socket at the same path.
     fn unlink_unix_socket_path(&self) {
-        let UnixOrHost::Unix(path) = &self.connection else {
+        let UnixOrHost::Unix(path) = self.connection.get() else {
             return;
         };
         // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
@@ -830,21 +826,21 @@ impl Listener {
     }
 
     pub(crate) fn get_unix(&self) -> Option<&[u8]> {
-        match &self.connection {
+        match self.connection.get() {
             UnixOrHost::Unix(unix) => Some(unix),
             _ => None,
         }
     }
 
     pub(crate) fn get_hostname(&self) -> Option<&[u8]> {
-        match &self.connection {
+        match self.connection.get() {
             UnixOrHost::Host { host, .. } => Some(host),
             _ => None,
         }
     }
 
     pub(crate) fn get_port(&self) -> Option<u16> {
-        match &self.connection {
+        match self.connection.get() {
             UnixOrHost::Host { port, .. } => Some(*port),
             _ => None,
         }
@@ -1520,7 +1516,10 @@ impl ServerNameAnswer {
     }
 
     /// Converts the answer to what a `ListenSocket::on_server_name` callback returns to openssl.c.
-    pub(crate) fn into_raw(self, abort_handshake: *mut core::ffi::c_int) -> *mut uws_sys::SslCtx {
+    pub(crate) fn into_raw(
+        self,
+        abort_handshake: Option<&mut core::ffi::c_int>,
+    ) -> *mut uws_sys::SslCtx {
         let code = match self {
             Self::Default => return core::ptr::null_mut(),
             // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
@@ -1528,9 +1527,8 @@ impl ServerNameAnswer {
             Self::Refused => 1,
             Self::Pending => 2,
         };
-        if !abort_handshake.is_null() {
-            // SAFETY: live out-parameter for the duration of this dispatch.
-            unsafe { *abort_handshake = code };
+        if let Some(abort_handshake) = abort_handshake {
+            *abort_handshake = code;
         }
         core::ptr::null_mut()
     }
@@ -1544,7 +1542,7 @@ impl ServerNameAnswer {
 pub(crate) unsafe extern "C" fn us_dispatch_server_name(
     bun_socket: *mut c_void,
     hostname: *const core::ffi::c_char,
-    abort_handshake: *mut core::ffi::c_int,
+    abort_handshake: Option<&mut core::ffi::c_int>,
 ) -> *mut uws_sys::SslCtx {
     jsc::mark_binding!();
     if bun_socket.is_null() {

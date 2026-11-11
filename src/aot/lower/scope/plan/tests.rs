@@ -2,7 +2,6 @@ mod captures;
 mod classes;
 mod evals;
 mod forms;
-mod handlers;
 mod holders;
 mod loop_updates;
 mod module_level;
@@ -18,7 +17,8 @@ use crate::ir::{ClassSlot, FunctionKey};
 use crate::lower::captures::Capture;
 use crate::lower::scope::testing::{
     file_scope, first_statement, function_named, functions_of_kind, only_function, symbol_named,
-    top_scope, with_scope_analysis,
+    top_scope, with_scope_analysis, with_scope_analysis_of_entry_that_runs_again,
+    with_scope_analysis_of_test_run,
 };
 use crate::lower::scope::{
     ArgumentsObject, BindingForm, BindingRef, Placement, ScopeAnalysis, ScopeSlot, Storage,
@@ -44,11 +44,41 @@ fn analyze_source<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '_, 
     analyze_files(&[(file, source)], test)
 }
 
+fn analyze_test_file<R>(file: &str, source: &str, test: impl FnOnce(&Probe<'_, '_, '_>) -> R) -> R {
+    with_scope_analysis_of_test_run(&[(file, source)], |hir, bound, analysis| {
+        test(&Probe {
+            hir,
+            bound,
+            analysis,
+        })
+    })
+}
+
+fn analyze_files_that_run_again<R>(
+    files: &[(&str, &str)],
+    test: impl FnOnce(&Probe<'_, '_, '_>) -> R,
+) -> R {
+    with_scope_analysis_of_entry_that_runs_again(files, |hir, bound, analysis| {
+        test(&Probe {
+            hir,
+            bound,
+            analysis,
+        })
+    })
+}
+
+fn analyze_source_that_runs_again<R>(
+    file: &str,
+    source: &str,
+    test: impl FnOnce(&Probe<'_, '_, '_>) -> R,
+) -> R {
+    analyze_files_that_run_again(&[(file, source)], test)
+}
+
 fn storage_in(file: &str, source: &str, name: &str) -> Storage {
     analyze_source(file, source, |probe| probe.placement_of(name).storage)
 }
 
-// What closures copy.
 const COPIED: Placement = Placement {
     storage: Storage::Local,
     has_local: true,
@@ -56,7 +86,6 @@ const COPIED: Placement = Placement {
     is_shared: true,
 };
 
-// What closures read from the first field of the environment of `scope`. Its owner keeps a copy of what is never stored again.
 fn first_field(scope: ScopeId, is_immutable: bool) -> Placement {
     Placement {
         storage: Storage::Field { scope, field: 0 },

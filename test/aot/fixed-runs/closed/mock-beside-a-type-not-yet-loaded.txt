@@ -1,0 +1,18 @@
+A file is loaded as a text and mocked; the next test file is the first to import it as JSON.
+#### a.test.js
+import { mock, test } from "bun:test";
+import { now } from "./lib.mjs";
+test("a", () => {
+  mock.module("./b.json", () => ({ default: { v: "MOCK" } }));
+  console.log("| CASE a", now());
+});
+#### b.json
+{ "v": "real" }
+#### b.test.js
+import { test } from "bun:test";
+import { json, now } from "./lib.mjs";
+test("b", async () => console.log("| CASE b", now(), await json()));
+#### lib.mjs
+import text from "./b.json" with { type: "text" };
+export const now = () => (String(text).includes("real") ? "TEXT" : String(text));
+export const json = async () => (await import("./b.json", { with: { type: "json" } })).default.v;

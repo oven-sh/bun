@@ -354,16 +354,13 @@ fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
 }
 
 /// <https://console.spec.whatwg.org/#formatter>
-#[crate::host_call]
-pub extern "C" fn message_with_type_and_level(
-    ctype: *mut ConsoleObject,
+pub fn message_with_type_and_level(
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
 ) {
-    if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
+    if let Err(err) = message_with_type_and_level_(message_type, level, global, vals) {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
@@ -373,13 +370,57 @@ pub extern "C" fn message_with_type_and_level(
     }
 }
 
+/// `console.log(text)` in AOT-compiled code: one string and nothing else. Nothing is formatted,
+/// so no `Formatter` is made and no option is looked up: what `format2` writes for a lone
+/// string is the indent of the open groups, its characters and a line break.
+fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -> JsResult<()> {
+    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error);
+    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    let is_red = level == MessageLevel::Error && Output::enable_ansi_colors_stderr();
+    let console: *mut ConsoleObject = vm_console(global);
+    // SAFETY: see [`vm_console`] — the live boxed `ConsoleObject` of this VM; JS-thread-only, and
+    // nothing below re-enters JavaScript while `writer` is borrowed.
+    let (default_indent, writer): (u16, &mut dyn bun_io::Write) = unsafe {
+        (
+            (*console).default_indent,
+            if use_stderr {
+                (*console).error_writer()
+            } else {
+                (*console).writer()
+            },
+        )
+    };
+    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+        (hooks.console_on_before_print)();
+    }
+    if formatter::write_indent_n(u32::from(default_indent), writer).is_err() {
+        return Ok(());
+    }
+    if is_red {
+        let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
+    }
+    let characters = text.to_js_string_view(global)?;
+    if characters.is_utf16() {
+        let _ = writer.write_fmt(format_args!("{characters}"));
+    } else if let Some(slice) = characters.as_utf8() {
+        let _ = writer.write_all(slice);
+    } else if !characters.is_empty() {
+        let buf = strings::allocate_latin1_into_utf8(characters.latin1()).unwrap_or_default();
+        let _ = writer.write_all(&buf);
+    }
+    if is_red {
+        let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
+    }
+    let _ = writer.write_all(b"\n");
+    let _ = writer.flush();
+    Ok(())
+}
+
 fn message_with_type_and_level_(
-    _ctype: *mut ConsoleObject,
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
     // `defer console.default_indent +|= is_start_group as u16;`
@@ -399,7 +440,7 @@ fn message_with_type_and_level_(
         }
     });
 
-    if is_start_group && len == 0 {
+    if is_start_group && vals.is_empty() {
         // No label prints nothing, so return before the before-print hook of
         // `bun test` runs. An explicit `undefined` is a label and is printed.
         return Ok(());
@@ -425,7 +466,7 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    if message_type == MessageType::Assert && len == 0 {
+    if message_type == MessageType::Assert && vals.is_empty() {
         let text: &str = if Output::enable_ansi_colors_stderr() {
             pfmt!("<r><red>Assertion failed<r>\n", true)
         } else {
@@ -476,7 +517,7 @@ fn message_with_type_and_level_(
         (hooks.console_on_before_print)();
     }
 
-    let mut print_length = len;
+    let mut print_length = vals.len();
     // Get console depth from CLI options or bunfig, fallback to default.
     let console_depth = bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
@@ -496,19 +537,16 @@ fn message_with_type_and_level_(
         ..FormatOptions::default()
     };
 
-    // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
-    let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
-
-    if message_type == MessageType::Table && len >= 1 {
+    if message_type == MessageType::Table && !vals.is_empty() {
         // if value is not an object/array/iterable, don't print a table and just print it
-        let tabular_data = vals_slice[0];
+        let tabular_data = vals[0];
         if tabular_data.is_object() {
             // The function that the program calls is the engine's, which every executable has.
             if bun_removable_features::is_removed(bun_removable_features::Feature::ConsoleTable) {
                 return Err(throw_for_removed_table_printer(global));
             }
-            let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
-                vals_slice[1]
+            let properties: JSValue = if vals.len() >= 2 && vals[1].js_type().is_array() {
+                vals[1]
             } else {
                 JSValue::UNDEFINED
             };
@@ -525,9 +563,9 @@ fn message_with_type_and_level_(
         }
     }
 
-    if message_type == MessageType::Dir && len >= 2 {
+    if message_type == MessageType::Dir && vals.len() >= 2 {
         print_length = 1;
-        let opts = vals_slice[1];
+        let opts = vals[1];
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_number() {
@@ -549,13 +587,7 @@ fn message_with_type_and_level_(
     }
 
     if print_length > 0 {
-        format2(
-            level,
-            global,
-            &vals_slice[..print_length],
-            writer,
-            print_options,
-        )?;
+        format2(level, global, &vals[..print_length], writer, print_options)?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
@@ -2115,6 +2147,15 @@ pub mod formatter {
                 });
             }
 
+            if js_type == jsc::JSType::InternalFunction
+                && value.is_placeholder_for_omitted_builtin()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Function,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
@@ -2719,7 +2760,10 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+    pub(crate) fn write_indent_n(
+        indent: u32,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -3047,13 +3091,11 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*EncodedSlice`.
-            let key = unsafe { &*key };
             if key.eq_ascii(b"constructor") {
                 return None;
             }
@@ -3127,7 +3169,7 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
@@ -5965,18 +6007,12 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     let Ok(result) = global_this.generate_heap_snapshot() else {
         return;
     };
-    let snapshot: [JSValue; 1] = [result];
-    // SAFETY: re-entry into our own host shim with a stack-local args slice.
-    unsafe {
-        message_with_type_and_level(
-            core::ptr::null_mut(), // unused by the callee
-            MessageType::Log,
-            MessageLevel::Debug,
-            global_this,
-            snapshot.as_ptr(),
-            1,
-        );
-    }
+    message_with_type_and_level(
+        MessageType::Log,
+        MessageLevel::Debug,
+        global_this,
+        &[result],
+    );
 }
 
 console_noop_hooks!(
@@ -5989,8 +6025,23 @@ console_noop_hooks!(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
+pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
+    level: u32,
+    global: &JSGlobalObject,
+    text: JSValue,
+) {
+    if let Err(err) = print_one_text(MessageLevel::from_raw(level), global, text) {
+        if matches!(err, jsc::JsError::OutOfMemory) {
+            global.throw_out_of_memory_value();
+        }
+        debug_assert!(global.has_exception());
+    }
+}
+
+#[unsafe(no_mangle)]
+#[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    ctype: *mut ConsoleObject,
+    _console: *mut ConsoleObject,
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an
     // out-of-range discriminant, so accept the raw `u32` (matching the C++
@@ -6001,15 +6052,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     vals: *const JSValue,
     len: usize,
 ) {
-    // SAFETY: forwarding the same FFI args to the inner host shim.
-    unsafe {
-        message_with_type_and_level(
-            ctype,
-            MessageType::from_raw(message_type),
-            MessageLevel::from_raw(level),
-            global,
-            vals,
-            len,
-        )
-    };
+    message_with_type_and_level(
+        MessageType::from_raw(message_type),
+        MessageLevel::from_raw(level),
+        global,
+        // SAFETY: C++ passes its stack array `jsArgs` and the number of values it wrote to it.
+        unsafe { core::slice::from_raw_parts(vals, len) },
+    );
 }

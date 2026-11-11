@@ -1,8 +1,10 @@
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
+import "./harness/real-executables";
 import { beforeAll, describe, test } from "./supported";
 
 raiseDefaultTimeout(120_000);
@@ -208,7 +210,7 @@ test.skipIf(isASAN)("crash report of compiled frames ends with a complete line w
 
   const { stderr } = await run([join(cwd, "app")], cwd, {
     ...bunEnv,
-    BUN_CRASH_REPORT_URL: "",
+    ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
     BUN_ENABLE_CRASH_REPORTING: "0",
   });
   const header = "Compiled JavaScript on the stack:\n";

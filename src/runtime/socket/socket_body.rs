@@ -3233,7 +3233,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get()
             .as_ref()
             .is_some_and(|handlers| handlers.mode == SocketMode::Server);
-        let groups: *mut bun_jsc::rare_data::SocketGroups = if accepted {
+        let groups = if accepted {
             // In its listener's own group: the listener's context.
             let listener_context = self
                 .handlers
@@ -3243,13 +3243,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             let vm = VirtualMachine::get();
             let context =
                 listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
-            core::ptr::from_mut(vm.as_mut().client_socket_groups_in(context))
+            vm.as_mut().client_socket_groups_in(context)
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
         };
-        // SAFETY: a boxed set that outlives this call; JS thread.
-        let groups = unsafe { &mut *groups };
         let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `options.ctx` is the +1 ref
@@ -3816,6 +3814,14 @@ pub(crate) fn get_bytes_read(socket: SocketHandle<'_>) -> f64 {
         SocketHandle::Tcp(this) => this.bytes_read.get() as f64,
         SocketHandle::Tls(this) => this.bytes_read.get() as f64,
         SocketHandle::Ignored(_) => 0.0,
+    }
+}
+
+pub(crate) fn has_pending_read(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Tls(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Ignored(_) => false,
     }
 }
 

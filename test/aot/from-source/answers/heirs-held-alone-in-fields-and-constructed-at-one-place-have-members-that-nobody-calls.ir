@@ -1,0 +1,20 @@
+# -- source: main.js
+# class Base { constructor(n) { this.n = n; } }
+# class Method extends Base { unused() { return 1; } }
+# class Getter extends Base { get unused() { return 2; } }
+# class Static extends Base { static unused() { return 3; } }
+# class Plain extends Base {}
+# const held = { method: Method, getter: Getter, fixed: Static, plain: Plain };
+# let sum = 0;
+# for (let i = 0; i < 8; i++) { const Chosen = i & 4 ? (i & 1 ? held.method : held.getter) : (i & 1 ? held.fixed : held.plain); sum += new Chosen(i).n; }
+# print(sum);
+# -- end of source
+# Heirs of one class, each held alone in a field, meet at one `new`. Every caller of their constructors is known, and the call has several callees. To mention such a constructor is to mention the members of its class, and a member that nobody calls waits in a cycle: so the constructor waits in its own cycle too, and is not in the queue from the start. The build used to stop here.
+# RUN: run-in-shell
+# CHECK: 28
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 28
+# CHECKED-NEXT: exited with 0
+# RUN(LINK): link functions mechanisms=all
+# LINK-NOT: callers-known {{*}}in-queue-from-start {{*}}result=L

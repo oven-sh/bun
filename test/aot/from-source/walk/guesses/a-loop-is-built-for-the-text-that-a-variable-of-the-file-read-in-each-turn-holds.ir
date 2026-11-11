@@ -1,0 +1,23 @@
+# -- source: a-loop-is-built-for-the-text-that-a-variable-of-the-file-read-in-each-turn-holds.js
+# let held = JSON.parse('"abcabca"');
+# function count(t) {
+#   let c = t & 1;
+#   for (let i = 0; i < held.length; i++) if (held[i] === "a") c = c + 1;
+#   return c;
+# }
+# sink(count);
+# const ofText = count(0);
+# held = JSON.parse('["a", "b", "a"]');
+# const ofList = count(1);
+# held = JSON.parse('{"length": 2, "0": "a", "1": "a"}');
+# print(ofText, ofList, count(0));
+# -- end of source
+# Use writes of `held`: a text or a list. The loop reads the variable anew in each turn and holds the element against a text of one unit, so the front reads the variable once and tells a text from a list.
+# In the copy for each the reads of the variable are expected what the copy is built for. Without that the text's copy guessed a list at the read, failed in every turn, and never came to know that its
+# turns run no other code, which is what lets the value read in front stand for the variable.
+# f1 = count
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: = GetStringCodeUnit
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 3 3 2

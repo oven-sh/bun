@@ -266,6 +266,7 @@ pub struct VerbatimLine {
     /// The columns of white space before `beg` that belong to the block.
     pub indent: u32,
 }
+bun_core::impl_no_uninit!(VerbatimLine);
 
 /// Container types: blockquote or list item.
 #[derive(Copy, Clone, Default)]

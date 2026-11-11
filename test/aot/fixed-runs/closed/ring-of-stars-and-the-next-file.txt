@@ -1,0 +1,22 @@
+Two barrels hand on one another by `export *`; one is mocked, and the next test file mocks nothing.
+#### a.test.js
+import { vi, test } from "bun:test";
+vi.mock("./barrel.js", () => ({ x: "mock x" }));
+import * as ns from "./barrel.js";
+import * as behind from "./barrel2.js";
+test("a", () => console.log("| CASE a", Object.keys(ns).join(), ns.x, Object.keys(behind).join(), behind.x, behind.second));
+#### b.test.js
+import { test } from "bun:test";
+import * as ns from "./barrel.js";
+import * as behind from "./barrel2.js";
+const key = name => name.split("").join("");
+test("b", () => {
+  console.log("| CASE b", Object.keys(ns).join(), ns.x, typeof ns.f, ns.second, ns[key("x")], typeof ns[key("f")]);
+  console.log("| CASE b", Object.keys(behind).join(), behind.x, typeof behind.f, behind.second, behind[key("x")]);
+});
+#### barrel.js
+export * from "./leaf.js"; export * from "./barrel2.js";
+#### barrel2.js
+export * from "./barrel.js"; export const second = "second";
+#### leaf.js
+export const x = "real x"; export function f() { return "real f"; }

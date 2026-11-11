@@ -245,7 +245,7 @@ impl<'s> Workspace<'s> {
             experimental_decorators: source.experimental_decorators,
             every_file_is_a_module: false,
             reads_jsdoc: true,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         hir.text = Cow::Borrowed(self.arena.alloc_slice_copy(source.text));
@@ -279,6 +279,7 @@ impl<'s> Workspace<'s> {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         };
         let options = bind_options(Some(source.runtime));
         analyze_file(hir, options, &fold, file, &self.atoms, self.arena)

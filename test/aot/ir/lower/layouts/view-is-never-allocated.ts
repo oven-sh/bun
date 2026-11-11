@@ -1,11 +1,11 @@
 // RUN(VIEW): link
-// VIEW: layout [[view]] name="View" {{*}}fields=[{key="_viewBrand" {{*}}flags=[IsNeverWritten]}, {key="id" {{*}}flags=[IsRequired]}] flags=[IsNeverAllocated]
+// VIEW: layout [[view]] {{*}}fields=[{key="_viewBrand" {{*}}flags=[IsNeverWritten]}, {key="id" {{*}}flags=[IsRequired]}] flags=[IsNeverAllocated]
 
 // RUN(STORED): link
-// STORED: layout [[stored]] name="Stored" {{*}}fields=[{key="late" {{*}}flags=[IsRequired]}] flags=[IsNeverAllocated]
+// STORED: layout [[stored]] {{*}}fields=[{key="late" {{*}}flags=[IsRequired]}] flags=[IsNeverAllocated]
 
 // RUN(MADE): link
-// MADE: layout [[made]] name="Made" {{*}}fields=[{key="id" {{*}}flags=[IsRequired]}, {key="label" {{*}}flags=[IsRequired]}]
+// MADE: layout [[made]] {{*}}fields=[{key="id" {{*}}flags=[IsRequired]}, {key="label" {{*}}flags=[IsRequired]}]
 
 // RUN(USED): link
 // USED-NOT: layout {{*}}name="Made" {{*}}IsNever

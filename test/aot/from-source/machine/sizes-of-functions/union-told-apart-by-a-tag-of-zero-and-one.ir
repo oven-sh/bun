@@ -1,0 +1,19 @@
+# f1 = total
+# -- source: union-told-apart-by-a-tag-of-zero-and-one.ts
+# type Leaf = { op: 0; value: number };
+# type Pair = { op: 1; left: number; right: number };
+# function total(node: Leaf | Pair): number {
+#   if (node.op === 0) return node.value;
+#   return node.left + node.right;
+# }
+# declare const input: any;
+# const leaf: Leaf = { op: 0, value: +input };
+# const pair: Pair = { op: 1, left: +input, right: +input };
+# (globalThis as any).answer = total(input ? leaf : pair);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 7, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

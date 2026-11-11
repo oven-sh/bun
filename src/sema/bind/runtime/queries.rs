@@ -4,13 +4,13 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    StoreKind, SymbolStore, stability,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId,
+    RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
-    Bound, BoundBuilder, BoundIn, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId,
-    TableId,
+    Bound, BoundBuilder, BoundIn, ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId,
+    ScopeKind, SymFlags, SymbolId, TableId,
 };
 use crate::hir::*;
 
@@ -20,7 +20,6 @@ pub(super) fn find_entry<K: Ord + Copy, V>(list: &[(K, V)], key: K) -> Option<&V
     Some(&list[index].1)
 }
 
-/// `RuntimeReferencesIn::ident_binding_runs`
 pub(super) const IDENTS_IN_RUN: usize = 16;
 
 #[inline]
@@ -33,10 +32,8 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
     column.get(index).copied().unwrap_or(SymbolId::NONE)
 }
 
-/// Whether code at `pos`, whose chain of scopes enters the scope of `function` from a scope of kind `from`, stands among the parameters.
 pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
     match hir[function].body {
-        // A function whose body is an expression has one scope for its parameters and its body.
         FnBody::Expr(body) => pos < hir[body].pos,
         FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
     }
@@ -44,11 +41,15 @@ pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos:
 
 impl BoundBuilder {
     pub(super) fn find_in_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
-        let entries = self.table(table);
-        if entries.len() <= Self::SCANNED {
-            let entry = entries.iter().find(|entry| entry.0 == name);
-            return entry.map(|entry| entry.1);
-        }
+        let Some(entries) = self.entries_to_scan(table) else {
+            return self.find_in_large_table(table, name);
+        };
+        let entry = entries.iter().find(|entry| entry.0 == name);
+        entry.map(|entry| entry.1)
+    }
+
+    #[inline(never)]
+    fn find_in_large_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
         let entry_index = *self.large_tables.get(&(table, name))?;
         Some(self.entries[entry_index as usize].1)
     }
@@ -63,14 +64,21 @@ impl<S: Storage> RuntimeDeclarationsIn<S> {
 }
 
 impl<S: Storage> BoundIn<S> {
+    #[inline]
     pub fn binding_kind(&self, symbol: SymbolId) -> BindingKind {
         let kind = self.runtime.declarations.binding_kinds.get(symbol.idx());
         kind.copied().unwrap_or(BindingKind::NoBinding)
     }
 
+    #[inline]
     pub fn symbol_scope(&self, symbol: SymbolId) -> ScopeId {
         let scope = self.runtime.declarations.symbol_scopes.get(symbol.idx());
         scope.copied().unwrap_or(ScopeId::NONE)
+    }
+
+    pub fn own_binding_of_decorated_class(&self, inner: SymbolId) -> Option<SymbolId> {
+        let own_bindings = &self.runtime.declarations.own_bindings_of_decorated_classes;
+        find_symbol(own_bindings, inner)
     }
 
     pub fn function_flags(&self, function: FnId) -> FunctionFlags {
@@ -78,7 +86,49 @@ impl<S: Storage> BoundIn<S> {
         flags.copied().unwrap_or_default()
     }
 
-    /// Unless each of its parameters is a plain name, a function keeps what text evaluated in its body declares in an environment of its own, inside the environment of its parameters and `arguments`. With expressions among the parameters the variables of the body's own code are kept there too; without, they are the parameters of their names.
+    pub fn is_mapped_argument(
+        &self,
+        hir: &File,
+        symbol: SymbolId,
+        names_lie_on_object_prototype: bool,
+    ) -> bool {
+        let scope = self.scopes.get(self.symbol_scope(symbol).idx());
+        let Some(ScopeKind::Fn(function)) = scope.map(|scope| scope.kind) else {
+            return false;
+        };
+        let flags = self.function_flags(function);
+        if !flags.contains(FunctionFlags::USES_ARGUMENTS)
+            || !has_mapped_arguments(hir, CodeUnit::Function(function))
+        {
+            return false;
+        }
+        let mut other_ways = FunctionFlags::HANDS_ARGUMENTS_ON
+            | FunctionFlags::HAS_ARGUMENTS_VARIABLE
+            | FunctionFlags::HAS_DIRECT_EVAL;
+        if names_lie_on_object_prototype {
+            other_ways |= FunctionFlags::MAY_READ_ABOVE_ARGUMENTS;
+        }
+        let references = &self.runtime.references;
+        if !flags.intersects(other_ways | FunctionFlags::READS_ELEMENTS_OF_ARGUMENTS)
+            && !has_bit(&references.eval_visible_symbols, symbol.idx())
+        {
+            return false;
+        }
+        let mut declared = self.runtime.declarations.declared_symbols.iter();
+        if declared
+            .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
+        {
+            return false;
+        }
+        let stores = &references.stores[..];
+        let first_store = stores.partition_point(|store| store.symbol < symbol);
+        let mut own_declarations = self.symbol(symbol).decls.iter();
+        own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
+            || flags.intersects(other_ways)
+            || has_bit(&references.eval_visible_symbols, symbol.idx())
+            || (stores.get(first_store)).is_some_and(|store| store.symbol == symbol)
+    }
+
     pub fn is_outside_body_variables(&self, binding: Binding) -> bool {
         let function = match binding {
             Binding::Symbol(symbol) if self.binding_kind(symbol) == BindingKind::Parameter => {
@@ -121,11 +171,27 @@ impl<S: Storage> BoundIn<S> {
             return self.scopes[scope.idx()].parent;
         };
         let around_class = self.scopes[self.class_scope[class.idx()].idx()].parent;
-        if hir[class].name.is_some() {
-            self.scopes[around_class.idx()].parent
-        } else {
-            around_class
+        match self.class_owner[class.idx()] {
+            ClassOwner::Expr(_) if hir[class].name.is_some() => {
+                self.scopes[around_class.idx()].parent
+            }
+            ClassOwner::Expr(_) | ClassOwner::Stmt(_) => around_class,
         }
+    }
+
+    pub fn constructor_of_field_value(&self, hir: &File, scope: ScopeId) -> Option<FnId> {
+        let ScopeKind::FieldInitializer(field) = self.scopes[scope.idx()].kind else {
+            return None;
+        };
+        if !hir.has_typescript_semantics() || hir[field].flags.contains(Flags::STATIC) {
+            return None;
+        }
+        let mut members = hir[self.member_class(field)?].members.iter();
+        let constructor = members.find(|&member| {
+            hir.runtime_member_kind(member) == MemberKind::Constructor
+                && has_runtime_member(hir, member)
+        });
+        Some(hir[constructor?].func)
     }
 
     pub fn member_class(&self, member: MemberId) -> Option<ClassId> {
@@ -147,17 +213,33 @@ impl<S: Storage> BoundIn<S> {
         Binding::from_symbol(self.symbol_of_expr(ident))
     }
 
+    #[inline]
+    pub(super) fn is_default_binding(&self, ident: ExprId, binding: Binding) -> bool {
+        let symbol = self.symbol_of_expr(ident);
+        match binding {
+            Binding::Symbol(found) => found == symbol && symbol.is_some(),
+            Binding::Free => symbol.is_none(),
+            Binding::Arguments(_) | Binding::CommonJs(_) => false,
+        }
+    }
+
+    #[inline]
     pub(super) fn declared_pattern_symbol(&self, pattern: PatId) -> SymbolId {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::Var(pattern))
             .unwrap_or_else(|| self.file_binding(self.pat_symbol[pattern.idx()]))
     }
 
-    /// `var v` beside `export var v` in a file declares the exported binding again.
-    fn file_binding(&self, declared: SymbolId) -> SymbolId {
-        if declared.is_none() {
+    #[inline]
+    pub fn file_binding(&self, declared: SymbolId) -> SymbolId {
+        if declared.is_none() || !self.symbol_flags(declared).contains(SymFlags::EXPORT_VALUE) {
             return declared;
         }
+        self.file_binding_of_exported_value(declared)
+    }
+
+    #[inline(never)]
+    fn file_binding_of_exported_value(&self, declared: SymbolId) -> SymbolId {
         let exported = self.export_symbol_of_value_symbol_if_exported(declared);
         match self.symbol(exported).parent == self.file_symbol {
             true => exported,
@@ -165,6 +247,7 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
+    #[inline]
     pub(super) fn declared_binding_symbol(&self, decl: Decl) -> Option<SymbolId> {
         let declarations = &self.runtime.declarations;
         Some(match decl {
@@ -176,7 +259,7 @@ impl<S: Storage> BoundIn<S> {
             | Decl::Enum(_)
             | Decl::Module(_)
             | Decl::ExportExpr(_) => find_symbol(&declarations.declared_symbols, decl)
-                .unwrap_or_else(|| declaration_symbol(self, decl)),
+                .unwrap_or_else(|| self.file_binding(declaration_symbol(self, decl))),
             Decl::ImportDefault(import) => {
                 symbol_at(&declarations.import_default_symbols, import.idx())
             }
@@ -191,6 +274,7 @@ impl<S: Storage> BoundIn<S> {
         })
     }
 
+    #[inline]
     pub(super) fn initialized_pattern_binding(&self, name: PatId) -> Binding {
         match find_entry(&self.runtime.references.initialized_bindings, name) {
             Some(&binding) => binding,
@@ -223,6 +307,17 @@ impl RuntimeBindings<'_> {
         &self.references.unbound_name_stores
     }
 
+    pub fn jsx_paths(&self) -> [Option<Atom>; 2] {
+        self.jsx_paths
+    }
+
+    pub fn is_stored_by_function_of_block(&self, variable: SymbolId) -> bool {
+        has_bit(
+            &self.variables_stored_by_functions_of_blocks,
+            variable.idx(),
+        )
+    }
+
     pub fn annex_b_functions(&self) -> &[AnnexBFunction] {
         &self.declarations.annex_b_functions
     }
@@ -233,6 +328,20 @@ impl RuntimeBindings<'_> {
 
     pub fn implicit_references(&self) -> &[ImplicitReference] {
         &self.references.implicit_references
+    }
+
+    pub fn binding_of_defined_path(&self, path: ExprId) -> Binding {
+        let mut references = self.implicit_references().iter();
+        let found = references.find(|it| {
+            it.kind == ImplicitReferenceKind::DefinedPath
+                && matches!(it.node, NodeData::Expr(at) if at == path)
+        });
+        found.map_or(Binding::Free, |it| it.binding)
+    }
+
+    pub fn is_named_implicitly(&self, symbol: SymbolId) -> bool {
+        let mut references = self.implicit_references().iter();
+        references.any(|reference| reference.binding == Binding::Symbol(symbol))
     }
 
     pub fn redeclared_commonjs_variables(&self) -> &[(SymbolId, CommonJsVariable)] {
@@ -279,12 +388,16 @@ impl Bound<'_> {
     }
 
     pub fn binding(&self, ident: ExprId) -> Binding {
-        let references = &self.runtime.references;
         let run = ident.idx() / IDENTS_IN_RUN;
-        let entries = match references.ident_binding_runs.get(run..run + 2) {
-            Some(&[start, end]) => &references.ident_bindings[start as usize..end as usize],
-            _ => &[],
-        };
+        match self.runtime.references.ident_binding_runs.get(run..run + 2) {
+            Some(&[start, end]) if start != end => self.binding_in_run(ident, start, end),
+            _ => self.default_binding(ident),
+        }
+    }
+
+    #[inline(never)]
+    fn binding_in_run(&self, ident: ExprId, start: u32, end: u32) -> Binding {
+        let entries = &self.runtime.references.ident_bindings[start as usize..end as usize];
         match entries.iter().find(|entry| entry.0 == ident) {
             Some(&(_, binding)) => self.binding_under_goal(binding),
             None => self.default_binding(ident),
@@ -306,7 +419,6 @@ impl Bound<'_> {
         binding.map_or(Binding::Free, |&binding| self.binding_under_goal(binding))
     }
 
-    /// False for `export default Name` where `Name` is only a type: the statement has no code, and it gives the file no export.
     pub fn exports_value(&self, statement: StmtId) -> bool {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::ExportExpr(statement)) != Some(SymbolId::NONE)
@@ -314,6 +426,23 @@ impl Bound<'_> {
 
     pub fn has_runtime_value(&self, symbol: SymbolId) -> bool {
         !has_bit(&self.runtime.declarations.valueless_symbols, symbol.idx())
+    }
+
+    pub fn last_made_enum_member(&self, member: EnumMemberId) -> Option<EnumMemberId> {
+        let symbol = self.declared_symbol(Decl::EnumMember(member));
+        let is_made = |written: Decl| self.has_runtime_value(self.declared_symbol(written));
+        let mut written_again = self.redeclarations.iter().rev();
+        let last = written_again.find_map(|it| match it.decl {
+            Decl::EnumMember(later) if it.symbol == symbol && is_made(it.decl) => Some(later),
+            _ => None,
+        });
+        last.or_else(|| self.has_runtime_value(symbol).then_some(member))
+    }
+
+    pub fn exported_variable(&self, declaration: Decl) -> Option<SymbolId> {
+        let local = self.declared_symbol(declaration).some()?;
+        let is_shown = !has_bit(&self.runtime.declarations.bound_without_export, local.idx());
+        (is_shown && self.has_runtime_value(local)).then_some(local)
     }
 
     pub fn initial_state(&self, symbol: SymbolId) -> InitialState {
@@ -331,17 +460,23 @@ impl Bound<'_> {
             | BindingKind::SimpleCatchParameter => InitialState::Initialized,
             BindingKind::Parameter => {
                 let scope = self.scopes.get(self.symbol_scope(symbol).idx());
-                let has_dead_zone = scope.is_none_or(|scope| {
-                    let ScopeKind::Fn(function) = scope.kind else {
-                        return true;
-                    };
-                    let flags = self.function_flags(function);
-                    flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
+                let has_dead_zone = scope.is_none_or(|scope| match scope.kind {
+                    ScopeKind::Fn(function) => {
+                        let flags = self.function_flags(function);
+                        flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
+                    }
+                    ScopeKind::Module(_) | ScopeKind::Enum(_) => false,
+                    _ => true,
                 });
                 match has_dead_zone {
                     true => InitialState::Uninitialized,
                     false => InitialState::Initialized,
                 }
+            }
+            BindingKind::ClassInnerName
+                if self.own_binding_of_decorated_class(symbol).is_some() =>
+            {
+                InitialState::Undefined
             }
             _ => InitialState::Uninitialized,
         }
@@ -351,6 +486,7 @@ impl Bound<'_> {
         self.binding_under_goal(self.initialized_pattern_binding(name))
     }
 
+    #[inline]
     pub fn dynamic_lookup_scope(&self, node: NodeData) -> Option<ScopeId> {
         let references = &self.runtime.references;
         if references.dynamic_ident_lookups.is_empty()
@@ -358,6 +494,13 @@ impl Bound<'_> {
         {
             return None;
         }
+        self.find_dynamic_lookup_scope(node)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn find_dynamic_lookup_scope(&self, node: NodeData) -> Option<ScopeId> {
+        let references = &self.runtime.references;
         match node {
             NodeData::Expr(ident) => find_entry(&references.dynamic_ident_lookups, ident).copied(),
             NodeData::Pat(name) => {
@@ -367,7 +510,6 @@ impl Bound<'_> {
         }
     }
 
-    /// The first scope that a dynamic lookup of `ident`, whose binding is declared in `declaring_scope`, does not search.
     pub fn dynamic_lookup_end(&self, ident: ExprId, declaring_scope: ScopeId) -> ScopeId {
         let behind_variables = &self.runtime.references.idents_behind_eval_variables;
         match has_bit(behind_variables, ident.idx()) {
@@ -384,6 +526,17 @@ impl Bound<'_> {
         find_entry(&self.runtime.field_initializer_scopes, member).copied()
     }
 
+    pub fn is_field_assigned_behind_class(&self, member: MemberId) -> bool {
+        self.field_initializer_scope(member).is_some_and(|scope| {
+            let around = self.scopes[scope.idx()].parent;
+            matches!(
+                self.scopes[around.idx()].kind,
+                ScopeKind::ClassDecorators(_)
+            )
+        })
+    }
+
+    #[inline]
     pub fn code_unit(&self, scope: ScopeId) -> CodeUnit {
         let unit = self.runtime.declarations.scope_units.get(scope.idx());
         unit.copied().unwrap_or(CodeUnit::File)
@@ -407,12 +560,31 @@ impl Bound<'_> {
         self.runtime.file_uses_arguments
     }
 
+    pub fn lets_made_requires_out_of_sight(&self, ask: impl FnOnce() -> bool) -> bool {
+        *self
+            .runtime
+            .lets_made_requires_out_of_sight
+            .get_or_init(ask)
+    }
+
+    pub fn stores(&self) -> &[SymbolStore] {
+        &self.runtime.references.stores[..]
+    }
+
+    pub fn may_require_get_members(&self, compute: impl FnOnce() -> bool) -> bool {
+        *self.runtime.may_require_get_members.get_or_init(compute)
+    }
+
     pub fn import_meta_may_be_modified(&self) -> bool {
         self.runtime.import_meta_may_be_modified
     }
 
-    /// The file writes `import.meta`, or a `require`, a `module` or a `__filename` that is the file's own. Without one of them no expression in it
-    /// is the file's `require`, one made for the file, or `import.meta.require`.
+    #[inline]
+    pub fn may_name_own_path(&self) -> bool {
+        self.runtime.may_name_own_path
+    }
+
+    #[inline]
     pub fn may_name_own_require(&self) -> bool {
         self.runtime.may_name_own_require
     }
@@ -424,6 +596,7 @@ impl Bound<'_> {
         &stores[start..start + len]
     }
 
+    #[inline]
     pub fn is_store_target(&self, ident: ExprId) -> bool {
         has_bit(&self.runtime.references.store_targets, ident.idx())
     }
@@ -436,36 +609,54 @@ impl Bound<'_> {
         find_entry(&self.runtime.references.eval_scopes, call)
     }
 
+    #[inline]
     pub fn binding_stability_ignoring(
         &self,
         symbol: SymbolId,
         is_dead_store: &dyn Fn(ExprId) -> bool,
     ) -> BindingStability {
-        let recorded = self.runtime.stability.stabilities.get(symbol.idx());
-        let recorded = recorded.copied().unwrap_or_default();
-        if recorded != BindingStability::Stable || self.binding_kind(symbol).is_immutable() {
-            return recorded;
-        }
-        let mut stores = self.stores_to(symbol).iter();
-        match stores.any(|store| !is_dead_store(store.target)) {
-            true => BindingStability::Stored,
-            false => BindingStability::Stable,
+        match self.binding_stability(symbol) {
+            BindingStability::Stored => self.stability_of_stored_binding(symbol, is_dead_store),
+            recorded => recorded,
         }
     }
 
+    #[inline(never)]
+    fn stability_of_stored_binding(
+        &self,
+        symbol: SymbolId,
+        is_dead_store: &dyn Fn(ExprId) -> bool,
+    ) -> BindingStability {
+        let stores = &self.runtime.references.stores[..];
+        let start = stores.partition_point(|store| store.symbol < symbol);
+        for store in &stores[start..] {
+            if store.symbol != symbol {
+                break;
+            }
+            if !is_dead_store(store.target) {
+                return BindingStability::Stored;
+            }
+        }
+        BindingStability::Stable
+    }
+
+    #[inline]
     pub fn binding_stability(&self, symbol: SymbolId) -> BindingStability {
-        self.binding_stability_ignoring(symbol, &|_| false)
+        let recorded = self.runtime.stability.stabilities.get(symbol.idx());
+        recorded.copied().unwrap_or_default()
     }
 
+    #[inline]
     pub fn is_stable_binding(&self, symbol: SymbolId) -> bool {
         self.binding_stability(symbol) == BindingStability::Stable
     }
 
+    #[inline]
     pub fn binding_initializer(&self, hir: &File<'_>, symbol: SymbolId) -> BindingInitializer {
         stability::find_binding_initializer(hir, self, symbol)
     }
 
-    /// `None` if several declarations initialize the binding, or none does.
+    #[inline]
     pub fn initializing_declaration(&self, symbol: SymbolId) -> Option<Decl> {
         let recorded = self.runtime.stability.initializers.get(symbol.idx());
         recorded.copied().flatten()
@@ -499,6 +690,11 @@ impl Bound<'_> {
         find_symbol(symbols, class).unwrap_or(SymbolId::NONE)
     }
 
+    pub fn container_parameter(&self, scope: ScopeId) -> SymbolId {
+        let parameters = &self.runtime.declarations.container_parameters;
+        find_symbol(parameters, scope).unwrap_or(SymbolId::NONE)
+    }
+
     pub fn jump_target(&self, jump: StmtId) -> Option<StmtId> {
         find_entry(&self.runtime.references.jump_targets, jump).copied()
     }
@@ -515,7 +711,6 @@ impl Bound<'_> {
         }
     }
 
-    /// The imports whose names mean another symbol where the program runs, each with that symbol: `Declarations::takes_name_of_imports`.
     pub fn names_taken_from_imports(&self) -> &[(SymbolId, SymbolId)] {
         match self.runtime.is_computed() {
             true => &self.runtime.declarations.names_taken_from_imports,
@@ -523,24 +718,16 @@ impl Bound<'_> {
         }
     }
 
+    #[inline]
     pub fn is_evaluated_ident(&self, e: ExprId) -> bool {
         has_bit(&self.runtime.references.evaluated_idents, e.idx())
     }
 
     pub fn finds_itself(&self, hir: &File, function: FnId) -> bool {
-        if hir[function].kind == FnKind::Arrow {
-            return false;
-        }
-        let ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
-        if self.function_flags(function).intersects(ways) {
-            return true;
-        }
-        if hir[function].name == Atom::NONE {
-            return false;
-        }
-        let own_name = Binding::Symbol(self.declared_symbol(Decl::Fn(function)));
-        let mut idents = (0..hir.exprs.len() as u32).map(ExprId);
-        idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
+        let ways = FunctionFlags::USES_ARGUMENTS
+            | FunctionFlags::HAS_DIRECT_EVAL
+            | FunctionFlags::MENTIONS_OWN_NAME;
+        hir[function].kind != FnKind::Arrow && self.function_flags(function).intersects(ways)
     }
 
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {

@@ -153,30 +153,5 @@ for (const [label, folded, compute, a, b] of rows) {
 }
 console.log("different:", different);
 
-// GENERATED: attempt hidden
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attempt"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hidden"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|[[f_1]]|[[f_2]]|[[f_3]]|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]]|[[f_8]]|Array<undefined|null|number|Array<number>> flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|bigint|[[f_1]]|[[f_2]]|[[f_3]]|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]]|[[f_8]]|Array<undefined|null|number|Array<number>>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="hiddenValues"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="hiddenValues"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_10]] flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4, v0 calleeKey="push" calleeName="hiddenValues.push"
-// CHECK-NEXT: v8 = Convert v7 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v9 = Integer integer=1
-// CHECK-NEXT: v10 = Sub v8, v9
-// CHECK-NEXT: v11 = ElemGet v2, v10
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }

@@ -1,0 +1,2 @@
+[test]
+preload = ["./setup.js", "./setup.cjs", "./setup-without-the-mark.js"]

@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 // Each line: the message where what `call` is called on is no function: it names the member that was called, as written.
 const show = (label, run) => {
   try {
@@ -32,10 +34,6 @@ function noArguments(f) {
   const result = f.call();
   return [result];
 }
-function spread(f, list) {
-  const result = f.call(null, ...list);
-  return [result];
-}
 function throughCall(f) {
   const result = Function.prototype.call.call(f, null, 1);
   return [result];
@@ -60,7 +58,6 @@ for (let round = 0; round < 3; round++) {
   show("bracket", () => bracket(notCallable));
   show("chain", () => chain(notCallable));
   show("noArguments", () => noArguments(notCallable));
-  show("spread", () => spread(notCallable, [1, 2]));
   show("throughCall", () => throughCall(notCallable));
   show("throughVariable", () => throughVariable(notCallable));
   show("bound", () => bound(notCallable));

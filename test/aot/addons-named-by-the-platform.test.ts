@@ -2,10 +2,12 @@
 // The build knows both, so it knows the name, and the file is in the executable.
 // ./addons-named-by-the-platform/addon.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp, and laid under the names that this machine asks for.
 // Each program is built, its sources and the addon are deleted, and the executable runs in another folder: it prints what plain Bun printed while they were there.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+// A program that imports a built-in module pays for the library, so those are the modules of one executable, each in a folder of its own with its own copies of the addon: no program
+// finds a file that the build took in for another.
+import { describe, expect } from "bun:test";
+import { copyFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { dirname, join, resolve } from "path";
+import { dirname, join, relative, resolve, sep } from "path";
 import {
   loaderWithChain,
   loaderWithJoinedParts,
@@ -17,6 +19,7 @@ import {
   targets,
 } from "./addons-named-by-the-platform/loaders";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, beforeAll, test } from "./harness/default-timeout";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const here = join(import.meta.dir, "addons-named-by-the-platform");
@@ -227,6 +230,7 @@ const oneOfFew: Record<string, Program> = {
       "no-program.js": "this is no program (\n",
     },
     addons: [beside],
+    isConstant: true,
   },
   "names that a list hands to a function, made of what node:os answers": {
     entry: "main.cjs",
@@ -330,9 +334,9 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b|\bprocess\.env\b/.test(text),
     );
 
-  async function run(title: string, program: Program, { passesAddons = false } = {}) {
-    const file = title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
-    const sources = join(folder, file);
+  const nameOf = (title: string, passesAddons: boolean) =>
+    title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
+  function lay(sources: string, program: Program) {
     for (const [path, text] of Object.entries(program.files)) {
       mkdirSync(dirname(join(sources, path)), { recursive: true });
       writeFileSync(join(sources, path), text);
@@ -341,67 +345,117 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       mkdirSync(dirname(join(sources, path)), { recursive: true });
       copyFileSync(addon, join(sources, path));
     }
+  }
+  const said = ({ stdout, stderr, exitCode, signal }: Awaited<ReturnType<typeof spawned>>) => ({
+    stdout,
+    stderr,
+    exitCode,
+    signal,
+  });
+
+  /** Plain Bun, the build, the sources deleted, the executable in another folder. */
+  const whileTheMachineIsBusy = 300_000;
+  async function bothWays(file: string, sources: string, entry: string, flags: string[], addons: string[]) {
     const executable = join(away, file + (isWindows ? ".exe" : ""));
-    const said = ({ stdout, stderr, exitCode, signal }: Awaited<ReturnType<typeof spawned>>) => ({
-      stdout,
-      stderr,
-      exitCode,
-      signal,
-    });
-    const plain = said(await spawned([bunExe(), "run", join(sources, program.entry)], sources, bunEnv));
+    const plain = said(await spawned([bunExe(), "run", join(sources, entry)], sources, bunEnv, whileTheMachineIsBusy));
     expect(plain).toEqual({ stdout: expect.stringMatching(/ 42\n$/), stderr: "", exitCode: 0, signal: null });
     const build = await spawned(
-      [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        ...(usesABuiltInModule(program) ? [] : ["--no-builtin-modules"]),
-        join(sources, program.entry),
-        ...(passesAddons ? program.addons.map(path => join(sources, path)) : []),
-        "--outfile",
-        executable,
-      ],
+      [bunExe(), "build", "--compile", "--aot", ...flags, join(sources, entry), ...addons, "--outfile", executable],
       sources,
       bunEnv,
+      whileTheMachineIsBusy,
     );
     built(build);
+    const root = realpathSync(sources);
     rmSync(sources, { recursive: true, force: true });
-    const compiled = said(await spawned([executable], away, bunEnv));
+    const compiled = said(await spawned([executable], away, bunEnv, whileTheMachineIsBusy));
     if (!isWindows) rmSync(executable, { force: true });
-    return { plain, build, compiled };
+    // A warning names its file.
+    const places = Array.from(build.stderr.matchAll(/isn't a constant.*\n\s*at (.*):\d+:\d+$/gm), place => place[1]);
+    expect(places).toHaveLength(build.stderr.split("isn't a constant").length - 1);
+    return { plain, compiled, warnedOf: places.map(place => relative(root, place)) };
+  }
+
+  const together = [
+    ...Object.entries(programs).map(([title, program]) => ({ title, program, passesAddons: false })),
+    ...Object.entries(oneOfFew).map(([title, program]) => ({ title, program, passesAddons: true })),
+    ...Object.entries(oneOfFew).map(([title, program]) => ({ title, program, passesAddons: false })),
+  ]
+    .filter(({ program }) => usesABuiltInModule(program))
+    .map(each => ({
+      ...each,
+      at: nameOf(each.title, each.passesAddons),
+      // A build that takes in the file that is no program fails, so a program beside such a file shares its executable with nobody else.
+      executable: "no-program.js" in each.program.files ? nameOf(each.title, false) + "-both" : "programs",
+    }));
+  const executables = new Map<string, ReturnType<typeof bothWays>>();
+  const builtTogether = (name: string) =>
+    executables.getOrInsertComputed(name, () => {
+      const held = together.filter(each => each.executable === name);
+      const sources = join(folder, name);
+      for (const { at, program } of held) lay(join(sources, at), program);
+      const loads = held.map(({ at, program: { entry } }) => {
+        const load = entry.endsWith(".cjs") ? `require("./${at}/${entry}")` : `await import("./${at}/${entry}")`;
+        return `console.log("PROGRAM ${at}");\ntry {\n  ${load};\n} catch (error) {\n  console.log("THROWS", error);\n}\n`;
+      });
+      writeFileSync(join(sources, "main.cjs"), `(async () => {\n${loads.join("")}})();\n`);
+      const passed = held.flatMap(({ at, program, passesAddons }) =>
+        passesAddons ? program.addons.map(path => join(sources, at, path)) : [],
+      );
+      return slot(() => bothWays(name, sources, "main.cjs", [], passed));
+    });
+
+  async function run(title: string, program: Program, { passesAddons = false } = {}) {
+    const file = nameOf(title, passesAddons);
+    if (!usesABuiltInModule(program)) {
+      const sources = join(folder, file);
+      lay(sources, program);
+      const addons = passesAddons ? program.addons.map(path => join(sources, path)) : [];
+      const { plain, compiled, warnedOf } = await slot(() =>
+        bothWays(file, sources, program.entry, ["--no-builtin-modules"], addons),
+      );
+      return { plain, compiled, isWarnedOf: warnedOf.length > 0 };
+    }
+    const all = await builtTogether(together.find(each => each.at === file)!.executable);
+    const ofThisProgram = ({ stdout, ...rest }: ReturnType<typeof said>) => ({
+      ...rest,
+      stdout: stdout.split(/^PROGRAM (.*)\n/m).find((_, index, parts) => index % 2 === 0 && parts[index - 1] === file),
+    });
+    const plain = ofThisProgram(all.plain);
+    expect(plain.stdout).toMatch(/^.* 42\n$/);
+    return {
+      plain,
+      compiled: ofThisProgram(all.compiled),
+      isWarnedOf: all.warnedOf.some(place => place.split(sep)[0] === file),
+    };
   }
 
   test.concurrent.each(Object.keys(programs))(
     "%s",
-    title =>
-      slot(async () => {
-        const { plain, build, compiled } = await run(title, programs[title]);
-        expect(compiled).toEqual(plain);
-        if (programs[title].isConstant) expect(build.stderr).not.toContain("isn't a constant");
-      }),
+    async title => {
+      const { plain, compiled, isWarnedOf } = await run(title, programs[title]);
+      expect(compiled).toEqual(plain);
+      if (programs[title].isConstant) expect(isWarnedOf).toBe(false);
+    },
     600_000,
   );
 
   test.concurrent.each(Object.keys(oneOfFew))(
     "%s, with the addon passed as another entry point",
-    title =>
-      slot(async () => {
-        const { plain, build, compiled } = await run(title, oneOfFew[title], { passesAddons: true });
-        if (oneOfFew[title].isConstant) expect(build.stderr).not.toContain("isn't a constant");
-        else expect(build.stderr).toContain("isn't a constant");
-        expect(compiled).toEqual(plain);
-      }),
+    async title => {
+      const { plain, compiled, isWarnedOf } = await run(title, oneOfFew[title], { passesAddons: true });
+      expect(isWarnedOf).toBe(!oneOfFew[title].isConstant);
+      expect(compiled).toEqual(plain);
+    },
     600_000,
   );
 
   test.concurrent.each(Object.keys(oneOfFew))(
     "%s",
-    title =>
-      slot(async () => {
-        const { plain, compiled } = await run(title, oneOfFew[title]);
-        expect(compiled).toEqual(plain);
-      }),
+    async title => {
+      const { plain, compiled } = await run(title, oneOfFew[title]);
+      expect(compiled).toEqual(plain);
+    },
     600_000,
   );
 });

@@ -1,0 +1,19 @@
+# The hidden helper of the library's flatMap runs over a plain list first: it asks the storage for the index, takes the element out of it, and lays a value that is no list by a store that a plain list takes.
+# It asked `in` and a closed read for each element and laid each value by a definition in C++. A hole ends the run: the general loop goes on from there (the second answer).
+# The run stands in the helper and not in flatMap: flatMap ends in a tail call of the helper, so no frame of flatMap stands below the callback; f5 holds no run.
+# f4 = flatIntoArrayWithCallback, f5 = flatMap of the library
+# -- source: flat-map-takes-the-elements-of-a-plain-list-out-of-its-storage.cjs
+# const box = {};
+# box['k' + [].length] = [[1, 2, 3], (x) => [x, x * 2], [4, , 6]];
+# print(box.k0[0].flatMap(box.k0[1]).join(), box.k0[2].flatMap(box.k0[1]).join());
+# -- end of source
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: = HasContiguousIndex
+# CHECK: = GetOwnContiguousIndex
+# RUN(STORE): walk f4 mechanisms=all
+# STORE: = TryPutIndex
+# RUN(TAIL): walk f5 mechanisms=all
+# TAIL-NOT: ContiguousIndex
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1,2,2,4,3,6 4,8,6,12

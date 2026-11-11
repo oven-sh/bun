@@ -1,0 +1,48 @@
+# `count` is written as an enum, `label` as a text and `point` as a class, and the slots are held to that (FieldFacts::slotType, PlacedSlot::type, FieldData::type), in a class, in what a constructor function with a written `this` makes, and in a literal.
+# the objects reach code that the build has not seen. Whatever that code stores, by whatever road, a slot that is filled holds a value of its type: a value of another type takes the field out of its slot IN THAT OBJECT,
+# a later value that fits brings it back, and undefined and null lie in the slot. Every answer is that of the language.
+# the last run is the red control of what the others look at: a door left open on purpose leaves a number in the slot of `label`, and aotPlaceOfProperty() says "slot".
+# f1 = Old, f2 = make, f3 = makeOld, f4 = makeRecord, f5 = read, f6 = between, f7 = betweenOld, f8 = betweenRecord, f9 = again
+# -- source: a-slot-held-to-what-is-written-takes-whatever-anybody-stores.ts
+# declare function register(...handed: unknown[]): void;
+# const enum Count { Zero, One, Two }
+# class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } }
+# class Holder { point: Point; label: string; count: Count; constructor() { this.point = new Point(1, 2); this.label = "label"; this.count = Count.Two; } }
+# interface Old { count: Count; on: boolean }
+# function Old(this: Old, count: Count) { this.count = count; this.on = true; }
+# interface Rec { count: Count; on: boolean }
+# function make(): Holder { return new Holder(); }
+# function makeOld(): Old { return new (Old as any)(Count.Two); }
+# function makeRecord(): Rec { return { count: Count.Two, on: true }; }
+# function read(h: Holder): number { return h.label.length + h.count; }
+# function between(h: Holder, deed: (h: Holder) => void): unknown { const before = h.count; deed(h); return before + (h.count as any) + 1; }
+# function betweenOld(h: Old, deed: (h: Old) => void): unknown { const before = h.count; deed(h); return before + (h.count as any) + 1; }
+# function betweenRecord(h: Rec, deed: (h: Rec) => void): unknown { const before = h.count; deed(h); return before + (h.count as any) + 1; }
+# function again(h: { count: Count }): number { h.count = Count.One; return h.count + 7; }
+# register(make, makeOld, makeRecord, read, between, betweenOld, betweenRecord, again);
+# -- end of source
+# OPTIONS: mechanisms=all
+# RUN(FORM): facts enforced
+# FORM-COUNT-3: "count" source=written type=i32 markers spares-test
+# RUN: run-in-shell globalThis.register = (make, makeOld, makeRecord, read) => { const h = make(); h.label = 5; print(aotPlaceOfProperty(h, "label"), read(h)); h.label = "back"; print(aotPlaceOfProperty(h, "label"), read(h)); h.count = 1.5; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = 2147483648; print(aotPlaceOfProperty(h, "count"), read(h)); h.count = -4; print(aotPlaceOfProperty(h, "count"), read(h)); h.point = { x: 1, y: 2 }; print(aotPlaceOfProperty(h, "point")); h.point = make().point; print(aotPlaceOfProperty(h, "point")); };
+# CHECK: beside its slot NaN
+# CHECK-NEXT: slot 6
+# CHECK-NEXT: beside its slot 5.5
+# CHECK-NEXT: beside its slot 2147483652
+# CHECK-NEXT: slot 0
+# CHECK-NEXT: beside its slot
+# CHECK-NEXT: slot
+# CHECK-NEXT: exited with 0
+# RUN(MARKERS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read) => { const makers = [make, makeOld, makeRecord]; for (let i = 0; i < makers.length; i++) { const h = makers[i](); h.count = undefined; print(aotPlaceOfProperty(h, "count"), h.count); h.count = null; print(aotPlaceOfProperty(h, "count"), h.count); } const h = make(); h.label = undefined; h.point = null; print(aotPlaceOfProperty(h, "label"), aotPlaceOfProperty(h, "point")); };
+# MARKERS-COUNT-3: slot undefined
+# MARKERS: slot slot
+# MARKERS-NEXT: exited with 0
+# RUN(NULLS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read) => { const makers = [make, makeOld, makeRecord]; for (let i = 0; i < makers.length; i++) { const h = makers[i](); h.count = null; print(aotPlaceOfProperty(h, "count"), h.count); } };
+# NULLS-COUNT-3: slot null
+# NULLS-NEXT: exited with 0
+# RUN(ROADS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read, between, betweenOld, betweenRecord, again) => { const roads = [h => { h["co" + "unt"] = "t"; }, h => { Reflect.set(h, "count", "t"); }, h => { Reflect.set({ }, "count", "t", h); }, h => { Object.defineProperty(h, "count", { value: "t" }); }, h => { Object.assign(h, { count: "t" }); }, h => { new Proxy(h, { }).count = "t"; }, h => { delete h.count; h.count = "t"; }, h => { for (let i = 0; i < 40; i++) h.count = "t"; }]; const kinds = [[make, between], [makeOld, betweenOld], [makeRecord, betweenRecord]]; for (let k = 0; k < kinds.length; k++) { for (let i = 0; i < roads.length; i++) { const h = kinds[k][0](); print(kinds[k][1](h, roads[i]), aotPlaceOfProperty(h, "count"), typeof h.count, again(h), typeof h.count); } } };
+# ROADS-COUNT-24: 2t1 beside its slot string 8 number
+# ROADS-NEXT: exited with 0
+# RUN(UNTESTED): run-in-shell globalThis.register = make => { const h = make(); print(aotStoreIntoSlotUntested(h, "label", 5), aotPlaceOfProperty(h, "label"), typeof h.label); };
+# UNTESTED: true slot number
+# UNTESTED-NEXT: exited with 0

@@ -168,6 +168,21 @@ fn es_module_variables() {
 }
 
 #[test]
+fn stored_require_of_es_module() {
+    let source = "export {}; require = f; require.resolve; require;";
+    with_case(PROGRAM, source, |case| {
+        assert_unresolved(case, "require");
+        assert_unresolved(case, "require.resolve");
+        assert!(case.exposes(BuiltinId::ModuleRequire));
+    });
+    let source = "export {}; if (false) require = f; require.resolve; require;";
+    with_case(PROGRAM, source, |case| {
+        assert_builtin(case, "require", BuiltinId::ModuleRequire);
+        assert_builtin(case, "require.resolve", BuiltinId::ModuleRequireResolve);
+    });
+}
+
+#[test]
 fn require_member_resolves_in_both_formats() {
     for (setup, source) in [
         (SCRIPT, "require.resolve;"),

@@ -3,8 +3,8 @@ use crate::atom::{Atom, number_to_string, written_name};
 use crate::check::aot::{
     BuiltinTypeClass, CheckedType, ClassMember, ClassMemberSource, EnumConstant, GaveUp,
     IndexSignature, MemberLookup, MemberName, ObjectMember, PositionTypes, PrimitiveKinds,
-    ShapeKind, SignatureShape, Trust, TupleElement, TypeArgument, TypeIdentity, TypeParameterRef,
-    TypeShape, WrittenType,
+    ShapeKind, SignatureShape, Trust, TupleElement, TypeArgument, TypeIdentity, TypeShape,
+    WrittenType,
 };
 use crate::hir::start_of;
 use crate::program::FileId;
@@ -185,31 +185,6 @@ impl Writer<'_, '_, '_, '_> {
         .concat()
     }
 
-    fn type_parameter_text(&self, parameter: TypeParameterRef) -> Vec<u8> {
-        if !self.is_under_root(parameter.file) {
-            return b"outside".to_vec();
-        }
-        let index = format!(":{}", parameter.parameter.0);
-        [self.relative_path(parameter.file), index.as_bytes()].concat()
-    }
-
-    fn type_variable_text(
-        &mut self,
-        constraint: Option<TypeId>,
-        parameter: Option<TypeParameterRef>,
-    ) -> Vec<u8> {
-        let constraint = self.optional_type_text(constraint);
-        match parameter {
-            Some(parameter) => [
-                &constraint[..],
-                b"; ",
-                &self.type_parameter_text(parameter)[..],
-            ]
-            .concat(),
-            None => constraint,
-        }
-    }
-
     pub(super) fn type_argument_text(&mut self, pair: TypeArgument) -> Vec<u8> {
         let parameter = self.queries.type_text(pair.parameter);
         let argument = self.queries.type_text(pair.argument);
@@ -228,13 +203,9 @@ impl Writer<'_, '_, '_, '_> {
     fn shape_kind_text(&mut self, kind: ShapeKind<'_>) -> Vec<u8> {
         match kind {
             ShapeKind::Anything(reason) => format!("Anything({reason:?})").into_bytes(),
-            ShapeKind::TypeVariable {
-                constraint,
-                parameter,
-            } => wrapped(
-                "TypeVariable",
-                &self.type_variable_text(constraint, parameter),
-            ),
+            ShapeKind::TypeVariable { constraint } => {
+                wrapped("TypeVariable", &self.optional_type_text(constraint))
+            }
             ShapeKind::Never => b"Never".to_vec(),
             ShapeKind::Undefined => b"Undefined".to_vec(),
             ShapeKind::Null => b"Null".to_vec(),
@@ -290,6 +261,10 @@ impl Writer<'_, '_, '_, '_> {
                 wrapped("Builtin", &self.builtin_text(class, arguments))
             }
             ShapeKind::Class(class) => wrapped("Class", &self.class_location(class)),
+            ShapeKind::ConstructorFunctionInstance(function) => wrapped(
+                "ConstructorFunctionInstance",
+                &self.function_location(function),
+            ),
             ShapeKind::Object => b"Object".to_vec(),
             ShapeKind::Union(types) => wrapped("Union", &self.type_list_text(types, b" | ")),
             ShapeKind::Int32 { base } => wrapped("Int32", &self.queries.type_text(base)),

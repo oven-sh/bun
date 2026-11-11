@@ -125,9 +125,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             });
             return self.emit_closure(id, home);
         }
-        let id = super::declare_source_function(self.file, function, text_name);
+        let id = match inferred_name.and_then(|given| given.name_that_key_spells) {
+            Some(name) => {
+                super::declare_source_function_with(self.file, function, &mut |_, header| {
+                    header.name = Some(name);
+                    header.flags |= FunctionFlags::IS_NAMED_BY_COMPUTED_KEY;
+                })
+            }
+            None => super::declare_source_function(self.file, function, text_name),
+        };
         let closure = self.emit_closure(id, home);
-        if let (Some(given), None) = (inferred_name, text_name) {
+        if let (Some(given), None) = (inferred_name, text_name)
+            && self.file.names_functions_by_keys()
+        {
             let key = self.emit_name_value(given.name);
             let kind = match func.kind {
                 FnKind::Getter => MethodKind::Getter,
@@ -137,6 +147,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder.set_function_name(closure, key, kind);
         }
         closure
+    }
+
+    pub(in crate::lower) fn declare_function_named_by(&mut self, function: FnId, given: GivenName) {
+        let text_name = match given.name {
+            PropertyName::Constant(key) => member::find_function_name(self.file, key),
+            PropertyName::Computed(_) => None,
+        };
+        super::declare_source_function(self.file, function, text_name);
     }
 
     fn emit_argument_list(&mut self, values: &[ValueId]) -> ValueId {

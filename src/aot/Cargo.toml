@@ -20,6 +20,7 @@ ir_text = []
 test_support = ["bun_aot_interface/test_support", "bun_sema/test_support"]
 
 [dependencies]
+bun_sort_by_number.workspace = true
 bun_aot_builtins.workspace = true
 bun_aot_interface.workspace = true
 bun_sema.workspace = true

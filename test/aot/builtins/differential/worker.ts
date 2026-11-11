@@ -1,4 +1,5 @@
 // One process of the differential test: bun --expose-internals worker.ts <request.json> <reports.jsonl>
+// A test run takes no arguments for its files: there AOT_BUILTINS_WORKER_FILES has the two paths, a line each.
 // A built-in may end the process, never return, or leave an exception for the event loop, so none is called in the process of the test.
 import "./describe-values-without-running-code";
 import { aotBuiltinEntries } from "bun:internal-for-testing";
@@ -17,7 +18,7 @@ export type WorkerNote = [entry: string, mode: CallMode] | { notStarted: string 
 // `failure`: the test itself threw, which says nothing about the built-in.
 export type WorkerReport = CallReport & { entry: string; failure?: string };
 
-const [requestPath, reportsPath] = process.argv.slice(2);
+const [requestPath, reportsPath] = process.env.AOT_BUILTINS_WORKER_FILES?.split("\n") ?? process.argv.slice(2);
 const { tablePath, calls }: WorkerRequest = JSON.parse(readFileSync(requestPath, "utf8"));
 
 process.on("unhandledRejection", () => {});

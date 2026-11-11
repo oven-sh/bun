@@ -1,0 +1,39 @@
+# f1 = count, f2 = lastSealed, f3 = lastCounted
+# -- source: copy-of-a-derived-constructor-leaves-for-its-call-where-the-parent-is-another.ts
+# declare function print(...values: unknown[]): void;
+# let deeds = 0;
+# function count(n: number): number { deeds++; return n; }
+# class Crate { weight: number; constructor(n: number) { this.weight = n + 1; } }
+# class Sealed extends Crate { seal: number; constructor(n: number) { super(n); this.seal = n + 2; } }
+# class Counted extends Crate { seal: number; constructor(n: number) { super(count(n)); this.seal = n + 2; } }
+# function lastSealed(amount: number): Sealed { let last = new Sealed(0); for (let i = 1; i < amount; i++) last = new Sealed(i); return last; }
+# function lastCounted(amount: number): Counted { let last = new Counted(0); for (let i = 1; i < amount; i++) last = new Counted(i); return last; }
+# (globalThis as any).makers = [lastSealed, lastCounted];
+# const first = lastSealed(3), second = lastCounted(3);
+# class Barrel { volume: number; constructor(n: number) { this.volume = n * 2; } }
+# Object.setPrototypeOf(Sealed, Barrel);
+# Object.setPrototypeOf(Counted, Barrel);
+# const third = lastSealed(3) as any, fourth = lastCounted(3) as any;
+# print(first.weight, first.seal, second.weight, third.weight, third.volume, third.seal, fourth.volume, fourth.seal, deeds);
+# -- end of source
+# In the copy of a derived constructor the test at super(), whether the parent is the class that is written, fails into the construction as written: nothing has been done since the copy began.
+# So nothing meets the likely way again: `this` behind super() is the fresh object of one layout, and the store behind it is a store into its slot without a test.
+# In `lastCounted` an argument of super() does a deed in front of the test: the construction as written would do it a second time: that test keeps its closed arm, which constructs by value and comes back.
+# RUN: walk f2 mechanisms=all
+# CHECK: isLoopHead=true
+# CHECK: = GetSuperBase
+# CHECK: = TypeTest
+# CHECK: Branch {{*}}notTaken [[call]]()
+# CHECK: = PutSlotOrAdd {{*}}key="seal" {{*}}level=Proven
+# RUN(CALL): walk f2 mechanisms=all
+# CALL: frequency=Rare isInLoop=true:
+# CALL: = CallDirect {{*}}function=f6 [isNeverInlined, isConstruction]
+# RUN(APART): walk f2 mechanisms=all
+# APART-NOT: = SuperConstruct
+# RUN(DEED): walk f3 mechanisms=all
+# DEED: = PutModuleVariable
+# DEED: = SuperConstruct
+# RUN(ONCE): walk f3 mechanisms=all
+# ONCE-NOT: isNeverInlined
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3 4 3 undefined 4 4 4 4 6

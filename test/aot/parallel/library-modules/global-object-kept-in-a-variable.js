@@ -1,5 +1,5 @@
 // What TypeScript makes of `globalThis.registry ??= {}`: the global object is stored in a variable, and the variable is only read by constant names. Every use of it is in sight, and none of them needs Bun's library.
-// STATISTIC: FunctionsLowered <= 600
+// STATISTIC: FunctionsLowered <= 600 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 var _a;
 const registry = (_a = globalThis).__registry_of_this_program ?? (_a.__registry_of_this_program = { entries: [] });
 registry.entries.push("one");

@@ -1,0 +1,44 @@
+# "As made" is a fact of the heap that any unknown code can end. A check that has held the word of Link against a list says nothing of the list behind the next code that may write.
+# Red controls. With testing=AssumeUnknownCallsReturnUndefined Link takes what the shell's `odd` gives for undefined, so every list that it sees go into `rows` is written here.
+# The list out of the shell IS as made where it comes in. The shell's `deed` lays an object above it that holds 70 under 1 and 71 under 5, behind the door.
+# `steps`: the door stands where the loop opens, the deed comes between two steps: the step read the hole with no look: "4,undefined,6,". Now the step asks the cell where it finds no element.
+# `held`: `row.indexOf(6)` holds the word, the deed comes, `row[5]` was taken for held: "2,undefined". Now what is known of the list ends with the call.
+# f1 = fill, f2 = swap, f3 = steps, f4 = held
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(STEP): walk f3 mechanisms=all
+# STEP: = GetArrayElement {{*}}level=Proven {{*}}asksCellWhereNothingIsFound
+# STEP: = GetArrayElement {{*}}level=Proven {{*}}asksCellWhereNothingIsFound
+# RUN(READ): walk f4 mechanisms=all
+# READ: calleeName="deed"
+# READ: = GetArrayElement {{*}}level=Proven {{*}}asksCellWhereNothingIsFound
+# RUN(BETWEENSTEPS): run-in-shell mechanisms=all globalThis.kept = [4, , 6]; globalThis.odd = () => kept; globalThis.which = 1; globalThis.calls = 0; globalThis.deed = () => { if (++calls === 4) Object.setPrototypeOf(kept, Object.assign(Object.create(Array.prototype), { 1: 70, 5: 71 })); };
+# BETWEENSTEPS: bun: internal AOT error: type check failed
+# BETWEENSTEPS-NEXT: in the result of an operation
+# BETWEENSTEPS-NOT: went on
+# BETWEENSTEPS: crashed with
+# RUN(BEHINDHOLD): run-in-shell mechanisms=all globalThis.kept = [4, , 6]; globalThis.odd = () => kept; globalThis.which = 2; globalThis.calls = 0; globalThis.deed = () => { if (++calls === 2) Object.setPrototypeOf(kept, Object.assign(Object.create(Array.prototype), { 1: 70, 5: 71 })); };
+# BEHINDHOLD: bun: internal AOT error: type check failed
+# BEHINDHOLD-NEXT: in the result of an operation
+# BEHINDHOLD-NOT: went on
+# BEHINDHOLD: crashed with
+# THE GREEN CONTROLS: the same without the deed.
+# RUN(STEPSALONE): run-in-shell mechanisms=all globalThis.kept = [4, , 6]; globalThis.odd = () => kept; globalThis.which = 1; globalThis.calls = 0; globalThis.deed = () => { ++calls; };
+# STEPSALONE: 4,undefined,6,;4,undefined,6,;4,undefined,6,;
+# STEPSALONE-NEXT: went on
+# STEPSALONE-NEXT: exited with 0
+# RUN(HOLDALONE): run-in-shell mechanisms=all globalThis.kept = [4, , 6]; globalThis.odd = () => kept; globalThis.which = 2; globalThis.calls = 0; globalThis.deed = () => { ++calls; };
+# HOLDALONE: 2,undefined;2,undefined;2,undefined;
+# HOLDALONE-NEXT: went on
+# HOLDALONE-NEXT: exited with 0
+# -- source: a-false-word-that-a-list-stays-as-made-is-stopped-where-the-deed-comes-behind-the-door.ts
+# declare function odd(): any;
+# declare function deed(): void;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# function fill(count: number) { const rows: (number | undefined)[][] = []; for (let i = 0; i < count; i++) rows.push([4, , 6]); return rows; }
+# function swap(rows: (number | undefined)[][]) { rows[1] = odd(); return rows; }
+# function steps(rows: (number | undefined)[][]) { let said = ""; for (let k = 0; k < rows.length; k++) { const row = rows[k]; if (row !== undefined) { for (const x of row) { said += x + ","; deed(); } said += ";"; } } return said; }
+# function held(rows: (number | undefined)[][]) { let said = ""; for (let k = 0; k < rows.length; k++) { const row = rows[k]; if (row !== undefined) { said += row.indexOf(6) + ","; deed(); said += row[5] + ";"; } } return said; }
+# print(which === 1 ? steps(swap(fill(3))) : held(swap(fill(3))));
+# print("went on");
+# -- end of source

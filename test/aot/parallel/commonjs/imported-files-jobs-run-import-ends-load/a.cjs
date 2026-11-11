@@ -1,2 +1,0 @@
-runFile("a");
-module.exports = {};

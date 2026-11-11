@@ -1,9 +1,6 @@
-//! `encodeURIComponent(text)` and `btoa(text)` of a text that the build knows.
-
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings::is_valid_utf8;
 
-/// `None`: the function throws.
 pub type Encoder = fn(&[u8]) -> Option<Vec<u8>>;
 
 pub const ENCODERS: [(&[u8], Encoder); 2] = [

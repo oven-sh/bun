@@ -1,0 +1,18 @@
+# -- source: the-lowest-bit-of-an-element-is-asked-in-turns-laid-out.ts
+# declare function sink(value: unknown): void;
+# function even(cells: number[]): number { let t = 0; for (let j = 0; j < cells.length; j++) { const cell = cells[j]!; if ((cell & 1) === 0) t++; } return t; }
+# function kept(cells: number[]): number { let t = 0; for (let j = 0; j < cells.length; j++) { const cell = cells[j]!; if ((cell & 1) === 0) t += cell; } return t; }
+# const cells: number[] = []; for (let i = 0; i < 40; i++) cells.push(i);
+# sink(even(cells)); sink(kept(cells));
+# -- end of source
+# `list[j] & 1` in a counted loop over a list of whole numbers. A hole gives undefined, whose bits are those of NaN: 0. So the read under a bit operator reads a hole as NaN, as under + - * /:
+# it is a number, no ToNumber stands in the turn, and the eight turns are laid out, once for each kind of storage.
+# Where the element has a second user it stays a number or undefined, and ToNumber stands in the turn: of a number or nothing it runs no code, and belongs to a turn laid out.
+# f1 = even, f2 = kept
+# RUN(NAN): walk f1 mechanisms=all
+# NAN: = GetArrayElement {{*}}readsHoleAsNaN
+# NAN-NOT: = ToNumber
+# RUN(TWICE): walk f2 mechanisms=all
+# TWICE: = ToNumber
+# RUN: compile UnrolledLoopsForIndexingType mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 4

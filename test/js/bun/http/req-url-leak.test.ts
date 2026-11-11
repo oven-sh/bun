@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, withoutAsanQuarantine } from "harness";
 import path from "path";
 test(
   "req.url doesn't leak memory",
@@ -7,7 +7,7 @@ test(
     const { promise, resolve } = Promise.withResolvers<string>();
     await using process = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "req-url-leak-fixture.js")],
-      env: bunEnv,
+      env: withoutAsanQuarantine(bunEnv),
       stdout: "inherit",
       stderr: "inherit",
       stdin: "inherit",

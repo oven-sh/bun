@@ -1,6 +1,6 @@
 // RUN: link
-// CHECK: layout [[point]] name="Point" {{*}}{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
-// CHECK: layout [[size]] name="Size" {{*}}{key="height" declared={type=number} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}]
+// CHECK: layout [[point]] {{*}}{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+// CHECK: layout [[size]] {{*}}{key="height" declared={type=number} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}]
 
 interface Point {
   x: number;

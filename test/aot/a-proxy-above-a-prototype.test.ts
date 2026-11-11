@@ -7,10 +7,19 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
 import { slot, spawned, withoutDebugInformation } from "./harness/commands";
-import { withSteadyCollections } from "./harness/counted-run";
 import { describe, test } from "./supported";
 
 const root = join(import.meta.dir, "a-proxy-above-a-prototype");
+
+// Collections come when so much has been allocated and at no other time, and the thread of the program does all their work while the program stands still.
+// Otherwise what the collector's threads get done beside the program differs by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 async function withExecutable(run: (executable: string) => Promise<void>) {
   const folder = String(tempDir("aot-a-proxy-above-a-prototype", {}));

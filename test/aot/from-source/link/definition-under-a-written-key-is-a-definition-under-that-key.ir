@@ -1,0 +1,29 @@
+# `Object.defineProperty(P.prototype, "shown", { get() { .. } })`: the row says which operand is the key, and a text is written there. So the definition lies under that name, as one of a written map does.
+# The layout of P, off which only `x` is read, keeps its proofs. That of Q keeps them too where a lookup under the name comes by: the getter is entered with the object, and what it stores is followed. A key that is no written text is any key: R.
+# RUN: summary f0
+# CHECK: change {{*}}DefinesByDescriptor {{*}}"shown"
+# CHECK: change {{*}}DefinesByDescriptor {{*}}"shown"
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK: field L0.0 "x" proven=i32 writers-known
+# LINK: field L1.0 "x" proven=i32|string writers-known
+# LINK: layout L0 changes=[]
+# LINK: layout L1 changes=[]
+# LINK: layout L2 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 1
+# ALL-NEXT: number 7 string
+# ALL-NEXT: number 7 string
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# function P() { this.x = 1; }
+# function Q() { this.x = 1; }
+# function R() { this.x = 1; }
+# function nameOf(text) { return text + "n"; }
+# Object.defineProperty(P.prototype, "shown", { get() { this.x = "text"; return 7; } });
+# Object.defineProperty(Q.prototype, "shown", { get() { this.x = "text"; return 7; } });
+# Object.defineProperty(R.prototype, nameOf("show"), { get() { this.x = "text"; return 7; } });
+# print(new P().x);
+# const q = new Q, r = new R;
+# print(typeof q.x + " " + q.shown + " " + typeof q.x);
+# print(typeof r.x + " " + r.shown + " " + typeof r.x);
+# -- end of source

@@ -1,9 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="middle"
-// CHECK: Switch [[subject]] cases=[1, 2] -> case {{*}}, case {{*}}, otherwise [[none]]()
+// CHECK: Switch [[subject]] cases=[1, 2] -> case {{*}}, case {{*}}, otherwise [[default]]()
 // CHECK-NOT: Switch
-// CHECK: [[none]]():
-// CHECK-NEXT: Jump -> next [[default]]()
 // CHECK: [[default]]():
 // CHECK: integer=2
 // CHECK: Jump -> next [[last]]()

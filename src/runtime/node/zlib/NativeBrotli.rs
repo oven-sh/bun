@@ -6,13 +6,6 @@ type Op = c::BrotliEncoderOperation;
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) union LastResult {
-    pub(crate) e: c_int,
-    pub d: c::BrotliDecoderResult,
-}
-
 pub(crate) struct Context {
     pub(crate) mode: bun_zlib::NodeMode,
     pub(crate) state: Option<NonNull<c_void>>,
@@ -24,7 +17,8 @@ pub(crate) struct Context {
 
     pub flush: Op,
 
-    pub(crate) last_result: LastResult,
+    /// The encoder's `BROTLI_BOOL`, or the decoder's `BrotliDecoderResult` as an integer.
+    pub(crate) last_result: c_int,
     pub(crate) error: c::BrotliDecoderErrorCode2,
 
     /// Owned copy of the dictionary bytes. The prepared dictionary (encode) and
@@ -45,7 +39,7 @@ impl Default for Context {
             avail_in: 0,
             avail_out: 0,
             flush: Op::process,
-            last_result: LastResult { e: 0 },
+            last_result: 0,
             error: c::BrotliDecoderErrorCode2::NO_ERROR,
             dictionary: Vec::new(),
             prepared_dictionary: None,
@@ -518,47 +512,34 @@ mod _impl {
             }
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    let mut next_in = self.next_in;
                     // SAFETY: state is a live encoder; next_in/next_out point into
                     // caller-provided buffers sized by avail_in/avail_out.
-                    self.last_result.e = unsafe {
+                    self.last_result = unsafe {
                         c::BrotliEncoderCompressStream(
                             self.state_ptr().cast(),
                             self.flush,
                             &raw mut self.avail_in,
-                            &raw mut next_in,
+                            &raw mut self.next_in,
                             &raw mut self.avail_out,
                             &raw mut self.next_out,
                             ptr::null_mut(),
                         )
-                    };
-                    // self.next_in += (next_in - self.next_in)
-                    // SAFETY: next_in advanced within the same allocation; offset = bytes consumed by brotli.
-                    self.next_in = unsafe {
-                        self.next_in
-                            .add((next_in as usize) - (self.next_in as usize))
                     };
                 }
                 bun_zlib::NodeMode::BROTLI_DECODE => {
-                    let mut next_in = self.next_in;
                     // SAFETY: state is a live decoder; buffers as above.
-                    self.last_result.d = unsafe {
+                    let result = unsafe {
                         c::BrotliDecoderDecompressStream(
                             self.state_ptr().cast(),
                             &raw mut self.avail_in,
-                            &raw mut next_in,
+                            &raw mut self.next_in,
                             &raw mut self.avail_out,
                             &raw mut self.next_out,
                             ptr::null_mut(),
                         )
                     };
-                    // SAFETY: next_in advanced within the same allocation; offset = bytes consumed by brotli.
-                    self.next_in = unsafe {
-                        self.next_in
-                            .add((next_in as usize) - (self.next_in as usize))
-                    };
-                    // SAFETY: d was just written by the line above.
-                    if unsafe { self.last_result.d } == c::BrotliDecoderResult::err {
+                    self.last_result = result as c_int;
+                    if result == c::BrotliDecoderResult::err {
                         self.error = c::BrotliDecoderGetErrorCode(self.decoder_mut());
                     }
                 }
@@ -573,8 +554,7 @@ mod _impl {
         pub(crate) fn get_error_info(&self) -> Error {
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    // SAFETY: e is the active field after an encode do_work().
-                    if unsafe { self.last_result.e } == 0 {
+                    if self.last_result == 0 {
                         return Error::init(
                             c"Compression failed".as_ptr(),
                             -1,
@@ -591,8 +571,7 @@ mod _impl {
                             code_for_error(self.error),
                         );
                     } else if self.flush == Op::finish
-                    // SAFETY: d is the active field after a decode do_work().
-                    && unsafe { self.last_result.d } == c::BrotliDecoderResult::needs_more_input
+                        && self.last_result == c::BrotliDecoderResult::needs_more_input as c_int
                     {
                         return Error::init(
                             c"unexpected end of file".as_ptr(),

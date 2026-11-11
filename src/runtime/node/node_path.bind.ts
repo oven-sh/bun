@@ -8,7 +8,7 @@ const text = b.string.allowStringObject.local;
 const result = b.string.local;
 
 /** A UNC root that is longer than any path of the system is answered with the error, which is not thrown. */
-const resultOrError = b.any;
+const resultOrError = b.any.returning(table.union(table.string, table.instance("Error")).spec);
 
 /** An operand that is refused is described in the message of the error: that reads its constructor.name or prints it the way console.log does. Nothing keeps it. */
 const describedInMessage = (...membersRead: string[]) => [table.printedByFormatter("constructor", ...membersRead)];
@@ -128,7 +128,7 @@ export const toNamespacedPathPosix = b.fn({
   namedAsBound: true,
   length: 1,
   args: { path: b.any },
-  returns: b.any,
+  returns: b.any.returning(table.operand("path").spec),
   capability: "heap",
   uses: { path: [table.returned] },
   ...ofOperandsAlone,
@@ -144,13 +144,13 @@ export const normalizeWin32 = ofPath("normalize", result);
 export const parseWin32 = ofPath("parse", ParsedPath);
 export const relativeWin32 = relative(resultOrError);
 export const resolveWin32 = resolve(resultOrError);
-/** A `String` object counts as a string, and an empty one is answered as it is. */
+/** A `String` object counts as a string, and an empty one is answered as it is. What `resolve` answers an error for is answered with that error. */
 export const toNamespacedPathWin32 = b.fn({
   name: "toNamespacedPath",
   namedAsBound: true,
   length: 1,
   args: { path: b.any },
-  returns: b.any,
+  returns: b.any.returning(table.union(table.string, table.instance("Error"), table.operand("path")).spec),
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,

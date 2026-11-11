@@ -1713,7 +1713,7 @@ test.skipIf(!isLinux)(
       // partial header write. The file is all 0xEE; headers are ASCII, so any
       // 0xEE before the header terminator means sendfile bytes jumped ahead of
       // the header tail.
-      import { dlopen, ptr } from "bun:ffi";
+      import { dlopen, ptr, read } from "bun:ffi";
 
       const port = Number(process.env.PORT);
       const padSize = Number(process.env.PAD_SIZE);
@@ -1727,6 +1727,7 @@ test.skipIf(!isLinux)(
         recv: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
         setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
         close: { args: ["i32"], returns: "i32" },
+        __errno_location: { args: [], returns: "ptr" },
       } as const;
       function openLibc() {
         for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1"]) {
@@ -1777,6 +1778,8 @@ test.skipIf(!isLinux)(
           let earlyFileByte = -1;
           while (total < expected) {
             const n = Number(libc.recv(fd, ptr(recvBuf), recvBuf.length, 0));
+            // JSC suspends threads with a signal, and a recv with SO_RCVTIMEO is never restarted after one.
+            if (n === -1 && read.i32(libc.__errno_location()) === 4 /* EINTR */) continue;
             if (n <= 0) break; // EOF, error, or SO_RCVTIMEO after a 10s stall
             const chunk = Buffer.from(recvBuf.subarray(0, n));
             if (hdrEnd === -1) {

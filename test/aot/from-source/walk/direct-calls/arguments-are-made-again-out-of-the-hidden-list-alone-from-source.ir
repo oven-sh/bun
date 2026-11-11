@@ -1,0 +1,21 @@
+# `x.apply(t, arguments)` is expected to find Function.prototype.apply, which takes what the object holds and not the object: so the object is made where the test fails, at the call as written, and the sweep drops the one at the entry.
+# It is made again out of the operands of its allocation. Where the function declares a rest parameter one of them is the program's own list, which the body may have changed since the entry: there the object of the entry stays.
+# test/aot/parallel/arguments-made-again/. f1 hidden . f2 declared
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}} testedType=builtin(FunctionPrototypeApply)
+# CHECK: frequency=Rare
+# CHECK-NEXT: = CreateUnmappedArguments
+# RUN(ONE): walk f1 mechanisms=all
+# ONE-COUNT-1: = CreateUnmappedArguments
+# ONE-NOT: = CreateUnmappedArguments
+# RUN(DECLARED): walk f2 mechanisms=all
+# DECLARED-LABEL: code f2:Body
+# DECLARED: = CreateUnmappedArguments
+# DECLARED: = TypeTest {{*}} testedType=builtin(FunctionPrototypeApply)
+# DECLARED-NOT: = CreateUnmappedArguments
+# -- source: arguments-are-made-again-out-of-the-hidden-list-alone-from-source.mjs
+# function hidden(first) { return sink.apply(null, arguments); }
+# function declared(first, ...others) { others.push("added"); return sink.apply(null, arguments); }
+# keep(hidden, declared);
+# -- end of source

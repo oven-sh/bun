@@ -16,6 +16,7 @@ pub enum Trust {
 }
 
 impl Trust {
+    #[inline]
     pub fn of_role(role: FileRole) -> Trust {
         match role {
             FileRole::Checked => Trust::Trusted,
@@ -23,6 +24,7 @@ impl Trust {
         }
     }
 
+    #[inline]
     pub fn is_trusted(self) -> bool {
         match self {
             Trust::Trusted => true,
@@ -30,10 +32,12 @@ impl Trust {
         }
     }
 
+    #[inline]
     pub fn strongest(self, other: Trust) -> Trust {
         self.max(other)
     }
 
+    #[inline]
     pub fn weakest(self, other: Trust) -> Trust {
         self.min(other)
     }
@@ -43,42 +47,50 @@ type VisitedTypes = SmallVec<[TypeId; 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn file_trust(&self, file: FileId) -> Trust {
-        if self.files().module(file).runs_other_code {
+        let trust = Trust::of_role(self.role(file));
+        if !trust.is_trusted() || self.files().module(file).runs_other_code {
             return Trust::Untrusted;
         }
-        match self.inputs.checked_elsewhere.binary_search(&file) {
-            Ok(_) => Trust::Untrusted,
-            Err(_) => Trust::of_role(self.role(file)),
+        let elsewhere = self.inputs.checked_elsewhere;
+        if !elsewhere.is_empty() && elsewhere.binary_search(&file).is_ok() {
+            return Trust::Untrusted;
         }
+        trust
     }
 
     pub fn symbol_trust(&self, symbol: Sym) -> Trust {
         let declarations = self.files().decls_of(symbol);
+        if let List::One((file, _)) = declarations {
+            return self.file_trust(file);
+        }
         let trusts = declarations.iter().map(|&(file, _)| self.file_trust(file));
         trusts.fold(Trust::Untrusted, Trust::strongest)
     }
 
     pub fn compiled_class(&self, symbol: Sym) -> Option<ClassRef> {
         let declarations = self.files().decls_of(symbol);
-        let mut classes = declarations.iter().filter_map(|&(file, decl)| {
+        let mut only_class = None;
+        for &(file, decl) in declarations.iter() {
             if let Decl::Class(class) = decl {
-                Some(ClassRef { file, class })
-            } else {
-                None
+                if only_class.is_some() {
+                    return None;
+                }
+                only_class = Some(ClassRef { file, class });
             }
-        });
-        let class = classes.next()?;
-        let is_single = classes.next().is_none();
+        }
+        let class = only_class?;
         let is_ambient = self.c.hir(class.file)[class.class]
             .flags
             .contains(Flags::AMBIENT);
         let has_code = self.c.is_compiled_file(class.file)
             || self.files().module(class.file).holds_code_that_never_runs;
-        (is_single && has_code && !is_ambient).then_some(class)
+        (has_code && !is_ambient).then_some(class)
     }
 
-    /// One name may be assigned to at thousands of places, which are all declarations of it, and each of them asks.
     pub(super) fn member_trust(&mut self, declarations: &List<'p, (FileId, Decl)>) -> Trust {
+        if let List::One((file, _)) = declarations {
+            return self.file_trust(*file);
+        }
         let permanent = match declarations {
             List::Permanent(permanent) if permanent.len() > 4 => Some(permanent.as_ptr() as usize),
             _ => None,

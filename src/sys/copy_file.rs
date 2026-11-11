@@ -224,8 +224,7 @@ pub fn copy_file_with_state(
     {
         // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
         #[cfg(target_os = "freebsd")]
-        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
-        let _ = unsafe { libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+        let _ = crate::safe_libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
 
         loop {
             {
@@ -412,8 +411,7 @@ pub(crate) fn copy_file_range(
         copy_file_state.insert(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
         // The read/write loop below is called once per 32 KiB chunk; hint once
         // up front so the kernel doubles its readahead window. Best-effort.
-        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
-        let _ = unsafe { libc::posix_fadvise(in_, 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+        let _ = crate::safe_libc::posix_fadvise(in_, 0, 0, libc::POSIX_FADV_SEQUENTIAL);
     }
 
     copy_file_read_write_loop(in_, out, len)

@@ -1,12 +1,16 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use super::entry_points::find_default_entry_point;
+use super::entry_points::{
+    EntryPointError, NamedEntryPoint, find_default_entry_point, find_named_entry_point,
+    find_package_name, is_script_without_extension,
+};
 use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
 use crate::cli::run_compiled;
+use bun_aot::report::build_rows::write_note_row;
 use bun_bundler::aot::expand_entry_points;
 use bun_bundler::options;
 use bun_bundler::transpiler::Transpiler;
@@ -63,12 +67,99 @@ pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
                 ctx.bundler_options.outfile = found.executable_name;
             }
         }
-        Err(error) => {
-            let mut message = Vec::new();
-            error.write_message(&mut message);
-            exit_without_entry_point(&message);
-        }
+        Err(error) => exit_with_error(&error),
     }
+}
+
+/// `bun compile rollup` compiles the file that `bun run rollup` runs.
+pub(super) fn use_installed_executable(ctx: &mut ContextData) {
+    if ctx.bundler_options.library {
+        return;
+    }
+    let Some(written) = ctx.args.entry_points.first() else {
+        return;
+    };
+    let working_directory = ctx
+        .args
+        .absolute_working_dir
+        .as_deref()
+        .expect("Arguments::parse sets the working directory");
+    match find_named_entry_point(working_directory, written) {
+        Ok(NamedEntryPoint::AsWritten) => {}
+        Ok(NamedEntryPoint::Library { executable_names }) => {
+            note_library_entry_point(written, &executable_names);
+        }
+        Ok(NamedEntryPoint::SourceFile(path)) => ctx.args.entry_points[0] = path,
+        Ok(NamedEntryPoint::Executable(found)) => {
+            note_installed_executable(working_directory, written, &found.path);
+            ctx.args.entry_points[0] = found.path;
+            if ctx.bundler_options.outfile.is_empty() {
+                ctx.bundler_options.outfile = found.executable_name;
+            }
+        }
+        Err(error) => exit_with_error(&error),
+    }
+}
+
+#[cold]
+pub(super) fn load_script_as_code(ctx: &mut ContextData) {
+    let working_directory = ctx
+        .args
+        .absolute_working_dir
+        .as_deref()
+        .expect("Arguments::parse sets the working directory");
+    let is_script = (ctx.args.entry_points.first())
+        .is_some_and(|written| is_script_without_extension(working_directory, written));
+    if !is_script {
+        return;
+    }
+    // What `--loader=:tsx` does. `bun run` and `--aot` read such an entry point as TSX too.
+    let loaders = ctx.args.loaders.get_or_insert_default();
+    if !loaders.extensions.iter().any(|it| it.is_empty()) {
+        loaders.extensions.push(Box::default());
+        loaders.loaders.push(api::Loader::tsx);
+    }
+}
+
+#[cold]
+fn note_library_entry_point(package_name: &[u8], executable_names: &[Vec<u8>]) {
+    let package_name = bstr::BStr::new(package_name);
+    if executable_names.is_empty() {
+        bun_core::note!(
+            "{} has no \"bin\" in its package.json, so this compiles the library that import \"{}\" loads",
+            package_name,
+            package_name
+        );
+        return;
+    }
+    bun_core::note!(
+        "{} has no \"bin\" of that name in its package.json, so this compiles the library that import \"{}\" loads. Its \"bin\" has: {}",
+        package_name,
+        package_name,
+        bstr::BStr::new(&executable_names.join(&b", "[..]))
+    );
+}
+
+#[cold]
+fn note_installed_executable(working_directory: &[u8], name: &[u8], path: &[u8]) {
+    let shown_path = bun_paths::resolve_path::relative(working_directory, path);
+    let mut line = [name, b" is ", shown_path].concat();
+    if let Some(package_name) = find_package_name(path) {
+        line.extend_from_slice(b", from the package ");
+        line.extend_from_slice(&package_name);
+    }
+    let mut row = Vec::new();
+    let has_colors = Output::enable_ansi_colors_stderr();
+    write_note_row("note", &[line], has_colors, &mut row);
+    let _ = Output::error_writer().write_all(&row);
+    Output::flush();
+}
+
+#[cold]
+fn exit_with_error(error: &EntryPointError) -> ! {
+    let mut message = Vec::new();
+    error.write_message(&mut message);
+    exit_without_entry_point(&message)
 }
 
 #[cold]
@@ -123,10 +214,27 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         add_target_defines(ctx);
     }
 
+    if let Some(aot) = ctx.bundler_options.aot.as_mut()
+        && aot.runs_in_place
+        && ctx
+            .args
+            .tsconfig_override
+            .as_deref()
+            .is_some_and(|path| !bun_sys::exists(path))
+    {
+        aot.missing_tsconfig_override = ctx.args.tsconfig_override.take();
+    }
+    let reads_no_configuration = (ctx.bundler_options.aot.as_ref())
+        .is_some_and(|aot| aot.missing_tsconfig_override.is_some());
+
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.
     let this_transpiler: &'static mut Transpiler<'static> =
         arena.alloc(Transpiler::init(arena, ctx.log, ctx.args.clone(), None)?);
+    if reads_no_configuration {
+        this_transpiler.options.load_tsconfig_json = false;
+        this_transpiler.resolver.opts.load_tsconfig_json = false;
+    }
     bun_core::asan::register_root_region(
         std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
         core::mem::size_of::<Transpiler>(),
@@ -236,6 +344,16 @@ fn apply_bundler_options(ctx: &ContextData, this_transpiler: &mut Transpiler<'st
     } else {
         bun_ast::runtime::ReactCompilerMode::Disabled
     };
+    // `bun test --aot` compiles the components that `bun test` compiles, the same way.
+    let runs_tests = (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| aot.runs_tests);
+    if let Some(scope) = (ctx.test_options.react_compiler.as_ref()).filter(|_| runs_tests) {
+        this_transpiler.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+        this_transpiler.options.react_compiler_filter =
+            Some(crate::cli::test_command::react_compiler_filter(
+                scope,
+                FileSystem::get().top_level_dir(),
+            ));
+    }
     this_transpiler.options.inline_entrypoint_import_meta_main =
         ctx.bundler_options.inline_entrypoint_import_meta_main;
     this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
@@ -462,11 +580,7 @@ pub(super) fn request_from_context<'r>(
         entry_points.map(|path| -> &'static [u8] { arena.alloc_slice_copy(&path[..]) }),
     );
     let embeds_source_maps = transpiler.options.source_map != options::SourceMapOption::None;
-    // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-    let env = unsafe { &mut *transpiler.env };
-    // SAFETY: `create_context_data` set `ctx.log`, which lives as long as the process. The build
-    // writes to it through this reference or through the transpiler's pointer, never both at once.
-    let log = unsafe { &mut *ctx.log };
+    let env = transpiler.env;
 
     CompileRequest {
         origin,
@@ -522,9 +636,13 @@ pub(super) fn request_from_context<'r>(
                 jit_policy: ctx.bundler_options.compile_jit_policy,
             },
             assets: &ctx.bundler_options.compile_assets,
+            metafiles: [
+                &ctx.bundler_options.metafile,
+                &ctx.bundler_options.metafile_md,
+            ],
             embeds_source_maps,
         },
-        log,
+        log: ctx.log,
     }
 }
 

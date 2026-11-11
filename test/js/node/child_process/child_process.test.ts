@@ -1814,10 +1814,10 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
   // The first 'data' call returns only when the next two blocks are in the pipe, and it calls read(0) between them.
   // That read pulls the second block at once, nested in the push() of the first. The handler keeps every chunk and
   // also copies it at once. A first block of 100 KiB does not fit the pull buffer, so the reader hands over its own.
-  it.each([16, 100 * 1024])(
+  it.concurrent.each([16, 100 * 1024])(
     "does not write over a chunk that is kept or still buffered (first block of %d bytes)",
     async first => {
-      const waitFor = `file => { const deadline = Date.now() + 10_000; while (!fs.existsSync(file)) { if (Date.now() > deadline) throw new Error("timed out waiting for " + file); Bun.sleepSync(1); } }`;
+      const waitFor = `file => { const deadline = Date.now() + 15_000; while (!fs.existsSync(file)) { if (Date.now() > deadline) throw new Error("timed out waiting for " + file); Bun.sleepSync(1); } }`;
       using dir = tempDir("child-stdout-nested-read", {
         "producer.js": `
           const fs = require("node:fs");
@@ -1869,11 +1869,13 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
         stderr: "",
         exitCode: 0,
       });
+      // As above: the fixtures give up on their markers after 15 s, so their own error is what gets reported.
     },
+    30_000,
   );
 });
 
-it("a child stdout chunk kept across text(child.stdout) keeps its bytes", async () => {
+it.concurrent("a child stdout chunk kept across text(child.stdout) keeps its bytes", async () => {
   const writer = `let n = 0; process.stdin.on("data", () => { if (n++ === 0) process.stdout.write("version-7\\n"); else process.stdout.write("alpha\\nbeta\\n", () => process.exit(0)); });`;
   const script = `
     const { spawn } = require("node:child_process");
@@ -1900,11 +1902,13 @@ it("a child stdout chunk kept across text(child.stdout) keeps its bytes", async 
 
 // The child writes block i (the letter a + i) when it gets a line on stdin, so the read that gets a block already
 // waits and push() runs in its reaction. The listener keeps every chunk.
-it("a chunk that a child stdout 'data' listener keeps is not written over when the listener calls read(0)", async () => {
-  const BLOCKS = 4;
-  const SIZE = 1024;
-  const writer = `let i = 0; const next = () => i < ${BLOCKS} ? process.stdout.write(Buffer.alloc(${SIZE}, 97 + i++)) : process.exit(0); next(); process.stdin.on("data", next);`;
-  const script = `
+it.concurrent(
+  "a chunk that a child stdout 'data' listener keeps is not written over when the listener calls read(0)",
+  async () => {
+    const BLOCKS = 4;
+    const SIZE = 1024;
+    const writer = `let i = 0; const next = () => i < ${BLOCKS} ? process.stdout.write(Buffer.alloc(${SIZE}, 97 + i++)) : process.exit(0); next(); process.stdin.on("data", next);`;
+    const script = `
     const { spawn } = require("node:child_process");
     const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
     // The last line can reach a child that already exited.
@@ -1920,11 +1924,12 @@ it("a chunk that a child stdout 'data' listener keeps is not written over when t
       console.log(Buffer.concat(kept).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim());
     });
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: Array.from({ length: BLOCKS }, (_, i) => String.fromCharCode(97 + i) + SIZE).join(" "),
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: Array.from({ length: BLOCKS }, (_, i) => String.fromCharCode(97 + i) + SIZE).join(" "),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

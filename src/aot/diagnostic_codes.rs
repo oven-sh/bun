@@ -50,7 +50,6 @@ diagnostic_codes! {
         ModuleCacheIsHandedOn = 100093, Warning, "Code that the build doesn't follow gets require.cache here. In an executable, require.cache doesn't list compiled modules: deleting an entry or storing one changes nothing, and require() returns the same exports";
         FunctionSourceReparseMismatch = 100090, Error, "A check of the compiler itself failed: the retained source of a function does not parse back to its syntax tree: {0}";
         WorkerFilesGoByOnePath = 100086, Warning, "In the executable \"{0}\" is all that is left of the paths of two files: \"{1}\" and \"{2}\". A \"..\" above the root of the executable takes nothing away, so nothing tells the two apart, and a Worker that starts from either fails to load. Pass both files to the build as entry points";
-        LocaleDataLeftOut = 100087, Warning, "compile.trim.locales leaves out the data of \"{0}\". A call that needs it exits the process with code 70 if it runs. Add \"{0}\" to the list";
         FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
         ModuleMayBeNamedAtRunTime = 100094, Warning, "This call may load a module, and the build can't work out its name. If it names code that isn't in the executable, the call throws at run time. Import the module by its name to keep it, or build with --aot-allow-code-from-disk";
         FoldersOfResolveAreNotRead = 100095, Warning, "The build can't work out the folders that this call looks in, so what they hold may not be in the executable. The call may then find a module of the same name in a folder above them, or none. Write the list of folders in the call, each as a path from __dirname or import.meta.dirname";
@@ -101,6 +100,7 @@ diagnostic_codes! {
         ExportNotFound = 100200, Error, "No matching export in \"{0}\" for import \"{1}\"";
         AmbiguousExport = 100201, Error, "Ambiguous import \"{0}\" has multiple matching exports";
         ProgramLimitExceeded = 100202, Error, "The program is too large to compile: {0} is limited to {1}, and it needs {2}";
+        LocaleDataLeftOut = 100203, Warning, "compile.trim.locales leaves out the data of \"{0}\". A call that needs it exits the process with code 70 if it runs. Add \"{0}\" to the list";
     }
     Lower 100300..=100699 {
         NestedTooDeeply = 100301, Error, "This code is nested more than {0} levels deep.";

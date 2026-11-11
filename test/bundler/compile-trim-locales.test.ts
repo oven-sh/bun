@@ -142,7 +142,7 @@ console.log(locale ? new Date(0).toLocaleDateString(locale, { timeZone: "UTC" })
     "dollars.ts": price("en-US", "USD"),
     // Nothing of Intl is used, so none of its data stays for any language, and the list leaves out nothing that this call could ask for.
     "upper.ts": `console.log("i".toLocaleUpperCase("tr"));`,
-    "silenced.ts": `// bun-ignore TS100087 every amount is a finite number
+    "silenced.ts": `// bun-ignore TS100203 every amount is a finite number
 console.log(new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(1234.5));`,
     "build.ts": `
 const built = await Bun.build({
@@ -153,7 +153,7 @@ if (!built.success) throw new AggregateError(built.logs);
 console.log(JSON.stringify(built.logs.map(log => ({ level: log.level, message: log.message, line: log.position?.line, column: log.position?.column }))));`,
   };
   const warning = (tag: string) =>
-    `TS100087: compile.trim.locales leaves out the data of "${tag}". A call that needs it exits the process with code 70 if it runs. Add "${tag}" to the list`;
+    `TS100203: compile.trim.locales leaves out the data of "${tag}". A call that needs it exits the process with code 70 if it runs. Add "${tag}" to the list`;
   const place = { line: 2, column: priceLine("de-DE", "EUR").indexOf('"de-DE"') + 1 };
   const aot = ["build", "--compile", "--aot", ...withoutDebugInformation];
   const silenced = "note: Silenced by bun-ignore: ";

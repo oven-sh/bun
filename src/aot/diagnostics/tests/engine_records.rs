@@ -477,7 +477,7 @@ fn constant_locale_that_a_plan_leaves_out_warns_where_it_is_passed() {
     assert_eq!(
         describe(&log),
         [
-            "/p/a.ts:2:1 Warn TS100087: compile.trim.locales leaves out the data of \"de-DE\". A call that needs it exits the process with code 70 if it runs. Add \"de-DE\" to the list".to_owned(),
+            "/p/a.ts:2:1 Warn TS100203: compile.trim.locales leaves out the data of \"de-DE\". A call that needs it exits the process with code 70 if it runs. Add \"de-DE\" to the list".to_owned(),
             format!("/p/node_modules/b/b.js:1:1 Warn {french}"),
         ]
     );

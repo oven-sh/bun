@@ -106,9 +106,7 @@ fn generate_compile_result_for_css_chunk_impl(
     }
 
     match &css_import.kind {
-        CssImportOrderKind::Layers(_)
-        | CssImportOrderKind::LayersOf(_)
-        | CssImportOrderKind::ExternalPath(_) => {
+        CssImportOrderKind::Layers(_) | CssImportOrderKind::ExternalPath(_) => {
             let printer_options = PrinterOptions {
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,

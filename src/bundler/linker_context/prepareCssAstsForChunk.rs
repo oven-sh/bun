@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 
-use bun_alloc::{Arena as Bump, ArenaVec};
+use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
@@ -129,32 +129,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     };
                     let mut ast = BundlerStyleSheet {
                         rules,
-                        sources: Default::default(),
-                        source_map_urls: Default::default(),
-                        license_comments: Default::default(),
-                        composes: Default::default(),
-                        ..BundlerStyleSheet::empty()
-                    };
-                    wrap_rules_with_conditions(
-                        &mut ast,
-                        bump,
-                        &entry.conditions.slice()[private_conditions..],
-                    );
-                    css_chunk.asts[i] = ast;
-                }
-                CssImportOrderKind::LayersOf(source_index) => {
-                    let stylesheet: &BundlerStyleSheet = asts[source_index.get() as usize]
-                        .as_deref()
-                        .expect("css ast present");
-                    let mut ast = BundlerStyleSheet {
-                        // SAFETY: the skeleton aliases the conditions of `stylesheet`, which
-                        // outlives the chunk, and its lists are in `bump`. It goes into
-                        // `css_chunk.asts[i]`, whose elements never run `Drop`.
-                        rules: unsafe {
-                            stylesheet
-                                .rules
-                                .layer_skeleton(!stylesheet.layers_pre_import.is_empty(), bump)
-                        },
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
@@ -371,34 +345,10 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         //
                         // The statements ahead of the first "@import" have an entry
                         // of their own in the order.
-                        let original_rules = ast.rules.v.as_slice();
-                        let keep_leading_layers = ast.layers_pre_import.is_empty();
-                        let mut keep_layers = keep_leading_layers;
-                        let mut layer_count: usize = 0;
-                        let mut prefix_end: usize = original_rules.len();
-                        'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
-                            match rule {
-                                BundlerCssRule::Import(_) => keep_layers = true,
-                                BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => {
-                                    layer_count += usize::from(keep_layers);
-                                }
-                                _ => {
-                                    prefix_end = idx;
-                                    break 'prefix_scan;
-                                }
-                            }
-                        }
-                        // An "@import" behind an unknown at-rule is in the order too.
-                        let is_import =
-                            |rule: &&BundlerCssRule| matches!(rule, BundlerCssRule::Import(_));
-                        let dropped = prefix_end - layer_count
-                            + original_rules[prefix_end..]
-                                .iter()
-                                .filter(is_import)
-                                .count();
+                        let printed = ast.rules.printed_rules(!ast.layers_pre_import.is_empty());
+                        let kept = printed.clone().count();
 
-                        if dropped == 0 {
+                        if kept == ast.rules.v.len() {
                             // Prefix is all "@layer" (or empty). Nothing to
                             // strip — leave `ast.rules.v` untouched.
                         } else {
@@ -407,24 +357,8 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
                             let mut new_rules: ArenaVec<BundlerCssRule> =
-                                ArenaVec::with_capacity_in(original_rules.len() - dropped, bump);
-                            keep_layers = keep_leading_layers;
-                            for rule in &original_rules[0..prefix_end] {
-                                keep_layers |= matches!(rule, BundlerCssRule::Import(_));
-                                if keep_layers && matches!(rule, BundlerCssRule::LayerStatement(_))
-                                {
-                                    // SAFETY: bitwise duplicate of a rule. The copy goes into
-                                    // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
-                                    // whose elements never run `Drop` (see `arena_rule_list` /
-                                    // `CssChunk::Drop`), so the rule's interior heap stays
-                                    // singly-owned by the original.
-                                    new_rules.push(unsafe { core::ptr::read(rule) });
-                                }
-                            }
-                            for rule in &original_rules[prefix_end..] {
-                                if is_import(&rule) {
-                                    continue;
-                                }
+                                ArenaVec::with_capacity_in(kept, bump);
+                            for rule in printed {
                                 // SAFETY: bitwise duplicate of a rule. The copy goes into
                                 // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                 // whose elements never run `Drop` (see `arena_rule_list` /
@@ -466,7 +400,16 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 /// the `asts` slab) and never grown after this point; the arena reclaims the
 /// storage on `reset`.
 fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
-    BundlerCssRuleList::from_arena(rules)
+    let len = rules.len();
+    if len == 0 {
+        return BundlerCssRuleList::default();
+    }
+    let slab = rules.into_bump_slice_mut();
+    BundlerCssRuleList {
+        // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown
+        // (see fn doc).
+        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
+    }
 }
 
 /// Single-element shorthand for [`arena_rule_list`].

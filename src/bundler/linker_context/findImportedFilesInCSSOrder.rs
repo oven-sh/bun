@@ -430,6 +430,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             }
             _ => false,
         };
+        // An entry that declares only the layers of an import that was not loaded must
+        // not keep a later statement behind the hoisted imports.
+        let continues_prefix = |entry: &CssImportOrder| {
+            is_statement(entry)
+                || matches!(&entry.kind, CssImportOrderKind::Layers(layers) if layers.inner().is_empty())
+        };
         let mut stand_ins = has_layered_external_import.then(LayerStandIns::default);
         let mut is_at_layer_prefix = true;
         for (i, entry) in order.slice().iter().enumerate() {
@@ -438,6 +444,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             if let Some(stand_ins) = &mut stand_ins {
                 if is_external {
                     stand_ins.declare_ahead_of(
+                        i,
                         entry,
                         order.slice(),
                         css_asts,
@@ -457,7 +464,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            is_at_layer_prefix &= is_statement(entry);
+            is_at_layer_prefix &= continues_prefix(entry);
         }
         drop(stand_ins);
 
@@ -472,7 +479,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 // each `CssImportOrder` value is dropped at most once.
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
-            is_at_layer_prefix &= is_statement(entry);
+            is_at_layer_prefix &= continues_prefix(entry);
         }
 
         // The stand-ins are more entries than `order` had.
@@ -485,6 +492,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // file, replace all but the last copy with just the layers that are in that
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
+    let mut kept_copies: Vec<u32> = Vec::new();
     {
         let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
         let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> = StringArrayHashMap::new();
@@ -515,9 +523,14 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
                             let later = &order.slice()[i as usize + 1..];
-                            let layers =
-                                layers_of_redundant_copy(idx, css_asts, later, layer_lists);
-                            order.mut_(i as usize).kind = layers;
+                            if can_list_stand_for_copy(idx, later, css_asts, layer_lists) {
+                                let layer_names =
+                                    &css_asts[idx.get() as usize].as_deref().unwrap().layer_names;
+                                order.mut_(i as usize).kind =
+                                    CssImportOrderKind::Layers(Layers::borrow(layer_names));
+                            } else {
+                                kept_copies.push(i);
+                            }
                             continue 'next_backward;
                         }
                     }
@@ -555,7 +568,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     gop.value_ptr.push(i);
                 }
-                CssImportOrderKind::Layers(_) | CssImportOrderKind::LayersOf(_) => {}
+                CssImportOrderKind::Layers(_) => {}
             }
         }
     }
@@ -576,7 +589,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         }
         let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
 
-        'next_forward: for entry in order.slice_mut() {
+        'next_forward: for (i, entry) in order.slice_mut().iter_mut().enumerate() {
             debug_css_order(
                 this,
                 &wip_order,
@@ -665,13 +678,11 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // sometimes non-layer ones can make following layer ones redundant.
             // layers_post_import
             let layers_key: &[LayerName] = match &entry.kind {
-                CssImportOrderKind::SourceIndex(idx) | CssImportOrderKind::LayersOf(idx) => {
-                    css_asts[idx.get() as usize]
-                        .as_deref()
-                        .unwrap()
-                        .layer_names
-                        .slice_const()
-                }
+                CssImportOrderKind::SourceIndex(idx) => css_asts[idx.get() as usize]
+                    .as_deref()
+                    .unwrap()
+                    .layer_names
+                    .slice_const(),
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
             };
@@ -698,44 +709,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 let duplicate_index = duplicates[j];
                 // A file may have these names under "@media", which is no proof
                 // that it declares them for this list.
-                let declares_no_more =
-                    match (&entry.kind, &wip_order.at(duplicate_index as usize).kind) {
-                        (CssImportOrderKind::Layers(_), CssImportOrderKind::Layers(_)) => true,
-                        (CssImportOrderKind::Layers(_), CssImportOrderKind::SourceIndex(_)) => {
-                            layers_key.is_empty()
-                        }
-                        (CssImportOrderKind::Layers(_), CssImportOrderKind::ExternalPath(_)) => {
-                            !in_anonymous_layer
-                        }
-                        (CssImportOrderKind::Layers(_), CssImportOrderKind::LayersOf(_)) => false,
-                        // A list has each name of the file with no condition of its own.
-                        (CssImportOrderKind::LayersOf(_), CssImportOrderKind::Layers(_)) => true,
-                        (
-                            CssImportOrderKind::LayersOf(file),
-                            CssImportOrderKind::LayersOf(earlier),
-                        ) => file.get() == earlier.get(),
-                        (
-                            CssImportOrderKind::LayersOf(_),
-                            CssImportOrderKind::SourceIndex(_)
-                            | CssImportOrderKind::ExternalPath(_),
-                        ) => false,
-                        (
-                            CssImportOrderKind::SourceIndex(_)
-                            | CssImportOrderKind::ExternalPath(_),
-                            _,
-                        ) => true,
-                    };
-                if !declares_no_more {
+                if matches!(entry.kind, CssImportOrderKind::Layers(_))
+                    && match wip_order.at(duplicate_index as usize).kind {
+                        CssImportOrderKind::Layers(_) => false,
+                        CssImportOrderKind::SourceIndex(_) => !layers_key.is_empty(),
+                        CssImportOrderKind::ExternalPath(_) => in_anonymous_layer,
+                    }
+                {
                     continue;
                 }
                 if is_conditional_import_redundant(
                     &entry.conditions,
                     &wip_order.at(duplicate_index as usize).conditions,
                 ) {
-                    if !matches!(
-                        entry.kind,
-                        CssImportOrderKind::Layers(_) | CssImportOrderKind::LayersOf(_)
-                    ) {
+                    if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
                         // If an empty layer is followed immediately by a full layer and
                         // everything else is identical, then we don't need to emit the
                         // empty layer. For example:
@@ -767,7 +754,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                                         || core::ptr::eq(layers_key, layers.inner().slice())
                                 }
                                 (
-                                    CssImportOrderKind::LayersOf(earlier),
+                                    CssImportOrderKind::SourceIndex(earlier),
                                     CssImportOrderKind::SourceIndex(file),
                                 ) => earlier.get() == file.get(),
                                 _ => false,
@@ -789,12 +776,24 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             }
                         }
 
-                        // Non-layer entries still need to be present because they have
-                        // other side effects beside inserting things in the layer order
-                        // SAFETY: `entry` is moved back into `order` via
-                        // `memcpy_and_reset` below (no `Drop` on the source slot),
-                        // so each value is dropped at most once.
-                        wip_order.push(unsafe { bitwise_copy(entry) });
+                        // A copy that stays for its layers adds none to an earlier copy or list.
+                        let adds_nothing = kept_copies.contains(&(i as u32))
+                            && match (&entry.kind, &wip_order.at(duplicate_index as usize).kind) {
+                                (
+                                    CssImportOrderKind::SourceIndex(file),
+                                    CssImportOrderKind::SourceIndex(earlier),
+                                ) => file.get() == earlier.get(),
+                                (_, CssImportOrderKind::Layers(_)) => true,
+                                _ => false,
+                            };
+                        if !adds_nothing {
+                            // Non-layer entries still need to be present because they have
+                            // other side effects beside inserting things in the layer order
+                            // SAFETY: `entry` is moved back into `order` via
+                            // `memcpy_and_reset` below (no `Drop` on the source slot),
+                            // so each value is dropped at most once.
+                            wip_order.push(unsafe { bitwise_copy(entry) });
+                        }
                     }
 
                     // Don't add this to the duplicate list below because it's redundant
@@ -955,8 +954,7 @@ pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOr
                     (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
                         a.text == b.text
                     }
-                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b))
-                    | (CssImportOrderKind::LayersOf(a), CssImportOrderKind::LayersOf(b)) => {
+                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
                         a.get() == b.get()
                     }
                     _ => false,
@@ -1005,59 +1003,46 @@ impl LayerLists {
     }
 }
 
-/// What stands for a copy of `file` that a later copy makes redundant: the layers it declares.
-fn layers_of_redundant_copy<'a>(
+/// Whether a list of the layer names can stand for a copy of `file` that a later copy makes redundant.
+fn can_list_stand_for_copy(
     file: AstIndex,
-    css_asts: &[crate::bundled_ast::CssCol],
     later: &[CssImportOrder],
+    css_asts: &[crate::bundled_ast::CssCol],
     layer_lists: &mut LayerLists,
-) -> CssImportOrderKind<'a> {
-    let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
-    if layer_lists.is_flat(file, sheet) || is_ahead_of_namespace(later, css_asts) {
-        return CssImportOrderKind::Layers(Layers::borrow(&sheet.layer_names));
-    }
-    CssImportOrderKind::LayersOf(file)
-}
-
-/// Whether only "@layer" statements come before an "@namespace", which a block would make invalid.
-fn is_ahead_of_namespace(
-    later: &[CssImportOrder],
-    css_asts: &[crate::bundled_ast::CssCol],
 ) -> bool {
-    for entry in later {
-        match &entry.kind {
-            CssImportOrderKind::Layers(layers)
-                if prints_as_layer_statement(
-                    layers.inner().is_empty(),
-                    entry.conditions.slice(),
-                ) => {}
-            CssImportOrderKind::SourceIndex(file) if entry.conditions.len() == 0 => {
-                let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
-                let first = sheet.rules.v.iter().find(|rule| {
-                    !matches!(
-                        rule,
-                        BundlerCssRule::Import(_)
-                            | BundlerCssRule::Ignored
-                            | BundlerCssRule::LayerStatement(_)
-                    )
-                });
-                return matches!(first, Some(BundlerCssRule::Namespace(_)));
-            }
-            _ => return false,
-        }
-    }
-    false
+    let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
+    // The rules of a copy would make the "@namespace" of a later file invalid. A list does not.
+    layer_lists.is_flat(file, sheet)
+        || later
+            .iter()
+            .any(|entry| starts_with_namespace(entry, css_asts))
 }
 
-/// The URL of a stand-in. Its "@import" rule declares the layer, also when a CSP blocks the URL.
-const EMPTY_STYLE_SHEET: &[u8] = b"data:text/css,";
+/// Whether the entry is a file whose "@namespace" is valid only with no rule but "@layer" statements ahead of it.
+fn starts_with_namespace(entry: &CssImportOrder, css_asts: &[crate::bundled_ast::CssCol]) -> bool {
+    let CssImportOrderKind::SourceIndex(file) = &entry.kind else {
+        return false;
+    };
+    if entry.conditions.len() != 0 {
+        return false;
+    }
+    let sheet: &BundlerStyleSheet = css_asts[file.get() as usize].as_deref().unwrap();
+    let first = sheet
+        .rules
+        .printed_rules(false)
+        .find(|rule| !matches!(rule, BundlerCssRule::LayerStatement(_)));
+    matches!(first, Some(BundlerCssRule::Namespace(_)))
+}
+
+/// The URL of a stand-in: an empty style sheet. Its "@import" rule declares the layer.
+static EMPTY_STYLE_SHEET: &[u8] = b"data:text/css,";
 
 /// Whether the entry is an "@import" that `LayerStandIns` made to declare a layer.
 fn is_layer_stand_in(entry: &CssImportOrder) -> bool {
-    matches!(&entry.kind, CssImportOrderKind::ExternalPath(path) if path.text == EMPTY_STYLE_SHEET)
+    matches!(&entry.kind, CssImportOrderKind::ExternalPath(path) if core::ptr::eq(path.text, EMPTY_STYLE_SHEET))
 }
 
-/// A layer that an entry behind the hoisted imports adds to the layer order.
+/// A layer that an entry adds to the layer order.
 struct LayerDeclaration<'o> {
     /// The index of the entry that declares it.
     entry: u32,
@@ -1067,14 +1052,21 @@ struct LayerDeclaration<'o> {
     media: Option<&'o ImportConditions>,
     /// The import conditions whose "supports()" it is under.
     supports: Option<&'o ImportConditions>,
+    /// An "@layer" statement ahead of every "@import" can declare it.
+    in_statement: bool,
+    /// Its place in the layer order does not depend on the import that is next.
+    is_fixed: bool,
 }
 
 impl LayerDeclaration<'_> {
+    fn is_unconditional(&self) -> bool {
+        self.media.is_none() && self.supports.is_none()
+    }
+
     /// Whether this declaration leaves nothing for `other` to declare.
     fn covers(&self, other: &Self) -> bool {
         self.path.starts_with(&other.path)
-            && ((self.media.is_none() && self.supports.is_none())
-                || self.has_same_conditions(other))
+            && (self.is_unconditional() || self.has_same_conditions(other))
     }
 
     fn has_same_conditions(&self, other: &Self) -> bool {
@@ -1095,6 +1087,13 @@ impl LayerDeclaration<'_> {
     }
 }
 
+/// Whether a declaration with no condition has `path` or a layer inside it.
+fn is_declared(declared: &[LayerDeclaration], path: &[&[u8]]) -> bool {
+    declared
+        .iter()
+        .any(|d| d.is_unconditional() && d.path.starts_with(path))
+}
+
 /// Adds the layers of `entry` to `out`. Returns false at the first one that no stand-in can declare.
 fn visible_layers<'o, 'n>(
     index: u32,
@@ -1102,6 +1101,13 @@ fn visible_layers<'o, 'n>(
     file_layers: &mut dyn FnMut(AstIndex) -> Option<&'n [LayerName]>,
     out: &mut Vec<LayerDeclaration<'o>>,
 ) -> bool {
+    let names_a_layer = |c: &ImportConditions| c.layer.as_ref().is_some_and(|l| l.v.is_some());
+    // Such an entry prints nothing, so it has no place in the layer order.
+    if matches!(&entry.kind, CssImportOrderKind::Layers(layers) if layers.inner().is_empty())
+        && !entry.conditions.iter().any(names_a_layer)
+    {
+        return true;
+    }
     let first = out.len();
     let mut path: Vec<&'static [u8]> = Vec::new();
     let mut media: Option<&ImportConditions> = None;
@@ -1115,6 +1121,8 @@ fn visible_layers<'o, 'n>(
             path: path.to_vec(),
             media,
             supports,
+            in_statement: false,
+            is_fixed: false,
         };
         // A name also declares the layers around it.
         match out[first..].last_mut() {
@@ -1153,7 +1161,7 @@ fn visible_layers<'o, 'n>(
             Some(names) => names,
             None => return false,
         },
-        CssImportOrderKind::ExternalPath(_) | CssImportOrderKind::LayersOf(_) => &[],
+        CssImportOrderKind::ExternalPath(_) => &[],
     };
     for name in names {
         let depth = path.len();
@@ -1167,18 +1175,30 @@ fn visible_layers<'o, 'n>(
 /// Declares each layer that a hoisted external "@import" with a layer would pass, ahead of it.
 #[derive(Default)]
 struct LayerStandIns<'o> {
-    /// The entries behind the imports that have no stand-in yet, as indexes into the order.
-    pending: Vec<u32>,
-    /// A pending entry has a layer that no stand-in can declare, so later layers get none either.
+    /// The entries behind the imports whose layers are not in `pending` yet, as indexes into the order.
+    unread: Vec<u32>,
+    /// The layers of the entries behind the imports that have no stand-in, in the order of the source.
+    pending: Vec<LayerDeclaration<'o>>,
+    /// An entry has a layer that no stand-in can declare, so the layers after it get none either.
     is_closed: bool,
-    has_import: bool,
+    /// The layers that are declared ahead of the next import.
     declared: Vec<LayerDeclaration<'o>>,
+    /// The first external import, as an index into the order and into the hoisted entries.
+    first_import: Option<(u32, usize)>,
+    /// Each external import so far, as its index into the order and its URL.
+    imports: Vec<(u32, &'o [u8])>,
+    /// The index of the first external import that has "supports()".
+    first_import_with_supports: Option<u32>,
+    /// A pending layer needs an "@import" to declare it, so the layers after it do too.
+    needs_import: bool,
+    /// A stand-in has "supports()", which Chrome 99 to 121, Firefox 97 to 114 and Safari 15.4 to 17.4 drop.
+    has_supports: bool,
 }
 
 impl<'o> LayerStandIns<'o> {
     fn add(&mut self, index: usize) {
         if !self.is_closed {
-            self.pending.push(index as u32);
+            self.unread.push(index as u32);
         }
     }
 
@@ -1187,34 +1207,15 @@ impl<'o> LayerStandIns<'o> {
         visible_layers(index as u32, statement, &mut |_| None, &mut self.declared);
     }
 
-    /// Called ahead of each external import, in the order of the source.
-    fn declare_ahead_of<'a>(
+    fn read_pending(
         &mut self,
-        import: &CssImportOrder,
-        order: &'o [CssImportOrder<'a>],
+        first_import: u32,
+        order: &'o [CssImportOrder],
         css_asts: &[crate::bundled_ast::CssCol],
         layer_lists: &mut LayerLists,
-        arena: &Arena,
-        hoisted: &mut Vec<CssImportOrder<'a>>,
     ) {
-        let had_import = core::mem::replace(&mut self.has_import, true);
-        if self.pending.is_empty() {
-            return;
-        }
-        // The named part of the layer of the import. An import with no layer passes no layer.
-        let mut import_path: Vec<&'static [u8]> = Vec::new();
-        let mut has_layer = false;
-        for layer in import.conditions.iter().filter_map(|c| c.layer.as_ref()) {
-            has_layer = true;
-            let Some(name) = &layer.v else { break };
-            import_path.extend_from_slice(name.v.slice());
-        }
-        if !has_layer {
-            return;
-        }
-
-        let mut declarations: Vec<LayerDeclaration<'o>> = Vec::new();
-        for (pending, &index) in self.pending.iter().enumerate() {
+        for index in core::mem::take(&mut self.unread) {
+            let first = self.pending.len();
             let is_visible = visible_layers(
                 index,
                 &order[index as usize],
@@ -1225,27 +1226,138 @@ impl<'o> LayerStandIns<'o> {
                         && !layer_lists.has_anonymous_layer(file, sheet);
                     is_flat.then_some(sheet.layer_names.slice_const())
                 },
-                &mut declarations,
+                &mut self.pending,
             );
+            for declaration in &mut self.pending[first..] {
+                self.needs_import |= index > first_import || !declaration.is_unconditional();
+                declaration.in_statement = !self.needs_import;
+            }
             if !is_visible {
                 self.is_closed = true;
-                self.pending.truncate(pending + 1);
-                break;
+                return;
             }
         }
-        // The import itself declares these layers, at the place where the entries did.
-        if declarations
-            .iter()
-            .all(|declaration| import_path.starts_with(&declaration.path))
-        {
+    }
+
+    /// Called ahead of each external import, in the order of the source.
+    fn declare_ahead_of<'a>(
+        &mut self,
+        index: usize,
+        import: &'o CssImportOrder<'a>,
+        order: &'o [CssImportOrder<'a>],
+        css_asts: &[crate::bundled_ast::CssCol],
+        layer_lists: &mut LayerLists,
+        arena: &Arena,
+        hoisted: &mut Vec<CssImportOrder<'a>>,
+    ) {
+        let (first_import, _) = *self
+            .first_import
+            .get_or_insert((index as u32, hoisted.len()));
+
+        // The named part of the layer of the import. An import with no layer passes no layer.
+        let mut import_path: Vec<&'static [u8]> = Vec::new();
+        let mut has_layer = false;
+        let mut is_named = true;
+        let mut media: Option<&'o ImportConditions> = None;
+        let mut supports: Option<&'o ImportConditions> = None;
+        let mut has_more_conditions = false;
+        for conditions in import.conditions.slice() {
+            if !conditions.media.media_queries.is_empty() {
+                has_more_conditions |= media.replace(conditions).is_some();
+            }
+            if conditions.supports.is_some() {
+                has_more_conditions |= supports.replace(conditions).is_some();
+            }
+            if let Some(layer) = &conditions.layer {
+                has_layer = true;
+                match &layer.v {
+                    Some(name) if is_named => import_path.extend_from_slice(name.v.slice()),
+                    _ => is_named = false,
+                }
+            }
+        }
+        if let CssImportOrderKind::ExternalPath(path) = &import.kind {
+            self.imports.push((index as u32, path.text));
+        }
+        if supports.is_some() {
+            self.first_import_with_supports.get_or_insert(index as u32);
+        }
+        if !has_layer {
             return;
         }
-        self.pending.clear();
+        self.read_pending(first_import, order, css_asts, layer_lists);
 
-        let mut has_import = had_import;
+        // A stand-in is for a layer whose place among its siblings the import would take.
+        let mut end = 0;
+        // How much of the layer of the import an earlier pending layer declares, for each list of conditions.
+        let mut own = 0;
+        let mut own_under: Vec<(usize, usize)> = Vec::new();
+        for i in 0..self.pending.len() {
+            let pending = &self.pending[i];
+            let shared = pending
+                .path
+                .iter()
+                .zip(&import_path)
+                .take_while(|(a, b)| a == b)
+                .count();
+            let sibling = &pending.path[..pending.path.len().min(shared + 1)];
+            let is_fixed = is_declared(&self.declared, sibling)
+                || self.declared.iter().any(|d| d.covers(pending));
+            if !is_fixed {
+                let under = own_under
+                    .iter()
+                    .position(|&(_, other)| self.pending[other].has_same_conditions(pending));
+                // The import is ahead of both, as the earlier pending layer is in the source.
+                let is_sibling_declared = shared < import_path.len()
+                    && (is_declared(&self.declared, &import_path[..shared + 1])
+                        || shared < own
+                        || under.is_some_and(|under| shared < own_under[under].0));
+                if shared < pending.path.len() && !is_sibling_declared {
+                    end = i + 1;
+                }
+                match under {
+                    _ if pending.is_unconditional() => own = own.max(shared),
+                    Some(under) => own_under[under].0 = own_under[under].0.max(shared),
+                    None => own_under.push((shared, i)),
+                }
+            }
+            self.pending[i].is_fixed = is_fixed;
+        }
+        // A later copy masks an import. A stand-in behind it would then be ahead of the layers of its sheet.
+        if end != 0 {
+            let later = &order[index + 1..];
+            let masked = self.imports.iter().filter_map(|&(at, url)| {
+                let conditions = &order[at as usize].conditions;
+                let is_masked = later.iter().any(|e| {
+                    matches!(&e.kind, CssImportOrderKind::ExternalPath(path) if path.text == url)
+                        && is_conditional_import_redundant(conditions, &e.conditions)
+                });
+                // Those layers are inside the layer of the import. No name reaches into a layer with no name.
+                let mut path: Vec<&[u8]> = Vec::new();
+                for layer in conditions.iter().filter_map(|c| c.layer.as_ref()) {
+                    path.extend_from_slice(layer.v.as_ref()?.v.slice());
+                }
+                is_masked.then_some((at, path))
+            });
+            let masked: Vec<(u32, Vec<&[u8]>)> = masked.collect();
+            // An older browser drops an import that has "supports()", with its layer.
+            let dropped = self.first_import_with_supports.unwrap_or(u32::MAX);
+            let is_blocked = |d: &LayerDeclaration| {
+                (d.entry > dropped && d.supports.is_none())
+                    || masked
+                        .iter()
+                        .any(|(at, path)| *at < d.entry && d.path.starts_with(path))
+            };
+            if let Some(blocked) = self.pending[..end].iter().position(is_blocked) {
+                end = blocked;
+            }
+        }
+
         let mut statement: Vec<LayerName> = Vec::new();
+        let mut statement_entry = u32::MAX;
         let end_statement = |statement: &mut Vec<LayerName>,
-                             hoisted: &mut Vec<CssImportOrder<'a>>| {
+                             hoisted: &mut Vec<CssImportOrder<'a>>,
+                             first_import: &mut Option<(u32, usize)>| {
             if statement.is_empty() {
                 return;
             }
@@ -1255,35 +1367,49 @@ impl<'o> LayerStandIns<'o> {
             let names: &Vec<LayerName> = arena.alloc(unsafe {
                 Vec::from_raw_parts(names.as_mut_ptr(), names.len(), names.len())
             });
-            hoisted.push(CssImportOrder {
-                kind: CssImportOrderKind::Layers(Layers::borrow(names)),
-                conditions: Vec::new(),
-                condition_import_records: Vec::new(),
+            let at = first_import.as_mut().map_or(hoisted.len(), |(_, at)| {
+                *at += 1;
+                *at - 1
             });
+            hoisted.insert(
+                at,
+                CssImportOrder {
+                    kind: CssImportOrderKind::Layers(Layers::borrow(names)),
+                    conditions: Vec::new(),
+                    condition_import_records: Vec::new(),
+                },
+            );
         };
-        // One statement per entry, so that the later list of the same entry is redundant.
-        let mut statement_entry = u32::MAX;
-        for declaration in declarations {
-            if self
-                .declared
-                .iter()
-                .any(|earlier| earlier.covers(&declaration))
-            {
+        let pending = if end == 0 {
+            Vec::new()
+        } else {
+            core::mem::take(&mut self.pending)
+        };
+        let mut is_stopped = false;
+        for (i, declaration) in pending.into_iter().enumerate() {
+            let is_emitted = i < end
+                && !declaration.is_fixed
+                && !is_stopped
+                && !self.declared.iter().any(|d| d.covers(&declaration));
+            is_stopped |= is_emitted && self.has_supports && declaration.supports.is_none();
+            if !is_emitted || is_stopped {
+                self.pending.push(declaration);
                 continue;
             }
             let name = LayerName {
                 v: SmallList::from_arena_iter(arena, declaration.path.iter().copied()),
             };
-            if !has_import && declaration.media.is_none() && declaration.supports.is_none() {
+            if declaration.in_statement {
+                // One statement per entry, so that the later list of the same entry is redundant.
                 if statement_entry != declaration.entry {
-                    end_statement(&mut statement, hoisted);
+                    end_statement(&mut statement, hoisted, &mut self.first_import);
                     statement_entry = declaration.entry;
                 }
                 statement.push(name);
             } else {
                 // Only an "@import" is valid between two "@import" rules, and it takes conditions.
-                end_statement(&mut statement, hoisted);
-                has_import = true;
+                end_statement(&mut statement, hoisted, &mut self.first_import);
+                self.has_supports |= declaration.supports.is_some();
                 let conditions = arena.alloc_uninit_slice::<ImportConditions>(1);
                 conditions[0].write(ImportConditions {
                     layer: Some(Layer {
@@ -1319,7 +1445,28 @@ impl<'o> LayerStandIns<'o> {
             }
             self.declared.push(declaration);
         }
-        end_statement(&mut statement, hoisted);
+        end_statement(&mut statement, hoisted, &mut self.first_import);
+        if is_stopped {
+            self.is_closed = true;
+            self.pending.clear();
+            self.unread.clear();
+        }
+        // A statement for a later layer would be ahead of the layer of this import.
+        self.needs_import = true;
+        for pending in &mut self.pending {
+            pending.in_statement = false;
+        }
+
+        if !import_path.is_empty() && !has_more_conditions {
+            self.declared.push(LayerDeclaration {
+                entry: index as u32,
+                path: import_path,
+                media,
+                supports,
+                in_statement: false,
+                is_fixed: false,
+            });
+        }
     }
 }
 

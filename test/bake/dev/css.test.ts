@@ -828,22 +828,6 @@ devTest("an @import of a file that is not CSS fails the stylesheet until it is r
     await c.style(".b").width.expect.toBe("2px");
   },
 });
-// The first build of such a stylesheet fails the page. A hot update of it must not serve the page again.
-devTest("a hot update that adds an invalid @import to a stylesheet fails its page", {
-  files: {
-    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
-    "main.css": `.m { width: 1px; }`,
-    "x.ts": `export default 1;`,
-  },
-  async test(dev) {
-    const status = async () => (await dev.fetch("/")).status;
-    expect(await status()).toBe(200);
-    await dev.write("main.css", `@import "./x.ts";\n.m { width: 2px; }`, { errors: null });
-    expect([await status(), await status()]).toEqual([500, 500]);
-    await dev.write("main.css", `.m { width: 3px; }`, { errors: null });
-    expect(await status()).toBe(200);
-  },
-});
 // The file that did not load has the error. Its importer gets no error of its own.
 devTest("an @import of a file that a plugin fails to load is not an invalid import", {
   framework: minimalFramework,
@@ -881,7 +865,7 @@ devTest("an @import of a file that a plugin fails to load is not an invalid impo
   },
 });
 // The dev server builds the import order with the pass that `bun build` has.
-devTest("a redundant @import declares a layer under the @media rule that its file has around it", {
+devTest("a redundant @import of a file with a layer under @media keeps a copy of the file", {
   files: {
     "index.html": emptyHtmlFile({ styles: ["main.css"] }),
     "main.css": `@import "./f.css";\n@import "./g.css";\n@import "./f.css";\n@layer b { .t { color: green; } }`,
@@ -892,7 +876,7 @@ devTest("a redundant @import declares a layer under the @media rule that its fil
     const html = await dev.fetch("/").text();
     const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
     // On a screen "a" is the first layer, so ".t" is green.
-    expect(css.replace(/\s+/g, " ")).toStartWith("@media print { @layer b; }");
+    expect(css.replace(/\s+/g, " ")).toStartWith("/* f.css */ @media print { @layer b { .p {");
   },
 });
 

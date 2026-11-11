@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { cascadeProblems, generateGraph, type GraphOptions } from "../css-order-fuzz";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1090,6 +1091,58 @@ describe("esbuild-bundler", () => {
         },
       ],
       written: [],
+    });
+  });
+  // A file has one loader in a bundle. The note says so when the "@import" itself resolves to CSS.
+  test.each([
+    {
+      name: "an import attribute",
+      entry: `import text from "./a.css" with { type: "text" };\nimport "./styles.css";\nconsole.log(text);`,
+      plugins: [],
+    },
+    {
+      name: "a plugin",
+      entry: `import "./styles.css";`,
+      plugins: [
+        {
+          name: "text",
+          setup(build: Bun.PluginBuilder) {
+            build.onLoad({ filter: /a\.css$/ }, () => ({ contents: ".a { color: red }", loader: "text" }));
+          },
+        },
+      ],
+    },
+  ])("css/ImportCSSWithAnotherLoaderFromCSS: the note names the loader that $name gave", async ({ entry, plugins }) => {
+    using dir = tempDir("css-import-two-loaders", {
+      "entry.js": entry,
+      "styles.css": `@import "./a.css";\n.t { color: green }`,
+      "a.css": `.a { color: red }`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      plugins,
+      throw: false,
+    });
+
+    const byName = (message: string) => message.replace(/"[^"]*a\.css"/g, '"a.css"');
+    expect({
+      success: build.success,
+      logs: build.logs.map(log => ({
+        message: byName(log.message),
+        notes: (log as any).notes.map((note: { message: string }) => byName(note.message)),
+      })),
+    }).toEqual({
+      success: false,
+      logs: [
+        {
+          message: 'Cannot import "a.css" into a CSS file',
+          notes: [
+            'This "@import" needs "a.css" as CSS, but an import attribute or a plugin gave it the "text" loader. A file has one loader in a bundle.',
+          ],
+        },
+      ],
     });
   });
   itBundled("css/MissingImportURLInCSS", {
@@ -2654,7 +2707,17 @@ describe("bundler", () => {
   });
 
   // Each case prints the layers in the order of the source files. `.t` gets the same color from `out` as from them.
-  const layerOrderCases: Record<string, { files: Record<string, string>; out: string }> = {
+  // `differs`: what `out` does not have as the source files have it, where that is known and stays.
+  type LayerOrderCase = { files: Record<string, string>; out: string; differs?: string[] };
+  // The order of the layers in `out` against the order in the source files, for every state of the conditions.
+  const layerOrderDifferences = (cases: Record<string, LayerOrderCase>) =>
+    Object.entries(cases).flatMap(([name, { files, out }]) => {
+      const problems = cascadeProblems(files, "/entry.css", out).filter(problem => problem.kind !== "pair");
+      return problems.length ? [[name, problems.map(problem => problem.text)]] : [];
+    });
+  const knownDifferences = (cases: Record<string, LayerOrderCase>) =>
+    Object.entries(cases).flatMap(([name, { differs }]) => (differs ? [[name, differs]] : []));
+  const layerOrderCases: Record<string, LayerOrderCase> = {
     StatementBeforeImport: {
       files: {
         "/entry.css": /* css */ `
@@ -2883,8 +2946,8 @@ describe("bundler", () => {
       },
       out: `@layer x;@import "https://example.com/e.css" layer(y);`,
     },
-    // "z" and "x" come before "y", as in the source files. Only an "@import" is valid ahead of an "@import" with a
-    // condition, and after it, so each one is an import of an empty style sheet.
+    // "z" and "x" come before "y", as in the source files. "z" has a condition, so an import of an empty style sheet
+    // declares it. The statement stays ahead of every import, as it is on main, so "x" comes before "z".
     ConditionalImportOfACycleAheadOfAStatement: {
       files: {
         "/entry.css": /* css */ `
@@ -2897,7 +2960,10 @@ describe("bundler", () => {
           .a { c: d }
         `,
       },
-      out: `@import "data:text/css," layer(z) screen;@import "data:text/css," layer(x);@import "https://example.com/e.css" layer(y);@media screen{@layer z;}@layer x;.a{c:d}`,
+      out: `@layer x;@import "data:text/css," layer(z) screen;@import "https://example.com/e.css" layer(y);@media screen{@layer z;}.a{c:d}`,
+      differs: [
+        "layers of the root: [z, x, y] in the sources, [x, z, y] in the bundle (conditions that hold: media screen)",
+      ],
     },
     // Browsers accept an "@import" behind an unknown at-rule, and it applies once.
     ImportBehindAnUnknownAtRule: {
@@ -3207,8 +3273,8 @@ describe("bundler", () => {
       },
       out: "@layer a;@layer{.t{color:#00f}}@layer a{.t{color:red}}",
     },
-    // A redundant import declares the layers of its file at its place. A layer that the file has under a
-    // condition is declared under that condition: on a screen "a" comes before "b".
+    // A redundant import declares the layers of its file at its place. A list of names cannot say that the file
+    // has a layer only under a condition, so a copy of the file stays there: on a screen "a" comes before "b".
     LayerUnderMediaInARedundantImport: {
       files: {
         "/entry.css": /* css */ `
@@ -3220,7 +3286,7 @@ describe("bundler", () => {
         "/f.css": `@media print { @layer b { .p { color: red } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+      out: "@media print{@layer b{.p{color:red}}}@layer a{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
     },
     LayerUnderSupportsInARedundantImport: {
       files: {
@@ -3233,7 +3299,7 @@ describe("bundler", () => {
         "/f.css": `@supports (display: grid) { @layer b { .p { color: red } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@supports (display: grid){@layer b;}@layer a{.t{color:red}}@supports (display: grid){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+      out: "@supports (display: grid){@layer b{.p{color:red}}}@layer a{.t{color:red}}@supports (display: grid){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
     },
     LayerUnderMozDocumentInARedundantImport: {
       files: {
@@ -3246,7 +3312,7 @@ describe("bundler", () => {
         "/f.css": `@-moz-document url-prefix() { @layer b { .p { color: red } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@-moz-document url-prefix(){@layer b;}@layer a{.t{color:red}}@-moz-document url-prefix(){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+      out: "@-moz-document url-prefix(){@layer b{.p{color:red}}}@layer a{.t{color:red}}@-moz-document url-prefix(){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
     },
     LayerUnderTwoConditionsInARedundantImport: {
       files: {
@@ -3259,7 +3325,7 @@ describe("bundler", () => {
         "/f.css": `@media print { @supports (display: grid) { @layer b { .p { color: red } } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@media print{@supports (display: grid){@layer b;}}@layer a{.t{color:red}}@media print{@supports (display: grid){@layer b{.p{color:red}}}}@layer b{.t{color:green}}",
+      out: "@media print{@supports (display: grid){@layer b{.p{color:red}}}}@layer a{.t{color:red}}@media print{@supports (display: grid){@layer b{.p{color:red}}}}@layer b{.t{color:green}}",
     },
     LayerStatementUnderMediaInARedundantImport: {
       files: {
@@ -3286,7 +3352,7 @@ describe("bundler", () => {
         "/f.css": `@layer o { @media print { @layer b { .p { color: red } } } }`,
         "/g.css": `@layer o { @layer a { .t { color: red } } }`,
       },
-      out: "@layer o;@media print{@layer o.b;}@layer o{@layer a{.t{color:red}}}@layer o{@media print{@layer b{.p{color:red}}}}@layer o{@layer b{.t{color:green}}}",
+      out: "@layer o{@media print{@layer b{.p{color:red}}}}@layer o{@layer a{.t{color:red}}}@layer o{@media print{@layer b{.p{color:red}}}}@layer o{@layer b{.t{color:green}}}",
     },
     // A style rule around the "@media" rule is no condition.
     LayerUnderMediaInAStyleRuleOfARedundantImport: {
@@ -3300,7 +3366,7 @@ describe("bundler", () => {
         "/f.css": `.x { @media print { @layer b { color: red } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b{.x{color:red}}}@layer b{.t{color:green}}",
+      out: "@media print{@layer b{.x{color:red}}}@layer a{.t{color:red}}@media print{@layer b{.x{color:red}}}@layer b{.t{color:green}}",
     },
     // Only in print does "b" come before "c".
     LayerUnderMediaAndInALaterStatementOfARedundantImport: {
@@ -3318,7 +3384,7 @@ describe("bundler", () => {
         `,
         "/g.css": `.g { color: blue }`,
       },
-      out: "@media print{@layer b;}@layer c,b;.g{color:#00f}@media print{@layer b{.p{color:red}}}@layer c,b;@layer c{.t{color:red}}@layer b{.t{color:green}}",
+      out: "@media print{@layer b{.p{color:red}}}@layer c,b;.g{color:#00f}@media print{@layer b{.p{color:red}}}@layer c,b;@layer c{.t{color:red}}@layer b{.t{color:green}}",
     },
     // The minifier removes the rule, so the file declares no layer.
     LayerUnderMediaThatNeverMatchesInARedundantImport: {
@@ -3345,7 +3411,7 @@ describe("bundler", () => {
         "/f.css": `@supports (display: grid) { @layer b { .p { color: red } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@media screen{@supports (display: grid){@layer b;}}@layer a{.t{color:red}}@media screen{@supports (display: grid){@layer b{.p{color:red}}}}@layer b{.t{color:green}}",
+      out: "@media screen{@supports (display: grid){@layer b{.p{color:red}}}}@layer a{.t{color:red}}@media screen{@supports (display: grid){@layer b{.p{color:red}}}}@layer b{.t{color:green}}",
     },
     LayerUnderMediaInARedundantImportInAnonymousLayer: {
       files: {
@@ -3359,7 +3425,7 @@ describe("bundler", () => {
         "/f.css": `@media print { @layer b { .p { color: red } } }`,
         "/g.css": `@layer a { .t { color: red } }`,
       },
-      out: "@layer{@media print{@layer b;}@layer a{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}}",
+      out: "@layer{@media print{@layer b{.p{color:red}}}@layer a{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}}",
     },
     LayerUnderMediaInARedundantImportWithALeadingStatement: {
       files: {
@@ -3377,7 +3443,7 @@ describe("bundler", () => {
         "/g.css": `@layer a { .t { color: red } }`,
         "/h.css": `.h { color: blue }`,
       },
-      out: "@layer x;@media print{@layer b;}@layer a{.t{color:red}}.h{color:#00f}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+      out: "@layer x;@media print{@layer b{.p{color:red}}}@layer a{.t{color:red}}.h{color:#00f}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
     },
     // The second redundant import adds nothing to the first one.
     LayerUnderMediaInTwoRedundantImports: {
@@ -3394,7 +3460,7 @@ describe("bundler", () => {
         "/g.css": `@layer a { .t { color: red } }`,
         "/h.css": `@layer c { .t { color: red } }`,
       },
-      out: "@media print{@layer b;}@layer a{.t{color:red}}@layer c{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+      out: "@media print{@layer b{.p{color:red}}}@layer a{.t{color:red}}@layer c{.t{color:red}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
     },
     // "f2.css" always declares "b", and the redundant import of "f.css" ahead of it does not.
     ListOfAnotherFileBehindLayerUnderMedia: {
@@ -3410,7 +3476,7 @@ describe("bundler", () => {
         "/f2.css": `@layer b { .t { color: red } }`,
         "/g.css": `@layer a { .t { color: green } }`,
       },
-      out: "@media print{@layer b;}@layer b;@layer a{.t{color:green}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:red}}",
+      out: "@media print{@layer b{.p{color:red}}}@layer b;@layer a{.t{color:green}}@media print{@layer b{.p{color:red}}}@layer b{.t{color:red}}",
     },
     // The file follows at once, so nothing has to stand for the redundant import.
     LayerUnderMediaInAnAdjacentRedundantImport: {
@@ -3474,6 +3540,81 @@ describe("bundler", () => {
       },
       out: `@layer b;@namespace svg "http://www.w3.org/2000/svg";svg|a{color:red}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}`,
     },
+    // The copy of a file has its rules, and they would make "@namespace" invalid. A list does not.
+    LayerUnderMediaInARedundantImportAheadOfNamespaceBehindAnEmptyFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./empty.css";
+          @import "./ns.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/empty.css": `@import "./f.css";`,
+        "/ns.css": /* css */ `
+          @namespace h "http://www.w3.org/1999/xhtml";
+          h|div.t { color: green }
+        `,
+      },
+      out: `@layer b;@namespace h "http://www.w3.org/1999/xhtml";h|div.t{color:green}@media print{@layer b{.p{color:red}}}@layer b{.t{color:green}}`,
+    },
+    // Each copy of the file has an anonymous layer of its own, as each import of it has in a browser.
+    AnonymousLayerInARedundantImportWithLayerUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/f.css": /* css */ `
+          @media print { @layer b { .p { color: red } } }
+          @layer { .t { color: red !important } }
+        `,
+        "/g.css": `@layer a { .t { color: green !important } }`,
+      },
+      out: "@media print{@layer b{.p{color:red}}}@layer{.t{color:red!important}}@layer a{.t{color:green!important}}@media print{@layer b{.p{color:red}}}@layer{.t{color:red!important}}",
+    },
+    // A browser declares a layer inside these rules in every case, so the list of names is right.
+    LayerInScopeInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@scope (.s) { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@layer b;@layer a{.t{color:red}}@scope(.s){@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    LayerInStartingStyleInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@starting-style { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@layer b;@layer a{.t{color:red}}@starting-style{@layer b{.p{color:red}}}@layer b{.t{color:green}}",
+    },
+    LayerInMediaAllInARedundantImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+          @layer b { .t { color: green } }
+        `,
+        "/f.css": `@media all { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@layer b;@layer a{.t{color:red}}@layer b{.p{color:red}}@layer b{.t{color:green}}",
+    },
   };
   for (const [name, { files, out }] of Object.entries(layerOrderCases)) {
     itBundled(`css/CSSAtLayerOrder${name}`, {
@@ -3485,6 +3626,9 @@ describe("bundler", () => {
       },
     });
   }
+  test("css/CSSAtLayerOrder: each expected output has the layer order of its source files", () => {
+    expect(layerOrderDifferences(layerOrderCases)).toEqual(knownDifferences(layerOrderCases));
+  });
 
   itBundled("css/CSSAtLayerBareImportPrintsOneIndentedBlock", {
     files: {
@@ -3557,7 +3701,7 @@ describe("bundler", () => {
   });
 
   // Only "@charset" and "@layer" statements are valid ahead of an "@import", and the parser rejects anything else.
-  const importPrologueCases: Record<string, { files: Record<string, string>; out: string }> = {
+  const importPrologueCases: Record<string, LayerOrderCase> = {
     StatementBeforeExternalImport: {
       files: {
         "/entry.css": /* css */ `
@@ -3789,6 +3933,9 @@ describe("bundler", () => {
         "/f.css": `.f { color: blue }`,
       },
       out: `@import "https://example.com/ext.css" layer(v);@media screen{@media (min-width:1px){@layer w{.f{color:#00f}}}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+      differs: [
+        "layers of the root: [w, v] in the sources, [v, w] in the bundle (conditions that hold: media (min-width:1px), media screen)",
+      ],
     },
     // Nothing ahead of the import can declare the anonymous layer, and "w" must stay behind it.
     LayerBehindAnAnonymousLayerBeforeExternalImport: {
@@ -3804,6 +3951,7 @@ describe("bundler", () => {
         "/g.css": `.g { color: blue }`,
       },
       out: `@import "https://example.com/ext.css" layer(v);@layer{.f{color:#00f}}@layer w{.g{color:#00f}}@layer v{.t{color:green}}@layer w{.t{color:red}}`,
+      differs: ["layers of the root: [w, v] in the sources, [v, w] in the bundle"],
     },
     // An external import with no layer declares none.
     LayerOfAFileBeforeExternalImportWithNoLayer: {
@@ -3832,7 +3980,7 @@ describe("bundler", () => {
       },
       out: `@import "https://example.com/fonts.css";@layer theme,base,components,utilities;@layer base{.u{color:#00f}}@layer base{.t{color:red}}`,
     },
-    // The statement is not ahead of every layer, so it does not move ahead of "z".
+    // The statement stays ahead of the import. The external style sheet can declare layers, and "x" was ahead of them.
     LayerOfACycleUnderMediaBeforeAStatementAndExternalImportWithNoLayer: {
       files: {
         "/entry.css": /* css */ `
@@ -3842,10 +3990,11 @@ describe("bundler", () => {
         "/a.css": /* css */ `
           @layer x;
           @import "https://example.com/e.css";
-          .a { c: d }
+          @layer x { .t { color: red } }
         `,
       },
-      out: `@import "https://example.com/e.css";@media screen{@layer z;}@layer x;.a{c:d}`,
+      out: `@layer x;@import "https://example.com/e.css";@media screen{@layer z;}@layer x{.t{color:red}}`,
+      differs: ["layers of the root: [z, x] in the sources, [x, z] in the bundle (conditions that hold: media screen)"],
     },
     // The rules of a file declare the layer here, not the conditions of its import.
     LayerOfTheRulesOfAFileBeforeExternalImport: {
@@ -3952,6 +4101,10 @@ describe("bundler", () => {
         "/b.css": `@layer y { .b { color: blue } }`,
       },
       out: `@import "https://example.com/ext.css" layer(z);@media screen{@layer q{.a{color:#00f}}}@layer y{.b{color:#00f}}@layer z{.t{color:green}}@layer y{.t{color:red}}`,
+      differs: [
+        "layers of the root: [y, z] in the sources, [z, y] in the bundle (conditions that hold: none)",
+        "layers of the root: [q, y, z] in the sources, [z, q, y] in the bundle (conditions that hold: media screen)",
+      ],
     },
     // Nothing ahead of the import can declare the anonymous layer, and "y" must stay behind it.
     AnonymousLayerBlockInAFileThenALayerBeforeExternalImport: {
@@ -3967,6 +4120,7 @@ describe("bundler", () => {
         "/b.css": `@layer y { .b { color: blue } }`,
       },
       out: `@import "https://example.com/ext.css" layer(z);@layer{.a{color:#00f}}@layer y{.b{color:#00f}}@layer z{.t{color:green}}@layer y{.t{color:red}}`,
+      differs: ["layers of the root: [y, z] in the sources, [z, y] in the bundle"],
     },
     SublayerInABlockOfAFileBeforeExternalImport: {
       files: {
@@ -3995,6 +4149,182 @@ describe("bundler", () => {
       },
       out: `@layer theme,base,components,utilities;@import "https://example.com/ext.css" layer(vendor);@layer base{.b{color:#00f}}@layer utilities{.u{color:#00f}}@layer utilities{.t{color:green}}`,
     },
+    // The import of the cycle has a layer with no name, so it prints nothing. The statement stays ahead of the import.
+    StatementBehindAnonymousLayerOfACycleBeforeExternalImportWithLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer screen;
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+          @layer x { .t { color: red } }
+          @layer y { .t { color: green } }
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);@layer x{.t{color:red}}@layer y{.t{color:green}}`,
+    },
+    // "@namespace" is valid behind the import only when the statement is ahead of the import.
+    NamespaceBehindAStatementBehindAnonymousLayerOfACycle: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer;
+          @import "./a.css";
+        `,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css";
+          @namespace h "http://www.w3.org/1999/xhtml";
+          h|div.t { color: green }
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css";@namespace h "http://www.w3.org/1999/xhtml";h|div.t{color:green}`,
+    },
+    // "y" was ahead of both imports, so a statement ahead of them declares it. No "@import" has to.
+    LayerOfAFileBeforeImportWithNoLayerAndImportWithLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://fonts.example/f.css";
+          @import "https://cdn.example/t.css" layer(z);
+          @layer z { .t { color: green } }
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@layer y;@import "https://fonts.example/f.css";@import "https://cdn.example/t.css" layer(z);@layer y{.t{color:red}}@layer z{.t{color:green}}`,
+    },
+    LayerOfAFileBeforeImportWithLayerAndImportWithNoLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://cdn.example/t.css" layer(z);
+          @import "https://fonts.example/f.css";
+          @layer z { .t { color: green } }
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@layer y;@import "https://cdn.example/t.css" layer(z);@import "https://fonts.example/f.css";@layer y{.t{color:red}}@layer z{.t{color:green}}`,
+    },
+    // The statement declares "framework" first, so its import passes no layer.
+    LayerOrderDeclaredFirstThenExternalImports: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer reset, framework, components, utilities;
+          @import "https://fonts.example/f.css";
+          @import "./components.css";
+          @import "https://cdn.example/fw.css" layer(framework);
+          @layer utilities { .u { c: d } }
+        `,
+        "/components.css": `@layer components { @layer buttons { .b { c: d } } @layer cards { .c { c: d } } }`,
+      },
+      out: `@layer reset,framework,components,utilities;@import "https://fonts.example/f.css";@import "https://cdn.example/fw.css" layer(framework);@layer components{@layer buttons{.b{c:d}}@layer cards{.c{c:d}}}@layer utilities{.u{c:d}}`,
+    },
+    // The first copy of the import declares "tokens" ahead of "components". The second copy passes nothing.
+    DiamondOnExternalImportWithLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./button.css";
+          @import "./card.css";
+        `,
+        "/button.css": /* css */ `
+          @import "./tokens.css";
+          @layer components { .b { c: d } }
+        `,
+        "/card.css": /* css */ `
+          @import "./tokens.css";
+          @layer components { .c { c: d } }
+        `,
+        "/tokens.css": `@import "https://cdn.example/tokens.css" layer(tokens);`,
+      },
+      out: `@import "https://cdn.example/tokens.css" layer(tokens);@layer components{.b{c:d}}@layer components{.c{c:d}}`,
+    },
+    // The first import declares "vendor" already.
+    FileBetweenTwoExternalImportsInOneLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://a.example/a.css" layer(vendor);
+          @import "./mine.css" layer(vendor);
+          @import "https://b.example/b.css" layer(other);
+        `,
+        "/mine.css": `.m { c: d }`,
+      },
+      out: `@import "https://a.example/a.css" layer(vendor);@import "https://b.example/b.css" layer(other);@layer vendor{.m{c:d}}`,
+    },
+    // "z" is declared, but the external style sheet can declare a layer inside "z" ahead of "z.q".
+    SublayerOfTheLayerOfExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer z;
+          @import "./a.css" layer(z);
+          @import "https://example.com/e.css" layer(z);
+        `,
+        "/a.css": `@layer q { .t { color: red } }`,
+      },
+      out: `@layer z;@layer z.q;@import "https://example.com/e.css" layer(z);@layer z{@layer q{.t{color:red}}}`,
+    },
+    // Older browsers drop an "@import" that has "supports()". So no layer behind "a" goes ahead of it.
+    LayerUnderSupportsThenPlainLayerBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer(a) supports(display: grid);
+          @import "./b.css";
+          @import "https://example.com/e.css" layer(z);
+        `,
+        "/a.css": `.a { c: d }`,
+        "/b.css": `@layer b { .b { c: d } }`,
+      },
+      out: `@import "data:text/css," layer(a) supports(display:grid);@import "https://example.com/e.css" layer(z);@supports (display:grid){@layer a{.a{c:d}}}@layer b{.b{c:d}}`,
+      differs: [
+        "layers of the root: [b, z] in the sources, [z, b] in the bundle (conditions that hold: none)",
+        "layers of the root: [a, b, z] in the sources, [a, z, b] in the bundle (conditions that hold: supports display:grid)",
+      ],
+    },
+    // Only the last copy of the first import stays. Ahead of it, "y" would come before the layers of that style
+    // sheet, and the source files have them first.
+    LayerBehindExternalImportThatIsImportedAgain: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://fonts.example/f.css";
+          @import "./a.css";
+          @import "https://example.com/e.css" layer(z);
+          @import "https://fonts.example/f.css";
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@import "https://example.com/e.css" layer(z);@import "https://fonts.example/f.css";@layer y{.t{color:red}}`,
+      differs: ["layers of the root: [y, z] in the sources, [z, y] in the bundle"],
+    },
+    LayerAheadOfExternalImportThatIsImportedAgain: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://fonts.example/f.css";
+          @import "https://example.com/e.css" layer(z);
+          @import "https://fonts.example/f.css";
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@layer y;@import "https://example.com/e.css" layer(z);@import "https://fonts.example/f.css";@layer y{.t{color:red}}`,
+    },
+    // The conditions of the import declare "a", and a statement can do that. The file declares "b" only in print,
+    // and no statement can. So "a" goes ahead of the import, and the layers behind it stay where they are.
+    LayerOfTheImportOfAFileWithALayerUnderMediaBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css" layer(a);
+          @import "./g.css";
+          @import "https://example.com/e.css" layer(z);
+        `,
+        "/f.css": `@media print { @layer b { .p { color: red } } }`,
+        "/g.css": `@layer c { .t { color: red } }`,
+      },
+      out: `@layer a;@import "https://example.com/e.css" layer(z);@layer a{@media print{@layer b{.p{color:red}}}}@layer c{.t{color:red}}`,
+      differs: [
+        "layers of the root: [a, c, z] in the sources, [a, z, c] in the bundle (conditions that hold: none)",
+        "layers of the root: [a, c, z] in the sources, [a, z, c] in the bundle (conditions that hold: media print)",
+      ],
+    },
   };
   for (const [name, { files, out }] of Object.entries(importPrologueCases)) {
     itBundled(`css/CSSImportPrologue${name}`, {
@@ -4009,6 +4339,45 @@ describe("bundler", () => {
       },
     });
   }
+  test("css/CSSImportPrologue: each expected output has the layer order of its source files", () => {
+    expect(layerOrderDifferences(importPrologueCases)).toEqual(knownDifferences(importPrologueCases));
+  });
+
+  // Random graphs of CSS files, from test/bundler/css-order-fuzz.ts. `wrong` has the seeds whose bundle does not have
+  // the cascade of its source files. So a change that makes another graph wrong, or one of these right, shows here.
+  const externalSheets = { external: true, externalRules: true, externalLayers: true };
+  const graphSets: { name: string; options: GraphOptions; wrong: number[] }[] = [
+    { name: "layers under conditions in the files", options: { conditions: true }, wrong: [] },
+    {
+      name: "external imports",
+      options: externalSheets,
+      wrong: [2, 5, 10, 11, 35, 37, 44, 45, 46, 50, 53, 55, 56, 57],
+    },
+    {
+      name: "external imports, cycles, empty files and import conditions",
+      options: { ...externalSheets, cycles: true, emptyFiles: true, importConditions: true },
+      wrong: [
+        1, 2, 5, 6, 10, 11, 14, 17, 18, 21, 25, 30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 43, 44, 45, 50, 53, 54, 55, 56,
+        58, 60,
+      ],
+    },
+  ];
+  // A debug build takes about 0.3 seconds for each graph.
+  const graphsPerSet = isDebug || isASAN ? 10 : 60;
+  test.each(graphSets)(
+    "css: random import graphs keep their cascade, with $name",
+    async ({ options, wrong }) => {
+      const found: number[] = [];
+      for (let seed = 1; seed <= graphsPerSet; seed++) {
+        const { files, entry, externalSheets } = generateGraph(seed, options);
+        const build = await Bun.build({ entrypoints: [entry], files, minify: true });
+        const problems = cascadeProblems(files, entry, await build.outputs[0].text(), externalSheets);
+        if (problems.some(problem => problem.kind !== "pair-hoist")) found.push(seed);
+      }
+      expect(found).toEqual(wrong.filter(seed => seed <= graphsPerSet));
+    },
+    30_000,
+  );
 
   // The bundle is a source file too. Its import of an empty style sheet is then a file that declares "w" ahead of
   // the external import, so the second bundle has the layers in the same order.

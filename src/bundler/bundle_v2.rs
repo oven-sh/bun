@@ -5775,8 +5775,6 @@ pub mod bv2_impl {
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
-                // Removed from the CSS roots after the loop, because a later importer adds them again.
-                let mut css_files_with_invalid_imports: Vec<Index> = Vec::new();
                 for index in 1..self.graph.ast.len() {
                     // SAFETY: `index < ast.len()`; see note above for column aliasing.
                     let part_list = unsafe { &mut *parts_col.add(index) };
@@ -5822,8 +5820,9 @@ pub mod bv2_impl {
                                     .map_err(|_| AllocError)?;
                                 // Since there is an error, do not treat it as a
                                 // valid CSS chunk.
-                                css_files_with_invalid_imports
-                                    .push(Index::init(u32::try_from(index).expect("int cast")));
+                                let _ = start.css_entry_points.swap_remove(&Index::init(
+                                    u32::try_from(index).expect("int cast"),
+                                ));
                             }
                         } else {
                             // HTML files are special cased because they correspond
@@ -5899,9 +5898,6 @@ pub mod bv2_impl {
                             },
                         )?;
                     }
-                }
-                for index in &css_files_with_invalid_imports {
-                    let _ = start.css_entry_points.swap_remove(index);
                 }
 
                 break 'reachable_files self.arena().alloc_slice_copy(&js_files);

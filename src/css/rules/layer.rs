@@ -1,12 +1,9 @@
 use core::fmt;
 use core::ops::ControlFlow;
 
-use bun_alloc::{Arena, ArenaVec, ArenaVecExt};
+use bun_alloc::Arena;
 
 use crate as css;
-use crate::css_rules::document::MozDocumentRule;
-use crate::css_rules::media::MediaRule;
-use crate::css_rules::supports::SupportsRule;
 use crate::css_rules::{CssRule, CssRuleList, Location};
 use crate::{PrintErr, Printer, SmallList};
 
@@ -190,29 +187,6 @@ impl LayerStatementRule {
 /// The names of the `@layer` blocks around a rule.
 type LayerPath = SmallList<&'static [u8], 8>;
 
-/// The top-level rules that `prepare_css_asts_for_chunk` prints for a copy of a style sheet.
-fn printed_rules<R>(
-    rules: &[CssRule<R>],
-    has_layers_pre_import: bool,
-) -> impl Iterator<Item = &CssRule<R>> {
-    let mut keep_statements = !has_layers_pre_import;
-    let mut in_prologue = true;
-    rules.iter().filter(move |rule| {
-        if in_prologue {
-            match rule {
-                CssRule::Import(_) => {
-                    keep_statements = true;
-                    return false;
-                }
-                CssRule::Ignored => return false,
-                CssRule::LayerStatement(_) => return keep_statements,
-                _ => in_prologue = false,
-            }
-        }
-        !matches!(rule, CssRule::Import(_))
-    })
-}
-
 /// Whether `expected` is `name` inside the layers of `path`.
 fn is_name_in_path(expected: &LayerName, path: &LayerPath, name: &LayerName) -> bool {
     let (expected, path, name) = (expected.v.slice(), path.slice(), name.v.slice());
@@ -295,24 +269,34 @@ impl LayerNameWalk<'_> {
 }
 
 impl<R> CssRuleList<R> {
-    /// A list in the arena of `rules`. It must not be dropped or grown: the arena frees it.
-    pub fn from_arena(rules: ArenaVec<'_, CssRule<R>>) -> Self {
-        let len = rules.len();
-        if len == 0 {
-            return Self::default();
-        }
-        let slab = rules.into_bump_slice_mut();
-        Self {
-            // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown (see fn doc).
-            v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
-        }
+    /// The top-level rules that the bundler prints for a copy of a style sheet.
+    pub fn printed_rules(
+        &self,
+        has_layers_pre_import: bool,
+    ) -> impl Iterator<Item = &CssRule<R>> + Clone {
+        let mut keep_statements = !has_layers_pre_import;
+        let mut in_prologue = true;
+        self.v.iter().filter(move |rule| {
+            if in_prologue {
+                match rule {
+                    CssRule::Import(_) => {
+                        keep_statements = true;
+                        return false;
+                    }
+                    CssRule::Ignored => return false,
+                    CssRule::LayerStatement(_) => return keep_statements,
+                    _ => in_prologue = false,
+                }
+            }
+            !matches!(rule, CssRule::Import(_))
+        })
     }
 
     /// Whether the top-level `@layer` rules name exactly `names`, all names of the sheet, in order.
     pub fn top_level_layers_are(&self, names: &[LayerName], has_layers_pre_import: bool) -> bool {
         let mut expected = names.iter();
         let mut is_next = |name: &LayerName| expected.next().is_some_and(|next| next.eql(name));
-        for rule in printed_rules(&self.v, has_layers_pre_import) {
+        for rule in self.printed_rules(has_layers_pre_import) {
             match rule {
                 CssRule::LayerStatement(statement) => {
                     if !statement.names.slice().iter().all(&mut is_next) {
@@ -373,7 +357,7 @@ impl<R> CssRuleList<R> {
             },
         };
         if walk
-            .rules(printed_rules(&self.v, has_layers_pre_import))
+            .rules(self.printed_rules(has_layers_pre_import))
             .is_continue()
             && found == names.len()
         {
@@ -434,153 +418,8 @@ impl<R> CssRuleList<R> {
                 ControlFlow::Continue(())
             },
         };
-        walk.rules(printed_rules(&self.v, has_layers_pre_import))
+        walk.rules(self.printed_rules(has_layers_pre_import))
             .is_continue()
             && reached == count
-    }
-
-    /// The `@layer` names of these rules, inside copies of the conditions around them. The caller never drops the result, which aliases `self` and lives in `bump`.
-    pub unsafe fn layer_skeleton(&self, has_layers_pre_import: bool, bump: &Arena) -> Self {
-        let mut builder = LayerSkeleton {
-            bump,
-            path: LayerPath::default(),
-        };
-        let mut level = SkeletonLevel::new(bump);
-        builder.rules(printed_rules(&self.v, has_layers_pre_import), &mut level);
-        level.finish(bump)
-    }
-}
-
-/// The skeleton of the rules in one block.
-struct SkeletonLevel<'bump, R> {
-    rules: ArenaVec<'bump, CssRule<R>>,
-    /// The names since the last rule of `rules`. They make one statement.
-    names: Vec<LayerName>,
-}
-
-impl<'bump, R> SkeletonLevel<'bump, R> {
-    fn new(bump: &'bump Arena) -> Self {
-        Self {
-            rules: ArenaVec::new_in(bump),
-            names: Vec::new(),
-        }
-    }
-
-    fn flush_names(&mut self, bump: &'bump Arena) {
-        if self.names.is_empty() {
-            return;
-        }
-        self.rules.push(CssRule::LayerStatement(LayerStatementRule {
-            names: SmallList::from_arena_iter(bump, self.names.drain(..)),
-            loc: Location::dummy(),
-        }));
-    }
-
-    fn finish(mut self, bump: &'bump Arena) -> CssRuleList<R> {
-        self.flush_names(bump);
-        CssRuleList::from_arena(self.rules)
-    }
-}
-
-struct LayerSkeleton<'bump> {
-    bump: &'bump Arena,
-    path: LayerPath,
-}
-
-impl<'bump> LayerSkeleton<'bump> {
-    fn name(&self, name: &LayerName) -> LayerName {
-        let mut segments = self.path.clone();
-        segments.append_slice(name.v.slice());
-        LayerName {
-            v: SmallList::from_arena_iter(self.bump, segments),
-        }
-    }
-
-    fn rules<'r, R: 'r>(
-        &mut self,
-        rules: impl IntoIterator<Item = &'r CssRule<R>>,
-        level: &mut SkeletonLevel<'bump, R>,
-    ) {
-        for rule in rules {
-            self.rule(rule, level);
-        }
-    }
-
-    /// The rules of a block whose rule is a condition. `copy` makes that rule around their skeleton.
-    fn conditional<R>(
-        &mut self,
-        rules: &CssRuleList<R>,
-        level: &mut SkeletonLevel<'bump, R>,
-        copy: impl FnOnce(CssRuleList<R>) -> CssRule<R>,
-    ) {
-        let mut inside = SkeletonLevel::new(self.bump);
-        self.rules(&rules.v, &mut inside);
-        let inside = inside.finish(self.bump);
-        if !inside.v.is_empty() {
-            level.flush_names(self.bump);
-            level.rules.push(copy(inside));
-        }
-    }
-
-    fn rule<R>(&mut self, rule: &CssRule<R>, level: &mut SkeletonLevel<'bump, R>) {
-        let loc = Location::dummy();
-        match rule {
-            CssRule::LayerStatement(statement) => {
-                for name in statement.names.slice() {
-                    level.names.push(self.name(name));
-                }
-            }
-            CssRule::LayerBlock(block) => {
-                let Some(name) = &block.name else { return };
-                level.names.push(self.name(name));
-                let depth = self.path.len();
-                self.path.append_slice(name.v.slice());
-                self.rules(&block.rules.v, level);
-                self.path.set_len(depth);
-            }
-            CssRule::Media(media) if media.query.always_matches() => {
-                self.rules(&media.rules.v, level)
-            }
-            // The names in it are never in the layer order.
-            CssRule::Media(media) if media.query.never_matches() => {}
-            CssRule::Media(media) => self.conditional(&media.rules, level, |rules| {
-                CssRule::Media(MediaRule {
-                    // SAFETY: a bitwise copy that is never dropped (see `layer_skeleton`).
-                    query: unsafe { core::ptr::read(&raw const media.query) },
-                    rules,
-                    loc,
-                })
-            }),
-            CssRule::Supports(supports) => self.conditional(&supports.rules, level, |rules| {
-                CssRule::Supports(SupportsRule {
-                    // SAFETY: a bitwise copy that is never dropped (see `layer_skeleton`).
-                    condition: unsafe { core::ptr::read(&raw const supports.condition) },
-                    rules,
-                    loc,
-                })
-            }),
-            CssRule::MozDocument(document) => self.conditional(&document.rules, level, |rules| {
-                CssRule::MozDocument(MozDocumentRule { rules, loc })
-            }),
-            CssRule::Style(style) => self.rules(&style.rules.v, level),
-            CssRule::Nesting(nesting) => self.rules(&nesting.style.rules.v, level),
-            CssRule::Container(container) => self.rules(&container.rules.v, level),
-            CssRule::Scope(scope) => self.rules(&scope.rules.v, level),
-            CssRule::StartingStyle(starting_style) => self.rules(&starting_style.rules.v, level),
-            CssRule::Import(_)
-            | CssRule::Keyframes(_)
-            | CssRule::FontFace(_)
-            | CssRule::FontPaletteValues(_)
-            | CssRule::Page(_)
-            | CssRule::CounterStyle(_)
-            | CssRule::Namespace(_)
-            | CssRule::NestedDeclarations(_)
-            | CssRule::Viewport(_)
-            | CssRule::CustomMedia(_)
-            | CssRule::Property(_)
-            | CssRule::Ignored
-            | CssRule::Unknown(_)
-            | CssRule::Custom(_) => {}
-        }
     }
 }

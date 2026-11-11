@@ -3223,19 +3223,25 @@ impl<'a> LinkerContext<'a> {
                                 let imported = bun_core::fmt::quote(
                                     sources[record.source_index.get() as usize].path.pretty,
                                 );
+                                let loader: &str = match loader {
+                                    Loader::Bunsh => "sh",
+                                    loader => loader.into(),
+                                };
+                                // The first import of a file gives it its loader for the whole bundle.
+                                let note = if record.loader == Some(Loader::Css) {
+                                    format!(
+                                        "This \"@import\" needs {imported} as CSS, but an import attribute or a plugin gave it the \"{loader}\" loader. A file has one loader in a bundle.",
+                                    )
+                                } else {
+                                    format!(
+                                        "An \"@import\" rule can only import a CSS file, and {imported} is not a CSS file (it was loaded with the \"{loader}\" loader). If it holds CSS, rename it to end in \".css\" or give its extension the \"css\" loader.",
+                                    )
+                                };
                                 log.add_range_error_fmt_with_notes(
                                     Some(source),
                                     record.range,
                                     Box::new([Data {
-                                        text: format!(
-                                            "An \"@import\" rule can only import a CSS file, and {imported} is not a CSS file (it was loaded with the \"{}\" loader). If it holds CSS, rename it to end in \".css\" or give its extension the \"css\" loader.",
-                                            match loader {
-                                                Loader::Bunsh => "sh",
-                                                loader => loader.into(),
-                                            },
-                                        )
-                                        .into_bytes()
-                                        .into(),
+                                        text: note.into_bytes().into(),
                                         location: None,
                                     }]),
                                     format_args!("Cannot import {imported} into a CSS file"),

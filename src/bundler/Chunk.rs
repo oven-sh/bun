@@ -1389,9 +1389,6 @@ pub enum CssImportOrderKind<'a> {
     /// We'll just print layer name declarations so that the original ordering is preserved.
     #[strum(serialize = "layers")]
     Layers(Layers),
-    /// Like `Layers`, for a file that declares a layer under a condition. Prints `layer_skeleton`.
-    #[strum(serialize = "layers_of")]
-    LayersOf(Index),
     #[strum(serialize = "external_path")]
     ExternalPath(bun_fs::Path<'a>),
     #[strum(serialize = "source_index")]
@@ -1450,7 +1447,6 @@ impl CssImportOrder<'_> {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
-            CssImportOrderKind::LayersOf(_) => 3,
         };
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
@@ -1469,7 +1465,7 @@ impl CssImportOrder<'_> {
                 hasher.update(b"\x00");
             }
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
-            CssImportOrderKind::SourceIndex(idx) | CssImportOrderKind::LayersOf(idx) => {
+            CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
             }
         }
@@ -1515,8 +1511,7 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
             CssImportOrderKind::ExternalPath(path) => {
                 write!(writer, "\"{}\"", bstr::BStr::new(&path.pretty))?;
             }
-            CssImportOrderKind::SourceIndex(source_index)
-            | CssImportOrderKind::LayersOf(source_index) => {
+            CssImportOrderKind::SourceIndex(source_index) => {
                 // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
                 // for the lifetime of the link step that owns this LinkerContext.
                 let source =

@@ -1998,3 +1998,59 @@ describe("a chunk that a child stdio 'data' listener keeps is not written over",
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   });
 });
+
+// The first listener call returns only when the next two blocks are in the pipe, and it calls read(0) between them.
+// That read pulls the second block at once, nested in the push() of the first. The listener keeps every chunk and
+// also copies it at once.
+describe("a read nested in a 'data' listener that pulls the next chunk at once does not write over a chunk", () => {
+  const waitFor = `file => { const deadline = Date.now() + 10_000; while (!fs.existsSync(file)) { if (Date.now() > deadline) throw new Error("timed out waiting for " + file); Bun.sleepSync(1); } }`;
+  const writer = `const fs = require("node:fs"); const waitFor = ${waitFor}; [16, 1024, 1024].forEach((size, i) => { waitFor("go" + i); fs.writeSync(1, Buffer.alloc(size, 97 + i)); fs.writeFileSync("done" + i, ""); });`;
+
+  it.each([
+    [
+      "child.stdout",
+      `require("node:child_process").spawn(process.execPath, ["-e", writer], { stdio: ["ignore", "pipe", "inherit"] }).stdout`,
+    ],
+    [
+      "Readable.fromWeb(Bun.spawn().stdout)",
+      `require("node:stream").Readable.fromWeb(Bun.spawn({ cmd: [process.execPath, "-e", writer], stdin: "ignore", stdout: "pipe", stderr: "inherit" }).stdout)`,
+    ],
+  ])("%s", async (_label, stream) => {
+    using dir = tempDir("child-stdout-nested-read", {});
+    const script = `
+      const fs = require("node:fs");
+      const waitFor = ${waitFor};
+      const writer = ${JSON.stringify(writer)};
+      const stream = ${stream};
+      // "a16 b1024 ...": each run of one letter and its length.
+      const runs = chunks => Buffer.concat(chunks).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim();
+      const kept = [], copied = [];
+      stream.on("data", chunk => {
+        kept.push(chunk);
+        copied.push(Buffer.from(chunk));
+        if (kept.length !== 1) return;
+        fs.writeFileSync("go1", "");
+        waitFor("done1");
+        stream.read(0);
+        fs.writeFileSync("go2", "");
+        waitFor("done2");
+      });
+      stream.on("end", () => console.log("kept [" + runs(kept) + "] copied [" + runs(copied) + "]"));
+      // After the tick that starts the first read.
+      setImmediate(() => fs.writeFileSync("go0", ""));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "kept [a16 b1024 c1024] copied [a16 b1024 c1024]",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

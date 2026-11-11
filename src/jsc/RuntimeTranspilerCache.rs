@@ -86,7 +86,8 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: A constructor that the source does not have gets no `design:paramtypes`.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: A lone `#x = init` stays a field. A class that assigns nothing gets no constructor.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

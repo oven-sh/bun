@@ -101,6 +101,7 @@ pub(in crate::lower) enum ClassElement {
 pub(in crate::lower) struct ClassPlan {
     pub(in crate::lower) transform: ClassTransform,
     pub(in crate::lower) field_semantics: FieldSemantics,
+    pub(in crate::lower) assigns_plain_field: bool,
     pub(in crate::lower) constructor: Option<FnId>,
     pub(in crate::lower) injection_point: InjectionPoint,
     pub(in crate::lower) initializer_call: InitializerCall,

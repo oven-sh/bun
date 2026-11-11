@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // With `useDefineForClassFields: false` TypeScript lowers instance fields to
 // `this.x = init` in the constructor, after parameter-property assignments.
@@ -246,6 +247,147 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(out).not.toMatch(/^\s*x;\s*$/m);
   });
 
+  // tsc and esbuild move a `#private` initializer into the constructor only to keep its
+  // place among the plain fields that they assign. The expected values are what their
+  // output prints on Node (tsc 6.0.2 with target ES2022, esbuild 0.21.5).
+  test.concurrent("false: a #private initializer stays a field unless a plain field is assigned", async () => {
+    using dir = tempDir("udfcf-private", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        let seen: string[] = [];
+        const t = (name: string) => (seen.push(name), name);
+        const ran = (make: () => unknown) => {
+          seen = [];
+          try { make(); } catch (error) { t((error as Error).name); }
+          return seen.join();
+        };
+
+        class Alone {
+          #id = t("#id");
+          constructor(public seq = t("seq")) { t("body"); }
+          id() { return this.#id; }
+        }
+        class Two {
+          #a = t("#a");
+          #b = t("#b");
+          constructor(public seq = t("seq")) { t("body"); }
+          ab() { return this.#a + this.#b; }
+        }
+        class NoParameterProperty {
+          #id = t("#id");
+          constructor(seq = t("seq")) { t("body of " + seq); }
+          id() { return this.#id; }
+        }
+        class BesideFieldWithoutValue {
+          n?: number;
+          #id = t("#id");
+          constructor(public seq = t("seq")) { t("body"); }
+          id() { return this.#id; }
+        }
+        class BesideStaticField {
+          static s = t("s");
+          #id = t("#id");
+          constructor(public seq = t("seq")) { t("body"); }
+          id() { return this.#id; }
+        }
+        const Expression = class {
+          #id = t("#id");
+          constructor(public seq = t("seq")) { t("body"); }
+          id() { return this.#id; }
+        };
+        class Base {
+          x = 0;
+          constructor(public arg: string) { t("base"); }
+        }
+        class Derived extends Base {
+          #id = t("#id");
+          constructor(public seq = t("seq")) { super(t("super arg")); t("body"); }
+          id() { return this.#id; }
+        }
+        class SuperInBranch extends Base {
+          #id = t("#id");
+          constructor(first: boolean) {
+            // @ts-expect-error TS2401: tsc wants super() at the root of the body beside a private field
+            if (first) super(t("first"));
+            else super(t("second"));
+            t("body");
+          }
+          id() { return this.#id; }
+        }
+        class AheadOfAssignedField {
+          #id = t("#id");
+          n = t("n");
+          constructor(public seq = t("seq")) { t("body"); }
+          id() { return this.#id; }
+        }
+        class BehindAssignedField {
+          n = t("n");
+          #id = t("#id");
+          constructor(public seq = t("seq")) { t("body"); }
+          id() { return this.#id; }
+        }
+        class ReadsParameterProperty {
+          #read = this.x;
+          constructor(public x: number) {}
+          read() { return this.#read; }
+        }
+        class ReadsParameterPropertyBesideAssignedField {
+          #read = this.x;
+          n = 0;
+          constructor(public x: number) {}
+          read() { return this.#read; }
+        }
+        class DerivedReadsParameterProperty extends Base {
+          #read = this.x;
+          constructor(public x: number) { super(""); }
+          read() { return this.#read; }
+        }
+        class Named {
+          #f = () => {};
+          name() { return this.#f.name; }
+        }
+
+        process.stdout.write(JSON.stringify({
+          alone: ran(() => new Alone()),
+          two: ran(() => new Two()),
+          noParameterProperty: ran(() => new NoParameterProperty()),
+          besideFieldWithoutValue: ran(() => new BesideFieldWithoutValue()),
+          besideStaticField: ran(() => new BesideStaticField()),
+          expression: ran(() => new Expression()),
+          derived: ran(() => new Derived()),
+          superInBranch: ran(() => new SuperInBranch(false)),
+          aheadOfAssignedField: ran(() => new AheadOfAssignedField()),
+          behindAssignedField: ran(() => new BehindAssignedField()),
+          readsParameterProperty: String(new ReadsParameterProperty(5).read()),
+          readsParameterPropertyBesideAssignedField: new ReadsParameterPropertyBesideAssignedField(5).read(),
+          derivedReadsParameterProperty: new DerivedReadsParameterProperty(5).read(),
+          name: new Named().name(),
+          keys: Object.keys(new BesideFieldWithoutValue()),
+        }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      alone: "#id,seq,body",
+      two: "#a,#b,seq,body",
+      noParameterProperty: "#id,seq,body of seq",
+      besideFieldWithoutValue: "#id,seq,body",
+      besideStaticField: "#id,seq,body",
+      expression: "#id,seq,body",
+      derived: "seq,super arg,base,#id,body",
+      superInBranch: "second,base,#id,body",
+      aheadOfAssignedField: "seq,#id,n,body",
+      behindAssignedField: "seq,n,#id,body",
+      readsParameterProperty: "undefined",
+      readsParameterPropertyBesideAssignedField: 5,
+      derivedReadsParameterProperty: 0,
+      name: "#f",
+      keys: ["seq"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // The expected values are what the output of tsc 6.0.2 prints on Node, at every target:
   // a class has `design:paramtypes` of its own only if its source has a constructor.
   test.concurrent("false: a constructor that Bun adds for assigned fields has no design:paramtypes", async () => {
@@ -328,4 +470,91 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("false: Bun.Transpiler writes a constructor only for a field that it assigns", () => {
+    const t = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { useDefineForClassFields: false } },
+    });
+    const out = t.transformSync(`
+      class Alone {
+        #id = next();
+        constructor(public seq = next()) {}
+      }
+      class BesideFieldWithoutValue extends Base {
+        n?: number;
+        #id = next();
+      }
+      class FieldWithoutValue {
+        n?: number;
+      }
+      class BesideAssignedField {
+        #id = next();
+        n = next();
+      }
+    `);
+    expect(out).toMatchInlineSnapshot(`
+      "class Alone {
+        #id = next();
+        constructor(seq = next()) {
+          this.seq = seq;
+        }
+      }
+
+      class BesideFieldWithoutValue extends Base {
+        #id = next();
+      }
+
+      class FieldWithoutValue {
+      }
+
+      class BesideAssignedField {
+        constructor() {
+          this.#id = next();
+          this.n = next();
+        }
+        #id;
+      }
+      "
+    `);
+  });
+
+  test.concurrent.each(["bun", "node", "browser"] as const)(
+    "false: Bun.build keeps a lone #private initializer, target %s",
+    async target => {
+      using dir = tempDir("udfcf-build", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+        "index.ts": `
+          let n = 0;
+          const next = () => ++n;
+          class Alone {
+            #id = next();
+            constructor(public seq = next()) {}
+            id() { return this.#id; }
+          }
+          const alone = new Alone();
+          console.log(alone.id(), alone.seq);
+        `,
+      });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "index.ts")], target });
+      expect(result.success).toBe(true);
+      const text = await result.outputs[0].text();
+      expect(text.slice(text.indexOf("class Alone"))).toBe(
+        [
+          "class Alone {",
+          "  #id = next();",
+          "  constructor(seq = next()) {",
+          "    this.seq = seq;",
+          "  }",
+          "  id() {",
+          "    return this.#id;",
+          "  }",
+          "}",
+          "var alone = new Alone;",
+          "console.log(alone.id(), alone.seq);",
+          "",
+        ].join("\n"),
+      );
+    },
+  );
 });

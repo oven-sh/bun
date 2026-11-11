@@ -286,8 +286,29 @@ fn blockquote_raw_text(raw: &[u8], value: &[u8], out: &mut Vec<u8>) {
 /// `{ numberText, leadingSpaces }` of Prettier's `getOrderedListItemInfo`: an ordered list item's number, and how much
 /// whitespace follows its marker.
 pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64, usize) {
+    let head = item_head(text, tree, item);
+    let digits = ordered_item_digits(text, tree, item);
+    let number = digits
+        .iter()
+        .fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
+    let after = head.get(digits.len() + 1..).unwrap_or_default();
+    (
+        number,
+        after.len() - bun_core::strings::trim_js_whitespace_start(after).len(),
+    )
+}
+
+/// The digits of an ordered item's marker as written.
+pub(crate) fn ordered_item_digits<'x>(text: &'x [u8], tree: &Tree, item: NodeId) -> &'x [u8] {
+    let head = item_head(text, tree, item);
+    let digits = head.iter().take_while(|byte| byte.is_ascii_digit()).count();
+    head.get(..digits).unwrap_or_default()
+}
+
+/// An item's text from its marker up to its first child.
+fn item_head<'x>(text: &'x [u8], tree: &Tree, item: NodeId) -> &'x [u8] {
     let Some(node) = tree.get(item) else {
-        return (0, 0);
+        return b"";
     };
     let end = tree
         .get(node.first_child)
@@ -295,16 +316,7 @@ pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64,
     let head = text
         .get(node.start as usize..end as usize)
         .unwrap_or_default();
-    let head = bun_core::strings::trim_js_whitespace_start(head);
-    let digits = head.iter().take_while(|byte| byte.is_ascii_digit()).count();
-    let number = head[..digits]
-        .iter()
-        .fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
-    let after = head.get(digits + 1..).unwrap_or_default();
-    (
-        number,
-        after.len() - bun_core::strings::trim_js_whitespace_start(after).len(),
-    )
+    bun_core::strings::trim_js_whitespace_start(head)
 }
 
 /// True if `code` looks like indented code.

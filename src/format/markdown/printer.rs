@@ -4,7 +4,7 @@ use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::parse::{Syntax, leaves_paragraph};
 use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
-    ordered_item_info,
+    ordered_item_digits, ordered_item_info,
 };
 use super::strings::character_reference;
 use crate::css::doc::{
@@ -38,6 +38,9 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) is_mdx: bool,
     /// How many columns the current node is indented by.
     pub(crate) indentation: usize,
+    /// The spaces that `print_list_item` puts before a nested list, for `print_list`. They count toward the
+    /// indentation that makes a marker indented code.
+    pub(crate) alignment_before_list: usize,
     /// The current node is in a reference whose label is its text, which has to stay unchanged.
     pub(crate) is_in_label: bool,
     /// For oxfmt: `first_list_of_run`'s cache, indexed by list.
@@ -2199,6 +2202,7 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `printList`
     fn print_list(&mut self, id: NodeId, list: &'a Node) -> Doc<'a> {
+        let alignment_before = std::mem::take(&mut self.alignment_before_list);
         let uses_alternate_marker = self.uses_alternate_marker(id);
         let is_git_diff_friendly = self.is_git_diff_friendly(list);
         // Prettier's `requiredIndent`: before indented code, the content has to be indented deeper than the code.
@@ -2255,13 +2259,29 @@ impl<'a> Printer<'a, '_> {
             }
             if prefix.len() < min_indent && !printer.is_mdx {
                 // Prettier meets it with trailing spaces first (`1.        x`), which are code for such an item. It
-                // gets leading spaces only, so its marker can stand right of the others.
-                if !starts_with_indented_code {
-                    prefix.truncate(prefix.trim_ascii_end().len());
-                    let trailing = (min_indent - prefix.len()).min(4);
-                    prefix.resize(prefix.len() + trailing, b' ');
-                }
-                let leading = (min_indent - prefix.len()).min(3);
+                // gets leading spaces only, so its marker can stand right of the others: at most three together with
+                // the spaces before a nested list, since four make the marker indented code. Only the last item's
+                // content column decides whether the code after the list joins it. If three cannot reach it, because
+                // renumbering made the marker narrower, the last item keeps its number as written: that marker was
+                // wide enough.
+                let leading = match starts_with_indented_code {
+                    false => {
+                        prefix.truncate(prefix.trim_ascii_end().len());
+                        let trailing = (min_indent - prefix.len()).min(4);
+                        prefix.resize(prefix.len() + trailing, b' ');
+                        (min_indent - prefix.len()).min(3)
+                    }
+                    true => {
+                        if node.next == NONE && prefix.len() + 3 < min_indent {
+                            let digits = ordered_item_digits(printer.original, printer.tree, item);
+                            prefix
+                                .splice(0..prefix.len().saturating_sub(2), digits.iter().copied());
+                        }
+                        min_indent
+                            .saturating_sub(alignment_before + prefix.len())
+                            .min(3usize.saturating_sub(alignment_before))
+                    }
+                };
                 prefix.splice(0..0, std::iter::repeat_n(b' ', leading));
             }
 
@@ -2317,6 +2337,9 @@ impl<'a> Printer<'a, '_> {
             }
             // Four or more would make it indented code.
             let alignment = tab_width.saturating_sub(list_prefix_len).min(3);
+            if kind == Kind::List {
+                printer.alignment_before_list = alignment;
+            }
             let doc = printer.indented(alignment, |printer| printer.print(child));
             Some(docs![
                 spaces(alignment),

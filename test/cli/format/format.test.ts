@@ -2015,13 +2015,14 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    // An ordered list item that starts with indented code: its content begins one space after the marker, and every
-    // further space is part of the code. Prettier 3.9.9 pads the marker of such an item to a multiple of `tabWidth`
+    // A list item that starts with indented code: its content begins one space after the marker, and every further
+    // space is part of the code. Prettier 3.9.9 pads the marker of such an ordered item to a multiple of `tabWidth`
     // like the others' (`100.  `), so the code gains a space. Before an indented code block that follows the list, it
-    // pads the marker with trailing spaces (`1.        x`). Bun pads that marker with leading spaces, and puts a later
-    // child of such an item in the column after the marker and one space, where Prettier puts it on its second run.
-    // Each row is the text, Bun's output, Prettier's, the flags of both, and the extension of the file.
-    // `Bun.markdown.html` checks the meaning, in the oxfmt flavor too.
+    // pads the marker with trailing spaces (`1.        x`). Bun pads that marker with leading spaces, at most three
+    // together with the indentation of a nested list, and the last item keeps its number as written if three are not
+    // enough. A later child of such an item goes in the column after the marker and one space, where Prettier puts it
+    // on its second run. Each row is the text, Bun's output, Prettier's, the flags of both, and the extension of the
+    // file. `Bun.markdown.html` checks the meaning, in the oxfmt flavor too.
     test.each([
       ["99. a\n99.       x\n", "99. a\n100.       x\n", "99. a\n100.        x\n", []],
       ["99. a\n99.       x\n", "99. a\n100.       x\n", "99. a\n100.          x\n", ["--tab-width=4"]],
@@ -2034,6 +2035,19 @@ describe.concurrent("bun fmt", () => {
         "  1.      x\n1.   foo\n\n    code\n",
         "1.        x\n1.   foo\n\n    code\n",
         [],
+      ],
+      ["   -      x\n\n    y\n", "   -      x\n\n    y\n", "-         x\n\n    y\n", []],
+      [
+        "1.  a\n\n   10.      x\n\n      b\n",
+        " 1.    a\n\n   10.      x\n\n      b\n",
+        " 1.    a\n\n 2.         x\n\n      b\n",
+        [],
+      ],
+      [
+        "- a\n\n    10.      x\n\n       y\n",
+        "- a\n\n    10.      x\n\n       y\n",
+        "- a\n\n    10.        x\n\n       y\n",
+        ["--tab-width=4"],
       ],
       ["1. a\n1.      x\n", "1.  a\n1.      x\n", "1.  a\n1.       x\n", [], "mdx"],
       ["9. a\n9.       x\n", "9.  a\n10.       x\n", "9.  a\n10.       x\n", [], "mdx"],
@@ -2052,6 +2066,12 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
       expect(names.map(name => Bun.markdown.html(asOxfmt.files[name]!))).toEqual(names.map(() => html));
       expect(asOxfmt.exitCode).toBe(0);
+      // That flavor's output is stable too.
+      const again = await format(asOxfmt.files as Record<string, string>, ["--flavor=oxfmt", ...args], {
+        reads: names,
+      });
+      expect(again.files).toEqual(asOxfmt.files);
+      expect(again.exitCode).toBe(0);
     });
 
     // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output

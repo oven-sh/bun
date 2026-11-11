@@ -629,6 +629,7 @@ fn with_document<R>(
         is_in_template: mode.is_in_template,
         is_mdx: mode.is_mdx,
         indentation: 0,
+        alignment_before_list: 0,
         is_in_label: false,
         first_of_run: Vec::new(),
         stack: Stack::for_tree(),

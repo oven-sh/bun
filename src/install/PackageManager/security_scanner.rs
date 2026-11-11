@@ -395,31 +395,7 @@ pub(crate) fn prompt_for_warnings() -> bool {
     bun_core::pretty!("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ");
     Output::flush();
 
-    let mut reader = bun_core::output::stdin_reader();
-
-    let Ok(first_byte) = reader.take_byte() else {
-        bun_core::pretty!("\n<red>Installation cancelled.<r>\n");
-        return false;
-    };
-
-    let should_continue = match first_byte {
-        b'\n' => false,
-        b'\r' => {
-            let _ = reader.take_byte();
-            false
-        }
-        b'y' | b'Y' => match reader.take_byte() {
-            Ok(b'\n') => true,
-            Ok(b'\r') => matches!(reader.take_byte(), Ok(b'\n')),
-            _ => false,
-        },
-        _ => {
-            while !matches!(reader.take_byte(), Err(_) | Ok(b'\n' | b'\r')) {}
-            false
-        }
-    };
-
-    if !should_continue {
+    if !bun_core::output::stdin_reader().read_yes() {
         bun_core::pretty!("\n<red>Installation cancelled.<r>\n");
         return false;
     }

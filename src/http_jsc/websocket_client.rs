@@ -198,10 +198,8 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// Bytes not parsed yet. Either bytes that arrived with the 101, held until after `open`
-    /// (or until `resume()` if an `open` listener paused the socket), bytes the transport
-    /// handed over while paused, held until `resume()`, or bytes from a re-entrant `feed`,
-    /// held until the outer `feed` finishes.
+    /// Bytes not parsed yet: what arrived with the 101, what the transport handed over while
+    /// paused, or what a re-entrant `feed` queued. `parse_initial_data` drains it.
     initial_data: Cell<Option<Box<InitialData>>>,
     /// A `feed` call is on the stack.
     parsing: Cell<bool>,
@@ -659,9 +657,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = RefPtr::from_this(this);
 
-        // A paused socket reads nothing, but a transport can still hand over bytes it read
-        // before `pause()`: the TLS tunnel decrypts what arrived while an `open` listener spun
-        // the event loop once that listener returns. `resume()` queues `deliver_initial_data`.
+        // The TLS tunnel decrypts a read after the callback that received it. `resume()` queues
+        // `deliver_initial_data` for what is held here.
         let paused = || this.cpp_websocket().is_some_and(|ws| ws.is_paused());
         if paused() {
             this.hold(data);

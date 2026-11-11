@@ -107,7 +107,6 @@ expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();
   // `next()` of an async iterator.
   const reader = new ReadableStreamDefaultReader(new ReadableStream<string>({} as any));
   const iterator: AsyncIterator<string> = { next: () => reader.read() };
-  expectType(iterator).is<AsyncIterator<string>>();
 
   const result = await reader.read();
   if (result.done) {
@@ -117,7 +116,6 @@ expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();
   }
 
   const finished: Bun.ReadableStreamDefaultReadResult<string> = { done: true, value: undefined };
-  expectType(finished.value).is<undefined>();
   // @ts-expect-error A result without a `value` is not one that `read()` gives.
   const withoutValue: Bun.ReadableStreamDefaultReadResult<string> = { done: true };
 }

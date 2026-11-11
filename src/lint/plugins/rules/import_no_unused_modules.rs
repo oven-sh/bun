@@ -246,7 +246,8 @@ fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -
 }
 
 impl NoUnusedModules {
-    /// `doPreparation`. If `listFilesToProcess` throws, no files are found.
+    /// `doPreparation`. If `listFilesToProcess` throws, which ESLint 8's `FileEnumerator` does for a directory without
+    /// an `.eslintrc` above it, no files are found.
     fn prepare<'a>(&self, file: &'a File<'a>) -> Prepared {
         let mut prepared = Prepared {
             context: Context::from_language(file.configured_language()),

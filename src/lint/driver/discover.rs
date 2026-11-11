@@ -258,6 +258,7 @@ fn search(
     pool: &Pool,
     search: &Search,
     exclusions: &Exclusions,
+    skips_hidden: bool,
     are_all_in_repositories: &(dyn Fn() -> bool + Sync),
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
@@ -378,6 +379,9 @@ fn search(
             let within = own.config.within(&directory.path, seen);
             let mut within = within.with_frameworks(frameworks);
             for mut entry in entries {
+                if skips_hidden && (entry.name.starts_with(b".") || entry.name == b"node_modules") {
+                    continue;
+                }
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);
                 // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8 and oxlint
@@ -503,6 +507,54 @@ fn search(
     }
 }
 
+/// [`Modules::list_files`](bun_lint::modules::Modules::list_files) for a run. In a run with ESLint 8's configuration
+/// files, it's [`list_as_eslint_8`]. In every other run, it's [`list_with_fs`] with the run's own `loader`.
+pub(crate) fn list_files(
+    run_state: (&Linter, &Environment, &Host),
+    loader: &Loader,
+    pool: &Pool,
+    patterns: &[&[u8]],
+    extensions: &[&[u8]],
+) -> Result<Vec<Listed>, Vec<u8>> {
+    let cwd_config = loader.for_directory(&loader.environment().cwd).ok();
+    match cwd_config.is_some_and(|it| it.flavor == Flavor::EslintRc) {
+        true => list_as_eslint_8(run_state, pool, patterns, extensions),
+        false => list_with_fs(loader, pool, patterns, extensions),
+    }
+}
+
+/// Returns what eslint-plugin-import's `listFilesWithNodeFs(patterns, extensions)` yields, which it lists with when
+/// ESLint's `FileEnumerator` throws for a run without ESLint 8's configuration files: the files under `patterns` that
+/// have one of `extensions`, found the way the run itself finds files, so its configuration and ignore files apply.
+/// An entry named `node_modules` or starting with `.` isn't entered, and an argument that selects nothing is skipped.
+/// Sorted by path. `Err` has the message of the error the search throws.
+fn list_with_fs(
+    loader: &Loader,
+    pool: &Pool,
+    patterns: &[&[u8]],
+    extensions: &[&[u8]],
+) -> Result<Vec<Listed>, Vec<u8>> {
+    let patterns: Vec<Vec<u8>> = patterns.iter().map(|it| it.to_vec()).collect();
+    let walk = Walk {
+        error_on_unmatched_pattern: false,
+        skips_hidden: true,
+    };
+    let targets = find_files_with(loader, pool, &patterns, walk).map_err(|error| error.0)?;
+    let has_extension = |path: &[u8]| {
+        let extension = paths::extname(path);
+        let without_dot = extension.strip_prefix(b".").unwrap_or(extension);
+        (extensions.iter()).any(|it| it.strip_prefix(b".").unwrap_or(it) == without_dot)
+    };
+    let listed = targets.into_iter().filter_map(|it| {
+        let is_listed = matches!(it.status, Status::Matched(_)) && has_extension(&it.path);
+        is_listed.then_some(Listed {
+            path: it.path,
+            is_ignored: false,
+        })
+    });
+    Ok(listed.collect())
+}
+
 /// Returns what ESLint 8 and 9's `new FileEnumerator({ extensions }).iterateFiles(patterns)` yields. It searches from
 /// the working directory using ESLint 8's configuration files, regardless of the run's own configuration and command
 /// line. Sorted by path. `Err` has the message of the error it throws.
@@ -571,6 +623,16 @@ fn split_exclusions<'p>(
     (Cow::Owned(selecting), exclusions)
 }
 
+/// How [`find_files`] searches.
+#[derive(Clone, Copy)]
+struct Walk {
+    /// ESLint's `errorOnUnmatchedPattern`: `Err` if an argument selects no file.
+    error_on_unmatched_pattern: bool,
+    /// Skips an entry named `node_modules`, and one whose name starts with `.`, in every directory it lists. The
+    /// arguments themselves are still used.
+    skips_hidden: bool,
+}
+
 /// ESLint's `findFiles`. `patterns` is the list of arguments. The files are in no particular order, without duplicates.
 pub(crate) fn find_files(
     loader: &Loader,
@@ -578,6 +640,20 @@ pub(crate) fn find_files(
     patterns: &[Vec<u8>],
     error_on_unmatched_pattern: bool,
 ) -> Result<Vec<Target>, Fatal> {
+    let walk = Walk {
+        error_on_unmatched_pattern,
+        skips_hidden: false,
+    };
+    find_files_with(loader, pool, patterns, walk)
+}
+
+fn find_files_with(
+    loader: &Loader,
+    pool: &Pool,
+    patterns: &[Vec<u8>],
+    walk: Walk,
+) -> Result<Vec<Target>, Fatal> {
+    let error_on_unmatched_pattern = walk.error_on_unmatched_pattern;
     let cwd = &loader.environment().cwd;
     let first = patterns.first();
     let (patterns, exclusions) = split_exclusions(loader, patterns);
@@ -712,6 +788,7 @@ pub(crate) fn find_files(
             pool,
             it,
             &exclusions,
+            walk.skips_hidden,
             &|| *are_all_in_repositories,
             &mut searched,
         )? {

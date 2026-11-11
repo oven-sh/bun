@@ -997,7 +997,7 @@ impl Run<'_> {
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let run_state = (&linter, environment, &js_plugins);
-            discover::list_as_eslint_8(run_state, &pool, patterns, extensions)
+            discover::list_files(run_state, &loader, &pool, patterns, extensions)
         }));
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,

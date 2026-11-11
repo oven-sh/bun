@@ -256,9 +256,10 @@ pub trait Modules: Sync {
     /// mark itself is dropped. Can be called at any time.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
 
-    /// `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))` in ESLint 8 and 9, run from the working
-    /// directory. It always uses ESLint 8's config files, whatever config the run itself uses. Returns `Err` with the
-    /// message of the error it throws. Can be called at any time.
+    /// eslint-plugin-import's `listFilesToProcess(patterns, extensions)`, run from the working directory. With ESLint
+    /// 8's config files, it's `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))`. Otherwise it's
+    /// `listFilesWithNodeFs`: the files the run itself would find under `patterns`, so its ignores apply. Returns `Err`
+    /// with the message of the error it throws. Can be called at any time.
     fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>>;
 
     /// The result of `reader.read` on the file at `path`, which is read like [`Modules::read`] and parsed according to

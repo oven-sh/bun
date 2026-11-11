@@ -1006,6 +1006,86 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     }
   });
 
+  // Without an `.eslintrc`, the rule lists files the way the run does: with its ignores, and without `node_modules` or
+  // a directory whose name starts with `.`.
+  const dead = {
+    "package.json": `{ "type": "module" }`,
+    "src/a/lib.js": "export const used = 1;\n",
+    "src/a/dead.js": "export const dead = 1;\n",
+    "src/a/.hidden/dead.js": "export const hidden = 1;\n",
+    "src/a/node_modules/x/dead.js": "export const x = 1;\n",
+    "src/b/entry.js": "export const entry = 1;\n",
+    "src/b/main.js": `import { used } from "../a/lib.js";\nconsole.log(used);\n`,
+    "gen/dead.js": "export const gen = 1;\n",
+  };
+  type UnusedModules = { src?: string[]; ignoreExports?: string[] };
+  const asJson = (options: UnusedModules) =>
+    `"import/no-unused-modules": ["error", ${JSON.stringify({ unusedExports: true, ...options })}]`;
+  const asToml = (options: UnusedModules) => {
+    const entries = Object.entries({ unusedExports: true, ...options }).map(([k, v]) => `${k} = ${JSON.stringify(v)}`);
+    return `"import/no-unused-modules" = ["error", { ${entries.join(", ")} }]`;
+  };
+  const noUnusedModulesStandIn = {
+    "node_modules/eslint-plugin-import/package.json": standIn["node_modules/eslint-plugin-import/package.json"],
+    "node_modules/eslint-plugin-import/index.js": `const rule = { meta: { schema: false }, create() { return {}; } };\nmodule.exports = { meta: { name: "eslint-plugin-import" }, rules: { "no-unused-modules": rule } };\n`,
+  };
+
+  test.each([
+    [
+      "bunfig.toml",
+      (options: UnusedModules) => ({
+        "bunfig.toml": `[lint]\nplugins = ["import"]\nignorePatterns = ["gen/"]\n[lint.rules]\n${asToml(options)}\n`,
+      }),
+    ],
+    [
+      "eslint.config.js",
+      (options: UnusedModules) => ({
+        ...noUnusedModulesStandIn,
+        "eslint.config.js": `import plugin from "eslint-plugin-import";\nexport default [{ ignores: ["gen/"] }, { plugins: { import: plugin }, rules: { ${asJson(options)} } }];\n`,
+      }),
+    ],
+    [
+      ".oxlintrc.json",
+      (options: UnusedModules) => ({
+        ".oxlintrc.json": `{ "plugins": ["import"], "ignorePatterns": ["gen/"], "rules": { ${asJson(options)} } }`,
+      }),
+    ],
+  ])("import/no-unused-modules lists the files the run finds, with %s and no .eslintrc", async (name, config) => {
+    const files = { ...dead, ...config({ src: ["."], ignoreExports: ["**/entry.js"] }) };
+    expect(await lintIn(".", files, ["src/a"])).toMatchObject({
+      found: ["src/a/dead.js:1 import/no-unused-modules"],
+      exitCode: 1,
+    });
+    // A hidden file is linted when it's named, but it isn't in the list.
+    const named = ["gen/dead.js", "src/a/.hidden/dead.js", "src/a/dead.js"];
+    expect(await lintIn(".", files, named)).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"] });
+  });
+
+  test("import/no-unused-modules searches from bunfig.toml's directory without an .eslintrc", async () => {
+    for (const options of [{}, { src: ["src"] }]) {
+      const files = { ...dead, "bunfig.toml": `[lint]\nplugins = ["import"]\n[lint.rules]\n${asToml(options)}\n` };
+      expect(await lintIn("src/a", files, [])).toMatchObject({
+        found: ["src/a/dead.js:1 import/no-unused-modules"],
+        exitCode: 1,
+      });
+    }
+  });
+
+  test("import/no-unused-modules reports an unused type export in a project with only bunfig.toml", async () => {
+    const files = {
+      "bunfig.toml": `[lint]\nplugins = ["import"]\n[lint.settings]\n"import/extensions" = [".ts"]\n[lint.rules]\n"import/no-unused-modules" = ["error", { unusedExports = true, ignoreUnusedTypeExports = false, src = ["."] }]\n`,
+      "decoder.ts": `export type Input = Readonly<{ text: string }>;\nexport type Decoder = (input: Input) => string;\nexport const decode: Decoder = (input) => input.text.trim();\n`,
+      "consumer.ts": `import { decode, type Input } from "./decoder.ts";\n\nconst input: Input = { text: " hello " };\ndecode(input);\n`,
+    };
+    const args = ["--no-script", "--no-ignore", "--no-inline-config", "decoder.ts", "consumer.ts"];
+    expect(await lintIn(".", files, args)).toMatchObject({
+      found: ["decoder.ts:2 import/no-unused-modules"],
+      exitCode: 1,
+    });
+    const used = { ...files, "decoder.ts": files["decoder.ts"].replace("export type Decoder", "type Decoder") };
+    expect(await lintIn(".", used, args)).toMatchObject({ found: [], exitCode: 0 });
+  });
+
   test.each([
     ["no setting", ""],
     ["typescript = true", `[lint.settings]\n"import/resolver" = { typescript = true }\n`],

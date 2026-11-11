@@ -292,16 +292,33 @@ impl ExecutionSequence {
         }
     }
 
-    /// Vitest's `task.result.state`
+    /// Vitest's `task.result.state`: how the attempt stands, then the reported result once the sequence has ended.
     pub(crate) fn state(&self) -> &'static str {
+        let Some(entry) = self.active_entry else {
+            return match self.result.basic_result() {
+                Basic::Fail => "fail",
+                // Vitest's reporters count both as skipped.
+                Basic::Skip | Basic::Todo => "skip",
+                Basic::Pass | Basic::Pending => "pass",
+            };
+        };
         if self.result == Result::Skip {
             "skip"
         } else if self.attempt_failed() {
             "fail"
-        } else if self.active_entry.is_some_and(|entry| Some(entry) == self.test_entry || self.test_follows(entry)) {
+        } else if Some(entry) == self.test_entry || self.test_follows(entry) {
             "run"
         } else {
             "pass"
+        }
+    }
+
+    /// Copies `state()` and the retry and repeat counts into the `task.result` of `context`.
+    #[inline(never)]
+    fn sync_task_result(&self, context: JSValue) {
+        let global = VirtualMachine::get().global();
+        if let Err(err) = TestContext::sync_result(context, global, self) {
+            global.bun_vm().as_mut().run_error_handler(global.take_exception(err), None);
         }
     }
 
@@ -638,6 +655,19 @@ impl Execution {
         sequence: &mut ExecutionSequence,
         group_ptr: NonNull<ConcurrentGroup>,
     ) {
+        Execution::end_entry(buntest, sequence, group_ptr);
+        // `task.result` is current when this returns. A sequence that completed has released its context.
+        if let Some(context) = &sequence.context {
+            sequence.sync_task_result(context.get());
+        }
+    }
+
+    #[optimize(size)]
+    fn end_entry(
+        buntest: NonNull<BunTest>,
+        sequence: &mut ExecutionSequence,
+        group_ptr: NonNull<ConcurrentGroup>,
+    ) {
         let _g = group_begin!();
 
         debug_assert!(sequence.executing);
@@ -712,7 +742,6 @@ impl Execution {
 
             // Only report the final result after all retries/repeats are done
             Execution::on_sequence_completed(buntest, sequence);
-            sequence.context = None;
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
@@ -801,6 +830,10 @@ impl Execution {
                 ScopeMode::Todo => Result::FailBecauseTodoPassed,
                 _ => Result::Pass,
             };
+        }
+        // Before the report, because the reporter exits the process on `--bail`.
+        if let Some(context) = sequence.context.take() {
+            sequence.sync_task_result(context.get());
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
@@ -1255,9 +1288,6 @@ fn step_sequence_one(
             sequence.context(global_this, buntest_strong, this.group_index, sequence_index);
         }
         let context = sequence.context.as_ref().map(Strong::get);
-        if let Some(context) = context {
-            TestContext::sync_result(context, global_this, sequence)?;
-        }
         let mut args = [JSValue::UNDEFINED; 2];
         let args: &[JSValue] = match (next_item.calling, context, next_item.base.parent) {
             (Calling::Vitest { context: true }, Some(context), _) => {

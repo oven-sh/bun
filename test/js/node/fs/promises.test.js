@@ -263,7 +263,7 @@ describe("arguments", () => {
     fs.symlinkSync("file", join(dir, "symlink"));
     return dir;
   }
-  const clean = (text, dir) => text.replaceAll(dir, "<dir>").replace(/tmp-\w{6}/g, "tmp-XXXXXX");
+  const clean = (text, dir) => text.replaceAll(dir, "<dir>").replace(/tmp-\w{6}/g, "tmp-<random>");
 
   function describeValue(value, dir) {
     if (typeof value === "string") return clean(value, dir);

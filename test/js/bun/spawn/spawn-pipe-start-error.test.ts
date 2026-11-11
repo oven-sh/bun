@@ -345,11 +345,42 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
 console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
+// The argument is [stdio, whether the program uses the streams]. The report is what the ChildProcess emits, and
+// whether its child still ran at the return of spawn().
+const CHILD_PROCESS_FIXTURE = /* js */ `
+const { spawn } = require("node:child_process");
+const [stdio, used] = JSON.parse(process.argv[2]);
+const child = spawn("sleep", ["1000"], { stdio });
+let running = true;
+try {
+  process.kill(child.pid, 0);
+} catch {
+  running = false;
+}
+const log = [];
+child.on("error", err => log.push("error " + err.code));
+child.on("exit", () => log.push("exit"));
+child.on("close", () => log.push("close"));
+if (used) {
+  child.stdin?.end("unread");
+  child.stderr.unref();
+  child.stderr.ref();
+}
+process.on("exit", () => {
+  const { readableEnded, destroyed } = child.stderr;
+  console.log(JSON.stringify({ running, log, stderr: { readableEnded, destroyed } }));
+});
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
   if (!isLinux || !cc) return;
-  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE });
+  dir = tempDir("poll-start-error", {
+    "shim.c": SHIM_C,
+    "fixture.js": FIXTURE,
+    "child-process.cjs": CHILD_PROCESS_FIXTURE,
+  });
   await using ccProc = Bun.spawn({
     cmd: [cc, "-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
@@ -364,9 +395,9 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-async function runFixture(kind: string, env: Record<string, string> = {}) {
+async function runFixture(kind: string, env: Record<string, string> = {}, script = "fixture.js") {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js", kind],
+    cmd: [bunExe(), script, kind],
     cwd: String(dir),
     env: { ...bunEnv, ...env, LD_PRELOAD: join(String(dir), "shim.so") },
     stdout: "pipe",
@@ -526,6 +557,30 @@ describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished"
   ])("%s", async (_, kind, env) => {
     expect(await runFixture(kind, env)).toEqual({
       report: { error: null, sync: { children: 0, next: 0 }, shell: 1, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// node:child_process waits for the 'close' of the stdout and stderr streams that it made. An exit that came with an
+// error left them as they were, neither read nor destroyed, so 'close' of the child never came. With fewer than three
+// stdio entries the streams were made at their first use, so a program that did not use them had its 'close'.
+describe.skipIf(!isLinux || !cc)("a child of node:child_process whose pidfd fails to register emits 'close'", () => {
+  test.concurrent.each([
+    ["with the default stdio", ["pipe", "pipe", "pipe"], false],
+    ["with the default stdio, in a program that uses the streams", ["pipe", "pipe", "pipe"], true],
+    ["with two stdio entries", ["ignore", "pipe"], false],
+    ["with two stdio entries, in a program that uses the streams", ["ignore", "pipe"], true],
+  ])("%s", async (_, stdio, used) => {
+    const env = { FAIL_EPOLL_CTL: "pidfd-add" };
+    expect(await runFixture(JSON.stringify([stdio, used]), env, "child-process.cjs")).toEqual({
+      report: {
+        // The exit came inside spawn(), with the error.
+        running: false,
+        log: ["error ENOSPC", "exit", "close"],
+        stderr: { readableEnded: false, destroyed: true },
+      },
       stderr: "",
       exitCode: 0,
     });

@@ -1187,19 +1187,22 @@ class ChildProcess extends EventEmitter {
       if (err) {
         if (this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
         if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
+        // The streams that spawn() attached are not read either, and 'close' of the child waits for theirs.
+        this.#stdout?.destroy();
+        this.#stderr?.destroy();
       }
 
       const stdout = this.#stdout,
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, true);
+        this.#stdout = this.#getBunSpawnIo(1);
       } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, true);
+        this.#stderr = this.#getBunSpawnIo(2);
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
@@ -1232,10 +1235,11 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i: 0, autoResume?: boolean): $Node.Writable | null | undefined;
-  #getBunSpawnIo(i: 1 | 2, autoResume?: boolean): $Node.Readable | null | undefined;
-  #getBunSpawnIo(i: number, autoResume?: boolean): StdioStream | null | undefined;
-  #getBunSpawnIo(i: number, autoResume = false) {
+  // `made` is the stream that spawn() made for the slot ahead of the child: it gets the child's end here.
+  #getBunSpawnIo(i: 0, made?: $Node.WriteStream): $Node.Writable | null | undefined;
+  #getBunSpawnIo(i: 1 | 2, made?: $Node.Readable): $Node.Readable | null | undefined;
+  #getBunSpawnIo(i: number, made?: $Node.Socket): StdioStream | null | undefined;
+  #getBunSpawnIo(i: number, made?: any) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1252,7 +1256,7 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const stdin = handle?.stdin;
 
-            if (!stdin) {
+            if (!stdin || !made) {
               // This can happen if the process was already killed.
               const Writable = require("internal/streams/writable");
               const stream = new Writable({
@@ -1266,9 +1270,7 @@ class ChildProcess extends EventEmitter {
               stream.destroy();
               return stream;
             }
-            const result = require("internal/fs/streams").writableFromFileSink(stdin as $Node.FileSink);
-            result.readable = false;
-            return result;
+            return require("internal/fs/streams").attachFileSink(made, stdin as $Node.FileSink);
           }
           case "inherit":
             return null;
@@ -1297,7 +1299,7 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
-            if (!value) {
+            if (!value || !made) {
               const Readable = require("internal/streams/readable");
               const stream = new Readable({ read() {} });
               // Mark as destroyed to indicate it's not usable
@@ -1305,13 +1307,12 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(
+            const pipe = require("internal/streams/native-readable").attachNativeReadable(
+              made,
               value as ReadableStream,
-              {},
             );
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
-            if (autoResume) pipe.resume();
             return pipe;
           }
           case "destroyed": {
@@ -1335,8 +1336,8 @@ class ChildProcess extends EventEmitter {
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
-            if (fd == null) return null;
-            return require("node:net").connect({ fd });
+            if (fd == null || !made) return null;
+            return made.connect({ fd });
         }
         return null;
     }
@@ -1348,7 +1349,8 @@ class ChildProcess extends EventEmitter {
   #stdioObject: (StdioStream | null | undefined)[] | undefined;
   #stdioOptions;
 
-  #createStdioObject() {
+  // `sockets` holds, by index, the sockets that spawn() made ahead for the pipes behind stderr.
+  #createStdioObject(sockets?: ($Node.Socket | undefined)[]) {
     const opts = this.#stdioOptions;
     const length = opts.length;
     let result = new Array(length);
@@ -1373,7 +1375,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, false);
+          result[i] = this.#getBunSpawnIo(i, sockets?.[i]);
           continue;
       }
     }
@@ -1381,15 +1383,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2));
   }
 
   get stdio() {
@@ -1442,8 +1444,6 @@ class ChildProcess extends EventEmitter {
 
     const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
-    const stdioCount = stdio.length;
-    const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
     validateString(options.file, "options.file");
     var file;
@@ -1469,6 +1469,21 @@ class ChildProcess extends EventEmitter {
       return;
     }
 
+    // Made before the child starts, as node makes its pipes (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1032):
+    // the first stream of a kind takes longer to load and make than a short-lived child lives (EPIPE on its stdin).
+    const slots = this.#stdioOptions;
+    let stdinAhead: $Node.WriteStream | undefined,
+      stdoutAhead: $Node.Readable | undefined,
+      stderrAhead: $Node.Readable | undefined,
+      socketsAhead: ($Node.Socket | undefined)[] | undefined;
+    if (slots[0] === "pipe") stdinAhead = require("internal/fs/streams").writableForFileSink();
+    if (slots[1] === "pipe") stdoutAhead = require("internal/streams/native-readable").makeNativeReadable({});
+    if (slots[2] === "pipe") stderrAhead = require("internal/streams/native-readable").makeNativeReadable({});
+    for (let i = 3; i < slots.length; i++) {
+      const io = slots[i];
+      if (io === "pipe" || io === "socket-fd") (socketsAhead ??= [])[i] = new (require("node:net").Socket)();
+    }
+
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
@@ -1487,13 +1502,6 @@ class ChildProcess extends EventEmitter {
           this.#handle = handle as unknown as $Bindgen.Subprocess;
           this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-
-          if (hasSocketsToEagerlyLoad) {
-            process.nextTick(() => {
-              void this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-            });
-          }
 
           process.nextTick(
             (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
@@ -1533,10 +1541,12 @@ class ChildProcess extends EventEmitter {
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
-      if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio!) {
-          item?.ref?.();
-        }
+      if (stdinAhead) this.#stdin = this.#getBunSpawnIo(0, stdinAhead);
+      if (stdoutAhead) this.#stdout = this.#getBunSpawnIo(1, stdoutAhead);
+      if (stderrAhead) this.#stderr = this.#getBunSpawnIo(2, stderrAhead);
+      this.#stdioObject = this.#createStdioObject(socketsAhead);
+      for (let item of this.stdio!) {
+        item?.ref?.();
       }
     } catch (ex) {
       const exCode =
@@ -1686,7 +1696,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function (this: ChildProcess) {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1701,7 +1711,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function (this: ChildProcess) {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1716,7 +1726,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function (this: ChildProcess) {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,

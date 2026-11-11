@@ -4325,6 +4325,40 @@ describe("bundler", () => {
         "layers of the root: [a, c, z] in the sources, [a, z, c] in the bundle (conditions that hold: media print)",
       ],
     },
+    // The first import declares "v" where "a.css" did, so it passes no layer. The second one passes "q". A statement
+    // for "q" would be ahead of the first import and of "v", so an import declares it.
+    LayerBehindTheLayerOfTheFirstImportBeforeASecondImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://a.example/a.css" layer(v);
+          @import "https://b.example/b.css" layer(w);
+        `,
+        "/a.css": /* css */ `
+          @layer v { .t { color: red } }
+          @layer q { .t { color: green } }
+        `,
+      },
+      out: `@import "https://a.example/a.css" layer(v);@import "data:text/css," layer(q);@import "https://b.example/b.css" layer(w);@layer v{.t{color:red}}@layer q{.t{color:green}}`,
+    },
+    // An older browser drops the first import, with the layers of its style sheet. The second copy of it would
+    // then declare them behind "y", and the source files have them first.
+    LayerBehindExternalImportWithSupports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/s.css" supports(display: grid);
+          @import "./a.css";
+          @import "https://example.com/e.css" layer(z);
+          @import "https://example.com/s.css";
+        `,
+        "/a.css": `@layer y { .t { color: red } }`,
+      },
+      out: `@import "https://example.com/e.css" layer(z);@import "https://example.com/s.css";@layer y{.t{color:red}}`,
+      differs: [
+        "layers of the root: [y, z] in the sources, [z, y] in the bundle (conditions that hold: none)",
+        "layers of the root: [y, z] in the sources, [z, y] in the bundle (conditions that hold: supports display:grid)",
+      ],
+    },
   };
   for (const [name, { files, out }] of Object.entries(importPrologueCases)) {
     itBundled(`css/CSSImportPrologue${name}`, {

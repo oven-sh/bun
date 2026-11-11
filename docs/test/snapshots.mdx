@@ -302,6 +302,8 @@ Earlier versions of Bun printed `[native code]` for an accessor instead of its v
 
 Earlier versions also wrote a property matcher into the object before they printed it. A snapshot they wrote fails now if the matcher matched `Symbol.toStringTag`, an own `constructor`, the `$$typeof` of a React element, or a property that a `Symbol.toStringTag` getter reads: its text came from the matcher, such as `Row[object ExpectAny]`. Bun now prints the object as it is, and `--update-snapshots` stores text that comes from the matched value, so keep a matched property out of the text that names the object, or match the whole value, for example with `expect.any(Row)`.
 
+A matcher that earlier versions wrote into an object showed at every place where the value holds that object. Bun shows a matcher only at the place that the property matchers name. A snapshot that has the matcher at a second place fails: give that place a matcher of its own. When the property matchers used one object for two values, earlier versions compared only the first value, and the snapshot kept the second. Bun compares both and shows the matcher for both.
+
 ## Best Practices
 
 ### Keep Snapshots Small

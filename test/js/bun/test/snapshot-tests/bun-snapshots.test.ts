@@ -1059,13 +1059,9 @@ describe.concurrent("a snapshot with property matchers that an older Bun wrote",
         `<div id="a" />`,
       ],
     };
-    const file = (which: 0 | 1) =>
-      headers.bun +
-      Object.entries(printed)
-        .map(([name, texts]) => `\nexports[\`${name} 1\`] = \`${texts[which]}\`;\n`)
-        .join("");
-    using dir = tempDir("snapshot-older-bun-names", {
-      "a.test.js": `
+    await failsUntilUpdated(
+      "snapshot-older-bun-names",
+      `
           class Named {}
           class Row {
             id = 7;
@@ -1082,18 +1078,56 @@ describe.concurrent("a snapshot with property matchers that an older Bun wrote",
             expect(element).toMatchSnapshot({ $$typeof: expect.any(Symbol) });
           });
         `,
-      "__snapshots__/a.test.js.snap": file(0),
-    });
-    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
-    const count = Object.keys(printed).length;
-    const older = await runTests(String(dir), { CI: "true" });
-    expect({ pass: older.pass, fail: older.fail, snap: snap() }).toEqual({ pass: 0, fail: count, snap: file(0) });
-    const updated = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
-    expect({ pass: updated.pass, stderr: updated.pass === count ? "" : updated.stderr }).toEqual({
-      pass: count,
-      stderr: "",
-    });
-    expect(snap()).toBe(file(1));
-    expect([older.exitCode, updated.exitCode]).toEqual([1, 0]);
+      printed,
+    );
+  });
+
+  test("fails when it is what an older Bun wrote where a matcher shows at a place that the property matchers do not name", async () => {
+    // Bun 1.4.2 wrote the first text of each. It wrote a matcher into the object, so the matcher showed wherever the value holds that object.
+    // It also compared only the first of two values that got one object of matchers. The second text is what Bun prints.
+    await failsUntilUpdated(
+      "snapshot-older-bun-places",
+      `
+          const number = expect.any(Number);
+          test("object at a second place", () => {
+            const shared = { id: 1 };
+            expect({ a: shared, b: shared }).toMatchSnapshot({ a: { id: number } });
+          });
+          test("one object of matchers for two values", () => {
+            const matchers = { id: number };
+            expect({ items: [{ id: 1 }, { id: 2 }] }).toMatchSnapshot({ items: [matchers, matchers] });
+          });
+        `,
+      {
+        "object at a second place": [
+          `\n{\n  "a": {\n    "id": Any<Number>,\n  },\n  "b": {\n    "id": Any<Number>,\n  },\n}\n`,
+          `\n{\n  "a": {\n    "id": Any<Number>,\n  },\n  "b": {\n    "id": 1,\n  },\n}\n`,
+        ],
+        "one object of matchers for two values": [
+          `\n{\n  "items": [\n    {\n      "id": Any<Number>,\n    },\n    {\n      "id": 2,\n    },\n  ],\n}\n`,
+          `\n{\n  "items": [\n    {\n      "id": Any<Number>,\n    },\n    {\n      "id": Any<Number>,\n    },\n  ],\n}\n`,
+        ],
+      },
+    );
   });
 });
+
+/** Runs the tests of `source` on the first text of each entry, which an older Bun wrote. They fail, and --update-snapshots then stores the second text. */
+async function failsUntilUpdated(prefix: string, source: string, printed: Record<string, string[]>) {
+  const file = (which: 0 | 1) =>
+    headers.bun +
+    Object.entries(printed)
+      .map(([name, texts]) => `\nexports[\`${name} 1\`] = \`${texts[which]}\`;\n`)
+      .join("");
+  using dir = tempDir(prefix, { "a.test.js": source, "__snapshots__/a.test.js.snap": file(0) });
+  const count = Object.keys(printed).length;
+  const older = await runTests(String(dir), { CI: "true" });
+  expect({ pass: older.pass, fail: older.fail, snap: snap(dir) }).toEqual({ pass: 0, fail: count, snap: file(0) });
+  const updated = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+  expect({ pass: updated.pass, stderr: updated.pass === count ? "" : updated.stderr }).toEqual({
+    pass: count,
+    stderr: "",
+  });
+  expect(snap(dir)).toBe(file(1));
+  expect([older.exitCode, updated.exitCode]).toEqual([1, 0]);
+}

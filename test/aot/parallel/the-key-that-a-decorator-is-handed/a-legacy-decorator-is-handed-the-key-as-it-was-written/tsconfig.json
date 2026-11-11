@@ -1,0 +1,1 @@
+{ "compilerOptions": { "experimentalDecorators": true, "target": "ESNext", "module": "ESNext", "strict": true } }

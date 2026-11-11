@@ -1,0 +1,35 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Three = { a: number; b: number; c: number };
+# function overKeys(o: Three, c: number): number { let n = 0; for (const k of Object.keys(o)) { if (c & 1) n += k.length; else n -= 2 * k.length; c >>= 1; } return n; }
+# function overValues(o: Three, c: number): number { let n = 0; for (const v of Object.values(o)) { if (c & 1) n += v; else n -= 2 * v; c >>= 1; } return n; }
+# function overEntries(o: Three, c: number): number { let n = 0; for (const [k, v] of Object.entries(o)) { if (c & 1) n += v + k.length; else n -= v; c >>= 1; } return n; }
+# function overLiteral(a: number, b: number, c: number): number { let n = 0; for (const x of [a, b, a + b]) { if (c & 1) n += x; else n -= 2 * x; c >>= 1; } return n; }
+# function overBoxes(a: number, c: number): number { let n = 0; for (const box of [{ lid: a }, { lid: a + 1 }, { lid: a + 2 }]) { if (c & 1) n += box.lid; else n -= 2 * box.lid; c >>= 1; } return n; }
+# function overFreshObject(a: number, c: number): number { let n = 0; for (const k in { left: a, right: a + 1, up: a + 2 }) { if (c & 1) n += k.length; else n -= 2 * k.length; c >>= 1; } return n; }
+# function overFreshObjectRead(a: number, c: number): number { const o: { [key: string]: number } = { left: a, right: a + 1, up: a + 2 }; let n = 0; for (const k in o) { if (c & 1) n += o[k]; else n -= 2 * o[k]; c >>= 1; } return n; }
+# function overMap(a: number, c: number): number { let n = 0; for (const [k, v] of new Map<string, number>([["p", a], ["qq", a + 1], ["rrr", a + 2]])) { if (c & 1) n += v + k.length; else n -= v; c >>= 1; } return n; }
+# function overSet(a: number, c: number): number { let n = 0; for (const v of new Set<number>([a, a + 1, a, a + 2])) { if (c & 1) n += v; else n -= 2 * v; c >>= 1; } return n; }
+# function overKeysOfMap(a: number, c: number): number { const m = new Map<number, number>([[a, 1], [a + 1, 2]]); let n = 0; for (const k of m.keys()) { if (c & 1) n += k; else n -= 2 * k; c >>= 1; } return n; }
+# function overMapped(list: number[], c: number): number { let n = 0; for (const x of list.map(v => v * 2)) { if (c & 1) n += x; else n -= 2 * x; c >>= 1; } return n; }
+# function overSlices(rows: number[][], c: number): number { let n = 0; for (const row of rows.slice()) { for (const x of row.slice(1)) { if (c & 1) n += x; else n -= 2 * x; c >>= 1; } } return n; }
+# function overText(s: string, c: number): number { let n = 0; for (const ch of s + "!?") { if (c & 1) n += ch.length; else n -= 2; c >>= 1; } return n; }
+# function overPieces(s: string, c: number): number { let n = 0; for (const piece of s.split(",")) { if (c & 1) n += piece.length; else n -= 2 * piece.length; c >>= 1; } return n; }
+# function leavesEarly(list: number[], c: number): number { let n = 0; for (const x of list.slice()) { if (x > c) break; if (x & 1) n += x; else n -= 2 * x; } return n; }
+# function byPattern(a: number, b: number, c: number): number { const [x, y, z = 7] = [a + 1, b + 1]; let n = 0; if (c & 1) n = x; else n = y; return n + z; }
+# function byPatternOfBoxes(a: number, c: number): number { const [p, q] = [{ lid: a }, { lid: a + 1 }]; let n = 0; if (c & 1) n = p.lid; else n = q.lid; return n + p.lid + q.lid; }
+# function spreads(list: number[], c: number): number { const all = [...list.slice(1), c]; let n = 0; for (const x of all) { if (x & 1) n += x; else n -= 2 * x; } return n + all.length; }
+# function rest(c: number, ...others: number[]): number { let n = 0; for (const x of others) { if (c & 1) n += x; else n -= 2 * x; c >>= 1; } return n; }
+# function underTry(o: Three, c: number): number { let n = 0; try { for (const k of Object.keys(o)) { if (c & 1) n += k.length; else throw new RangeError(k); c >>= 1; } } catch (e) { n -= 100; } return n; }
+# const three: Three = { a: 1, b: 2, c: 3 };
+# const got: number[] = [];
+# for (let c = 0; c < 8; c += 5)
+#   got.push(overKeys(three, c), overValues(three, c), overEntries(three, c), overLiteral(3, 4, c), overBoxes(3, c), overFreshObject(3, c), overFreshObjectRead(3, c), overMap(3, c), overSet(3, c), overKeysOfMap(3, c), overMapped([1, 2, 3], c), overSlices([[1, 2, 3], [4, 5, 6]], c), overText("ab", c), overPieces("a,bb,ccc", c), leavesEarly([1, 2, 3, 4, 9, 1], c), byPattern(1, 2, c), byPatternOfBoxes(1, c), spreads([1, 2, 3], c), rest(c, 1, 2, 3), underTry(three, c));
+# print(got.join());
+# -- end of source
+# testing=CheckProofsAtRunTime: the list, the object, the table that a loop goes through is named by no value that is live in the turns: the iteration holds it, for which no cell stands.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: -6,-12,-6,-28,-24,-22,-24,-12,-24,-14,-24,-32,-8,-12,0,10,5,2,-12,-100,0,0,4,2,0,-4,0,8,0,-5,0,-11,-2,0,-8,9,4,7,0,-99
+# RUN(COPIES): run-in-shell
+# COPIES: -6,-12,-6,-28,-24,-22,-24,-12,-24,-14,-24,-32,-8,-12,0,10,5,2,-12,-100,0,0,4,2,0,-4,0,8,0,-5,0,-11,-2,0,-8,9,4,7,0,-99

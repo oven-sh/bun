@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Prevents the assignment or declaration of variables named `module` in Next.js applications.
 pub struct NoAssignModuleVariable;
 
-const NO_ASSIGN_MODULE_VARIABLE: Message = Message::new("", "Do not assign to the variable `module`.");
+const NO_ASSIGN_MODULE_VARIABLE: &Message = &Message::new("", "Do not assign to the variable `module`.");
 
 impl Rule for NoAssignModuleVariable {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-assign-module-variable", Kind::Problem);

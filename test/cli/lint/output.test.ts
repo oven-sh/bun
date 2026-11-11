@@ -447,7 +447,7 @@ describe.concurrent("above 50 problems", () => {
         "warn: 'a0' is defined but never used.  no-unused-vars",
         "   at a.js:1:5",
         "",
-        "note: Remove it, or start its name with _ to keep it.",
+        "note: Remove it, or prefix it with _.",
         "",
         "    60 times in 1 file",
         "        60  a.js:1",

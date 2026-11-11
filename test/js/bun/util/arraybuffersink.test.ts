@@ -101,10 +101,9 @@ describe("ArrayBufferSink", () => {
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  // The generated ${name}__doClose detached the JS wrapper (nulling m_sinkPtr)
-  // and then called __close, but never __finalize. The wrapper's destructor
-  // skips __finalize when m_sinkPtr is null, so every close() leaked the boxed
-  // ArrayBufferSink plus its Vec<u8> buffer. The repro runs off a setImmediate
+  // close() takes the sink from the JS object, whose destructor then has none to
+  // finalize, so close() itself has to free the boxed ArrayBufferSink and its
+  // Vec<u8> buffer. The repro runs off a setImmediate
   // so the allocation stack does not fall under the module-loader suppression.
   // LSAN symbolization of the leak stacks can take several seconds on its own,
   // hence the explicit per-test timeout.
@@ -182,6 +181,26 @@ describe("ArrayBufferSink", () => {
     expect(stdout).toBe("highWaterMark true\nwrite true\nasUint8Array true\nwrite true\nstream true\nwrite true\n");
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it("has a prototype, so instanceof and extends work", () => {
+    const sink = new ArrayBufferSink();
+    expect(Object.getPrototypeOf(sink)).toBe(ArrayBufferSink.prototype);
+    expect(sink).toBeInstanceOf(ArrayBufferSink);
+
+    class CountingSink extends ArrayBufferSink {
+      writes = 0;
+      write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) {
+        this.writes++;
+        return super.write(chunk);
+      }
+    }
+    const counting = new CountingSink();
+    expect(counting).toBeInstanceOf(ArrayBufferSink);
+    counting.write("ab");
+    counting.write("c");
+    expect(counting.writes).toBe(2);
+    expect(new TextDecoder().decode(counting.end() as ArrayBuffer)).toBe("abc");
   });
 
   it("write() throws when converting the chunk to a string closes the sink", async () => {

@@ -1518,7 +1518,8 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], lis
                 }) if src.get(pos as usize) != Some(&b'`')
             )
         };
-        is_prologue &= matches!(it.kind, StmtKind::Expr(e) if is_string(e));
+        is_prologue &= matches!(it.kind, StmtKind::Directive { .. })
+            || matches!(it.kind, StmtKind::Expr(e) if is_string(e));
         let is_statement = matches!(
             it.kind,
             StmtKind::Empty
@@ -1538,6 +1539,8 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], lis
                 | StmtKind::Break(_)
                 | StmtKind::Continue(_)
                 | StmtKind::Labeled { .. }
+                | StmtKind::Directive { .. }
+                | StmtKind::With { .. }
         );
         if !is_statement || is_prologue {
             continue;
@@ -1749,7 +1752,8 @@ pub(super) fn returns_in_static_block(f: &mut FileBuilder, body: FnBody) {
             | StmtKind::ForOf { body, .. }
             | StmtKind::While { body, .. }
             | StmtKind::DoWhile { body, .. }
-            | StmtKind::Labeled { body, .. } => left.push(body.0),
+            | StmtKind::Labeled { body, .. }
+            | StmtKind::With { body, .. } => left.push(body.0),
             StmtKind::Try {
                 block,
                 handler,

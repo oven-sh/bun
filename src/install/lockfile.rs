@@ -87,7 +87,6 @@ pub use self::catalog_map::CatalogMap;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
 pub use self::tree::Tree;
-pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
 // `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
 use self::package::PackageColumns as _;
@@ -262,7 +261,7 @@ impl LinkedMembers {
                 continue;
             }
             let is_link = !resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                FileSystem::instance().top_level_dir(),
+                FileSystem::get().top_level_dir(),
                 &mut buf.0,
                 &[folder],
             )
@@ -300,7 +299,7 @@ impl LinkedMembers {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
         let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            FileSystem::instance().top_level_dir(),
+            FileSystem::get().top_level_dir(),
             &mut buf.0,
             &[path],
         ) else {
@@ -447,7 +446,7 @@ pub struct LoadResultErr {
 }
 
 impl LoadResultErr {
-    fn of<'a>(step: LoadStep, value: BunError, format: LockfileFormat) -> LoadResult<'a> {
+    fn of(step: LoadStep, value: BunError, format: LockfileFormat) -> LoadResult {
         LoadResult::Err(LoadResultErr {
             step,
             value,
@@ -477,20 +476,20 @@ pub(crate) fn print_log_errors(log: &bun_ast::Log) {
     }
 }
 
-pub struct LoadResultOk<'a> {
-    pub lockfile: &'a mut Lockfile,
+pub struct LoadResultOk {
     pub(crate) migrated: Migrated,
     pub serializer_result: Serializer::SerializerLoadResult,
     pub(crate) format: LockfileFormat,
 }
 
-pub enum LoadResult<'a> {
+/// How a load went. On `Ok`, what was loaded is in the `Lockfile` that the load was called on.
+pub enum LoadResult {
     NotFound,
     Err(LoadResultErr),
-    Ok(LoadResultOk<'a>),
+    Ok(LoadResultOk),
 }
 
-impl<'a> LoadResult<'a> {
+impl LoadResult {
     pub(crate) fn loaded_from_text_lockfile(&self) -> bool {
         match self {
             LoadResult::NotFound => false,
@@ -542,21 +541,10 @@ impl<'a> LoadResult<'a> {
     }
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
-    pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
-        self.choose_config_version_with_saved(match self {
-            LoadResult::Ok(ok) => ok.lockfile.saved_config_version,
-            LoadResult::NotFound | LoadResult::Err(_) => None,
-        })
-    }
-
-    /// For a caller that holds the lockfile mutably.
-    fn choose_config_version_with_saved(
-        &self,
-        saved_config_version: Option<ConfigVersion>,
-    ) -> (ConfigVersion, bool) {
+    pub(crate) fn choose_config_version(&self, lockfile: &Lockfile) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
-            LoadResult::Ok(ok) => match (ok.migrated, saved_config_version) {
+            LoadResult::Ok(ok) => match (ok.migrated, lockfile.saved_config_version) {
                 (Migrated::None, Some(config_version)) => (config_version, false),
                 (Migrated::Pnpm, _) => (ConfigVersion::V1, true),
                 // npm, yarn, or an existing bun project without configVersion
@@ -566,17 +554,13 @@ impl<'a> LoadResult<'a> {
     }
 
     /// Resolves `Auto` the way `bun install` picks the linker for this lockfile; never returns `Auto`.
-    pub fn node_linker(&self, configured: NodeLinker) -> NodeLinker {
+    pub fn node_linker(&self, lockfile: &Lockfile, configured: NodeLinker) -> NodeLinker {
         resolve_node_linker(
             configured,
-            self.choose_config_version().0,
-            matches!(self, LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0),
+            self.choose_config_version(lockfile).0,
+            matches!(self, LoadResult::Ok(_)) && lockfile.workspace_paths.len() > 0,
         )
     }
-
-    // Callers reach this only after `handleLoadLockfileErrors` has exited on
-    // the `NotFound`/`Err` arms, so the variant is known-`Ok`.
-    bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 
 /// Returns the linker for the project in the cwd. Never returns `Auto`.
@@ -609,36 +593,36 @@ impl Lockfile {
             || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
     }
 
-    pub fn load_from_cwd<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
-        &'a mut self,
+    pub fn load_from_cwd<const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+        &mut self,
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
-    ) -> LoadResult<'a> {
+    ) -> LoadResult {
         self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(Fd::cwd(), manager, log)
     }
 
-    pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
-        &'a mut self,
+    pub fn load_from_dir<const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+        &mut self,
         dir: Fd,
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
-    ) -> LoadResult<'a> {
-        let mut result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
-        if let LoadResult::Ok(ok) = &mut result {
-            ok.lockfile.rebase_folder_dependencies().unwrap_or_oom();
+    ) -> LoadResult {
+        let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
+        if matches!(result, LoadResult::Ok(_)) {
+            self.rebase_folder_dependencies().unwrap_or_oom();
         }
         result
     }
 
     /// Reads bun.lock or bun.lockb. If neither exists, reads another package manager's lockfile to
     /// migrate from.
-    fn read_from_dir<'a>(
-        &'a mut self,
+    fn read_from_dir(
+        &mut self,
         attempt_loading_from_other_lockfile: bool,
         dir: Fd,
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
-    ) -> LoadResult<'a> {
+    ) -> LoadResult {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
         let mut opened = None;
@@ -690,7 +674,6 @@ impl Lockfile {
             bun_core::analytics::Features::text_lockfile_inc();
 
             return LoadResult::Ok(LoadResultOk {
-                lockfile: self,
                 serializer_result: Serializer::SerializerLoadResult::default(),
                 migrated: Migrated::None,
                 format: lockfile_format,
@@ -700,12 +683,12 @@ impl Lockfile {
         self.load_from_bytes(manager.as_deref(), buf, log)
     }
 
-    pub fn load_from_bytes<'a>(
-        &'a mut self,
+    pub fn load_from_bytes(
+        &mut self,
         pm: Option<&PackageManager>,
         buf: Vec<u8>,
         log: &mut bun_ast::Log,
-    ) -> LoadResult<'a> {
+    ) -> LoadResult {
         let mut stream = Stream::new(buf);
 
         self.format = FormatVersion::current();
@@ -728,7 +711,6 @@ impl Lockfile {
         self.tag_workspace_links(link_workspace_packages);
 
         LoadResult::Ok(LoadResultOk {
-            lockfile: self,
             serializer_result: load_result,
             migrated: Migrated::None,
             format: LockfileFormat::Binary,
@@ -1047,6 +1029,36 @@ impl Lockfile {
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         self.get_parent_pkg_of_dependency(id)
             .is_some_and(|parent_id| self.is_local_declarer(parent_id))
+    }
+
+    /// Whether the project, and not only a package that it installs, names the tarball URL `url`.
+    pub(crate) fn is_tarball_url_of_project(&self, url: &[u8]) -> bool {
+        let buf = self.buffers.string_bytes.as_slice();
+        let dependencies = self.buffers.dependencies.as_slice();
+        let packages = self.packages.slice();
+        let names_url = |declared: &Dependency| {
+            declared.version.tag == dependency::version::Tag::Tarball
+                && matches!(
+                    &declared.version.tarball().uri,
+                    dependency::tarball::Uri::Remote(remote) if remote.slice(buf) == url
+                )
+        };
+        (self.overrides.values().chain(self.catalogs.values())).any(names_url)
+            || self.package_extensions.has_specifier(url)
+            || (packages.items_resolution().iter())
+                .zip(packages.items_dependencies())
+                .enumerate()
+                .any(|(id, (resolution, declared))| {
+                    declared.get(dependencies).iter().any(names_url)
+                        && match resolution.tag {
+                            ResolutionTag::Root | ResolutionTag::Workspace => true,
+                            // One that only an override selects may be resolved too late.
+                            ResolutionTag::Folder => {
+                                self.is_workspace_declared_package(id as PackageID)
+                            }
+                            _ => false,
+                        }
+                })
     }
 
     /// See `is_dependency_of_local_package`.
@@ -1791,11 +1803,9 @@ impl Lockfile {
         manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager_ptr`.
-        let manager_ptr: *mut PackageManager = manager;
-        let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-            core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
-        );
+        // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager`.
+        let options = &manager.options;
+        let manifests = &mut manager.manifests;
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
         let mut added_by_extensions: Vec<(PackageID, PackageNameHash, bool)> = Vec::new();
@@ -1821,19 +1831,15 @@ impl Lockfile {
                 continue;
             }
             let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
-            let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
-            // SAFETY: the call holds only that field, which nothing below resizes or relocates
-            // while `manifest` is held.
-            let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }
-                .by_name_hash_allow_expired(
-                    cache_ctx,
-                    scope,
-                    pkg_name_str,
-                    pkg_name_hash,
-                    Some(&mut false),
-                    false,
-                )
-            else {
+            let scope = options.scope_for_package_name(pkg_name_str);
+            let Some(manifest) = manifests.by_name_hash_allow_expired(
+                cache_ctx,
+                scope,
+                pkg_name_str,
+                pkg_name_hash,
+                Some(&mut false),
+                false,
+            ) else {
                 continue;
             };
 
@@ -2038,16 +2044,14 @@ impl Lockfile {
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
     pub fn save_to_disk(
         &mut self,
-        load_result: &LoadResult<'_>,
+        load_result: &LoadResult,
         options: &PackageManagerOptions,
     ) -> bool {
         let save_format = load_result.save_format(options);
-        // Only `bun install` sets the option. `self` is `load_result`'s lockfile.
-        let config_version = options.config_version.unwrap_or_else(|| {
-            load_result
-                .choose_config_version_with_saved(self.saved_config_version)
-                .0
-        });
+        // Only `bun install` sets the option.
+        let config_version = options
+            .config_version
+            .unwrap_or_else(|| load_result.choose_config_version(self).0);
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
         let bytes: Vec<u8> = 'bytes: {
@@ -2758,7 +2762,7 @@ impl Lockfile {
             len: 0,
             cap: 0,
             off: 0,
-            ptr: None,
+            allocated: false,
             string_bytes: &mut self.buffers.string_bytes,
             string_pool: &mut self.string_pool,
         }
@@ -2782,7 +2786,7 @@ impl Lockfile {
                 len: 0,
                 cap: 0,
                 off: 0,
-                ptr: None,
+                allocated: false,
                 string_bytes,
                 string_pool: &mut self.string_pool,
             },
@@ -3047,7 +3051,7 @@ pub struct StringBuilder<'a> {
     pub len: usize,
     pub cap: usize,
     pub off: usize,
-    pub ptr: Option<*mut u8>,
+    pub allocated: bool,
     pub string_bytes: &'a mut Vec<u8>,
     pub string_pool: &'a mut StringPool,
 }
@@ -3064,7 +3068,7 @@ macro_rules! string_builder {
             len: 0,
             cap: 0,
             off: 0,
-            ptr: None,
+            allocated: false,
             string_bytes: &mut $lockfile.buffers.string_bytes,
             string_pool: &mut $lockfile.string_pool,
         }
@@ -3087,7 +3091,7 @@ impl<'a> StringBuilder<'a> {
     #[inline]
     fn assert_not_allocated(&self) {
         if cfg!(debug_assertions) {
-            if self.ptr.is_some() {
+            if self.allocated {
                 Output::panic(format_args!(
                     "StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before allocating."
                 ));
@@ -3126,9 +3130,7 @@ impl<'a> StringBuilder<'a> {
         // Zeroed: `as_slice()` callers read the full slice including the not-yet-appended tail.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
-        // SAFETY: `string_bytes` was just resized to `prev_len + self.cap`, so
-        // offsetting its base pointer by `prev_len` stays within the allocation.
-        self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
+        self.allocated = true;
         self.len = 0;
         Ok(())
     }
@@ -3141,7 +3143,7 @@ impl<'a> StringBuilder<'a> {
         }
 
         debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
+        debug_assert!(self.allocated); // must call allocate first
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
         if string_entry.found_existing
@@ -3583,14 +3585,7 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        // SAFETY: engine is null (default).
-        unsafe {
-            Crypto::SHA512_256::hash(
-                alphabetized_name_version_string,
-                &mut digest,
-                core::ptr::null_mut(),
-            )
-        };
+        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest);
 
         Ok(digest)
     }
@@ -3876,6 +3871,7 @@ pub struct PatchedDep {
     /// the hash of the patch file contents
     __patchfile_hash: u64,
 }
+bun_core::impl_no_uninit!(PatchedDep);
 
 impl Default for PatchedDep {
     fn default() -> Self {

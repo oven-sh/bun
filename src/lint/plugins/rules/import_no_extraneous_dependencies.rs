@@ -27,16 +27,16 @@ pub struct NoExtraneousDependencies {
     closest: [OnceLock<(Box<[u8]>, DepFields)>; 32],
 }
 
-const MISSING: Message = Message::new(
+const MISSING: &Message = &Message::new(
     "",
     "'{{packageName}}' should be listed in the project's dependencies. Run 'npm i -S {{packageName}}' to add it",
 );
-const DEV_DEP: Message =
-    Message::new("", "'{{packageName}}' should be listed in the project's dependencies, not devDependencies.");
-const OPT_DEP: Message =
-    Message::new("", "'{{packageName}}' should be listed in the project's dependencies, not optionalDependencies.");
-const NOT_FOUND: Message = Message::new("", "The package.json file could not be found.");
-const NOT_PARSED: Message = Message::new("", "The package.json file could not be parsed: {{message}}");
+const DEV_DEP: &Message =
+    &Message::new("", "'{{packageName}}' should be listed in the project's dependencies, not devDependencies.");
+const OPT_DEP: &Message =
+    &Message::new("", "'{{packageName}}' should be listed in the project's dependencies, not optionalDependencies.");
+const NOT_FOUND: &Message = &Message::new("", "The package.json file could not be found.");
+const NOT_PARSED: &Message = &Message::new("", "The package.json file could not be parsed: {{message}}");
 
 /// `declarationStatus`
 const IN_DEPS: u8 = 1 << 0;
@@ -70,7 +70,7 @@ pub(crate) const INHERITED: [&[u8]; 12] = [
 ];
 
 /// The report for a `package.json` that can't be read, with the error's `message`.
-type Failure = (Message, Vec<u8>);
+type Failure = (&'static Message, Vec<u8>);
 
 /// An option that decides in which files a field counts.
 enum Config {

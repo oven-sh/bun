@@ -1,0 +1,21 @@
+# `given || (() => late)`: what is called is the closure of the program or whatever `given` was. What has escaped is among what is unseen, so the settled type of the callee names no function (LinkFlow::settleTypes()).
+# The order in which a program starts took such a call for one of unseen code that holds nothing of the program yet, which enters nothing. So nobody entered the closure in front of the store,
+# `late` lost its `absent`, and the read in the dead zone gave undefined where it throws a ReferenceError
+# RUN: link variables mechanisms=all
+# CHECK: variable g0 proven=int[0, 2147483647]|absent
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: ReferenceError
+# NONE-NEXT: 1
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: ReferenceError
+# ALL-NEXT: 1
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# const called = globalThis.nothing || (() => late);
+# let first;
+# try { first = called(); } catch (error) { first = error.name; }
+# let late = 1;
+# print(first);
+# print(called());
+# -- end of source

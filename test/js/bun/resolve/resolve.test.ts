@@ -306,6 +306,12 @@ it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path 
   );
 });
 
+it("Bun.resolveSync takes undefined for its third argument", () => {
+  using dir = tempDir("resolve-undefined-esm", { "index.js": "" });
+  // @ts-expect-error
+  expect(Bun.resolveSync("./index.js", String(dir), undefined)).toBe(join(String(dir), "index.js"));
+});
+
 it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
@@ -748,6 +754,166 @@ describe("package.json exports target percent-encoding", () => {
       expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
     }
   });
+});
+
+describe.concurrent("an absolute specifier about as long as a path buffer", () => {
+  const limit = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+  // The parent directory exists, so the resolver goes on to append each extension to the long name.
+  const specifiers = `
+    const root = import.meta.dir + require("node:path").sep;
+    const specifiers = [];
+    for (let length = ${limit} - 16; length <= ${limit} + 4; length++) {
+      for (const suffix of ["", ".js", ".mjs", ".css", "/"]) {
+        specifiers.push(root + Buffer.alloc(length - root.length - suffix.length, "c").toString() + suffix);
+      }
+    }
+  `;
+
+  it("is not found", async () => {
+    using dir = tempDir("resolver-long-absolute-specifier", {
+      "index.js": `
+        ${specifiers}
+        const outcomes = {};
+        for (const specifier of specifiers) {
+          const ways = {
+            "Bun.resolveSync()": () => Bun.resolveSync(specifier, root),
+            "require.resolve()": () => require.resolve(specifier),
+            "require()": () => require(specifier),
+            "import()": () => import(specifier),
+          };
+          for (const [way, resolve] of Object.entries(ways)) {
+            try {
+              await resolve();
+              outcomes[way + " resolved"] = true;
+            } catch (e) {
+              outcomes[way + " " + e.name + " " + e.code] = true;
+            }
+          }
+        }
+        console.log(Object.keys(outcomes).join("\\n"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "Bun.resolveSync() ResolveMessage ERR_MODULE_NOT_FOUND",
+        "require.resolve() ResolveMessage MODULE_NOT_FOUND",
+        "require() ResolveMessage MODULE_NOT_FOUND",
+        "import() ResolveMessage ERR_MODULE_NOT_FOUND",
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is an entry point that Bun.build() does not find", async () => {
+    using dir = tempDir("resolver-long-absolute-entry-point", {
+      "index.js": `
+        ${specifiers}
+        const { success, logs } = await Bun.build({ entrypoints: specifiers, throw: false });
+        const notFound = specifiers.filter(specifier =>
+          logs.some(log => log.message === 'ModuleNotFound resolving "' + specifier + '" (entry point)'),
+        );
+        console.log(success, notFound.length === specifiers.length);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "false true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is not found when it comes from appending a require.extensions key that long", async () => {
+    using dir = tempDir("resolver-long-extension", {
+      "directory/other.js": "",
+      "index.js": `
+        require.extensions["." + Buffer.alloc(${limit}, "x")] = require.extensions[".js"];
+        for (const specifier of ["./missing", "./directory"]) {
+          try {
+            require(specifier);
+            console.log(specifier, "resolved");
+          } catch (e) {
+            console.log(specifier, e.name, e.code);
+          }
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "./missing ResolveMessage MODULE_NOT_FOUND\n./directory ResolveMessage MODULE_NOT_FOUND\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.skipIf(isWindows)(
+    "is not found either when it is a directory whose index.js path is longer than the buffer",
+    async () => {
+      using dir = tempDir("resolver-long-directory", {
+        "index.js": `
+        const { mkdirSync, writeFileSync } = require("node:fs");
+        const outcomes = {};
+        for (let length = ${limit} - "index.js".length; length < ${limit} - 1; length++) {
+          let directory = import.meta.dir + "/" + length;
+          while (directory.length < length) {
+            directory += "/" + Buffer.alloc(Math.min(200, length - directory.length - 1), "c");
+          }
+          mkdirSync(directory, { recursive: true });
+          // No system call takes the path of this file.
+          process.chdir(directory);
+          writeFileSync("index.js", "");
+          process.chdir(import.meta.dir);
+          for (const suffix of ["", "/", "/index", "/index.js"]) {
+            try {
+              Bun.resolveSync(directory + suffix, import.meta.dir);
+              outcomes["resolved"] = true;
+            } catch (e) {
+              outcomes[e.name + " " + e.code] = true;
+            }
+          }
+        }
+        console.log(Object.keys(outcomes).join("\\n"));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "ResolveMessage ERR_MODULE_NOT_FOUND\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 describe("package.json exports targets longer than the maximum path length", () => {

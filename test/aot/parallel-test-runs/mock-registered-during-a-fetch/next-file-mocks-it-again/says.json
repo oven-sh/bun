@@ -1,0 +1,12 @@
+{
+  "why": "the file is read on another thread: on a busy machine `bun test` now and then loads the second test file before the first file's pending import has begun to evaluate",
+  "printed": [
+    "when the second file loads: 1 evaluations, 1 factory calls",
+    "real/none | first mock/2 | first mock/2 | second mock/throws | 1 | false | false"
+  ],
+  "tests": [
+    "(pass) leaves an import pending and mocks the file one microtask later",
+    "(pass) mocks the file again"
+  ],
+  "exitCode": 0
+}

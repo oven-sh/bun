@@ -1,0 +1,10 @@
+# one element of the list is written and one is not
+# -- source: list-with-an-element-that-is-no-constant.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# new Intl.NumberFormat(["de", input]);
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown IntlNumberFormat at f0
+# RUN(TAG): locales
+# TAG: locale constant "de" IntlNumberFormat at f0

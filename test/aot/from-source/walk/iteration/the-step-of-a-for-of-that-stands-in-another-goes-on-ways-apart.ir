@@ -1,0 +1,15 @@
+# -- source: the-step-of-a-for-of-that-stands-in-another-goes-on-ways-apart.ts
+# declare function sink(value: unknown): void;
+# function sum(rows: number[][]): number { let s = 0; for (const r of rows) for (const v of r) s += v; return s; }
+# sink(sum([[1, 2], [3]]));
+# -- end of source
+# The head of the inner loop lies under the handler that closes the outer iteration. A block under a handler was never walked once for each way, so the step of the inner loop was built as a join of
+# three values: whether it is the last, what it hands out as a boxed value, the next position. Every turn boxed the element, asked the flag and unboxed the element again: 23 of 37 instructions.
+# Behind the step stand two reads of its results and the branch. None of them can throw, so the handler sees nothing of them: the way that hands out and the way that ends each take the branch.
+# f1 = sum
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: : boolean @Boolean @
+# RUN(COUNT): compile IteratorStepsThreadedUnderHandlers mechanisms=all
+# COUNT: statistic IteratorStepsThreadedUnderHandlers 2

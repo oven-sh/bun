@@ -1,0 +1,722 @@
+//// json-stringify-a-small-object
+function turn(i: number): number {
+  return JSON.stringify({ id: i, name: "row", ok: true }).length;
+}
+//// json-stringify-a-kept-object
+const user = { id: 7, name: "Ann", roles: ["admin", "dev"], address: { city: "Oslo", zip: "0150" }, active: true };
+function turn(i: number): number {
+  user.id = i & 1023;
+  return JSON.stringify(user).length;
+}
+//// json-stringify-an-array-of-objects
+const rows = Array.from({ length: 8 }, (_, k) => ({ id: k, label: "row " + k, score: k / 2 }));
+function turn(i: number): number {
+  return JSON.stringify(rows).length + (i & 1);
+}
+//// json-stringify-an-array-of-numbers
+const numbers = Array.from({ length: 32 }, (_, k) => k * 7);
+function turn(i: number): number {
+  return JSON.stringify(numbers).length + (i & 1);
+}
+//// json-stringify-indented
+const config = { name: "app", version: 3, flags: { a: true, b: false } };
+function turn(i: number): number {
+  return JSON.stringify(config, null, 2).length + (i & 1);
+}
+//// json-stringify-with-a-replacer
+const secretive = { id: 1, password: "x", name: "n" };
+function turn(i: number): number {
+  return JSON.stringify(secretive, (key, value) => (key === "password" ? undefined : value)).length + (i & 1);
+}
+//// json-stringify-with-to-json
+class Money {
+  constructor(public cents: number) {}
+  toJSON() {
+    return this.cents / 100;
+  }
+}
+function turn(i: number): number {
+  return JSON.stringify({ price: new Money(i & 1023) }).length;
+}
+//// json-stringify-a-class-instance
+class Item {
+  constructor(
+    public id: number,
+    public title: string,
+  ) {}
+}
+function turn(i: number): number {
+  return JSON.stringify(new Item(i & 255, "thing")).length;
+}
+//// json-stringify-a-string-with-escapes
+const texts = ["plain", 'with "quotes"', "line\nbreak", "tab\there"];
+function turn(i: number): number {
+  return JSON.stringify(texts[i & 3]).length;
+}
+//// json-parse-a-small-object
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { id: number; name: string; ok: boolean };
+  return row.id + row.name.length + (i & 1);
+}
+//// json-parse-with-a-member-that-the-type-does-not-declare
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { id: number; name: string };
+  return row.id + row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-one-of-three-members
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-one-of-eleven-members
+const text = '{"k0":0,"k1":"v1","k2":true,"k3":3.5,"k4":28,"name":"row","k5":"v5","k6":true,"k7":7.5,"k8":56,"k9":"v9"}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-three-of-nine-members
+const text = '{"id":7,"created":"2026-01-02","name":"row","tags":["a","b"],"owner":{"id":1},"ok":true,"score":1.5,"note":null,"rank":3}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { id: number; name: string; ok: boolean };
+  return row.id + row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-fewer-members-and-list-the-keys
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return Object.keys(row).length + row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-fewer-members-and-write-it-again
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return JSON.stringify(row).length + (i & 1);
+}
+//// json-parse-nested-objects-by-types-that-list-fewer-members
+const text = '{"version":2,"user":{"id":7,"name":"row","ok":true},"total":3,"place":{"city":"Oslo","zip":"0150","country":"NO"}}';
+function turn(i: number): number {
+  const reply = JSON.parse(text) as { user: { name: string }; place: { city: string } };
+  return reply.user.name.length + reply.place.city.length + (i & 1);
+}
+//// json-parse-a-list-by-a-type-that-lists-one-of-three-members
+const rowsOfText: string[] = [];
+for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + k + ',"label":"row ' + k + '","ok":' + (k % 2 === 0) + "}");
+const text = "[" + rowsOfText.join(",") + "]";
+function turn(i: number): number {
+  const rows = JSON.parse(text) as { label: string }[];
+  let sum = i & 1;
+  for (const row of rows) sum += row.label.length;
+  return sum;
+}
+//// json-parse-a-list-by-a-type-that-lists-one-of-three-members-and-write-it-again
+const rowsOfText: string[] = [];
+for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + k + ',"label":"row ' + k + '","ok":' + (k % 2 === 0) + "}");
+const text = "[" + rowsOfText.join(",") + "]";
+function turn(i: number): number {
+  const rows = JSON.parse(text) as { label: string }[];
+  return JSON.stringify(rows).length + (i & 1);
+}
+//// json-stringify-a-list-parsed-by-a-type-that-lists-one-of-three-members-whose-texts-have-escapes
+const rowsOfText: string[] = [];
+for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + k + ',"label":"row\\n' + k + '","ok":' + (k % 2 === 0) + "}");
+const rows = JSON.parse("[" + rowsOfText.join(",") + "]") as { label: string }[];
+function turn(i: number): number {
+  return JSON.stringify(rows).length + (i & 1);
+}
+//// json-parse-texts-with-other-values-each-time-by-a-type-that-lists-one-of-three-members
+const texts: string[] = [];
+for (let k = 0; k < 64; k++) texts.push('{"id":' + (1000 + k * 37) + ',"name":"row ' + k + '","ok":' + (k % 3 === 0) + "}");
+function turn(i: number): number {
+  const row = JSON.parse(texts[i & 63]) as { name: string };
+  return row.name.length + (i & 1);
+}
+//// json-parse-lists-with-other-values-each-time-by-a-type-that-lists-one-of-three-members
+const texts: string[] = [];
+for (let t = 0; t < 16; t++) {
+  const rowsOfText: string[] = [];
+  for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + (t * 100 + k) + ',"label":"row ' + (t * 8 + k) + '","ok":' + (k % 2 === 0) + "}");
+  texts.push("[" + rowsOfText.join(",") + "]");
+}
+function turn(i: number): number {
+  const rows = JSON.parse(texts[i & 15]) as { label: string }[];
+  let sum = i & 1;
+  for (const row of rows) sum += row.label.length;
+  return sum;
+}
+//// json-parse-nested
+const text = '{"user":{"id":7,"roles":["admin","dev"],"address":{"city":"Oslo"}},"total":3}';
+function turn(i: number): number {
+  const reply = JSON.parse(text);
+  return reply.user.id + reply.user.roles.length + reply.user.address.city.length + reply.total + (i & 1);
+}
+//// json-parse-an-array-of-objects
+const text = JSON.stringify(Array.from({ length: 8 }, (_, k) => ({ id: k, label: "row " + k })));
+function turn(i: number): number {
+  const rows = JSON.parse(text) as { id: number; label: string }[];
+  let sum = i & 1;
+  for (const row of rows) sum += row.id + row.label.length;
+  return sum;
+}
+//// json-parse-an-array-of-numbers
+const text = JSON.stringify(Array.from({ length: 32 }, (_, k) => k * 7));
+function turn(i: number): number {
+  return (JSON.parse(text) as number[])[i & 31]!;
+}
+//// json-parse-with-a-reviver
+const text = '{"a":1,"b":2,"c":3}';
+function turn(i: number): number {
+  return JSON.parse(text, (_, value) => (typeof value === "number" ? value * 2 : value)).c + (i & 1);
+}
+//// json-parse-by-a-type-of-63-members
+interface Wide { id: number; p0?: number; p1?: number; p2?: number; p3?: number; p4?: number; p5?: number; p6?: number; p7?: number; p8?: number; p9?: number; p10?: number; p11?: number; p12?: number; p13?: number; p14?: number; p15?: number; p16?: number; p17?: number; p18?: number; p19?: number; p20?: number; p21?: number; p22?: number; p23?: number; p24?: number; p25?: number; p26?: number; p27?: number; p28?: number; p29?: number; p30?: number; p31?: number; p32?: number; p33?: number; p34?: number; p35?: number; p36?: number; p37?: number; p38?: number; p39?: number; p40?: number; p41?: number; p42?: number; p43?: number; p44?: number; p45?: number; p46?: number; p47?: number; p48?: number; p49?: number; p50?: number; p51?: number; p52?: number; p53?: number; p54?: number; p55?: number; p56?: number; p57?: number; p58?: number; p59?: number; p60?: number; p61?: number }
+const texts: string[] = JSON.parse('["{\\"id\\":1,\\"p3\\":2}","{\\"id\\":2,\\"p61\\":5}"]');
+function turn(i: number): number {
+  return (JSON.parse(texts[i & 1]!) as Wide).id;
+}
+//// json-parse-by-a-type-of-66-members
+interface Wide { id: number; p0?: number; p1?: number; p2?: number; p3?: number; p4?: number; p5?: number; p6?: number; p7?: number; p8?: number; p9?: number; p10?: number; p11?: number; p12?: number; p13?: number; p14?: number; p15?: number; p16?: number; p17?: number; p18?: number; p19?: number; p20?: number; p21?: number; p22?: number; p23?: number; p24?: number; p25?: number; p26?: number; p27?: number; p28?: number; p29?: number; p30?: number; p31?: number; p32?: number; p33?: number; p34?: number; p35?: number; p36?: number; p37?: number; p38?: number; p39?: number; p40?: number; p41?: number; p42?: number; p43?: number; p44?: number; p45?: number; p46?: number; p47?: number; p48?: number; p49?: number; p50?: number; p51?: number; p52?: number; p53?: number; p54?: number; p55?: number; p56?: number; p57?: number; p58?: number; p59?: number; p60?: number; p61?: number; p62?: number; p63?: number; p64?: number }
+const texts: string[] = JSON.parse('["{\\"id\\":1,\\"p3\\":2}","{\\"id\\":2,\\"p64\\":5}"]');
+function turn(i: number): number {
+  return (JSON.parse(texts[i & 1]!) as Wide).id;
+}
+//// json-parse-that-fails
+function turn(i: number): number {
+  try {
+    return JSON.parse("{bad");
+  } catch {
+    return i & 1;
+  }
+}
+//// date-now
+function turn(i: number): number {
+  return Date.now() > 0 ? i & 1 : 2;
+}
+//// performance-now
+function turn(i: number): number {
+  return performance.now() >= 0 ? i & 1 : 2;
+}
+//// date-made-from-a-number
+function turn(i: number): number {
+  return new Date(1700000000000 + i * 1000).getTime() % 1000;
+}
+//// date-parts-utc
+function turn(i: number): number {
+  const date = new Date(1700000000000 + i * 60000);
+  return date.getUTCFullYear() + date.getUTCMonth() + date.getUTCDate() + date.getUTCHours();
+}
+//// date-parts-local
+function turn(i: number): number {
+  const date = new Date(1700000000000 + i * 60000);
+  return date.getFullYear() + date.getMonth() + date.getDate() + date.getHours();
+}
+//// date-to-iso-string
+function turn(i: number): number {
+  return new Date(1700000000000 + i * 1000).toISOString().length;
+}
+//// date-to-iso-string-or-to-json-under-a-key-found-at-run-time
+const writers = ["toISOString", "toJSON"] as const;
+const written = new Date(1700000000000);
+function turn(i: number): number {
+  return written[writers[i & 1]!]().length;
+}
+//// date-to-json
+function turn(i: number): number {
+  return new Date(1700000000000 + i * 1000).toJSON().length;
+}
+//// date-parsed-from-iso
+const stamps = ["2026-10-23T18:07:35Z", "1999-01-02T03:04:05.678Z"];
+function turn(i: number): number {
+  return new Date(stamps[i & 1]!).getTime() % 1000;
+}
+//// date-parse
+function turn(i: number): number {
+  return (Date.parse("2026-10-23") % 997) + (i & 1);
+}
+//// date-difference
+const start = new Date(1700000000000);
+function turn(i: number): number {
+  return (new Date(1700000000000 + i).getTime() - start.getTime()) & 255;
+}
+//// date-add-a-day
+function turn(i: number): number {
+  const date = new Date(1700000000000);
+  date.setUTCDate(date.getUTCDate() + (i & 31));
+  return date.getUTCDate();
+}
+//// date-to-locale-date-string
+function turn(i: number): number {
+  return new Date(1700000000000 + (i & 255) * 86400000).toLocaleDateString("en-US", { timeZone: "UTC" }).length;
+}
+//// intl-number-format-kept
+const euros = new Intl.NumberFormat("en-US", { style: "currency", currency: "EUR" });
+function turn(i: number): number {
+  return euros.format(i & 0xffff).length;
+}
+//// uint8-array-fill-by-index
+const bytes = new Uint8Array(64);
+function turn(i: number): number {
+  for (let k = 0; k < bytes.length; k++) bytes[k] = i + k;
+  return bytes[63]!;
+}
+//// uint8-array-sum
+const bytes = Uint8Array.from({ length: 64 }, (_, k) => k);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < bytes.length; k++) sum += bytes[k]!;
+  return sum;
+}
+//// uint8-array-for-of
+const bytes = Uint8Array.from({ length: 64 }, (_, k) => k);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const byte of bytes) sum += byte;
+  return sum;
+}
+//// uint8-array-made
+function turn(i: number): number {
+  const bytes = new Uint8Array(16);
+  bytes[0] = i;
+  return bytes[0]! + bytes.length;
+}
+//// float64-array-math
+const xs = Float64Array.from({ length: 32 }, (_, k) => k / 4);
+function turn(i: number): number {
+  let dot = i & 1;
+  for (let k = 0; k < xs.length; k++) dot += xs[k]! * xs[k]!;
+  return dot;
+}
+//// int32-array-store-and-read
+const cells = new Int32Array(32);
+function turn(i: number): number {
+  cells[i & 31] = i;
+  return cells[(i + 7) & 31]!;
+}
+//// typed-array-subarray
+const bytes = new Uint8Array(256);
+function turn(i: number): number {
+  return bytes.subarray(i & 127, 200).length;
+}
+//// typed-array-slice
+const bytes = new Uint8Array(64);
+function turn(i: number): number {
+  return bytes.slice(i & 31, 48).length;
+}
+//// typed-array-set
+const source = new Uint8Array(32).fill(3);
+const target = new Uint8Array(64);
+function turn(i: number): number {
+  target.set(source, i & 31);
+  return target[i & 31]!;
+}
+//// typed-array-fill
+const bytes = new Uint8Array(64);
+function turn(i: number): number {
+  bytes.fill(i & 255);
+  return bytes[63]!;
+}
+//// typed-array-index-of
+const bytes = Uint8Array.from({ length: 64 }, (_, k) => k);
+function turn(i: number): number {
+  return bytes.indexOf(i & 63);
+}
+//// typed-array-from-an-array
+const list = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return new Uint16Array(list)[i & 7]!;
+}
+//// data-view-read
+const view = new DataView(new ArrayBuffer(64));
+for (let k = 0; k < 16; k++) view.setUint32(k * 4, k * 1000, true);
+function turn(i: number): number {
+  return view.getUint32((i & 15) * 4, true) + view.getUint16((i & 15) * 2);
+}
+//// data-view-write
+const view = new DataView(new ArrayBuffer(64));
+function turn(i: number): number {
+  view.setFloat64((i & 7) * 8, i / 2);
+  view.setInt16(0, i & 1023, true);
+  return view.getInt16(0, true);
+}
+//// data-view-made-over-bytes
+const bytes = new Uint8Array(32);
+function turn(i: number): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  view.setUint32(0, i);
+  return view.getUint8(3);
+}
+//// buffer-from-a-string
+const texts = ["hello", "a longer piece of text", "x", "héllo wörld"];
+function turn(i: number): number {
+  return Buffer.from(texts[i & 3]!).length;
+}
+//// buffer-to-string
+const buffers = ["hello", "a longer piece of text", "x", "héllo wörld"].map(text => Buffer.from(text));
+function turn(i: number): number {
+  return buffers[i & 3]!.toString().length;
+}
+//// buffer-to-hex
+const buffer = Buffer.from("0123456789abcdef");
+function turn(i: number): number {
+  return buffer.toString("hex").length + (i & 1);
+}
+//// buffer-base64-round-trip
+const buffer = Buffer.from("some bytes to encode");
+function turn(i: number): number {
+  return Buffer.from(buffer.toString("base64"), "base64").length + (i & 1);
+}
+//// buffer-alloc
+function turn(i: number): number {
+  const buffer = Buffer.alloc(32);
+  buffer[0] = i;
+  return buffer[0]! + buffer.length;
+}
+//// buffer-concat
+const parts = [Buffer.from("head"), Buffer.from("body"), Buffer.from("tail")];
+function turn(i: number): number {
+  return Buffer.concat(parts).length + (i & 1);
+}
+//// buffer-read-and-write-integers
+const buffer = Buffer.alloc(16);
+function turn(i: number): number {
+  buffer.writeUInt32BE(i >>> 0, 0);
+  buffer.writeUInt16LE(i & 0xffff, 4);
+  return buffer.readUInt32BE(0) + buffer.readUInt16LE(4);
+}
+//// buffer-index-loop
+const buffer = Buffer.from("The quick brown fox jumps over the lazy dog");
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < buffer.length; k++) sum += buffer[k]!;
+  return sum;
+}
+//// buffer-equals
+const left = Buffer.from("the same bytes");
+const right = Buffer.from("the same bytes");
+function turn(i: number): number {
+  return left.equals(right) ? 1 + (i & 1) : 0;
+}
+//// buffer-byte-length
+const texts = ["hello", "héllo", "日本語", ""];
+function turn(i: number): number {
+  return Buffer.byteLength(texts[i & 3]!);
+}
+//// text-encoder
+const encoder = new TextEncoder();
+const texts = ["hello", "a longer piece of text", "x", "héllo wörld"];
+function turn(i: number): number {
+  return encoder.encode(texts[i & 3]!).length;
+}
+//// text-encoder-encode-into
+const encoder = new TextEncoder();
+const target = new Uint8Array(64);
+const texts = ["hello", "a longer piece of text", "x", "héllo wörld"];
+function turn(i: number): number {
+  return encoder.encodeInto(texts[i & 3]!, target).written;
+}
+//// text-decoder
+const decoder = new TextDecoder();
+const chunks = ["hello", "a longer piece of text", "x", "héllo wörld"].map(text => new TextEncoder().encode(text));
+function turn(i: number): number {
+  return decoder.decode(chunks[i & 3]!).length;
+}
+//// atob-btoa
+function turn(i: number): number {
+  return atob(btoa("text " + (i & 255))).length;
+}
+//// url-parsed
+const urls = ["https://example.com/a/b?x=1&y=2#top", "http://localhost:3000/", "https://a.b/c?q=z"];
+function turn(i: number): number {
+  const url = new URL(urls[i % 3]!);
+  return url.pathname.length + url.host.length;
+}
+//// url-search-params
+function turn(i: number): number {
+  const params = new URLSearchParams("a=1&b=two&c=3");
+  return params.get("b")!.length + Number(params.get("c")) + (i & 1);
+}
+//// headers
+function turn(i: number): number {
+  const headers = new Headers({ "content-type": "text/plain", "x-id": "7" });
+  return headers.get("Content-Type")!.length + (headers.has("x-none") ? 1 : 0) + (i & 1);
+}
+//// crypto-random-uuid
+function turn(i: number): number {
+  return crypto.randomUUID().length + (i & 1);
+}
+//// structured-clone-of-a-map
+const original = new Map([["a", [1, 2]], ["b", [3]]]);
+function turn(i: number): number {
+  return structuredClone(original).get("a")!.length + (i & 1);
+}
+//// switch-on-small-ints
+function turn(i: number): number {
+  switch (i & 7) {
+    case 0:
+      return 10;
+    case 1:
+      return 21;
+    case 2:
+      return 32;
+    case 3:
+      return 43;
+    case 4:
+      return 54;
+    case 5:
+      return 65;
+    default:
+      return 0;
+  }
+}
+//// switch-with-fall-through
+function turn(i: number): number {
+  let sum = 0;
+  switch (i & 3) {
+    case 0:
+      sum += 1;
+    case 1:
+      sum += 2;
+    case 2:
+      sum += 4;
+      break;
+    default:
+      sum = 9;
+  }
+  return sum;
+}
+//// switch-on-sparse-ints
+function turn(i: number): number {
+  switch ((i & 3) * 100 + 200) {
+    case 200:
+      return 1;
+    case 300:
+      return 2;
+    case 404:
+      return 3;
+    case 500:
+      return 4;
+    default:
+      return 0;
+  }
+}
+//// switch-true
+function turn(i: number): number {
+  const n = i & 255;
+  switch (true) {
+    case n < 10:
+      return 1;
+    case n < 100:
+      return 2;
+    default:
+      return 3;
+  }
+}
+//// labeled-break
+const grid = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+function turn(i: number): number {
+  const wanted = (i % 9) + 1;
+  let steps = 0;
+  search: for (const row of grid) {
+    for (const cell of row) {
+      steps++;
+      if (cell === wanted) break search;
+    }
+  }
+  return steps;
+}
+//// labeled-continue
+function turn(i: number): number {
+  let count = 0;
+  rows: for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      if (x === (i & 3)) continue rows;
+      count++;
+    }
+  }
+  return count;
+}
+//// while-loop
+function turn(i: number): number {
+  let n = (i & 1023) + 1;
+  let steps = 0;
+  while (n > 1) {
+    n >>= 1;
+    steps++;
+  }
+  return steps;
+}
+//// do-while-loop
+function turn(i: number): number {
+  let n = i & 1023;
+  let digits = 0;
+  do {
+    digits++;
+    n = (n / 10) | 0;
+  } while (n > 0);
+  return digits;
+}
+//// nested-loops
+function turn(i: number): number {
+  let sum = 0;
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) sum += x * y + i;
+  return sum | 0;
+}
+//// loop-counting-down
+const values = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = values.length - 1; k >= 0; k--) sum += values[k]!;
+  return sum;
+}
+//// ternary-chain
+function turn(i: number): number {
+  const n = i & 3;
+  return n === 0 ? 5 : n === 1 ? 6 : n === 2 ? 7 : 8;
+}
+//// logical-operators
+const flags = [true, false, true, true];
+function turn(i: number): number {
+  const a = flags[i & 3]!;
+  const b = flags[(i + 1) & 3]!;
+  return (a && b ? 1 : 0) + (a || b ? 2 : 0) + (!a ? 4 : 0);
+}
+//// truthiness-of-mixed-values
+const values: unknown[] = [0, 1, "", "x", null, {}, undefined, NaN];
+function turn(i: number): number {
+  return values[i & 7] ? 1 : 0;
+}
+//// loose-equality-with-null
+const values: (number | null | undefined)[] = [0, null, 2, undefined];
+function turn(i: number): number {
+  return values[i & 3] == null ? 1 : 0;
+}
+//// comma-and-void
+function turn(i: number): number {
+  let a = 0;
+  void (a++, a++);
+  return a + (i & 1);
+}
+//// state-machine
+const enum State {
+  Idle,
+  Running,
+  Done,
+}
+let state = State.Idle;
+function turn(i: number): number {
+  switch (state) {
+    case State.Idle:
+      state = State.Running;
+      break;
+    case State.Running:
+      if (i & 1) state = State.Done;
+      break;
+    case State.Done:
+      state = State.Idle;
+      break;
+  }
+  return state;
+}
+//// process-env-read
+process.env.IDIOM_MODE = "fast";
+function turn(i: number): number {
+  return process.env.IDIOM_MODE!.length + (i & 1);
+}
+//// console-free-string-format
+import { format } from "node:util";
+function turn(i: number): number {
+  return format("%s has %d items", "cart", i & 255).length;
+}
+//// path-join
+import { join } from "node:path";
+const names = ["a.txt", "b/c.txt", "../d.txt", "e"];
+function turn(i: number): number {
+  return join("/usr/local", names[i & 3]!).length;
+}
+//// path-basename-and-extname
+import { basename, extname } from "node:path";
+const files = ["/a/b/c.txt", "/x/y.tar.gz", "plain", "/d/e/"];
+function turn(i: number): number {
+  return basename(files[i & 3]!).length + extname(files[i & 3]!).length;
+}
+//// event-emitter
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+let heard = 0;
+emitter.on("tick", (n: number) => {
+  heard = (heard + n) & 0xffff;
+});
+function turn(i: number): number {
+  emitter.emit("tick", i);
+  return heard;
+}
+//// abort-controller
+function turn(i: number): number {
+  const controller = new AbortController();
+  if (i & 1) controller.abort();
+  return controller.signal.aborted ? 1 : 0;
+}
+//// bun-hash
+function turn(i: number): number {
+  return Number(Bun.hash("key" + (i & 255)) & 255n);
+}
+//// one-value-is-tested-for-truthiness-again-and-again
+const kinds: any[] = JSON.parse('[0, 1, "", "a", null, {"a": 1}, [], 2.5, true, false, {"a": 0}]');
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+let noise = 0;
+function side(n: number): number {
+  noise = (noise + n) | 0;
+  return noise & 1;
+}
+function twice(x: any): number {
+  let n = 0;
+  if (x) n += 1;
+  n += side(n);
+  if (x) n += 2;
+  return n;
+}
+function inLoop(flag: any, xs: number[]): number {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (flag) n += xs[i];
+    else n -= xs[i];
+  }
+  return n;
+}
+function behindAnd(x: any): number {
+  return x && x.a ? (x ? 1 : 2) : 3;
+}
+function turn(i: number): number {
+  const x = kinds[i % kinds.length];
+  return twice(x) + inLoop(x, numbers) + behindAnd(x);
+}
+//// two-values-are-compared-again-and-again
+const kinds: any[] = JSON.parse('[0, 1, "", "a", null, {"a": 1}, [], 2.5, true, false, "a", "abcdefgh"]');
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+let noise = 0;
+function side(n: number): number {
+  noise = (noise + n) | 0;
+  return noise & 1;
+}
+function twice(a: any, b: any): number {
+  let n = 0;
+  if (a === b) n += 1;
+  n += side(n);
+  if (a === b) n += 2;
+  return n;
+}
+function inLoop(a: any, b: any, xs: number[]): number {
+  let n = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (a === b) n += xs[i];
+    else n -= xs[i];
+  }
+  return n;
+}
+function turn(i: number): number {
+  const a = kinds[i % kinds.length];
+  const b = kinds[(i * 7 + 3) % kinds.length];
+  return twice(a, b) + inLoop(a, b, numbers);
+}

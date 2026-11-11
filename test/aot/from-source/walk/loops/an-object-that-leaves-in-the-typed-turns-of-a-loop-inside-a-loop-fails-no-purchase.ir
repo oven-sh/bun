@@ -1,0 +1,35 @@
+# -- source: an-object-that-leaves-in-the-typed-turns-of-a-loop-inside-a-loop-fails-no-purchase.js
+# const rows = JSON.parse("[0,5,2]");
+# function work(holder, least) {
+#   const workers = [0, 1].map(() => {
+#     let done = 0;
+#     return { step: () => ++done };
+#   });
+#   const front = { n: least };
+#   const mate = { n: least };
+#   const box = [mate];
+#   let i = -1;
+#   while (++i < holder.rows.length) {
+#     while (holder.rows[i] < least) {
+#       holder.rows[i] = holder.rows[i] + workers[i % 2].step();
+#       box[0].n += 1;
+#     }
+#   }
+#   const seen = [typeof front.n, front.n, typeof mate.n, mate.n];
+#   front.n += holder.rows.length;
+#   return seen.concat(front.n, JSON.stringify(front), JSON.stringify(mate)).join(" ");
+# }
+# print(work({ rows }, 3) + " " + rows.join());
+# -- end of source
+# `box` and `mate` are made in front of both loops and are believed fresh where the closed copy of the loop inside begins; the typed turn that hands over to it has let them leave. The builds of that row are given
+# up as a try is, and every fresh object leaves in front of them. Once the walk failed there instead: the try of the loop around took that for a failure inside it, and its own purchases were lost with it.
+# RUN: compile LoopVersioningAttemptsFailed WalkLoopsVersioned mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# CHECK: statistic WalkLoopsVersioned 7
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: number 3 number 6 6 {"n":6} {"n":6} 3,5,5
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: number 3 number 6 6 {"n":6} {"n":6} 3,5,5
+# HELD-NEXT: exited with 0

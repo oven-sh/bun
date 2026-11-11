@@ -260,7 +260,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         auto* obj = JSC::constructEmptyObject(g);
         obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
             jsString(vm, WTF::String::fromUTF8(std::span<const char>(name, nameLen))));
-        obj->putDirect(vm, Identifier::fromString(vm, "size"_s), jsNumber(byteLen));
+        Bun::putDirectNamed(vm, obj, "size"_s, jsNumber(byteLen));
         ok = true;
         return obj;
     }

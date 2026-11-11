@@ -122,7 +122,7 @@ it("Bun.resolve throws TypeError when called without arguments", async () => {
     expect.unreachable("Should have thrown");
   } catch (error) {
     expect(error).toBeInstanceOf(TypeError);
-    expect(error.message).toBe("Expected a specifier and a from path");
+    expect(error.message).toBe("moduleId must be a string");
     expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
   }
 });
@@ -133,7 +133,7 @@ it("Bun.resolveSync throws TypeError when called without arguments", () => {
     expect.unreachable("Should have thrown");
   } catch (error) {
     expect(error).toBeInstanceOf(TypeError);
-    expect(error.message).toBe("Expected a specifier and a from path");
+    expect(error.message).toBe("moduleId must be a string");
     expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
   }
 });

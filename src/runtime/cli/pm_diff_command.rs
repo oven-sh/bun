@@ -5,6 +5,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
+use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -19,7 +20,6 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
@@ -531,36 +531,27 @@ fn materialize(
 }
 
 fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> {
-    let mut iter = match ArchiveIterator::init(bytes) {
-        ArchiveIterResult::Result(it) => it,
-        ArchiveIterResult::Err { message, .. } => {
-            Status::clear();
-            Output::err_generic("{}: {}", (BStr::new(&tree.label), BStr::new(message)));
-            Global::exit(1);
+    let fail = |err: tar::Error, message: &str| -> crate::Error {
+        if let tar::Error::Alloc(err) = err {
+            return err.into();
         }
+        Status::clear();
+        Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
+        Global::exit(1);
     };
-    loop {
-        let next = match iter.next() {
-            ArchiveIterResult::Result(Some(n)) => n,
-            ArchiveIterResult::Result(None) => break,
-            ArchiveIterResult::Err { message, .. } => {
-                Status::clear();
-                Output::err_generic("{}: {}", (BStr::new(&tree.label), BStr::new(message)));
-                Global::exit(1);
-            }
-        };
-        if next.kind != bun_sys::FileKind::File {
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
+        .map_err(|err| fail(err, "failed to read tarball"))?;
+    while let Some(entry) = reader
+        .next_entry()
+        .map_err(|err| fail(err, "failed to read archive header"))?
+    {
+        if entry.kind() != bun_sys::FileKind::File {
             continue;
         }
-        let perm = next.entry().perm() & 0o777;
-        // libarchive returns NULL from the narrow accessor for non-ASCII names on Windows; go through UTF-16 there.
-        #[cfg(windows)]
-        let wide_path =
-            strings::to_utf8_list_with_type(Vec::new(), next.entry().pathname_w().as_slice())?;
-        #[cfg(windows)]
-        let path = wide_path.as_slice();
-        #[cfg(not(windows))]
-        let path = next.entry().pathname().as_bytes();
+        let perm = (entry.perm() & 0o777) as bun_sys::Mode;
+        let size = usize::try_from(entry.size().max(0)).expect("int cast");
+        let path = bun_archive::display_path(entry)?;
+        let path: &[u8] = &path;
         // npm tarballs root everything under one folder (usually `package/`).
         let rel = match strings::index_of_char(path, b'/') {
             Some(i) => &path[i as usize + 1..],
@@ -569,21 +560,26 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         if rel.is_empty() {
             continue;
         }
-        let data = match iter.read_entry_data(&next)? {
-            ArchiveIterResult::Result(d) => d,
-            ArchiveIterResult::Err { message, .. } => {
-                Status::clear();
-                Output::err_generic(
-                    "{}: {}: {}",
-                    (BStr::new(&tree.label), BStr::new(rel), BStr::new(message)),
-                );
-                Global::exit(1);
+        let rel = rel.to_vec();
+        let mut data = Vec::new();
+        if let Err(err) = reader.read_data(size, &mut data) {
+            if let tar::Error::Alloc(err) = err {
+                return Err(err.into());
             }
-        };
-        tree.modes.insert(rel.to_vec(), perm);
-        tree.files.insert(rel.to_vec(), data.into_vec());
+            Status::clear();
+            Output::err_generic(
+                "{}: {}: {}",
+                (
+                    BStr::new(&tree.label),
+                    BStr::new(&rel),
+                    "failed to read archive data",
+                ),
+            );
+            Global::exit(1);
+        }
+        tree.modes.insert(rel.clone(), perm);
+        tree.files.insert(rel, data);
     }
-    let _ = iter.close();
     Ok(())
 }
 

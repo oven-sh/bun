@@ -36,6 +36,6 @@ describe("vm.SourceTextModule", () => {
       const megabytes = Math.round(((finalUsage - initialUsage) / 1024 / 1024) * 100) / 100;
       expect(megabytes).toBeLessThan(THRESHOLD_MB);
     },
-    isDebug ? 60_000 : 30_000,
+    isDebug || isASAN ? 60_000 : 30_000,
   );
 });

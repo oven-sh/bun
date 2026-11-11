@@ -8,7 +8,7 @@ pub struct ConsistentDirectivePrefix {
     prefers_oxlint: bool,
 }
 
-const OTHER_PREFIX: Message = Message::new("otherPrefix", "Use `{{expected}}` instead of `{{found}}`.");
+const OTHER_PREFIX: &Message = &Message::new("otherPrefix", "Use `{{expected}}` instead of `{{found}}`.");
 
 /// True if a comment that consists of a prefix followed by `rest` turns rules off or on.
 fn is_directive(rest: &[u8]) -> bool {

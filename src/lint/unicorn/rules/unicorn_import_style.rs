@@ -29,7 +29,7 @@ pub struct ImportStyle {
     check_require: bool,
 }
 
-const IMPORT_STYLE: Message = Message::new("", "Use {{allowed_styles}} import for module `{{module_name}}`.");
+const IMPORT_STYLE: &Message = &Message::new("", "Use {{allowed_styles}} import for module `{{module_name}}`.");
 
 impl Rule for ImportStyle {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "import-style", Kind::Suggestion);

@@ -5,13 +5,13 @@ use bun_lint::rule::Plugin;
 /// This rule enforces proper case for numeric literals.
 pub struct NumberLiteralCase;
 
-const UPPERCASE_PREFIX: Message =
-    Message::new("", "Unexpected number literal prefix in uppercase.");
-const UPPERCASE_EXPONENTIAL_NOTATION: Message =
-    Message::new("", "Unexpected exponential notation in uppercase.");
-const LOWERCASE_HEXADECIMAL_DIGITS: Message =
-    Message::new("", "Unexpected hexadecimal digits in lowercase.");
-const UPPERCASE_PREFIX_AND_LOWERCASE_HEXADECIMAL_DIGITS: Message = Message::new(
+const UPPERCASE_PREFIX: &Message =
+    &Message::new("", "Unexpected number literal prefix in uppercase.");
+const UPPERCASE_EXPONENTIAL_NOTATION: &Message =
+    &Message::new("", "Unexpected exponential notation in uppercase.");
+const LOWERCASE_HEXADECIMAL_DIGITS: &Message =
+    &Message::new("", "Unexpected hexadecimal digits in lowercase.");
+const UPPERCASE_PREFIX_AND_LOWERCASE_HEXADECIMAL_DIGITS: &Message = &Message::new(
     "",
     "Unexpected number literal prefix in uppercase and hexadecimal digits in lowercase.",
 );

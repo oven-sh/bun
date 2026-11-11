@@ -344,6 +344,18 @@ export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
 export var __promiseAll = args => Promise.all(args);
 
+// ASCII-only output escapes the non-ASCII text of a template literal, which is right for `strings` and wrong for
+// `strings.raw`. `strings` is the engine's template object of the escaped text: one for each place in the source.
+var __rawTemplates;
+export var __rawTemplate = raw => strings => {
+  var template = (__rawTemplates ??= new WeakMap()).get(strings);
+  if (!template) {
+    template = Object.freeze(__defProp(strings.slice(), "raw", { value: Object.freeze(raw) }));
+    __rawTemplates.set(strings, template);
+  }
+  return template;
+};
+
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");

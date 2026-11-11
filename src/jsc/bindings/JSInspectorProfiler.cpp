@@ -135,6 +135,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         // JSC's ranges include their last character; V8's end after it.
         auto blockArray = JSON::Array::create();
         for (const auto& block : blocks) {
+            // V8 has no range for a part of a loop header.
+            if (block.m_isInLoopHeader)
+                continue;
             auto range = JSON::Array::create();
             range->pushInteger(block.m_startOffset);
             range->pushInteger(block.m_endOffset + 1);

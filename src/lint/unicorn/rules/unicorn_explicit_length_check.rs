@@ -12,11 +12,11 @@ pub struct ExplicitLengthCheck {
     is_non_zero_not_equal: bool,
 }
 
-const NON_ZERO: Message = Message::new(
+const NON_ZERO: &Message = &Message::new(
     "",
     "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is not zero.",
 );
-const ZERO: Message = Message::new(
+const ZERO: &Message = &Message::new(
     "",
     "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is zero.",
 );

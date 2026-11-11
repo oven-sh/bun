@@ -1,0 +1,22 @@
+# -- source: callee-that-gets-no-surplus-argument-gets-the-shared-empty-list.js
+# function count(a) { return arguments[1] + a; }
+# function none() { return count(); }
+# function one(x) { return count(x); }
+# function two(x) { return count(x, x); }
+# sink(none, one, two);
+# -- end of source
+# The list of the arguments behind the parameters has no name in the language, and a body only reads it out into `arguments`. So nothing tells one empty list from another:
+# a direct call that hands over no more arguments than the callee has parameters hands over the one empty list of the realm, and makes no cell.
+# RUN: walk f2 f3 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: [[empty]]: Array {{*}} = EmptyArgumentList
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-LABEL: code f3:Body
+# CHECK: [[empty]]: Array {{*}} = EmptyArgumentList
+# CHECK: = CallDirect {{*}} function=f1
+# RUN(NEVER): walk f2 f3 mechanisms=none+DirectCalls
+# NEVER-NOT: = NewArray
+# RUN(SURPLUS): walk f4 mechanisms=none+DirectCalls
+# SURPLUS: b0([[x]]: anything
+# SURPLUS: = NewArray [[x]] contents=anything
+# SURPLUS: = CallDirect {{*}} function=f1

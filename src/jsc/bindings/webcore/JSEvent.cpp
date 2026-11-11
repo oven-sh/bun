@@ -151,6 +151,7 @@ static_assert(Event::BUBBLING_PHASE == 3, "BUBBLING_PHASE in Event does not matc
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Events, JSEventDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSEventDOMConstructor>(callFrame->jsCallee());

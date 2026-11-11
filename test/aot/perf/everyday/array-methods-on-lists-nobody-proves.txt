@@ -1,0 +1,116 @@
+//// a-field-of-a-parsed-object-filter
+interface Part {
+  type: string;
+  size: number;
+}
+interface Message {
+  id: string;
+  parts: Part[];
+}
+const message: Message = JSON.parse('{"id":"m","parts":[{"type":"text","size":1},{"type":"tool","size":2},{"type":"text","size":3}]}');
+function turn(i: number): number {
+  return message.parts.filter(part => part.type === "text").length + (i & 1);
+}
+//// a-field-of-a-parsed-object-for-each
+interface Part {
+  type: string;
+  size: number;
+}
+interface Message {
+  id: string;
+  parts: Part[];
+}
+const message: Message = JSON.parse('{"id":"m","parts":[{"type":"text","size":1},{"type":"tool","size":2},{"type":"text","size":3}]}');
+function turn(i: number): number {
+  let sum = i & 1;
+  message.parts.forEach(part => {
+    sum += part.size;
+  });
+  return sum;
+}
+//// a-field-of-a-parsed-object-handed-in-map
+interface Part {
+  type: string;
+  size: number;
+}
+interface Message {
+  id: string;
+  parts: Part[];
+}
+const messages: Message[] = JSON.parse('[{"id":"m","parts":[{"type":"text","size":1},{"type":"tool","size":2},{"type":"text","size":3}]},{"id":"n","parts":[]}]');
+function sizes(message: Message): number[] {
+  return message.parts.map(part => part.size);
+}
+(globalThis as any).sizesOfThisProgram = sizes;
+function turn(i: number): number {
+  const found: typeof sizes = (globalThis as any).sizesOfThisProgram;
+  return found(messages[i & 1]!).length;
+}
+//// a-list-of-type-any-find-last-index
+const list: any = JSON.parse('[{"role":"user"},{"role":"assistant"},{"role":"user"},{"role":"assistant"}]');
+function turn(i: number): number {
+  return list.findLastIndex((m: any) => m.role === "user") + (i & 1);
+}
+//// a-list-of-type-any-some
+const list: any = JSON.parse('[{"role":"user"},{"role":"assistant"},{"role":"user"},{"role":"assistant"}]');
+function turn(i: number): number {
+  return list.some((m: any) => m.role === "system") ? 1 : i & 1;
+}
+//// what-a-function-nobody-knows-returns-map
+const make: () => { size: number }[] = (globalThis as any).makerOfThisProgram ?? (() => [{ size: 1 }, { size: 2 }, { size: 3 }]);
+(globalThis as any).makerOfThisProgram = make;
+function turn(i: number): number {
+  const found: typeof make = (globalThis as any).makerOfThisProgram;
+  return found().map(part => part.size + i).length;
+}
+//// values-of-a-map-spread-then-filter
+const table = new Map<string, { size: number }>([
+  ["a", { size: 1 }],
+  ["b", { size: 2 }],
+  ["c", { size: 3 }],
+]);
+function turn(i: number): number {
+  return [...table.values()].filter(part => part.size > (i & 1)).length;
+}
+//// an-optional-list-map
+interface Options {
+  names?: string[];
+}
+const options: Options[] = [{ names: ["a", "bc"] }, {}];
+function lengths(given: Options): number {
+  return (given.names ?? []).map(name => name.length).length;
+}
+(globalThis as any).lengthsOfThisProgram = lengths;
+function turn(i: number): number {
+  const found: typeof lengths = (globalThis as any).lengthsOfThisProgram;
+  return found(options[i & 1]!);
+}
+//// a-field-of-this-for-each
+class Store {
+  listeners: ((value: number) => void)[] = [];
+  total = 0;
+  notify(value: number): void {
+    this.listeners.forEach(listener => listener(value));
+  }
+}
+const store = new Store();
+store.listeners.push(value => {
+  store.total += value;
+});
+store.listeners.push(value => {
+  store.total -= value >> 1;
+});
+function turn(i: number): number {
+  store.notify(i & 7);
+  return store.total & 255;
+}
+//// sort-by-a-field
+const parts = [{ size: 3 }, { size: 1 }, { size: 2 }, { size: 5 }, { size: 4 }];
+function turn(i: number): number {
+  return parts.slice().sort((a, b) => a.size - b.size)[i & 3]!.size;
+}
+//// split-then-map
+const line = "a,bc,def,g";
+function turn(i: number): number {
+  return line.split(",").map(word => word.length + i).length;
+}

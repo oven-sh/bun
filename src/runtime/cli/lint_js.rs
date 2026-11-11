@@ -242,6 +242,7 @@ fn start_vm() -> Result<(), Vec<u8>> {
         bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
     // Same as for config files: see `run_script` in `lint_command.rs`.
     vm.transpiler.options.env.disable_default_env_files = true;
+    vm.transpiler.resolver.opts.packages_require_like_node();
     vm.transpiler
         .configure_defines()
         .map_err(|error| failed(error.name()))?;

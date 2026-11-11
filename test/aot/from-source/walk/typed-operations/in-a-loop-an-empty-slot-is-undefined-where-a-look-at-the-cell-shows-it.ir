@@ -1,0 +1,9 @@
+# f1 = Row, f2 = sumInLoop
+# -- source: in-a-loop-an-empty-slot-is-undefined-where-a-look-at-the-cell-shows-it.ts
+# declare function sink(...values: unknown[]): void;
+# function Row(this: any, value: number) { if (value > 1) this.mark = value; this.name = "r"; }
+# function sumInLoop(rows: any[]) { let sum = 0; for (let i = 0; i < rows.length; i++) sum += rows[i].mark; return sum; }
+# sink(Row, sumInLoop, new (Row as any)(1));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: = GetSlotOrUndefined {{*}}key="mark" receivers=[L0] level=Expected

@@ -114,7 +114,9 @@ impl EncodingLabel {
 
     pub(crate) const LATIN1: EncodingLabel = EncodingLabel::Windows1252;
 
+    #[inline(never)]
     pub(crate) fn encoding_rs(self) -> &'static encoding_rs::Encoding {
+        bun_removable_features::removable_definition!(LegacyEncodings, Self::encoding_rs);
         match self {
             Self::Utf8 => encoding_rs::UTF_8,
             Self::Utf16Le => encoding_rs::UTF_16LE,

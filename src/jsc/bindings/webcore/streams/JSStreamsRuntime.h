@@ -22,8 +22,8 @@
 // [bound-convention] — FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET. The shared function is
 //   NEVER called directly; it is wrapped per use-site in
 //   `JSC::JSBoundFunction::create(vm, global, target, jsUndefined(), {contextCell}, ...)`
-//   and STORED ON an object we do not control (the native source handle, the JSSink
-//   controller). `boundFunctionCall` PREPENDS the bound args, so the target receives
+//   and STORED ON an object we do not control (the native source handle).
+//   `boundFunctionCall` PREPENDS the bound args, so the target receives
 //        handler(contextCell, ...callArgs)              // context at argument(0)
 //   — the OPPOSITE position.
 //

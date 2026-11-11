@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow the use of `undefined` as an identifier.
 pub struct NoUndefined;
 
-const UNEXPECTED_UNDEFINED: Message =
-    Message::new("unexpectedUndefined", "Unexpected use of undefined.");
+const UNEXPECTED_UNDEFINED: &Message =
+    &Message::new("unexpectedUndefined", "Unexpected use of undefined.");
 
 impl NoUndefined {
     /// Checks a variable that the file declares.

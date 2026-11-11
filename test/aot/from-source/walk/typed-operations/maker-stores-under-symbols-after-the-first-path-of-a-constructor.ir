@@ -1,0 +1,24 @@
+# -- source: maker-stores-under-symbols-after-the-first-path-of-a-constructor.ts
+# declare function report(value: unknown): void;
+# const kPort = Symbol("port"), kClosed = Symbol("closed"), kOwner = Symbol("owner"), kFast = Symbol("fast");
+# interface Channel { name: string; depth: number; items: unknown[]; slow?: boolean; [kFast]?: boolean; [kPort]: number; [kClosed]: boolean; [kOwner]: string; touched?: number; }
+# function Channel(this: Channel, name: string, mode?: symbol) {
+#   if (mode === kFast) { this.name = name; this[kFast] = true; this.depth = 0; this.items = []; return; }
+#   this.items = []; this.name = name; this.slow = true; this.depth = 1;
+# }
+# function open(name: string, mode: symbol | undefined, port: number, touch?: (channel: Channel) => void): Channel {
+#   const channel = new (Channel as any)(name, mode) as Channel;
+#   channel[kPort] = port; channel[kClosed] = false;
+#   if (touch) touch(channel);
+#   channel[kOwner] = "owner" + port; channel.depth = 5;
+#   return channel;
+# }
+# for (let i = 0; i < 8; i++) {
+#   const channel = open("n" + i, i % 4 === 3 ? undefined : kFast, i, i % 2 ? c => { c.touched = i; } : undefined);
+#   report(channel);
+#   report(Reflect.ownKeys(channel).map(String).join() + " " + channel.depth + " " + channel[kOwner] + " " + channel[kClosed]);
+# }
+# -- end of source
+# RUN: plan orders mechanisms=all
+# CHECK-LABEL: orders L0
+# CHECK: "name" symbol("fast"){{*}} "depth" "items" | symbol("port"){{*}} symbol("closed"){{*}} symbol("owner")

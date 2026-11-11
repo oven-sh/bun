@@ -1,0 +1,13 @@
+# the front end folds a constant of the module into each read of it, so the call in the function passes a written text
+# -- source: constant-of-the-module-read-in-a-function.ts
+# const locale = "uk";
+# function show(value: number): string {
+#   return value.toLocaleString(locale);
+# }
+# show(1);
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "uk" NumberPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: locale host-default

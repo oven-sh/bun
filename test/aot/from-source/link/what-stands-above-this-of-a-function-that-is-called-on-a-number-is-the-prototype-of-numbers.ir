@@ -1,0 +1,15 @@
+# the red control: a number is seen to come as this
+# -- source: main.js
+# function init(inst) {
+#   const own = Object.getPrototypeOf(inst);
+#   console.log(typeof own.toFixed);
+# }
+# function Made() {
+#   init(this);
+# }
+# Made.call(5);
+# console.log(typeof new Made());
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup let-go NumberPrototype
+# CHECK-NOT: lookup let-go StringPrototype

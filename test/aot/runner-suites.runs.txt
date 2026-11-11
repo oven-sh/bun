@@ -7,6 +7,7 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a later test file that it imports, and that imports what it mocks, runs in its own turn
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
@@ -31,6 +32,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import(
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that calls import() for the module that makes the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that keeps import() of a module nothing mocks stays loaded
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that only passes on what import() gave it is evaluated again too
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that waits for a load goes with its callers when a factory stops inside require()
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a package that calls import() for a module of the project
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > also when an earlier file loaded it and never called import()
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file called import() with no mock: jest.mock
@@ -76,6 +78,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import(
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > within one test file ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > within one test file []
 test/js/bun/test/mock/mock-module.test.ts: a module that made a mock is not evaluated again while the test file runs
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a later test file that it imports, and that calls import() for what it mocks, runs in its own turn
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a factory that is still running is not waited for: bun test 
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a factory that is still running is not waited for: bun test --rerun-each=2
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a load that imported a mock and never finishes isn't reused by the next file

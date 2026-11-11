@@ -3552,20 +3552,29 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (callersGo.add(key).isNewEntry)
                 held.append(key);
         };
-        for (auto& key : named)
-            hold(key);
         for (auto& key : plugins.modulesToEvictWithCallers)
             hold(key);
+        // The modules that wait for a load are walked first, with all that called import() for them. `onlyCallersIn` is for the listed modules, which are held once those are done.
+        decltype(evict.onlyCallersIn) onlyCallersIn = nullptr;
+        bool holdsListed = false;
+        auto holdListed = [&](size_t walked) {
+            if (std::exchange(holdsListed, true))
+                return false;
+            onlyCallersIn = evict.onlyCallersIn;
+            for (auto& key : named)
+                hold(key);
+            return walked < held.size();
+        };
         auto takeCaller = [&](const String& key, const String& importer) {
             // A module that made a mock would make it again: it goes once the test file has ended, with JSMock__replaceModuleOfTestFile().
-            if (plugins.modulesThatMocked.contains(fileOfModuleKey(importer)) || (evict.onlyCallersIn && !evict.onlyCallersIn->contains(importer)))
+            if (plugins.modulesThatMocked.contains(fileOfModuleKey(importer)) || (onlyCallersIn && !onlyCallersIn->contains(importer)))
                 return;
             bool isQueued;
             if (take(key, importer, isQueued))
                 hold(importer);
         };
         UncheckedKeyHashMap<String, Vector<String>> requireKeysOfFile;
-        for (size_t walked = 0; walked < held.size(); ++walked) {
+        for (size_t walked = 0; walked < held.size() || holdListed(walked); ++walked) {
             String key = held[walked];
             if (auto importers = importersOf.find(key); importers != importersOf.end()) {
                 bool isQueued;
@@ -3723,16 +3732,10 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vecto
 
 static void evictModulesGivenTheOriginal(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock&& stopped)
 {
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    // The modules that wait for a load go first, with all that called import() for them: the factory's chain says nothing of those.
-    if (!globalObject->onLoadPlugins.modulesToEvictWithCallers.isEmpty()) {
-        Bun::evictModulesThatHaveLoaded(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-    }
     ModulesToEvict evict { WTF::move(stopped.givenTheOriginal) };
     // A module that the factory loaded may have called import() for one of them. One that was loaded before, and called import() for the factory, keeps nothing of them.
     evict.onlyCallersIn = &stopped.importChain;
-    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvictModulesThatHaveLoaded, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))

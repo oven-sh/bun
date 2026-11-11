@@ -114,6 +114,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import(
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that calls import() for the module that makes the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that keeps import() of a module nothing mocks stays loaded
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that only passes on what import() gave it is evaluated again too
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that waits for a load goes with its callers when a factory stops inside require()
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a package that calls import() for a module of the project
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > also when an earlier file loaded it and never called import()
 test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file called import() with no mock: jest.mock
@@ -161,6 +162,8 @@ test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import(
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a module that made a mock is not evaluated again while the test file runs
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a later test file that it imports, and that calls import() for what it mocks, runs in its own turn
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a later test file that it imports, and that imports what it mocks, runs in its own turn
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept

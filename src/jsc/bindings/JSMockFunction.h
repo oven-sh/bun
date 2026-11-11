@@ -53,6 +53,8 @@ public:
 
     // Weak sets (ActiveSpySet), created on first use.
     JSC::WriteBarrier<JSC::Unknown> activeSpies;
+    // Spies that the end of a test file found off their property. Empty again when that end is over.
+    JSC::WriteBarrier<JSC::Unknown> displacedSpies;
     // Mocks that were called, or had `.mock` read, since they were last cleared.
     JSC::WriteBarrier<JSC::Unknown> calledMocks;
     // Mocks whose implementation or mock name may differ from what mockReset() gives them.

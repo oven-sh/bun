@@ -453,12 +453,17 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   // https://github.com/oven-sh/bun/issues/48611: the path was taken for the file to run, and nothing else ran.
   test("bun --config <path> lint --stdin lints with the rules of that file", async () => {
     using dir = tempDir("bun-lint-bunfig", { "other.toml": `[lint.rules]\n"no-eval" = "error"\n` });
-    const args = ["lint", "--no-script", "--no-ignore", "--no-inline-config", "--stdin", "--stdin-filename", "probe.ts"];
+    const args = [
+      "lint",
+      "--no-script",
+      "--no-ignore",
+      "--no-inline-config",
+      "--stdin",
+      "--stdin-filename",
+      "probe.ts",
+    ];
     const results = await Promise.all(
-      [
-        ["--config", "other.toml"],
-        ["--config=other.toml"],
-      ].map(async flag => {
+      [["--config", "other.toml"], ["--config=other.toml"]].map(async flag => {
         await using proc = spawn({
           cmd: [bunExe(), ...flag, ...args],
           env,

@@ -352,7 +352,12 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
         ["--env-file", ".env"],
         ["--preload", "./pre.js"],
         // `bun check` doesn't accept `-r` or `-r=./pre.js`, nor `-c`.
-        ...(command === "check" ? [] : [["-r", "./pre.js"], ["-c", "other.toml"]]),
+        ...(command === "check"
+          ? []
+          : [
+              ["-r", "./pre.js"],
+              ["-c", "other.toml"],
+            ]),
         ["--shell", "bun"],
         ["--elide-lines", "5"],
         ["--config", "other.toml"],

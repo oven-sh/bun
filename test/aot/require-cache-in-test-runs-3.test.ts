@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { eachRow, gap, test as oneAtATime } from "./supported";
@@ -9,7 +9,9 @@ raiseDefaultTimeout(120_000);
 
 // Each case builds and runs in a folder of its own. One after the other they take longer than CI gives a file on the lane with assertions,
 // and at once they still take about that long there: so they are dealt out over four files, by the time that they take.
-const test = oneAtATime.concurrent;
+// A debug build of Bun dies now and then of a race between the threads of the engine (oven-sh/bun#48169), and a test run has no
+// switch for one thread: such a build is left out of this file.
+const test = isDebug ? oneAtATime.skip : oneAtATime.concurrent;
 
 const looksAtFiles = {
   "src/look.cjs": `
@@ -151,8 +153,9 @@ test("files that require each other are all listed while the innermost runs", as
 });
 
 // The file that is required again hands out its namespace, and the names that are not there yet throw where they are read.
-eachRow([
-  gap("compiled, the file that is required again gets the empty object that stands in for it while it runs", [
+const ringOfESModules = gap(
+  "compiled, the file that is required again gets the empty object that stands in for it while it runs",
+  [
     {
       ...looksAtFiles,
       "src/ring-first.ts": `const second = require("./ring-second");\nexport const first = 1;\nexport const seen = second.seen;`,
@@ -168,10 +171,14 @@ eachRow([
           console.log(require("./src/ring-first").seen);
         });`,
     },
-  ] as const),
-])("ES modules that require each other in a ring are listed while the second runs", async files => {
-  await expectCompiledToRunAsPlain(files, true);
-});
+  ] as const,
+);
+eachRow(isDebug ? [] : [ringOfESModules])(
+  "ES modules that require each other in a ring are listed while the second runs",
+  async files => {
+    await expectCompiledToRunAsPlain(files, true);
+  },
+);
 
 test("an ES module that an import has begun is listed from the first require() of it", async () => {
   await expectCompiledToRunAsPlain({

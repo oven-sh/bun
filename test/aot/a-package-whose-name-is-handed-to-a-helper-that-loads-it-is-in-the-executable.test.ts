@@ -146,9 +146,18 @@ const cases: Record<string, { files: Record<string, string>; said: string; holds
 const forms = { closed: [], withCodeFromDisk: ["--aot-allow-code-from-disk"] };
 type Form = keyof typeof forms;
 const bothForms = Object.keys(forms) as Form[];
+/**
+ * As `Promise.all`, but it waits for all of them before it throws what one of them threw. `run()` throws where the commands
+ * of the file hold too much memory together, and a case that ends removes its folder: by then no command of it is left there.
+ */
+async function allOf<Asked extends readonly unknown[] | []>(asked: Asked) {
+  const thrown = (await Promise.allSettled(asked)).find(one => one.status === "rejected");
+  if (thrown) throw (thrown as PromiseRejectedResult).reason;
+  return Promise.all(asked);
+}
 /** What `ask` answers for each form of the executable. Both are asked at once. */
 const ofEachForm = async <Answer>(ask: (form: Form) => Answer | Promise<Answer>) =>
-  Object.fromEntries(await Promise.all(bothForms.map(async form => [form, await ask(form)] as const)));
+  Object.fromEntries(await allOf(bothForms.map(async form => [form, await ask(form)] as const)));
 const inBothForms = <Answer>(answer: Answer) => Object.fromEntries(bothForms.map(form => [form, answer]));
 
 // The builds are nearly all of the time. So the cases run beside one another, and so do the commands of a case that don't wait
@@ -185,7 +194,7 @@ declare.each(Object.entries(cases))(
     }
 
     // Plain Bun and the two builds only read the folder, and each build writes a file of its own.
-    const [plain, built] = await Promise.all([start(bunExe(), main), ofEachForm(build)]);
+    const [plain, built] = await allOf([start(bunExe(), main), ofEachForm(build)]);
     expect(plain).toEqual(prints(said));
     expect(built).toEqual(inBothForms({ stderr: "", exitCode: 0 }));
 

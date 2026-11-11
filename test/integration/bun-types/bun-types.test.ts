@@ -979,8 +979,9 @@ describe("@types/bun integration test", () => {
   // With lib.dom loaded, bun-types used to merge its own `values()` and `entries()` into the
   // `FormData` of lib.dom, and a call got the signature of bun-types (#27194).
   // Runs on debug builds too, same as the Bun.mmap block above, but for the cases of TypeScript 5.9.
+  // Each case has a folder of its own, so the cases run at the same time.
   describe("FormData", () => {
-    test("has the types of lib.dom when lib.dom is loaded", async () => {
+    test.concurrent("has the types of lib.dom when lib.dom is loaded", async () => {
       await checkSource(
         "formdata-lib-dom-check",
         ["ESNext", "DOM"],
@@ -997,7 +998,7 @@ describe("@types/bun integration test", () => {
       );
     });
 
-    test("has the types of Bun without lib.dom", async () => {
+    test.concurrent("has the types of Bun without lib.dom", async () => {
       await checkSource(
         "formdata-no-lib-dom-check",
         ["ESNext"],
@@ -1014,7 +1015,7 @@ describe("@types/bun integration test", () => {
 
     // The iteration members have a gate of their own. It is open only when lib.dom is loaded
     // too: a global that a project declares without lib.dom does not take them away.
-    test("is iterable without lib.dom when a project declares a global of lib.dom.iterable", async () => {
+    test.concurrent("is iterable without lib.dom when a project declares a global of lib.dom.iterable", async () => {
       await checkSource(
         "formdata-stray-global-check",
         ["ESNext"],
@@ -1057,7 +1058,7 @@ describe("@types/bun integration test", () => {
          for (const [name, value] of headers) name + value;
          export {};`;
 
-      test("a FormData and a Headers are iterable", async () => {
+      test.concurrent("a FormData and a Headers are iterable", async () => {
         await checkSource("formdata-dom-without-iterable-check", ["ESNext", "DOM"], loops, {
           typescript: await typescript59(),
           libCheck: true,
@@ -1066,7 +1067,7 @@ describe("@types/bun integration test", () => {
 
       // A library of polyfills gives NodeList its iteration members. That does not say that
       // lib.dom.iterable.d.ts is loaded.
-      test("they stay iterable when a project gives NodeList its iteration members", async () => {
+      test.concurrent("they stay iterable when a project gives NodeList its iteration members", async () => {
         await checkSource(
           "formdata-dom-with-node-list-entries-check",
           ["ESNext", "DOM"],
@@ -1076,7 +1077,7 @@ describe("@types/bun integration test", () => {
              }
            }
            ${loops}`,
-          { typescript: await typescript59() },
+          { typescript: await typescript59(), libCheck: true },
         );
       });
     });
@@ -1084,7 +1085,7 @@ describe("@types/bun integration test", () => {
     // What the gate costs. An own member of an interface hides the member of a base. So
     // without lib.dom, a member that a project declares again in `declare global` is the only
     // signature of that member. With lib.dom loaded it is one overload more.
-    test("an overload that a project adds is one more with lib.dom", async () => {
+    test.concurrent("an overload that a project adds is one more with lib.dom", async () => {
       await checkSource(
         "formdata-augmented-lib-dom-check",
         ["ESNext", "DOM"],
@@ -1098,7 +1099,7 @@ describe("@types/bun integration test", () => {
       );
     });
 
-    test("a member that a project declares again replaces the gated member without lib.dom", async () => {
+    test.concurrent("a member that a project declares again replaces the gated member without lib.dom", async () => {
       await checkSource(
         "formdata-augmented-check",
         ["ESNext"],

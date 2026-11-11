@@ -651,9 +651,13 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return false;
         }
         let was_alone = context.entry_point_count() - added.len() <= 1;
+        let entry_points;
         let may_answer_otherwise = match was_alone {
-            true => context.entry_points(),
-            false => added,
+            true => {
+                entry_points = context.entry_points();
+                &entry_points
+            }
+            false => &added,
         };
         for entry_point in may_answer_otherwise {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
@@ -662,6 +666,13 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             let is_main = import_meta_main(context, entry_point.key);
             if folded_with.is_some_and(|known| known != is_main) {
                 set_import_meta_main(state, index, is_main);
+            }
+        }
+        // An entry point is no barrel, and a file that keeps its parse here was loaded as a module.
+        for entry_point in &added {
+            let index = state.index_of[&context.canonical_key(entry_point.key)];
+            if state.files[index as usize].parsed.is_some() && state.barrels.is_waiting(index) {
+                scan_parsed_file_again(state, index);
             }
         }
         true

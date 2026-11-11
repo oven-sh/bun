@@ -3,18 +3,36 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 const read = { returns: b.any.returning("Promise"), ...js } as const;
 
+/**
+ * A Node stream passes `deliver`. Then the call returns no bytes: each result comes as `deliver(result, isClosed, failed)`
+ * on a later turn of the event loop, as a libuv handle reports a read. `cancel` calls `callback()` the same way.
+ */
+const deliver = b.callable.optional;
+
 const members = {
-  cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
+  cancel: {
+    capability: "js",
+    args: { reason: b.any.orAbsent, callback: deliver },
+    passThis: true,
+    length: 1,
+    rustName: "cancel_from_js",
+  },
   drain: { returns: b.any.returning("Uint8Array", "undefined"), ...js, length: 1 },
   isClosed: { getter: b.bool, pure: true },
   pull: {
     ...js,
-    args: { view: b.any, flags: b.any },
+    args: { view: b.any, flags: b.any, deliver },
     returns: b.any.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
     passThis: true,
     length: 1,
   },
-  start: { returns: b.any.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
+  start: {
+    ...js,
+    args: { chunkSize: b.any.orAbsent, deliver },
+    returns: b.any.returning("number", "boolean", "Uint8Array", "undefined"),
+    passThis: true,
+    length: 1,
+  },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
@@ -43,8 +61,8 @@ const bufferedSource = {
 
 const source = { refCounted: true, finalize: true, memoryCost: true } as const;
 
-/** `owner` roots the peer that produces into this source, `sinkOwner` the peer it pipes into. */
-const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner"] as const;
+/** `owner` roots the peer that produces into this source, `sinkOwner` the peer it pipes into. `deliver` is the function of a Node stream that waits for a result. */
+const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner", "deliver"] as const;
 
 /** A Blob source never gets a native sink. */
 export const BlobInternalReadableStreamSource = b.class({

@@ -501,8 +501,8 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     });
   });
 
-  // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
-  // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.
+  // A later read fails when the result of the read before it can still be on its way to the 'data' listener. The
+  // stream is destroyed with the error, and those bytes have to reach 'data' first.
   test.concurrent("node:child_process: stdout delivers every byte read before the error", async () => {
     const report = join(String(dir), "recv-report.txt");
     expect(

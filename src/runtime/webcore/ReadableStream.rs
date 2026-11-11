@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use crate::webcore::jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
 };
@@ -798,6 +798,10 @@ pub trait SourceContext: Sized {
     fn js_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
     fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::deliver_set_cached`
+    fn js_deliver_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::deliver_get_cached`
+    fn js_deliver_get_cached(this: JSValue) -> Option<JSValue>;
 
     fn on_start(&self) -> streams::Start;
     fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result;
@@ -879,6 +883,8 @@ pub struct NewSource<C: SourceContext> {
     /// for a test file under `bun test --isolate`: a read that never ends would keep its buffer,
     /// and with it the file's whole realm, for the rest of the run.
     pub abort_handle: jsc::AbortHandle,
+    /// How many results in a row a Node stream got from the task queue ([`Self::deliver_later`]).
+    pub queued_in_a_row: Cell<u8>,
 }
 
 jsc::impl_abort_handle_owner!(
@@ -915,6 +921,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             is_closed: Cell::new(false),
             reader_context: Cell::new(None),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
+            queued_in_a_row: Cell::new(0),
         }
     }
 }
@@ -976,6 +983,22 @@ macro_rules! source_context_codegen {
             $crate::generated_bindgen::readable_stream::$gen::sink_owner_set_cached(
                 this, global, value,
             )
+        }
+        #[inline]
+        fn js_deliver_set_cached(
+            this: $crate::webcore::jsc::JSValue,
+            global: &$crate::webcore::jsc::JSGlobalObject,
+            value: $crate::webcore::jsc::JSValue,
+        ) {
+            $crate::generated_bindgen::readable_stream::$gen::deliver_set_cached(
+                this, global, value,
+            )
+        }
+        #[inline]
+        fn js_deliver_get_cached(
+            this: $crate::webcore::jsc::JSValue,
+        ) -> Option<$crate::webcore::jsc::JSValue> {
+            $crate::generated_bindgen::readable_stream::$gen::deliver_get_cached(this)
         }
     };
 }
@@ -1231,40 +1254,67 @@ impl<C: SourceContext> NewSource<C> {
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
 // The thunks of `ReadableStream.bind.ts` call these by exact name on `NewSource<C>`.
 impl<C: SourceContext> NewSource<C> {
+    /// With `deliver` (a Node stream's, see `ReadableStream.bind.ts`) the result is not returned:
+    /// `true` says that it is on its way.
     pub fn pull(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         view: JsLocal<'_>,
         flags: JsLocal<'_>,
+        deliver: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
         // Cancelled with its graph: a read its leftover code still makes stays pending. ("Done"
         // would let that code carry on with what it takes for the whole of the data.)
         if self.abort_handle.context_stopped() {
-            return Ok(jsc::JSPromise::create(global_this).to_js());
+            return Ok(match deliver {
+                Some(_) => JSValue::TRUE,
+                None => jsc::JSPromise::create(global_this).to_js(),
+            });
         }
         let view = view.to_js();
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.context.on_pull(buffer.slice_mut(), view);
-        Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
+        let Some(deliver) = deliver else {
+            return Self::process_result(this_value.to_js(), &cx, flags.to_js(), result);
+        };
+        self.deliver_later(this_value.to_js(), global_this, deliver.to_js(), result);
+        Ok(JSValue::TRUE)
     }
 
-    pub fn start(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    /// With `deliver`, bytes that were read before the start come like a pull's result, and `true` says so.
+    pub fn start(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        _chunk_size: Option<JsLocal<'_>>,
+        deliver: Option<JsLocal<'_, Callable>>,
+    ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
         self.global_this
             .set(Some(bun_ptr::BackRef::new(global_this)));
         self.reader_context.set(Some(cx.context().id()));
-        match self.context.on_start() {
-            streams::Start::Empty => Ok(JSValue::js_number(0.0)),
-            streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
-            streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size as f64)),
-            streams::Start::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
-            rc => rc.to_js(global_this),
+        match (self.context.on_start(), deliver) {
+            (streams::Start::Empty, _) => Ok(JSValue::js_number(0.0)),
+            (streams::Start::Ready, _) => Ok(JSValue::js_number(16384.0)),
+            (streams::Start::ChunkSize(size), _) => Ok(JSValue::js_number(size as f64)),
+            (streams::Start::Err(err), _) => Err(global_this.throw_value(err.to_js(global_this))),
+            // The end of the source is the result of the pull that comes next.
+            (streams::Start::OwnedAndDone(bytes), Some(deliver)) => {
+                self.deliver_later(
+                    this_value.to_js(),
+                    global_this,
+                    deliver.to_js(),
+                    streams::Result::Owned(bytes),
+                );
+                Ok(JSValue::TRUE)
+            }
+            (rc, _) => rc.to_js(global_this),
         }
     }
 
@@ -1302,8 +1352,163 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn cancel_from_js(&self, _: &mut JsScope<'_>) {
+    /// `callback` runs on a later turn of the event loop, as the close callback of a libuv handle does.
+    pub fn cancel_from_js(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        _reason: Option<JsLocal<'_>>,
+        callback: Option<JsLocal<'_, Callable>>,
+    ) {
         self.cancel();
+        let Some(callback) = callback else {
+            return;
+        };
+        let cx = cx.js_thread();
+        let global_this = cx.global();
+        // A source that nothing started has neither yet.
+        if self.global_this.get().is_none() {
+            self.global_this
+                .set(Some(bun_ptr::BackRef::new(global_this)));
+        }
+        if self.reader_context.get().is_none() {
+            self.reader_context.set(Some(cx.context().id()));
+        }
+        let this_jsvalue = this_value.to_js();
+        C::js_deliver_set_cached(this_jsvalue, global_this, callback.to_js());
+        this_jsvalue.protect();
+        streams::Pending::run_later(
+            self.delivery(Self::call_cancel_callback),
+            streams::Result::Done,
+            false,
+        );
+    }
+
+    fn delivery(&self, handler: fn(*mut c_void, streams::Result)) -> streams::PendingHandler {
+        streams::PendingHandler {
+            ctx: core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+            handler,
+            release: Self::release_delivery,
+        }
+    }
+
+    /// `deliver` gets `result` on a later turn of the event loop and never inside the call that asked for it:
+    /// from the source where it settles a read that waits, from the task queue otherwise.
+    fn deliver_later(
+        &self,
+        this_jsvalue: JSValue,
+        global_this: &JSGlobalObject,
+        deliver: JSValue,
+        result: streams::Result,
+    ) {
+        C::js_deliver_set_cached(this_jsvalue, global_this, deliver);
+        // The wrapper holds `deliver`, which holds the Node stream: all three stay until the result is delivered or dropped.
+        this_jsvalue.protect();
+        match result {
+            streams::Result::Pending(pending) => {
+                // SAFETY: BORROW_PARAM — `pending` is a field of `self.context`.
+                unsafe { (*pending).handle_with(self.delivery(Self::deliver_from_source)) };
+            }
+            result => self.queue_delivery(result),
+        }
+    }
+
+    fn queue_delivery(&self, result: streams::Result) {
+        // libuv reads a stream at most 32 times in one callback: then timers and other handles get their turn.
+        let in_a_row = self.queued_in_a_row.get() + 1;
+        let after_yield = in_a_row == 32;
+        self.queued_in_a_row
+            .set(if after_yield { 0 } else { in_a_row });
+        streams::Pending::run_later(
+            self.delivery(Self::deliver_from_queue),
+            result.detached(),
+            after_yield,
+        );
+    }
+
+    /// The source settled a read that waited.
+    fn deliver_from_source(ctx: *mut c_void, result: streams::Result) {
+        // SAFETY: `ctx` is the `self` of `delivery`; the protected wrapper holds a ref on it.
+        let this = unsafe { &*ctx.cast::<Self>() };
+        // Script made the source settle it (`setFlowing(true)` read the pipe): the turn of that script is not over.
+        if this.this_jsvalue.try_get().is_some() && this.global_this().vm().is_entered() {
+            return this.queue_delivery(result);
+        }
+        this.queued_in_a_row.set(0);
+        this.deliver_now(result);
+    }
+
+    fn deliver_from_queue(ctx: *mut c_void, result: streams::Result) {
+        // SAFETY: as in `deliver_from_source`.
+        unsafe { &*ctx.cast::<Self>() }.deliver_now(result);
+    }
+
+    /// The wrapper with its `deliver`, for a source that may still call it. Undoes the `protect()` of `deliver_later`.
+    fn take_delivery(&self) -> Option<(jsc::js_value::Protected, JSValue, jsc::ContextId)> {
+        // Finalized with the heap: there is nothing to unprotect and nobody to call.
+        let wrapper = self.this_jsvalue.try_get()?;
+        let unprotect = jsc::js_value::Protected::adopt(wrapper);
+        let deliver = C::js_deliver_get_cached(wrapper)?;
+        let context = self.reader_context.get()?;
+        let vm = self.global_this().bun_vm();
+        (vm.script_allowed() && vm.is_context_live(context))
+            .then_some((unprotect, deliver, context))
+    }
+
+    fn release_delivery(ctx: *mut c_void) {
+        // SAFETY: as in `deliver_from_source`.
+        let this = unsafe { &*ctx.cast::<Self>() };
+        if let Some(wrapper) = this.this_jsvalue.try_get() {
+            wrapper.unprotect();
+        }
+    }
+
+    fn deliver_now(&self, mut result: streams::Result) {
+        let Some((_unprotect, deliver, context)) = self.take_delivery() else {
+            return result.release();
+        };
+        // As a closed libuv handle, a cancelled source reports nothing more.
+        if self.cancelled.get() {
+            return result.release();
+        }
+        let global_this = self.global_this();
+        let vm = global_this.bun_vm();
+        let is_closed = result.is_done();
+        let (value, failed) = {
+            let entered = vm.enter_context(context);
+            let cx = global_this.js_thread(entered.context());
+            match &mut result {
+                streams::Result::Err(err) => (err.to_js(global_this), true),
+                result => match result.to_js(&cx) {
+                    Ok(value) => (value, false),
+                    Err(err) => (global_this.take_exception(err), true),
+                },
+            }
+        };
+        result.release();
+        vm.event_loop_ref().run_callback(
+            context,
+            deliver,
+            global_this,
+            JSValue::UNDEFINED,
+            &[value, JSValue::from(is_closed), JSValue::from(failed)],
+        );
+    }
+
+    fn call_cancel_callback(ctx: *mut c_void, _: streams::Result) {
+        // SAFETY: as in `deliver_from_source`.
+        let this = unsafe { &*ctx.cast::<Self>() };
+        let Some((_unprotect, callback, context)) = this.take_delivery() else {
+            return;
+        };
+        let global_this = this.global_this();
+        global_this.bun_vm().event_loop_ref().run_callback(
+            context,
+            callback,
+            global_this,
+            JSValue::UNDEFINED,
+            &[],
+        );
     }
 
     pub fn finalize(&self) {

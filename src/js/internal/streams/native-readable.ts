@@ -20,8 +20,13 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kDeliver = Symbol("deliver");
+const kPullView = Symbol("pullView");
+const kViewSize = Symbol("viewSize");
 
 const MIN_BUFFER_SIZE = 512;
+// What the native reader of a file or a pipe reads at once.
+const LARGE_VIEW_SIZE = 256 * 1024;
 let dynamicallyAdjustChunkSize = (_?) => (
   (_ = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1"),
   (dynamicallyAdjustChunkSize = () => _)
@@ -39,17 +44,28 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  // Set for good once the stream has a consumer: see `deliverOf`.
+  [kDeliver]: Deliver | undefined;
+  // What the pull that waits reads into.
+  [kPullView]: Buffer | undefined;
+  // The size of a new view, once a read has filled one. 0: the size that Readable asks for.
+  [kViewSize]: number;
   debugId: number;
 }
+
+// `result` is what pull() returns without it. `failed`: `result` is the error of the read.
+type Deliver = (result: any, isClosed: boolean, failed: boolean) => void;
 
 interface NativePtr {
   onClose: () => void;
   onDrain: (chunk: any) => void;
-  start: (highWaterMark: number) => number;
+  // With `deliver` nothing is returned: each result comes through it on a later turn of the event loop, and `true` says that one is on its way.
+  start: (highWaterMark: number, deliver?: Deliver) => any;
   drain: () => any;
-  pull: (view: any, closer: any) => any;
+  pull: (view: any, closer: any, deliver?: Deliver) => any;
   updateRef: (ref: boolean) => void;
-  cancel: (error: any) => void;
+  // `callback` runs on a later turn of the event loop.
+  cancel: (error: any, callback?: () => void) => void;
   setFlowing?: (flowing: boolean) => void;
 }
 
@@ -77,6 +93,9 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kDeliver] = undefined;
+  stream[kPullView] = undefined;
+  stream[kViewSize] = 0;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -141,6 +160,29 @@ function read(this: NativeReadable, maxToRead: number) {
     this.push(null);
     return;
   }
+  const deliver = deliverOf(this);
+  if (deliver !== undefined) {
+    if (!this[kConstructed]) {
+      const started: any = ptr.start(this[kHighWaterMark], deliver);
+      $debug(`[${this.debugId}] start, initial hwm:`, started);
+      this[kConstructed] = true;
+      if (started === true) {
+        // The bytes that the source had before its start are on their way.
+        this[kPendingRead] = true;
+        return;
+      }
+      if (typeof started === "number" && started > 1) {
+        this[kHasResized] = true;
+        this[kHighWaterMark] = Math.min(this[kHighWaterMark], started);
+      }
+    }
+    const view = getRemainingChunk(this, this[kViewSize] || maxToRead);
+    if (ptr.pull(view, this[kCloseState], deliver) === true) {
+      this[kPullView] = view;
+      this[kPendingRead] = true;
+    }
+    return;
+  }
   if (!this[kConstructed]) {
     const result: any = ptr.start(this[kHighWaterMark]);
     $debug(`[${this.debugId}] start, initial hwm:`, result);
@@ -183,6 +225,67 @@ function read(this: NativeReadable, maxToRead: number) {
   }
 }
 
+// Node's sources never push inside _read(): a libuv handle reports each read, its EOF and its close from a callback of its own, with the
+// nextTicks and promise jobs of the one before done. So once something consumes the stream, the native source delivers each result on a
+// later turn of the event loop. Before that nobody sees an order, and read() answers at once: by then Node has the bytes in its buffer.
+function deliverOf(stream: NativeReadable): Deliver | undefined {
+  let deliver = stream[kDeliver];
+  if (deliver === undefined) {
+    const state = stream._readableState;
+    if (state.flowing !== true && !state.readableListening) return undefined;
+    deliver = stream[kDeliver] = (result, isClosed, failed) => deliverResult(stream, result, isClosed, failed);
+  }
+  return deliver;
+}
+
+function deliverResult(stream: NativeReadable, result: any, isClosed: boolean, failed: boolean) {
+  $debug(
+    `[${stream.debugId}] deliver: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, isClosed: ${isClosed}, failed: ${failed}`,
+  );
+  const view = stream[kPullView];
+  stream[kPullView] = undefined;
+  stream[kPendingRead] = false;
+  if (failed) {
+    errorOrDestroy(stream, result);
+    return;
+  }
+  // A listener can read again before push() returns, so the next read's view is in place first.
+  let chunk: Buffer | ArrayBufferView;
+  if (typeof result === "number") {
+    chunk = view!.subarray(0, result);
+    stream[kRemainingChunk] = result < view!.byteLength ? view!.subarray(result) : undefined;
+    // A file or a pipe that filled a whole new view has more behind it. Its reader took that in one read while `_read()` pushed,
+    // through its own buffer.
+    if (result === view!.byteLength && view!.byteOffset === 0 && stream.$bunNativePtr?.setFlowing) {
+      stream[kViewSize] = LARGE_VIEW_SIZE;
+    }
+  } else if (typeof result === "boolean") {
+    // The source ended with the read before this one.
+    stream[kRemainingChunk] = view;
+    stream.push(null);
+    // As net.Socket does at its EOF: 'end' also comes for a 'readable' listener that took all the bytes and does not read() again.
+    stream.read(0);
+    return;
+  } else {
+    $assert($isTypedArrayView(result), "Invalid result from pull");
+    chunk = result;
+    stream[kRemainingChunk] = view;
+  }
+  let threw = true;
+  try {
+    // The end of the source is the result of the next pull: the push asks for it, also when it has no bytes.
+    pushAndCheck(stream, chunk);
+    threw = false;
+  } finally {
+    // The throw of a 'data' listener left push() before its maybeReadMore(). A libuv handle reads on.
+    if (threw) process.nextTick(readAfterListenerThrew, stream);
+  }
+}
+
+function readAfterListenerThrew(stream: NativeReadable) {
+  if (!stream.destroyed) stream.read(0);
+}
+
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);
@@ -204,7 +307,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
   }
 }
 
-// EOF is pushed a tick after the last chunk. After a destroy() in between, Node emits 'close' without 'end'.
+// For a stream that nothing consumes yet. After a destroy() before the tick, Node emits 'close' without 'end'.
 function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }
@@ -257,30 +360,15 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: NativeReadable, error: any, cb: () => void) {
+function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
   const ptr = this.$bunNativePtr;
   if (ptr) {
-    ptr.cancel(error);
-  }
-  dropReadAhead(this);
-  if (cb) {
+    // As the close callback of a libuv handle: 'close' comes on a later turn, after the promise jobs of the 'end' listeners.
     // `_destroy` reports its error through the callback.
+    ptr.cancel(error, cb && (() => cb(error)));
+  } else if (cb) {
     process.nextTick(cb, error);
   }
-}
-
-// `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.
-function dropReadAhead(stream: NativeReadable) {
-  const state = stream._readableState;
-  // Paused: Node has this buffered too, and a later read() returns it.
-  if (!state.flowing) return;
-  // Ended: the buffer is all that is left, and 'end' must not follow dropped data.
-  if (state.ended) return;
-  // Inside `_read()` the source failed: the bytes it read before the error are still delivered.
-  if (state.sync) return;
-  state.buffer.length = 0;
-  state.bufferIndex = 0;
-  state.length = 0;
 }
 
 function ref(this: NativeReadable) {

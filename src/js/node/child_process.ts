@@ -1189,20 +1189,9 @@ class ChildProcess extends EventEmitter {
         if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
       }
 
-      const stdout = this.#stdout,
-        stderr = this.#stderr;
-
-      if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
-        stdout.resume?.();
-      }
-
-      if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
-        stderr.resume?.();
-      }
+      // The 'close' of each one counts for the 'close' of the ChildProcess, so they exist before 'exit'.
+      if (this.#stdout === undefined) this.#stdout = this.#getBunSpawnIo(1);
+      if (this.#stderr === undefined) this.#stderr = this.#getBunSpawnIo(2);
     }
 
     const spawnfile = this.spawnfile;
@@ -1229,13 +1218,17 @@ class ChildProcess extends EventEmitter {
 
     this.emit("exit", this.exitCode, this.signalCode);
 
+    // As Node's flushStdio: what nothing read is pulled through to its EOF and 'close', on the tick after 'exit', so that an 'exit'
+    // listener can still read() what the child wrote.
+    process.nextTick(flushStdio, this.#stdout, this.#stderr);
+
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i: 0, autoResume?: boolean): $Node.Writable | null | undefined;
-  #getBunSpawnIo(i: 1 | 2, autoResume?: boolean): $Node.Readable | null | undefined;
-  #getBunSpawnIo(i: number, autoResume?: boolean): StdioStream | null | undefined;
-  #getBunSpawnIo(i: number, autoResume = false) {
+  #getBunSpawnIo(i: 0): $Node.Writable | null | undefined;
+  #getBunSpawnIo(i: 1 | 2): $Node.Readable | null | undefined;
+  #getBunSpawnIo(i: number): StdioStream | null | undefined;
+  #getBunSpawnIo(i: number) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1311,7 +1304,6 @@ class ChildProcess extends EventEmitter {
             );
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
-            if (autoResume) pipe.resume();
             return pipe;
           }
           case "destroyed": {
@@ -1373,7 +1365,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, false);
+          result[i] = this.#getBunSpawnIo(i);
           continue;
       }
     }
@@ -1381,15 +1373,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2));
   }
 
   get stdio() {
@@ -1686,7 +1678,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function (this: ChildProcess) {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1701,7 +1693,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function (this: ChildProcess) {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1716,7 +1708,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function (this: ChildProcess) {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1760,6 +1752,11 @@ const nodeToBunLookup = {
 };
 
 const INTERNAL_IPC_PREFIX = "NODE_";
+
+function flushStdio(stdout: $Node.Readable | null | undefined, stderr: $Node.Readable | null | undefined) {
+  if (stdout && !stdout.destroyed && stdout.readable) stdout.resume?.();
+  if (stderr && !stderr.destroyed && stderr.readable) stderr.resume?.();
+}
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;

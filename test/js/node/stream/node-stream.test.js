@@ -1,6 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -651,16 +652,15 @@ it.each(["before the first read", "after a chunk"])(
   },
 );
 
-// A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
-// buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
-// emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so
-// nothing is buffered or due at that point, and it emits only 'close'.
+// A native-backed Readable used to push its pull results inside `_read()`, so while it flowed Readable had the next
+// chunk buffered when a 'data' listener ran, and it pushed EOF a tick after the last chunk. destroy() stopped neither:
+// flow() emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously,
+// so nothing is buffered or due at that point, and it emits only 'close'.
 describe.each([
   ["Blob.stream()", size => new Blob([Buffer.alloc(size, "x")]).stream()],
   ["Response.body", size => new Response(Buffer.alloc(size, "x")).body],
 ])("Readable.fromWeb(%s): destroy() inside a 'data' listener", (_, makeWeb) => {
-  // With today's chunking, 100 bytes are the only chunk and EOF is due a tick later, 16484 bytes are two chunks with
-  // the last one buffered behind the first, and 1 MiB has more buffered behind every chunk.
+  // 100 bytes are the only chunk, with the EOF behind it. 16484 bytes were two chunks, and 1 MiB is many.
   it.each([100, 16384 + 100, 1024 * 1024])("of a %d byte body stops 'data' and 'end'", async size => {
     const r = Readable.fromWeb(makeWeb(size));
     const events = [];
@@ -707,6 +707,101 @@ it("Readable.fromWeb: a stream that ended while paused still delivers every byte
   r.resume();
   await closed;
   expect(bytes).toBe(size);
+});
+
+// Node's fromWeb pushes every chunk from a promise job. A native source answers a pull inside the call and `_read()`
+// pushed that answer, so flow() emitted the chunks back to back. A loop of `await once(r, "data")` has no listener
+// between two chunks, and got the first one.
+describe.each([
+  ["Readable.fromWeb(Blob.stream())", (bytes, dir) => Readable.fromWeb(new Blob([bytes]).stream())],
+  ["Readable.fromWeb(Response.body)", (bytes, dir) => Readable.fromWeb(new Response(bytes).body)],
+  [
+    "Readable.fromWeb(Bun.file().stream())",
+    (bytes, dir) => {
+      writeFileSync(join(String(dir), "body.bin"), bytes);
+      return Readable.fromWeb(Bun.file(join(String(dir), "body.bin")).stream());
+    },
+  ],
+  ["Duplex.from(Blob.stream())", (bytes, dir) => Duplex.from(new Blob([bytes]).stream())],
+])("%s read one event at a time", (_, makeReadable) => {
+  const size = 1_000_000;
+
+  it.each([
+    ["a promise job", false],
+    ["a nextTick", true],
+  ])("gets every byte when the next once('data') comes after %s", async (_, awaitsTick) => {
+    using dir = tempDir("native-readable-once-data", {});
+    const r = makeReadable(Buffer.alloc(size, "x"), dir);
+    const ended = once(r, "end").then(() => null);
+    let bytes = 0;
+    for (;;) {
+      const next = await Promise.race([once(r, "data"), ended]);
+      if (next === null) break;
+      bytes += next[0].length;
+      if (awaitsTick) await new Promise(resolve => process.nextTick(resolve));
+    }
+    expect(bytes).toBe(size);
+  });
+
+  // read() never returns null here, so nothing but the push of the next chunk can ask for the next 'readable'.
+  it("gets every byte when each 'readable' listener call takes all that is buffered with read(n)", async () => {
+    using dir = tempDir("native-readable-read-n", {});
+    const r = makeReadable(Buffer.alloc(size, "x"), dir);
+    const { promise: gotAll, resolve } = Promise.withResolvers();
+    let bytes = 0;
+    r.on("readable", () => {
+      if (r.readableLength > 0) bytes += r.read(r.readableLength).length;
+      if (bytes >= size) resolve(bytes);
+    });
+    expect(await gotAll).toBe(size);
+  });
+});
+
+// Between a pull and its result nothing but the native source holds the stream and its listeners.
+describe("a Readable.fromWeb() stream that only its listeners hold gets every byte across a GC", () => {
+  it("when the source answers each pull at once", async () => {
+    const size = 1_000_000;
+    let bytes = 0;
+    const { promise: ended, resolve } = Promise.withResolvers();
+    Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream())
+      .on("data", chunk => {
+        bytes += chunk.length;
+        Bun.gc(true);
+      })
+      .on("end", resolve);
+    await ended;
+    expect(bytes).toBe(size);
+  });
+
+  it("when each pull waits for the network", async () => {
+    const chunks = 8;
+    let received = "";
+    const { promise: ended, resolve } = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        let sent = 0;
+        return new Response(
+          new ReadableStream({
+            // The next chunk is sent once the client has the one before.
+            async pull(controller) {
+              while (received.length < sent * 1024) await new Promise(resolve => setImmediate(resolve));
+              if (sent === chunks) return controller.close();
+              controller.enqueue(Buffer.alloc(1024, 97 + sent++));
+            },
+          }),
+        );
+      },
+    });
+    Readable.fromWeb((await fetch(server.url)).body)
+      .on("data", chunk => {
+        received += chunk;
+        Bun.gc(true);
+      })
+      .on("end", resolve);
+    await ended;
+    expect(received).toBe(Array.from({ length: chunks }, (_, i) => Buffer.alloc(1024, 97 + i).toString()).join(""));
+  });
 });
 
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {

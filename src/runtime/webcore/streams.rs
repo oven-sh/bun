@@ -186,6 +186,17 @@ impl StreamResult {
             _ => {}
         }
     }
+
+    /// The same result with a copy of the bytes it borrowed, for a consumer that takes it after the call.
+    pub(crate) fn detached(self) -> StreamResult {
+        match self {
+            StreamResult::Temporary(bytes) => StreamResult::Owned(bytes.slice().to_vec()),
+            StreamResult::TemporaryAndDone(bytes) => {
+                StreamResult::OwnedAndDone(bytes.slice().to_vec())
+            }
+            result => result,
+        }
+    }
 }
 
 /// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
@@ -428,6 +439,7 @@ impl Default for Pending {
             future: PendingFuture::Handler(PendingHandler {
                 ctx: core::ptr::null_mut(),
                 handler: |_, _| {},
+                release: |_| {},
             }),
             result: StreamResult::Done,
             state: PendingState::None,
@@ -445,6 +457,28 @@ impl Pending {
         };
         self.state = PendingState::Pending;
         prom
+    }
+
+    /// Parks the read for native code: `handler` takes the result where the source settles it.
+    pub(crate) fn handle_with(&mut self, handler: PendingHandler) {
+        self.future = PendingFuture::Handler(handler);
+        self.state = PendingState::Pending;
+    }
+
+    /// `handler` takes `result` from the task queue, on a later turn of the event loop: with
+    /// `after_yield`, once the loop has polled again.
+    pub(crate) fn run_later(handler: PendingHandler, result: StreamResult, after_yield: bool) {
+        let task = bun_event_loop::Task::from_boxed(Box::new(Pending {
+            future: PendingFuture::Handler(handler),
+            result,
+            state: PendingState::Pending,
+        }));
+        let event_loop = VirtualMachine::get().event_loop_ref();
+        if after_yield {
+            event_loop.enqueue_task_after_yield(task);
+        } else {
+            event_loop.enqueue_task(task);
+        }
     }
 
     pub(crate) fn run_on_next_tick(&mut self) {
@@ -480,8 +514,11 @@ impl Pending {
         // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.state = PendingState::Used;
-        if let PendingFuture::Promise { promise, .. } = &boxed.future {
-            JSPromise::opaque_ref(*promise).to_js().unprotect();
+        match &boxed.future {
+            PendingFuture::Promise { promise, .. } => {
+                JSPromise::opaque_ref(*promise).to_js().unprotect()
+            }
+            PendingFuture::Handler(handler) => (handler.release)(handler.ctx),
         }
         drop(boxed);
     }
@@ -517,6 +554,8 @@ pub(crate) enum PendingFuture {
 pub(crate) struct PendingHandler {
     pub ctx: *mut c_void,
     pub(crate) handler: PendingHandlerFn,
+    /// Runs in place of `handler` when the loop drops the result unrun.
+    pub(crate) release: fn(ctx: *mut c_void),
 }
 
 type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);

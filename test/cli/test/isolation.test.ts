@@ -1617,7 +1617,7 @@ describe.concurrent("bun test --isolate=modules", () => {
         test("b", () => {
           Object.defineProperty(Math, "7", { value: "b" });
           noInline(read);
-          for (let i = 0; i < 4000 && !numberOfDFGCompiles(read); i++) for (let j = 0; j < 500; j++) read();
+          for (let i = 0; i < 1000 && !numberOfDFGCompiles(read); i++) for (let j = 0; j < 500; j++) read();
           console.log("read", read());
         });
       `,

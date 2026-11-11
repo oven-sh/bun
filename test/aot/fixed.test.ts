@@ -63,17 +63,16 @@ const forAnExecutable = bunEnv.BUN_AOT_WRITES_PROGRAM_ALONE ? [] : withoutDebugI
 
 const folderOfPrograms = join(import.meta.dir, "fixed");
 // The folders are removed when the file is done, not behind each `describe`: a hook between two of them ends the group of cases that run beside one
-// another, and then the one program of a small .txt file runs with nothing beside it.
-const folders: Disposable[] = [];
-afterAll(() => folders.forEach(folder => folder[Symbol.dispose]()));
+// another, and then the one program of a small .txt file runs with nothing beside it. A folder that cannot be removed keeps no other from it.
+const folders = new DisposableStack();
+afterAll(() => folders.dispose());
 
 for (const file of readdirSync(folderOfPrograms).sort()) {
   if (!file.endsWith(".txt")) continue;
   const programs = read(readFileSync(join(folderOfPrograms, file), "utf8"));
   const names = [...programs.keys()];
-  const dir = tempDirWithBunTypes("fixed", Object.assign({}, ...[...programs.values()].map(({ files }) => files)));
-  folders.push(dir);
-  const folder = String(dir);
+  const filesOfAll = Object.assign({}, ...[...programs.values()].map(({ files }) => files));
+  const folder = String(folders.use(tempDirWithBunTypes("fixed", filesOfAll)));
   describe(file.slice(0, -".txt".length), () => {
     test.concurrent.each(names)(
       "%s",

@@ -2,7 +2,7 @@ use super::imports::has_source;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::module_cache::is_function_that_loader_calls;
-use super::resolver::{AliasSource, ExprState, ResolvedValue, Resolver};
+use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{SourceDialect, SpyCall, passes_every_assertion};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
@@ -10,12 +10,13 @@ use crate::builtins::table::{
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    AssignmentTarget, Binding, BindingInitializer, Decl, Parent, PatParent, StoreKind,
+    AssignmentTarget, Binding, BindingInitializer, BindingStability, Decl, Parent, PatParent,
+    StoreKind,
 };
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, MemberKind, NodeData, PatId,
-    PatKind, PropKey, PropKind, StmtKind,
+    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, MemberKind, NodeData,
+    PatId, PatKind, PropKey, PropKind, StmtKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
 use bun_sema::util::{FxHashSet, SharedSort};
@@ -386,10 +387,155 @@ pub(super) fn find_what_opens_where_handed_on(
 }
 
 impl Resolver<'_, '_> {
+    pub(super) fn exposes_first_operand(&self, call: CallId, function: BuiltinId) -> bool {
+        let hir = self.input.hir;
+        let mut operands = hir.ids(hir[call].args).skip(1);
+        match find_writer(function) {
+            Some(Writer::Spy) => {
+                *(self.shows_receivers_of_spies).get_or_init(|| self.spies_show_receivers())
+            }
+            Some(Writer::MemberOfOperand) => operands
+                .nth(1)
+                .is_some_and(|descriptor| self.describes_function_reading_this(descriptor)),
+            Some(Writer::MemberOfReceiverOperand) => operands
+                .nth(1)
+                .is_some_and(|value| self.is_function_reading_this(value)),
+            Some(Writer::KeysOfOperands) => operands.any(|operand| {
+                self.any_written_property(operand, |_, value| match function {
+                    BuiltinId::ObjectDefineProperties => {
+                        self.describes_function_reading_this(value)
+                    }
+                    _ => self.is_function_reading_this(value),
+                })
+            }),
+            _ => false,
+        }
+    }
+
+    fn any_written_property(
+        &self,
+        object: ExprId,
+        is_found: impl Fn(PropKey, ExprId) -> bool,
+    ) -> bool {
+        let hir = self.input.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(object)].kind else {
+            return false;
+        };
+        properties.iter().any(|property| {
+            let property = &hir[property];
+            property.kind != PropKind::Spread && is_found(property.key, property.value)
+        })
+    }
+
+    fn describes_function_reading_this(&self, descriptor: ExprId) -> bool {
+        self.any_written_property(descriptor, |key, value| {
+            matches!(key, PropKey::Name(known::value | known::get | known::set))
+                && self.is_function_reading_this(value)
+        })
+    }
+
+    fn spies_show_receivers(&self) -> bool {
+        let hir = self.input.hir;
+        self.evaluated_exprs().any(|member| {
+            let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
+                return false;
+            };
+            match name {
+                known::contexts | known::instances => {
+                    let object = hir.skip_type_assertions(object);
+                    let read = hir.member_key(object).map(|(_, key)| key);
+                    matches!(read, Some(MemberKey::Name(known::mock)))
+                }
+                known::mockReturnThis => !self.is_mock_of_another_object(object),
+                known::mockImplementation
+                | known::mockImplementationOnce
+                | known::withImplementation => {
+                    self.is_given_function_reading_this(member)
+                        && !self.is_mock_of_another_object(object)
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn is_given_function_reading_this(&self, method: ExprId) -> bool {
+        let hir = self.input.hir;
+        let callee = self.outermost_assertion_of(method);
+        let Parent::Expr(user) = self.input.bound.parent_of_expr(callee) else {
+            return false;
+        };
+        match hir[user].kind {
+            ExprKind::Call(call) if hir[call].callee == callee => hir
+                .ids(hir[call].args)
+                .next()
+                .is_some_and(|first| self.is_function_reading_this(first)),
+            _ => false,
+        }
+    }
+
+    fn is_mock_of_another_object(&self, mock: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut mock = hir.skip_type_assertions(mock);
+        loop {
+            match hir[mock].kind {
+                ExprKind::Call(call) => {
+                    let callee = hir.skip_type_assertions(hir[call].callee);
+                    if let Some(function) = mentioned_id(self.state(callee)) {
+                        let first = hir.ids(hir[call].args).next();
+                        let is_spy =
+                            find_writer(table::canonical_id(function)) == Some(Writer::Spy);
+                        return match first {
+                            Some(object) if is_spy => {
+                                self.value_of(object).is_none()
+                                    && self.held_value_of(object).is_none()
+                            }
+                            _ => is_of_test_runner(function),
+                        };
+                    }
+                    let Some((object, _)) = hir.member_key(callee) else {
+                        return false;
+                    };
+                    mock = hir.skip_type_assertions(object);
+                }
+                ExprKind::Ident(_) => {
+                    let Binding::Symbol(name) = bound.binding(mock) else {
+                        return false;
+                    };
+                    let [Decl::Var(pattern)] = *bound.symbol(name).decls else {
+                        return false;
+                    };
+                    match bound.pat_parent[pattern.idx()] {
+                        PatParent::Var(declaration)
+                            if hir[declaration].init.is_some()
+                                && bound.binding_stability(name) == BindingStability::Stable =>
+                        {
+                            let initializer = hir.skip_type_assertions(hir[declaration].init);
+                            if matches!(hir[initializer].kind, ExprKind::Ident(_)) {
+                                return false;
+                            }
+                            mock = initializer;
+                        }
+                        _ => return false,
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+
     fn find_holder_behind(&self, object: ExprId) -> Option<BuiltinId> {
         match self.state(self.input.hir.skip_type_assertions(object)) {
             ExprState::DynamicGlobal(path) => Some(holder_of(path.id)),
             state => mentioned_id(state).map(holder_of),
+        }
+    }
+
+    fn is_module_namespace(&self, object: ExprId) -> bool {
+        match self.state(self.input.hir.skip_type_assertions(object)) {
+            ExprState::Builtin(value) | ExprState::Held(value) => {
+                value.kind == HolderKind::ModuleNamespace
+            }
+            _ => false,
         }
     }
 
@@ -865,11 +1011,11 @@ impl Resolver<'_, '_> {
                 found.followed.extend([first, object]);
                 let keys = self.find_written_keys(key);
                 match self.find_holder_behind(object) {
-                    Some(holder) => {
+                    Some(holder) if writer != Writer::Spy || !self.is_module_namespace(object) => {
                         let runs = self.find_when_write_runs(expr, holder, keys.as_deref());
                         self.note_write_under(holder, keys, runs, found);
                     }
-                    None if writer == Writer::Spy => found.spy_calls.push(SpyCall {
+                    _ if writer == Writer::Spy => found.spy_calls.push(SpyCall {
                         call: expr,
                         object,
                         name: match keys.as_deref() {
@@ -877,7 +1023,7 @@ impl Resolver<'_, '_> {
                             _ => None,
                         },
                     }),
-                    None => {}
+                    _ => {}
                 }
             }
             Writer::MemberOfReceiver => {

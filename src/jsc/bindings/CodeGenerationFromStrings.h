@@ -123,4 +123,11 @@ inline bool isDataOrBlobURL(const WTF::String& specifier)
     return specifier.startsWith("data:"_s) || specifier.startsWith("blob:"_s);
 }
 
+// Such a URL may name a compiled module, if it is a literal specifier of an import or of a Worker. With "=strict" a
+// computed specifier cannot load it.
+inline bool isModuleRefusedByName(const WTF::String& name)
+{
+    return isDataOrBlobURL(name) && isCodeGenerationFromStringsStrictByFlags();
+}
+
 } // namespace Bun

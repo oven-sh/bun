@@ -2837,8 +2837,8 @@ fn describe_name_of_worker(text: &str) -> Option<Vec<String>> {
                 return None;
             };
             let argument = s.hir.ids(s.hir[call].args).next()?;
-            let specifier = s.analysis.find_name_of_worker(argument)?;
-            Some(describe_specifier(s, specifier))
+            let found = s.analysis.find_name_of_worker(argument)?;
+            Some(describe_specifier(s, &found.name))
         });
     });
     described

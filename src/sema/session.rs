@@ -27,7 +27,7 @@ use std::any::Any;
 use std::cell::{Cell, UnsafeCell};
 use std::ptr::NonNull;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::ThreadId;
 
 /// `FxHashMap` in an arena.
@@ -73,6 +73,8 @@ pub struct Session {
     first: Link,
     /// Values passed to `keep`.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
+    /// See `set_readers_are_tasks`.
+    are_readers_tasks: AtomicBool,
 }
 
 /// A session that its user empties once it's done with it, while others still refer to the slot.
@@ -123,7 +125,27 @@ impl Session {
             number: NEXT_SESSION_NUMBER.fetch_add(1, Ordering::Relaxed),
             first: OnceLock::new(),
             kept: AppendVec::new(),
+            are_readers_tasks: AtomicBool::new(false),
         }
+    }
+
+    /// While this is set, whoever looks up something in a table of the session does it in a `ReadingTask`. So what a table
+    /// no longer uses is freed when the tasks that may be reading it have ended.
+    pub fn set_readers_are_tasks(&self, are_tasks: bool) {
+        self.are_readers_tasks.store(are_tasks, Ordering::Relaxed);
+    }
+
+    /// Returns false if it can't tell when `block` is no longer read.
+    ///
+    /// # Safety
+    /// `block` was allocated in the session. From now on no thread finds it anymore.
+    pub(crate) unsafe fn free_when_unread(&self, block: NonNull<u8>) -> bool {
+        let are_tasks = self.are_readers_tasks.load(Ordering::Relaxed);
+        if are_tasks {
+            // SAFETY: caller contract. `forget_blocks_of` is called when the session ends.
+            unsafe { crate::program::free_behind_tasks(self.number, block) };
+        }
+        are_tasks
     }
 
     /// Returns the calling thread's arena, creating it on the thread's first call.
@@ -227,6 +249,7 @@ impl Session {
     }
 
     pub fn drop_in_parallel(mut self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        crate::program::forget_blocks_of(self.number);
         /// How many kept values a thread drops at a time.
         const RUN: usize = 256;
         let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
@@ -270,6 +293,7 @@ impl Drop for Session {
     /// sessions, because `mi_heap_destroy` detaches each thread's part of the heap under that
     /// thread's lock (`_mi_heap_detach_theaps`).
     fn drop(&mut self) {
+        crate::program::forget_blocks_of(self.number);
         let mut next = self.first.take();
         while let Some(mut node) = next {
             next = node.next.take();

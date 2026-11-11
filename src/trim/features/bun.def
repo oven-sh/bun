@@ -79,6 +79,7 @@ feature BunJsc "bun:jsc"
 feature ModuleGraph "Bun.ModuleGraph"
 
 feature Valkey "Bun.redis and Bun.RedisClient"
+  cxx-function create_no_js_no_pubsub JSValkeyClient>::create_no_js_no_pubsub$
 
 feature RuntimeTranspiler "Bun.Transpiler and the transpiler for code loaded at run time"
   minimum 700000

@@ -521,8 +521,7 @@ public:
     WriteBarrier<JSObject> exports;
     WriteBarrier<JSString> specifier;
     WriteBarrier<JSString> writtenSpecifier;
-    // Set when a loaded ES module is patched in place. It is the owner of the values that the mock has laid over the module's exports
-    // (JSModuleNamespaceObject::layExportOverride), and its properties are the names of those exports.
+    // Set when a loaded ES module is patched in place: the owner for layExportOverride(), keyed by the export names this mock laid.
     WriteBarrier<JSObject> originalExports;
     WriteBarrier<Unknown> originalCommonJSExports;
     WriteBarrier<Unknown> commonJSExportsOfOriginal;
@@ -531,8 +530,7 @@ public:
     // These outlive the patched module's eviction, so unmocking still restores it for whatever stays linked to it (a preload, say).
     WriteBarrier<JSC::JSModuleNamespaceObject> patchedNamespace;
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
-    // The preload's mock that this mock of a test file patches the same module over. What that one has laid waits aside from the
-    // time this one lays the same export, and the rest from the end of this one, until the preload's mock comes back.
+    // The preload's mock that this test file's mock patches over. It waits set aside until the file ends.
     WriteBarrier<JSModuleMock> mockOfPreloadBelow;
     // Patches end newest first when the test file ends: the owner that stored last in a variable ends without a walk over the others.
     unsigned patchOrder { 0 };
@@ -3109,7 +3107,6 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
-// What owns the values that a mock has laid over the exports of an ES module: see JSModuleMock::originalExports.
 static JSObject* ownerOfExportOverrides(JSModuleMock* mock)
 {
     return mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
@@ -3240,7 +3237,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                     moduleNamespaceObject->setExportOverrideAside(globalObject, names[i], ownerBelow);
                     RETURN_IF_EXCEPTION(scope, );
                 }
-                // A preload's mock that comes back lays what waited aside, and what it has not laid yet. What it shows has stayed where the preload laid it.
+                // A preload's mock that comes back skips what still stands: it lays only what waited aside or was never laid.
                 JSValue found;
                 bool standsAlready = comesBack && moduleNamespaceObject->exportFoundByOverride(globalObject, names[i], owner, found);
                 RETURN_IF_EXCEPTION(scope, );
@@ -3916,9 +3913,7 @@ static void keepInFlightModuleMock(Zig::GlobalObject* globalObject, JSModuleMock
         globalObject->onLoadPlugins.moduleMocksBeingLoaded.add(specifier, JSC::Strong<JSC::JSObject> { globalObject->vm(), mock });
 }
 
-// Ends what `owner` has laid over the exports of the module. Where the owner's value shows, the engine puts back what the owner found. Where another owner
-// has laid later (a mock of a module that exports the same variable, a spy), that one keeps showing, and the engine hands it what this owner found.
-// `staysAside`: the owner is a preload's mock that a test file removes. It comes back at the end of the file, where it stood.
+// Ends what `owner` laid. `staysAside`: a preload's mock that a test file removes, which comes back when the file ends.
 static void endExportOverrides(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, JSObject* owner, bool staysAside = false)
 {
     using End = JSC::JSModuleNamespaceObject::ExportOverrideEnd;
@@ -4190,7 +4185,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         endExportOverrides(globalObject, patched, saved, comesBack);
         RETURN_IF_EXCEPTION(scope, );
     }
-    // What the preload's mock below still shows waits aside from here on, as what this mock laid over has waited.
+    // The rest of what the preload's mock below shows waits aside too, until the file ends.
     if (auto* below = mock->mockOfPreloadBelow.get()) {
         JSObject* savedBelow = ownerOfExportOverrides(below);
         if (auto* patched = below->patchedNamespace.get(); patched && savedBelow) {
@@ -6205,7 +6200,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 #endif
     // With an earlier mock in place, what's loaded isn't the original any more, so take over what that mock has laid, and the end of it.
     if (previous && !keepsLoadedModule) {
-        // A test file's mock owns what it lays over a preload's mock, which comes back at the end of the file where it stood: see JSModuleMock::mockOfPreloadBelow.
+        // A test file's mock over a preload's mock gets its own owner: the preload's mock comes back in place when the file ends.
         if (previous->isFromPreload && !mock->isFromPreload && previous->originalExports && loaded.esmNamespace) {
             mock->originalExports.set(vm, mock, JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
             mock->mockOfPreloadBelow.set(vm, mock, previous);

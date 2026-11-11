@@ -369,7 +369,6 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
     async close() {
       const { happyDOM } = win;
       // Until happy-dom 18, happyDOM.close() throws for a window that the file already closed.
-      // Not isClosed(): a file may set `document` to undefined, and that is written through to the window.
       if (win.closed) return;
       if (!happyDOM.abort) return void happyDOM.cancelAsync();
       // Aborted first, so that what a pending task does when it is aborted still has the document.

@@ -1129,11 +1129,12 @@ impl BlobExt for Blob {
             return JSValue::TRUE;
         }
 
-        // We say regular files and pipes exist.
+        // Every file kind a stat finds exists, except a directory. `seekable` is
+        // set only by a successful stat, and `mode` is meaningful only then.
         let store::Data::File(file) = &store.data else {
             return JSValue::FALSE;
         };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
+        JSValue::from(file.seekable.is_some() && !bun_sys::S::ISDIR(file.mode))
     }
     fn write(
         &self,
@@ -1204,7 +1205,7 @@ impl BlobExt for Blob {
         }
     }
 
-    // This mostly means 'can it be read?'
+    // True does not mean that a read succeeds or ends: a socket or a device also exists.
     fn exists(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.is_s3() {
             return crate::webcore::s3_file::S3BlobStatTask::exists(&cx.js_thread(), self);

@@ -188,7 +188,12 @@ test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .
 test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > twoClasses
 test/js/bun/util/inspect-error.test.js: AggregateError whose errors cannot be walked > the error a second load of a module that failed to build rejects with
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > a `cause` getter that loads the throwing file again
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > call sites of an external map that has no sourcesContent
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > code frame of an external map that has no sourcesContent
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map that has no sourcesContent
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map whose original source is unavailable
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > inline map with an empty source name in a blob module: sourcesContent [null]
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > inline map with an empty source name in a blob module: sourcesContent absent
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction does not expose the module loader reaction
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction hides internal callees from sloppy code
 test/js/node/v8/capture-stack-trace.test.js: a stack that a collection materializes reads the same in a Worker

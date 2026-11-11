@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 1003, jest: 624 };
+  const tests = { vitest: 1004, jest: 624 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -1527,6 +1527,33 @@ describe.concurrent("the number of a snapshot matcher that throws as it matches 
     expect(exitCode).toBe(0);
   });
 
+  // `existsSync()` does not find these paths. Vitest takes such a path for a new file: the matcher has its number and
+  // prints, and then fails when it writes. Bun reports the error of its read. On Windows that error is another one.
+  test.skipIf(isWindows)("toMatchFileSnapshot() reports the error of a path that it cannot read", async () => {
+    using dir = tempDir("snapshot-number-unreadable", {
+      "a.test.js": `
+        test.each([
+          ["under a file", "./a.test.js/never-written.txt", "ENOTDIR"],
+          ["a name that is too long", "./" + Buffer.alloc(300, "n") + ".txt", "ENAMETOOLONG"],
+          ["a path that is too long", "./" + Buffer.alloc(6000, "n") + ".txt", "ENAMETOOLONG"],
+        ])("%s", async (_, path, code) => {
+          let error;
+          try { await expect("text").toMatchFileSnapshot(path); } catch (thrown) { error = thrown; }
+          expect(error?.code).toBe(code);
+          expect("after").toMatchSnapshot();
+        });
+      `,
+      "__snapshots__/a.test.js.snap": entries("bun", [
+        "under a file 2",
+        "a name that is too long 2",
+        "a path that is too long 2",
+      ]),
+    });
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 3, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // Vitest 5.0.3 wrote this file. The tests fail there too: what `expect.soft()` reports fails its test at the end.
   test("expect.soft() goes on, and the next snapshot has the next number", async () => {
     using dir = tempDir("snapshot-number-soft", {
@@ -1624,17 +1651,23 @@ describe.concurrent("the number of a snapshot matcher that throws as it matches 
       });
       const first = await runTests(String(dir), { CI: "true" });
       const adds = step !== "--update-snapshots";
-      if (adds) {
-        writeFileSync(join(String(dir), "a.test.js"), tests + failsThenSnapshots("added"));
-        await runTests(String(dir), { CI: "false" });
-      } else {
-        await runTests(String(dir), { CI: "true" }, step);
-      }
+      if (adds) writeFileSync(join(String(dir), "a.test.js"), tests + failsThenSnapshots("added"));
+      const second = await (adds
+        ? runTests(String(dir), { CI: "false" })
+        : runTests(String(dir), { CI: "true" }, step));
       expect(snap(dir)).toBe(headers.jest + (adds ? entry("added 2") + older + entry("t 2") : entry("t 2") + older));
-      const next = await runTests(String(dir), { CI: "true" });
-      expect([first, next].map(({ pass, fail, stderr }) => ({ pass, fail, stderr: fail ? stderr : "" }))).toEqual([
-        { pass: 2, fail: 0, stderr: "" },
-        { pass: adds ? 3 : 2, fail: 0, stderr: "" },
+      const third = await runTests(String(dir), { CI: "true" });
+      const pass = adds ? 3 : 2;
+      const results = [first, second, third].map(({ pass, fail, exitCode, stderr }) => ({
+        pass,
+        fail,
+        exitCode,
+        stderr: fail ? stderr : "",
+      }));
+      expect(results).toEqual([
+        { pass: 2, fail: 0, exitCode: 0, stderr: "" },
+        { pass, fail: 0, exitCode: 0, stderr: "" },
+        { pass, fail: 0, exitCode: 0, stderr: "" },
       ]);
     },
   );

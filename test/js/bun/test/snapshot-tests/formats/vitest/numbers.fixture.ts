@@ -170,6 +170,7 @@ describe("only in Vitest", () => {
   test.each([
     ["a path under a file", "./numbers.fixture.ts/never-written.txt"],
     ["a name that is too long", `./${Buffer.alloc(300, "n")}.txt`],
+    ["a path that is too long", `./${Buffer.alloc(6000, "n")}.txt`],
   ])("toMatchFileSnapshot() with %s", async (_, path) => {
     let message;
     try {

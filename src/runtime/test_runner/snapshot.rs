@@ -145,7 +145,8 @@ pub(crate) enum FileOutcome {
 /// What `toMatchFileSnapshot()` found at its path.
 pub(crate) struct FileSnapshot<'a> {
     path: &'a [u8],
-    saved: Option<Vec<u8>>,
+    /// An error is the one of a path that `existsSync()` does not find. The matcher reports it after its print.
+    saved: Result<Option<Vec<u8>>, bun_sys::Error>,
 }
 
 pub(crate) struct Snapshots {
@@ -693,20 +694,21 @@ impl Snapshots {
         let Some((test_dir, _, len)) = snapshot_file_path(files, file_id, snapshot_path_buf.0.as_mut_slice()) else {
             return Err(FileOutcome::NoTest(Error::FailedToOpenSnapshotFile));
         };
-        let Some(path) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(test_dir, path_buf, &[path])
-        else {
-            return Err(FileOutcome::Failed(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)));
-        };
-        if path == &snapshot_path_buf.0[..len] {
+        let joined =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(test_dir, path_buf, &[path]);
+        if joined == Some(&snapshot_path_buf.0[..len]) {
             return Err(FileOutcome::IsSnapshotFile);
         }
 
-        let saved = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-            Ok(saved) => Some(saved),
-            // Vitest asks `existsSync()`, which is false for a path that cannot be looked up too.
-            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT || !bun_sys::exists(path) => None,
-            Err(err) => return Err(FileOutcome::Failed(err.with_path(path))),
+        // Vitest asks `existsSync()`. It takes a path that is not found for a new file, and fails when it writes it.
+        let (path, saved) = match joined {
+            None => (&b""[..], Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))),
+            Some(path) => match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+                Ok(saved) => (path, Ok(Some(saved))),
+                Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => (path, Ok(None)),
+                Err(err) if !bun_sys::exists(path) => (path, Err(err.with_path(path))),
+                Err(err) => return Err(FileOutcome::Failed(err.with_path(path))),
+            },
         };
         // Vitest counts a file snapshot among the test's snapshots too.
         if let Err(err) = self.add_count(expect, format, hint) {
@@ -718,6 +720,10 @@ impl Snapshots {
     #[cold]
     pub(crate) fn settle_file(&mut self, file: FileSnapshot<'_>, received: &[u8]) -> FileOutcome {
         let FileSnapshot { path, saved } = file;
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(err) => return FileOutcome::Failed(err),
+        };
         match saved {
             Some(mut saved) => {
                 if strings::contains(&saved, b"\r\n") && !strings::contains(received, b"\r\n") {

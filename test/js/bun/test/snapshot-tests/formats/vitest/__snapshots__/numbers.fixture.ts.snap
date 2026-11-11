@@ -70,4 +70,6 @@ exports[`only in Vitest > toMatchFileSnapshot() 2`] = `"after"`;
 
 exports[`only in Vitest > toMatchFileSnapshot() with a name that is too long 2`] = `"after"`;
 
+exports[`only in Vitest > toMatchFileSnapshot() with a path that is too long 2`] = `"after"`;
+
 exports[`only in Vitest > toMatchFileSnapshot() with a path under a file 2`] = `"after"`;

@@ -1533,7 +1533,9 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
         .filter_map(|refusal| {
             let place = &refusal[bun_core::strings::index_of(refusal, b"', at ")? + 6..];
             let place = &place[..bun_core::strings::index_of(place, b", while ")?];
-            place.rsplitn(3, |&byte| byte == b':').nth(2)
+            let (file_and_line, _column) = bun_core::strings::rsplit_once_char(place, b':')?;
+            let (file, _line) = bun_core::strings::rsplit_once_char(file_and_line, b':')?;
+            Some(file)
         })
         .collect();
     askers.sort_unstable();

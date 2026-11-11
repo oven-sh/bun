@@ -346,7 +346,9 @@ fn find_stations(mocked: &[&str], rest: &str, others: &[(&str, &str)]) -> Vec<St
             .parse()
             .ok()?;
         let path = program.strings.get(program.modules[module].path);
-        let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
+        let after_slash =
+            bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+        let name = &path[after_slash..];
         Some(String::from_utf8_lossy(name).into_owned())
     };
     let mut is_in_test_file = false;

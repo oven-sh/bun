@@ -752,14 +752,15 @@ fn read_path_given_to_create_require(
         paths_read.push((given, *path));
         return Ok(Some(ResolvedFrom::PathFromOwnFolder(*path)));
     };
-    let last = below.rsplit(|&byte| byte == b'/').next();
-    if matches!(last, Some(b"." | b"..")) {
+    let slash = strings::last_index_of_char(below, b'/');
+    let last = &below[slash.map_or(0, |slash| slash + 1)..];
+    if matches!(last, b"." | b"..") {
         return Err(UnreadPath);
     }
     paths_read.push((given, *path));
-    match last {
-        Some(name) if name.len() == below.len() => Ok(None),
-        _ => Ok(Some(ResolvedFrom::PathFromOwnFolder(*path))),
+    match slash {
+        None => Ok(None),
+        Some(_) => Ok(Some(ResolvedFrom::PathFromOwnFolder(*path))),
     }
 }
 

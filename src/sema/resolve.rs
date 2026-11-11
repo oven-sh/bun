@@ -5398,10 +5398,8 @@ fn parse_partial(text: &[u8]) -> Option<PartialVersion<'_>> {
             |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '\u{17f}' | '\u{212a}');
         !parts.is_empty() && parts.chars().all(is_part)
     };
-    let mut parts = text.splitn(3, |&c| c == b'.');
-    let major_str = parts.next()?;
-    let minor_str = parts.next().unwrap_or(b"*");
-    let rest = parts.next().unwrap_or(b"*");
+    let (major_str, rest) = strings::split_once_char(text, b'.').unwrap_or((text, b"*"));
+    let (minor_str, rest) = strings::split_once_char(rest, b'.').unwrap_or((rest, b"*"));
     let end = strings::index_of_any(rest, b"-+").unwrap_or(rest.len());
     let (patch_str, qualifier) = rest.split_at(end);
     let (pre, build) = match strings::split_once_char(qualifier, b'+') {
@@ -5569,5 +5567,28 @@ mod tests {
                 bstr::BStr::new(path)
             );
         }
+    }
+
+    #[test]
+    fn partial_version_is_split_at_its_first_two_dots() {
+        fn parts(text: &str) -> Option<([&str; 3], &str)> {
+            let partial = parse_partial(text.as_bytes())?;
+            let part = |part| std::str::from_utf8(part).unwrap();
+            Some((
+                [partial.major_str, partial.minor_str, partial.patch_str].map(part),
+                part(partial.version.prerelease),
+            ))
+        }
+        assert_eq!(parts("1"), Some((["1", "*", "*"], "")));
+        assert_eq!(parts("1.2"), Some((["1", "2", "*"], "")));
+        assert_eq!(parts("1.2.3"), Some((["1", "2", "3"], "")));
+        assert_eq!(parts("1.2.3-rc.1+build.5"), Some((["1", "2", "3"], "rc.1")));
+        assert_eq!(parts("1.x"), Some((["1", "x", "*"], "")));
+        assert_eq!(parts("*"), Some((["*", "*", "*"], "")));
+        // A fourth part is not a patch, and an empty part is not a number.
+        assert_eq!(parts("1.2.3.4"), None);
+        assert_eq!(parts("1..3"), None);
+        assert_eq!(parts("1."), None);
+        assert_eq!(parts(""), None);
     }
 }

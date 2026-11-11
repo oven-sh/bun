@@ -5776,7 +5776,8 @@ fn count_path_components(path: &[u8]) -> usize {
 
 /// `TryGetRealFileNameForNonJSDeclarationFileName`
 fn try_get_real_file_name_for_non_js_declaration_file_name(file_name: &[u8]) -> Option<Vec<u8>> {
-    let base_name = file_name.rsplit(|&b| b == b'/').next().unwrap_or(file_name);
+    let base_name =
+        &file_name[strings::last_index_of_char(file_name, b'/').map_or(0, |slash| slash + 1)..];
     let no_extension = file_name.strip_suffix(b".ts")?;
     if !strings::contains(base_name, b".d.") || base_name.ends_with(b".d.ts") {
         return None;

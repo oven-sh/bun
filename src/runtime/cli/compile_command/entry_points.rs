@@ -476,8 +476,9 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
 }
 
 fn strip_scope(package_name: &[u8]) -> &[u8] {
-    let after_last_slash = package_name.rsplit(|&byte| byte == b'/').next();
-    after_last_slash.unwrap_or(package_name)
+    let after_last_slash =
+        bun_core::strings::last_index_of_char(package_name, b'/').map_or(0, |slash| slash + 1);
+    &package_name[after_last_slash..]
 }
 
 fn find_index_file(directory: &[u8]) -> Option<Box<[u8]>> {

@@ -598,7 +598,7 @@ impl<'s> Folder<'_, 's> {
 }
 
 pub fn ends_in_name_with_extension(text: &[u8]) -> bool {
-    let name = text.rsplit(|&byte| byte == b'/').next().unwrap_or(text);
+    let name = &text[strings::last_index_of_char(text, b'/').map_or(0, |slash| slash + 1)..];
     matches!(strings::last_index_of_char(name, b'.'), Some(dot) if dot != 0 && dot + 1 != name.len())
 }
 

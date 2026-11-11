@@ -1769,12 +1769,7 @@ fn run_one(
             false => Vec::new(),
         };
         // The harness requests `\r\n`.
-        for line in emitted.split_inclusive(|&b| b == b'\n') {
-            match line.strip_suffix(b"\n") {
-                Some(line) => text.extend_from_slice(&[line, b"\r\n"].concat()),
-                None => text.extend_from_slice(line),
-            }
-        }
+        text.extend(replace_in_bytes(&emitted, b"\n", b"\r\n"));
         let is_found = looked_up.as_ref() == Some(&output);
         let mut emitted_files = dts.lock();
         emitted_files.retain(|it| it.0 != source_index as u32);
@@ -2261,7 +2256,8 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                                 setup.lib_dir,
                                             ),
                                             false => {
-                                                name.rsplit(|&b| b == b'/').next().unwrap().to_vec()
+                                                let slash = strings::last_index_of_char(name, b'/');
+                                                name[slash.map_or(0, |slash| slash + 1)..].to_vec()
                                             }
                                         };
                                         [b"//// [", &name[..], b"]\r\n", &text[..]].concat()

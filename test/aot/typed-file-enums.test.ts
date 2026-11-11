@@ -1,7 +1,7 @@
 // What `bun build --dts` writes into `.aot.ts` files for enums: `bun check` judges callers by them and by the sources.
 import { expect } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { describe, test } from "./with-compiler";
@@ -1204,16 +1204,36 @@ export function later(n: number) {
     expect(built.exitCode).toBe(0);
   }
 
-  // On Windows the build says nothing of a type error in a typed file: compile-library.test.ts has the same gap.
-  test.todoIf(isWindows)("an enum in a namespace: the .aot.ts files are left out, with the reason", async () => {
-    const source = `export namespace Shapes {
+  test.each([
+    [
+      "the namespace",
+      `export namespace Shapes {
   export enum Kind { Circle = "circle", Square = "square" }
   export function area(kind: Kind, size: number): number { return kind === Kind.Circle ? 3 * size * size : size * size; }
 }
-`;
+`,
+    ],
+    [
+      "other code of the file",
+      `namespace Shapes { export enum Kind { Circle = "circle", Square = "square" } }\nexport const kinds = [Shapes.Kind.Circle];\n`,
+    ],
+  ])("an enum in a namespace that %s reads: the .aot.ts files are left out, with the reason", async (_, source) => {
     await leftOut(
       { "src/index.ts": source },
-      /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors, the first at index\.aot\.ts:\d+:\d+: TS2749: /,
+      /^warn: the \.aot\.ts files that --aot compiles a package from are left out: index\.js: .*src\/index\.ts reads the enum Kind of a namespace, and a typed file has no type for such a read\n$/,
+    );
+  });
+
+  // The bundle has no constant for such a read: the name of the member stays.
+  test("a read of an enum that an ambient block declares: index.aot.ts is written", async () => {
+    const source = `declare global { enum Level { Low = 1, High = 2 } }
+export function isHigh(level: number): boolean { return level === Level.High; }
+`;
+    using dir = tempDir("build-dts-ambient", { ...checked, "src/index.ts": source });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
+      `declare global { enum Level { Low = 1, High = 2 } }\nfunction isHigh(level: number): boolean {\n  return level === Level.High;\n}\n`,
     );
   });
 

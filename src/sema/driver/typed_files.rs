@@ -2748,6 +2748,16 @@ fn link(
             if let Some(twin) = twin {
                 let key = (index as u32, number as u32);
                 linked.read_enums.insert(key, twin.clone());
+            } else if let (EnumOf::Nested(block), Some(module)) = (of, module)
+                && index < mapped
+                && linked.enum_without_facts.is_none()
+                && !is_inside(&module.type_ranges, *block)
+            {
+                // `local_enums` has every enum of a function or a block. This one is in a namespace that is not ambient.
+                linked.enum_without_facts = Some(TypedFilesError::EnumInNamespace {
+                    path: paths[index].to_vec(),
+                    name: module.syntax.word(*block).to_vec(),
+                });
             }
         }
         for (number, member) in enums.iter().flat_map(|enums| &enums.members).enumerate() {
@@ -5448,6 +5458,10 @@ pub enum TypedFilesError {
     EnumInOtherText {
         path: Vec<u8>,
     },
+    EnumInNamespace {
+        path: Vec<u8>,
+        name: Vec<u8>,
+    },
     InOutput {
         path: Vec<u8>,
         why: Box<TypedFilesError>,
@@ -5488,6 +5502,12 @@ impl core::fmt::Display for TypedFilesError {
                 f,
                 "{} declares or reads an enum, and the bundle has another text of that file than the type check read",
                 BStr::new(path)
+            ),
+            TypedFilesError::EnumInNamespace { path, name } => write!(
+                f,
+                "{} reads the enum {} of a namespace, and a typed file has no type for such a read",
+                BStr::new(path),
+                BStr::new(name)
             ),
             TypedFilesError::InOutput { path, why } => write!(f, "{}: {why}", BStr::new(path)),
         }

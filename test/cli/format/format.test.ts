@@ -2642,6 +2642,61 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  describe("YAML comments after the last value of a document", () => {
+    // Each row is the text and what Prettier 3.9.9 prints, which is already formatted, so it prints the same again.
+    test.each([
+      // The first key's tag or anchor doesn't move a comment out of the last value (#48604).
+      ["!!str a: 0\nb:\n  c: 1\n  # x\n", "!!str a: 0\nb:\n  c: 1\n  # x\n"],
+      ["&n a: 0\nb:\n  - c\n  # x\n", "&n a: 0\nb:\n  - c\n  # x\n"],
+      ["? !!str a\n:\n  b:\n    c: 1\n    # x\n", "!!str a:\n  b:\n    c: 1\n    # x\n"],
+      ["!!str : 0\nb: !!map\n  c: 1\n  # x\n", "!!str : 0\nb: !!map\n  c: 1\n  # x\n"],
+      // A comment indented less than the mapping it follows leaves it, and the mappings around it.
+      ["a:\n  b: 1\n # x\n", "a:\n  b: 1\n# x\n"],
+      ["k:\n  !!str a: 0\n  b:\n    c: 1\n # x\n", "k:\n  !!str a: 0\n  b:\n    c: 1\n# x\n"],
+      // Unless one of them is not. Then they all stay.
+      ["a:\n  b: 1\n # x\n  # y\n", "a:\n  b: 1\n  # x\n  # y\n"],
+      // The comments after a block scalar keep their order.
+      ["a: |\n    text\n  # x\n# y\n", "a: |\n  text\n\n# x\n# y\n"],
+      ["- |\n  text\n # x\n# y\n", "- |\n  text\n\n# x\n# y\n"],
+      // A sequence, or the root, lets them leave too.
+      ["- a:\n    b: 1\n # x\n", "- a:\n    b: 1\n# x\n"],
+      ["- - a\n # x\n", "- - a\n# x\n"],
+      ["  a:\n    b: 1\n   # x\n", "a:\n  b: 1\n  # x\n"],
+      // So does a sequence at the column of its key, whatever the indentation of the comments.
+      ["a:\n- b:\n    c: 1\n # x\n", "a:\n  - b:\n      c: 1\n# x\n"],
+      ["!!str k0:\n- >-\n  folded\n# c0\n # c1\n      # c2\n", "!!str k0:\n  - >-\n    folded\n\n# c0\n# c1\n# c2\n"],
+      ["a:\n- b\n # x\n", "a:\n  - b\n    # x\n"],
+      // Comments indented more than the value belong to it, until one that isn't.
+      ["a: 1\n  # x\n  # y\n# z\n", "a:\n  1\n  # x\n  # y\n# z\n"],
+      ["a:\n  b: 1\n    # x\n    # y\n # z\n", "a:\n  b:\n    1\n    # x\n    # y\n# z\n"],
+      // Prettier measures a comment after the value of a tagged key against the key, not the tag.
+      ["!!str a: 1\n  # x\n# y\n", "!!str a: 1\n# y\n# x\n"],
+      ["a:\n  !!str b: 1\n    # x\n", "a:\n  !!str b: 1\n  # x\n"],
+    ])("%j", async (before, after) => {
+      const result = await format({ "a.yaml": before, "b.yaml": after }, [], { reads: ["a.yaml", "b.yaml"] });
+      expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // oxfmt keeps a comment in the deepest collection that it's indented more than, measured from the tag or anchor
+    // of a key, and lets the comments after the block scalar of a mapping go.
+    test.each([
+      ["!!str a: 0\nb:\n  c: 1\n  # x\n", "!!str a: 0\nb:\n  c: 1\n  # x\n"],
+      ["k:\n  !!str a: 0\n  b:\n    c: 1\n # x\n", "k:\n  !!str a: 0\n  b:\n    c: 1\n  # x\n"],
+      ["a:\n- b:\n    c: 1\n # x\n", "a:\n  - b:\n      c: 1\n    # x\n"],
+      ["- - a\n # x\n", "- - a\n  # x\n"],
+      ["!!str a: 1\n  # x\n# y\n", "!!str a: 1\n  # x\n# y\n"],
+      ["a:\n  !!str b: 1\n    # x\n", "a:\n  !!str b: 1\n    # x\n"],
+      ["a: |\n    text\n  # x\n# y\n", "a: |\n  text\n# x\n# y\n"],
+      ["- |\n  text\n # x\n# y\n", "- |\n  text\n  # x\n# y\n"],
+    ])("with an .oxfmtrc.json, %j", async (before, after) => {
+      const files = { "a.yaml": before, "b.yaml": after, ".oxfmtrc.json": "{}\n" };
+      const result = await format(files, [], { reads: ["a.yaml", "b.yaml"] });
+      expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   describe("GraphQL whose values Prettier changes", () => {
     const Q = '"""';
     const type = "\ntype A {\n  b: C\n}\n";

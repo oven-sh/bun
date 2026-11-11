@@ -248,6 +248,8 @@ struct Context<'c, 'a> {
     pending: Vec<Id>,
     /// True if there's a tag or an anchor.
     has_properties: bool,
+    /// True in oxfmt's flavor, which places the comments at the end of a document differently.
+    is_oxfmt: bool,
     /// Message and position of an `Unexpected` error, if it has them.
     recorded_error: Option<SyntaxError>,
     stack: &'c Stack,
@@ -1005,6 +1007,28 @@ impl<'a> Context<'_, 'a> {
         (directive, comment)
     }
 
+    /// The indentation of a block collection as `yaml`'s parser records it: the column before its first item, with
+    /// the properties of its key.
+    fn block_collection_indent(&self, collection: &Node<'_>) -> u32 {
+        let column = match collection.children.first() {
+            Some(item) => column_of_item_with_properties(&self.nodes, item),
+            None => collection.position.start.column,
+        };
+        column.saturating_sub(1)
+    }
+
+    /// The content of the value of a block collection's last item, if it has one.
+    fn value_of_last_item(&self, collection: &Node<'_>) -> Option<Id> {
+        let item = &self.nodes[collection.children.last()?.index()];
+        match item.kind {
+            Kind::MappingItem => {
+                let value = &self.nodes[item.children.last()?.index()];
+                value.children.first()
+            }
+            _ => item.children.first(),
+        }
+    }
+
     /// Consumes the comments after `content`, a document's whole content, as far as `yaml` counts them as part of the
     /// document. Returns the ones that `yaml` puts at the end of the document itself and not inside any node.
     fn take_end_comments(&mut self, content: Option<Id>) -> Vec<Id> {
@@ -1012,16 +1036,6 @@ impl<'a> Context<'_, 'a> {
         let Some(content) = content.map(|content| &self.nodes[content.index()]) else {
             return end_comments;
         };
-        let is_block = matches!(content.kind, Kind::Mapping | Kind::Sequence);
-        // A comment after an item without a value belongs to that item.
-        let is_open = is_block
-            && (content.children.last())
-                .map(|item| &self.nodes[item.index()])
-                .and_then(|item| match item.kind {
-                    Kind::MappingItem => item.children.last().map(|it| &self.nodes[it.index()]),
-                    _ => Some(item),
-                })
-                .is_none_or(|it| it.children.is_empty());
         let last = self.at.checked_sub(1).and_then(|at| self.tokens.get(at));
         let is_block_scalar =
             last.is_some_and(|it| matches!(self.text.get(it.start as usize), Some(b'|' | b'>')));
@@ -1032,23 +1046,76 @@ impl<'a> Context<'_, 'a> {
             _ => content.position.end.offset,
         };
         let last_line = self.point(end.saturating_sub(1)).line;
-        // A comment that isn't indented more than the items doesn't belong to any of them.
-        let items_column = (content.children.first())
-            .map_or(1, |item| self.nodes[item.index()].position.start.column);
+        if !matches!(content.kind, Kind::Mapping | Kind::Sequence) {
+            // A document whose content isn't a block collection ends with the line after the content.
+            while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
+                let line = self.point(token.start).line;
+                if line > last_line + 1 {
+                    break;
+                }
+                self.at += 1;
+                let comment = self.transform_comment(token);
+                if line > last_line {
+                    end_comments.push(comment);
+                }
+            }
+            return end_comments;
+        }
+        // `yaml`'s parser still has on its stack the collection, the collection that its last value is, and so on.
+        // A comment goes to the innermost: to its last item, if that has no value, or to the value, if the comment
+        // is indented more than the collection and the value is a scalar, an alias or a flow collection. The others
+        // leave a collection when it ends, all of them or none, if each one is indented less than the collection, or
+        // the collection is at the first column. (`Parser.blockMap`, `Parser.blockSequence` and `Parser.pop`)
+        let root_indent = self.block_collection_indent(content);
+        let mut inner_indent = root_indent;
+        let mut is_nested = false;
+        // The least indentation of a collection on the stack that isn't at the first column.
+        let mut bound: Option<u32> = None;
+        let mut innermost = content;
+        let last_value = loop {
+            if inner_indent > 0 {
+                bound = Some(bound.map_or(inner_indent, |it| it.min(inner_indent)));
+            }
+            let value = (self.value_of_last_item(innermost)).map(|it| &self.nodes[it.index()]);
+            match value.filter(|it| matches!(it.kind, Kind::Mapping | Kind::Sequence)) {
+                Some(collection) => {
+                    inner_indent = self.block_collection_indent(collection);
+                    is_nested = true;
+                    innermost = collection;
+                }
+                None => break value,
+            }
+        };
+        let is_open = last_value.is_none();
+        let value_takes_indented = last_value
+            .is_some_and(|it| !matches!(it.kind, Kind::BlockFolded | Kind::BlockLiteral));
+        // oxfmt has no such stack. Each collection, the innermost first, takes the comments that are indented more
+        // than its items, but for a mapping whose last value is a block scalar. A comment that none takes ends the
+        // document, and so does everything after it.
+        let root_takes_indented = is_nested || content.kind == Kind::Sequence || value_takes_indented;
+        let is_oxfmt = self.is_oxfmt;
+        let mut leave_root = true;
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
             let token_point = self.point(token.start);
-            // A document whose content isn't a block collection ends with the line after the content.
-            if !is_block && token_point.line > last_line + 1 {
-                break;
-            }
             self.at += 1;
             let comment = self.transform_comment(token);
-            if token_point.line > last_line
-                && !is_open
-                && (!is_block || token_point.column <= items_column || !end_comments.is_empty())
-            {
-                end_comments.push(comment);
+            if token_point.line <= last_line || is_open {
+                continue;
             }
+            let indent = token_point.column.saturating_sub(1);
+            let is_taken = end_comments.is_empty()
+                && match is_oxfmt {
+                    true => root_takes_indented && indent > root_indent,
+                    false => value_takes_indented && indent > inner_indent,
+                };
+            if is_taken {
+                continue;
+            }
+            leave_root &= is_oxfmt || bound.is_none_or(|bound| indent < bound);
+            end_comments.push(comment);
+        }
+        if !leave_root {
+            end_comments.clear();
         }
         end_comments
     }
@@ -1289,6 +1356,23 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id, stack: &Stack
     }
 }
 
+/// The column of a mapping or sequence item. A key's tag or anchor is part of the item, as `yaml`'s parser and oxfmt
+/// see it. `yaml-unist-parser` starts the item at the key itself, as `Node::position` does.
+fn column_of_item_with_properties(nodes: &[Node<'_>], item: Id) -> u32 {
+    let item = &nodes[item.index()];
+    let mut column = item.position.start.column;
+    if item.kind == Kind::MappingItem
+        && let Some(key) = item.children.first()
+        && let Some(content) = nodes[key.index()].children.first()
+    {
+        let content = &nodes[content.index()];
+        for property in content.tag.into_iter().chain(content.anchor) {
+            column = column.min(nodes[property.index()].position.start.column);
+        }
+    }
+    column
+}
+
 /// `isExplicitMappingKey`
 fn is_explicit_mapping_key(nodes: &[Node<'_>], id: Id) -> bool {
     let node = &nodes[id.index()];
@@ -1297,7 +1381,9 @@ fn is_explicit_mapping_key(nodes: &[Node<'_>], id: Id) -> bool {
     })
 }
 
-fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool {
+/// `is_oxfmt`: oxfmt measures a comment against the column of the mapping, which is that of its first key's tag or
+/// anchor. Prettier measures it against the key itself, as `yaml-unist-parser` places the item.
+fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position, is_oxfmt: bool) -> bool {
     let node = &nodes[id.index()];
     if node.position.start.offset < comment.start.offset
         && node.position.end.offset > comment.end.offset
@@ -1314,9 +1400,10 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
     match node.kind {
         Kind::SequenceItem => comment.start.column > node.position.start.column,
         Kind::MappingKey | Kind::MappingValue => {
-            let parent_column = node
-                .parent
-                .map_or(0, |parent| nodes[parent.index()].position.start.column);
+            let parent_column = node.parent.map_or(0, |parent| match is_oxfmt {
+                true => column_of_item_with_properties(nodes, parent),
+                false => nodes[parent.index()].position.start.column,
+            });
             comment.start.column > parent_column
                 && match (node.children.first(), node.children.len()) {
                     (None, _) => true,
@@ -1339,6 +1426,7 @@ fn attach_comment(
     next_leading: &[u32],
     comment: Id,
     document: Id,
+    is_oxfmt: bool,
 ) -> Result<()> {
     let position = nodes[comment.index()].position;
     let comment_line = position.start.line as usize;
@@ -1384,7 +1472,7 @@ fn attach_comment(
             };
         }
         loop {
-            if should_own_end_comment(nodes, current, position) {
+            if should_own_end_comment(nodes, current, position, is_oxfmt) {
                 append(nodes, current, Which::EndComments, comment);
                 return Ok(());
             }
@@ -1521,6 +1609,7 @@ pub(crate) fn build<'a>(
     text: &'a [u8],
     documents: &[Expr],
     tokens: &[SourceToken],
+    is_oxfmt: bool,
     stack: &Stack,
 ) -> std::result::Result<Tree<'a>, SyntaxError> {
     let mut line_starts = vec![0u32];
@@ -1544,6 +1633,7 @@ pub(crate) fn build<'a>(
         comments: Vec::new(),
         pending: Vec::new(),
         has_properties: false,
+        is_oxfmt,
         recorded_error: None,
         stack,
     };
@@ -1620,6 +1710,7 @@ pub(crate) fn build<'a>(
             &next_leading,
             comment,
             *rest_documents.first().ok_or(misplaced)?,
+            is_oxfmt,
         )
         .map_err(|Unexpected| misplaced)?;
     }

@@ -85,6 +85,7 @@ class VersionSqlite3;
 
 namespace Bun {
 class StrongRootBlock;
+class JSMockFunction;
 struct IsolatedInternalModule;
 
 // JSC measures the live size of the heap at the end of each collection, but only
@@ -184,6 +185,9 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
     JSC::IsoHeapCellType m_heapCellTypeForJSModuleGraph;
+    JSC::IsoHeapCellType m_heapCellTypeForV8GlobalInternals;
+    JSC::IsoHeapCellType m_heapCellTypeForFunctionTemplate;
+    JSC::IsoHeapCellType m_heapCellTypeForObjectTemplate;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:
@@ -435,6 +439,9 @@ template<typename T, UseCustomHeapCellType useCustomHeapCellType>
 ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
 {
     static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
+    // JSMockFunction: https://github.com/oven-sh/bun/pull/40382
+    static_assert(T::needsDestruction == JSC::NeedsDestruction || std::is_trivially_destructible_v<T> || std::is_same_v<T, Bun::JSMockFunction>,
+        "the GC sweeps this cell type without destroying the cells, so its members' destructors never run; give it `needsDestruction` and `destroy`, or keep the members in GC-managed memory");
     static_assert(T::needsDestruction == JSC::DoesNotNeedDestruction || std::is_trivially_destructible_v<T> || !inheritsJSCellDestroy<T>,
         "the GC sweeps this cell type with JSCell::destroy, so its members' destructors never run; define `static void destroy(JSC::JSCell*)`");
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);

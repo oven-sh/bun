@@ -30,6 +30,12 @@ class FunctionTemplate : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<FunctionTemplate*>(cell)->~FunctionTemplate();
+    }
+
     static FunctionTemplate* create(JSC::VM& vm, JSC::Structure* structure, FunctionCallback callback, JSC::JSValue data);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
@@ -39,7 +45,8 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<FunctionTemplate, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForFunctionTemplate, m_subspaceForFunctionTemplate));
+        return WebCore::subspaceForImpl<FunctionTemplate, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForFunctionTemplate, m_subspaceForFunctionTemplate),
+            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForFunctionTemplate; });
     }
 
     DECLARE_INFO;

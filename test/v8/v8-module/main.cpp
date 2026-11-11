@@ -1698,6 +1698,24 @@ void test_v8_prototype_template(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(inst);
 }
 
+// make_templates_with_properties(count, properties)
+void make_templates_with_properties(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  int count = info[0].As<Number>()->Value();
+  int properties = info[1].As<Number>()->Value();
+  Local<String> key = String::NewFromUtf8Literal(isolate, "key");
+  Local<Integer> value = Integer::New(isolate, 1);
+  for (int i = 0; i < count; i++) {
+    HandleScope scope(isolate);
+    Local<FunctionTemplate> function = FunctionTemplate::New(isolate);
+    Local<ObjectTemplate> object = ObjectTemplate::New(isolate);
+    for (int j = 0; j < properties; j++) {
+      function->Set(key, value);
+      object->SetNativeDataProperty(key, native_data_getter);
+    }
+  }
+}
+
 void test_v8_arraybuffer(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
@@ -2285,6 +2303,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_string_from_utf8_literal);
   NODE_SET_METHOD(exports, "test_v8_prototype_template",
                   test_v8_prototype_template);
+  NODE_SET_METHOD(exports, "make_templates_with_properties",
+                  make_templates_with_properties);
   NODE_SET_METHOD(exports, "test_v8_arraybuffer", test_v8_arraybuffer);
   NODE_SET_METHOD(exports, "test_v8_typedarray", test_v8_typedarray);
   NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);

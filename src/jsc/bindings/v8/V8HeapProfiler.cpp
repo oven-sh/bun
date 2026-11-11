@@ -59,6 +59,11 @@ AllocationProfile* HeapProfiler::GetAllocationProfile()
     return nullptr;
 }
 
+Isolate::~Isolate()
+{
+    delete static_cast<shim::HeapProfilerImpl*>(m_heapProfiler);
+}
+
 HeapProfiler* Isolate::GetHeapProfiler()
 {
     if (!m_heapProfiler)

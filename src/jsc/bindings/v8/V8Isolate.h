@@ -57,6 +57,7 @@ public:
     static constexpr int kFalseValueRootIndex = 4;
 
     Isolate(shim::GlobalInternals* globalInternals);
+    ~Isolate();
 
     // Returns the isolate inside which the current thread is running or nullptr.
     BUN_EXPORT static Isolate* TryGetCurrent();

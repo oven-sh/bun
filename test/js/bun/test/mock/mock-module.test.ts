@@ -8,7 +8,7 @@
 import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -6488,6 +6488,43 @@ describe.concurrent(
     `,
         "mock of inner",
       ],
+      [
+        "the first is removed while the second stays",
+        `
+      await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+      vi.doUnmock("./inner.js");
+    `,
+        "mock of outer",
+      ],
+      [
+        "the first is removed, then the second",
+        `
+      await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+      vi.doUnmock("./inner.js");
+      vi.doUnmock("./outer.js");
+    `,
+        "real",
+      ],
+      [
+        "vi.doMock() takes the place of the first",
+        `
+      await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+      vi.doMock("./inner.js", () => ({ a: "second mock of inner" }));
+    `,
+        "mock of outer",
+      ],
+      [
+        "the first is made again, and patches a name that only the second had patched",
+        `
+      await mock.module("./inner.js", async () => ({}));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+      await mock.module("./inner.js", async () => ({ a: "second mock of inner" }));
+    `,
+        "second mock of inner",
+      ],
     ])("%s", async (_, mocks, seen) => {
       await expectFixturesToPass(
         {
@@ -6511,6 +6548,412 @@ describe.concurrent(
         },
         2,
       );
+    });
+
+    test("the first is a mock of a builtin module, and its handle is disposed while the second stays", async () => {
+      await expectFixturesToPass(
+        {
+          "barrel.js": `export * from "node:path";`,
+          "a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          test("both are patches in place", async () => {
+            const barrel = await import("./barrel.js");
+            const path = await import("node:path");
+            {
+              using first = vi.doMock("node:path", () => ({ sep: "mock of node:path" }));
+              await mock.module("./barrel.js", async () => ({ sep: "mock of the barrel" }));
+              expect([barrel.sep, path.sep]).toEqual(["mock of the barrel", "mock of the barrel"]);
+            }
+            expect([barrel.sep, path.sep]).toEqual(["mock of the barrel", "mock of the barrel"]);
+          });
+        `,
+          "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the builtin module has its value back", async () => {
+            expect([(await import("./barrel.js")).sep, (await import("node:path")).sep]).toEqual([${JSON.stringify(sep)}, ${JSON.stringify(sep)}]);
+          });
+        `,
+        },
+        2,
+      );
+    });
+
+    test("two spying mocks of two barrels of one class, and the first is removed", async () => {
+      await expectFixturesToPass(
+        {
+          "models.js": `export class User { name() { return "real"; } }`,
+          "barrel-a.js": `export * from "./models.js";`,
+          "barrel-b.js": `export { User } from "./models.js";`,
+          "a.test.js": `
+          import { expect, test } from "bun:test";
+          import * as a from "./barrel-a.js";
+          import * as b from "./barrel-b.js";
+          test("an earlier file loads both barrels", () => {
+            expect([new a.User().name(), new b.User().name()]).toEqual(["real", "real"]);
+          });
+        `,
+          "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as a from "./barrel-a.js";
+          import * as b from "./barrel-b.js";
+          vi.mock("./barrel-a.js", { spy: true });
+          vi.mock("./barrel-b.js", { spy: true });
+          test("both are patches in place", () => {
+            expect([vi.isMockFunction(a.User), vi.isMockFunction(b.User)]).toEqual([true, true]);
+            vi.doUnmock("./barrel-a.js");
+            expect(vi.isMockFunction(b.User)).toBe(true);
+          });
+        `,
+          "c.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { User } from "./models.js";
+          test("the class is the real one", () => {
+            expect([vi.isMockFunction(User), new User().name()]).toEqual([false, "real"]);
+          });
+        `,
+        },
+        3,
+      );
+    });
+
+    test("the second is laid by a hook of a preload, and stays when the file of the first ends", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = "real";`,
+          "inner.js": `export * from "./variable.js";`,
+          "outer.js": `export * from "./inner.js";`,
+          "preload.js": `
+          import { beforeEach, mock } from "bun:test";
+          await import("./outer.js");
+          beforeEach(async () => {
+            await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+          });
+        `,
+          "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          const outer = await import("./outer.js");
+          await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+          test("both are patches in place", () => {
+            expect(outer.a).toBe("mock of outer");
+          });
+        `,
+          "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the mock of the preload is all that the next file removes", async () => {
+            const outer = await import("./outer.js");
+            expect(outer.a).toBe("mock of outer");
+            vi.doUnmock("./outer.js");
+            expect(outer.a).toBe("real");
+          });
+        `,
+        },
+        2,
+        ["--preload", "./preload.js"],
+      );
+    });
+
+    test("both are mocks of a preload, and a file removes the first, then the second", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = "real";`,
+          "inner.js": `export * from "./variable.js";`,
+          "outer.js": `export * from "./inner.js";`,
+          "preload.js": `
+          import { mock } from "bun:test";
+          await import("./outer.js");
+          await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+          await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+        `,
+          "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("both are patches in place", async () => {
+            const outer = await import("./outer.js");
+            expect(outer.a).toBe("mock of outer");
+            vi.doUnmock("./inner.js");
+            expect(outer.a).toBe("mock of outer");
+            vi.doUnmock("./outer.js");
+            expect(outer.a).toBe("real");
+          });
+        `,
+          "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("both are back in the next file, which removes them again", async () => {
+            const outer = await import("./outer.js");
+            expect(outer.a).toBe("mock of outer");
+            vi.doUnmock("./inner.js");
+            vi.doUnmock("./outer.js");
+            expect(outer.a).toBe("real");
+          });
+        `,
+        },
+        2,
+        ["--preload", "./preload.js"],
+      );
+    });
+
+    test("the first is a mock of a preload, and the mock of a file takes its place until the file ends", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = "real"; export const b = "real";`,
+          "inner.js": `export * from "./variable.js";`,
+          "outer.js": `export * from "./inner.js";`,
+          "preload.js": `
+          import { mock } from "bun:test";
+          await import("./outer.js");
+          await mock.module("./inner.js", async () => ({ a: "mock of the preload", b: "mock of the preload" }));
+          await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+        `,
+          "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("the mock of the file shows for the name that it has", async () => {
+            const outer = await import("./outer.js");
+            expect([outer.a, outer.b]).toEqual(["mock of outer", "mock of the preload"]);
+            await mock.module("./inner.js", async () => ({ a: "mock of the file" }));
+            expect([outer.a, outer.b]).toEqual(["mock of the file", "mock of the preload"]);
+          });
+        `,
+          "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the mocks of the preload are back where they were", async () => {
+            const outer = await import("./outer.js");
+            expect([outer.a, outer.b]).toEqual(["mock of outer", "mock of the preload"]);
+            vi.doUnmock("./outer.js");
+            expect([outer.a, outer.b]).toEqual(["mock of the preload", "mock of the preload"]);
+            vi.doUnmock("./inner.js");
+            expect([outer.a, outer.b]).toEqual(["real", "real"]);
+          });
+        `,
+        },
+        2,
+        ["--preload", "./preload.js"],
+      );
+    });
+
+    test("both patch two names of the variable", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `const a = "real"; export { a, a as b };`,
+          "inner.js": `export * from "./variable.js";`,
+          "outer.js": `export * from "./inner.js";`,
+          "a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          test("both are patches in place", async () => {
+            const outer = await import("./outer.js");
+            await mock.module("./inner.js", async () => ({ a: "mock of inner", b: "mock of inner" }));
+            await mock.module("./outer.js", async () => ({ a: "mock of outer", b: "mock of outer" }));
+            vi.doUnmock("./inner.js");
+            expect([outer.a, outer.b]).toEqual(["mock of outer", "mock of outer"]);
+            vi.doUnmock("./outer.js");
+            expect([outer.a, outer.b]).toEqual(["real", "real"]);
+          });
+        `,
+          "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the variable has its value back", async () => {
+            const variable = await import("./variable.js");
+            expect([variable.a, variable.b]).toEqual(["real", "real"]);
+          });
+        `,
+        },
+        2,
+      );
+    });
+
+    test("the variable holds a number that is no integer, and the first is removed", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = 0.5;`,
+          "inner.js": `export * from "./variable.js";`,
+          "outer.js": `export * from "./inner.js";`,
+          "a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          test("both are patches in place", async () => {
+            const outer = await import("./outer.js");
+            await mock.module("./inner.js", async () => ({ a: 1.5 }));
+            await mock.module("./outer.js", async () => ({ a: 2.5 }));
+            vi.doUnmock("./inner.js");
+            expect(outer.a).toBe(2.5);
+          });
+        `,
+          "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the variable has its value back", async () => {
+            expect([(await import("./outer.js")).a, (await import("./inner.js")).a, (await import("./variable.js")).a]).toEqual([0.5, 0.5, 0.5]);
+          });
+        `,
+        },
+        2,
+      );
+    });
+
+    test("the variable holds the namespace of a module, which two modules export, and the first is removed", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = "real";`,
+          "inner.js": `export * as all from "./variable.js";`,
+          "outer.js": `export * as all from "./variable.js";`,
+          "a.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as inner from "./inner.js";
+          import * as outer from "./outer.js";
+          test("both are patches in place", async () => {
+            await mock.module("./inner.js", async () => ({ all: { a: "mock of inner" } }));
+            await mock.module("./outer.js", async () => ({ all: { a: "mock of outer" } }));
+            expect([inner.all.a, outer.all.a]).toEqual(["mock of outer", "mock of outer"]);
+            vi.doUnmock("./inner.js");
+            expect([inner.all.a, outer.all.a]).toEqual(["mock of outer", "mock of outer"]);
+          });
+        `,
+          "b.test.js": `
+          import { expect, test } from "bun:test";
+          import * as inner from "./inner.js";
+          import * as outer from "./outer.js";
+          import * as variable from "./variable.js";
+          test("the variable holds the namespace again", () => {
+            expect([inner.all === variable, outer.all === variable, inner.all.a]).toEqual([true, true, "real"]);
+          });
+        `,
+        },
+        2,
+      );
+    });
+
+    test("the first is made again by a factory that fails", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = "real";`,
+          "inner.js": `export * from "./variable.js";`,
+          "outer.js": `export * from "./inner.js";`,
+          "a.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("both are patches in place", async () => {
+            const outer = await import("./outer.js");
+            await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+            await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+            const again = mock.module("./inner.js", async () => {
+              await 0;
+              throw new Error("the factory fails");
+            });
+            await expect(again).rejects.toThrow("the factory fails");
+            expect(outer.a).toBe("mock of outer");
+          });
+        `,
+          "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the variable has its value back", async () => {
+            expect([(await import("./outer.js")).a, (await import("./inner.js")).a, (await import("./variable.js")).a]).toEqual(["real", "real", "real"]);
+          });
+        `,
+        },
+        2,
+      );
+    });
+
+    describe("the first is a spy on the variable, the second a mock of a module that exports it", () => {
+      const files = {
+        "variable.js": `export function a() { return "real"; }`,
+        "inner.js": `export * from "./variable.js";`,
+        "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the variable has its value back", async () => {
+            const variable = await import("./variable.js");
+            expect([variable.a(), vi.isMockFunction(variable.a)]).toEqual(["real", false]);
+          });
+        `,
+      };
+      test.each([
+        [
+          "the spy is restored, then the mock is removed",
+          `
+            spy.mockRestore();
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["mock of inner", false]);
+            vi.doUnmock("./inner.js");
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["real", false]);
+          `,
+        ],
+        [
+          "the mock is removed, then the spy is restored",
+          `
+            vi.doUnmock("./inner.js");
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["spy", true]);
+            spy.mockRestore();
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["real", false]);
+          `,
+        ],
+        ["the file ends", ""],
+      ])("%s", async (_, ends) => {
+        await expectFixturesToPass(
+          {
+            ...files,
+            "a.test.js": `
+            import { expect, mock, spyOn, test, vi } from "bun:test";
+            test("both stand", async () => {
+              const inner = await import("./inner.js");
+              const variable = await import("./variable.js");
+              const spy = spyOn(variable, "a").mockReturnValue("spy");
+              await mock.module("./inner.js", async () => ({ a: () => "mock of inner" }));
+              expect(inner.a()).toBe("mock of inner");
+              ${ends}
+            });
+          `,
+          },
+          2,
+        );
+      });
+    });
+
+    describe("the first is a mock of a module that exports the variable, the second a spy on it", () => {
+      const files = {
+        "variable.js": `export function a() { return "real"; }`,
+        "inner.js": `export * from "./variable.js";`,
+        "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the variable has its value back", async () => {
+            const variable = await import("./variable.js");
+            expect([variable.a(), vi.isMockFunction(variable.a)]).toEqual(["real", false]);
+          });
+        `,
+      };
+      test.each([
+        [
+          "the mock is removed, and the spy calls the function of the module from then on",
+          `
+            vi.doUnmock("./inner.js");
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["real", true]);
+            expect(spy).toHaveBeenCalledTimes(2);
+            spy.mockRestore();
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["real", false]);
+          `,
+        ],
+        [
+          "the spy is restored, then the mock is removed",
+          `
+            spy.mockRestore();
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["mock of inner", false]);
+            vi.doUnmock("./inner.js");
+            expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["real", false]);
+          `,
+        ],
+        ["the file ends", ""],
+      ])("%s", async (_, ends) => {
+        await expectFixturesToPass(
+          {
+            ...files,
+            "a.test.js": `
+            import { expect, mock, spyOn, test, vi } from "bun:test";
+            test("both stand", async () => {
+              const inner = await import("./inner.js");
+              const variable = await import("./variable.js");
+              await mock.module("./inner.js", async () => ({ a: () => "mock of inner" }));
+              const spy = spyOn(variable, "a");
+              expect([inner.a(), vi.isMockFunction(variable.a)]).toEqual(["mock of inner", true]);
+              ${ends}
+            });
+          `,
+          },
+          2,
+        );
+      });
     });
   },
 );

@@ -107,6 +107,10 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# The next two: a compiled run keeps what the mock of a file has laid by the file. A built-in module keeps its exports in a table of its own, and the end of its
+# mock puts them back under the mock of a file that exports them. A preload's mock of a file comes back over the mocks that were laid after it, not where it stood.
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is a mock of a builtin module, and its handle is disposed while the second stays
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the first is a mock of a preload, and the mock of a file takes its place until the file ends
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 # A module that is being imported calls import(): a compiled run runs the inner module ahead of the `.then()` of the outer call, as the executable and Node.js do. `bun test` reads the inner file on another thread first.
 test/js/bun/test/vi-utils.test.ts: vi.dynamicImportSettled > waits for the imports in flight and the ones they start

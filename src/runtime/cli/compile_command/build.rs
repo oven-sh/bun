@@ -6,6 +6,7 @@ use bun_aot::statistics::{log_part_outside_stages, log_time_outside_stages};
 use bun_ast::Loader;
 use bun_bundler::aot::{
     AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint, FileIdentity, FilesForFileSystem,
+    read_database_with_log,
 };
 use bun_bundler::options::{self, OutputFile};
 use bun_core::{CodeGenerationFromStrings, ZBox};
@@ -1149,6 +1150,11 @@ fn add_assets_under_root(
             let is_file_given = file.dest_path[..] == asset_name[..];
             let path_below_asset =
                 file.dest_path[asset_name.len().min(file.dest_path.len())..].to_vec();
+            let path_on_disk = [asset_path, &path_below_asset].concat();
+            let contents = file.value.as_slice();
+            if let Some(contents) = read_database_with_log(&path_on_disk, contents) {
+                file = asset_output_file(file.dest_path.into_vec(), contents);
+            }
             if let Some(from_root) = &from_root {
                 let path_in_asset = file
                     .dest_path
@@ -1175,7 +1181,7 @@ fn add_assets_under_root(
             }
             push_asset_paths(
                 &file.dest_path,
-                &[asset_path, &path_below_asset].concat(),
+                &path_on_disk,
                 is_explicit,
                 size_without_bytes,
                 &mut paths,

@@ -528,7 +528,9 @@ fn write_embedded_entries(
     }
     Syscall::mkdir(&bun_core::ZBox::from_vec(target.to_vec()), 0o777)?;
     for (below, is_folder) in entries {
-        let place = [target, b"/", below].concat();
+        // Behind the prefix of a long path, Windows knows its own separator alone.
+        let mut place = [target, b"/", below].concat();
+        paths::resolve_path::posix_to_platform_in_place(&mut place);
         match is_folder {
             true => Syscall::mkdir(&bun_core::ZBox::from_vec(place), 0o777)?,
             false => write_file(&[path, b"/", below].concat(), place)?,
@@ -1509,29 +1511,37 @@ mod _async_tasks {
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
-                    let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
+                    let writes = args.flags.as_int() & FLAGS_OF_WRITES != 0;
+                    let source = if writes {
+                        find_source_path_to_write(&args.path)
+                    } else {
+                        None
+                    };
+                    let named = source.as_ref().unwrap_or(&args.path);
+                    let refusal = if writes {
+                        creation_in_executable(named.slice(), sys::Tag::open, E::EROFS).or_else(
+                            || {
+                                prepare_source_path_write(
+                                    named.slice(),
+                                    args.flags.as_int(),
+                                    args.mode,
+                                )
+                                .err()
+                            },
+                        )
+                    } else {
+                        None
+                    };
+                    let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
+                    let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
                         // SAFETY (R-2): single-JS-thread `JsCell` projection of the
                         // scratch path buffer; the borrow is held only across the
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
-                        args.path
-                            .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
+                        named.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
-                    let writes = (args.flags.as_int()
-                        & (sys::O::WRONLY
-                            | sys::O::RDWR
-                            | sys::O::CREAT
-                            | sys::O::TRUNC
-                            | sys::O::APPEND))
-                        != 0;
-                    let refusal = if writes {
-                        creation_in_executable(args.path.slice(), sys::Tag::open, E::EROFS)
-                    } else {
-                        None
-                    };
-                    let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     if let Some(answer) = answer {
                         // SAFETY: identity write — `R == ret::Open` for this `F`.
                         unsafe {
@@ -2781,6 +2791,12 @@ mod _async_tasks {
             let this = unsafe { &**_done };
 
             let args = &this.args;
+            if let Some(error) =
+                creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
+            {
+                this.finish_concurrently(Err(error));
+                return;
+            }
             let mut src_buf = bun_paths::os_path_buffer_pool::get();
             let mut dest_buf = bun_paths::os_path_buffer_pool::get();
             let name_too_long = |path: &PathLike| sys::Error {
@@ -2809,12 +2825,17 @@ mod _async_tasks {
                 // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
                 let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
                 if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
-                    this.finish_concurrently(Err(sys::Error {
+                    let err = sys::Error {
                         errno: SystemErrno::ENOENT as _,
                         syscall: sys::Tag::copyfile,
                         path: nodefs.os_path_into_sync_error_buf(src).into(),
                         ..Default::default()
-                    }));
+                    };
+                    let copied = NodeFS::copy_embedded_source(err, args);
+                    if copied.is_ok() {
+                        this.on_copy(src, dest);
+                    }
+                    this.finish_concurrently(copied);
                     return;
                 }
                 let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
@@ -2850,9 +2871,12 @@ mod _async_tasks {
                     Ok(result) => result,
                     Err(err) => {
                         nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                        this.finish_concurrently(Err(
-                            err.with_path(&nodefs.sync_error_buf[..src.len()])
-                        ));
+                        let err = err.with_path(&nodefs.sync_error_buf[..src.len()]);
+                        let copied = NodeFS::copy_embedded_source(err, args);
+                        if copied.is_ok() {
+                            this.on_copy(src, dest);
+                        }
+                        this.finish_concurrently(copied);
                         return;
                     }
                 };
@@ -6951,14 +6975,9 @@ impl NodeFS {
     #[cfg(windows)]
     pub(crate) fn uv_open(&mut self, args: &args::Open, rc: uv::ReturnCodeI64) -> Maybe<ret::Open> {
         if let Some(err) = rc.to_error(sys::Tag::open) {
-            if err.get_errno() == E::ENOENT
-                && let Some(file) = embedded_file_of_compiled_program(args.path.slice())
-            {
-                return open_embedded_file(
-                    file.utf8_contents(),
-                    args.flags.as_int(),
-                    args.path.slice(),
-                );
+            if err.get_errno() == E::ENOENT && compiled_program_graph().is_some() {
+                return open_embedded_path(args.flags.as_int(), args.path.slice())
+                    .unwrap_or_else(|| Err(err.with_path(args.path.slice())));
             }
             return Err(err.with_path(args.path.slice()));
         }
@@ -7569,6 +7588,10 @@ impl NodeFS {
                 false,
             );
         }
+        if is_root {
+            let args = &async_task._args;
+            Self::append_graph_entries(root_basename, args, true, Flavor::Async, entries);
+        }
 
         Ok(())
     }
@@ -7793,7 +7816,8 @@ impl NodeFS {
             }
         }
 
-        if recursive && flavor == Flavor::Sync {
+        // The program may have made the folder on the disk since the executable was asked for it.
+        if recursive {
             let mut buf_to_pass = bun_paths::path_buffer_pool::get();
             let mut entries: Vec<T> = Vec::new();
             Self::readdir_with_entries_recursive_sync::<T>(
@@ -7804,12 +7828,6 @@ impl NodeFS {
             )?;
             Self::append_graph_entries(path.as_bytes(), args, true, flavor, &mut entries);
             return Ok(T::into_readdir(entries));
-        }
-
-        if recursive {
-            panic!(
-                "This code path should never be reached. It should only go through readdirWithEntriesRecursiveAsync."
-            );
         }
 
         #[cfg(not(windows))]
@@ -9277,19 +9295,19 @@ impl NodeFS {
             PathInt::try_from(dest_len).expect("int cast"),
             args,
         );
-        match copied {
-            Err(err)
-                if err.get_errno() == E::ENOENT
-                    && embedded_file_of_compiled_program(args.src.slice()).is_some() =>
-            {
-                let is_exclusive = args.flags.error_on_exist || !args.flags.force;
-                match Self::copy_embedded_file(&args.src, &args.dest, is_exclusive) {
-                    Err(err) if err.get_errno() == E::EEXIST && !args.flags.error_on_exist => {
-                        Ok(())
-                    }
-                    copied => copied,
-                }
-            }
+        copied.or_else(|err| Self::copy_embedded_source(err, args))
+    }
+
+    /// The disk has failed with `err`. Copies the file that the program finds in the executable at `args.src`.
+    fn copy_embedded_source(err: sys::Error, args: &args::Cp) -> Maybe<ret::Cp> {
+        if err.get_errno() != E::ENOENT
+            || embedded_file_of_compiled_program(args.src.slice()).is_none()
+        {
+            return Err(err);
+        }
+        let is_exclusive = args.flags.error_on_exist || !args.flags.force;
+        match Self::copy_embedded_file(&args.src, &args.dest, is_exclusive) {
+            Err(err) if err.get_errno() == E::EEXIST && !args.flags.error_on_exist => Ok(()),
             copied => copied,
         }
     }

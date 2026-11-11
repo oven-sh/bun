@@ -846,6 +846,12 @@ impl<'a> LoadHost<'a> {
                 self.embed_asset(path, read(path));
             }
         }
+        // Behind the load, nothing else asks for what plugins say of reads that fail.
+        if self.reads_in_background_after_load {
+            for (_, mut log) in self.take_failed_loads() {
+                self.say(&mut log);
+            }
+        }
         let (provider, messages) = (self.input.provider, self.input.messages);
         let _ = messages.with_log(|log| provider.check_embedded_files(log));
     }

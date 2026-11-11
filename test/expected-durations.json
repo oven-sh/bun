@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/suites-as-people-write-them.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-that-a-hook-of-a-preload-loads-is-named-where-it-runs-again.test.ts": {
     "default": 60000,
     "asan": 240000

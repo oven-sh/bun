@@ -494,11 +494,13 @@ export const start = () => [
   fs.globSync("*.txt", { cwd: path.join(import.meta.dirname, "data") }).sort().join(),
   open("plain.sqlite"),
   open("ahead.sqlite"),
+  open("busy.sqlite"),
 ].join(" ");
 `,
         "app/node_modules/store/data/a.txt": "a",
         "app/node_modules/store/data/b.txt": "b",
         "app/make.mjs": `import { Database } from "bun:sqlite";
+import fs from "node:fs";
 for (const [name, mode] of [["plain", "delete"], ["ahead", "wal"]]) {
   const database = new Database("./node_modules/store/data/" + name + ".sqlite");
   database.run("pragma journal_mode = " + mode);
@@ -507,6 +509,13 @@ for (const [name, mode] of [["plain", "delete"], ["ahead", "wal"]]) {
   database.run("pragma wal_checkpoint(truncate)");
   database.close();
 }
+// Its commits are in the log alone.
+const busy = new Database("./busy.sqlite");
+busy.run("pragma journal_mode = wal");
+busy.run("create table words (word)");
+busy.run("insert into words values ('a')");
+for (const end of ["", "-wal"]) fs.copyFileSync("./busy.sqlite" + end, "./node_modules/store/data/busy.sqlite" + end);
+busy.close();
 `,
         "app/main.mjs": `import { start } from "store"; console.log(start());`,
       });
@@ -515,7 +524,7 @@ for (const [name, mode] of [["plain", "delete"], ["ahead", "wal"]]) {
       const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs", ...flags);
       expect(warnings(built)).toEqual([]);
       expect(plain).toEqual({
-        stdout: "a.txt,b.txt a.txt,b.txt a read-only a read-only\n",
+        stdout: "a.txt,b.txt a.txt,b.txt a read-only a read-only a read-only\n",
         stderr: "",
         exitCode: 0,
       });
@@ -523,6 +532,71 @@ for (const [name, mode] of [["plain", "delete"], ["ahead", "wal"]]) {
     },
     120_000,
   );
+
+  test("the asynchronous forms of node:fs answer as the synchronous ones", async () => {
+    using dir = tempDir("aot-asynchronous-forms-of-fs", {
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.cjs" }`,
+      "app/node_modules/store/index.cjs": `const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const data = path.join(__dirname, "data");
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "aot-forms-"));
+const answer = async ask => {
+  try {
+    return JSON.stringify(await ask());
+  } catch (error) {
+    return error.code;
+  }
+};
+const both = async (label, ask) => {
+  const answers = [await answer(() => ask(false)), await answer(() => ask(true))];
+  console.log(label, ...new Set(answers));
+};
+let count = 0;
+const cp = (from, options) => async isAsynchronous => {
+  const to = path.join(temporary, options ? "0" : String(count++));
+  await (isAsynchronous ? fs.promises.cp(from, to, options) : fs.cpSync(from, to, options));
+  return fs.readFileSync(to, "utf8");
+};
+const list = options => async isAsynchronous => {
+  const entries = isAsynchronous ? await fs.promises.readdir(data, options) : fs.readdirSync(data, options);
+  return entries.map(it => (it.name ? path.relative(__dirname, path.join(it.parentPath, it.name)) : String(it)).replaceAll(path.sep, "/")).sort();
+};
+exports.start = async () => {
+  fs.readFileSync(path.join(__dirname, "data/a.txt"), "utf8");
+  fs.readdirSync(path.join(__dirname, "data"), { recursive: true });
+  await both("cp", cp(path.join(data, "a.txt")));
+  await both("cp over", cp(path.join(data, "below/b.txt"), { force: false }));
+  await both("cp over, told", cp(path.join(data, "a.txt"), { force: false, errorOnExist: true }));
+  await both("cp of nothing", cp(path.join(data, "absent.txt")));
+  fs.mkdirSync(path.join(data, "below"), { recursive: true });
+  fs.writeFileSync(path.join(data, "below/made.txt"), "made");
+  await both("list", list({ recursive: true }));
+  await both("list with types", list({ recursive: true, withFileTypes: true }));
+  await both("list in bytes", list({ recursive: true, encoding: "buffer" }));
+  if (process.getuid) {
+    const file = path.join(data, "a.txt"), { uid } = fs.statSync(file);
+    fs.chownSync(file, -1, process.getgid());
+    console.log("group", fs.statSync(file).uid === uid, fs.statSync(file).gid === process.getgid());
+    fs.chownSync(file, process.getuid(), -1);
+    console.log("user", fs.statSync(file).uid === process.getuid(), fs.statSync(file).gid === process.getgid());
+  }
+  fs.rmSync(temporary, { recursive: true });
+};
+`,
+      "app/node_modules/store/data/a.txt": "a",
+      "app/node_modules/store/data/below/b.txt": "b",
+      "app/main.mjs": `import { start } from "store"; await start();`,
+    });
+    const { plain, compiled } = await bothWays(String(dir), "./main.mjs");
+    const list = `["a.txt","below","below/b.txt","below/made.txt"]`;
+    const listBelowData = `["data/a.txt","data/below","data/below/b.txt","data/below/made.txt"]`;
+    const owner = isWindows ? "" : "group true true\nuser true true\n";
+    expect(plain).toEqual({
+      stdout: `cp "a"\ncp over "a"\ncp over, told ERR_FS_CP_EEXIST\ncp of nothing ENOENT\nlist ${list}\nlist with types ${listBelowData}\nlist in bytes ${list}\n${owner}`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  });
 
   test("what a package reads by a known path, and the program's own package.json", async () => {
     using dir = tempDir("aot-package-files-embedded-unasked", {
@@ -723,12 +797,14 @@ console.log("imported, it answers as a file that is left out", (await load("clie
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
     const read = `a script that is tested for true\na library asked about in front of the read true\nand read 14\nopened yes\nread on another platform not here\n`;
     const asked = `a program that is tested for true\nits size 12\nmay it be read yes\n${read}`;
+    // Windows has no Bun.mmap(), whose error has no code.
+    const mapped = (answer: string) => `the program, mapped ${isWindows ? undefined : answer}`;
     expect(plain.stdout).toBe(
-      `${asked}is that file there true\nthe program's bytes MZ a program\nthe script's bytes a script\nthe program, mapped 12\nit is listed helper.bin\nimported, it answers as a file that is left out false\n`,
+      `${asked}is that file there true\nthe program's bytes MZ a program\nthe script's bytes a script\n${mapped("12")}\nit is listed helper.bin\nimported, it answers as a file that is left out false\n`,
     );
     // Every question is answered as by plain Bun, so nothing is warned of.
     expect(compiled).toEqual({
-      stdout: `${asked}is that file there false\nthe program's bytes ENOENT\nthe script's bytes ENOENT\nthe program, mapped ENOENT\nit is listed helper.bin\nimported, it answers as a file that is left out true\n`,
+      stdout: `${asked}is that file there false\nthe program's bytes ENOENT\nthe script's bytes ENOENT\n${mapped("ENOENT")}\nit is listed helper.bin\nimported, it answers as a file that is left out true\n`,
       stderr: "",
       exitCode: 0,
     });

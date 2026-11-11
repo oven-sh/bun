@@ -87,7 +87,7 @@ fn read_function_body(
         .bytes(body)
         .trim_ascii_start()
         .strip_prefix(b"return")?;
-    if !rest.first()?.is_ascii_whitespace() || rest.trim_ascii_start().len() + 1 != rest.len() {
+    if !matches!(rest.first()?, b' ' | b'\t') || rest.trim_ascii_start().len() + 1 != rest.len() {
         return None;
     }
     let argument = read_import(rest)?;

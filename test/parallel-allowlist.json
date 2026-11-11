@@ -1846,6 +1846,7 @@
     "aot/test-run-function-source-enum-namespace.test.ts",
     "aot/test-run-function-source-enum-read.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts",
-    "aot/a-file-that-a-hook-of-a-preload-loads-is-named-where-it-runs-again.test.ts"
+    "aot/a-file-that-a-hook-of-a-preload-loads-is-named-where-it-runs-again.test.ts",
+    "aot/suites-as-people-write-them.test.ts"
   ]
 }

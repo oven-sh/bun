@@ -837,7 +837,12 @@ pub(crate) fn is_removed_by_program(key: &[u8]) -> bool {
 }
 
 fn record_removed_path(key: &[u8]) {
-    REMOVED_PATHS.lock().push(key.into());
+    let mut removed = REMOVED_PATHS.lock();
+    if removed.iter().any(|it| is_at_or_below(key, it)) {
+        return;
+    }
+    removed.retain(|it| !is_at_or_below(it, key));
+    removed.push(key.into());
     HAS_REMOVED_PATHS.store(true, core::sync::atomic::Ordering::Release);
 }
 
@@ -929,10 +934,25 @@ fn has_vanished(path: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 pub enum ChangedAttribute {
     Mode(bun_sys::Mode),
-    /// User and group.
+    /// User and group. `ChangedAttribute::KEPT` leaves one as it is.
     Owner(u32, u32),
     /// Of the last access and modification: seconds and nanoseconds.
     Times([(i64, i64); 2]),
+}
+
+impl ChangedAttribute {
+    const KEPT: u32 = u32::MAX;
+
+    /// What this leaves as it is stays as `earlier` has set it.
+    fn over(self, earlier: Option<ChangedAttribute>) -> ChangedAttribute {
+        let choose = |id: u32, earlier: u32| if id == Self::KEPT { earlier } else { id };
+        match (self, earlier) {
+            (Self::Owner(user, group), Some(Self::Owner(earlier_user, earlier_group))) => {
+                Self::Owner(choose(user, earlier_user), choose(group, earlier_group))
+            }
+            _ => self,
+        }
+    }
 }
 
 static CHANGED_ATTRIBUTES: bun_threading::Guarded<Vec<(Box<[u8]>, ChangedAttribute)>> =
@@ -951,7 +971,12 @@ pub(crate) fn apply_changed_attributes(key: &[u8], stat: &mut Stat) {
                 stat.st_mode = (stat.st_mode as bun_sys::Mode & !0o7777 | mode & 0o7777) as _;
             }
             ChangedAttribute::Owner(user, group) => {
-                (stat.st_uid, stat.st_gid) = (user as _, group as _);
+                if user != ChangedAttribute::KEPT {
+                    stat.st_uid = user as _;
+                }
+                if group != ChangedAttribute::KEPT {
+                    stat.st_gid = group as _;
+                }
             }
             ChangedAttribute::Times([accessed, modified]) => {
                 #[cfg(not(windows))]
@@ -1882,7 +1907,29 @@ impl StandaloneModuleGraph {
         if let Some(it) = program.and_then(|it| Self::key_under_own_root(it, key.as_bytes())) {
             self.forget_implicit_files(&it);
         }
-        record_removed_path(key.as_bytes());
+        // A program that makes and removes files of its own changes nothing in the executable.
+        if self.holds_at_or_below(key.as_bytes()) {
+            record_removed_path(key.as_bytes());
+        }
+    }
+
+    /// Whether the executable holds something for the path `key` of the disk, or below it.
+    fn holds_at_or_below(&self, key: &[u8]) -> bool {
+        let Some(program) = self.compiled_program.as_ref() else {
+            return false;
+        };
+        let holds = |key: &[u8]| {
+            self.files.contains(key)
+                || self.dirs.contains(key)
+                || program.holds_module_at(key)
+                || program.holds_module_below(key)
+                || program.entry_point_by_source_path(key).is_some()
+                || program.entry_points_in_directory(key).next().is_some()
+                || self.key_of_mounted_asset(key).is_some()
+                || self.find_renamed_file(key).is_some()
+                || self.contains_renamed_file(key)
+        };
+        holds(key) || Self::key_under_own_root(program, key).is_some_and(|it| holds(&it))
     }
 
     /// The program writes the file at the source path `name` on the disk. Once that is there, the copy in the executable is outdated.
@@ -2059,8 +2106,15 @@ impl StandaloneModuleGraph {
         let is_same = |it: &ChangedAttribute| {
             core::mem::discriminant(it) == core::mem::discriminant(&attribute)
         };
-        changed.retain(|it| *it.0 != *key || !is_same(&it.1));
-        changed.push((key.into(), attribute));
+        let mut earlier = None;
+        changed.retain(|it| {
+            let is_replaced = *it.0 == *key && is_same(&it.1);
+            if is_replaced {
+                earlier = Some(it.1);
+            }
+            !is_replaced
+        });
+        changed.push((key.into(), attribute.over(earlier)));
         HAS_CHANGED_ATTRIBUTES.store(true, core::sync::atomic::Ordering::Release);
         true
     }
@@ -2792,6 +2846,33 @@ pub(crate) mod tests {
         assert_eq!(find(b"/$bunfs/root/data/odd.txt"), None);
         assert_eq!(find(b"/$bunfs/root/data/bad.toml?toml"), None);
         assert_eq!(find(b""), None);
+    }
+
+    #[test]
+    fn removed_paths_are_recorded_once() {
+        let record = |path: &str| record_removed_path(format!("/recorded-once/{path}").as_bytes());
+        ["a/b", "a/b", "a/bc", "d"].into_iter().for_each(record);
+        record("a");
+        record("a/c");
+        let removed = REMOVED_PATHS.lock();
+        let mut of_test: Vec<&[u8]> = (removed.iter())
+            .filter_map(|it| it.strip_prefix(b"/recorded-once/"))
+            .collect();
+        of_test.sort_unstable();
+        assert_eq!(of_test, [&b"a"[..], b"d"]);
+        drop(removed);
+        assert!(is_removed_by_program(b"/recorded-once/a/b/c"));
+        assert!(!is_removed_by_program(b"/recorded-once/ab"));
+    }
+
+    #[test]
+    fn owner_is_changed_one_by_one() {
+        let kept = ChangedAttribute::KEPT;
+        let earlier = ChangedAttribute::Owner(kept, 5).over(None);
+        let later = ChangedAttribute::Owner(7, kept).over(Some(earlier));
+        assert!(matches!(later, ChangedAttribute::Owner(7, 5)));
+        let mode = ChangedAttribute::Mode(0o600).over(None);
+        assert!(matches!(mode, ChangedAttribute::Mode(0o600)));
     }
 
     #[cfg(not(windows))]

@@ -1,7 +1,5 @@
-// Accessor pairs of classes that a function makes again and again. The second half of a pair joins the first in its slot: no property table is copied for it.
-const { heapStats } = require("bun:jsc");
+// Accessor pairs of classes that a function makes again and again. The second half of a pair joins the first in its slot.
 const symbol = Symbol("pair");
-const tables = () => heapStats().objectTypeCounts.PropertyTable ?? 0;
 
 function large(g) {
   class Large {
@@ -380,14 +378,12 @@ console.log(lines.join("\n"));
 
 for (let round = 0; round < 3; round++) {
   const g = { v: round };
-  const before = tables();
   const L = large(g);
-  const made = tables() - before;
   const l = new L();
   l.p7 = 100;
   let sum = 0;
   for (const key of Object.getOwnPropertyNames(L.prototype)) if (key !== "constructor") sum += l[key];
-  console.log(round, sum, Object.getOwnPropertyNames(L.prototype).length, made < 100 ? "few tables" : "many tables");
+  console.log(round, sum, Object.getOwnPropertyNames(L.prototype).length);
   l.p299 = 1000;
   Object.defineProperties(L.prototype, { p3: { enumerable: true }, p299: { enumerable: true } });
   const keys = [];

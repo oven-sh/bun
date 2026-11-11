@@ -1054,7 +1054,7 @@ impl SourceProvider for BundlerServices {
             bun_paths::dirname(module_path).filter(|_| is_installed_package_file(module_path));
         while let Some(current) = folder.filter(|it| bun_paths::basename(it) != b"node_modules") {
             let path = [current, &[bun_paths::SEP], b"package.json"].concat();
-            let is_new = !self.files_for_file_system.lock().is_embedded(&path, false);
+            let is_new = !self.is_embedded_implicitly(&path, false);
             if is_new && self.embed_file_implicitly(b"", module_path, &path, false) {
                 added.push(path);
             }

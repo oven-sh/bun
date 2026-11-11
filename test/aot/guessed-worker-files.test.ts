@@ -408,6 +408,20 @@ test.concurrent.each(Object.keys(refused))("%s stops no build", async name => {
   expect(said).toContain(says);
 });
 
+test.concurrent("an asset that a plugin fails to load still stops the build", async () => {
+  using dir = tempDir("aot-asset-beside-guessed-worker-file", {
+    "main.js": `import logo from "./logo.png" with { type: "file" };\nconsole.log(logo);\n${startsJob("./job.js")}`,
+    "job.js": job,
+    "logo.png": "logo",
+  });
+  const options = `entrypoints: ["./main.js"], plugins: [{ name: "fails", setup(build) {
+    build.onLoad({ filter: /logo/ }, () => { throw new Error("fails to load"); });
+  } }]`;
+  const built = await build(String(dir), { cwd: ".", options, seen: [] }, "program");
+  expect(built.stderr).toContain("error: fails to load");
+  expect(built.exitCode).toBe(1);
+});
+
 test.concurrent("what the program itself loads still stops the build", async () => {
   using dir = tempDir("aot-guessed-worker-files", {
     "main.ts": `import { size } from "./size";\nconst names = ["./job.ts"];\nconsole.log(names, size);\nif (process.argv[2]) new Worker(process.argv[2]);\n`,

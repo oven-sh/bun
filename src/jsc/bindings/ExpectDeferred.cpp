@@ -69,10 +69,18 @@ extern "C" void ExpectDeferred__rejectUndecided(JSGlobalObject* globalObject, En
     promise->setFlags(promise->flags() & ~JSPromise::isHandledFlag);
 }
 
-// Also true with a reaction on the promise while another rejected promise has no handler: the reaction may only have passed the rejection on.
-extern "C" bool ExpectDeferred__isStillUnhandled(JSGlobalObject* globalObject, EncodedJSValue encodedPromise)
+extern "C" uint32_t ExpectDeferred__reportedRejections(JSGlobalObject* globalObject)
 {
-    return !uncheckedDowncast<JSPromise>(JSValue::decode(encodedPromise))->isHandled() || defaultGlobalObject(globalObject)->hasUnhandledRejection();
+    return defaultGlobalObject(globalObject)->reportedRejectionCount();
+}
+
+// Also true with a reaction on the promise if a rejected promise has no handler, or had none at a report after `reportedBefore`: the reaction may only have passed the rejection on.
+extern "C" bool ExpectDeferred__isStillUnhandled(JSGlobalObject* globalObject, EncodedJSValue encodedPromise, uint32_t reportedBefore)
+{
+    if (!uncheckedDowncast<JSPromise>(JSValue::decode(encodedPromise))->isHandled())
+        return true;
+    auto* global = defaultGlobalObject(globalObject);
+    return global->hasUnhandledRejection() || global->reportedRejectionCount() != reportedBefore;
 }
 
 // A JSC::Exception, because unlike an Error it keeps its stack frames' code alive.

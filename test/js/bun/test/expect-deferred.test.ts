@@ -844,6 +844,20 @@ describe.concurrent(".resolves and .rejects", () => {
           step(helper);
         });
         test("next", () => {});
+        // Bun.build() waits for the setup() of a plugin in a nested tick, with this test on the stack. The listener
+        // gets the rejection at the end of that tick, which is before the runner can ask.
+        test("passed on in a nested tick, in a file with an unhandledRejection listener", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = expect(promise).resolves.toBe(2);
+          resolve(1);
+          (async () => {
+            for (let i = 0; i < 8; i++) await null;
+            matcher.finally(() => {});
+          })();
+          const plugin = { name: "nested tick", setup: () => Bun.sleep(1) };
+          await Bun.build({ entrypoints: ["./none.js"], plugins: [plugin] }).catch(() => {});
+        });
+        test("next", () => {});
       `,
     });
     expect(results.filter(line => !line.endsWith("next"))).toEqual([
@@ -862,6 +876,7 @@ describe.concurrent(".resolves and .rejects", () => {
       "(fail) an async helper that nothing awaits",
       "(fail) a helper that wraps the error, and that nothing awaits",
       "(fail) a helper that wraps the error, in a file with an unhandledRejection listener",
+      "(fail) passed on in a nested tick, in a file with an unhandledRejection listener",
     ]);
     expect(exitCode).toBe(1);
   });

@@ -33,6 +33,7 @@ void RejectedPromiseQueue::markReported(JSC::JSGlobalObject* owner, JSC::JSPromi
         m_reported.set(vm, owner, reported);
     }
     reported->add(vm, promise);
+    m_reportedCount++;
 }
 
 bool RejectedPromiseQueue::hasUnhandled() const

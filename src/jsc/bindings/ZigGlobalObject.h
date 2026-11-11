@@ -324,6 +324,7 @@ public:
 
     void handleRejectedPromises();
     bool hasUnhandledRejection() const { return m_aboutToBeNotifiedRejectedPromises.hasUnhandled(); }
+    uint32_t reportedRejectionCount() const { return m_aboutToBeNotifiedRejectedPromises.reportedCount(); }
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
     void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }

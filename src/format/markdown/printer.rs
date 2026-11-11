@@ -1902,7 +1902,13 @@ impl<'a> Printer<'a, '_> {
                 }
                 lines.push(Doc::from(line.to_vec()));
             }
-            return docs![backticks(), padding, Doc::Array(lines), padding, backticks()];
+            return docs![
+                backticks(),
+                padding,
+                Doc::Array(lines),
+                padding,
+                backticks()
+            ];
         }
         docs![backticks(), padding, code, padding, backticks()]
     }

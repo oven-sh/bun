@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import path from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -692,4 +693,63 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// A loop of `await once(process.stdin, "data")` has no 'data' listener between two chunks. Node's stdin is an
+// fs.ReadStream over a file and a libuv handle over a pipe, a socket or a TTY: every chunk, and the EOF, comes in a
+// callback of its own, after the nextTicks and the promise jobs of the one before. So the loop has its listener back in
+// time and gets every byte, and 'end' comes when the loop is done with the last chunk.
+//
+// process.stdin pushed each chunk from the promise job of a read of `Bun.stdin.stream()`. That read is answered at once
+// when the bytes are there (a file, a pipe that the writer keeps full), so the next chunk came before the nextTick of
+// the loop, and flow() emitted it to no listener.
+describe("process.stdin read one 'data' event at a time", () => {
+  const size = 2_000_000;
+  const fixture = path.join(import.meta.dir, "stdin", "once-data.fixture.js");
+  const expected = { stdout: JSON.stringify({ bytes: size, doneAtEnd: size }) + "\n", stderr: "", exitCode: 0 };
+  const forms = [
+    ["the next once('data') comes after a nextTick", "tick"],
+    ["the next once('data') comes after pause(), a nextTick and resume()", "pause"],
+  ] as const;
+
+  test.concurrent.each(forms)("a file: %s", async (_, form) => {
+    using dir = tempDir("stdin-once-data-file", { "input.bin": Buffer.alloc(size, "x") });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, form],
+      stdin: Bun.file(path.join(String(dir), "input.bin")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
+  // Bun.spawn's "pipe" is a socketpair on POSIX.
+  test.concurrent.each(forms)("a socket: %s", async (_, form) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, form],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write(Buffer.alloc(size, "x"));
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
+  test.concurrent.each(forms)("an anonymous pipe: %s", async (_, form) => {
+    using dir = tempDir("stdin-once-data-pipe", {
+      "writer.js": `const chunk = Buffer.alloc(65536, "x"); let left = ${size}; (function pump() { while (left > 0) { const n = Math.min(left, chunk.length); left -= n; if (!process.stdout.write(chunk.subarray(0, n))) return process.stdout.once("drain", pump); } })();`,
+    });
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    exec(
+      `"${bunExe()}" writer.js | "${bunExe()}" "${fixture}" ${form}`,
+      { cwd: String(dir), env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    expect(await promise).toEqual({ err: null, stdout: expected.stdout, stderr: "" });
+  });
 });

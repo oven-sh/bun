@@ -1,3 +1,4 @@
+use bun_aot::diagnostics::log_locales_left_out;
 use bun_aot::engine::{
     EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
     has_compiler, image_alignment, used_features,
@@ -104,6 +105,13 @@ pub(crate) fn compile_to_executable(
         Some(outfile) => Some((outfile, trimming::plan_without_trim_flag(request, &used)?)),
         None => None,
     };
+    if options.trim.locales.is_some() {
+        let untrimmed_plan = untrimmed.as_ref().and_then(|(_, plan)| plan.as_ref());
+        let plans: Vec<&TrimPlan> = trimming.plan().into_iter().chain(untrimmed_plan).collect();
+        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+        let log = unsafe { &mut *request.log };
+        log_locales_left_out(&build.engine, &build.texts, &plans, log);
+    }
     log_part_outside_stages("behind the engine: used features, trimming");
     let mut outcome =
         reports::collect_reports(&build, options, &used, &trimming, compiler_called_at);

@@ -1,5 +1,5 @@
 use crate::error::TrimRequestError;
-use crate::model::{IcuLanguage, LocaleGroup, UsedLocales, WantedLocaleGroups};
+use crate::model::{IcuLanguage, LocaleGroup, TrimPlan, UsedLocales, WantedLocaleGroups};
 
 pub(crate) fn resolve_wanted_groups(
     used: &UsedLocales,
@@ -33,6 +33,22 @@ pub(crate) fn resolve_wanted_groups(
     groups.sort_unstable();
     groups.dedup();
     Ok(WantedLocaleGroups::Listed(groups))
+}
+
+pub(crate) fn count_groups(languages: &[IcuLanguage]) -> usize {
+    let ends = languages.iter().map(|it| usize::from(it.group.0) + 1);
+    ends.max().unwrap_or(0)
+}
+
+impl TrimPlan {
+    /// A list of locales takes data of the language of `tag` out of the executable. `tag` is read as a listed one is.
+    pub fn leaves_out_locale(&self, tag: &[u8]) -> bool {
+        let Some(left_out) = &self.locales_left_out else {
+            return false;
+        };
+        let group = find_tag_group(&left_out.languages, tag);
+        group.is_some_and(|it| left_out.tombstoned_groups.get(usize::from(it.0)) == Some(&true))
+    }
 }
 
 fn find_tag_group(languages: &[IcuLanguage], tag: &[u8]) -> Option<LocaleGroup> {
@@ -69,7 +85,7 @@ impl WantedLocaleGroups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::LocaleTag;
+    use crate::model::{LocaleTag, LocalesLeftOut};
 
     const UNKNOWN: UsedLocales = UsedLocales::Unknown(None);
     const ALL: Result<WantedLocaleGroups, TrimRequestError> = Ok(WantedLocaleGroups::All);
@@ -202,6 +218,30 @@ mod tests {
         assert_eq!(find_group(&languages, *b"zh\0\0"), Some(LocaleGroup(4)));
         assert_eq!(find_group(&languages, *b"fi\0\0"), None);
         assert_eq!(find_group(&[], *b"de\0\0"), None);
+    }
+
+    #[test]
+    fn count_groups_reaches_the_last_group() {
+        assert_eq!(count_groups(&languages()), 5);
+        assert_eq!(count_groups(&[]), 0);
+    }
+
+    #[test]
+    fn plan_leaves_out_the_tags_of_tombstoned_groups() {
+        let plan = TrimPlan {
+            locales_left_out: Some(LocalesLeftOut {
+                languages: languages(),
+                tombstoned_groups: vec![true, false, false, true, false],
+            }),
+            ..TrimPlan::empty()
+        };
+        for tag in ["de", "de-DE", "DE_at", "nb", "no-NO"] {
+            assert!(plan.leaves_out_locale(tag.as_bytes()), "{tag}");
+        }
+        for tag in ["en-US", "fil", "zh-Hant-TW", "xx-YY", "x-private", ""] {
+            assert!(!plan.leaves_out_locale(tag.as_bytes()), "{tag}");
+        }
+        assert!(!TrimPlan::empty().leaves_out_locale(b"de"));
     }
 
     #[test]

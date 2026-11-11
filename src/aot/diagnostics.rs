@@ -21,6 +21,7 @@ use bun_sema_driver::{self as driver, LoadedProgram, Locator};
 use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+pub use self::engine_records::log_locales_left_out;
 pub(crate) use self::engine_records::package_with_slow_code;
 pub(crate) use self::front_end::{describe_first_fold_error, syntax_errors_of};
 use self::ignore_comments::IgnoreComment;

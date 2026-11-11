@@ -1205,6 +1205,14 @@ fn icu_items_follow_wanted_languages() {
             let label = format!("{target:?} {name}");
             let trimmed = toy.trim(&label, used, request, unwanted_run_groups);
             check_icu_items(&label, &toy, &trimmed, *expected);
+            // Without a list the plan keeps what the program names, so it leaves out none of that.
+            let tags = [&b"de-AT"[..], b"nb", b"no-NO"];
+            let left_out = tags.map(|tag| trimmed.plan.leaves_out_locale(tag));
+            assert_eq!(
+                left_out,
+                [request.locales.is_some(), false, false],
+                "{label}"
+            );
             let summary = &trimmed.summary;
             assert!(
                 summary.file_bytes_saved + 4 * toy.layout.cut_alignment >= summary.removed_bytes(),

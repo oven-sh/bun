@@ -5,7 +5,7 @@ use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::program::Files;
 use bun_sema::session::Arena;
-use bun_trim::UsedFeatures;
+use bun_trim::{TrimPlan, UsedFeatures};
 
 use crate::compile::{BuildFailed, Compilation};
 use crate::diagnostic_codes::Code;
@@ -44,6 +44,7 @@ macro_rules! define_linked_functions {
 linked_functions! {
     pub fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Result<Compilation, BuildFailed>;
     pub fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]);
+    pub fn bun_aot_log_locales_left_out(engine: &EngineResult, texts: &SourceTexts, plans: &[&TrimPlan], log: &mut Log);
     pub(crate) fn bun_aot_parse_json<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> Option<&'s DataValue<'s>>;
     pub fn bun_aot_check_option_word(earlier_words: &[Box<[u8]>], word: &[u8]) -> Result<(), RejectedOptionWord>;
     pub fn bun_aot_used_features(result: &EngineResult) -> UsedFeatures;

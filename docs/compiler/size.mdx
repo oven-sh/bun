@@ -57,10 +57,16 @@ With the last two, `--trim` keeps almost every API. With the others, unused Bun 
 ## Make it smaller
 
 - `--disallow-code-generation-from-strings` removes the parser and the interpreter. `eval` and `new Function` then throw.
-- `--trim-locales en,de` removes the `Intl` data for every other locale. Using another locale exits the process.
+- `--trim-locales en,de` removes the `Intl` data for every other language. A regional variant of a listed language, such as `de-AT`, stays. A call that needs the data of another language exits the process.
 - `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`, and an error message [quotes less](/compiler/compatibility) of the code that failed.
 
 Without `--trim-locales`, Bun keeps the locales that your code passes as constants, as in `toLocaleString("de")`. One call with a computed locale, or with none, keeps them all. The flag has no effect on macOS, where Bun uses the system's ICU library.
+
+With `--trim-locales`, only the list counts. An executable built with `--aot` can pass a test with a locale that the list leaves out: it formats some values without the locale's data, and exits on others.
+
+Where a build with `--aot` finds a constant locale that the list leaves out, it warns with `TS100203`. It warns once for each locale and names one place, so look for other calls that pass the same locale. A comment can't silence this warning, even where the call needs no locale data, as in `toLocaleUpperCase("tr")`: add the locale to the list.
+
+No warning doesn't mean that the list is complete. The build finds a locale that is written at the call or held in a `const`. It doesn't find one that reaches the call through a parameter, a property or a closure, one that `toLocaleString()` gets on a `Temporal` object, or one that your code computes. It doesn't warn about a call that passes no locale. Without `--aot`, or where the compiler [can't see all of the program](#what-blocks---trim), it may find no constants. `supportedLocalesOf()` is no guard: in the executable it still lists a locale whose data the list left out.
 
 ### Turn off code from strings
 

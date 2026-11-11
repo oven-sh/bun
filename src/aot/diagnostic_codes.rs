@@ -100,6 +100,7 @@ diagnostic_codes! {
         ExportNotFound = 100200, Error, "No matching export in \"{0}\" for import \"{1}\"";
         AmbiguousExport = 100201, Error, "Ambiguous import \"{0}\" has multiple matching exports";
         ProgramLimitExceeded = 100202, Error, "The program is too large to compile: {0} is limited to {1}, and it needs {2}";
+        LocaleDataLeftOut = 100203, Warning, "compile.trim.locales leaves out the data of \"{0}\", and {1} gets that locale here. A call that needs the data exits the process with code 70. Other calls may pass \"{0}\" too: the build names one place for each locale. Add \"{0}\" to the list";
     }
     Lower 100300..=100699 {
         NestedTooDeeply = 100301, Error, "This code is nested more than {0} levels deep.";

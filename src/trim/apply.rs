@@ -835,6 +835,7 @@ mod tests {
             icu_packages: Vec::new(),
             keeps_table: false,
             unrequested: UnrequestedCut::Nothing,
+            locales_left_out: None,
         }
     }
 

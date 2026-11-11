@@ -35,8 +35,15 @@ pub(crate) struct IgnoreCommentOptions {
 
 const COMPUTED_IMPORT_PATH: u32 = 100_064;
 
+/// `LocaleDataLeftOut` stands for every call that passes its locale, not for a line.
+const NEVER_SILENCED: [Code; 2] = [Code::IgnoreCommentSilencesNothing, Code::LocaleDataLeftOut];
+
+fn is_never_silenced(number: u32) -> bool {
+    NEVER_SILENCED.iter().any(|code| code.number() == number)
+}
+
 fn can_be_silenced(number: u32) -> bool {
-    (100_000..=100_999).contains(&number) && number != Code::IgnoreCommentSilencesNothing.number()
+    (100_000..=100_999).contains(&number) && !is_never_silenced(number)
 }
 
 fn text_after_marker(text: &[u8], (marker, end): (u32, u32)) -> Option<&[u8]> {
@@ -241,7 +248,7 @@ impl Diagnostics {
         let complain_if_edited =
             |reason: String| can_complain.then(|| complain(reason.as_bytes())).flatten();
         let codes = numbers.into_iter().map(|number| {
-            let reason = if number == Code::IgnoreCommentSilencesNothing.number() {
+            let reason = if is_never_silenced(number) {
                 Some(format!("TS{number} can't be silenced"))
             } else if can_be_silenced(number) {
                 options.should_report_stale.then(|| {

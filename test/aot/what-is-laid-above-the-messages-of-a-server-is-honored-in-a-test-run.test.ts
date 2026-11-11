@@ -1,8 +1,14 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
+
+// A debug build of Bun needs about 165 s to compile one test run here, with one thread as with all of them, and with more than one thread its engine can crash
+// in the build (#48169). So a debug build compiles with one thread, which makes the same program, and a case has time for its two compiled runs.
+const env = isDebug ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "threads=1" } : bunEnv;
+if (isDebug) raiseDefaultTimeout(1_200_000);
 
 // The short road of a server is taken only while nobody has laid an accessor above a server, a request or a response. An executable asks, and so does a test run.
 // So does a test run one of whose tests adds a name to Object.prototype: there the road is also left for good once a name was added.
@@ -51,7 +57,7 @@ const ofARunThatPasses =
   /^(?:(?:usual|opened)\.test\.js:|\(pass\) .+| \d+ pass| 0 fail|Ran \d+ tests? across 1 file\. .+)$/;
 
 async function outcomeOf(directory: string, file: string, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, file], directory, bunEnv);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, file], directory, env);
   return {
     printed: stdout.split("\n").filter(line => line !== "" && !line.startsWith("bun test")),
     // The rest: a test that failed, an error, a warning of the build, the report of a crash.

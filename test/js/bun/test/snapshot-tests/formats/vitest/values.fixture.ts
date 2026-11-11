@@ -381,6 +381,28 @@ const cases: Record<string, () => unknown> = {
       },
     });
   },
+  // Each retry prints the matchers inside again, and each of those starts with toJSON() again.
+  "custom asymmetric matchers in each other, each beside a toJSON that throws": () => {
+    let calls = 0;
+    let value: unknown = "innermost";
+    for (let i = 0; i < 8; i++) {
+      value = (expect as any).toBeBetween([
+        value,
+        {
+          toJSON() {
+            calls++;
+            throw new Error("not printed");
+          },
+        },
+      ]);
+    }
+    return {
+      printed: value,
+      get total() {
+        return calls;
+      },
+    };
+  },
   "custom asymmetric matcher prints its arguments each time it is printed": () => {
     let calls = 0;
     const matcher = (expect as any).toBeBetween({ toJSON: () => ++calls });

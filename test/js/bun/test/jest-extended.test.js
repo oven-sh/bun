@@ -277,6 +277,22 @@ describe("jest-extended", () => {
         '-   "a": toSatisfy<[Function isOdd], /a+b.c/, Object {\n-   "b": 1,\n- }>,\n+   "a": 2,\n',
       );
 
+      // The utils of a matcher from expect.extend() print it in the same way.
+      let fromUtils;
+      expect.extend({
+        toBePrintedByUtils(received) {
+          const { utils } = this;
+          fromUtils = [utils.stringify(received), utils.printExpected(received), utils.printReceived(received)];
+          return { pass: true, message: () => "" };
+        },
+      });
+      expect(expect.toSatisfy(isOdd, /a+b.c/)).toBePrintedByUtils();
+      expect(fromUtils.map(text => Bun.stripANSI(text))).toEqual([
+        "toSatisfy<[Function isOdd], /a+b.c/>",
+        "toSatisfy<[Function isOdd], /a+b.c/>",
+        "toSatisfy<[Function isOdd], /a+b.c/>",
+      ]);
+
       // A snapshot serializer is not asked about the matcher or about its arguments, only about a value beside it.
       asked = 0;
       expect(inspect(expect.toSatisfy(isOdd, new Marked()))).toBe(

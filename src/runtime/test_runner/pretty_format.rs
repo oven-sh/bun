@@ -3601,6 +3601,8 @@ impl JestPrettyFormat {
 impl JestPrettyFormat {
     /// Vitest's `taskTitleValueFormatTruncate`.
     pub(crate) const TRUNCATE: usize = 40;
+    /// The default `maxLength` of Vitest's `stringify()`.
+    const STRINGIFY_MAX_LENGTH: usize = 10_000;
 
     #[cold]
     #[inline(never)]
@@ -3609,7 +3611,6 @@ impl JestPrettyFormat {
         unsafe extern "C" {
             safe fn SnapshotFormat__isShortenedByWidth(global: &JSGlobalObject, value: JSValue) -> bool;
         }
-        const MAX_LENGTH: usize = 10_000;
         let fits = |printed: &[u8]| strings::element_length_utf8_into_utf16(printed) <= Self::TRUNCATE;
 
         let mut printed = Vec::new();
@@ -3640,16 +3641,16 @@ impl JestPrettyFormat {
             let (mut fitting, mut too_wide) = (0, Self::TRUNCATE as u32);
             while fitting + 1 < too_wide {
                 let width = (fitting + too_wide) / 2;
-                stringify(&mut printed, Some(1), width, MAX_LENGTH)?;
+                stringify(&mut printed, Some(1), width, Self::STRINGIFY_MAX_LENGTH)?;
                 if fits(&printed) {
                     fitting = width;
                 } else {
                     too_wide = width;
                 }
             }
-            stringify(&mut printed, Some(1), fitting, MAX_LENGTH)?;
+            stringify(&mut printed, Some(1), fitting, Self::STRINGIFY_MAX_LENGTH)?;
         } else {
-            stringify(&mut printed, Some(0), u32::MAX, MAX_LENGTH)?;
+            stringify(&mut printed, Some(0), u32::MAX, Self::STRINGIFY_MAX_LENGTH)?;
         }
         out.extend_from_slice(&printed);
         Ok(())
@@ -3668,7 +3669,7 @@ impl JestPrettyFormat {
         runs: Option<&ArgumentRuns>,
     ) -> JsResult<()> {
         let start = printed.len();
-        let may_retry = || runs.is_none_or(|runs| runs.failed_retries.get() < ArgumentRuns::MAX_FAILED_RETRIES);
+        let may_retry = |printed: &[u8]| runs.is_none_or(|runs| runs.may_retry(printed.len() - start));
         let may_print_again = |printed: &[u8]| runs.is_none_or(|runs| runs.may_print_again(printed.len() - start));
         let mut max_depth = 10;
         loop {
@@ -3687,7 +3688,7 @@ impl JestPrettyFormat {
             };
             match print(printed, true) {
                 // Vitest retries once with `callToJSON: false`, whatever was thrown.
-                Err(JsError::Thrown) if may_retry() && global.clear_exception_except_termination() => {
+                Err(JsError::Thrown) if may_retry(printed) && global.clear_exception_except_termination() => {
                     let retried = print(printed, false);
                     if let (Err(_), Some(runs)) = (&retried, runs) {
                         runs.failed_retries.set(runs.failed_retries.get() + 1);
@@ -3732,7 +3733,7 @@ impl JestPrettyFormat {
                 out.extend_from_slice(b", ");
             }
             if format == SnapshotFormat::Vitest {
-                Self::stringify(global, argument, out, Stringify::Argument, None, u32::MAX, 10_000, Some(runs))?;
+                Self::stringify(global, argument, out, Stringify::Argument, None, u32::MAX, Self::STRINGIFY_MAX_LENGTH, Some(runs))?;
             } else {
                 out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
             }
@@ -3756,7 +3757,7 @@ enum Stringify {
 pub(crate) struct ArgumentRuns {
     /// Retries that threw as well. Each matcher around a print that keeps throwing doubles them.
     failed_retries: core::cell::Cell<u32>,
-    /// Bytes of the attempts that were printed again. Each matcher around a print of 10,000 characters has 4 times as many.
+    /// Bytes of the attempts that another attempt replaced. A matcher around a print of 10,000 characters has 4 times as many, and around one that throws once, 2 times.
     dropped: core::cell::Cell<usize>,
 }
 
@@ -3766,6 +3767,11 @@ impl ArgumentRuns {
     fn may_print_again(&self, dropped: usize) -> bool {
         self.dropped.set(self.dropped.get().saturating_add(dropped));
         self.dropped.get() <= MAX_LENGTH
+    }
+
+    /// An attempt that threw counts as one that was long enough to print again, however little it printed.
+    fn may_retry(&self, dropped: usize) -> bool {
+        self.failed_retries.get() < Self::MAX_FAILED_RETRIES && self.may_print_again(dropped.max(JestPrettyFormat::STRINGIFY_MAX_LENGTH))
     }
 }
 

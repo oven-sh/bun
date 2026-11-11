@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 1012, jest: 601 };
+  const tests = { vitest: 1013, jest: 601 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -3111,8 +3111,45 @@ describe.concurrent("the arguments of a matcher that expect.extend() made, in Vi
     });
   });
 
-  // Vitest 5.0.3 does not finish on these. The getter is read 63 times after the deepest level, and a print that did
-  // not end would read it again until it returns a string.
+  // Under one matcher, Bun prints a value again only while the attempts that were replaced have 536,870,888 bytes or
+  // fewer, where a retry counts as 10,000 bytes at least. Vitest 5.0.3 has no limit: it calls toJSON() of the third
+  // argument 4 times and prints the matcher. Not beside the other tests: this one prints 536 MB.
+  test.serial("a value is not printed again once the attempts that were replaced have 536,870,888 bytes", async () => {
+    const { log, stderr, exitCode } = await logOf(`
+      const calls = [0, 0];
+      // 255 second prints of 2,100,000 characters leave about 1,370,000 bytes.
+      const long = Buffer.alloc(2_100_000, "x").toString();
+      const first = expect.toBeFoo(expect.toBeFoo(expect.toBeFoo({ toJSON: () => (calls[0]++, long) })));
+      // 63 retries count as 630,000 bytes.
+      let second = "innermost";
+      for (let i = 0; i < 6; i++) {
+        second = expect.toBeFoo([
+          second,
+          {
+            toJSON() {
+              throw new Error("not thrown");
+            },
+          },
+        ]);
+      }
+      // A second print of 1,000,000 characters is more than what is left, so this one is printed once.
+      const shorter = Buffer.alloc(1_000_000, "x").toString();
+      const third = { toJSON: () => (calls[1]++, shorter) };
+      // The retry is not made, so what toJSON() threw is thrown.
+      const fourth = {
+        toJSON() {
+          throw new Error("thrown");
+        },
+      };
+      const printed = print(expect.toBeFoo(first, second, third, fourth));
+      console.log(JSON.stringify([...calls, printed]));
+    `);
+    expect({ log, stderr, exitCode }).toEqual({ log: [[256, 1, "thrown"]], stderr: "", exitCode: 0 });
+  });
+
+  // Vitest 5.0.3 does not finish on these. The getter counts a read only when it has made the next matcher, so the
+  // count does not depend on where the stack ends: below 2 for each of the 64 retries after the deepest level. A print
+  // that did not end would read the getter again until it returns a string.
   test("a matcher that its own argument holds, and matchers without end, are a RangeError, and soon", async () => {
     const { log, stderr, exitCode } = await logOf(`
       const holder = { name: "holder" };
@@ -3128,19 +3165,22 @@ describe.concurrent("the arguments of a matcher that expect.extend() made, in Vi
       let readsAtDeepest = 0;
       const endless = depth => ({
         get matcher() {
+          const matcher = expect.toBeFoo(endless(depth + 1));
           reads++;
           if (depth > deepest) {
             deepest = depth;
             readsAtDeepest = reads;
           }
-          return reads - readsAtDeepest > 1000 ? "read too often" : expect.toBeFoo(endless(depth + 1));
+          return reads - readsAtDeepest > 1000 ? "read too often" : matcher;
         },
       });
-      console.log(JSON.stringify([print(endless(1)), reads - readsAtDeepest]));
+      const printed = print(endless(1));
+      const readsAfterDeepest = reads - readsAtDeepest;
+      console.log(JSON.stringify([printed, readsAfterDeepest < 2 * 64 || readsAfterDeepest]));
     `);
     const overflow = "Maximum call stack size exceeded.";
     expect({ log, stderr, exitCode }).toEqual({
-      log: [[overflow, overflow], overflow, [overflow, 63]],
+      log: [[overflow, overflow], overflow, [overflow, true]],
       stderr: "",
       exitCode: 0,
     });

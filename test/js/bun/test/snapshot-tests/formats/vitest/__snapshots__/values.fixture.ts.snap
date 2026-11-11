@@ -972,6 +972,53 @@ exports[`values > custom asymmetric matchers beside each other in an argument 1`
 ]
 `;
 
+exports[`values > custom asymmetric matchers in each other, each beside a toJSON that throws 1`] = `
+{
+  "printed": toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  "innermost",
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  "total": 255,
+}
+`;
+
 exports[`values > deep 1`] = `
 {
   "o": {

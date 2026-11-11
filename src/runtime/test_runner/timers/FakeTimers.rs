@@ -1075,7 +1075,7 @@ impl FakeTimers {
             }
         }
         crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
-            JSMock__giveWayOnGlobals(global, originals.unwrap_or(JSValue::ZERO))
+            JSMock__giveWayOnGlobals(global, originals.unwrap_or_default())
         }));
     }
 
@@ -1625,7 +1625,7 @@ fn stays_away(api: Api, original: JSValue) -> bool {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__originals() -> JSValue {
     // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
-    unsafe { (*timer_all()).fake_timers.originals.get() }.unwrap_or(JSValue::ZERO)
+    unsafe { (*timer_all()).fake_timers.originals.get() }.unwrap_or_default()
 }
 
 fn plus(a: Timespec, b: Timespec) -> Timespec {

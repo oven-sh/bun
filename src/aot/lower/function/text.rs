@@ -140,6 +140,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.counts_executions(),
             ));
         }
+        let written_end = hir.written_text_end();
+        replaced.retain(|it| it.start <= written_end);
         let reparses = self.inputs.options.reparses_function_sources;
         let folded = decisions.as_folded_by_bun_run();
         let is_printed_by_bun = is_of_program && !stands_as_written;
@@ -153,6 +155,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 let mut heads = find_text_of_heads(hir, types, replaced);
                 replaced.append(&mut heads);
+                replaced.retain(|it| it.start <= written_end);
             }
             changes = reparses
                 .then(|| ChangesOfText::new(hir, &folded, replaced))

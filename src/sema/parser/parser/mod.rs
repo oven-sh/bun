@@ -468,7 +468,171 @@ pub(crate) fn run<'a>(
     })
 }
 
+/// An expression of a script, at the end of the text of a file that is parsed already.
+#[derive(Copy, Clone)]
+pub struct AppendedExpression {
+    pub start: u32,
+    pub end: u32,
+    pub is_strict: bool,
+}
+
+/// `AppendedExpressionFilter(file, expressions_before, expression)`
+pub type AppendedExpressionFilter = dyn Fn(&FileBuilder, usize, ExprId) -> bool;
+
+/// Parses `expressions`, which are in `text`, and adds the nodes of those that `accepts` takes to `file`. An expression
+/// that isn't JavaScript adds none. Returns the first node of each and the expression.
+pub(crate) fn run_appended(
+    text: &[u8],
+    mut file: FileBuilder,
+    expressions: &[AppendedExpression],
+    atoms: &dyn Intern,
+    scratch: &mut Scratch,
+    accepts: &AppendedExpressionFilter,
+) -> (FileBuilder, Vec<Option<(ExprId, ExprId)>>) {
+    let options = Options {
+        is_jsx: true,
+        is_javascript: true,
+        await_is_a_name: true,
+        dialect: bun_sema::resolve::Dialect {
+            ecmascript: true,
+            script: true,
+            ..Default::default()
+        },
+        compiles: true,
+        reads_as_bun_run: true,
+        ignores_pure_comments: true,
+        ..Options::default()
+    };
+    if text.len() >= 1 << 30 {
+        return (file, vec![None; expressions.len()]);
+    }
+    scratch.names.use_interner(atoms);
+    scratch.stops.forget();
+    let stops = scratch.stops.find_again(text);
+    let mut found = Vec::with_capacity(expressions.len());
+    for &expression in expressions {
+        let (before, flags) = (file_lens(&file), (file.rare_syntax, file.syntax_errors));
+        let mut stacks = std::mem::take(&mut scratch.stacks);
+        stacks.clear();
+        let mut declared = std::mem::take(&mut scratch.declared);
+        declared.begin(text.len(), false, false, true);
+        let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
+        lx.start_at(expression.start);
+        lx.set_src(text.get(..expression.end as usize).unwrap_or(text));
+        lx.is_jsx = options.is_jsx;
+        lx.is_ecmascript = true;
+        lx.is_script = true;
+        lx.decodes_ill_formed_text = true;
+        let jsdoc = jsdoc::State::new(&options, true, 0);
+        let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
+        if expression.is_strict {
+            parser.context |= ctx::STRICT;
+        }
+        let parsed = parser.appended_expression();
+        (scratch.stacks, scratch.declared) = (parser.s, parser.declared);
+        file = parser.f;
+        let accepted = parsed.filter(|&expression| {
+            flags == (file.rare_syntax, file.syntax_errors)
+                && file.has_room_for_handles()
+                && is_plain_javascript_since(&file, &before)
+                && accepts(&file, before.exprs as usize, expression)
+        });
+        if accepted.is_none() {
+            truncate_file(&mut file, &before);
+            (file.rare_syntax, file.syntax_errors) = flags;
+        }
+        found.push(accepted.map(|expression| (ExprId(before.exprs), expression)));
+    }
+    scratch.stops.forget();
+    (file, found)
+}
+
+/// Whether the nodes that follow `before` are JavaScript without classes, modules, regular expressions and tagged
+/// templates, which are one object for each time that the text is evaluated.
+fn is_plain_javascript_since(file: &FileBuilder, before: &FileLens) -> bool {
+    let lens = file_lens(file);
+    let grown = [
+        (lens.types, before.types),
+        (lens.type_params, before.type_params),
+        (lens.classes, before.classes),
+        (lens.interfaces, before.interfaces),
+        (lens.aliases, before.aliases),
+        (lens.enums, before.enums),
+        (lens.modules, before.modules),
+        (lens.members, before.members),
+        (lens.jsx, before.jsx),
+        (lens.imports, before.imports),
+        (lens.import_equals, before.import_equals),
+        (lens.exports, before.exports),
+        (lens.tuple_elems, before.tuple_elems),
+        (lens.mapped, before.mapped),
+        (lens.non_null_ends, before.non_null_ends),
+        (lens.specifier_uses, before.specifier_uses),
+        (lens.decorators, before.decorators),
+        (lens.stray_decorators, before.stray_decorators),
+        (lens.modifiers_of_params, before.modifiers_of_params),
+        (lens.modifiers_of_stmts, before.modifiers_of_stmts),
+        (lens.with_bodies, before.with_bodies),
+        (lens.import_attributes, before.import_attributes),
+        (lens.diagnostics, before.diagnostics),
+        (lens.specifier_expressions, before.specifier_expressions),
+        (
+            lens.exports_from_expressions,
+            before.exports_from_expressions,
+        ),
+    ];
+    let of_typescript = Flags::OPTIONAL | Flags::DEFINITE | Flags::PARAMETER_PROPERTY;
+    grown.iter().all(|it| it.0 == it.1)
+        && file.exprs[before.exprs as usize..].iter().all(|it| {
+            !matches!(
+                it.kind,
+                ExprKind::Missing
+                    | ExprKind::PrivateIdentifier(_)
+                    | ExprKind::Regex { .. }
+                    | ExprKind::TaggedTemplate(_)
+                    | ExprKind::Class(_)
+                    | ExprKind::As { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::AsConst(_)
+                    | ExprKind::NonNull(_)
+                    | ExprKind::Instantiation { .. }
+                    | ExprKind::Jsx(_)
+                    | ExprKind::JsxText(_)
+                    | ExprKind::ImportCall { .. }
+                    | ExprKind::ImportMeta
+            )
+        })
+        && file.fns[before.fns as usize..]
+            .iter()
+            .all(|it| !matches!(it.body, FnBody::None) && it.this_param.is_none())
+        && file.params[before.params as usize..]
+            .iter()
+            .all(|it| !it.flags.intersects(of_typescript))
+        && file.var_decls[before.var_decls as usize..]
+            .iter()
+            .all(|it| !it.flags.intersects(of_typescript))
+        && file.props[before.props as usize..]
+            .iter()
+            .all(|it| it.postfix_token == 0)
+}
+
 impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
+    /// An expression that is the whole text. `None` if it has an error.
+    fn appended_expression(&mut self) -> Option<ExprId> {
+        self.next();
+        let expression = self.expression_allowing_in();
+        while self.eat(T::Semicolon) {}
+        let is_whole = self.token() == T::Eof
+            && !self.has_failed()
+            && self.lx.flagged.is_empty()
+            && self.lx.errors.is_empty()
+            && self.lx.private_names.is_empty()
+            && !self.lx.has_legacy_octal
+            && !self.has_top_level_await;
+        self.sort_side_tables();
+        is_whole.then_some(expression)
+    }
+
     #[inline(always)]
     fn new(
         lx: Lexer<'a>,
@@ -714,6 +878,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let is_parse_error = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
         self.f.has_parse_diagnostics =
             self.recovers() && self.f.diagnostics.iter().any(is_parse_error);
+        self.sort_side_tables();
+    }
+
+    fn sort_side_tables(&mut self) {
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
             self.f
                 .body_starts

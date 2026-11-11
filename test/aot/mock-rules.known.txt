@@ -7,11 +7,3 @@ one-program ordinary-jest file 3: SILENT | real calls 4
 one-program ordinary-module file 3: SILENT | real calls 4
 one-program ordinary-vimock file 2: SILENT | mock calls 3
 one-program ordinary-vimock file 3: SILENT | real calls 4
-one-program this-files-user-domock again: SILENT | mock held: mock
-two-layers failed-then-unmock behind the event: loud | threw not yet 1
-two-layers ordinary-jest file 2: SILENT | mock calls 3
-two-layers ordinary-jest file 3: SILENT | real calls 4
-two-layers ordinary-module file 3: SILENT | real calls 4
-two-layers ordinary-vimock file 2: SILENT | mock calls 3
-two-layers ordinary-vimock file 3: SILENT | real calls 4
-two-layers this-files-user-domock again: SILENT | real held: real

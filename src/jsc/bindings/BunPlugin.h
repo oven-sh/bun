@@ -109,7 +109,11 @@ public:
             WTF::UncheckedKeyHashSet<String> waitingModules;
             // importChain for imports by compiled code, which the loader does not see.
             WTF::BitVector compiledImportChain = {};
+            // givenTheOriginal for compiled files that required the mocked file.
+            WTF::Vector<uint32_t, 2> compiledRequirersGivenOriginal = {};
         };
+        // givenTheOriginal for compiled modules, by the specifier of the mock. They are evicted when the mock ends.
+        WTF::UncheckedKeyHashMap<String, WTF::Vector<uint32_t, 2>> compiledModulesGivenOriginal = {};
         Vector<RunningModuleMock> runningModuleMocks = {};
         // Numbers the import() calls of compiled code and the factory calls, in order.
         uint32_t moduleMockSequenceNumber = 0;
@@ -139,6 +143,8 @@ public:
         WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
         // The first module of each load that import() or a factory started, oldest first.
         WTF::ListHashSet<String> loadRoots = {};
+        // Those of them that a factory's file, but not the factory, called import() for while the factory ran.
+        WTF::UncheckedKeyHashSet<String> loadRootsDuringFactories = {};
         // Fetch promises for those modules, kept until JSC registers them.
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> loadRootFetches = {};
         // Preload mocks that the running test file replaced or removed. Restored when the file ends.
@@ -187,6 +193,7 @@ public:
             moduleMocksWithTurn.clear();
             modulesGivenTimeToRequestImports.clear();
             loadRoots.clear();
+            loadRootsDuringFactories.clear();
             loadRootFetches.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
@@ -228,7 +235,7 @@ public:
             // Identifies this call of the factory.
             uint64_t call { 0 };
             WTF::Vector<uint32_t, 1> modulesRequestedByWaiters;
-            WTF::Vector<JSC::Strong<JSC::JSObject>, 1> factoriesThatWait;
+            WTF::Vector<JSC::Strong<JSC::JSObject>, 1> waitingFactories;
         };
         WTF::Vector<CompiledMockFactory> compiledMockFactories;
         size_t stashedFactoryCount { 0 };
@@ -333,6 +340,8 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
 // Nothing has called it, and no import is loading the original, which a require() would disturb.
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+bool hasSynchronousMockFactory(Zig::GlobalObject*, const String& path, bool isOriginalSynchronous);
+bool isSpyMock(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
 bool canRequireMockOriginalAt(Zig::GlobalObject*, const String& path);
 // In `bun test` the require map holds a restored preload mock, which is dropped with the key.

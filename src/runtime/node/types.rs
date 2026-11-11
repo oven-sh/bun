@@ -1082,6 +1082,7 @@ impl PathLikeExt for PathLike<'_> {
         };
         if arg.js_type() == jsc::JSType::String
             && bun_core::working_directory_in_executable().is_none()
+            && !bun_standalone_graph::has_written_files()
         {
             let str = arg.to_bun_string(ctx)?;
             arguments.eat();
@@ -1225,11 +1226,25 @@ fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<PathLike<'st
     })))
 }
 
+/// A file of the executable that the program has written is on the disk.
+fn find_file_written_to_disk(path: &[u8]) -> Option<PathLike<'static>> {
+    let joined = bun_standalone_graph::find_written_file(path)?;
+    Some(PathLike::Joined(Box::new(bun_jsc::node_path::JoinedPath {
+        joined: joined.into_vec(),
+        written: path.to_vec(),
+    })))
+}
+
 fn path_like_from_working_directory(
     global: &JSGlobalObject,
     str: bun_core::String,
     will_be_async: bool,
 ) -> JsResult<PathLike<'static>> {
+    if bun_standalone_graph::has_written_files()
+        && let Some(path) = find_file_written_to_disk(str.to_utf8().slice())
+    {
+        return Ok(path);
+    }
     if bun_core::working_directory_in_executable().is_some()
         && let Some(path) = join_onto_working_directory_in_executable(str.to_utf8().slice())
     {

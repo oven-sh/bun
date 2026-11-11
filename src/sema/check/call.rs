@@ -987,12 +987,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolve_call_or_new(file, call, id, is_new)
     }
 
+    /// False if an error is all that the arguments of a call can add to its resolution, and nobody reports it. Lowering
+    /// reports none. But if `file` hasn't been checked yet, its check finds the resolved call and doesn't check the
+    /// arguments itself.
+    #[inline]
+    fn needs_argument_check(&self, file: FileId) -> bool {
+        !self.answers_lowering || self.task.file != Some(file) && self.p.is_check_pending(file)
+    }
+
     /// `resolveUntypedCall`: the arguments have no contextual type, and they are checked anyway.
     /// Anything there that re-enters a resolution in progress is a cycle. The result is
     /// `anySignature`.
     fn resolve_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
-        // The look at the arguments finds mistakes and changes no answer. Whoever lowers reports none.
-        if self.answers_lowering {
+        if !self.needs_argument_check(file) {
             return ResolvedCall {
                 sig: None,
                 ret: TypeId::ANY,
@@ -1397,9 +1404,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_single_non_generic_candidate =
             candidates.len() == 1 && self.sig_type_params(candidates[0]).is_empty();
-        // Where the arguments don't fit, `candidate_for_overload_failure` answers with the candidate too, and the mistake is
-        // reported. Whoever lowers reports none.
-        if is_single_non_generic_candidate && self.answers_lowering {
+        // If the arguments don't fit, `candidate_for_overload_failure` returns the candidate too, and an error is reported.
+        if is_single_non_generic_candidate && !self.needs_argument_check(file) {
             return self.resolved_to(file, call, candidates[0], expects_return);
         }
         let mut s = CallState {

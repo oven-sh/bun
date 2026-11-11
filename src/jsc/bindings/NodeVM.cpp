@@ -1566,15 +1566,30 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    // Objects and functions of compiled code have properties that only their own method table finds. All other objects, including Proxies, take the same path as in bun run.
-    bool isCompiled = sandbox->type() == CompiledObjectType || sandbox->type() == SlimClosureType;
-    bool deleted = isCompiled ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    bool deleted = sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;
     }
 
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
+bool NodeVMGlobalObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    JSObject* sandbox = thisObject->m_sandbox.get();
+    if (!sandbox) [[unlikely]]
+        return Base::deletePropertyByIndex(cell, globalObject, index);
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool deleted = sandbox->methodTable()->deletePropertyByIndex(sandbox, globalObject, index);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!deleted)
+        return false;
+
+    RELEASE_AND_RETURN(scope, Base::deletePropertyByIndex(cell, globalObject, index));
 }
 
 bool NodeVMGlobalObject::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)

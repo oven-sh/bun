@@ -287,7 +287,13 @@ impl ShellTouchTask {
             'out: {
                 if err.get_errno() == bun_sys::E::ENOENT {
                     const PERM: bun_sys::Mode = 0o664;
-                    match bun_sys::open(filepath, bun_sys::O::CREAT | bun_sys::O::WRONLY, PERM) {
+                    let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
+                    let prepared = crate::node::fs::prepare_source_path_write(
+                        filepath.as_bytes(),
+                        flags,
+                        PERM,
+                    );
+                    match prepared.and_then(|()| bun_sys::open(filepath, flags, PERM)) {
                         Ok(fd) => {
                             fd.close();
                             break 'out;

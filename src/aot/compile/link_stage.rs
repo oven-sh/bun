@@ -107,7 +107,15 @@ impl Build<'_> {
                 "source texts",
                 "functions without code, what the link stage adds to the program",
             ],
-            || collect_source_texts(&views, &modules, &erased_ranges_by_file, &in_parallel),
+            || {
+                collect_source_texts(
+                    &views,
+                    &modules,
+                    &erased_ranges_by_file,
+                    runs_tests,
+                    &in_parallel,
+                )
+            },
             || {
                 let mut steps = StepClock::new(Stage::LinkAndEmit);
                 run_steps_beside(
@@ -180,7 +188,13 @@ impl Build<'_> {
                                 );
                             }
                         }
-                        let used_at_start = builtins_used_at_start(self.options.aot).into_iter();
+                        let keeps_code_without_names = loaded.keeps_library_code_without_names;
+                        let used_at_start = builtins_used_at_start(
+                            self.options.aot,
+                            keeps_code_without_names,
+                            self.stays_in_compiled_files,
+                        )
+                        .into_iter();
                         let comes_out = loaded
                             .contents
                             .method_that_hands_out_global_object_may_come_out;

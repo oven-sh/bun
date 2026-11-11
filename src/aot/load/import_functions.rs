@@ -152,7 +152,7 @@ fn find_evaluated_import(
     }
 }
 
-fn declares(hir: &File<'_>, name: Atom) -> bool {
+pub(super) fn declares(hir: &File<'_>, name: Atom) -> bool {
     hir.pats
         .iter()
         .any(|pat| matches!(pat.kind, PatKind::Ident(it) if it == name))

@@ -8,15 +8,16 @@ mod tests;
 
 use bun_sema::bind::{BindingStability, CodeUnit, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{ExprId, FnId};
+use bun_sema::import_sites::{ImportSiteKind, JsxImport};
 
 pub(in crate::lower) use self::loop_updates::is_let_declaration;
 use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key, sort_unique};
 use super::lexical_owners::compute_lexical_owners;
 use super::walk::{EvalUse, ScopeWalk, walk_file};
-use super::{BindingForm, BindingRef, Placement, ScopeInput, WalkedFunctionId};
+use super::{BindingForm, BindingRef, Placement, ScopeInput, ScopeSlot, WalkedFunctionId};
 use crate::ir::VariableKey;
 use crate::lower::captures::{CaptureInput, CapturePlan, CapturedBinding, compute_captures};
-use crate::modules::{ModuleKind, ModuleRef};
+use crate::modules::{ImportBinding, ModuleGraph, ModuleKind, ModuleRef, SiteAnswer};
 
 struct Context<'x, 's> {
     input: &'x ScopeInput<'x, 's>,
@@ -25,8 +26,79 @@ struct Context<'x, 's> {
     scope_functions: Vec<Option<WalkedFunctionId>>,
     module_bodies: Vec<WalkedFunctionId>,
     is_module_level_scope: Vec<bool>,
+    /// Scopes that each instance of the file enters once; none in a file without instances.
+    is_entered_once_per_instance: Vec<bool>,
     loop_updates: Vec<(ScopeId, ExprId)>,
     holders_without_value: Vec<SymbolId>,
+    has_instances: bool,
+    instance_imports: Vec<SymbolId>,
+}
+
+/// Whether code of `file` that reads `binding`, which a statement imports from `named`, reads it through the instance of
+/// `file`: a link or a mock word leads to it.
+fn is_read_through_instance(
+    modules: &ModuleGraph,
+    binding: ImportBinding,
+    named: Option<ModuleRef>,
+) -> bool {
+    let end = match binding {
+        ImportBinding::Variable(variable) => Some(ModuleRef::File(variable.file)),
+        ImportBinding::Synthetic(export) => Some(modules.synthetic_export(export).module),
+        ImportBinding::Namespace { module, .. }
+        | ImportBinding::NamespaceRead { module, .. }
+        | ImportBinding::Exports { module } => Some(module),
+        _ => None,
+    };
+    let has_link_or_word = |module| match module {
+        ModuleRef::File(file) => {
+            modules.has_instances(file) || modules.holds_mock_in_variable(file)
+        }
+        ModuleRef::Runtime(_) => modules.is_named_by_mock(module),
+        ModuleRef::External { .. } => modules.is_absent_module(module),
+        _ => false,
+    };
+    let reaches_mock = |module| match module {
+        ModuleRef::File(file) => modules.reaches_mock(file),
+        _ => false,
+    };
+    end.is_some_and(has_link_or_word)
+        || named.is_some_and(|named| has_link_or_word(named) || reaches_mock(named))
+}
+
+fn find_instance_imports(input: &ScopeInput<'_, '_>) -> Vec<SymbolId> {
+    let (modules, file) = (input.modules, input.file);
+    if !modules.has_instances(file) {
+        return Vec::new();
+    }
+    let imports = modules.import_bindings(file).iter();
+    let imports = imports.filter(|&&(symbol, binding)| {
+        let site = match *input.bound.symbol(symbol).decls {
+            [Decl::ImportSpec(specifier)] => Some(input.hir[specifier].import),
+            [Decl::ImportDefault(import) | Decl::ImportNamespace(import)] => Some(import),
+            _ => None,
+        };
+        let site = site.map(ImportSiteKind::Import);
+        let named = match site.and_then(|site| modules.find_site_answer(file, site)) {
+            Some(SiteAnswer::Module(named)) => Some(named),
+            _ => None,
+        };
+        is_read_through_instance(modules, binding, named)
+    });
+    imports.map(|it| it.0).collect()
+}
+
+pub(super) fn is_instance_jsx_import(input: &ScopeInput<'_, '_>, import: JsxImport) -> bool {
+    let (modules, file) = (input.modules, input.file);
+    if !modules.has_instances(file) {
+        return false;
+    }
+    let named = match modules.find_site_answer(file, import.site_kind()) {
+        Some(SiteAnswer::Module(named)) => Some(named),
+        _ => None,
+    };
+    let bindings = modules.jsx_bindings(file).iter();
+    let mut bindings = bindings.filter(|it| it.0 == import);
+    bindings.any(|&(_, binding)| is_read_through_instance(modules, binding, named))
 }
 
 struct NormalizedUses {
@@ -41,6 +113,7 @@ struct BindingSharing {
     captured: Vec<CapturedBinding>,
     captured_uses: Vec<(WalkedFunctionId, BindingRef)>,
     variables: Vec<(BindingRef, VariableKey)>,
+    instance_fields: Vec<(BindingRef, u32)>,
     shared: Vec<BindingRef>,
     fields_for_eval: Vec<BindingRef>,
     stored_under_handlers: Vec<Vec<BindingRef>>,
@@ -77,9 +150,12 @@ impl<'x, 's> Context<'x, 's> {
             file_scope: bound.scope_of_declaration(input.hir, Decl::File),
             scope_functions: Vec::with_capacity(count),
             is_module_level_scope: Vec::with_capacity(count),
+            is_entered_once_per_instance: Vec::new(),
             loop_updates: loop_updates::collect_loop_updates(input.hir, bound, walk),
             module_bodies: find_module_bodies(walk),
             holders_without_value: collect_holders_without_value(input),
+            has_instances: input.modules.has_instances(input.file),
+            instance_imports: find_instance_imports(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
             ModuleKind::SourceText if input.modules.may_be_reevaluated(input.file) => false,
@@ -101,11 +177,22 @@ impl<'x, 's> Context<'x, 's> {
                 None => has_module_variables,
             };
             let is_repeated = walk.is_repeated_scope[index];
+            let is_entered_once = unit == CodeUnit::File && !is_repeated;
             context
                 .is_module_level_scope
-                .push(is_parent_at_module_level && unit == CodeUnit::File && !is_repeated);
+                .push(is_parent_at_module_level && is_entered_once);
+            if context.has_instances {
+                let scopes = &mut context.is_entered_once_per_instance;
+                let is_parent_entered_once = parent.is_none_or(|parent| scopes[parent]);
+                scopes.push(is_parent_entered_once && is_entered_once);
+            }
         }
         context
+    }
+
+    #[inline]
+    fn is_entered_once_per_instance(&self, scope: ScopeId) -> bool {
+        self.has_instances && self.is_entered_once_per_instance[scope.idx()]
     }
 
     #[inline]
@@ -122,6 +209,17 @@ impl<'x, 's> Context<'x, 's> {
         }
     }
 
+    /// The scope whose environment holds a binding. The file's environment also holds the bindings of scopes that are
+    /// entered once per instance, so module-level functions capture no other environment.
+    #[inline]
+    fn storage_scope(&self, binding: BindingRef) -> ScopeId {
+        let scope = self.scope_of(binding);
+        match self.is_entered_once_per_instance(scope) {
+            true => self.file_scope,
+            false => scope,
+        }
+    }
+
     #[inline]
     fn owner_of(&self, binding: BindingRef) -> Option<WalkedFunctionId> {
         self.scope_functions[self.scope_of(binding).idx()]
@@ -131,6 +229,23 @@ impl<'x, 's> Context<'x, 's> {
         let (bound, decisions) = (self.input.bound, &self.input.compiled.analysis.decisions);
         let is_ignored = |target: ExprId| decisions.is_dead_expr(target) || is_ignored(target);
         bound.binding_stability_ignoring(symbol, &is_ignored) == BindingStability::Stable
+    }
+
+    #[inline]
+    fn instance_slot(&self) -> BindingRef {
+        BindingRef::Slot(self.file_scope, ScopeSlot::ModuleInstance)
+    }
+
+    fn find_instance_field(&self, symbol: SymbolId) -> Option<u32> {
+        if !self.has_instances {
+            return None;
+        }
+        let layout = self.input.modules.instance_layout(self.input.file)?;
+        layout.field_of_export(symbol)
+    }
+
+    fn is_read_through_instance(&self, import: SymbolId) -> bool {
+        self.has_instances && self.instance_imports.binary_search(&import).is_ok()
     }
 
     #[inline]

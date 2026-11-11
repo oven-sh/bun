@@ -1,7 +1,7 @@
 // answers: without-library
 // # `total += measured(boxes[i & 3]) * table.scale`, measured > checked > area: in the typed copy of the loop the turn may begin again, so the callees of the copy are copied too, the looks count on the guesses in the copies,
 // # and the block that only throws is left to the other copy: no call of `checked` or of `area` is left in the unit, and the one of `measured` stands in the other copy.
-// # A deed in a copy ends that: behind `calls++` the read keeps its closed side: one operation that tests for itself.
+// # A store of a copy into a variable is undone where the turn begins again: behind `calls++` the read counts on its look, and on the way to the other copy the old value is written back.
 // # OPTIONS: check=Validate
 // # f1 = id, f2 = area, f3 = checked, f4 = measured, f5 = counted, f6 = sumOfMeasures, f7 = sumOfCounted
 // # RUN(FORM): walk f6 mechanisms=all-ParameterGuards
@@ -9,7 +9,9 @@
 // # FORM-NOT: = CallDirect {{*}}function=f2
 // # RUN(DEED): walk f7 mechanisms=all-ParameterGuards
 // # DEED: = PutModuleVariable
-// # DEED: = GetSlot{{*}}key="w" {{*}}level=Expected
+// # DEED: = ShapeTest
+// # DEED: = GetSlot{{*}}key="w" {{*}}level=Proven
+// # DEED: = PutModuleVariable
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 5 of 5 of 5

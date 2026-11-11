@@ -462,11 +462,12 @@ bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     return visitor.containsOpaqueRoot(owner);
 }
 
-void JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsMessagePort = static_cast<JSMessagePort*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsMessagePort->wrapped(), jsMessagePort);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

@@ -10,7 +10,7 @@
 # -- end of source
 # RUN: link fields mechanisms=all
 # CHECK: field L0.0 "kind" {{*}}filled
-# CHECK: field L0.1 "radius" proven=i32 writers-known
+# CHECK: field L0.1 "radius" proven=int[0, 2147483647] writers-known
 # RUN(NEVER): link fields mechanisms=all
 # NEVER-NOT: field L0.1 "radius" {{*}}filled
 # RUN(SHELL): run-in-shell globalThis.sink = (...values) => print(values.map(String).join(" "));

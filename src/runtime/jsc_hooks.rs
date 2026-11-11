@@ -5138,7 +5138,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return None;
     }
 
-    let file = bun_standalone_graph::Graph::get_ref()?.find_ref(input_path)?;
+    let file = bun_standalone_graph::Graph::get_ref()?.find_data(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
 
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
@@ -5250,7 +5250,7 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::O;
 
     let graph = bun_standalone_graph::Graph::get_ref()?;
-    let addon = graph.find_ref(addon_path)?;
+    let addon = graph.find_data(addon_path)?;
     let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
     if files.is_empty() {
         return None;

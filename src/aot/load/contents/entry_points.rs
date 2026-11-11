@@ -1,6 +1,7 @@
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::mem::take;
+use std::sync::OnceLock;
 
 use bun_ast::Loader;
 use bun_core::{CodeGenerationFromStrings, strings};
@@ -62,6 +63,24 @@ pub(crate) struct FoundEntryPoint {
     pub because: FoundBecause,
     pub started_at: Option<(Vec<u8>, u32)>,
     pub starts: Vec<(FileId, u32)>,
+    /// Nothing more than a Worker that may start from it names the file.
+    pub is_guess: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum LeftOutBecause {
+    LiesOutsideRoot,
+    KeptOutByPlugin,
+}
+
+/// A text that may be the name of a Worker's file, and the file, which isn't compiled.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) struct NameLeftOut {
+    pub because: LeftOutBecause,
+    pub leads_to: Vec<u8>,
+    pub name: Vec<u8>,
+    pub written_in: Vec<u8>,
+    pub written_at: u32,
 }
 
 pub(crate) struct FinderInput<'a, 'h> {
@@ -87,6 +106,8 @@ struct Question {
     read_as: ReadAs,
     names: Vec<NameKnownInPart>,
     is_guess: bool,
+    /// Nothing says that a Worker starts from the file.
+    is_written_elsewhere: bool,
 }
 
 enum Named {
@@ -146,6 +167,7 @@ struct FoundSoFar {
     named_by_more_than_workers: FxHashSet<Vec<u8>>,
     named_as_what_a_worker_may_start: FxHashSet<Vec<u8>>,
     names_written: Vec<EntryPointPaths>,
+    names_left_out: Vec<NameLeftOut>,
 }
 
 fn names_only_what_reaches_no_file(
@@ -262,6 +284,24 @@ pub(crate) fn join_below_root(root: &[u8], levels_above_root: usize, relative: &
     [&folder[..], &kept[level..].join(&b"/"[..])].concat()
 }
 
+fn without_trailing_slashes(path: &[u8]) -> &[u8] {
+    let end = path.iter().rposition(|&byte| byte != b'/');
+    &path[..end.map_or(0, |last| last + 1)]
+}
+
+/// Returns `text` and what is left of it behind the last folders of the root directory.
+fn spell_from_root(root_directory: &[u8], text: &[u8]) -> Vec<Vec<u8>> {
+    let named = normalize(text);
+    let folders = normalize(root_directory);
+    let mut spelled = vec![text.to_vec()];
+    for count in 1..named.len().min(folders.len() + 1) {
+        if folders.ends_with(&named[..count]) {
+            spelled.push([b"./", &named[count..].join(&b"/"[..])[..]].concat());
+        }
+    }
+    spelled
+}
+
 pub(crate) fn name_from_working_directory(relative: &[u8]) -> Vec<u8> {
     [b"./", &normalize(relative).join(&b"/"[..])[..]].concat()
 }
@@ -375,6 +415,7 @@ fn collect_named_workers(
     workers
 }
 
+/// Returns the constructions with known names, for a load that looks for no entry points.
 pub(crate) fn find_named_workers(files: &Files<'_>) -> Vec<(FileId, ExprId)> {
     collect_named_workers(files, |_| true)
 }
@@ -389,6 +430,7 @@ impl Mention {
                     read_as,
                     names,
                     is_guess: false,
+                    is_written_elsewhere: start.place == PlaceOfName::Elsewhere,
                 })
             })
         };
@@ -420,6 +462,7 @@ impl Mention {
 pub(crate) struct EntryPointFinder<'a, 'h> {
     input: FinderInput<'a, 'h>,
     code_from_root: CodeOptions,
+    real_root: OnceLock<Vec<u8>>,
     is_case_sensitive: bool,
     found: Guarded<FoundSoFar>,
 }
@@ -436,6 +479,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 working_directory: from_native(&input.options.paths.root_directory),
                 ..input.code.clone()
             },
+            real_root: OnceLock::new(),
             is_case_sensitive: input.host.is_case_sensitive(),
             found: Guarded::new(FoundSoFar::default()),
             input,
@@ -492,6 +536,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         },
                         names: vec![(code.atoms().bytes(name).to_vec(), None)],
                         is_guess,
+                        is_written_elsewhere: false,
                     }),
                     because: FoundBecause::NamedByData,
                     started_at: None,
@@ -500,7 +545,6 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         written_in: file,
                         requires,
                         is_guess,
-                        is_name_followed: false,
                         may_be_left_out: is_guess,
                     }),
                 }));
@@ -559,6 +603,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         read_as: ReadAs::Require,
                         names: vec![(name.to_vec(), None)],
                         is_guess: false,
+                        is_written_elsewhere: false,
                     }),
                     because: FoundBecause::NamedByData,
                     started_at: None,
@@ -580,16 +625,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 (held.texts).extend_from_slice(&contents.texts_behind_object_urls);
                 sought.extend(contents.names.sought_from_unknown_folders.iter().copied());
                 let arms = contents.names.written_arms_of_unknown_names.iter();
-                let arms = arms.map(|&(name, requires)| (name, requires, false, false, false));
+                let arms = arms.map(|&(name, requires)| (name, requires, false, false));
                 let guessed = contents.names.guessed_arms.iter();
-                let arms = arms.chain(guessed.map(|&name| (name, true, true, false, false)));
+                let arms = arms.chain(guessed.map(|&name| (name, true, true, false)));
                 let called_first = contents.names.arms_of_makers_called_first.iter();
-                let arms = arms.chain(called_first.map(|&name| (name, true, false, true, false)));
+                let arms = arms.chain(called_first.map(|&name| (name, true, false, true)));
                 let followed = contents.names.followed_names.iter();
-                let arms = arms
-                    .chain(followed.map(|&(name, requires)| (name, requires, false, false, true)));
-                mentions.extend(arms.map(
-                    |(name, requires, is_guess, is_called_first, is_name_followed)| Mention {
+                let arms =
+                    arms.chain(followed.map(|&(name, requires)| (name, requires, false, true)));
+                mentions.extend(arms.map(|(name, requires, is_guess, yields_to_imports)| {
+                    Mention {
                         named: Named::ByName(Question {
                             file_name: code.file_name(file).to_vec(),
                             read_as: match requires {
@@ -598,6 +643,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             },
                             names: vec![(code.atoms().bytes(name).to_vec(), None)],
                             is_guess,
+                            is_written_elsewhere: false,
                         }),
                         because: FoundBecause::WrittenInArm,
                         started_at: None,
@@ -605,12 +651,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             file,
                             written_in: file,
                             requires,
-                            is_guess: is_guess || is_called_first,
-                            is_name_followed,
+                            is_guess: is_guess || yields_to_imports,
                             may_be_left_out: is_guess,
                         }),
-                    },
-                ));
+                    }
+                }));
                 for load in &contents.names.under_parameters {
                     let under_name = loads.entry((load.property, load.place)).or_default();
                     if under_name.last() != Some(&(file, load.requires)) {
@@ -675,6 +720,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         },
                         names: vec![(code.atoms().bytes(passed.text).to_vec(), None)],
                         is_guess,
+                        is_written_elsewhere: false,
                     }),
                     because: FoundBecause::PassedForParameter,
                     started_at: None,
@@ -683,7 +729,6 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         written_in: caller,
                         requires,
                         is_guess,
-                        is_name_followed: false,
                         may_be_left_out: false,
                     }),
                 });
@@ -709,6 +754,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     },
                     names: vec![(code.atoms().bytes(name).to_vec(), None)],
                     is_guess: false,
+                    is_written_elsewhere: false,
                 }),
                 because: FoundBecause::PassedForParameter,
                 started_at: None,
@@ -737,6 +783,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 mentions.append(&mut self.mention_code_of_workers(code, found, levels, held));
             }
         }
+        // A name made at run time gets the module that a written URL has loaded. With =strict it gets none.
         if !self.is_strict() {
             let urls = self.input.host.data_urls_in_program().into_iter();
             mentions.extend(urls.map(|url| Mention {
@@ -777,6 +824,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         levels: Option<usize>,
         code_of_workers: CodeOfWorkers,
     ) -> Vec<Mention> {
+        // With =strict no Worker starts from text.
         if self.is_strict() {
             return Vec::new();
         }
@@ -950,6 +998,93 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             path,
             written_down_as: Some(written_down_as),
         })
+    }
+
+    fn lies_in_root(&self, path: &[u8]) -> bool {
+        let root = &self.code_from_root.working_directory[..];
+        let real_root = self
+            .real_root
+            .get_or_init(|| self.input.host.realpath(root));
+        let real_path = self.input.host.realpath(path);
+        [path, &real_path].into_iter().all(|path| {
+            let path = self.key_of(path);
+            [root, &real_root[..]].into_iter().any(|root| {
+                let root = self.key_of(without_trailing_slashes(root));
+                path.strip_prefix(&root[..])
+                    .is_some_and(|below| below.starts_with(b"/"))
+            })
+        })
+    }
+
+    /// Finds the file of the root directory that a relative text is the name of, whatever the working directory is. A file that
+    /// the program holds already may lie elsewhere.
+    fn find_file_in_root(
+        &self,
+        code: &dyn CodeView<'_>,
+        finders: &FileFinders<'_>,
+        mention: &NameLeftOut,
+        names_left_out: &mut Vec<NameLeftOut>,
+    ) -> Option<NamedFile> {
+        let text = &mention.name[..];
+        let paths = &self.input.options.paths;
+        let from_root = finders.from_root_directory();
+        let may_lead_to = |path: &[u8]| {
+            let key = self.key_of(path);
+            let mut held = code.compiled_files().iter();
+            self.lies_in_root(path) || held.any(|&it| self.key_of(code.file_name(it)) == key)
+        };
+        let root = from_native(&paths.root_directory);
+        let mut spellings = spell_from_root(&root, text);
+        let main = code.entry_points().first();
+        let main = main.map(|&main| self.input.host.directory_of(code.file_name(main)));
+        spellings.extend(main.map(|folder| [&folder[..], b"/", text].concat()));
+        let mut outside = None;
+        for spelled in spellings {
+            let Some(on_disk) = from_root.find_entry_point_on_disk(&spelled) else {
+                continue;
+            };
+            if !may_lead_to(&on_disk) {
+                outside.get_or_insert(on_disk);
+                continue;
+            }
+            let Some(path) = from_root.find_guessed_entry_point(&spelled) else {
+                names_left_out.push(NameLeftOut {
+                    because: LeftOutBecause::KeptOutByPlugin,
+                    leads_to: on_disk,
+                    ..mention.clone()
+                });
+                return None;
+            };
+            if !may_lead_to(&path) {
+                outside.get_or_insert(path);
+                continue;
+            }
+            let root = spell_root_of_executable(paths);
+            let levels = count_folders(&paths.root_directory);
+            let written_down_as = match spelled == text {
+                true => join_below_root(&root, levels, text),
+                false => name_from_working_directory(text),
+            };
+            return Some(NamedFile {
+                path,
+                written_down_as: (!names_directory(text)).then_some(written_down_as),
+            });
+        }
+        let outside = outside.or_else(|| {
+            let above = std::iter::successors(Some(&root[..]), |&folder| {
+                let end = strings::last_index_of_char(folder, b'/')?;
+                (end > 0).then(|| &folder[..end])
+            });
+            let mut above = above.skip(1);
+            above.find_map(|folder| {
+                from_root.find_entry_point_on_disk(&[folder, b"/", text].concat())
+            })
+        });
+        names_left_out.extend(outside.map(|leads_to| NameLeftOut {
+            leads_to,
+            ..mention.clone()
+        }));
+        None
     }
 
     fn find_files_written_in_part_as_entry_points(
@@ -1254,7 +1389,28 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             let (paths, path_of_copy, question) = match named {
                 Named::ByName(question) if found.asked.contains_key(&question) => continue,
                 Named::ByName(question) => {
-                    let files = self.answer(&finders, &question);
+                    let stays_in_root = question.is_written_elsewhere
+                        && question.read_as == ReadAs::EntryPoint
+                        && !self.input.options.aot.runs_in_place;
+                    let files: Vec<NamedFile> = match stays_in_root {
+                        true => {
+                            let left_out = &mut found.names_left_out;
+                            let written_at = started_at.as_ref().map_or(0, |it| it.1);
+                            let texts = question.names.iter().filter(|name| name.1.is_none());
+                            let files = texts.filter_map(|(text, _)| {
+                                let mention = NameLeftOut {
+                                    because: LeftOutBecause::LiesOutsideRoot,
+                                    leads_to: Vec::new(),
+                                    name: text.clone(),
+                                    written_in: question.file_name.clone(),
+                                    written_at,
+                                };
+                                self.find_file_in_root(code, &finders, &mention, left_out)
+                            });
+                            files.collect()
+                        }
+                        false => self.answer(&finders, &question),
+                    };
                     let is_whole = question.names.iter().all(|name| name.1.is_none());
                     starts_worker_by_whole_name =
                         because == FoundBecause::StartsWorker && is_whole && !question.is_guess;
@@ -1287,6 +1443,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             because,
                             started_at,
                             starts: Vec::new(),
+                            is_guess: false,
                         };
                         loads.push((path.clone(), named_by));
                         found.named_otherwise.insert(self.key_of(&path));
@@ -1308,6 +1465,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                             because,
                             started_at,
                             starts: Vec::new(),
+                            is_guess: false,
                         };
                         loads.push((path.clone(), named_by));
                         found.named_otherwise.insert(self.key_of(&path));
@@ -1348,9 +1506,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     because,
                     started_at: started_at.clone(),
                     starts: Vec::new(),
+                    is_guess: false,
                 };
                 let from_here = finders.from_working_directory();
-                let Some(path) = from_here.find_entry_point(&entry_point.source_path) else {
+                let begun_at = match because {
+                    FoundBecause::MayStartWorker => {
+                        from_here.find_guessed_entry_point(&entry_point.source_path)
+                    }
+                    _ => from_here.find_entry_point(&entry_point.source_path),
+                };
+                let Some(path) = begun_at else {
                     continue;
                 };
                 let key = self.key_of(&path);
@@ -1386,6 +1551,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         further.shared_sort_unstable();
         further.dedup_by(|repeated, kept| repeated.0 == kept.0);
         let mut paths = Vec::with_capacity(further.len());
+        let mut may_start = further.iter().map(|it| it.2.because);
+        if may_start.any(|because| because == FoundBecause::MayStartWorker) {
+            self.input.host.hold_failed_loads();
+        }
         for (key, path, entry_point) in further {
             paths.push(path);
             found.entry_points.push((key, entry_point));
@@ -1404,6 +1573,15 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             named_by: loads,
             is_more_named: false,
         }
+    }
+
+    pub(crate) fn take_excluded_names(&self) -> Vec<NameLeftOut> {
+        let mut names = take(&mut self.found.lock().names_left_out);
+        names.shared_sort_unstable();
+        names.dedup_by(|repeated, kept| {
+            (repeated.because, &repeated.leads_to) == (kept.because, &kept.leads_to)
+        });
+        names
     }
 
     pub(crate) fn take_names_written(&self) -> Vec<EntryPointPaths> {
@@ -1435,6 +1613,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             })
             .collect();
         self.list_starts(files, &found, &keys, &mut entry_points);
+        for (key, entry_point) in keys.iter().zip(&mut entry_points) {
+            entry_point.is_guess = entry_point.because == FoundBecause::MayStartWorker
+                && !(found.named_for_more_than_a_worker_that_may_start).contains(key);
+        }
         let followed_workers = self.list_followed_workers(files, &found);
         if crate::statistics::logs_stages() {
             let of_workers = entry_points.iter();
@@ -1444,6 +1626,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         (entry_points, followed_workers)
     }
 
+    /// Returns the constructions whose known names led to entry points, and those that start from known code. A construction that may also get an unknown name isn't one of them.
     fn list_followed_workers(
         &self,
         files: &Files<'_>,
@@ -1509,11 +1692,14 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         }
         for (key, entry_point) in keys.iter().zip(entry_points) {
+            // A package's file that is held as a file and that sure starts name too waits for those starts. The reach seeds it
+            // behind them, as what a Worker may start.
             let waits_though_held = entry_point.because.is_for_worker()
                 && found.named_as_what_a_worker_may_start.contains(key)
                 && is_in_node_modules(&entry_point.source_path)
                 && !found.named_by_more_than_workers.contains(key);
             if waits_though_held {
+                // Of two mentions of one file either reason may have stayed.
                 entry_point.because = FoundBecause::MayStartWorker;
             }
             let is_named_otherwise = found.named_otherwise.contains(key) && !waits_though_held;
@@ -1552,6 +1738,30 @@ mod tests {
             b"./src/w.ts"
         );
         assert_eq!(name_from_working_directory(b"../w.ts"), b"./../w.ts");
+    }
+
+    #[test]
+    fn text_is_read_from_root_and_last_folders() {
+        let rows: [(&[u8], &[u8], &[&[u8]]); 7] = [
+            (b"/project/src", b"./w.ts", &[b"./w.ts"]),
+            (b"/project/src", b"./src/w.ts", &[b"./src/w.ts", b"./w.ts"]),
+            (
+                b"/project/src/",
+                b"./project//src/lib/w.ts",
+                &[b"./project//src/lib/w.ts", b"./lib/w.ts"],
+            ),
+            (
+                b"/a/a",
+                b"./a/a/w.ts",
+                &[b"./a/a/w.ts", b"./a/w.ts", b"./w.ts"],
+            ),
+            (b"/project/src", b"./project/w.ts", &[b"./project/w.ts"]),
+            (b"C:/project", b"../project/w.ts", &[b"../project/w.ts"]),
+            (b"/", b"../w.ts", &[b"../w.ts"]),
+        ];
+        for (root, text, expected) in rows {
+            assert_eq!(spell_from_root(root, text), expected);
+        }
     }
 
     #[test]

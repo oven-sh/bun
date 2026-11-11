@@ -33,7 +33,7 @@
 # -- end of source
 # L0 = Box. Two families are called directly, each at a place of its own: each pool is tied. One of the first five, reached only there, lets them meet: the pools are tied to one while nobody has asked a name of either. The call by name is reached later still, through a third family: the pool that is kept answers for the functions that were tied to the other.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32|string
-# FIELDS: "note" proven=i32|string
+# FIELDS: "count" proven=int[0, 2147483647]|string
+# FIELDS: "note" proven=int[0, 2147483647]|string
 # RUN(ANSWERS): run-in-shell globalThis.hidden = () => true;
 # ANSWERS: 10;20;30;40;50;1;2;3;4;1first,string,number;second,number,string;;

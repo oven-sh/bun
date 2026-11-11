@@ -11,7 +11,8 @@
 # REQUIRES: as-written
 # CHECK-LABEL: code f1:Body
 # CHECK-COUNT-2: @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN
-# CHECK-NOT: GetArrayElement {{*}}level=Proven
+# The version for boxed numbers reads each place once too.
+# CHECK-NOT: readsHoleAsNaN
 # RUN(SHELL): run-in-shell globalThis.sink = sums => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(), short = halves.slice(0, 7); delete holed[21]; delete holedWholes[3]; for (const [x, y] of [[halves, halves], [halves, wholes], [wholes, halves], [wholes, wholes], [holed, halves], [halves, holed], [holedWholes, wholes], [wholes, holedWholes], [halves, short], [short, halves], [[], halves], [[1.5, NaN], [2, 3]], [[2], [3]]]) print(sums(x, y)); };
 # SHELL: 493790
 # SHELL: 483040

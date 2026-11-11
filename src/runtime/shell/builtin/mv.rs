@@ -4,6 +4,7 @@ use bun_core::{ZBox, ZStr};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
+use crate::node::fs::forget_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -312,7 +313,7 @@ impl Mv {
     }
 
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
-        let (all_done, had_err) = {
+        let (all_done, had_err, moved) = {
             let MvState::Executing {
                 task_count,
                 tasks_done,
@@ -323,15 +324,22 @@ impl Mv {
             else {
                 unreachable!()
             };
+            let mut moved = Vec::new();
             if let Some(e) = tasks[task_idx].err.take() {
                 error_signal.store(true, Ordering::SeqCst);
                 if err.is_none() {
                     *err = Some(e);
                 }
+            } else {
+                moved = core::mem::take(&mut tasks[task_idx].sources);
             }
             *tasks_done += 1;
-            (*tasks_done >= *task_count, err.is_some())
+            (*tasks_done >= *task_count, err.is_some(), moved)
         };
+        // One that stayed where it was, as under `-n`, is on the disk, which is asked first.
+        for source in &moved {
+            forget_shell_operand(Builtin::shell(interp, cmd).cwd(), source.as_bytes());
+        }
         if all_done {
             if had_err {
                 let e = match &mut Self::state_mut(interp, cmd).state {

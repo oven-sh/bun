@@ -370,6 +370,173 @@ fn graph_after_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph>
     compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
 }
 
+/// For what may remove files of the program, also half of a folder: a process that it starts, or a removal of its own.
+pub(crate) fn note_found_on_disk() {
+    if let Some(graph) = compiled_program_graph() {
+        graph.note_found_on_disk();
+    }
+}
+
+/// The program has removed `path` from the disk or renamed it, so the copy in the executable is not what it finds there any more.
+fn forget_in_executable(path: &[u8]) {
+    if let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path)) {
+        graph.forget_source_path(path);
+    }
+}
+
+/// The program has renamed `old` to `new`. Two names of one file are both left as they are.
+fn forget_renamed_file(old: &[u8], new: &[u8]) {
+    if compiled_program_graph().is_none() || sys::exists(old) {
+        return;
+    }
+    forget_in_executable(old);
+    note_written_file(new);
+}
+
+const FLAGS_OF_WRITES: i32 =
+    sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC | sys::O::APPEND;
+
+/// The program writes `path` on the disk. Under the root of the executable the file is the same, as soon as the disk has it.
+fn note_written_file(path: &[u8]) {
+    if let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path)) {
+        graph.note_written_file(path);
+    }
+}
+
+/// Where a write to `path` goes, if that is elsewhere. A file that nobody asked the build to embed may be written by its path under the root of the executable too: it goes where its `__dirname` leads.
+pub(crate) fn find_source_path_to_write(path: &PathLike<'_>) -> Option<PathLike<'static>> {
+    let graph = graph_before_disk(path.slice())?;
+    let joined = graph.find_source_path_to_write(path.slice())?;
+    Some(PathLike::Joined(Box::new(bun_jsc::node_path::JoinedPath {
+        joined,
+        written: path.slice().to_vec(),
+    })))
+}
+
+/// As `forget_in_executable`, for an operand of the shell's `rm` or `mv`, which is relative to the shell's working directory.
+pub(crate) fn forget_shell_operand(cwd: &[u8], operand: &[u8]) {
+    match bun_paths::is_absolute(operand) {
+        true => forget_in_executable(operand),
+        false => forget_in_executable(&[cwd, b"/", operand].concat()),
+    }
+}
+
+/// Nothing is there for a program any more that removes a file which the build embedded unasked.
+fn remove_in_executable(path: &[u8]) -> bool {
+    graph_before_disk(path).is_some_and(|graph| graph.forget_file_for_file_system_only(path))
+}
+
+fn remove_folder_in_executable(path: &[u8], must_be_empty: bool) -> bool {
+    graph_before_disk(path)
+        .is_some_and(|graph| graph.forget_folder_for_file_system_only(path, must_be_empty))
+}
+
+/// The disk does not have `path`. A program that finds the copy in the executable there removes that.
+fn is_embedded_source_file(error: &sys::Error, path: &[u8]) -> bool {
+    error.get_errno() == E::ENOENT
+        && graph_after_disk(path)
+            .is_some_and(|graph| graph.may_answer_for(path) && graph.contains_file(path))
+}
+
+/// The same for a folder: its entries.
+fn list_embedded_source_folder(error: &sys::Error, path: &[u8]) -> Option<Vec<(Box<[u8]>, bool)>> {
+    if error.get_errno() != E::ENOENT {
+        return None;
+    }
+    graph_after_disk(path)
+        .filter(|graph| graph.may_answer_for(path))?
+        .readdir(path, false)
+}
+
+/// The disk has failed with `err`. Sets `attribute` on what the program finds in the executable at `path`.
+#[cold]
+fn change_embedded_attribute(
+    err: sys::Error,
+    path: &[u8],
+    attribute: bun_standalone_graph::ChangedAttribute,
+) -> Maybe<()> {
+    let graph = match err.get_errno() {
+        E::ENOENT | E::EROFS => compiled_program_graph(),
+        _ => None,
+    };
+    let is_changed = graph
+        .is_some_and(|graph| graph.may_answer_for(path) && graph.change_attribute(path, attribute));
+    match is_changed {
+        true => Ok(()),
+        false => Err(err),
+    }
+}
+
+fn changed_times(accessed: TimeLike, modified: TimeLike) -> bun_standalone_graph::ChangedAttribute {
+    #[cfg(not(windows))]
+    let times = [accessed, modified].map(|it| (it.tv_sec as i64, it.tv_nsec as i64));
+    #[cfg(windows)]
+    let times = [accessed, modified].map(|it| (it.floor() as i64, (it.fract() * 1e9) as i64));
+    bun_standalone_graph::ChangedAttribute::Times(times)
+}
+
+/// A rename from the executable to the disk. Returns `None` for what stays where it is.
+#[cold]
+fn move_out_of_executable(old: &[u8], new: &ZStr) -> Option<Maybe<()>> {
+    let old = strings::without_trailing_slash(old);
+    let graph = compiled_program_graph().filter(|graph| graph.may_answer_for(old))?;
+    let entries = graph.list_movable(old)?;
+    let mut name_buffer = [0u8; 64];
+    let name = paths::fs::FileSystem::tmpname(b"moved", &mut name_buffer, bun_core::fast_random())
+        .expect("64 bytes hold a temporary name");
+    let new_name = strings::without_trailing_slash(new.as_bytes());
+    let temporary = [new_name, name.as_bytes()].concat();
+    let moved = write_embedded_entries(graph, old, &entries, &temporary)
+        .and_then(|()| Syscall::rename(&bun_core::ZBox::from_vec(temporary.clone()), new));
+    match &moved {
+        Ok(()) if bun_standalone_graph::is_bun_standalone_file_path(old) => {
+            let _ = remove_in_executable(old) || remove_folder_in_executable(old, false);
+        }
+        Ok(()) => {}
+        Err(_) => {
+            let _ = zig_delete_tree(&sys::Dir::cwd(), &temporary, sys::FileKind::File);
+        }
+    }
+    Some(moved.map_err(|mut err| {
+        err.syscall = sys::Tag::rename;
+        err
+    }))
+}
+
+fn write_embedded_entries(
+    graph: &bun_standalone_graph::Graph,
+    path: &[u8],
+    entries: &[(Box<[u8]>, bool)],
+    target: &[u8],
+) -> Maybe<()> {
+    let write_file = |path: &[u8], target: Vec<u8>| -> Maybe<()> {
+        let (Some(file), Some(stat)) = (graph.find_data(path), graph.stat(path)) else {
+            return Err(sys::Error::from_code(E::EROFS, sys::Tag::rename));
+        };
+        let mode = stat.st_mode as sys::Mode & 0o777;
+        let fd = Syscall::open(
+            &bun_core::ZBox::from_vec(target),
+            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
+            mode,
+        )?;
+        let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
+        fd.close();
+        written
+    };
+    if graph.contains_file(path) {
+        return write_file(path, target.to_vec());
+    }
+    Syscall::mkdir(&bun_core::ZBox::from_vec(target.to_vec()), 0o777)?;
+    for (below, is_folder) in entries {
+        let place = [target, b"/", below].concat();
+        match is_folder {
+            true => Syscall::mkdir(&bun_core::ZBox::from_vec(place), 0o777)?,
+            false => write_file(&[path, b"/", below].concat(), place)?,
+        }
+    }
+    Ok(())
+}
+
 /// The executable holds read-only data.
 fn change_in_executable(path: &[u8], syscall: sys::Tag) -> Option<sys::Error> {
     let graph = graph_before_disk(path)?;
@@ -400,19 +567,201 @@ pub(crate) fn creation_in_executable(
     Some(sys::Error::from_code(errno, syscall).with_path(path))
 }
 
+/// The disk has no folder for `path`, and the executable has it: a program that asks finds it there, so it is made where the program writes into it.
+fn make_source_folder(path: &[u8]) -> bool {
+    if compiled_program_graph().is_none() {
+        return false;
+    }
+    let Some(folder) = bun_paths::dirname(strings::without_trailing_slash(path)) else {
+        return false;
+    };
+    graph_after_disk(folder)
+        .is_some_and(|graph| graph.may_answer_for(folder) && graph.find_dir(folder))
+        && sys::mkdir_recursive(folder).is_ok()
+}
+
+/// In front of an open of `path` on the disk that writes. As an overlay copies up: one that appends or updates finds the bytes of an embedded file that is not on the disk laid there, so that the file ends as it would over the sources. Where they can't be laid, the error is the open's. One that truncates needs none of them. One that must make the file finds it there. Nothing is written where the executable holds a folder.
+pub(crate) fn prepare_source_path_write(path: &[u8], flags: i32, mode: Mode) -> Maybe<()> {
+    if flags & (sys::O::WRONLY | sys::O::RDWR) == 0 {
+        return Ok(());
+    }
+    if flags & sys::O::CREAT != 0 {
+        make_source_folder(path);
+    }
+    let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path)) else {
+        return Ok(());
+    };
+    graph.note_written_file(path);
+    if graph.find_dir(path) {
+        return Err(sys::Error::from_code(E::EISDIR, sys::Tag::open).with_path(path));
+    }
+    let is_exclusive = flags & (sys::O::CREAT | sys::O::EXCL) == sys::O::CREAT | sys::O::EXCL;
+    if is_exclusive && graph.contains_file(path) {
+        return Err(sys::Error::from_code(E::EEXIST, sys::Tag::open).with_path(path));
+    }
+    if flags & sys::O::CREAT == 0 && graph.contains_file(path) {
+        make_source_folder(path);
+    }
+    let Some(file) = graph.find_data(path).filter(|_| flags & sys::O::TRUNC == 0) else {
+        return Ok(());
+    };
+    lay_file_whole(path, file.utf8_contents(), mode)
+        .map_err(|err| err.with_path_and_syscall(path, sys::Tag::open))
+}
+
+/// As `prepare_source_path_write`, for the file of a redirect of the shell, which is relative to the shell's working directory.
+pub(crate) fn prepare_shell_redirect(cwd: &[u8], file: &[u8], flags: i32) -> Maybe<()> {
+    match bun_paths::is_absolute(file) {
+        true => prepare_source_path_write(file, flags, 0o666),
+        false => prepare_source_path_write(&[cwd, b"/", file].concat(), flags, 0o666),
+    }
+}
+
+/// EEXIST for what would make `path`, where the executable holds a file that is not on the disk. A folder that it holds may be made there: whoever writes into it needs it.
+fn creation_over_embedded_file(path: &[u8], syscall: sys::Tag) -> Option<sys::Error> {
+    let graph = graph_after_disk(path).filter(|graph| graph.may_answer_for(path))?;
+    let error = || sys::Error::from_code(E::EEXIST, syscall).with_path(path);
+    graph.contains_file(path).then(error)
+}
+
+/// The same for a folder, which can't lie below such a file either: ENOTDIR.
+fn folder_creation_error(path: &[u8]) -> Option<sys::Error> {
+    if let Some(error) = creation_over_embedded_file(path, sys::Tag::mkdir) {
+        return Some(error);
+    }
+    let graph = graph_after_disk(path)?;
+    let mut rest = strings::without_trailing_slash(path);
+    while let Some(parent) = bun_paths::dirname(rest).filter(|parent| parent.len() < rest.len()) {
+        if graph.may_answer_for(parent) && graph.contains_file(parent) {
+            return Some(sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir).with_path(path));
+        }
+        rest = strings::without_trailing_slash(parent);
+    }
+    None
+}
+
+/// An operand of a command of the shell is relative to the shell's working directory.
+fn resolve_shell_operand(cwd: &[u8], operand: &[u8]) -> Vec<u8> {
+    match bun_paths::is_absolute(operand) {
+        true => operand.to_vec(),
+        false => [cwd, b"/", operand].concat(),
+    }
+}
+
+/// The shell's `rm` has failed with `error`. As for `rm()`: what the disk lacks and the program finds in the executable is removed there.
+pub(crate) fn is_embedded_shell_operand(
+    cwd: &[u8],
+    operand: &[u8],
+    error: &sys::Error,
+    is_recursive: bool,
+) -> bool {
+    let path = resolve_shell_operand(cwd, operand);
+    is_embedded_source_file(error, &path)
+        || is_recursive && list_embedded_source_folder(error, &path).is_some()
+}
+
+/// Behind an open of the shell for reading that failed with `error`: as `open()`, what the program finds in the executable.
+pub(crate) fn open_embedded_shell_operand(
+    cwd: &[u8],
+    operand: &[u8],
+    flags: i32,
+    error: sys::Error,
+) -> Maybe<FD> {
+    if error.get_errno() != E::ENOENT || flags & (sys::O::WRONLY | sys::O::RDWR) != 0 {
+        return Err(error);
+    }
+    open_embedded_path(flags, &resolve_shell_operand(cwd, operand)).unwrap_or(Err(error))
+}
+
+/// The shell's `rm -f` passes over what the disk lacks. A folder that the program finds in the executable is there: EISDIR.
+pub(crate) fn find_embedded_shell_folder(cwd: &[u8], operand: &[u8]) -> Option<sys::Error> {
+    let path = resolve_shell_operand(cwd, operand);
+    let graph = graph_after_disk(&path).filter(|graph| graph.may_answer_for(&path))?;
+    let error = || sys::Error::from_code(E::EISDIR, sys::Tag::unlink).with_path(operand);
+    graph.find_dir(&path).then(error)
+}
+
+/// What the program finds in the executable at an operand that the disk lacks.
+pub(crate) fn stat_embedded_shell_operand(cwd: &[u8], operand: &[u8]) -> Option<sys::Stat> {
+    let path = resolve_shell_operand(cwd, operand);
+    let graph = graph_after_disk(&path).filter(|graph| graph.may_answer_for(&path))?;
+    graph.stat(&path)
+}
+
+/// Lays `contents` at `path` whole or not at all: in a file of the same folder that is linked to `path` once it is written. So nobody finds a part of them at `path`, whoever opens it at the same moment or comes behind a write that failed, and a file that somebody else laid there in the meantime stays.
+fn lay_file_whole(path: &[u8], contents: &[u8], mode: Mode) -> Maybe<()> {
+    let name = bun_core::ZBox::from_bytes(path);
+    // A file without a name leaves nothing behind where the process is ended midway, and no listing shows it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(folder) = bun_paths::dirname(path)
+        && let Ok(unnamed) = sys::open(
+            &bun_core::ZBox::from_bytes(folder),
+            sys::O::TMPFILE | sys::O::WRONLY,
+            mode,
+        )
+    {
+        let written = sys::File::borrow(&unnamed).write_all(contents);
+        let linked = written.and_then(|()| sys::linkat_tmpfile(unnamed, FD::cwd(), &name));
+        unnamed.close();
+        return match linked {
+            Err(err) if err.get_errno() != E::EEXIST => Err(err),
+            _ => Ok(()),
+        };
+    }
+    // No two threads and no two processes make the same name. One that a process left behind is passed over.
+    static NAMES_MADE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let open_next = || {
+        let number = NAMES_MADE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        let suffix = format!(".{:x}-{number:x}", std::process::id());
+        let temporary = bun_core::ZBox::from_vec([path, suffix.as_bytes()].concat());
+        let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL;
+        sys::open(&temporary, flags, mode).map(|laid| (laid, temporary))
+    };
+    let mut opened = open_next();
+    while matches!(&opened, Err(err) if err.get_errno() == E::EEXIST) {
+        opened = open_next();
+    }
+    let (laid, temporary) = opened?;
+    let written = sys::File::borrow(&laid).write_all(contents);
+    laid.close();
+    #[cfg(windows)]
+    let linked = written.and_then(|()| Syscall::link(&temporary, &name));
+    #[cfg(not(windows))]
+    let linked = written.and_then(|()| sys::linkat(FD::cwd(), &temporary, FD::cwd(), &name));
+    let _ = sys::unlink(&temporary);
+    match linked {
+        Err(err) if err.get_errno() != E::EEXIST => Err(err),
+        _ => Ok(()),
+    }
+}
+
 fn is_in_executable(path: &[u8]) -> bool {
     graph_before_disk(path).is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
+}
+
+/// The disk does not have `path`, and the executable does.
+fn is_source_path_in_executable(path: &[u8]) -> bool {
+    graph_after_disk(path).is_some_and(|graph| {
+        graph.may_answer_for(path) && (graph.contains_file(path) || graph.find_dir(path))
+    })
 }
 
 /// What the executable holds lies on the file system that holds the executable.
 fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a ZStr {
     match bun_core::self_exe_path() {
-        Ok(executable) if is_in_executable(path.slice()) => executable,
+        Ok(executable)
+            if is_in_executable(path.slice()) || is_source_path_in_executable(path.slice()) =>
+        {
+            executable
+        }
         _ => path.slice_z(buf),
     }
 }
 
 fn lies_below_embedded_file(path: &[u8]) -> bool {
+    if path.is_empty() {
+        return false;
+    }
     let fallback_graph = || graph_after_disk(path).filter(|graph| graph.may_answer_for(path));
     let Some(graph) = graph_before_disk(path).or_else(fallback_graph) else {
         return false;
@@ -509,8 +858,8 @@ fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOr
         }
     }
     // `throwIfNoEntry` does not apply to ENOTDIR, which `error_for_caller` reports.
-    let is_absent = cfg!(windows) || !lies_below_embedded_file(written);
-    if err.get_errno() == E::ENOENT && !args.throw_if_no_entry && is_absent {
+    let is_absent = || cfg!(windows) || !lies_below_embedded_file(written);
+    if err.get_errno() == E::ENOENT && !args.throw_if_no_entry && is_absent() {
         return Ok(StatOrNotFound::NotFound);
     }
     Err(err.with_path(written))
@@ -689,15 +1038,27 @@ fn open_embedded_folder(flags: i32, path: &[u8]) -> Maybe<FD> {
         ]
         .concat(),
     );
-    Syscall::mkdir(&folder, 0o700).map_err(|err| err.with_path(path))?;
-    let opened = sys::open(
-        &folder,
-        sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
-        0,
-    );
-    let _ = sys::rmdir(&folder);
-    opened.map_err(|err| err.with_path(path))
+    let open = |folder: &ZStr| {
+        let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC;
+        sys::open(folder, flags, 0)
+    };
+    let opened = match Syscall::mkdir(&folder, 0o700) {
+        Ok(()) => {
+            let opened = open(&folder);
+            let _ = sys::rmdir(&folder);
+            opened
+        }
+        // A container often has no folder that can be written.
+        Err(err) => open(ZStr::from_static(PERMANENT_FOLDER)).map_err(|_| err),
+    };
+    opened.map_err(|err| err.with_path_and_syscall(path, sys::Tag::open))
 }
+
+/// A folder that is there without a disk. Nobody makes, removes or changes anything through a descriptor of it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const PERMANENT_FOLDER: &[u8] = b"/proc/self/fdinfo\0";
+#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+const PERMANENT_FOLDER: &[u8] = b"/var/empty\0";
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
@@ -5185,11 +5546,6 @@ impl NodeFS {
         _: Flavor,
     ) -> Maybe<ret::AppendFile> {
         let args = &args.0;
-        if let PathOrFileDescriptor::Path(path) = &args.file
-            && let Some(error) = creation_in_executable(path.slice(), sys::Tag::open, E::EROFS)
-        {
-            return Err(error);
-        }
         let mut data = args.data.slice();
         match &args.file {
             PathOrFileDescriptor::Fd(fd) => {
@@ -5199,9 +5555,16 @@ impl NodeFS {
                 }
                 Ok(())
             }
-            PathOrFileDescriptor::Path(path_) => {
-                let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
+            PathOrFileDescriptor::Path(path) => {
+                let source = find_source_path_to_write(path);
+                let path = source.as_ref().unwrap_or(path);
+                if let Some(error) = creation_in_executable(path.slice(), sys::Tag::open, E::EROFS)
+                {
+                    return Err(error);
+                }
+                prepare_source_path_write(path.slice(), args.flag.as_int(), args.mode)?;
+                let opened = path.slice_z(&mut self.sync_error_buf);
+                let fd = Syscall::open(opened, args.flag.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
@@ -5397,18 +5760,37 @@ impl NodeFS {
         Ok(())
     }
 
-    pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
+    pub(crate) fn copy_file(
+        &mut self,
+        args: &args::CopyFile,
+        flavor: Flavor,
+    ) -> Maybe<ret::CopyFile> {
+        if let Some(dest) = find_source_path_to_write(&args.dest) {
+            let args = args::CopyFile {
+                src: PathLike::borrowed(args.src.slice()),
+                dest,
+                mode: args.mode,
+            };
+            return self.copy_file(&args, flavor);
+        }
         if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
         {
             return Err(error);
         }
+        if args.mode.shouldnt_overwrite()
+            && let Some(error) = creation_over_embedded_file(args.dest.slice(), sys::Tag::copyfile)
+        {
+            return Err(error);
+        }
+        make_source_folder(args.dest.slice());
+        note_written_file(args.dest.slice());
         match self.copy_file_inner(args) {
             Ok(_) => Ok(()),
             Err(err)
                 if err.get_errno() == E::ENOENT
                     && embedded_file_of_compiled_program(args.src.slice()).is_some() =>
             {
-                Self::copy_embedded_file(args)
+                Self::copy_embedded_file(&args.src, &args.dest, args.mode.shouldnt_overwrite())
             }
             Err(err) => Err(sys::Error {
                 errno: err.errno,
@@ -5420,18 +5802,22 @@ impl NodeFS {
         }
     }
 
-    fn copy_embedded_file(args: &args::CopyFile) -> Maybe<ret::CopyFile> {
+    fn copy_embedded_file(
+        src: &PathLike<'_>,
+        dest: &PathLike<'_>,
+        is_exclusive: bool,
+    ) -> Maybe<ret::CopyFile> {
         let copied = (|| {
-            let file = embedded_file_of_compiled_program(args.src.slice())
+            let file = embedded_file_of_compiled_program(src.slice())
                 .ok_or_else(|| sys::Error::from_code(E::ENOENT, sys::Tag::copyfile))?;
             let mut dest_buf = bun_paths::path_buffer_pool::get();
-            let overwrite_flag = if args.mode.shouldnt_overwrite() {
+            let overwrite_flag = if is_exclusive {
                 sys::O::EXCL
             } else {
                 sys::O::TRUNC
             };
             let fd = Syscall::open(
-                args.dest.slice_z(&mut dest_buf),
+                dest.slice_z(&mut dest_buf),
                 sys::O::WRONLY | sys::O::CREAT | overwrite_flag,
                 0o644,
             )?;
@@ -5442,8 +5828,8 @@ impl NodeFS {
         copied.map_err(|err: sys::Error| sys::Error {
             errno: err.errno,
             syscall: sys::Tag::copyfile,
-            path: args.src.slice().into(),
-            dest: args.dest.slice().into(),
+            path: src.slice().into(),
+            dest: dest.slice().into(),
             ..Default::default()
         })
     }
@@ -5910,7 +6296,13 @@ impl NodeFS {
                     || is_source_path(path.slice()))))
     }
 
-    pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
+    pub(crate) fn chown(&mut self, args: &args::Chown, flavor: Flavor) -> Maybe<ret::Chown> {
+        let owner = bun_standalone_graph::ChangedAttribute::Owner(args.uid as _, args.gid as _);
+        let result = self.chown_on_disk(args, flavor);
+        result.or_else(|err| change_embedded_attribute(err, args.path.slice(), owner))
+    }
+
+    fn chown_on_disk(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::chown) {
             return Err(error);
         }
@@ -5932,7 +6324,13 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn chmod(&mut self, args: &args::Chmod, _: Flavor) -> Maybe<ret::Chmod> {
+    pub(crate) fn chmod(&mut self, args: &args::Chmod, flavor: Flavor) -> Maybe<ret::Chmod> {
+        let mode = bun_standalone_graph::ChangedAttribute::Mode(args.mode);
+        let result = self.chmod_on_disk(args, flavor);
+        result.or_else(|err| change_embedded_attribute(err, args.path.slice(), mode))
+    }
+
+    fn chmod_on_disk(&mut self, args: &args::Chmod, _: Flavor) -> Maybe<ret::Chmod> {
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::chmod) {
             return Err(error);
         }
@@ -6097,7 +6495,8 @@ impl NodeFS {
             return Err(error);
         }
         // A link does not lead from one file system to another.
-        if is_in_executable(args.old_path.slice()) {
+        let old = args.old_path.slice();
+        if is_in_executable(old) || is_source_path_in_executable(old) {
             return Err(sys::Error::from_code(E::EXDEV, sys::Tag::link)
                 .with_path_dest(args.old_path.slice(), args.new_path.slice()));
         }
@@ -6186,8 +6585,18 @@ impl NodeFS {
 
     // Node doesn't absolute the path so we don't have to either
     pub(crate) fn mkdir_non_recursive(&mut self, args: &args::Mkdir) -> Maybe<ret::Mkdir> {
+        if let Some(error) = folder_creation_error(args.path.slice()) {
+            return Err(error);
+        }
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        match Syscall::mkdir(path, args.mode) {
+        let mut made = Syscall::mkdir(path, args.mode);
+        if let Err(err) = &made
+            && err.get_errno() == E::ENOENT
+            && make_source_folder(args.path.slice())
+        {
+            made = Syscall::mkdir(path, args.mode);
+        }
+        match made {
             Ok(_) => Ok(StringOrUndefined::None),
             Err(err) => Err(err.with_path(args.path.slice())),
         }
@@ -6202,6 +6611,9 @@ impl NodeFS {
         args: &args::Mkdir,
         ctx: &mut Ctx,
     ) -> Maybe<ret::Mkdir> {
+        if let Some(error) = folder_creation_error(args.path.slice()) {
+            return Err(error);
+        }
         let mut buf = paths::path_buffer_pool::get();
         let path = match args.path.os_path_kernel32(&mut *buf) {
             Ok(p) => p,
@@ -6442,6 +6854,7 @@ impl NodeFS {
         {
             return Err(error);
         }
+        make_source_folder(args.prefix.slice());
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
         // Node rejects an empty prefix with EINVAL (its snprintf builds a
@@ -6507,18 +6920,23 @@ impl NodeFS {
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
-        if (args.flags.as_int()
-            & (sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC | sys::O::APPEND))
-            != 0
-            && let Some(error) = creation_in_executable(args.path.slice(), sys::Tag::open, E::EROFS)
+        let is_write = args.flags.as_int() & FLAGS_OF_WRITES != 0;
+        let source = match is_write {
+            true => find_source_path_to_write(&args.path),
+            false => None,
+        };
+        let named = source.as_ref().unwrap_or(&args.path);
+        if is_write
+            && let Some(error) = creation_in_executable(named.slice(), sys::Tag::open, E::EROFS)
         {
             return Err(error);
         }
-        let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
+        prepare_source_path_write(named.slice(), args.flags.as_int(), args.mode)?;
+        let path = if cfg!(windows) && named.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
             ZStr::from_static(b"\\\\.\\NUL\0")
         } else {
-            args.path.slice_z(&mut self.sync_error_buf)
+            named.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::open(path, args.flags.as_int(), args.mode) {
             Err(err) if err.get_errno() == E::ENOENT && compiled_program_graph().is_some() => {
@@ -7378,13 +7796,14 @@ impl NodeFS {
         if recursive && flavor == Flavor::Sync {
             let mut buf_to_pass = bun_paths::path_buffer_pool::get();
             let mut entries: Vec<T> = Vec::new();
-            return Self::readdir_with_entries_recursive_sync::<T>(
+            Self::readdir_with_entries_recursive_sync::<T>(
                 &mut buf_to_pass,
                 args,
                 path,
                 &mut entries,
-            )
-            .map(|()| T::into_readdir(entries));
+            )?;
+            Self::append_graph_entries(path.as_bytes(), args, true, flavor, &mut entries);
+            return Ok(T::into_readdir(entries));
         }
 
         if recursive {
@@ -7413,8 +7832,23 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)
-            .map(|()| T::into_readdir(entries))
+        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)?;
+        Self::append_graph_entries(path.as_bytes(), args, false, flavor, &mut entries);
+        Ok(T::into_readdir(entries))
+    }
+
+    /// The sources are not there, but their folder is: the program may have made it to write into it.
+    fn append_graph_entries<T: ReaddirEntry>(
+        path: &[u8],
+        args: &args::Readdir,
+        recursive: bool,
+        flavor: Flavor,
+        entries: &mut Vec<T>,
+    ) {
+        if let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path)) {
+            let listed = graph.list_beside_disk(path, recursive);
+            Self::append_embedded_entries(listed, args, recursive, flavor, entries);
+        }
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.
@@ -7435,6 +7869,17 @@ impl NodeFS {
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());
+        Self::append_embedded_entries(list, args, recursive, flavor, &mut entries);
+        Ok(T::into_readdir(entries))
+    }
+
+    fn append_embedded_entries<T: ReaddirEntry>(
+        list: Vec<(Box<[u8]>, bool)>,
+        args: &args::Readdir,
+        recursive: bool,
+        flavor: Flavor,
+        entries: &mut Vec<T>,
+    ) {
         let input_path = args.path.as_written();
         let root_path = if T::IS_DIRENT {
             BunString::clone_utf8(input_path)
@@ -7474,7 +7919,7 @@ impl NodeFS {
                     &root_path
                 };
                 T::append_entry_recursive(
-                    &mut entries,
+                    entries,
                     base,
                     &name,
                     dirent_path,
@@ -7483,10 +7928,9 @@ impl NodeFS {
                     flavor == Flavor::Sync,
                 );
             } else {
-                T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
+                T::append_entry(entries, &name, &root_path, kind, args.encoding);
             }
         }
-        Ok(T::into_readdir(entries))
     }
 
     pub(crate) fn read_file(
@@ -7893,9 +8337,12 @@ impl NodeFS {
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
+                let source = find_source_path_to_write(p);
+                let p = source.as_ref().unwrap_or(p);
                 if let Some(error) = creation_in_executable(p.slice(), sys::Tag::open, E::EROFS) {
                     return Err(error);
                 }
+                prepare_source_path_write(p.slice(), args.flag.as_int(), args.mode)?;
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
@@ -8225,27 +8672,89 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn rename(&mut self, args: &args::Rename, _: Flavor) -> Maybe<ret::Rename> {
+    pub(crate) fn rename(&mut self, args: &args::Rename, flavor: Flavor) -> Maybe<ret::Rename> {
+        let result = self.rename_on_disk(args, flavor);
+        if result.is_ok() {
+            forget_renamed_file(args.old_path.slice(), args.new_path.slice());
+        }
+        result
+    }
+
+    fn rename_on_disk(&mut self, args: &args::Rename, _: Flavor) -> Maybe<ret::Rename> {
+        let (old, new) = (args.old_path.slice(), args.new_path.slice());
+        let mut to_buf = bun_paths::path_buffer_pool::get();
+        let to = args.new_path.slice_z(&mut to_buf);
+        if let Some(graph) = graph_before_disk(old) {
+            if graph.rename_in_executable(old, new) {
+                return Ok(());
+            }
+            let moved = match graph_before_disk(new) {
+                None => move_out_of_executable(old, to),
+                // What could be moved has no place there.
+                Some(_) if graph.list_movable(old).is_some() => {
+                    creation_in_executable(new, sys::Tag::rename, E::EROFS).map(Err)
+                }
+                Some(_) => None,
+            };
+            if let Some(moved) = moved {
+                return moved.map_err(|err| err.with_path_dest(old, new));
+            }
+        }
         if let Some(error) = change_in_executable(args.old_path.slice(), sys::Tag::rename)
             .or_else(|| creation_in_executable(args.new_path.slice(), sys::Tag::rename, E::EROFS))
         {
             return Err(error.with_path_dest(args.old_path.slice(), args.new_path.slice()));
         }
-        let from_buf = &mut self.sync_error_buf;
-        let mut to_buf = bun_paths::path_buffer_pool::get();
-        let from = args.old_path.slice_z(from_buf);
-        let to = args.new_path.slice_z(&mut to_buf);
-        match Syscall::rename(from, to) {
-            Ok(result) => Ok(result),
-            Err(err) => Err(err.with_path_dest(args.old_path.slice(), args.new_path.slice())),
-        }
+        let from = args.old_path.slice_z(&mut self.sync_error_buf);
+        let renamed = match Syscall::rename(from, to) {
+            Err(err) if err.get_errno() == E::ENOENT && !sys::exists(old) => {
+                let folder = bun_paths::dirname(strings::without_trailing_slash(new));
+                let has_folder = folder.is_none_or(sys::exists);
+                match compiled_program_graph() {
+                    Some(graph) if !has_folder && graph.rename_source_path(old, new) => Ok(()),
+                    Some(graph) if graph.list_movable(old).is_some() => {
+                        make_source_folder(new);
+                        move_out_of_executable(old, to).unwrap_or(Err(err))
+                    }
+                    _ => Err(err),
+                }
+            }
+            renamed => renamed,
+        };
+        renamed.map_err(|err| err.with_path_dest(old, new))
     }
 
-    pub(crate) fn rmdir(&mut self, args: &args::RmDir, _: Flavor) -> Maybe<ret::Rmdir> {
-        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::rmdir) {
+    pub(crate) fn rmdir(&mut self, args: &args::RmDir, flavor: Flavor) -> Maybe<ret::Rmdir> {
+        let mut result = self.rmdir_on_disk(args, flavor);
+        if let Err(error) = &result
+            && let Some(entries) = list_embedded_source_folder(error, args.path.slice())
+        {
+            result = match args.recursive || entries.is_empty() {
+                true => Ok(()),
+                false => Err(sys::Error::from_code(E::ENOTEMPTY, sys::Tag::rmdir)
+                    .with_path(args.path.slice())),
+            };
+        }
+        if result.is_ok() {
+            forget_in_executable(args.path.slice());
+        }
+        result
+    }
+
+    fn rmdir_on_disk(&mut self, args: &args::RmDir, _: Flavor) -> Maybe<ret::Rmdir> {
+        if remove_folder_in_executable(args.path.slice(), !args.recursive) {
+            return Ok(());
+        }
+        if let Some(mut error) = change_in_executable(args.path.slice(), sys::Tag::rmdir) {
+            let graph = compiled_program_graph().filter(|_| !args.recursive);
+            let entries = graph.and_then(|graph| graph.readdir(args.path.slice(), false));
+            if entries.is_some_and(|it| !it.is_empty()) {
+                error.errno = E::ENOTEMPTY as _;
+            }
             return Err(error);
         }
         if args.recursive {
+            note_found_on_disk();
             // On Windows a rooted-but-driveless path ("/tmp/foo") must resolve
             // against the cwd drive.
             // Our dt_* helpers go through Syscall::*at → to_nt_path /
@@ -8284,7 +8793,27 @@ impl NodeFS {
         .unwrap_or(Ok(()))
     }
 
-    pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+    pub(crate) fn rm(&mut self, args: &args::Rm, flavor: Flavor) -> Maybe<ret::Rm> {
+        let mut result = self.rm_on_disk(args, flavor);
+        let path = args.path.slice();
+        if let Err(error) = &result
+            && (is_embedded_source_file(error, path)
+                || args.recursive && list_embedded_source_folder(error, path).is_some())
+        {
+            result = Ok(());
+        }
+        if result.is_ok() {
+            forget_in_executable(args.path.slice());
+        }
+        result
+    }
+
+    fn rm_on_disk(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+        if remove_in_executable(args.path.slice())
+            || args.recursive && remove_folder_in_executable(args.path.slice(), false)
+        {
+            return Ok(());
+        }
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::rm) {
             return match args.force && error.get_errno() == E::ENOENT {
                 true => Ok(()),
@@ -8293,6 +8822,7 @@ impl NodeFS {
         }
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
+            note_found_on_disk();
             // See the matching comment in `rmdir`: pre-resolve the path on
             // Windows so rooted-but-driveless paths ("/tmp/foo") get the cwd
             // drive prepended before reaching the dt_* / Syscall::*at helpers,
@@ -8380,6 +8910,9 @@ impl NodeFS {
         if let Some(error) =
             creation_in_executable(args.new_path.slice(), sys::Tag::symlink, E::EEXIST)
         {
+            return Err(error);
+        }
+        if let Some(error) = creation_over_embedded_file(args.new_path.slice(), sys::Tag::symlink) {
             return Err(error);
         }
         let mut to_buf = bun_paths::path_buffer_pool::get();
@@ -8549,11 +9082,32 @@ impl NodeFS {
             PathOrFileDescriptor::Fd(fd) => {
                 Syscall::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64)
             }
-            PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len, args.flags),
+            PathOrFileDescriptor::Path(p) => {
+                let source = find_source_path_to_write(p);
+                let p = source.as_ref().unwrap_or(p);
+                prepare_source_path_write(p.slice(), sys::O::WRONLY, 0o666)?;
+                self.truncate_inner(p, args.len, args.flags)
+            }
         }
     }
 
-    pub(crate) fn unlink(&mut self, args: &args::Unlink, _: Flavor) -> Maybe<ret::Unlink> {
+    pub(crate) fn unlink(&mut self, args: &args::Unlink, flavor: Flavor) -> Maybe<ret::Unlink> {
+        let mut result = self.unlink_on_disk(args, flavor);
+        if let Err(error) = &result
+            && is_embedded_source_file(error, args.path.slice())
+        {
+            result = Ok(());
+        }
+        if result.is_ok() {
+            forget_in_executable(args.path.slice());
+        }
+        result
+    }
+
+    fn unlink_on_disk(&mut self, args: &args::Unlink, _: Flavor) -> Maybe<ret::Unlink> {
+        if remove_in_executable(args.path.slice()) {
+            return Ok(());
+        }
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::unlink) {
             return Err(error);
         }
@@ -8609,7 +9163,13 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+    pub(crate) fn utimes(&mut self, args: &args::Utimes, flavor: Flavor) -> Maybe<ret::Utimes> {
+        let times = changed_times(args.atime, args.mtime);
+        let result = self.utimes_on_disk(args, flavor);
+        result.or_else(|err| change_embedded_attribute(err, args.path.slice(), times))
+    }
+
+    fn utimes_on_disk(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::utime) {
             return Err(error);
         }
@@ -8643,7 +9203,13 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
+    pub(crate) fn lutimes(&mut self, args: &args::Lutimes, flavor: Flavor) -> Maybe<ret::Lutimes> {
+        let times = changed_times(args.atime, args.mtime);
+        let result = self.lutimes_on_disk(args, flavor);
+        result.or_else(|err| change_embedded_attribute(err, args.path.slice(), times))
+    }
+
+    fn lutimes_on_disk(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::lutime) {
             return Err(error);
         }
@@ -8704,13 +9270,28 @@ impl NodeFS {
             Ok(p) => p.len(),
             Err(NameTooLong) => return Err(name_too_long(&args.dest)),
         };
-        self.cp_sync_inner(
+        let copied = self.cp_sync_inner(
             &mut src_buf,
             PathInt::try_from(src_len).expect("int cast"),
             &mut dest_buf,
             PathInt::try_from(dest_len).expect("int cast"),
             args,
-        )
+        );
+        match copied {
+            Err(err)
+                if err.get_errno() == E::ENOENT
+                    && embedded_file_of_compiled_program(args.src.slice()).is_some() =>
+            {
+                let is_exclusive = args.flags.error_on_exist || !args.flags.force;
+                match Self::copy_embedded_file(&args.src, &args.dest, is_exclusive) {
+                    Err(err) if err.get_errno() == E::EEXIST && !args.flags.error_on_exist => {
+                        Ok(())
+                    }
+                    copied => copied,
+                }
+            }
+            copied => copied,
+        }
     }
 
     pub(crate) fn os_path_into_sync_error_buf(&mut self, slice: &[OSPathChar]) -> &[u8] {

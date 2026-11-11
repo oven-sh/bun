@@ -8,6 +8,7 @@ use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
 use crate::util::SharedSort;
+use bun_core::strings;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -619,8 +620,8 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         let (hir, index) = (self.hir(file), index + 1);
                         let literal = hir.id_at(hir.template_texts(exprs), index);
-                        text.extend_from_slice(self.constant_text(value));
-                        text.extend_from_slice(self.atoms().bytes(literal));
+                        strings::push_wtf8(&mut text, self.constant_text(value));
+                        strings::push_wtf8(&mut text, self.atoms().bytes(literal));
                         template_result.resolved_other_files |= result.resolved_other_files;
                         template_result.has_external_references |= result.has_external_references;
                         template_result.run_time_inputs |= result.run_time_inputs;
@@ -680,7 +681,8 @@ impl<'p, 's> Checker<'p, 's> {
                     .and_then(|n| Evaluated::number(n).value)
             }
             (Some(a), Some(b), Some(BinOp::Add)) => {
-                let text = [self.constant_text(a), self.constant_text(b)].concat();
+                let mut text = self.constant_text(a).to_vec();
+                strings::push_wtf8(&mut text, self.constant_text(b));
                 Some(EnumValue::String(self.atoms().intern(&text)))
             }
             _ => None,

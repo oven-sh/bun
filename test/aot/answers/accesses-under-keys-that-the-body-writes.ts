@@ -1,11 +1,9 @@
 // answers: without-library
 // # an access under a key that the body writes is the access by that name: it finds fields, accessors, getters of literals, what strings and lists answer, throws for null, is refused by a frozen object, and keeps the order of keys.
 // # an element key and `__proto__` go by the value. A key that begins with "on" never names the prototype link, one that begins with "__" may.
-// # the front end folds `const k = "kind"; node[k]` by itself (lower/member/key.rs), and a `let` that is never assigned, so each key is a `let` that is assigned once, or undefined, null or true
-// # f1 = kindOf, f2 = setKind, f6 = underUndefined, f7 = underNull, f8 = underTrue, f13 = listen, f14 = hide
+// # the front end names the property where it lowers the key to a string (lower/member/key.rs), so Link lists undefined, null and true
+// # f1 = kindOf, f6 = underUndefined, f7 = underNull, f8 = underTrue, f13 = listen, f14 = hide
 // # RUN(FORM): link accesses mechanisms=all
-// # FORM: access f1 {{*}} under "kind"
-// # FORM: access f2 {{*}} under "kind"
 // # FORM: access f6 {{*}} under "undefined"
 // # FORM: access f7 {{*}} under "null"
 // # FORM: access f8 {{*}} under "true"
@@ -13,12 +11,12 @@
 // # NEVER-NOT: ElemGet
 // # with Folding withheld Link lists none of them. There TypedOperations reads a key that is one written text off the body by itself, so in the walk that is withheld too
 // # RUN(UNLISTED): link accesses mechanisms=-Folding
-// # UNLISTED-NOT: under "kind"
 // # UNLISTED-NOT: under "undefined"
-// # RUN(WITHHELD): walk f1 f6 mechanisms=-Folding-TypedOperations
-// # WITHHELD-LABEL: code f1:Body
-// # WITHHELD: = ElemGet
+// # UNLISTED-NOT: under "null"
+// # RUN(WITHHELD): walk f6 f7 mechanisms=-Folding-TypedOperations
 // # WITHHELD-LABEL: code f6:Body
+// # WITHHELD: = ElemGet
+// # WITHHELD-LABEL: code f7:Body
 // # WITHHELD: = ElemGet
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

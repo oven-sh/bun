@@ -5,10 +5,11 @@ use crate::link::ProgramModule;
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::SourceKind;
 use crate::load::{
-    EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, is_host_path, read_file_bytes,
+    EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, file_size, is_host_path,
+    read_file_bytes,
 };
 use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
-use crate::report::{ModuleOrigin, ModuleSource, SourceTexts};
+use crate::report::{FunctionSources, ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
@@ -18,6 +19,8 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 use rustc_hash::FxHashMap;
+use std::ops::Range;
+use std::sync::Arc;
 
 pub(super) fn collect_entry_point_paths(
     project: &LoadedProject<'_, '_>,
@@ -242,23 +245,103 @@ pub(super) fn collect_source_texts(
     projects: &PerProject<ProgramView<'_, '_>>,
     modules: &[ProgramModule],
     erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    runs_tests: bool,
     in_parallel: InParallel<'_>,
 ) -> SourceTexts {
     let mut steps = StepClock::new(Stage::LinkAndEmit);
-    let mut slots: Vec<(ProgramModule, Option<ModuleSource>)> =
-        modules.iter().map(|&module| (module, None)).collect();
-    for_each_mut(&mut slots, in_parallel, &|(module, source)| {
-        *source = create_module_source(projects, *module, erased_ranges_by_file);
+    let mut slots: Vec<Slot> = modules
+        .iter()
+        .map(|&module| Slot {
+            module,
+            source: None,
+            holds_function_source: false,
+        })
+        .collect();
+    let holds_function_sources =
+        runs_tests && has_many_function_sources(projects, erased_ranges_by_file);
+    for_each_mut(&mut slots, in_parallel, &|slot| {
+        slot.source = create_module_source(
+            projects,
+            slot.module,
+            erased_ranges_by_file,
+            holds_function_sources,
+            &mut slot.holds_function_source,
+        );
     });
-    let texts = SourceTexts::new(slots.into_iter().map(|(_, source)| source).collect());
+    let function_sources = hold_function_sources(projects, &mut slots, in_parallel);
+    let texts = SourceTexts::new(slots.into_iter().map(|slot| slot.source).collect());
+    let texts = texts.with_function_sources(function_sources);
     steps.end_with(|| format!("source texts {} MB", texts.size_of_texts() >> 20));
     texts
+}
+
+struct Slot {
+    module: ProgramModule,
+    source: Option<ModuleSource>,
+    /// The text is on disk, and the function source is held apart from it.
+    holds_function_source: bool,
+}
+
+/// A build with fewer keeps them all.
+fn has_many_function_sources(
+    projects: &PerProject<ProgramView<'_, '_>>,
+    erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
+) -> bool {
+    const FEW: usize = 64 << 20;
+    let sizes = erased_ranges_by_file.keys();
+    let sizes = sizes.map(|&file| text_of(projects, file).len());
+    sizes.sum::<usize>() > FEW
+}
+
+fn text_of<'p>(projects: &PerProject<ProgramView<'p, '_>>, file: ProgramFile) -> &'p [u8] {
+    let files = projects.get(file.project).files();
+    &files.module(file.file).hir.text[..]
+}
+
+fn hold_function_sources(
+    projects: &PerProject<ProgramView<'_, '_>>,
+    slots: &mut [Slot],
+    in_parallel: InParallel<'_>,
+) -> Arc<FunctionSources> {
+    let mut parts: Vec<Range<usize>> = Vec::with_capacity(slots.len());
+    let mut end = 0;
+    for slot in &*slots {
+        let source = slot.source.as_ref().filter(|_| slot.holds_function_source);
+        let start = end;
+        end += source.map_or(0, ModuleSource::function_source_len);
+        parts.push(start..end);
+    }
+    let mut bytes = vec![0; end];
+    let mut rest = &mut bytes[..];
+    let mut places: Vec<(&mut [u8], &Slot)> = Vec::new();
+    for (slot, part) in slots.iter().zip(&parts) {
+        let (place, behind) = rest.split_at_mut(part.len());
+        places.push((place, slot));
+        rest = behind;
+    }
+    for_each_mut(&mut places, in_parallel, &|(place, slot)| {
+        if let (ProgramModule::File(file), Some(source), true) =
+            (slot.module, &slot.source, slot.holds_function_source)
+        {
+            source.remove_types_from(text_of(projects, file), place);
+        }
+    });
+    let sources = Arc::new(FunctionSources::new(bytes.into_boxed_slice()));
+    for (slot, part) in slots.iter_mut().zip(parts) {
+        if slot.holds_function_source {
+            let source = slot.source.take();
+            slot.source = source.map(|source| source.with_function_source_in(&sources, part));
+        }
+    }
+    sources
 }
 
 fn create_module_source(
     projects: &PerProject<ProgramView<'_, '_>>,
     module: ProgramModule,
     erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    holds_function_sources: bool,
+    holds_function_source: &mut bool,
 ) -> Option<ModuleSource> {
     let program_file = match module {
         ProgramModule::File(file) => file,
@@ -275,9 +358,13 @@ fn create_module_source(
     let origin = find_module_origin(view, program_file);
     let path = view.sources.diagnostic_path(file);
     let path_on_disk = files.module(file).file_name();
-    let is_on_disk = types.is_none()
-        && project == ProjectId::Application
-        && read_file_bytes(path_on_disk).is_some_and(|on_disk| on_disk == text);
+    // Whoever wants a text that is held apart from its function source compares it with what is on disk then.
+    let is_on_disk = project == ProjectId::Application
+        && match types {
+            None => read_file_bytes(path_on_disk).is_some_and(|on_disk| on_disk == text),
+            Some(_) => holds_function_sources && file_size(path_on_disk) == Some(text.len() as u64),
+        };
+    *holds_function_source = is_on_disk && types.is_some();
     let source = match is_on_disk {
         true => ModuleSource::new_on_disk(path, path_on_disk, text),
         false => ModuleSource::new(path, text),

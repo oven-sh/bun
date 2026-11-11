@@ -1264,7 +1264,7 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         };
         let graph = bun_standalone_graph::Graph::get_ref()
             .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
-        let embedded = graph.and_then(|graph| graph.find_ref(joined));
+        let embedded = graph.and_then(|graph| graph.find_data(joined));
         if graph.is_some_and(|graph| graph.find_dir(joined)) {
             use bun_jsc::SysErrorJsc as _;
             let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open).with_path(joined);

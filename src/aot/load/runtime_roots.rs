@@ -39,14 +39,29 @@ fn has_source(module: RuntimeModule) -> bool {
     module_data(module).flags.contains(ModuleFlags::HAS_SOURCE)
 }
 
-pub(crate) fn builtins_used_at_start(options: &AotOptions) -> Vec<BuiltinId> {
+/// Whether the run may interpret a file.
+pub(crate) fn may_interpret_files(options: &AotOptions) -> bool {
+    options.runs_tests && !options.checks_only
+}
+
+pub(crate) fn builtins_used_at_start(
+    options: &AotOptions,
+    keeps_code_without_names: bool,
+    stays_in_compiled_files: bool,
+) -> Vec<BuiltinId> {
     let read_for = |feature: &Feature| match feature {
         Feature::Sql => Some(BuiltinId::Bun_sql),
         _ => None,
     };
     let features = options.features_of_embedded_options.iter();
     let warnings = (options.warns_of_rejections).then_some(BuiltinId::WarningsOfRejections);
-    features.filter_map(read_for).chain(warnings).collect()
+    let interprets_files = may_interpret_files(options) && !stays_in_compiled_files;
+    let interpreted = interprets_files.then_some(BuiltinId::InterpretedFiles);
+    let interpreted_async =
+        (interprets_files && keeps_code_without_names).then_some(BuiltinId::InterpretedAsyncFiles);
+    let further = warnings.into_iter().chain(interpreted);
+    let further = further.chain(interpreted_async);
+    features.filter_map(read_for).chain(further).collect()
 }
 
 pub(crate) fn uses_of_what_start_reads(
@@ -65,6 +80,8 @@ pub(crate) fn uses_of_what_start_reads(
 #[derive(Copy, Clone)]
 pub(crate) struct FurtherLibraryCode<'a> {
     pub used_at_start: &'a [BuiltinId],
+    pub may_interpret_files: bool,
+    pub leaves_compiled_files: bool,
     pub serves_unseen_code: bool,
     pub loads_code_from_disk: bool,
     pub has_file_that_asks_for_it: bool,
@@ -142,6 +159,14 @@ pub(crate) fn collect_runtime_roots(
         || contents.names_worker_constructor
         || contents.loads_by_unknown_name
         || contents.loads_by_unknown_path;
+    if further.may_interpret_files && (further.leaves_compiled_files || imports_uncompiled_code) {
+        let interpreter = uses_of_what_start_reads(&[BuiltinId::InterpretedFiles], platform);
+        functions.extend(&interpreter.functions);
+        if keeps_code_without_names {
+            let of_async = uses_of_what_start_reads(&[BuiltinId::InterpretedAsyncFiles], platform);
+            functions.extend(&of_async.functions);
+        }
+    }
     let holds_what_unseen_code_finds = keeps_code_without_names || lets_in_what_nobody_names;
     let without_names = match holds_what_unseen_code_finds {
         true => RuntimeUses::of_unseen_code(platform),
@@ -325,6 +350,8 @@ mod tests {
 
     const NOTHING_FURTHER: FurtherLibraryCode<'static> = FurtherLibraryCode {
         used_at_start: &[],
+        may_interpret_files: false,
+        leaves_compiled_files: false,
         serves_unseen_code: false,
         loads_code_from_disk: false,
         has_file_that_asks_for_it: false,
@@ -473,6 +500,39 @@ mod tests {
         let of_a_printed_value = collect_roots_of("console.log(f);", &runtime);
         for path in &of_a_printed_value.paths {
             assert!(by_option.paths.contains(path));
+        }
+    }
+
+    #[test]
+    fn interpreter_callees_are_roots_when_unnamed_code_is_kept() {
+        let runtime = runtime_modules();
+        let in_test_run = FurtherLibraryCode {
+            may_interpret_files: true,
+            leaves_compiled_files: true,
+            ..NOTHING_FURTHER
+        };
+        let within_compiled_files = FurtherLibraryCode {
+            may_interpret_files: true,
+            ..NOTHING_FURTHER
+        };
+        let of_nothing = collect_roots_beside("export {};", &runtime, within_compiled_files);
+        assert_eq!(
+            of_nothing.paths,
+            collect_roots_of("export {};", &runtime).paths
+        );
+        let of_interpreter =
+            uses_of_what_start_reads(&[BuiltinId::InterpretedFiles], host_platform());
+        let outside = collect_roots_beside("export {};", &runtime, in_test_run);
+        for &function in &of_interpreter.functions {
+            let path = runtime.function_file_path(function).unwrap();
+            assert!(outside.paths.contains(&path), "{function:?}");
+        }
+        let next_to_host_code = collect_roots_beside("process.openStdin();", &runtime, in_test_run);
+        let called = uses_of_what_start_reads(&[BuiltinId::InterpretedAsyncFiles], host_platform());
+        assert!(!called.functions.is_empty());
+        for &function in &called.functions {
+            let path = runtime.function_file_path(function).unwrap();
+            assert!(next_to_host_code.paths.contains(&path), "{function:?}");
         }
     }
 

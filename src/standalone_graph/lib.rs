@@ -23,8 +23,10 @@ pub mod executable_request;
 #[cfg(not(windows))]
 pub use compiled_program::has_descriptors;
 pub use compiled_program::{
-    CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
+    ChangedAttribute, CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
+    CompiledProgramInput,
 };
+pub use compiled_program::{find_written_file, has_written_files};
 pub use executable_file::with_executable_image;
 
 // Re-export the flat surface most downstream callers use.

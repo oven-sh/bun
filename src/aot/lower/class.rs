@@ -6,10 +6,10 @@ mod members;
 mod plan;
 mod slots;
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use bun_sema::bind::{Bound, CodeUnit};
+use bun_sema::bind::{Bound, CodeUnit, ScopeId};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{
@@ -24,8 +24,9 @@ use super::member::PropertyName;
 use crate::ir::{LayoutId, PropertyKeyId, StringId, ValueId};
 
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
-pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
+pub(in crate::lower) use self::constructor::declare_constructor_of_class;
 pub(crate) use self::fields::static_field_position;
+pub(in crate::lower) use self::fields::{declare_initializer, is_called_by_evaluated_text};
 pub(in crate::lower) use self::plan::{
     brand_is_of_methods, class_slots, decorators_of, find_fields_evaluated_in_constructor,
     find_fields_under_signed_members, find_keys_that_hold_decorators,
@@ -123,9 +124,10 @@ pub(in crate::lower) struct StoreAtBirth {
     pub(in crate::lower) value: ExprId,
 }
 
-pub(in crate::lower) struct FieldsAtBirth {
+pub(in crate::lower) struct AllocatedFields {
     pub(in crate::lower) stores: SmallVec<[StoreAtBirth; 8]>,
     pub(in crate::lower) evaluated_first: SmallVec<[MemberId; 4]>,
+    pub(in crate::lower) holds_itself: bool,
 }
 
 pub(in crate::lower) struct FieldsInConstructor {
@@ -141,9 +143,19 @@ pub(in crate::lower) struct ClassText<'t, 's> {
     pub(in crate::lower) places_of_this_super_and_return: &'t [u32],
 }
 
+#[derive(Copy, Clone)]
+pub(in crate::lower) enum ObjectAtBirth {
+    Allocated(ValueId),
+    /// Nothing names the object before its fields are defined, so it is allocated there.
+    Pending {
+        prototype: ValueId,
+        scope: ScopeId,
+    },
+}
+
 pub(in crate::lower) struct Birth {
     pub(in crate::lower) class: ClassId,
-    pub(in crate::lower) this: ValueId,
+    pub(in crate::lower) object: ObjectAtBirth,
     pub(in crate::lower) parameter_properties: SmallVec<[(PropertyName, ValueId); 4]>,
     pub(in crate::lower) stores: SmallVec<[StoreAtBirth; 8]>,
     pub(in crate::lower) values: SmallVec<[ValueId; 8]>,
@@ -167,7 +179,6 @@ pub(crate) struct ClassState {
     plans: RefCell<FxHashMap<ClassId, Rc<ClassPlan>>>,
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
     entries_of_members: FxHashMap<ClassId, FxHashMap<MemberId, u32>>,
-    places_of_this_super_and_return: OnceCell<Vec<u32>>,
     pub(in crate::lower) fields_under_signed_members: Vec<MemberId>,
 }
 
@@ -190,7 +201,7 @@ impl ClassText<'_, '_> {
     }
 }
 
-pub(in crate::lower) fn find_places_of_this_super_and_return(
+pub(in crate::lower) fn find_this_super_returns(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
 ) -> Vec<u32> {
@@ -226,13 +237,13 @@ impl ClassState {
 impl<'s> FileLowering<'_, '_, '_, 's> {
     pub(in crate::lower) fn class_text(&self) -> ClassText<'_, 's> {
         let (hir, bound) = (self.hir, self.bound);
-        let places = &self.classes.places_of_this_super_and_return;
+        let places = &self.lists.places_of_this_super_and_return;
         ClassText {
             hir,
             bound,
             decisions: self.decisions(),
             places_of_this_super_and_return: places
-                .get_or_init(|| find_places_of_this_super_and_return(hir, bound)),
+                .get_or_init(|| find_this_super_returns(hir, bound)),
         }
     }
 

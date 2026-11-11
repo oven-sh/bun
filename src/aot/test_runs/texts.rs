@@ -944,6 +944,7 @@ impl<'a, 's> TextReader<'a, 's> {
         CodeInTexts { written, handed_on }
     }
 
+    /// `names` are those of the file's atoms.
     pub(super) fn finish(self, names: &BuiltinNames) -> (FoundInTexts, FoundInTexts) {
         if self.candidates.is_empty() {
             return Default::default();

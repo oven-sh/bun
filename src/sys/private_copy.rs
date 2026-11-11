@@ -35,9 +35,29 @@ pub fn map(_bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
     None
 }
 
+/// A read-only mapping of the executable.
+#[cfg(target_os = "linux")]
+#[derive(Copy, Clone)]
+struct Mapping {
+    low: usize,
+    high: usize,
+    /// Where the byte at `low` lies in the file.
+    offset: usize,
+}
+
 /// The offset of the bytes in the executable, if a single read-only mapping contains them.
 #[cfg(target_os = "linux")]
 fn offset_in_executable(bytes: &[u8]) -> Option<usize> {
+    // What an executable embeds lies in one section, so the mapping around the first bytes serves the process.
+    static MAPPING: std::sync::OnceLock<Option<Mapping>> = std::sync::OnceLock::new();
+    let mapping = (*MAPPING.get_or_init(|| find_mapping_around(bytes)))?;
+    let begin = bytes.as_ptr().addr();
+    (mapping.low <= begin && begin + bytes.len() <= mapping.high)
+        .then(|| mapping.offset + (begin - mapping.low))
+}
+
+#[cfg(target_os = "linux")]
+fn find_mapping_around(bytes: &[u8]) -> Option<Mapping> {
     let mut path = bun_paths::path_buffer_pool::get();
     let length = crate::readlink(bun_core::zstr!("/proc/self/exe"), &mut path[..]).ok()?;
     let executable = &path[..length];
@@ -54,7 +74,7 @@ fn offset_in_executable(bytes: &[u8]) -> Option<usize> {
         let (_device, _inode) = (fields.next()?, fields.next()?);
         let file = fields.next()?.trim_ascii_start();
         (low <= begin && end <= high && protection == b"r--p" && file == executable)
-            .then(|| offset + (begin - low))
+            .then_some(Mapping { low, high, offset })
     })
 }
 

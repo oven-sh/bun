@@ -639,10 +639,22 @@ fn add_assets(
             .map_err(CompileFailure::Assets);
     }
     let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
-    let (named_at_root, asset_paths) = match assets {
-        [] => (Vec::new(), Vec::new()),
-        assets => add_assets_under_root(assets, entry_name, root_directory, output_files)
-            .map_err(CompileFailure::Assets)?,
+    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+    let log = unsafe { &mut *request.log };
+    let implicit = &files_for_file_system.implicitly_embedded[..];
+    let asked_about = &files_for_file_system.asked_about[..];
+    let (named_at_root, asset_paths) = match (assets, implicit, asked_about) {
+        ([], [], []) => (Vec::new(), Vec::new()),
+        _ => add_assets_under_root(
+            assets,
+            implicit,
+            asked_about,
+            entry_name,
+            root_directory,
+            output_files,
+            log,
+        )
+        .map_err(CompileFailure::Assets)?,
     };
     let mut fs_only_paths = add_data_files_under_root(
         files_for_file_system,
@@ -650,8 +662,6 @@ fn add_assets(
         root_directory,
         output_files,
     );
-    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
-    let log = unsafe { &mut *request.log };
     warn_about_shared_asset_names(&named_at_root, output_files, log);
     emit_not_embedded_warnings(
         files_for_file_system,
@@ -980,6 +990,7 @@ fn add_data_files_under_root(
             modified_at: modified_at(&spelled).unwrap_or(0),
             is_folder: false,
             is_asset: false,
+            size_without_bytes: None,
         });
         file.dest_path = under_root.into_boxed_slice();
         add_asset(file, &mut modules_without_text, output_files);
@@ -1001,6 +1012,7 @@ fn add_data_files_under_root(
         path_below_root: folder,
         is_folder: true,
         is_asset: false,
+        size_without_bytes: None,
     }));
     fs_only_paths
 }
@@ -1025,6 +1037,8 @@ fn modules_without_text(output_files: &[OutputFile]) -> ModulesWithoutText {
 }
 
 /// An asset at the path of a compiled module gives the module's file its bytes, which `node:fs` and `Bun.file()` read, and its loader: the bytes are stored as they are, not as text that the executable runs.
+const LARGE_FILE_SIZE: usize = 10 * 1024 * 1024;
+
 fn add_asset(
     asset: OutputFile,
     modules_without_text: &mut ModulesWithoutText,
@@ -1046,11 +1060,22 @@ fn add_asset(
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AssetOrigin {
+    Explicit,
+    Implicit,
+    AskedAbout,
+}
+
+/// `implicit` is `FilesForFileSystem::implicitly_embedded`, and `asked_about` is the list of that name. Such a file is embedded at its own path only and yields to whatever is already there. One that is only asked about is embedded without its bytes.
 fn add_assets_under_root(
     assets: &[Box<[u8]>],
+    implicit: &[Box<[u8]>],
+    asked_about: &[Box<[u8]>],
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
+    log: &mut bun_ast::Log,
 ) -> Result<(Vec<u8>, Vec<PathForFileSystemAlone>), AssetError> {
     let working_directory =
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
@@ -1069,10 +1094,31 @@ fn add_assets_under_root(
             )
         })
         .collect();
-    for asset in assets {
+    let explicit = assets.iter().map(|asset| (asset, AssetOrigin::Explicit));
+    let implicit = implicit.iter().map(|path| (path, AssetOrigin::Implicit));
+    let asked_about = asked_about
+        .iter()
+        .map(|path| (path, AssetOrigin::AskedAbout));
+    for (asset, origin) in explicit.chain(implicit).chain(asked_about) {
+        let is_explicit = origin == AssetOrigin::Explicit;
         let mut files = Vec::new();
-        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)
-            .map_err(AssetError::NotCollected)?;
+        let mut size_without_bytes = None;
+        let collected = match origin {
+            AssetOrigin::AskedAbout => {
+                let Ok(stat) = bun_sys::stat(&ZBox::from_bytes(asset)) else {
+                    continue;
+                };
+                size_without_bytes = Some(stat.st_size as u64);
+                let name = to_embedded_name(bun_paths::basename(asset));
+                files.push(asset_output_file(name, Vec::new()));
+                Ok(())
+            }
+            _ => collect_compile_assets(core::slice::from_ref(asset), b"", &mut files),
+        };
+        match collected {
+            Err(_) if !is_explicit => continue,
+            collected => collected.map_err(AssetError::NotCollected)?,
+        }
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
@@ -1080,7 +1126,12 @@ fn add_assets_under_root(
         let embedded_path = from_root.as_deref().unwrap_or(&asset_name);
         let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
             .unwrap_or(embedded_path.len());
-        if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
+        let is_at_entry_point =
+            &embedded_path[..first_name_length] == bun_paths::basename(entry_name);
+        if is_at_entry_point && !is_explicit {
+            continue;
+        }
+        if is_at_entry_point {
             return Err(AssetError::EmbedsAtEntryPoint {
                 asset: asset.clone(),
             });
@@ -1105,12 +1156,28 @@ fn add_assets_under_root(
                     .expect("collect_compile_assets names files under the asset's name");
                 file.dest_path = graph_path(from_root, path_in_asset).into_boxed_slice();
             }
-            if is_file_given {
+            if !is_explicit && taken.contains_key(&file.dest_path) {
+                continue;
+            }
+            if !is_explicit && file.size > LARGE_FILE_SIZE {
+                log.add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "the executable embeds {}, which a package reads: {} MB",
+                        bun_core::fmt::quote(&file.dest_path),
+                        file.size / (1024 * 1024),
+                    ),
+                );
+            }
+            if is_file_given && is_explicit {
                 paths_of_files_given.push(file.dest_path.clone());
             }
             push_asset_paths(
                 &file.dest_path,
                 &[asset_path, &path_below_asset].concat(),
+                is_explicit,
+                size_without_bytes,
                 &mut paths,
             );
             let Some(earlier) = taken.insert(file.dest_path.clone(), None) else {
@@ -1137,6 +1204,8 @@ fn add_assets_under_root(
 fn push_asset_paths(
     path_below_root: &[u8],
     path_on_disk: &[u8],
+    is_explicit: bool,
+    size_without_bytes: Option<u64>,
     paths: &mut Vec<PathForFileSystemAlone>,
 ) {
     let path_below_root = bun_core::strings::remove_leading_dot_slash(path_below_root);
@@ -1145,7 +1214,9 @@ fn push_asset_paths(
         path_below_root: path_below_root.to_vec(),
         modified_at: modified_at(path_on_disk).unwrap_or(0),
         is_folder: false,
-        is_asset: true,
+        // `Bun.embeddedFiles` lists only explicit assets.
+        is_asset: is_explicit,
+        size_without_bytes,
     });
     for folder in folders_up_to(path_below_root, 1) {
         let name_length = bun_paths::basename(path_on_disk).len();
@@ -1155,6 +1226,7 @@ fn push_asset_paths(
             modified_at: modified_at(path_on_disk).unwrap_or(0),
             is_folder: true,
             is_asset: true,
+            size_without_bytes: None,
         });
     }
 }

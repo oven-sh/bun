@@ -4372,6 +4372,11 @@ pub(crate) fn write_file_internal(
     // RefPtr<Store> clone+drop keeps the store alive for the duration of this call.
     let _input_store_hold = input_store;
 
+    if let PathOrBlob::Path(PathOrFileDescriptor::Path(path)) = path_or_blob
+        && let Some(source) = node::fs::find_source_path_to_write(path)
+    {
+        *path = source;
+    }
     let destination: Option<&PathOrFileDescriptor> = match &*path_or_blob {
         PathOrBlob::Path(path) => Some(path),
         PathOrBlob::Blob(blob) => match blob.store.get().as_ref().map(|store| &store.data) {
@@ -4382,6 +4387,12 @@ pub(crate) fn write_file_internal(
     if let Some(PathOrFileDescriptor::Path(path)) = destination
         && let Some(err) =
             node::fs::creation_in_executable(path.slice(), bun_sys::Tag::open, bun_sys::E::EROFS)
+    {
+        return Ok(JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js());
+    }
+    let truncates = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+    if let Some(PathOrFileDescriptor::Path(path)) = destination
+        && let Err(err) = node::fs::prepare_source_path_write(path.slice(), truncates, 0o666)
     {
         return Ok(JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js());
     }
@@ -4484,7 +4495,16 @@ pub(crate) fn write_file_internal(
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
-            let new_blob = try_find_or_create_file_from_path(path, cx.global())?;
+            // What is written lies on the disk from then on, which is asked first.
+            let new_blob = match is_held_at_source_path(path) {
+                true => {
+                    let empty = PathOrFileDescriptor::Path(PathLike::default());
+                    let path = core::mem::replace(path, empty).thread_isolated_copy();
+                    let store = bun_core::handle_oom(Store::init_file(path, None));
+                    Blob::init_with_store(store, cx.global())
+                }
+                false => try_find_or_create_file_from_path(path, cx.global())?,
+            };
             if new_blob.store.get().is_none() {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "Writing to an empty blob is not implemented yet"
@@ -5192,6 +5212,16 @@ fn find_or_create_s3_file(
     global_this: &JSGlobalObject,
 ) -> Blob {
     Blob::find_or_create_file_from_path(path_or_fd, global_this, true)
+}
+
+/// Whether the executable holds a file for `path`, which names a place on the disk of the build and not one inside the executable.
+fn is_held_at_source_path(path: &PathOrFileDescriptor<'static>) -> bool {
+    let PathOrFileDescriptor::Path(path) = path else {
+        return false;
+    };
+    !bun_standalone_graph::is_bun_standalone_file_path(path.slice())
+        && bun_standalone_graph::Graph::get_ref()
+            .is_some_and(|graph| graph.find_data(path.slice()).is_some())
 }
 
 /// `find_or_create_file_from_path` with `check_s3`.

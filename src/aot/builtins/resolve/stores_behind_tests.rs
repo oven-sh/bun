@@ -88,6 +88,7 @@ impl Resolver<'_, '_> {
         })
     }
 
+    /// Nothing in `test` may give the variable another value: no other store into it, and nothing that runs code.
     fn leaves_variable_filled(&self, test: ExprId, member: BuiltinId, variable: SymbolId) -> bool {
         let hir = self.input.hir;
         let leaves = |part: ExprId| self.leaves_variable_filled(part, member, variable);

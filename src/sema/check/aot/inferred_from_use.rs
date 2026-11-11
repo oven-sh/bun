@@ -5,9 +5,12 @@ use super::queries::{GivenProduct, Queries};
 use super::type_identity::ObjectOrigin;
 use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
+use crate::bind::{
+    Binding, Bound, CodeUnit, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId,
+};
 use crate::check::root_declaration;
 use crate::check::shape::PropertyHolder;
+use crate::check::shared_indexes::{ReadsOfFields, SharedIndexes};
 use crate::hir::{
     self, BinOp, CallId, Chain, ClassId, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId,
     FnKind, MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
@@ -23,9 +26,10 @@ use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(super) enum Subject {
+pub(in crate::check) enum Subject {
     Binding(SymbolId),
     Pattern(PatId),
     This(FnId),
@@ -1868,6 +1872,42 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
+/// `list[i] | 0` and `~~list[i]` cut a number of any kind. They do not say that the list holds whole numbers.
+fn is_truncated_element(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> bool {
+    let find_parent = |value: ExprId| match bound.parent_of_expr(value) {
+        Parent::Expr(parent) => parent.some(),
+        _ => None,
+    };
+    if !matches!(hir[value].kind, ExprKind::Index { .. }) {
+        return false;
+    }
+    let Some(parent) = find_parent(value) else {
+        return false;
+    };
+    match hir[parent].kind {
+        ExprKind::Binary {
+            op: BinOp::BitOr | BinOp::Shr,
+            left,
+            right,
+        } => {
+            left == value
+                && matches!(hir[right].kind, ExprKind::Number(index) if hir.numbers[index as usize] == 0.0)
+        }
+        ExprKind::Unary {
+            op: UnOp::BitNot, ..
+        } => find_parent(parent).is_some_and(|outer| {
+            matches!(
+                hir[outer].kind,
+                ExprKind::Unary {
+                    op: UnOp::BitNot,
+                    ..
+                }
+            )
+        }),
+        _ => false,
+    }
+}
+
 fn is_used_as_int32(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -1971,8 +2011,10 @@ struct CallWithReceiver {
 
 type TypeParts = SmallVec<[TypeId; 4]>;
 
+/// What the calls in the file of a function pass to one of its parameters.
 pub(super) struct ArgumentsGiven {
     pub(super) written: SmallVec<[ExprId; 4]>,
+    /// The function is exported, or mentioned where it is not called.
     others_may_call: bool,
 }
 type ContentsOfLiteral = (FileId, SmallVec<[(Atom, PropFlags, TypeId); 4]>);
@@ -2170,6 +2212,93 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
         }
         classes
+    }
+
+    pub fn classes_stored_in_variable(&mut self, heritage: ExprId, most: usize) -> Vec<ClassRef> {
+        let Some(symbol) = self.find_variable_through_constants(heritage) else {
+            return Vec::new();
+        };
+        let mut classes: Vec<ClassRef> = Vec::new();
+        for value in self.find_stored_values(symbol) {
+            let Ok(ty) = self.expression_type(value) else {
+                continue;
+            };
+            if let Ok(ShapeKind::ClassConstructor(class)) =
+                self.type_shape(ty).map(|shape| shape.kind)
+                && !classes.contains(&class)
+            {
+                classes.push(class);
+            }
+            if classes.len() > most {
+                return Vec::new();
+            }
+        }
+        classes
+    }
+
+    pub fn only_class_stored_in_variable(&mut self, heritage: ExprId) -> Option<ClassRef> {
+        let hir = self.hir();
+        let symbol = self.find_variable_through_constants(heritage)?;
+        let mut only: Option<ClassRef> = None;
+        for value in self.find_stored_values(symbol) {
+            let class = match hir[value].kind {
+                ExprKind::Object(_) | ExprKind::Null => continue,
+                _ => {
+                    let ty = self.expression_type(value).ok()?;
+                    match self.type_shape(ty).ok()?.kind {
+                        ShapeKind::ClassConstructor(class) => class,
+                        _ => return None,
+                    }
+                }
+            };
+            if only.is_some_and(|only| only != class) {
+                return None;
+            }
+            only = Some(class);
+        }
+        only
+    }
+
+    fn find_variable_through_constants(&self, name: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+        let mut name = name;
+        loop {
+            let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+                (hir[name].kind, bound.binding(name))
+            else {
+                return None;
+            };
+            if followed.contains(&symbol) || !is_untyped_variable(hir, bound, symbol) {
+                return None;
+            }
+            followed.push(symbol);
+            match self
+                .find_initializer_of_constant(symbol)
+                .map(|it| (it, hir[it].kind))
+            {
+                Some((initializer, ExprKind::Ident(_))) => name = initializer,
+                Some(_) | None => return Some(symbol),
+            }
+        }
+    }
+
+    fn find_stored_values(&mut self, symbol: SymbolId) -> SmallVec<[ExprId; 2]> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let mut stored: SmallVec<[ExprId; 2]> = SmallVec::new();
+        for declaration in bound.symbol(symbol).decls {
+            if let Decl::Var(pattern) = *declaration
+                && let PatParent::Var(variable) = bound.pat_parent[pattern.idx()]
+            {
+                stored.extend(hir[variable].init.some());
+            }
+        }
+        for &(_, reference) in references_to(self.references_to_bindings(), symbol) {
+            if let Use::Stored { op: None, value } = find_use(hir, bound, reference) {
+                stored.push(value);
+            }
+        }
+        stored
     }
 
     fn find_arguments_in_sight(&mut self, parameter: ParamId) -> SmallVec<[ExprId; 2]> {
@@ -2424,6 +2553,59 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    pub fn note_functions_inferred(&mut self) {
+        self.memo.functions_inferred = Some(Vec::new());
+    }
+
+    /// The functions about whose results and parameters something has been inferred since the last call, one by one.
+    pub fn take_functions_inferred(&mut self) -> Vec<FnId> {
+        self.memo
+            .functions_inferred
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    pub fn forget_functions_inferred(&mut self) {
+        self.memo.functions_inferred = None;
+    }
+
+    #[cold]
+    fn note_function_inferred(&mut self, subject: Subject) {
+        let function = match subject {
+            Subject::Result(function) | Subject::This(function) => Some(function),
+            Subject::Binding(symbol) => match *self.bound().symbol(symbol).decls {
+                [Decl::Param(_)] => self.bound().symbol_scope(symbol).some().and_then(|scope| {
+                    match self.bound().code_unit(scope) {
+                        CodeUnit::Function(function) => Some(function),
+                        CodeUnit::File | CodeUnit::FieldInitializer(_) => None,
+                    }
+                }),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let (Some(noted), Some(function)) = (&mut self.memo.functions_inferred, function) {
+            noted.push(function);
+        }
+    }
+
+    /// The checkers of the parts of the file know what this one has inferred.
+    pub fn share_inferred_types(&self, indexes: &SharedIndexes<'s>) {
+        let inferred = self.memo.inferred_types.iter();
+        let known = inferred.filter_map(|(&subject, &state)| match state {
+            TypeState::Known(known) => Some((subject, known)),
+            _ => None,
+        });
+        let _ = indexes.inferred_types.set(known.collect());
+    }
+
+    pub fn take_over_inferred_types(&mut self, indexes: &SharedIndexes<'s>) {
+        let known = indexes.inferred_types.get().into_iter().flatten();
+        let known = known.map(|&(subject, known)| (subject, TypeState::Known(known)));
+        self.memo.inferred_types.extend(known);
+    }
+
     fn inferred_type_with_new_allowance(&mut self, subject: Subject) -> TypeId {
         self.memo.types_in_progress.remaining_types = self.inputs.max_inference_nodes;
         self.inferred_type_within_allowance(subject)
@@ -2590,6 +2772,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         } else {
             let known = TypeState::Known(inferred);
             self.memo.inferred_types.insert(subject, known);
+            if self.memo.functions_inferred.is_some() {
+                self.note_function_inferred(subject);
+            }
             let in_progress = &self.memo.types_in_progress;
             if in_progress.in_cycles.len() > first_in_cycle && in_progress.remaining_types != 0 {
                 self.infer_types_of_cycle_again(first_in_cycle);
@@ -2797,6 +2982,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
         }
         let (given, others_may_call) = self.compute_type_from_arguments(name);
+        // A record is one layout by its names. Where others may call and the uses name every member of what is given, the
+        // record of the uses is that layout, and says what the members are used as.
         let is_named_whole = others_may_call
             && (self.c.members(given))
                 .is_some_and(|members| members.shape().props.len() == usage.members.len());
@@ -3282,11 +3469,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
+    pub(super) fn references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
         if let Some(references) = self.memo.reference_index.to_bindings {
             return references;
         }
-        let references = self.compute_references_to_bindings();
+        let references = match self.c.indexes_of_parts(self.file) {
+            Some(indexes) => *indexes.references_to_bindings.get_or_init(|| {
+                let references = self.compute_references_to_bindings();
+                self.c.arena.alloc_slice_copy(&references)
+            }),
+            None => {
+                let references = self.compute_references_to_bindings();
+                self.list(&references)
+            }
+        };
         self.memo.reference_index.to_bindings = Some(references);
         references
     }
@@ -3303,41 +3499,65 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     #[inline(never)]
     fn reads_of_field_off_this(&mut self, class: ClassId, field: Atom) -> Vec<ExprId> {
-        if self.memo.reads_of_fields_off_this.is_none() {
-            let (file, hir, bound) = (self.file, self.hir(), self.bound());
-            let mut reads: FxHashMap<(ClassId, Atom), Vec<ExprId>> = FxHashMap::default();
-            for &(function, reference) in self.references_to_this() {
-                let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
-                    continue;
-                };
-                if hir[member].flags.contains(Flags::STATIC) {
-                    continue;
-                }
-                let Some(owner) = self.c.class_of_member_fn(file, function) else {
-                    continue;
-                };
-                if let Use::Member { access, name, .. } = find_use(hir, bound, reference) {
-                    reads.entry((owner, name)).or_default().push(access);
-                }
-            }
-            self.memo.reads_of_fields_off_this = Some(reads);
-        }
+        self.find_this_field_reads();
         let reads = self.memo.reads_of_fields_off_this.as_ref();
         reads
             .and_then(|reads| reads.get(&(class, field)).cloned())
             .unwrap_or_default()
     }
 
+    pub(super) fn find_this_field_reads(&mut self) {
+        if self.memo.reads_of_fields_off_this.is_none() {
+            let reads = match self.c.indexes_of_parts(self.file) {
+                Some(indexes) => {
+                    let reads = &indexes.reads_of_fields_off_this;
+                    Arc::clone(reads.get_or_init(|| Arc::new(self.compute_reads_of_fields())))
+                }
+                None => Arc::new(self.compute_reads_of_fields()),
+            };
+            self.memo.reads_of_fields_off_this = Some(reads);
+        }
+    }
+
+    fn compute_reads_of_fields(&mut self) -> ReadsOfFields {
+        let (file, hir, bound) = (self.file, self.hir(), self.bound());
+        let mut reads = ReadsOfFields::default();
+        for &(function, reference) in self.references_to_this() {
+            let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
+                continue;
+            };
+            if hir[member].flags.contains(Flags::STATIC) {
+                continue;
+            }
+            let Some(owner) = self.c.class_of_member_fn(file, function) else {
+                continue;
+            };
+            if let Use::Member { access, name, .. } = find_use(hir, bound, reference) {
+                reads.entry((owner, name)).or_default().push(access);
+            }
+        }
+        reads
+    }
+
     fn references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
         if let Some(references) = self.memo.reference_index.to_this {
             return references;
         }
-        let references = self.compute_references_to_this();
+        let references = match self.c.indexes_of_parts(self.file) {
+            Some(indexes) => *indexes.references_to_this.get_or_init(|| {
+                let references = self.compute_references_to_this();
+                self.c.arena.alloc_slice_copy(&references)
+            }),
+            None => {
+                let references = self.compute_references_to_this();
+                self.list(&references)
+            }
+        };
         self.memo.reference_index.to_this = Some(references);
         references
     }
 
-    fn compute_references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
+    fn compute_references_to_bindings(&mut self) -> Vec<(SymbolId, ExprId)> {
         let (file, hir, bound) = (self.file, self.hir(), self.bound());
         let expressions = self.c.exprs_by_kind(file);
         let mut to_bindings = Vec::with_capacity(expressions.of(ExprTag::Ident).len());
@@ -3357,10 +3577,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !to_bindings.is_sorted_by_key(|&(symbol, reference)| number_of(symbol.0, reference)) {
             to_bindings.sort_by_u64(|&(symbol, reference)| number_of(symbol.0, reference));
         }
-        self.list(&to_bindings)
+        to_bindings
     }
 
-    fn compute_references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
+    fn compute_references_to_this(&mut self) -> Vec<(FnId, ExprId)> {
         let (file, hir) = (self.file, self.hir());
         let expressions = self.c.exprs_by_kind(file);
         let mut to_this = Vec::new();
@@ -3373,7 +3593,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let number_of = |owner: u32, reference: ExprId| number_of_pair(owner, hir[reference].pos);
         to_this.sort_by_u64(|&(function, reference)| number_of(function.0, reference));
-        self.list(&to_this)
+        to_this
     }
 
     fn usage_of(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
@@ -3756,7 +3976,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Use::Int32 => {
                 usage.facts |= self.number_fact_of_operand(value);
                 let given = self.find_product_given_to(value);
-                if !given.is_given {
+                if !given.is_given && !is_truncated_element(self.hir(), self.bound(), value) {
                     usage.facts |= Facts::INT32;
                 }
                 if given.ran_out_of_terms {
@@ -3854,6 +4074,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         taking_elements
     }
 
+    /// `changed |= flag` where `changed` is a boolean, `whole *= factor` where `whole` is a big integer.
     fn is_combined_into_what_is_no_number(&mut self, value: ExprId) -> bool {
         let Parent::Expr(parent) = self.bound().parent_of_expr(value) else {
             return false;

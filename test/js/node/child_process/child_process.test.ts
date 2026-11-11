@@ -1625,17 +1625,18 @@ it.concurrent.each(["before", "after"])(
   async when => {
     const script = `
       const { spawn } = require("node:child_process");
-      // 'filled' follows the last stdout write's callback, so every byte has left the child by then. The child then
-      // waits to be killed: an exit before listen() would resume stdout with no listener.
-      const c = spawn(process.execPath, ["-e", "const b=Buffer.alloc(65536,97);for(let i=0;i<4;i++)process.stdout.write(b,i===3?()=>process.stderr.write('filled'):undefined);setTimeout(()=>{},60000)"], { stdio: ["ignore", "pipe", "pipe"] });
+      // The child waits to be killed: an exit before listen() would resume stdout with no listener. The parent
+      // kills it once every byte arrived, and stdout then ends.
+      const SIZE = 4 * 65536;
+      const c = spawn(process.execPath, ["-e", "const b=Buffer.alloc(65536,97);for(let i=0;i<4;i++)process.stdout.write(b);process.stderr.write('filled');setTimeout(()=>{},60000)"], { stdio: ["ignore", "pipe", "pipe"] });
       let bytes = 0, calls = 0, uncaught = 0, ends = 0;
       process.on("uncaughtException", e => { if (e.message === "boom") uncaught++; else throw e; });
       function listen() {
-        c.stdout.on("data", d => { bytes += d.length; if (calls++ === 0) throw new Error("boom"); });
+        c.stdout.on("data", d => { bytes += d.length; if (bytes === SIZE) c.kill(); if (calls++ === 0) throw new Error("boom"); });
         c.stdout.on("end", () => ends++);
       }
       if (${JSON.stringify(when)} === "before") listen();
-      c.stderr.once("data", () => { if (${JSON.stringify(when)} === "after") listen(); c.kill(); });
+      else c.stderr.once("data", listen);
       c.on("close", () => console.log(JSON.stringify({ bytes, uncaught, ends })));
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });

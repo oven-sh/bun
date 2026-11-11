@@ -244,8 +244,11 @@ test("receiveMessageOnPort works across threads", async () => {
   let sharedBuffer = new SharedArrayBuffer(8);
   let sharedBufferView = new Int32Array(sharedBuffer);
   let msg = { sharedBuffer };
+  // The wait starts before the message leaves: a wait that starts after the
+  // worker has written to the buffer returns "not-equal" at once.
+  const notified = Atomics.waitAsync(sharedBufferView, 0, 0);
   worker.postMessage(msg);
-  expect(await Atomics.waitAsync(sharedBufferView, 0, 0).value).toBe("ok");
+  expect(await notified.value).toBe("ok");
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");

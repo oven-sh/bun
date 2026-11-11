@@ -2604,9 +2604,9 @@ describe.concurrent("bun fmt", () => {
     });
 
     describe("an escaped space in double quotes", () => {
-      // Each row is the prose wrap, the width, the text, Bun's output and Prettier 3.9.9's output, or null where
-      // they're the same. `\ ` is one escape, so it isn't a place to break the line: a `\` at the end of a line is an
-      // escaped line break, and the space is lost.
+      // Each row is the prose wrap, the width, the text, Bun's output and Prettier 3.9.9's output. `\ ` is one
+      // escape, so it isn't a place to break the line: a `\` at the end of a line is an escaped line break, and the
+      // space is lost.
       const x75 = Buffer.alloc(75, "x").toString();
       test.each([
         ["always", 1, 'a: "ab\\ cd"\n', 'a:\n  "ab\\ cd"\n', 'a:\n  "ab\\\n  cd"\n'],
@@ -2616,9 +2616,6 @@ describe.concurrent("bun fmt", () => {
         ["always", 80, 'a: "ab\\ \n  cd"\n', 'a: "ab\\  cd"\n', 'a: "ab\\\n  cd"\n'],
         ["always", 80, `note: "${x75}\\ yyyy"\n`, `note:\n  "${x75}\\ yyyy"\n`, `note:\n  "${x75}\\\n  yyyy"\n`],
         ["never", 1, 'a: "ab\\ \n  cd"\n', 'a: "ab\\  cd"\n', 'a: "ab\\\ncd"\n'],
-        // `\\` is an escaped backslash, so the space after it is a place to break the line.
-        ["always", 1, 'a: "ab\\\\ cd"\n', 'a:\n  "ab\\\\\n  cd"\n', null],
-        ["never", 1, 'a: "ab\\ cd"\n', 'a: "ab\\ cd"\n', null],
       ] as const)("with --prose-wrap=%s at %d columns: %j", async (proseWrap, width, before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
         expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
@@ -2630,6 +2627,22 @@ describe.concurrent("bun fmt", () => {
         expect(checked.stderr).toBe("");
         expect(checked.exitCode).toBe(0);
       });
+
+      // Each row is the prose wrap, the width, the text and what both print. `\\` is an escaped backslash, so the space
+      // after it is a place to break the line.
+      test.each([
+        ["always", 1, 'a: "ab\\\\ cd"\n', 'a:\n  "ab\\\\\n  cd"\n'],
+        ["never", 1, 'a: "ab\\ cd"\n', 'a: "ab\\ cd"\n'],
+      ] as const)(
+        "is printed as Prettier prints it with --prose-wrap=%s at %d columns: %j",
+        async (proseWrap, width, before, byPrettier) => {
+          expect(Bun.YAML.parse(byPrettier)).toEqual(Bun.YAML.parse(before));
+          const args = [`--prose-wrap=${proseWrap}`, `--print-width=${width}`];
+          const result = await format({ "a.yaml": before }, args, { reads: ["a.yaml"] });
+          expect(result.files).toEqual({ "a.yaml": byPrettier });
+          expect(result.exitCode).toBe(0);
+        },
+      );
     });
 
     test.each(["always", "never"])(

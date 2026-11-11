@@ -3,6 +3,7 @@
 use crate::convert::{ConvertError, Converted, Recorded, Root, WrappedDefault, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
+use crate::program::is_parsed_by_babel;
 use bun_ast::ASTMemoryAllocator;
 use bun_core::strings;
 use bun_lint::ast::{BinOp, File, Func};
@@ -30,6 +31,10 @@ pub enum Flavor {
 pub(crate) struct Compiler<'a> {
     file: &'a File<'a>,
     flavor: Flavor,
+    /// The rules have to report what the plugin reports, and the plugin parses the file with Babel: a name is bound
+    /// to what Babel's scopes bind it to. It isn't set for a file that the plugin parses with hermes-parser, where
+    /// Babel's scopes bind what Flow declares.
+    has_babel_scopes: bool,
     wanted: Categories,
     config: EnvironmentConfig,
     /// Memory for the converted trees and the compiler.
@@ -77,11 +82,15 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
 
 impl<'a> Compiler<'a> {
     pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, wanted: Categories) -> Compiler<'a> {
+        let has_no_foreign_config = file.language().has_no_foreign_config;
         Compiler {
             file,
             flavor,
+            has_babel_scopes: flavor == Flavor::Eslint
+                && !has_no_foreign_config
+                && is_parsed_by_babel(file),
             wanted,
-            config: config_of(flavor, file.language().has_no_foreign_config),
+            config: config_of(flavor, has_no_foreign_config),
             arena: bun_alloc::Arena::new(),
         }
     }
@@ -100,7 +109,7 @@ impl<'a> Compiler<'a> {
         let arena = &self.arena;
         let mut allocator = ASTMemoryAllocator::borrowing(arena);
         let _scope = allocator.enter();
-        let converted = match convert(self.file, arena, func, self.flavor) {
+        let converted = match convert(self.file, arena, func, self.flavor, self.has_babel_scopes) {
             Ok(converted) => converted,
             Err(ConvertError::Using) => return Ok(()),
             Err(ConvertError::ThisParameter) => return Err(Vec::new()),

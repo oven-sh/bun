@@ -617,6 +617,51 @@ describe.concurrent(
           "react-hooks/todo 3:3-15:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",
         ],
         "typescript.tsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
+        // Babel binds nothing for a signature without a body, so `helper` is a global and not a local that nothing
+        // initializes. hermes-parser parses the `.mts` file, and Babel binds what it makes of the signature.
+        "signature.tsx": [
+          "react-hooks/refs 6:15-6:26 Error: Cannot access refs during render",
+          "react-hooks/refs 17:15-17:26 Error: Cannot access refs during render",
+        ],
+        "signature.ts": ["react-hooks/refs 6:15-6:26 Error: Cannot access refs during render"],
+        "signature.mts": [
+          "react-hooks/invariant 7:10-7:16 Invariant: [InferMutationAliasingEffects] Expected value kind to be initialized",
+        ],
+        "unbound.tsx": [
+          "react-hooks/refs 5:15-5:26 Error: Cannot access refs during render",
+          // `helper` is a variable from outside.
+          "react-hooks/refs 17:15-17:26 Error: Cannot access refs during render",
+          "react-hooks/globals 18:3-18:9 Error: Cannot reassign variables declared outside of the component/hook",
+          // `helper` is the ref of the enclosing scope, past two signatures and past an enum.
+          "react-hooks/refs 29:15-29:29 Error: Cannot access refs during render",
+          "react-hooks/refs 40:13-40:27 Error: Cannot access refs during render",
+          // `props` is the component's.
+          "react-hooks/immutability 48:5-48:10 Error: This value cannot be modified",
+          "react-hooks/unsupported-syntax 54:3-54:39 Compilation Skipped: Inline `class` declarations are not supported",
+          "react-hooks/refs 56:15-56:26 Error: Cannot access refs during render",
+          // In a default value, `helper` isn't the one of the function's body, and `useRef` is the parameter before
+          // it: no invariant, and no hook that's called in a nested function.
+          "react-hooks/refs 62:15-62:26 Error: Cannot access refs during render",
+          "react-hooks/todo 63:23-63:84 Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+          "react-hooks/refs 72:15-72:26 Error: Cannot access refs during render",
+          "react-hooks/todo 73:36-73:104 Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+          // `Box` is the `const`, under a type alias and under a type parameter.
+          "react-hooks/syntax 82:3-82:6 Error: Cannot reassign a `const` variable",
+          "react-hooks/syntax 88:3-88:6 Error: Cannot reassign a `const` variable",
+          // `Math` is the global, and not the member `Math` of the enum that the hook is in.
+          "react-hooks/purity 97:14-97:27 Error: Cannot call impure function during render",
+        ],
+        // The globals `useRef`, `React.useState`, `Date.now` and `Math.random`.
+        "unbound-in-module.tsx": [
+          "react-hooks/refs 14:15-14:26 Error: Cannot access refs during render",
+          "react-hooks/set-state-in-render 20:3-20:11 Error: Cannot call setState during render",
+          "react-hooks/purity 25:15-25:25 Error: Cannot call impure function during render",
+          "react-hooks/purity 30:18-30:40 Error: Cannot call impure function during render",
+        ],
+        // React's `useState`. The `useRef` in `ShadowsImport` is the module's own, and so is every name in `bound.tsx`.
+        "unbound-beside-imports.tsx": [
+          "react-hooks/set-state-in-render 9:3-9:11 Error: Cannot call setState during render",
+        ],
       });
       expect(files["disabled.jsx"].suppressed.map(it => it.ruleId)).toEqual(["react-hooks/refs"]);
       expect(files["typescript.tsx"].messages[0].suggestions).toEqual([
@@ -675,6 +720,34 @@ describe.concurrent(
         "",
       ]);
       expect(exitCode).toBe(1);
+    });
+
+    // Babel binds nothing for a namespace, so the plugin's compiler takes `Math` for the global. Without an ESLint or
+    // oxlint config there's no plugin to match, and `Math` is the module's own.
+    test("a namespace named like a global is the global only with an ESLint config", async () => {
+      const files = {
+        "own.tsx": `namespace Math {\n  export const random = () => 4;\n}\nexport function Dice() {\n  return <i>{Math.random()}</i>;\n}\n`,
+        "global.tsx": `export function Dice() {\n  return <i>{Math.random()}</i>;\n}\n`,
+      };
+      const bunfig = `[lint.rules]\n"react-hooks/purity" = "error"\n`;
+      const [withEslint, alone] = await Promise.all([
+        messages(files),
+        lint({ "bunfig.toml": bunfig, ...files }, ["-f", "json"]),
+      ]);
+      const purity = (found: ReturnType<typeof byEslintFile>) =>
+        Object.fromEntries(
+          Object.entries(found).map(([name, it]) => [
+            name,
+            it.messages.filter(message => message.ruleId === "react-hooks/purity").map(message => message.line),
+          ]),
+        );
+      expect({
+        withEslint: purity(withEslint.files),
+        alone: purity(byEslintFile(JSON.parse(alone.raw), alone.directories)),
+      }).toEqual({
+        withEslint: { "global.tsx": [2], "own.tsx": [5] },
+        alone: { "global.tsx": [2], "own.tsx": [] },
+      });
     });
   },
 );

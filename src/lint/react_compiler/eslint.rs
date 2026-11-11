@@ -39,7 +39,7 @@ pub(crate) struct Suggested {
 
 /// `None` if the plugin reports nothing.
 pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report> {
-    let is_parsed_by_babel = file.path().ends_with(b".ts") || file.path().ends_with(b".tsx");
+    let is_parsed_by_babel = crate::program::is_parsed_by_babel(file);
     let is_about_dependencies = matches!(
         finding.category,
         ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies

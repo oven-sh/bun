@@ -3,8 +3,8 @@
 //   bun eslint.ts <directory> <out.jsonl> --modules=<node_modules> [--again]
 //
 // <node_modules> needs eslint, eslint-plugin-react-hooks and @typescript-eslint/parser. All of the plugin's rules are
-// errors, except `rules-of-hooks` and `exhaustive-deps`, which aren't compiler rules. `.ts` and `.tsx` are parsed by
-// typescript-eslint, and the rest by espree with JSX.
+// errors, except `rules-of-hooks` and `exhaustive-deps`, which aren't compiler rules. `.ts`, `.tsx` and `.mts` are
+// parsed by typescript-eslint, and the rest by espree with JSX.
 //
 // Writes one line per file, sorted by path: {"path", "parse", "messages": [..], "suppressed": [..]}. A message has
 // ESLint's own fields: ruleId, severity, message, line, column, endLine, endColumn, suggestions (desc, fix). `parse` is
@@ -52,7 +52,7 @@ export function configOf(modules: string, isOn = true): { config: object[]; rule
   const rules = compilerRules(plugin);
   const config = [
     {
-      files: ["**/*.{js,jsx,mjs,ts,tsx}"],
+      files: ["**/*.{js,jsx,mjs,ts,tsx,mts}"],
       plugins: { "react-hooks": plugin },
       rules: Object.fromEntries(rules.map(rule => [rule, isOn ? "error" : "off"])),
       languageOptions: {
@@ -62,7 +62,7 @@ export function configOf(modules: string, isOn = true): { config: object[]; rule
       },
       linterOptions: { reportUnusedDisableDirectives: "off" },
     },
-    { files: ["**/*.{ts,tsx}"], languageOptions: { parser: require("@typescript-eslint/parser") } },
+    { files: ["**/*.{ts,tsx,mts}"], languageOptions: { parser: require("@typescript-eslint/parser") } },
   ];
   return { config, rules };
 }

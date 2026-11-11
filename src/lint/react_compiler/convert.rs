@@ -8,6 +8,9 @@
 //!   diagnostics carry the `Loc`s they were given, and [`Converted::span_of`] maps them back.
 //! - A `Ref` is an index into [`Converted::symbols`], which has only the symbols that the function
 //!   mentions.
+//! - A name is bound to what the tool of the [`Flavor`] binds it to, which Bun's parser doesn't
+//!   always do: `declare const` is a binding in Babel's scopes, and a function signature is one in
+//!   oxc's.
 //! - JSX is a classic-runtime call, `createElement(tag, props, ...children)`, which keeps the
 //!   attributes in order. The lowering turns it back into a `JsxExpression`.
 
@@ -21,11 +24,11 @@ use bun_ast::{
 };
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::ast::{
-    BinOp, Call, Chain, Class, Expr, ExprKind, File, FnBody, FnKind, Func, Ident, Jsx, Key,
+    BinOp, Call, Chain, Class, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Jsx, Key,
     KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind, Stmt,
     StmtKind, Template, UnOp, VarDecl, VarKind,
 };
-use bun_lint::semantic::{Declaration, Symbol};
+use bun_lint::semantic::{Declaration, DeclarationKinds, Scope, ScopeKind, Symbol};
 use bun_lint::span::Span;
 use bun_react_compiler::hir::VariableBinding;
 use rustc_hash::FxHashMap;
@@ -157,6 +160,9 @@ pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
     arena: &'x Arena,
     flavor: Flavor,
+    /// The plugin parses the file with Babel. Its compiler reads the bindings of Babel's scopes there, which don't
+    /// bind every name that the linter's do.
+    has_babel_scopes: bool,
     /// The range of the function being compiled.
     root: Span,
     spans: Vec<Span>,
@@ -182,12 +188,14 @@ pub(crate) fn convert<'a>(
     arena: &Arena,
     func: Func<'a>,
     flavor: Flavor,
+    has_babel_scopes: bool,
 ) -> Converts<Converted> {
     let stack = bun_core::StackCheck::init();
     let mut converter = Converter {
         file,
         arena,
         flavor,
+        has_babel_scopes,
         root: func.estree_span(),
         spans: Vec::with_capacity(256),
         symbols: Vec::with_capacity(32),
@@ -295,11 +303,22 @@ impl<'a> Converter<'a, '_> {
         made
     }
 
-    fn ref_of_symbol(&mut self, symbol: Symbol<'a>) -> Ref {
-        if let Some(known) = self.by_symbol.get(&symbol.key()) {
-            return *known;
+    /// `None` if the flavor's compiler has no binding for it, because Babel registers none of its declarations.
+    #[inline]
+    fn ref_of_symbol(&mut self, symbol: Symbol<'a>) -> Option<Ref> {
+        match self.by_symbol.get(&symbol.key()) {
+            Some(known) => Some(*known),
+            None => self.ref_of_new_symbol(symbol),
         }
-        let declaration = symbol.declarations().next();
+    }
+
+    /// [`Converter::ref_of_symbol`] for a symbol that isn't known yet. It's a function of its own so that a known one
+    /// costs the caller only the lookup.
+    fn ref_of_new_symbol(&mut self, symbol: Symbol<'a>) -> Option<Ref> {
+        let declaration = match self.has_babel_scopes {
+            true => Some((symbol.declarations()).find(|it| is_registered_by_babel(*it))?),
+            false => symbol.declarations().next(),
+        };
         let is_outside = !self.root.contains(symbol.scope().span())
             || matches!(declaration, Some(Declaration::Fn(func)) if self.treats_own_name_as_outer(func));
         let name = StoreStr::new(symbol.name().bytes());
@@ -367,13 +386,38 @@ impl<'a> Converter<'a, '_> {
             self.import_bindings.push((made, import));
         }
         self.by_symbol.insert(symbol.key(), made);
-        made
+        Some(made)
+    }
+
+    /// Babel's `Scope#getBinding` for a reference at `at` to a name that the scope of `symbol` doesn't bind: the
+    /// binding of the nearest enclosing scope that has one, or else the global.
+    #[cold]
+    #[inline(never)]
+    fn ref_of_unbound(&mut self, symbol: Symbol<'a>, at: u32) -> Ref {
+        let name = symbol.name();
+        for scope in symbol.scope().chain().skip(1) {
+            let Some(outer) = scope.get_name(name) else {
+                continue;
+            };
+            // The default value of a parameter doesn't see the variables of the function's body.
+            let is_parameter = (outer.declaration_kinds()).contains(DeclarationKinds::PARAMETER);
+            if !is_parameter && is_in_parameters(scope, at) {
+                continue;
+            }
+            if let Some(found) = self.ref_of_symbol(outer) {
+                return found;
+            }
+        }
+        self.ref_of_name(Named::Global, name)
     }
 
     /// Returns what the identifier `expr`, named `name`, refers to.
     fn ref_of_identifier(&mut self, expr: Expr<'a>, name: Name<'a>) -> Ref {
         match expr.symbol() {
-            Some(symbol) => self.ref_of_symbol(symbol),
+            Some(symbol) => match self.ref_of_symbol(symbol) {
+                Some(known) => known,
+                None => self.ref_of_unbound(symbol, expr.span().start),
+            },
             None => {
                 if name.is("arguments") && self.flavor == Flavor::Oxlint {
                     self.recorded.push(Recorded::ImplicitArguments(expr.span()));
@@ -384,8 +428,8 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn declared(&mut self, symbol: Option<Symbol<'a>>, name: Name<'a>) -> Ref {
-        match symbol {
-            Some(symbol) => self.ref_of_symbol(symbol),
+        match symbol.and_then(|it| self.ref_of_symbol(it)) {
+            Some(known) => known,
             // Nothing refers to it.
             None => self.new_symbol(name.bytes(), SymbolKind::Other),
         }
@@ -1346,8 +1390,11 @@ impl<'a> Converter<'a, '_> {
                 loc,
             ),
             // A signature without a body declares its name: a local that nothing initializes, as in oxc's compiler.
+            // Babel's scopes have no binding for it.
             StmtKind::Fn(func) => {
-                if let Some(name) = func.name() {
+                if !self.has_babel_scopes
+                    && let Some(name) = func.name()
+                {
                     let declared = self.declared(func.symbol(), name.name());
                     self.locals_without_declaration.push(declared);
                 }
@@ -1595,6 +1642,35 @@ impl<'a> Converter<'a, '_> {
             | StmtKind::ExportAsNamespace(_) => JsStmt::alloc(S::ExportClause::default(), loc),
         })
     }
+}
+
+/// True if `Scope#registerDeclaration` of @babel/traverse 7.29 makes a binding for it. It makes none for a node that
+/// `getBindingIdentifiers.keys` has no entry for, and none for a class with `declare`.
+fn is_registered_by_babel(declaration: Declaration<'_>) -> bool {
+    match declaration {
+        Declaration::Var(_)
+        | Declaration::Param(_)
+        | Declaration::ImportDefault(_)
+        | Declaration::ImportNamespace(_)
+        | Declaration::ImportSpec(_)
+        | Declaration::ImportEquals(_)
+        | Declaration::Other => true,
+        Declaration::Fn(func) => func.has_body(),
+        Declaration::Class(class) => !class.flags().contains(Flags::AMBIENT),
+        Declaration::Interface(_)
+        | Declaration::TypeAlias(_)
+        | Declaration::Enum(_)
+        | Declaration::EnumMember(_)
+        | Declaration::Module(_)
+        | Declaration::TypeParam(_) => false,
+    }
+}
+
+/// True if `at` is in the parameters of the function whose scope `scope` is.
+fn is_in_parameters(scope: Scope<'_>, at: u32) -> bool {
+    scope.kind() == ScopeKind::Function
+        && matches!(scope.node(), Node::Func(func)
+            if func.params().last().is_some_and(|last| at < last.span().end))
 }
 
 /// True if the pattern binds a variable that's reassigned somewhere.

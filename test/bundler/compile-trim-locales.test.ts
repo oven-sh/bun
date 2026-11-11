@@ -224,6 +224,7 @@ console.log(JSON.stringify(built.logs.map(log => ({ level: log.level, message: l
       using dir = tempDir("compile-trim-locales-not-left-out", files);
       const folder = String(dir);
       // The last: BUN_DEBUG_TEST_UNTRIMMED_OUTFILE, for a second executable that keeps what nothing uses. The list applies to it too.
+      const whole = isWindows ? "whole.exe" : "whole";
       const builds: [how: string[], warnings: string[], whole?: string][] = [
         [[...aot, "--trim-locales=en,de", "euros.ts"], []],
         [[...aot, "--trim", "euros.ts"], []],
@@ -231,7 +232,7 @@ console.log(JSON.stringify(built.logs.map(log => ({ level: log.level, message: l
         [[...aot, "--trim", "--trim-locales=en", "upper.ts"], []],
         [[...aot, "--trim-locales=en", "silenced.ts"], []],
         [[...aot, "--trim-locales=en", "--explain", "silenced.ts"], isMacOS ? [] : [silenced + warning("de-DE")]],
-        [[...aot, "--trim", "--trim-locales=en", "upper.ts"], isMacOS ? [] : [`warn: ${warning("tr")}`], "whole"],
+        [[...aot, "--trim", "--trim-locales=en", "upper.ts"], isMacOS ? [] : [`warn: ${warning("tr")}`], whole],
       ];
       const built = await Promise.all(
         builds.map(([how, , whole], index) =>
@@ -245,7 +246,7 @@ console.log(JSON.stringify(built.logs.map(log => ({ level: log.level, message: l
       );
       expect(built).toEqual(builds.map(([how, warnings]) => ({ how: how.join(" "), warnings, exitCode: 0 })));
       // The warning is of the data, not of the call: this one asks for none.
-      expect(await run([join(folder, "6", "whole")], folder)).toEqual({ stdout: "İ\n", stderr: "", exitCode: 0 });
+      expect(await run([join(folder, "6", whole)], folder)).toEqual({ stdout: "İ\n", stderr: "", exitCode: 0 });
     },
   );
 });

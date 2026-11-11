@@ -1838,9 +1838,8 @@ impl Diff {
         }
     }
 
-    /// A one-sided merge can leave a pin that the unchanged range rules out. Only flags clear cases:
-    /// the scan after the clean (`rows_outside_ranges`) checks every row with the same test, and
-    /// also moves a prerelease pin.
+    /// A one-sided merge can leave a pin that the unchanged range rules out. Only flags clear cases.
+    /// `rows_outside_ranges` checks every row after the clean, a prerelease pin too.
     fn locked_version_is_out_of_range(
         from_lockfile: &Lockfile,
         locked: PackageID,

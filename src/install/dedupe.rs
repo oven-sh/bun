@@ -738,11 +738,8 @@ pub(crate) fn effective_version_as_yarn(
     version_under(lockfile, dep, rule)
 }
 
-/// Whether `resolution`, the package named `name` that a row is bound to, is outside `range`, the
-/// npm range the row asks for. A fresh resolve never leaves such a binding: a merge or an edit of
-/// the lockfile does. False for a package of another name (the row follows an `npm:` alias), for a
-/// range that is not an npm range, and for an empty or `*` range: those resolve to `latest`, even
-/// if that is a prerelease, which no range accepts.
+/// Whether the npm package `name` at `resolution` is outside the npm range a row asks for. False
+/// for another name (an `npm:` alias) and for an empty or `*` range, which take `latest` as is.
 pub(crate) fn version_outside_range(
     range: &dependency::Version,
     range_buf: &[u8],

@@ -709,10 +709,8 @@ pub fn install_with_manager(
             retain_rows_to_resolve_again(manager, &mut outside, root_package_json_path);
         }
         if is_frozen {
-            // A frozen install takes the versions that the lockfile has for the rows that a rule
-            // names, and every row of a migrated lockfile: a hook or a rule of the other package
-            // manager can bind a row outside its range. A bun.lock row outside the range it
-            // declares fails below.
+            // A hook of the other package manager can bind a row of a migrated lockfile outside
+            // its range.
             if load_result.migrated_from().is_none() {
                 frozen_refused_row = first_row_frozen_refuses(&manager.lockfile, &outside);
             }
@@ -727,8 +725,7 @@ pub fn install_with_manager(
             had_any_diffs |= !moved_outside_ranges.is_empty();
         }
 
-        // After the rows outside their range moved: a patch for the version such a row brings
-        // back is not orphaned. Before the scanner, which can end the install.
+        // After the repair, which can bring a patched version back. Before the scanner can exit.
         if !manager.options.dry_run {
             Output::flush();
             crate::update_transitive::warn_orphaned_patches(manager);
@@ -2453,10 +2450,9 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
     }
 }
 
-/// Returns the rows that resolve to a version that their range does not allow, each with the
-/// package it resolves to. The range is the `overrides` rule that applies to the row, else its
-/// catalog entry, else the range it declares. A merge or an edit of the lockfile can leave such a
-/// row, a fresh resolve cannot.
+/// Returns the rows bound to a version that their effective range (`dedupe::effective_version`)
+/// does not allow, each with the package it resolves to. A merge or an edit of the lockfile leaves
+/// such a row.
 #[inline(never)]
 fn rows_outside_ranges(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -2468,8 +2464,7 @@ fn rows_outside_ranges(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
         .filter(|&(row, (dependency, &package_id))| {
             !dependency.behavior.is_bundled()
                 && !dependency.behavior.is_optional_peer()
-                // A peer takes the version that is installed when none fits its range. Only a
-                // rule that applies to it moves it.
+                // A peer takes the version that is installed. Only a rule moves it.
                 && (!dependency.behavior.is_peer()
                     || crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
                         .is_some())
@@ -2506,9 +2501,7 @@ fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: Packa
     })
 }
 
-/// Drops the rows of `outside` that the lockfile binds for a reason of its own: a peer or an
-/// optional row whose package another row holds, a name that its package lists in two dependency
-/// groups, and a row that yarn's `resolutions` rule accepts in a lockfile migrated from yarn.
+/// Drops the rows of `outside` that the lockfile binds for a reason of its own.
 fn retain_rows_to_resolve_again(
     manager: &mut PackageManager,
     outside: &mut Vec<(DependencyID, PackageID)>,
@@ -2530,8 +2523,7 @@ fn retain_rows_to_resolve_again(
     for &(row, _) in outside.iter() {
         is_outside.set(row as usize);
     }
-    // The packages that stay in the lockfile, because a dependency that no range forbids resolves
-    // to them.
+    // The packages that a row inside its range holds.
     let mut held = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
     for (row, &package_id) in lockfile.buffers.resolutions.iter().enumerate() {
         if !is_outside.is_set(row) && (package_id as usize) < held.bit_length() {
@@ -2540,9 +2532,8 @@ fn retain_rows_to_resolve_again(
     }
     outside.retain(|&(row, package_id)| {
         let dependency = &dependencies[row as usize];
-        // A peer that a rule moves uses the version that's installed, and a lockfile from Bun 1.4
-        // binds an optional dependency that never resolved by its name. Both only move if their
-        // package would otherwise be dropped.
+        // A peer, and an optional row that Bun 1.4 bound by name when it never resolved, only
+        // move if their package would otherwise be dropped.
         if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
             return !held.is_set(package_id as usize);
         }
@@ -2562,10 +2553,8 @@ fn retain_rows_to_resolve_again(
     });
 }
 
-/// The first row of `outside` that a frozen install refuses: one that no `overrides` rule names.
-/// Bun 1.4 wrote lockfiles whose rows disobey a rule, or follow a rule that the resolver now reads
-/// differently, and a frozen install still accepts those. The name is enough: the frozen install
-/// never looked at a row of such a name before.
+/// The first row of `outside` that no `overrides` rule names. A frozen install accepts a row of a
+/// name a rule names, as it did before any row was checked: Bun 1.4 wrote rows that disobey one.
 fn first_row_frozen_refuses(
     lockfile: &Lockfile,
     outside: &[(DependencyID, PackageID)],

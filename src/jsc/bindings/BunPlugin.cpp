@@ -10,6 +10,7 @@
 #include "ZigGlobalObject.h"
 #include "NodeAsyncHooks.h"
 
+#include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
@@ -39,6 +40,7 @@
 #include <JavaScriptCore/SymbolTableInlines.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <wtf/SetForScope.h>
+#include <wtf/SmallSet.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
 
@@ -3076,7 +3078,25 @@ static void addImporter(ModuleImporters& importersOf, const String& importer, co
 // After moveLoadedModule() a module's filename is not its key in the require cache.
 using RequireKeys = UncheckedKeyHashMap<Bun::JSCommonJSModule*, String>;
 
-static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, Bun::JSCommonJSModule* importer, JSValue importedValue)
+// What import.meta.require of an ES module is bound to. It lists what the module required, and no require cache holds it. Null before the first read.
+static Bun::JSCommonJSModule* requirerOfESModule(JSC::VM& vm, JSC::AbstractModuleRecord* record)
+{
+    auto* sourceTextModule = dynamicDowncast<JSC::JSModuleRecord>(record);
+    // The flag saves the lookup below for a module that never mentions import.meta.
+    auto* environment = sourceTextModule && (sourceTextModule->features() & JSC::ImportMetaFeature) ? record->moduleEnvironmentMayBeNull() : nullptr;
+    if (!environment)
+        return nullptr;
+    JSC::SymbolTableEntry::Fast entry = environment->symbolTable()->get(vm.propertyNames->builtinNames().metaPrivateName().impl());
+    if (entry.isNull())
+        return nullptr;
+    JSValue importMeta = environment->readVariable(vm, entry.scopeOffset());
+    auto* meta = importMeta ? dynamicDowncast<ImportMetaObject>(importMeta) : nullptr;
+    auto* require = meta ? dynamicDowncast<JSC::JSBoundFunction>(meta->requireProperty.getConcurrently()) : nullptr;
+    return require ? dynamicDowncast<Bun::JSCommonJSModule>(require->boundThis()) : nullptr;
+}
+
+// `esRequirerKeys` names the ES module behind each requirerOfESModule() by its registry key. The filename of that object has no query.
+static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, const RequireKeys& esRequirerKeys, Bun::JSCommonJSModule* importer, JSValue importedValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3096,11 +3116,57 @@ static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& import
         addImporter(importersOf, importerKey->value, importedKey);
         return;
     }
+    if (auto importerKey = esRequirerKeys.find(importer); importerKey != esRequirerKeys.end()) {
+        addImporter(importersOf, importerKey->value, importedKey);
+        return;
+    }
     if (!importer->filename().isString())
         return;
     String importerKey = asString(importer->filename())->value(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     addImporter(importersOf, importerKey, importedKey);
+}
+
+static void addRequiredModules(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, const RequireKeys& esRequirerKeys, Bun::JSCommonJSModule* requirer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    for (auto& child : requirer->m_children) {
+        addRequirer(globalObject, importersOf, requireKeys, esRequirerKeys, requirer, child.get());
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    if (auto* children = requirer->m_childrenValue ? dynamicDowncast<JSC::JSArray>(requirer->m_childrenValue.get()) : nullptr) {
+        for (unsigned i = 0; i < children->length(); ++i) {
+            // canGetIndexQuickly() skips accessors, so no script runs here.
+            addRequirer(globalObject, importersOf, requireKeys, esRequirerKeys, requirer, children->canGetIndexQuickly(i) ? children->getIndexQuickly(i) : JSValue());
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+}
+
+// A workaround for #43279: require() appends a child at each call, and the walk reads the list of an ES requirer at each mock end.
+static void dropRepeatedChildren(Bun::JSCommonJSModule* requirer)
+{
+    auto& children = requirer->m_children;
+    // A short list is scanned for a repeat first: that costs less than the set, and a list without one is left as it is.
+    if (children.size() <= 64) {
+        bool hasRepeat = false;
+        for (size_t i = 1; i < children.size() && !hasRepeat; ++i) {
+            for (size_t j = 0; j < i && !hasRepeat; ++j)
+                hasRepeat = children[i].get() == children[j].get();
+        }
+        if (!hasRepeat)
+            return;
+    }
+    WTF::SmallSet<JSC::JSCell*> listed;
+    // The collector reads the list under this lock.
+    WTF::Locker locker { requirer->cellLock() };
+    children.removeAllMatching([&](auto& child) {
+        JSValue value = child.get();
+        return value && value.isCell() && !listed.add(value.asCell()).isNewEntry;
+    });
+    children.shrinkToFit();
 }
 
 static bool isInNodeModules(const String& path)
@@ -3327,6 +3393,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         if (auto* record = entry->record())
             registeredKeys.add(record, String(mapKey.first));
     }
+    RequireKeys esRequirerKeys;
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         String key(mapKey.first);
         auto* record = entry->record();
@@ -3345,6 +3412,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             keys.append(key);
         if (!record || evict.all)
             continue;
+        if (auto* requirer = requirerOfESModule(vm, record))
+            esRequirerKeys.add(requirer, key);
         if (String mocked = specifierOfUnwaitedModuleMockKey(key); !mocked.isNull())
             addImporter(importersOf, key, mocked);
         for (auto& resolved : record->resolvedRequests().values())
@@ -3406,20 +3475,16 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             continue;
         // The wrapper of a require()d ES module isn't in its requirer's m_children, so only m_parent links the two.
         if (auto* parent = commonJSModule->m_parent.get()) {
-            addRequirer(globalObject, importersOf, requireKeys, parent, commonJSModule);
+            addRequirer(globalObject, importersOf, requireKeys, esRequirerKeys, parent, commonJSModule);
             RETURN_IF_EXCEPTION(scope, );
         }
-        for (auto& child : commonJSModule->m_children) {
-            addRequirer(globalObject, importersOf, requireKeys, commonJSModule, child.get());
-            RETURN_IF_EXCEPTION(scope, );
-        }
-        if (auto* children = commonJSModule->m_childrenValue ? dynamicDowncast<JSC::JSArray>(commonJSModule->m_childrenValue.get()) : nullptr) {
-            for (unsigned i = 0; i < children->length(); ++i) {
-                // canGetIndexQuickly() skips accessors, so no script runs here.
-                addRequirer(globalObject, importersOf, requireKeys, commonJSModule, children->canGetIndexQuickly(i) ? children->getIndexQuickly(i) : JSValue());
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        }
+        addRequiredModules(globalObject, importersOf, requireKeys, esRequirerKeys, commonJSModule);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    for (auto* requirer : esRequirerKeys.keys()) {
+        dropRepeatedChildren(requirer);
+        addRequiredModules(globalObject, importersOf, requireKeys, esRequirerKeys, requirer);
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     // A load stuck behind an abandoned fetch never finishes, so the entries waiting on it don't have to stay.

@@ -4265,6 +4265,354 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
   });
 });
 
+describe.concurrent("an ES module that got a mock from require() is evaluated again", () => {
+  // Each of these counts its evaluations in globalThis.loads.
+  const requirers = (dep: string) => ({
+    "first.js": `
+      const dep = require("${dep}");
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => dep.name;
+    `,
+    "second.js": `
+      const dep = require("${dep}");
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => dep.name;
+    `,
+    "explicit.js": `
+      const dep = import.meta.require("${dep}");
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => dep.name;
+    `,
+    // It calls require() at its first use and keeps what it got.
+    "lazy.js": `
+      let dep;
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => (dep ??= require("${dep}")).name;
+    `,
+    "equals.ts": `
+      import dep = require("${dep}");
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => dep.name;
+    `,
+    "untouched.js": `
+      const other = require("./other.cjs");
+      globalThis.untouchedLoads = (globalThis.untouchedLoads ?? 0) + 1;
+      export const seen = () => other.name;
+    `,
+    "other.cjs": `exports.name = "other";`,
+  });
+  // What the six requirers hold. first.js is the first that requires the module.
+  const seen = `[
+    (await import("./first.js")).seen(),
+    (await import("./second.js")).seen(),
+    (await import("./second.js?query")).seen(),
+    (await import("./explicit.js")).seen(),
+    (await import("./lazy.js")).seen(),
+    (await import("./equals.ts")).seen(),
+  ]`;
+
+  test.each([
+    ["a CommonJS module", "./dep.cjs", `module.exports = { name: "real" };`],
+    ["an ES module", "./dep.mjs", `export const name = "real";`],
+    ["a JSON file", "./dep.json", `{ "name": "real" }`],
+  ])("when the test file that mocked %s ends", async (_, dep, source) => {
+    // `nth` is the number of the test file: each of the six requirers is evaluated once for each file.
+    const file = (nth: number, mocked?: string) => `
+      import { expect, mock, test } from "bun:test";
+      ${mocked ? `mock.module("${dep}", () => ({ name: "${mocked}" }));` : ""}
+      test("every requirer", async () => {
+        expect(${seen}).toEqual(Array(6).fill("${mocked ?? "real"}"));
+        expect((await import("./untouched.js")).seen()).toBe("other");
+        expect([globalThis.loads, globalThis.untouchedLoads]).toEqual([${6 * nth}, 1]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...requirers(dep),
+        [dep]: source,
+        "1.test.js": file(1, "mock 1"),
+        "2.test.js": file(2, "mock 2"),
+        "3.test.js": file(3),
+      },
+      3,
+    );
+  });
+
+  test.each(isolationFlags)("after vi.doUnmock() %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...requirers("./dep.mjs"),
+        "dep.mjs": `export const name = "real";`,
+        "unmock.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          const seen = async () => [
+            (await import("./first.js")).seen(),
+            (await import("./second.js")).seen(),
+            (await import("./second.js?query")).seen(),
+            (await import("./explicit.js")).seen(),
+          ];
+          test("mocked, then not", async () => {
+            mock.module("./dep.mjs", () => ({ name: "mock" }));
+            expect(await seen()).toEqual(Array(4).fill("mock"));
+            vi.doUnmock("./dep.mjs");
+            expect(await seen()).toEqual(Array(4).fill("real"));
+            expect(globalThis.loads).toBe(8);
+          });
+        `,
+      },
+      1,
+      args,
+    );
+  });
+
+  test.each([
+    ["mock.module()", `mock.module("./dep.cjs", () => ({ name: "mock" }));`, ""],
+    ["vi.mock()", `vi.mock("./dep.cjs", () => ({ name: "mock" }));`, ""],
+    ["jest.mock()", `jest.mock("./dep.cjs", () => ({ name: "mock" }));`, ""],
+    ["vi.doMock() in a test", "", `vi.doMock("./dep.cjs", () => ({ name: "mock" }));`],
+  ])("when a later test file mocks what it required, with %s", async (_, atTop, inTest) => {
+    const file = (expected: string, atTop = "", inTest = "") => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      ${atTop}
+      test("every requirer", async () => {
+        ${inTest}
+        const seen = [(await import("./first.js")).seen(), (await import("./second.js")).seen()];
+        // import makes the module object of this CommonJS module, so no requirer is its parent.
+        await import("./made-by-import.cjs");
+        seen.push((await import("./of-made-by-import.js")).seen());
+        expect(seen).toEqual(Array(3).fill("${expected}"));
+        // The module object that was the first to require ./dep.cjs is of a first.js that is gone. Nothing may depend on when it is collected.
+        Bun.gc(true);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...requirers("./dep.cjs"),
+        "dep.cjs": `module.exports = { name: "real" };`,
+        "made-by-import.cjs": `exports.name = require("./dep.cjs").name;`,
+        "of-made-by-import.js": `
+          const made = require("./made-by-import.cjs");
+          export const seen = () => made.name;
+        `,
+        "1.test.js": file("real"),
+        "2.test.js": file("mock", atTop, inTest),
+        "3.test.js": file("real"),
+      },
+      3,
+    );
+  });
+
+  test("when it required a module that made the mock", async () => {
+    // The helper makes the mock again for each test file that loads one of its requirers.
+    const file = (nth: number, requirer: string) => `
+      import { expect, test } from "bun:test";
+      test("the helper has run for this file", async () => {
+        ${requirer}
+        expect([require("./dep.cjs").name, globalThis.helperLoads]).toEqual(["mock", ${nth}]);
+      });
+    `;
+    const requirer = `
+      const helper = require("./helper.cjs");
+      export const mocked = helper.mocked;
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `module.exports = { name: "real" };`,
+        "helper.cjs": `
+          require("bun:test").mock.module("./dep.cjs", () => ({ name: "mock" }));
+          globalThis.helperLoads = (globalThis.helperLoads ?? 0) + 1;
+          exports.mocked = true;
+        `,
+        "first.js": requirer,
+        "second.js": requirer,
+        "1.test.js": file(1, `await import("./first.js"); await import("./second.js");`),
+        "2.test.js": file(2, `await import("./second.js");`),
+        "3.test.js": file(3, `await import("./first.js");`),
+      },
+      3,
+    );
+  });
+
+  test("under the key with a query, as the only requirer of an ES module", async () => {
+    const file = (nth: number, mocked?: string) => `
+      import { expect, mock, test } from "bun:test";
+      ${mocked ? `mock.module("./dep.mjs", () => ({ name: "${mocked}" }));` : ""}
+      test("the requirer", async () => {
+        expect((await import("./first.js?query")).seen()).toBe("${mocked ?? "real"}");
+        expect(globalThis.loads).toBe(${nth});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...requirers("./dep.mjs"),
+        "dep.mjs": `export const name = "real";`,
+        "1.test.js": file(1),
+        "2.test.js": file(2, "mock"),
+        "3.test.js": file(3),
+      },
+      3,
+    );
+  });
+
+  test("when a module that it required has read the list of what it required", async () => {
+    const file = (nth: number, mocked?: string) => `
+      import { expect, mock, test } from "bun:test";
+      ${mocked ? `mock.module("./dep.cjs", () => ({ name: "${mocked}" }));` : ""}
+      test("both requirers", async () => {
+        expect([(await import("./first.js")).seen(), (await import("./listed.js")).seen()]).toEqual(Array(2).fill("${mocked ?? "real"}"));
+        expect(globalThis.listedLoads).toBe(${nth});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...requirers("./dep.cjs"),
+        "dep.cjs": `module.exports = { name: "real" };`,
+        // The read moves the list from the module object to an array. The next require() adds to that array.
+        "reads-children.cjs": `exports.children = module.parent.children.length;`,
+        "listed.js": `
+          require("./reads-children.cjs");
+          const dep = require("./dep.cjs");
+          globalThis.listedLoads = (globalThis.listedLoads ?? 0) + 1;
+          export const seen = () => dep.name;
+        `,
+        "1.test.js": file(1, "mock 1"),
+        "2.test.js": file(2, "mock 2"),
+        "3.test.js": file(3),
+      },
+      3,
+    );
+  });
+
+  test("in a package, for a mocked package", async () => {
+    const file = (mocks: string, expected: string, loads: number) => `
+      import { expect, mock, test, vi } from "bun:test";
+      ${mocks}
+      test("both packages", async () => {
+        expect([(await import("built-by-bun")).seen(), (await import("built-by-esbuild")).seen()]).toEqual(["${expected}", "${expected}"]);
+        expect(globalThis.loads).toBe(${loads});
+      });
+    `;
+    const requirer = (require: string) => `
+      ${require}
+      const dep = __require("dep");
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      export const seen = () => dep.name;
+    `;
+    // As in Vitest, vi.mock() leaves the package real for the modules in node_modules.
+    const viMock = `vi.mock("dep", () => ({ name: "vi" }));`;
+    await expectFixturesToPass(
+      {
+        "node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+        "node_modules/dep/index.js": `module.exports = { name: "real" };`,
+        "node_modules/built-by-bun/package.json": `{ "name": "built-by-bun", "type": "module", "main": "index.js" }`,
+        "node_modules/built-by-bun/index.js": requirer(`var __require = import.meta.require;`),
+        "node_modules/built-by-esbuild/package.json": `{ "name": "built-by-esbuild", "type": "module", "main": "index.js" }`,
+        "node_modules/built-by-esbuild/index.js": requirer(
+          `var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, { get: (a, b) => (typeof require !== "undefined" ? require : a)[b] }) : x)(function (x) { if (typeof require !== "undefined") return require.apply(this, arguments); throw Error("Dynamic require of \\"" + x + "\\" is not supported"); });`,
+        ),
+        "1.test.js": file(`mock.module("dep", () => ({ name: "mock 1" }));`, "mock 1", 2),
+        "2.test.js": file(`mock.module("dep", () => ({ name: "mock 2" }));`, "mock 2", 4),
+        "3.test.js": file(viMock, "real", 6),
+        "4.test.js": file("", "real", 6),
+        "5.test.js": file(viMock, "real", 6),
+        "6.test.js": file("", "real", 6),
+      },
+      6,
+    );
+  });
+
+  test("when a later test file mocks the package that it required, with vi.mock()", async () => {
+    const file = (nth: number, mocked?: string) => `
+      import { expect, test, vi } from "bun:test";
+      ${mocked ? `vi.mock("dep", () => ({ name: "${mocked}" }));` : ""}
+      test("both requirers", async () => {
+        expect([(await import("./first.js")).seen(), (await import("./second.js")).seen()]).toEqual(Array(2).fill("${mocked ?? "real"}"));
+        expect(globalThis.loads).toBe(${2 * nth});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...requirers("dep"),
+        "node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+        "node_modules/dep/index.js": `module.exports = { name: "real" };`,
+        "1.test.js": file(1),
+        "2.test.js": file(2, "mock"),
+        "3.test.js": file(3),
+      },
+      3,
+    );
+  });
+
+  test("and the walk leaves each module once in the list of what it required", async () => {
+    const requirer = (calls: number) => `
+      for (let call = 0; call < ${calls}; call++) require("./dep.cjs"), require("./other.cjs");
+      export {};
+    `;
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `module.exports = { name: "real" };`,
+        "other.cjs": `exports.name = "other";`,
+        "few.js": requirer(5),
+        "many.js": requirer(100),
+        "repeats.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          // For each CommonJS module object that holds more than one other: how many it holds. require() is called on such an object.
+          function modulesHeld() {
+            const { nodes, edges, nodeClassNames, type } = Bun.generateHeapSnapshot();
+            const stride = type === "GCDebugging" ? 7 : 4;
+            const modules = new Set();
+            for (let i = 0; i < nodes.length; i += stride) if (nodeClassNames[nodes[i + 2]] === "Module") modules.add(nodes[i]);
+            const held = new Map();
+            for (let i = 0; i < edges.length; i += 4)
+              if (modules.has(edges[i]) && modules.has(edges[i + 1])) held.set(edges[i], (held.get(edges[i]) ?? 0) + 1);
+            return [...held.values()].filter(count => count > 1).sort((a, b) => a - b);
+          }
+          test("10 and 200 calls of require() for 2 modules", async () => {
+            mock.module("./dep.cjs", () => ({ name: "mock" }));
+            const requirers = [await import("./few.js"), await import("./many.js")];
+            const before = modulesHeld();
+            vi.doUnmock("./dep.cjs");
+            expect([before, modulesHeld()]).toEqual([[10, 200], [2, 2]]);
+            expect(requirers).toHaveLength(2);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // These two keep the mock of the first file, as docs/test/mocks.mdx says. The right value in the second file is "mock 2".
+  test("but not yet one that required a mocked Node.js builtin, or got the mock from createRequire()", async () => {
+    const file = (nth: number, kept: string) => `
+      import { expect, mock, test } from "bun:test";
+      mock.module("./dep.cjs", () => ({ name: "mock ${nth}" }));
+      mock.module("node:os", () => ({ name: "mock ${nth}" }));
+      test("file ${nth}", async () => {
+        const seen = [(await import("./first.js")).seen(), (await import("./created.js")).seen(), (await import("./builtin.js")).seen()];
+        expect(seen).toEqual(["mock ${nth}", "${kept}", "${kept}"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...requirers("./dep.cjs"),
+        "dep.cjs": `module.exports = { name: "real" };`,
+        "created.js": `
+          import { createRequire } from "node:module";
+          const dep = createRequire(import.meta.url)("./dep.cjs");
+          export const seen = () => dep.name;
+        `,
+        "builtin.js": `
+          const os = require("node:os");
+          export const seen = () => os.name;
+        `,
+        "1.test.js": file(1, "mock 1"),
+        "2.test.js": file(2, "mock 1"),
+      },
+      2,
+    );
+  });
+});
+
 describe.concurrent("a mocked module that exports then", () => {
   const files = {
     "real.ts": `

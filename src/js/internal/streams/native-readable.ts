@@ -268,7 +268,8 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  if (!stream.push(chunk)) {
+  // A listener that asked for more (`_read()` during the push) keeps the reader running.
+  if (!stream.push(chunk) && !stream[kPendingRead]) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }

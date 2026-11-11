@@ -750,7 +750,9 @@ it("Readable.fromWeb: destroy() on a paused stream keeps the buffered chunk for 
 // would let 'end' follow data that never arrived.
 it("Readable.fromWeb: a stream that ended while paused still delivers every byte after destroy(), as in Node", async () => {
   const size = 16384 + 100;
-  const r = Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream());
+  // The source must end while the stream is paused. A paused stream stops pulling at highWaterMark, and the first
+  // chunk alone fills Windows' default of 16 KiB.
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream(), { highWaterMark: 64 * 1024 });
   let bytes = 0;
   r.on("data", chunk => {
     bytes += chunk.length;

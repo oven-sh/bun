@@ -1575,7 +1575,9 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
 // native pull result synchronously, while `needReadable` was false, so that push
 // emitted no 'readable'. When it left more than highWaterMark buffered, nothing
 // read again. Node's child stdio pushes from a later turn and never stalls.
-it("child.stdout keeps emitting 'readable' when read(n) drains the buffer exactly", async () => {
+// Windows pipe reads already completed on a later turn, and a child there can
+// block on stdout before it reports on stderr.
+it.skipIf(isWindows)("child.stdout keeps emitting 'readable' when read(n) drains the buffer exactly", async () => {
   const wait = new Int32Array(new SharedArrayBuffer(4));
   // The child fills the pipe, then says so on stderr. Every write after that
   // blocks until the parent reads.
@@ -1623,12 +1625,14 @@ it.concurrent.each(["before", "after"])(
   async when => {
     const script = `
       const { spawn } = require("node:child_process");
-      const c = spawn(process.execPath, ["-e", "const b=Buffer.alloc(65536,97);for(let i=0;i<4;i++)process.stdout.write(b);process.stderr.write('filled')"], { stdio: ["ignore", "pipe", "pipe"] });
+      // The child lives until its stdin ends: an exit before listen() would resume stdout with no listener.
+      const c = spawn(process.execPath, ["-e", "process.stdin.resume();const b=Buffer.alloc(65536,97);for(let i=0;i<4;i++)process.stdout.write(b);process.stderr.write('filled')"], { stdio: ["pipe", "pipe", "pipe"] });
       let bytes = 0, calls = 0, uncaught = 0, ends = 0;
       process.on("uncaughtException", e => { if (e.message === "boom") uncaught++; else throw e; });
       function listen() {
         c.stdout.on("data", d => { bytes += d.length; if (calls++ === 0) throw new Error("boom"); });
         c.stdout.on("end", () => ends++);
+        c.stdin.end();
       }
       if (${JSON.stringify(when)} === "after") c.stderr.once("data", listen);
       else listen();

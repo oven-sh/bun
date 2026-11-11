@@ -598,14 +598,7 @@ test("no assertion failures 2", () => {
   // Exceptions should print the error message, not '{}'.
   {
     [new Error(), new Error("FAIL"), new TypeError("FAIL"), new SyntaxError("FAIL")].forEach(err => {
-      assert(
-        //! temp bug workaround with replace()'s
-        util.inspect(err).startsWith(err.stack.replace(/^Error: /, err.message ? "$&" : "Error")),
-        `Expected "${util.inspect(err)}" to start with "${err.stack.replace(
-          /^Error: /,
-          err.message ? "$&" : "Error",
-        )}"`,
-      );
+      assert.strictEqual(util.inspect(err), err.stack);
     });
 
     assert.throws(
@@ -1894,12 +1887,9 @@ test("no assertion failures 3", () => {
     ],
   ].forEach(([Class, message], i) => {
     const foo = new Class(message);
+    const name = foo.name;
     const extra = Class.name.includes("Error") ? "" : ` [${foo.name}]`;
-    // TODO: Bun messes with `Error.stack` and this causes this to fail
-    // assert(
-    //   util.inspect(foo).startsWith(`${Class.name}${extra}${message ? `: ${message}` : "\n"}`),
-    //   util.inspect(foo) + "\n...did not start with: " + `${Class.name}${extra}${message ? `: ${message}` : "\n"}`,
-    // );
+    assert(util.inspect(foo).startsWith(`${Class.name}${extra}${message ? `: ${message}` : "\n"}`), util.inspect(foo));
     Object.defineProperty(foo, Symbol.toStringTag, {
       value: "WOW",
       writable: true,
@@ -1907,53 +1897,27 @@ test("no assertion failures 3", () => {
     });
     const stack = foo.stack;
     foo.stack = "This is a stack";
-    assert(
-      util.inspect(foo).startsWith("[This is a stack]"),
-      `Expected to start with: "[This is a stack]"\nFound: "${util.inspect(foo)}"`,
-    );
+    assert.strictEqual(util.inspect(foo), "[This is a stack]");
     foo.stack = stack;
-    // TODO: Bun messes with `Error.stack` and this causes this to fail
-    // assert(
-    //   util.inspect(foo).startsWith(`${Class.name} [WOW]${extra}${message ? `: ${message}` : "\n"}`),
-    //   util.inspect(foo),
-    // );
+    assert(
+      util.inspect(foo).startsWith(`${Class.name} [WOW]${extra}${message ? `: ${message}` : "\n"}`),
+      util.inspect(foo),
+    );
     Object.setPrototypeOf(foo, null);
     assert(
-      util.inspect(foo).startsWith(
-        // Upstream expects `[${name}: null prototype] [WOW]...`; JSC reports
-        // the generic Error brand for null-prototype errors rather than the
-        // subclass name.
-        `[Error: null prototype] [WOW]${message ? `: ${message}` : ""}`,
-      ),
+      util.inspect(foo).startsWith(`[${name}: null prototype] [WOW]${message ? `: ${message}` : "\n"}`),
       util.inspect(foo),
     );
     foo.bar = true;
     delete foo[Symbol.toStringTag];
-    let tmp = util.inspect(foo);
     assert(
-      tmp.startsWith(
-        // TODO: null prototypes
-        // `[${name}: null prototype]${message ? `: ${message}` : '\n'}`),
-        "[Error: null prototype]",
-      ) && tmp.includes("bar: true"),
-      tmp,
+      util.inspect(foo).startsWith(`[${name}: null prototype]${message ? `: ${message}` : "\n"}`),
+      util.inspect(foo),
     );
     foo.stack = "This is a stack";
-    tmp = util.inspect(foo);
-    assert(
-      // Restored to upstream: errors with a null prototype now format as
-      // errors, so the overridden stack renders bracketed like Node's.
-      tmp.startsWith("[[Error: null prototype]: This is a stack]") && tmp.includes("bar: true"),
-      tmp,
-    );
+    assert.strictEqual(util.inspect(foo), "[[Error: null prototype]: This is a stack] { bar: true }");
     foo.stack = stack.split("\n")[0];
-    tmp = util.inspect(foo);
-    assert(
-      // Bracketed error-form like upstream; JSC reports the generic Error
-      // brand and keeps the truncated stack on one line.
-      tmp.startsWith("[[Error: null prototype]") && tmp.includes("bar: true"),
-      tmp,
-    );
+    assert.strictEqual(util.inspect(foo), `[[${name}: null prototype]${message ? `: ${message}` : ""}] { bar: true }`);
   });
 
   // Verify that classes are properly inspected.

@@ -103,8 +103,7 @@ static WTF::String stackTraceHeaderNameWithoutScript(JSC::VM& vm, JSC::JSGlobalO
 static void readStackTraceHeader(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ErrorInstance* error, HeaderRead headerRead, WTF::String& name, WTF::String& message)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A getter cannot run inside a VM inquiry: the stack is then headed with what needs none.
-    if (headerRead == HeaderRead::Observable && !vm.disallowVMEntryCount) [[likely]] {
+    if (headerRead == HeaderRead::Observable) [[likely]] {
         name = stackTraceHeaderName(vm, lexicalGlobalObject, error);
         RETURN_IF_EXCEPTION(scope, );
         message = stackTraceHeaderMessage(vm, lexicalGlobalObject, error);

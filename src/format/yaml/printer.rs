@@ -23,6 +23,9 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) is_oxfmt: bool,
     /// True if the document being printed is the last one.
     pub(crate) is_last_document: bool,
+    /// The block scalar that keeps its line breaks and is the last thing printed in the stream, if any. It prints its
+    /// own final line break, and the root prints none.
+    pub(crate) ends_stream: Option<Id>,
     /// True if the first item of the mapping or sequence that's printed next is ignored.
     pub(crate) is_first_item_ignored: bool,
     /// A comment that's printed after the `[` or `{` at the given position instead of after the key before it.
@@ -30,8 +33,6 @@ pub(crate) struct Printer<'t, 'a> {
     /// `printedEmptyLineCache`: for each offset, true if the line after a node that ends there was already checked.
     pub(crate) printed_empty_lines: Vec<bool>,
     pub(crate) last_group_id: u32,
-    /// Number of keys that enclose the node being printed.
-    pub(crate) key_depth: u32,
     /// Offset of the first non-whitespace character in the text.
     pub(crate) start_of_content: u32,
     /// The output doc.
@@ -192,6 +193,34 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         node
     }
 
+    /// The block scalar that keeps its line breaks and is the last thing printed inside `node`, if that's what is. It
+    /// isn't when an end comment of a node on the way follows it. Prettier's `getLastDescendantNode` and
+    /// `isLastDescendantNode` follow the children only, so Prettier ends such a scalar the way it ends one at the end
+    /// of the file, with a line break of its own, and prints the hard line before the comment on top of it: for
+    /// `a:\n  b: |+\n    x\n  # c\n` it prints `x\n\n  # c`, with no final line break, and the empty line is part of
+    /// the value from then on. A key is never the last thing printed in its pair either (`? |+\n  a\n: m\n`), unless
+    /// the value is empty (`? |+\n  a\n`): then the key is, and Prettier prints nothing for the value.
+    fn kept_line_break_at_end(&self, mut node: &'t Node<'a>) -> Option<Id> {
+        let mut id = None;
+        while let Some(mut last) = node.children.last() {
+            if let Some(key) = node.children.first()
+                && matches!(node.kind, Kind::MappingItem | Kind::FlowMappingItem)
+                && is_empty_node(self.node(last))
+            {
+                last = key;
+            }
+            node = self.node(last);
+            if should_print_end_comments(node) {
+                return None;
+            }
+            id = Some(last);
+        }
+        id.filter(|_| {
+            matches!(node.kind, Kind::BlockLiteral | Kind::BlockFolded)
+                && node.chomping == Chomping::Keep
+        })
+    }
+
     fn start_align(&mut self, width: u32) {
         self.out
             .start_indent(IndentCommand::Align(Alignment::Spaces(width)));
@@ -290,18 +319,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// The fast path of `print`, which covers most nodes: a one-line scalar or an alias, or a key or value that holds
     /// nothing else. Each prints as a group with one text in it. For any other node it returns false without writing
     /// anything.
-    fn try_print_text(&mut self, node: &'t Node<'a>) -> bool {
+    fn try_print_text(&mut self, id: Id, node: &'t Node<'a>) -> bool {
         if !is_bare(node) {
             return false;
         }
-        let scalar = match node.kind {
+        let (scalar_id, scalar) = match node.kind {
             Kind::MappingKey | Kind::MappingValue | Kind::FlowSequenceItem => {
-                match self.first_child(node) {
-                    Some(content) if is_bare(content) => content,
+                match node.children.first() {
+                    Some(content) if is_bare(self.node(content)) => (content, self.node(content)),
                     _ => return false,
                 }
             }
-            _ => node,
+            _ => (id, node),
         };
         match scalar.kind {
             Kind::Alias => {}
@@ -311,7 +340,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             _ => return false,
         }
         self.out.text_group();
-        self.print_node(scalar, false);
+        self.print_node(scalar_id, scalar, false);
         true
     }
 
@@ -319,7 +348,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// comment, a tag or an anchor.
     pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) {
         let node = self.node(id);
-        if self.try_print_text(node) || !self.stack.has_room() {
+        if self.try_print_text(id, node) || !self.stack.has_room() {
             return;
         }
         if node.kind != Kind::MappingValue && !node.leading_comments.is_empty() {
@@ -394,7 +423,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
         } else {
             self.out.start_group(Group::default());
-            self.print_node(node, is_last_descendant);
+            self.print_node(id, node, is_last_descendant);
             self.out.end_group();
         }
 
@@ -430,12 +459,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.start_align(2);
             }
             let tree = self.tree;
-            for comment in tree.items(node.end_comments) {
+            for (index, comment) in tree.items(node.end_comments).enumerate() {
                 self.out.hard_line();
                 if is_previous_line_empty(
                     self.text,
                     self.node(comment).position.start.offset as usize,
-                ) {
+                )
+                    // The empty lines before the first comment are part of a block scalar that keeps its line breaks,
+                    // and printed with it. Prettier prints one more: `x\n\n  # c\nd: 1\n` becomes `x\n\n\n  # c`.
+                    && !(index == 0 && self.kept_line_break_at_end(node).is_some())
+                {
                     self.out.hard_line();
                 }
                 self.print(comment, false);
@@ -449,19 +482,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
     }
 
-    fn print_node(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
+    fn print_node(&mut self, id: Id, node: &'t Node<'a>, is_last_descendant: bool) {
         let tree = self.tree;
         match node.kind {
             Kind::Root => {
-                let last = self.last_descendant(node);
-                let source = self.source(last);
-                let should_print_hardline = !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
-                        && last.chomping == Chomping::Keep)
-                        // In oxfmt a file always ends with a line break, and here the scalar kept none.
-                        || (self.is_oxfmt
-                            && strings::index_of_char_usize(source, b'\n').is_none_or(|newline| {
-                                source[newline + 1..].iter().all(|byte| *byte == b' ')
-                            }));
+                let ends_stream = self.kept_line_break_at_end(node);
+                // True if that scalar has no line to end with a line break of its own: `a: |+\n`.
+                let ends_stream_without_a_line = ends_stream.is_some_and(|last| {
+                    let source = self.source(self.node(last));
+                    strings::index_of_char_usize(source, b'\n').is_none_or(|newline| {
+                        source[newline + 1..].iter().all(|byte| *byte == b' ')
+                    })
+                });
+                // In oxfmt a file always ends with a line break, and here the scalar kept none.
+                let should_print_hardline =
+                    ends_stream.is_none() || (self.is_oxfmt && ends_stream_without_a_line);
                 let mut keeps_line_breaks = false;
                 for (index, child) in tree.items(node.children).enumerate() {
                     let document = self.node(child);
@@ -472,17 +507,32 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         }
                     }
                     self.is_last_document = document.next.is_none();
+                    self.ends_stream = if self.is_last_document {
+                        ends_stream
+                    } else {
+                        None
+                    };
                     // In oxfmt, the spacing between two documents doesn't depend on their content.
                     self.print(child, self.is_last_document || self.is_oxfmt);
-                    let last = self.last_descendant(document);
-                    keeps_line_breaks = matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
-                        && last.chomping == Chomping::Keep;
+                    keeps_line_breaks = self.kept_line_break_at_end(document).is_some();
                     if self.should_print_document_end_marker(
                         document,
                         document.next.map(|next| self.node(next)),
                     ) {
                         keeps_line_breaks = false;
-                        if should_print_hardline && !(self.is_oxfmt && self.is_empty(document)) {
+                        // The scalar that ends the stream prints its own line break before the marker, if it has a
+                        // line and no comment comes after it. Prettier prints none whenever the stream ends with such
+                        // a scalar, in any document: `a: 1\n...\n---\nb: |+\n  x\n` becomes `a: 1...`, `a: |+\n...\n`
+                        // becomes `a: |+...`, and `a: |+\n  x\n# c\n...\n` becomes `# c...`.
+                        let ends_with_the_kept_line_break = self.ends_stream.is_some()
+                            && !ends_stream_without_a_line
+                            && document
+                                .children
+                                .last()
+                                .is_none_or(|body| self.node(body).end_comments.is_empty());
+                        if !ends_with_the_kept_line_break
+                            && !(self.is_oxfmt && self.is_empty(document))
+                        {
                             self.out.hard_line();
                         }
                         self.out.token("...");
@@ -556,6 +606,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     (node.children.last(), node.end_comments.first())
                 {
                     let last = self.last_descendant(node);
+                    let kept = self.kept_line_break_at_end(node);
                     let start = self.node(first_comment).position.start.offset as usize;
                     let is_block = matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral);
                     let hard_lines = if self.is_oxfmt && !has_newline_backwards(self.text, start) {
@@ -564,15 +615,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                             self.out.token(" ");
                         }
                         0
-                    } else if self.is_oxfmt && !(is_block && last.chomping == Chomping::Keep) {
+                    } else if kept.is_some() {
+                        // A block scalar that keeps its line breaks has printed its empty lines, and its final line
+                        // break if it ends the stream. Prettier prints no line break after every such scalar, in any
+                        // document: `a: |+\n  x\n# c\n---\nb: 1\n` becomes `x# c`. After one in a key it prints the
+                        // empty lines again: `? |+\n  a\n\n# c\n` becomes `? |+\n  a\n\n\n# c\n`.
+                        usize::from(self.ends_stream != kept)
+                    } else if self.is_oxfmt || (is_block && last.chomping == Chomping::Keep) {
+                        // The end comment of a node in between is what was printed last. Prettier prints no line
+                        // break after it either: `a:\n  b: |+\n    x\n  # c\n# d\n` becomes `  # c# d`.
                         1 + usize::from(is_previous_line_empty(self.text, start))
                     } else if is_block {
-                        // A block scalar that keeps its line breaks already ends with one.
-                        if last.chomping == Chomping::Keep {
-                            0
-                        } else {
-                            2
-                        }
+                        2
                     } else {
                         let keeps_empty_line = self.node(last_child).kind == Kind::Mapping
                             && is_previous_line_empty(self.text, start);
@@ -620,7 +674,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             Kind::Plain => self.print_flow_scalar_content(node, self.source(node)),
             Kind::QuoteDouble | Kind::QuoteSingle => self.print_quoted(node),
-            Kind::BlockFolded | Kind::BlockLiteral => self.print_block(node, is_last_descendant),
+            Kind::BlockFolded | Kind::BlockLiteral => {
+                self.print_block(id, node, is_last_descendant)
+            }
             Kind::Mapping | Kind::Sequence => self.print_children(node, is_last_descendant),
             Kind::SequenceItem => {
                 self.out.token("- ");
@@ -949,7 +1005,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// `printBlock`
-    fn print_block(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
+    fn print_block(&mut self, id: Id, node: &'t Node<'a>, is_last_descendant: bool) {
         let mut item = self.parent(node);
         while let Some(it) =
             item.filter(|it| !matches!(it.kind, Kind::MappingItem | Kind::SequenceItem))
@@ -1022,11 +1078,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         out.end_indent();
                     }
                 }
-            } else if node.chomping == Chomping::Keep
-                && is_last_descendant
-                && self.is_last_document
-                && self.key_depth == 0
-            {
+            } else if self.ends_stream == Some(id) {
                 out.start_indent(IndentCommand::DedentToRoot);
                 match words.is_empty() {
                     true => out.hard_line(),
@@ -1138,15 +1190,6 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
     }
 
-    /// Prettier treats a key as the last descendant whenever its pair is. So it ends a scalar in a key that keeps its
-    /// line breaks the way it ends one at the end of the file, with an extra line break. `key_depth` prevents that.
-    #[inline]
-    fn print_key(&mut self, key: Id, is_last_descendant: bool) {
-        self.key_depth += 1;
-        self.print(key, is_last_descendant);
-        self.key_depth -= 1;
-    }
-
     /// True if a scalar inside `node` spans several lines.
     fn has_multiline_scalar(&self, node: Option<&Node<'a>>) -> bool {
         let tree = self.tree;
@@ -1208,7 +1251,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if node.kind == Kind::FlowMappingItem
                 && parent.is_some_and(|it| it.kind == Kind::FlowMapping)
             {
-                return self.print_key(key_id, is_last_descendant);
+                return self.print(key_id, is_last_descendant);
             }
             let is_in_set = parent
                 .and_then(|it| it.tag)
@@ -1219,13 +1262,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 && !is_in_set
                 && !would_be_byte_order_mark
             {
-                self.print_key(key_id, is_last_descendant);
+                self.print(key_id, is_last_descendant);
                 self.out.text(space_before_colon);
                 return self.out.token(":");
             }
             self.out.token("? ");
             self.start_align(2);
-            self.print_key(key_id, is_last_descendant);
+            self.print(key_id, is_last_descendant);
             return self.out.end_indent();
         }
 
@@ -1243,7 +1286,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         {
             self.out.token("? ");
             self.start_align(2);
-            self.print_key(key_id, is_last_descendant);
+            self.print(key_id, is_last_descendant);
             self.out.end_indent();
             self.out.hard_line();
             let tree = self.tree;
@@ -1281,7 +1324,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             && self.is_absolutely_printed_as_single_line(value_content)
             && self.is_absolutely_printed_as_single_line(key_content)
         {
-            self.print_key(key_id, is_last_descendant);
+            self.print(key_id, is_last_descendant);
             self.out.text(space_before_colon);
             self.out.token(": ");
             if value.end_comments.is_empty() {
@@ -1332,7 +1375,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         });
         // A key that's guaranteed to be on one line is implicit, no matter how long it is.
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
-            self.print_key(key_id, is_last_descendant);
+            self.print(key_id, is_last_descendant);
             self.start_align(self.tab_width);
             write_colon(self.out);
             self.print(value_id, is_last_descendant);
@@ -1360,7 +1403,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             ..Group::default()
         });
         self.start_align(2);
-        self.print_key(key_id, is_last_descendant);
+        self.print(key_id, is_last_descendant);
         self.out.end_indent();
         self.out.end_group();
         self.out.end_group();

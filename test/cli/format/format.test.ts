@@ -2586,6 +2586,37 @@ describe.concurrent("bun fmt", () => {
       ],
       ["  a: |1\n    x\n   y\n", "a: |1\n  x\n y\n", "a: |1\n    x\n   y\n"],
       ["-   - |1\n       x\n      y\n", "- - |1\n     x\n    y\n", "- - |1\n       x\n      y\n"],
+      // A block scalar that keeps its line breaks ends with its own line break only at the end of the file. Prettier
+      // prints one after every such scalar that nothing but comments follow, and another empty line before the
+      // comment, so the value grows on every run. Where the scalar isn't at the end of the file, it prints none.
+      ["a:\n  b:   |+\n    x\n  # c\n", "a:\n  b: |+\n    x\n  # c\n", "a:\n  b: |+\n    x\n\n  # c"],
+      ["a:\n  b:   |+\n    x\n\n  # c\n", "a:\n  b: |+\n    x\n\n  # c\n", "a:\n  b: |+\n    x\n\n\n\n  # c"],
+      ["a:\n  b:   >+\n    x\n  # c\n", "a:\n  b: >+\n    x\n  # c\n", "a:\n  b: >+\n    x\n\n  # c"],
+      ["a:\n  -   |+\n    x\n  # c\n", "a:\n  - |+\n    x\n  # c\n", "a:\n  - |+\n    x\n\n  # c"],
+      ["a:\n  b:   |+\n\n  # c\n", "a:\n  b: |+\n\n  # c\n", "a:\n  b: |+\n\n\n\n  # c"],
+      ["a:\n  b:   |+\n    x\n  # c\n# d\n", "a:\n  b: |+\n    x\n  # c\n# d\n", "a:\n  b: |+\n    x\n\n  # c# d"],
+      ["a:\n  b:   |+\n    x\n  # c\n...\n", "a:\n  b: |+\n    x\n  # c\n...\n", "a:\n  b: |+\n    x\n\n  # c..."],
+      [
+        "a:\n  b:   |+\n    x\n\n  # c\nd: 1\n",
+        "a:\n  b: |+\n    x\n\n  # c\nd: 1\n",
+        "a:\n  b: |+\n    x\n\n\n  # c\nd: 1\n",
+      ],
+      ["a:   |+\n  x\n# c\n---\nb: 1\n", "a: |+\n  x\n# c\n---\nb: 1\n", "a: |+\n  x# c\n---\nb: 1\n"],
+      ["a:   |+\n  x\n\n# c\n---\nb: 1\n", "a: |+\n  x\n\n# c\n---\nb: 1\n", "a: |+\n  x\n  # c\n---\nb: 1\n"],
+      ["a:   1\n...\n---\nb: |+\n  x\n", "a: 1\n...\n---\nb: |+\n  x\n", "a: 1...\n---\nb: |+\n  x\n"],
+      ["a:   |+\n...\n", "a: |+\n...", "a: |+..."],
+      ["a:   |+\n  x\n# c\n...\n", "a: |+\n  x\n# c\n...", "a: |+\n  x\n# c..."],
+      ["a:   |+\n  x\n# c\n... # t\n", "a: |+\n  x\n# c\n... # t", "a: |+\n  x\n# c... # t"],
+      ["a:   |+\n  x\n# c\n...\n---\nb: 1\n", "a: |+\n  x\n# c\n...\n---\nb: 1\n", "a: |+\n  x# c\n...\n---\nb: 1\n"],
+      // The same for a key whose value is empty, which is the last thing Prettier prints for its pair.
+      ["? |+\n  a\n", "? |+\n  a\n", "? |+\n  a\n\n"],
+      ["? |+\n  a\n# c\n", "? |+\n  a\n# c", "? |+\n  a\n\n# c\n"],
+      ["? |+\n  a\n\n# c\n", "? |+\n  a\n\n# c", "? |+\n  a\n\n\n\n# c\n"],
+      [
+        "x:\n  ? |+\n    a\n\n  # c\ny:   1\n",
+        "x:\n  ? |+\n    a\n\n  # c\ny: 1\n",
+        "x:\n  ? |+\n    a\n\n\n  # c\ny: 1\n",
+      ],
     ])("%j", async (before, after, byPrettier) => {
       expect(after).not.toBe(byPrettier);
       expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));

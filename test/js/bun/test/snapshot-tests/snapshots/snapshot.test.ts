@@ -1986,9 +1986,21 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(exitCode).toBe(0);
       });
 
+      test("--update-snapshots keeps it for a test that does not run, as it keeps the runner's entry", async () => {
+        using dir = tempDir("snapshot-beside", {
+          "a.test.js": nested() + zOld,
+          "__snapshots__/a.test.js.snap": beside,
+        });
+        const updating = await runTests(String(dir), { CI: "true" }, "--update-snapshots", "-t", "z old");
+        expect(snap(dir)).toBe(beside);
+        const all = await runTests(String(dir), { CI: "true" });
+        expect({ pass: all.pass, stderr: all.pass === 2 ? "" : all.stderr }).toEqual({ pass: 2, stderr: "" });
+        expect([updating.exitCode, all.exitCode]).toEqual([0, 0]);
+      });
+
       // No older Bun wrote this file. The key of the test at the top level is also Bun's key of the nested one.
       test.each([[["top", "nested"]], [["nested", "top"]]])(
-        "the entry of a test at the top level, which Bun called as it did the nested one, passes that one in every order and run %j",
+        "is not the entry of a test at the top level, which has that key for its own, in any order and run %j",
         async order => {
           const tests = {
             top: `test("outer inner", () => { expect("same").toMatchSnapshot(); });`,
@@ -2001,9 +2013,10 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
             "__snapshots__/a.test.js.snap": outOfOrder,
           });
           const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" }, "--rerun-each=2");
-          expect({ pass, fail, stderr: fail ? stderr : "" }).toEqual({ pass: 4, fail: 0, stderr: "" });
+          expect({ pass, fail }).toEqual({ pass: 2, fail: 2 });
+          expect(stderr).toContain('Expected: "other"\nReceived: "same"');
           expect(snap(dir)).toBe(outOfOrder);
-          expect(exitCode).toBe(0);
+          expect(exitCode).toBe(1);
         },
       );
     },
@@ -2114,7 +2127,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         });
         const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
         expect({ pass, fail }).toEqual(counts);
-        expect(stderr).toContain(message);
+        expect(stderr.match(/Expected: .*\nReceived: .*/)?.[0] ?? "").toBe(message);
         expect(snap(dir)).toBe(leftBehind);
         expect(exitCode).toBe(fail);
 
@@ -2129,22 +2142,27 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
     );
 
     // `a b 1` tells that an older Bun appended. `x y 1` is Vitest's key of the test at the top level, and Bun's key of "x" > "y".
-    test("--update-snapshots does not take the entry of a test at the top level for the one that Bun appended", async () => {
-      const before = headers.vitest + entry("a > b 1", '"other"') + entry("a b 1", '"b"') + entry("x y 1", '"top"');
-      const after = headers.vitest + entry("a > b 1", '"b"') + entry("x > y 1", '"new"') + entry("x y 1", '"top"');
+    test("the entry of a test at the top level is not taken for a new test that Bun called the same", async () => {
+      const before = headers.vitest + entry("a > b 1", '"other"') + entry("a b 1", '"b"') + entry("x y 1", '"same"');
+      const after = headers.vitest + entry("a > b 1", '"b"') + entry("x > y 1", '"same"') + entry("x y 1", '"same"');
       using dir = tempDir("snapshot-in-order", {
         "a.test.js": `
           describe("a", () => { test("b", () => { expect("b").toMatchSnapshot(); }); });
-          test("x y", () => { expect("top").toMatchSnapshot(); });
-          describe("x", () => { test("y", () => { expect("new").toMatchSnapshot(); }); });
+          test("x y", () => { expect("same").toMatchSnapshot(); });
+          describe("x", () => { test("y", () => { expect("same").toMatchSnapshot(); }); });
         `,
         "__snapshots__/a.test.js.snap": before,
       });
+      const refused = await runTests(String(dir), { CI: "true" });
+      expect({ pass: refused.pass, fail: refused.fail }).toEqual({ pass: 2, fail: 1 });
+      expect(refused.stderr).toContain('Snapshot name: "x > y 1"');
+      expect(snap(dir)).toBe(before);
+
       const updating = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
       expect(snap(dir)).toBe(after);
       const all = await runTests(String(dir), { CI: "true" });
       expect({ pass: all.pass, stderr: all.pass === 3 ? "" : all.stderr }).toEqual({ pass: 3, stderr: "" });
-      expect([updating.exitCode, all.exitCode]).toEqual([0, 0]);
+      expect([refused.exitCode, updating.exitCode, all.exitCode]).toEqual([1, 0, 0]);
     });
 
     test.each([

@@ -245,6 +245,8 @@ pub(crate) struct File {
     may_hold_entries_of_bun: bool,
     /// Jest and Vitest keep their files sorted, so keys out of order are an older Bun's. `write_sorted` keeps that order.
     keys_were_out_of_order: bool,
+    /// What `format` calls the tests of the file. `key_of_older_bun` asks for them once.
+    names_of_tests: Option<StringArrayHashMap<()>>,
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
@@ -404,8 +406,15 @@ impl Snapshots {
         let may_hold_entries_of_bun = format == Format::Bun
             || keys_were_out_of_order
             || (format == Format::Vitest && self.holds_a_key_in_both_spellings());
-        self._current_file =
-            Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun, keys_were_out_of_order });
+        self._current_file = Some(File {
+            id: file_id,
+            format,
+            file: None,
+            dirty: false,
+            may_hold_entries_of_bun,
+            keys_were_out_of_order,
+            names_of_tests: None,
+        });
         Ok(format)
     }
 
@@ -461,14 +470,62 @@ impl Snapshots {
         if key_of_bun == key {
             return Ok(KeyOfOlderBun::TheSame);
         }
-        // An entry that this run wrote is not an older Bun's.
-        Ok(match self.values.get_mut(&key_of_bun).filter(|entry| !entry.written) {
-            Some(entry) => {
-                entry.found_under_key_of_bun = true;
-                KeyOfOlderBun::Other(key_of_bun)
+        // An entry that this run wrote is not an older Bun's. Nor is one under a key that `format` has for a test: it is that test's.
+        if !self.values.get(&key_of_bun).is_some_and(|entry| !entry.written) || self.is_key_of_a_test(expect, format, &key_of_bun) {
+            return Ok(KeyOfOlderBun::None);
+        }
+        if let Some(entry) = self.values.get_mut(&key_of_bun) {
+            entry.found_under_key_of_bun = true;
+        }
+        Ok(KeyOfOlderBun::Other(key_of_bun))
+    }
+
+    fn is_key_of_a_test(&mut self, expect: &Expect, format: Format, key: &[u8]) -> bool {
+        let (Some(file), Some(buntest)) = (self._current_file.as_mut(), expect.bun_test()) else { return false };
+        let names = file
+            .names_of_tests
+            .get_or_insert_with(|| Self::names_of_tests(format, &buntest.get().collection.root_scope, |_| true));
+        Self::is_key_of(names, format, key)
+    }
+
+    /// What `format` calls the tests under `root` that `is_wanted` picks.
+    fn names_of_tests(
+        format: Format,
+        root: &DescribeScope,
+        mut is_wanted: impl FnMut(&ExecutionEntry) -> bool,
+    ) -> StringArrayHashMap<()> {
+        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
+        let mut scopes = vec![root];
+        while let Some(scope) = scopes.pop() {
+            for entry in &scope.entries {
+                match entry {
+                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
+                    TestScheduleEntry::TestCallback(test) => {
+                        if is_wanted(test) {
+                            let name = full_test_name(test, format.name_separator(), format == Format::Jest);
+                            names.insert(&Self::escape_line_breaks(format, name), ());
+                        }
+                    }
+                }
             }
-            None => KeyOfOlderBun::None,
-        })
+        }
+        names
+    }
+
+    /// Whether `key` is `<name>[<separator><hint>] <count>` for one of `names`, as `format` writes it.
+    fn is_key_of(names: &StringArrayHashMap<()>, format: Format, key: &[u8]) -> bool {
+        let Some(end) = strings::last_index_of_char(key, b' ') else { return false };
+        if end + 1 == key.len() || !key[end + 1..].iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        let name = &key[..end];
+        let mut is_of_a_test = names.contains_key(name);
+        let mut from = 0;
+        while let Some(at) = strings::index_of(&name[from..], format.hint_separator()).filter(|_| !is_of_a_test) {
+            is_of_a_test = names.contains_key(&name[..from + at]);
+            from += at + 1;
+        }
+        is_of_a_test
     }
 
     pub(crate) fn match_or_write(
@@ -659,52 +716,29 @@ impl Snapshots {
             .filter(|sequence| matches!(sequence.result, TestResult::Pass | TestResult::Todo))
             .filter_map(|sequence| sequence.test_entry.map(|entry| entry.as_ptr().cast_const()))
             .collect();
-        Self::keep_entries_of_tests(&mut self.values, file.format, &buntest.collection.root_scope, &done);
+        // An older Bun's entry of a test that did not run to the end is under Bun's name for it.
+        let formats = [file.format, Format::Bun];
+        let formats = &formats[..if file.may_hold_entries_of_bun { 2 } else { 1 }];
+        Self::keep_entries_of_tests(&mut self.values, formats, &buntest.collection.root_scope, &done);
         file.dirty = true;
         self.values.retain(|_, entry| entry.checked || entry.stays);
     }
 
-    /// Sets `stays` on the entries of every test under `root` that isn't in `except`.
+    /// Sets `stays` on the entries of every test under `root` that isn't in `except`, as each of `formats` spells them.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
-        format: Format,
+        formats: &[Format],
         root: &DescribeScope,
         except: &[*const ExecutionEntry],
     ) {
         let mut except = except.to_vec();
         index_sort::sort_slice_unstable_by(&mut except, |a, b| a.cmp(b));
-        let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
-        let mut scopes = vec![root];
-        while let Some(scope) = scopes.pop() {
-            for entry in &scope.entries {
-                match entry {
-                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
-                    TestScheduleEntry::TestCallback(test) => {
-                        if except.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
-                            let name = full_test_name(test, format.name_separator(), format == Format::Jest);
-                            names.insert(&Self::escape_line_breaks(format, name), ());
-                        }
-                    }
-                }
-            }
-        }
-
-        let separator = format.hint_separator();
+        let is_left = |test: &ExecutionEntry| except.binary_search(&core::ptr::from_ref(test)).is_err();
+        let names: Vec<_> = formats.iter().map(|format| Self::names_of_tests(*format, root, is_left)).collect();
         for i in 0..values.len() {
-            // Keys look like `<test name>[<separator><hint>] <count>`.
             let key = &values.keys()[i];
-            let Some(end) = strings::last_index_of_char(key, b' ') else { continue };
-            if end + 1 == key.len() || !key[end + 1..].iter().all(u8::is_ascii_digit) {
-                continue;
-            }
-            let name = &key[..end];
-            let mut is_of_a_test = names.contains_key(name);
-            let mut from = 0;
-            while let Some(at) = strings::index_of(&name[from..], separator).filter(|_| !is_of_a_test) {
-                is_of_a_test = names.contains_key(&name[..from + at]);
-                from += at + 1;
-            }
-            values.values_mut()[i].stays = is_of_a_test;
+            let stays = formats.iter().zip(&names).any(|(format, names)| Self::is_key_of(names, *format, key));
+            values.values_mut()[i].stays = stays;
         }
     }
 

@@ -230,7 +230,7 @@ impl FileExt for File {
                     None,
                 ))
             }
-            PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
+            PathOrFileDescriptor::Fd(_) => Ok(JSPromise::rejected_promise(
                 cx.global(),
                 // `JSGlobalObject::create_invalid_args` lives in the still-gated
                 // `JSGlobalObject.rs`; `ERR_INVALID_ARG_TYPE` (lib.rs) is the
@@ -238,7 +238,8 @@ impl FileExt for File {
                 cx.global().ERR_INVALID_ARG_TYPE(format_args!(
                     "Is not possible to unlink a file descriptor"
                 )),
-            )),
+            )
+            .to_js()),
         }
     }
 }

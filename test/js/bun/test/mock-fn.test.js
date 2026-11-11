@@ -2333,6 +2333,24 @@ describe("spyOn", () => {
         },
       );
 
+      // Such a spy is stored as a value, not as an accessor.
+      test.each(keys)("a spy on an inherited method named `%s` is gone after the restore", key => {
+        class Parent {
+          static length() {}
+          static name() {}
+        }
+        class Child extends Parent {}
+        delete Child[key];
+        const spy = spyOn(Child, key);
+        const under = Object.getOwnPropertyDescriptor(Child, key);
+        spy.mockRestore();
+        expect([under, Object.hasOwn(Child, key), Child[key]]).toEqual([
+          { value: spy, writable: true, enumerable: false, configurable: true },
+          false,
+          Parent[key],
+        ]);
+      });
+
       // Only a function is asked to record the spy. The traps of a sandbox are JavaScript, and none may run where the spy is stored.
       test.each(keys)("a spy on `%s` asks the sandbox of a node:vm context what a spy on any other key asks", key => {
         const asked = [key, "other"].map(key => {

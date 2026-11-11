@@ -62,7 +62,10 @@ test("bind() reads the spy, a refused write leaves it, and a restore brings the 
         .join("\n")}`,
   });
   const plain = await runTests(String(dir));
-  expect(plain.results).toEqual(kinds.flatMap(([kind]) => cases.map(([title]) => `pass ${title} of ${kind}`)));
+  expect(plain).toMatchObject({
+    results: kinds.flatMap(([kind]) => cases.map(([title]) => `pass ${title} of ${kind}`)),
+    exitCode: 0,
+  });
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 });
 
@@ -106,8 +109,11 @@ test("a getter or a setter spy takes a static field of a class that nothing has 
         .join("\n")}`,
   });
   const plain = await runTests(String(dir));
-  expect(plain.results).toEqual(
-    fields.flatMap(([key]) => ["getter", "setter"].map(access => `pass a ${access} spy on the static field ${key}`)),
-  );
+  expect(plain).toMatchObject({
+    results: fields.flatMap(([key]) =>
+      ["getter", "setter"].map(access => `pass a ${access} spy on the static field ${key}`),
+    ),
+    exitCode: 0,
+  });
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 });

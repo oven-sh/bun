@@ -274,7 +274,11 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         return;
     }
     case Op::Close:
-        views.erase(viewId);
+        // The completion block of an operation in flight holds a reference too.
+        if (auto it = views.find(viewId); it != views.end()) {
+            it->second->close();
+            views.erase(it);
+        }
         failedViews.erase(viewId);
         writer.sendReply(viewId, Reply::Ack);
         return;

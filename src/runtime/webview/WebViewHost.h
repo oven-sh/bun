@@ -51,6 +51,7 @@ public:
     void goBack();
     void goForward();
     void reload();
+    void close();
 
     WTF::String url();
     WTF::String title();
@@ -67,7 +68,6 @@ public:
 
 private:
     WebViewHost() = default;
-    void close();
     // clickIPC's mouse-event dispatch + barrier, without the guard.
     // clickSelectorIPC enters here after the actionability check resolves.
     void doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);

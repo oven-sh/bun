@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { chmod, copyFile, exists, link, mkdir, rm, symlink, writeFile } from "fs/promises";
 import {
@@ -1635,13 +1636,23 @@ function cacheEnv(side: string, overrides: Record<string, string | undefined> = 
   return spawnEnv;
 }
 
-/** A bunx tree that an older version left in `tmp/`, and the line in which `bun pm cache rm` counts it. None on Windows, where the id in its name is a hash of the user name. */
-const oldBunxTree = isWindows
-  ? { files: {}, cleared: "Cleared 0 cached 'bunx' packages\n" }
-  : {
-      files: { [`tmp/bunx-${process.getuid!()}-cowsay@latest/package.json`]: "{}" },
-      cleared: "Cleared 1 cached 'bunx' packages\n",
-    };
+/** The id in the name of a bunx tree: the uid, or on Windows the hash that `user_unique_id()` takes of the user name. */
+function bunxTreeId(): number {
+  if (!isWindows) return process.getuid!();
+  const { symbols, close } = dlopen("advapi32.dll", { GetUserNameW: { args: ["ptr", "ptr"], returns: "i32" } });
+  const name = new Uint16Array(257);
+  const length = new Uint32Array([name.length]);
+  const ok = symbols.GetUserNameW(name, length);
+  close();
+  if (!ok) throw new Error("GetUserNameW failed");
+  return Number(BigInt.asUintN(32, Bun.hash.wyhash(new Uint8Array(name.buffer, 0, length[0] * 2))));
+}
+
+/** A `bunx-<id>-<package>` tree in `tmp/`, where Windows and older versions keep them, and the line in which `bun pm cache rm` counts it. */
+const oldBunxTree = {
+  files: { [`tmp/bunx-${bunxTreeId()}-cowsay@latest/package.json`]: "{}" },
+  cleared: "Cleared 1 cached 'bunx' packages\n",
+};
 
 async function pmCache(args: string[], cwd: string, spawnEnv: NodeJS.Dict<string>, exe: string = bunExe()) {
   await using proc = Bun.spawn({
@@ -1986,27 +1997,21 @@ describe.concurrent("bun pm cache rm", () => {
   });
 
   test("--dry-run prints what would be deleted and deletes nothing", async () => {
-    const uid = isWindows ? undefined : process.getuid!();
-    using side = tempDir("pm-cache-rm-dry-run", {
-      ...sideFiles,
-      ...(uid === undefined ? {} : { [`tmp/bunx-${uid}-cowsay@latest/package.json`]: "{}" }),
-    });
+    const tree = `bunx-${bunxTreeId()}-cowsay@latest`;
+    using side = tempDir("pm-cache-rm-dry-run", { ...sideFiles, [`tmp/${tree}/package.json`]: "{}" });
     using root = tempDir("pm-cache-rm-dry-run-project", projectFiles);
     const envCache = join(String(side), "bun-install", "install", "cache");
 
     expect(await pmCache(["rm", "--dry-run"], join(String(root), "proj"), cacheEnv(String(side)))).toEqual({
       stdout:
         `dry run: would delete 'bun install' cache at ${envCache}\n` +
-        (uid === undefined
-          ? "Would clear 0 cached 'bunx' packages\n"
-          : `dry run: would delete ${join(String(side), "tmp", `bunx-${uid}-cowsay@latest`)}\n` +
-            "Would clear 1 cached 'bunx' packages\n"),
+        `dry run: would delete ${join(String(side), "tmp", tree)}\n` +
+        "Would clear 1 cached 'bunx' packages\n",
       stderr: "",
       exitCode: 0,
     });
     expect(await readdirSorted(envCache)).toEqual(envCacheEntries);
-    if (uid !== undefined)
-      expect(await readdirSorted(join(String(side), "tmp"))).toContain(`bunx-${uid}-cowsay@latest`);
+    expect(await readdirSorted(join(String(side), "tmp"))).toContain(tree);
   });
 
   test.each([

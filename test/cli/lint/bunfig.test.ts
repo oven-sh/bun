@@ -1006,17 +1006,19 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     }
   });
 
-  // Without an `.eslintrc`, the rule lists files the way the run does: with its ignores, and without `node_modules` or
-  // a directory whose name starts with `.`.
+  // Without an `.eslintrc`, the rule lists the files under `src` that the run doesn't ignore, whether or not the config
+  // has `files` for them, and never `node_modules` or a directory whose name starts with `.`.
   const dead = {
     "package.json": `{ "type": "module" }`,
-    "src/a/lib.js": "export const used = 1;\n",
+    "src/a/lib.js": "export const used = 1;\nexport const onlyFromGen = 2;\nexport const fromTs = 3;\n",
     "src/a/dead.js": "export const dead = 1;\n",
     "src/a/.hidden/dead.js": "export const hidden = 1;\n",
     "src/a/node_modules/x/dead.js": "export const x = 1;\n",
     "src/b/entry.js": "export const entry = 1;\n",
     "src/b/main.js": `import { used } from "../a/lib.js";\nconsole.log(used);\n`,
+    "src/b/types.ts": `import { fromTs } from "../a/lib.js";\nconsole.log(fromTs);\n`,
     "gen/dead.js": "export const gen = 1;\n",
+    "gen/importer.js": `import { onlyFromGen } from "../src/a/lib.js";\nconsole.log(onlyFromGen);\n`,
   };
   type UnusedModules = { src?: string[]; ignoreExports?: string[] };
   const asJson = (options: UnusedModules) =>
@@ -1025,50 +1027,108 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     const entries = Object.entries({ unusedExports: true, ...options }).map(([k, v]) => `${k} = ${JSON.stringify(v)}`);
     return `"import/no-unused-modules" = ["error", { ${entries.join(", ")} }]`;
   };
+  const extensions = `"import/extensions": [".js", ".ts"]`;
   const noUnusedModulesStandIn = {
     "node_modules/eslint-plugin-import/package.json": standIn["node_modules/eslint-plugin-import/package.json"],
     "node_modules/eslint-plugin-import/index.js": `const rule = { meta: { schema: false }, create() { return {}; } };\nmodule.exports = { meta: { name: "eslint-plugin-import" }, rules: { "no-unused-modules": rule } };\n`,
   };
-
-  test.each([
+  const unusedModulesConfigs = [
     [
       "bunfig.toml",
       (options: UnusedModules) => ({
-        "bunfig.toml": `[lint]\nplugins = ["import"]\nignorePatterns = ["gen/"]\n[lint.rules]\n${asToml(options)}\n`,
+        "bunfig.toml": `[lint]\nplugins = ["import"]\nignorePatterns = ["gen/"]\n[lint.settings]\n"import/extensions" = [".js", ".ts"]\n[lint.rules]\n${asToml(options)}\n`,
       }),
     ],
     [
       "eslint.config.js",
       (options: UnusedModules) => ({
         ...noUnusedModulesStandIn,
-        "eslint.config.js": `import plugin from "eslint-plugin-import";\nexport default [{ ignores: ["gen/"] }, { plugins: { import: plugin }, rules: { ${asJson(options)} } }];\n`,
+        "eslint.config.js": `import plugin from "eslint-plugin-import";\nexport default [{ ignores: ["gen/"] }, { plugins: { import: plugin }, settings: { ${extensions} }, rules: { ${asJson(options)} } }];\n`,
       }),
     ],
     [
       ".oxlintrc.json",
       (options: UnusedModules) => ({
-        ".oxlintrc.json": `{ "plugins": ["import"], "ignorePatterns": ["gen/"], "rules": { ${asJson(options)} } }`,
+        ".oxlintrc.json": `{ "plugins": ["import"], "ignorePatterns": ["gen/"], "settings": { ${extensions} }, "rules": { ${asJson(options)} } }`,
       }),
     ],
-  ])("import/no-unused-modules lists the files the run finds, with %s and no .eslintrc", async (name, config) => {
-    const files = { ...dead, ...config({ src: ["."], ignoreExports: ["**/entry.js"] }) };
-    expect(await lintIn(".", files, ["src/a"])).toMatchObject({
-      found: ["src/a/dead.js:1 import/no-unused-modules"],
-      exitCode: 1,
-    });
-    // A hidden file is linted when it's named, but it isn't in the list.
-    const named = ["gen/dead.js", "src/a/.hidden/dead.js", "src/a/dead.js"];
-    expect(await lintIn(".", files, named)).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"] });
-  });
+  ] as const;
 
-  test("import/no-unused-modules searches from bunfig.toml's directory without an .eslintrc", async () => {
-    for (const options of [{}, { src: ["src"] }]) {
-      const files = { ...dead, "bunfig.toml": `[lint]\nplugins = ["import"]\n[lint.rules]\n${asToml(options)}\n` };
-      expect(await lintIn("src/a", files, [])).toMatchObject({
-        found: ["src/a/dead.js:1 import/no-unused-modules"],
+  test.each(unusedModulesConfigs)(
+    "import/no-unused-modules lists the files the run finds, with %s and no .eslintrc",
+    async (name, config) => {
+      const files = { ...dead, ...config({ src: ["."], ignoreExports: ["**/entry.js"] }) };
+      // `gen/importer.js` is ignored, so it doesn't count as a use. `src/b/types.ts` counts even where the config has
+      // no `files` for it.
+      expect(await lintIn(".", files, ["src/a"])).toMatchObject({
+        found: ["src/a/dead.js:1 import/no-unused-modules", "src/a/lib.js:2 import/no-unused-modules"],
         exitCode: 1,
       });
-    }
+      // A hidden file is linted when it's named, but it isn't in the list.
+      const named = ["gen/dead.js", "src/a/.hidden/dead.js", "src/a/dead.js"];
+      expect(await lintIn(".", files, named)).toMatchObject({ found: ["src/a/dead.js:1 import/no-unused-modules"] });
+    },
+  );
+
+  test.each(unusedModulesConfigs)(
+    "import/no-unused-modules lists `ignoreExports` the same way, with %s and no .eslintrc",
+    async (name, config) => {
+      const files = { ...dead, ...config({ src: ["."], ignoreExports: ["**/entry.js"] }) };
+      expect(await lintIn(".", files, ["src/b"])).toMatchObject({ found: [], exitCode: 0 });
+    },
+  );
+
+  test("import/no-unused-modules searches from bunfig.toml's directory without an .eslintrc", async () => {
+    const bunfig = (options: UnusedModules) => ({
+      ...dead,
+      "bunfig.toml": `[lint]\nplugins = ["import"]\n[lint.rules]\n${asToml(options)}\n`,
+    });
+    const found = ["src/a/dead.js:1 import/no-unused-modules"];
+    // Nothing is ignored here, so `gen/importer.js` counts when `src` includes it.
+    expect(await lintIn("src/a", bunfig({}), [])).toMatchObject({ found, exitCode: 1 });
+    expect(await lintIn("src/a", bunfig({ src: ["src"] }), [])).toMatchObject({
+      found: [...found, "src/a/lib.js:2 import/no-unused-modules"],
+      exitCode: 1,
+    });
+    // Without `ignoreExports`, `entry.js` is reported. An `ignoreExports` pattern that matches nothing is skipped.
+    expect(await lintIn(".", bunfig({ src: ["."] }), ["src/b"])).toMatchObject({
+      found: ["src/b/entry.js:1 import/no-unused-modules"],
+    });
+    expect(await lintIn(".", bunfig({ src: ["."], ignoreExports: ["**/*.nothing"] }), ["src/a"])).toMatchObject({
+      found,
+    });
+  });
+
+  test("import/no-unused-modules with an eslint.config.js lists a folder outside the config's directory", async () => {
+    const files = {
+      ...noUnusedModulesStandIn,
+      "package.json": `{ "type": "module" }`,
+      "packages/app/eslint.config.js": `import plugin from "eslint-plugin-import";\nexport default [{ plugins: { import: plugin }, rules: { ${asJson({ src: [".", "../shared"] })} } }];\n`,
+      "packages/app/src/lib.js": "export const fromShared = 1;\nexport const dead = 2;\n",
+      "packages/shared/util.js": `import { fromShared } from "../app/src/lib.js";\nconsole.log(fromShared);\n`,
+    };
+    expect(await lintIn("packages/app", files, ["src"])).toMatchObject({
+      found: ["packages/app/src/lib.js:2 import/no-unused-modules"],
+      exitCode: 1,
+    });
+  });
+
+  test("import/no-unused-modules with an .eslintrc still needs one above every folder in `src`", async () => {
+    const files = (eslintrc: Record<string, string>) => ({
+      ...eslintrc,
+      "project/package.json": `{ "type": "module" }`,
+      "project/bunfig.toml": `[lint]\nplugins = ["import"]\n[lint.rules]\n${asToml({ src: [".", "../outside"] })}\n`,
+      "project/src/dead.js": "export const dead = 1;\n",
+      "outside/out.js": "export const out = 1;\n",
+    });
+    const eslintrc = {
+      "project/.eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022 } }`,
+    };
+    expect(await lintIn("project", files(eslintrc), ["src"])).toMatchObject({ found: [], exitCode: 0 });
+    expect(await lintIn("project", files({}), ["src"])).toMatchObject({
+      found: ["project/src/dead.js:1 import/no-unused-modules"],
+      exitCode: 1,
+    });
   });
 
   test("import/no-unused-modules reports an unused type export in a project with only bunfig.toml", async () => {

@@ -258,7 +258,7 @@ fn search(
     pool: &Pool,
     search: &Search,
     exclusions: &Exclusions,
-    skips_hidden: bool,
+    walk: Walk,
     are_all_in_repositories: &(dyn Fn() -> bool + Sync),
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
@@ -286,7 +286,7 @@ fn search(
                 loader.ignore_files_at(&search.base_path, &inherited, are_all_in_repositories)
         {
             let real = fs::real_path(&search.base_path);
-            if loader.collects_tsconfigs() {
+            if loader.collects_tsconfigs() && !walk.for_reading {
                 (loader.searched_from.lock()).push(search.base_path.clone());
             }
             level.push(Directory {
@@ -312,7 +312,7 @@ fn search(
                 return;
             };
             let entries = std::mem::take(&mut listing.entries);
-            if loader.collects_tsconfigs() {
+            if loader.collects_tsconfigs() && !walk.for_reading {
                 // TypeScript reads one even if an ignore file excludes it. The consumer knows whether file names are
                 // case-sensitive here.
                 let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
@@ -342,7 +342,10 @@ fn search(
             };
             // ESLint looks up the configuration for anything that isn't a directory, whatever its name.
             let lacks_file = loader.lacks_eslint_config_file(&own);
-            if lacks_file && let Some(file) = entries.iter().find(|it| !it.is_directory) {
+            if lacks_file
+                && !walk.for_reading
+                && let Some(file) = entries.iter().find(|it| !it.is_directory)
+            {
                 let path = paths::join(&directory.path, &file.name);
                 failure.lock().get_or_insert(config_file_missing(&path));
                 return;
@@ -379,7 +382,9 @@ fn search(
             let within = own.config.within(&directory.path, seen);
             let mut within = within.with_frameworks(frameworks);
             for mut entry in entries {
-                if skips_hidden && (entry.name.starts_with(b".") || entry.name == b"node_modules") {
+                if walk.for_reading
+                    && (entry.name.starts_with(b".") || entry.name == b"node_modules")
+                {
                     continue;
                 }
                 let path = paths::join(&directory.path, &entry.name);
@@ -480,14 +485,18 @@ fn search(
                         is_matched.store(true, Ordering::Relaxed);
                     }
                 }
-                if let Some(FileConfig::Matched(config)) = selected.or(config)
-                    && let Some(size) = listing.size_of(&entry.name)
-                {
+                let status = match selected.or(config) {
+                    Some(FileConfig::Matched(config)) => Status::Matched(config),
+                    Some(FileConfig::Unconfigured) if walk.for_reading => Status::Unconfigured,
+                    Some(FileConfig::External) if walk.for_reading => Status::External,
+                    _ => continue,
+                };
+                if let Some(size) = listing.size_of(&entry.name) {
                     files.push(Target {
                         path,
                         size,
                         loaded: Arc::clone(&own),
-                        status: Status::Matched(config),
+                        status,
                     });
                 }
             }
@@ -525,9 +534,10 @@ pub(crate) fn list_files(
 
 /// Returns what eslint-plugin-import's `listFilesWithNodeFs(patterns, extensions)` yields, which it lists with when
 /// ESLint's `FileEnumerator` throws for a run without ESLint 8's configuration files: the files under `patterns` that
-/// have one of `extensions`, found the way the run itself finds files, so its configuration and ignore files apply.
-/// An entry named `node_modules` or starting with `.` isn't entered, and an argument that selects nothing is skipped.
-/// Sorted by path. `Err` has the message of the error the search throws.
+/// have one of `extensions`, found the way the run itself finds files, so what its configuration and ignore files
+/// ignore is left out. A file is listed whether or not the configuration has `files` for it, an entry named
+/// `node_modules` or starting with `.` isn't entered, and an argument that selects nothing is skipped. Sorted by
+/// path. `Err` has the message of the error the search throws.
 fn list_with_fs(
     loader: &Loader,
     pool: &Pool,
@@ -537,7 +547,7 @@ fn list_with_fs(
     let patterns: Vec<Vec<u8>> = patterns.iter().map(|it| it.to_vec()).collect();
     let walk = Walk {
         error_on_unmatched_pattern: false,
-        skips_hidden: true,
+        for_reading: true,
     };
     let targets = find_files_with(loader, pool, &patterns, walk).map_err(|error| error.0)?;
     let has_extension = |path: &[u8]| {
@@ -546,7 +556,7 @@ fn list_with_fs(
         (extensions.iter()).any(|it| it.strip_prefix(b".").unwrap_or(it) == without_dot)
     };
     let listed = targets.into_iter().filter_map(|it| {
-        let is_listed = matches!(it.status, Status::Matched(_)) && has_extension(&it.path);
+        let is_listed = !matches!(it.status, Status::Ignored) && has_extension(&it.path);
         is_listed.then_some(Listed {
             path: it.path,
             is_ignored: false,
@@ -628,9 +638,11 @@ fn split_exclusions<'p>(
 struct Walk {
     /// ESLint's `errorOnUnmatchedPattern`: `Err` if an argument selects no file.
     error_on_unmatched_pattern: bool,
-    /// Skips an entry named `node_modules`, and one whose name starts with `.`, in every directory it lists. The
-    /// arguments themselves are still used.
-    skips_hidden: bool,
+    /// The search is for a rule that reads the files it finds, and lints none of them. An entry named `node_modules`,
+    /// or whose name starts with `.`, is skipped in every directory. A file that the configuration has no `files` for,
+    /// and a directory that an `eslint.config.*` doesn't reach, are listed instead of failing the search. The arguments
+    /// aren't recorded as the run's, so the configurations the run found don't change.
+    for_reading: bool,
 }
 
 /// ESLint's `findFiles`. `patterns` is the list of arguments. The files are in no particular order, without duplicates.
@@ -642,7 +654,7 @@ pub(crate) fn find_files(
 ) -> Result<Vec<Target>, Fatal> {
     let walk = Walk {
         error_on_unmatched_pattern,
-        skips_hidden: false,
+        for_reading: false,
     };
     find_files_with(loader, pool, patterns, walk)
 }
@@ -691,12 +703,14 @@ fn find_files_with(
         searches[at].patterns.push(wanted);
     };
     // This has to happen before any configuration lookup.
-    for pattern in patterns {
-        let path = paths::resolve(cwd, &paths::from_native(pattern));
-        match fs::kind(&path) {
-            Some(fs::Kind::File) => loader.name(paths::dirname(&path)),
-            Some(fs::Kind::Directory) => loader.name(&path),
-            None => {}
+    if !walk.for_reading {
+        for pattern in patterns {
+            let path = paths::resolve(cwd, &paths::from_native(pattern));
+            match fs::kind(&path) {
+                Some(fs::Kind::File) => loader.name(paths::dirname(&path)),
+                Some(fs::Kind::Directory) => loader.name(&path),
+                None => {}
+            }
         }
     }
     let (mut missing, mut excluded_argument) = (None, None);
@@ -717,7 +731,7 @@ fn find_files_with(
             }
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
-                if loader.lacks_eslint_config_file(&loaded) {
+                if loader.lacks_eslint_config_file(&loaded) && !walk.for_reading {
                     return Err(config_file_missing(&path));
                 }
                 let status = match loader.ignores_named_file(&pattern, &path, &loaded) {
@@ -788,7 +802,7 @@ fn find_files_with(
             pool,
             it,
             &exclusions,
-            walk.skips_hidden,
+            walk,
             &|| *are_all_in_repositories,
             &mut searched,
         )? {

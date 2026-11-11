@@ -2912,7 +2912,12 @@ void GlobalObject::finishCreation(VM& vm)
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_moduleNamespaceObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
+             // The namespace objects of a realm share a Structure, and their exports are not in it. A lookup that misses on one of
+             // them goes on to this prototype, and a property cache would key what it finds here on that Structure alone. It would
+             // then answer in the same way for a namespace object that exports the name. ProhibitsPropertyCaching on the prototype
+             // keeps every cache from a lookup that reaches it.
+             Structure* moduleNamespacePrototypeStructure = Structure::create(init.vm, init.owner, jsNull(), TypeInfo(FinalObjectType, JSFinalObject::StructureFlags | ProhibitsPropertyCaching), JSFinalObject::info(), JSFinalObject::defaultIndexingType, JSFinalObject::defaultInlineCapacity);
+             JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, moduleNamespacePrototypeStructure);
              moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
              init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
          } },

@@ -7608,8 +7608,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
 
                     if self.options.features.emit_decorator_metadata {
-                        // tsc writes it for a constructor of the source only. The one that
-                        // `visit_class` adds for assigned fields has no `(` in the source.
+                        // tsc writes none for a constructor that is not in the source.
                         let written =
                             constructor_function.filter(|cf| !cf.func.open_parens_loc.is_empty());
                         if let Some(cf) = written {

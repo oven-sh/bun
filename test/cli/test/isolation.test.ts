@@ -2306,38 +2306,179 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
   const sourceCacheModes = [
     ...isolateFlags.map(flag => [flag, [flag], {}] as const),
     // One worker takes both files (scale-up gated), so the second comes after the worker's own swap.
-    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
+    ...[["--parallel=2"], ["--parallel=2", "--isolate=modules"]].map(
+      args => [args.join(" ") + " worker", args, { BUN_TEST_PARALLEL_SCALE_MS: "60000" }] as const,
+    ),
   ];
-  // Makes a module large, so that its transpile is still out when the test file that asked for it ends.
+  // Either of these transpiles on the JS thread, where no transpile is ever out.
+  const transpilesOnThePool = { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined, NODE_COMPILE_CACHE: undefined };
+  // Makes a transpile take as long as the one that a finished file left, so that one is back when this one is.
   const large = `export const zeros = [${Buffer.alloc(100_000, "0,").toString()}];`;
+  // A preload runs again before each test file. This one says when the file after the finished one begins.
+  const saysWhenTheNextFileRuns = `
+    import { writeFileSync } from "node:fs";
+    import { basename, join } from "node:path";
+    if (basename(Bun.main).startsWith("b-")) writeFileSync(join(import.meta.dir, "b-running"), "");
+  `;
+  // For the finished file: imports `file` again and again until the next file begins. Each turn hops through the
+  // thread pool, so one import is out when the file ends. What follows the loop then runs in the next file.
+  const importsUntilTheNextFileRuns = (file: string) => `
+    for (let turn = 0; turn < 1000 && !existsSync(join(import.meta.dir, "b-running")); turn++) {
+      writeFileSync(join(import.meta.dir, "last-turn"), String(turn));
+      await import("${file}?" + turn).catch(() => {});
+    }
+  `;
+  // For the next file: gives what the finished file left some turns of the thread pool to land, until `landed`.
+  const waitsForLateWork = (landed: string) =>
+    `for (let turn = 0; turn < 5 && !(${landed}); turn++) await import("./other.ts?" + turn);`;
 
   test.each(sourceCacheModes)(
     "%s: a finished file's import() that is still loading is dropped",
     async (_, args, env) => {
       using dir = tempDir("isolate-late-import", {
         // A file that imports from "vitest" has no `jest` global.
+        "preload.ts": saysWhenTheNextFileRuns,
         "helper.ts": `export const makeSpy = () => jest.fn(); ${large}`,
         "other.ts": large,
         "a-import.test.ts": `
           import { test } from "vitest";
-          test("ends while helper.ts is loading", () => void import("./helper.ts"));
+          import { existsSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("ends while helper.ts is loading", () => {
+            (async () => {
+              ${importsUntilTheNextFileRuns("./helper.ts")}
+            })();
+          });
         `,
         "b-import.test.ts": `
           import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
           import { expect, test } from "bun:test";
+          import { readFileSync } from "node:fs";
           import { join } from "node:path";
+
           test("loads helper.ts for its own test globals", async () => {
-            // This transpile is as large as the one that the finished file left, and went out later: that one is back too.
-            await import("./other.ts");
-            expect(isolatedModuleCacheSourceType(join(import.meta.dir, "helper.ts"))).toBeNull();
-            const spy = (await import("./helper.ts")).makeSpy();
+            const left = "./helper.ts?" + readFileSync(join(import.meta.dir, "last-turn"), "utf8");
+            const cached = () => isolatedModuleCacheSourceType(join(import.meta.dir, left));
+            ${waitsForLateWork("cached() !== null")}
+            expect(cached()).toBeNull();
+            const spy = (await import(left)).makeSpy();
             spy();
             expect(spy).toHaveBeenCalledTimes(1);
+            // In a compiled run this import waits for every transpile that went out before it, the dropped one too.
+            await import("./other.ts");
           });
         `,
       });
       const files = ["./a-import.test.ts", "./b-import.test.ts"];
-      const { stderr, exitCode } = await runTests(String(dir), [...args], files, { ...bunEnv, ...env });
+      const { stderr, exitCode } = await runTests(String(dir), [...args, "--preload", "./preload.ts"], files, {
+        ...bunEnv,
+        ...env,
+        ...transpilesOnThePool,
+      });
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // On the JS thread a job that failed to parse rejects its import(), and with a plugin registered it transpiles
+  // the file again and runs its macros. Neither may happen for a finished file. Where the realm of that file is
+  // retired, its handler does not run either way.
+  test.each(sourceCacheModes.filter(([, args]) => args.includes("--isolate=modules")))(
+    "%s: a finished file is not told that its import() failed to parse",
+    async (_, args, env) => {
+      using dir = tempDir("isolate-late-broken-import", {
+        "preload.ts": saysWhenTheNextFileRuns,
+        "broken.ts": `${large} export const x = ;`,
+        "other.ts": large,
+        "a-broken.test.ts": `
+          import { test } from "vitest";
+          import { existsSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("ends while broken.ts is loading", () => {
+            (async () => {
+              ${importsUntilTheNextFileRuns("./broken.ts")}
+              if (existsSync(join(import.meta.dir, "b-running"))) writeFileSync(join(import.meta.dir, "a-acted"), "");
+            })();
+          });
+        `,
+        "b-broken.test.ts": `
+          import { expect, test } from "bun:test";
+          import { existsSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("the finished file does not go on here", async () => {
+            const acted = () => existsSync(join(import.meta.dir, "a-acted"));
+            ${waitsForLateWork("acted()")}
+            expect(acted()).toBe(false);
+          });
+        `,
+      });
+      const files = ["./a-broken.test.ts", "./b-broken.test.ts"];
+      const { stderr, exitCode } = await runTests(String(dir), [...args, "--preload", "./preload.ts"], files, {
+        ...bunEnv,
+        ...env,
+        ...transpilesOnThePool,
+      });
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each(sourceCacheModes)(
+    "%s: a finished file's import() does not run its macro in the next file",
+    async (_, args, env) => {
+      using dir = tempDir("isolate-late-macro-import", {
+        // With a plugin, the thread pool leaves the macros of a file to the JS thread.
+        "preload.ts": `
+          ${saysWhenTheNextFileRuns}
+          Bun.plugin({ name: "never matches", setup(build) { build.onLoad({ filter: /never-matches$/ }, () => undefined); } });
+        `,
+        "macro.ts": `
+          import { existsSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          // It only acts once the next file runs.
+          export const macro = () => {
+            if (existsSync(join(import.meta.dir, "b-running"))) writeFileSync(join(import.meta.dir, "a-acted"), "");
+            return "from the macro";
+          };
+        `,
+        "calls-macro.ts": `import { macro } from "./macro.ts" with { type: "macro" }; ${large} export const value = macro();`,
+        "other.ts": large,
+        "a-macro.test.ts": `
+          import { test } from "vitest";
+          import { existsSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("ends while calls-macro.ts is loading", () => {
+            (async () => {
+              ${importsUntilTheNextFileRuns("./calls-macro.ts")}
+            })();
+          });
+        `,
+        "b-macro.test.ts": `
+          import { expect, test } from "bun:test";
+          import { existsSync } from "node:fs";
+          import { join } from "node:path";
+
+          test("the macro of the finished file does not run here", async () => {
+            const acted = () => existsSync(join(import.meta.dir, "a-acted"));
+            ${waitsForLateWork("acted()")}
+            expect(acted()).toBe(false);
+          });
+        `,
+      });
+      const files = ["./a-macro.test.ts", "./b-macro.test.ts"];
+      const { stderr, exitCode } = await runTests(String(dir), [...args, "--preload", "./preload.ts"], files, {
+        ...bunEnv,
+        ...env,
+        ...transpilesOnThePool,
+      });
       expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
       expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
       if (exitCode !== 0) expect(stderr).toBe("");
@@ -2379,7 +2520,10 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
       `,
     });
     const files = ["./a-realm.test.ts", "./b-realm.test.ts"];
-    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], files);
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], files, {
+      ...bunEnv,
+      ...transpilesOnThePool,
+    });
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     if (exitCode !== 0) expect(stderr).toBe("");
@@ -2411,9 +2555,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
       const { stderr, exitCode } = await runTests(String(dir), [...args], files, {
         ...bunEnv,
         ...env,
-        // Either of these transpiles on the JS thread, where no transpile is ever out.
-        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined,
-        NODE_COMPILE_CACHE: undefined,
+        ...transpilesOnThePool,
       });
       expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
       expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");

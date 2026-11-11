@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 17ea2bc3e5913943670a6d7c3cb7cb71080ec8aedfaa864cb5375215fcde09d8.
+// Written against that file with the SHA-256 0ddac289b82872a2dff8b2b16fed6b42b3af1e95e3adc3e14d3d26f1fc777a28.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -498,12 +498,18 @@ function normalizeServerTls(tls: $Node.HttpServerTLSOptions) {
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
 function connectionListener(this: $Node.HttpServer, socket: $Node.HttpSocket) {
+  if (socket != null && typeof socket === "object") socket.server = this;
   // A tunnel socket that was handed to 'connect'/'upgrade' has left the native listener: re-emitted, it is a connection like any other.
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
   const tlsServer = this[tlsSymbol];
   // Its 'connection' listener wraps the socket in a TLSSocket, which comes back as 'secureConnection'.
-  if (tlsServer) tlsServer.emit("connection", socket);
-  else connectionListenerHTTP1(this, socket);
+  if (tlsServer) {
+    if (tlsServer.listenerCount("tlsClientError") === 0) {
+      tlsServer.on("secureConnection", socket => this.emit("secureConnection", socket));
+      tlsServer.on("tlsClientError", (err, socket) => this.emit("tlsClientError", err, socket));
+    }
+    tlsServer.emit("connection", socket);
+  } else connectionListenerHTTP1(this, socket);
 }
 
 function secureConnectionListener(this: $Node.HttpServer, socket) {
@@ -798,10 +804,6 @@ function Server(
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
 
-  this.prependListener("connection", (socket: $Node.HttpSocket | null | undefined) => {
-    if (socket != null && typeof socket === "object") socket.server = this;
-  });
-
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
@@ -832,9 +834,7 @@ function Server(
   // This tls.Server never listens. It validates the TLS options and owns the SecureContext, like the one Node's https.Server extends.
   if (isTLS) {
     const { ignoredByHttpsServer } = require("internal/tls");
-    const tlsServer = (this[tlsSymbol] = new (require("node:tls").Server)({ ...options, ...ignoredByHttpsServer }));
-    tlsServer.on("secureConnection", socket => this.emit("secureConnection", socket));
-    tlsServer.on("tlsClientError", (err, socket) => this.emit("tlsClientError", err, socket));
+    this[tlsSymbol] = new (require("node:tls").Server)({ ...options, ...ignoredByHttpsServer });
     this.on("secureConnection", secureConnectionListener);
     this.on("tlsClientError", onTLSClientError);
   }

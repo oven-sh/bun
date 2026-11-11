@@ -7854,15 +7854,15 @@ export {};
   // A helper lays getters off a table, as bundlers write it. What is expected at the reads is found from each target's own readers: once a target, however often it is filled.
   ...(
     [
-      ["calls of the helper on one target, a name each", (size: number) => `const ns = {};\n` + lines(size, index => `lay(ns, { a${index}: () => f${index} });`), (index: number) => `ns.a${index}()`],
-      ["targets that the helper fills with a name each", (size: number) => lines(size, index => `const ns${index} = {}; lay(ns${index}, { a${index}: () => f${index} });`), (index: number) => `ns${index}.a${index}()`],
-      ["names of one table that the helper lays on one target", (size: number) => `const ns = {};\nlay(ns, { ${upTo(size, index => `a${index}: () => f${index}`).join(", ")} });\n`, (index: number) => `ns.a${index}()`],
+      ["calls of the helper on one target, a name each", 1000, (size: number) => `const ns = {};\n` + lines(size, index => `lay(ns, { a${index}: () => f${index} });`), (index: number) => `ns.a${index}()`],
+      ["targets that the helper fills with a name each", 4000, (size: number) => lines(size, index => `const ns${index} = {}; lay(ns${index}, { a${index}: () => f${index} });`), (index: number) => `ns${index}.a${index}()`],
+      ["names of one table that the helper lays on one target", 1000, (size: number) => `const ns = {};\nlay(ns, { ${upTo(size, index => `a${index}: () => f${index}`).join(", ")} });\n`, (index: number) => `ns.a${index}()`],
     ] as const
   ).map(
-    ([counted, fill, call]): Shape => ({
+    ([counted, size, fill, call]): Shape => ({
       name: `getters that a helper lays off a table, each called in one loop: ${counted}`,
       counted,
-      size: 1000,
+      size,
       entry: "main.js",
       write: size => ({
         "main.js":

@@ -204,11 +204,9 @@ pub struct WebSocket<const SSL: bool> {
     initial_data: Cell<Option<Box<InitialData>>>,
     /// An `ingest` call is on the stack.
     parsing: Cell<bool>,
-    /// `ingest` paused the socket because a nested read queued bytes. It resumes it when the
-    /// queue is parsed.
+    /// `ingest` paused the socket while `initial_data` holds queued bytes.
     paused_for_queue: Cell<bool>,
-    /// The connection ended during `ingest`. `ingest` calls `finish` once it has parsed what
-    /// it has. See `defer_finish_until_parsed`.
+    /// The connection ended during `ingest`, which finishes it after the parse.
     finish_after_parse: Cell<bool>,
     options: ConnectedOptions,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,

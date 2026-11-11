@@ -3570,7 +3570,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
     Bun::testFileModuleLoader(globalObject)->removeEntry(identifier); // takes the loader's cellLock itself
     // A CommonJS loader entry only re-exports the module cached in the require map, so re-evaluating needs both gone.
-    Bun::testFileRequireMap(globalObject)->remove(globalObject, JSC::jsString(vm, identifier.string()));
+    JSC__JSMap__remove(Bun::testFileRequireMap(globalObject), globalObject, JSC::JSValue::encode(JSC::jsString(vm, identifier.string())));
     RELEASE_AND_RETURN(scope, );
 }
 

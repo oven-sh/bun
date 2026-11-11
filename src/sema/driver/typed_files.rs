@@ -1,6 +1,6 @@
 use bstr::BStr;
 use bun_ast::op::Level;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
     Child, ModifierFlags, NodeRef, Services, SignatureKind, SymbolFlags, SymbolOp, SymbolRef,
@@ -3549,7 +3549,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         let reads_enums = (written.iter().flatten())
             .any(|module| module.enums.is_some_and(|enums| !enums.reads.is_empty()));
         let mut output_expressions: FxHashMap<(Shape, u32, u32), ExprId> = FxHashMap::default();
-        // The literals of the output, by the place in a source that each is mapped to: a read, or a use of a `const`.
+        // The literals of the output, by the place in a source that each is mapped to. The printer maps the constant of a read there.
         let mut literals: FxHashMap<(u32, u32), Vec<ExprId>> = FxHashMap::default();
         for index in 0..output_file.exprs.len() {
             let expr = ExprId(index as u32);
@@ -3580,10 +3580,27 @@ impl<'a> Transfer<'_, 'a, '_> {
             .filter(|member| member.kind == MemberKind::Property)
             .map(|member| member.init);
         let output_holders: FxHashSet<ExprId> = constants.chain(fields).collect();
+        // The value of each `let` and `var` of the output that declares one name, with the end of that name.
+        let output_variables: FxHashMap<ExprId, u32> = (output_file.var_decls.iter())
+            .filter(|declaration| reads_enums && declaration.kind != VarKind::Const)
+            .filter(|declaration| matches!(output_file[declaration.pat].kind, PatKind::Ident(_)))
+            .map(|declaration| (declaration.init, output_file[declaration.pat].end))
+            .collect();
         let output_defaults: FxHashSet<ExprId> =
             (output_file.params.iter().map(|parameter| parameter.default)).collect();
-        // Where a type goes behind each parameter of the output that is a name, by the parameter in its source.
-        let mut output_parameters: Option<FxHashMap<(u32, u32), u32>> = None;
+        // Each parameter of the output that is a name, by the parameter in its source: where a type goes, and whether a default value is there.
+        let mut output_parameters: Option<FxHashMap<(u32, u32), (u32, bool)>> = None;
+        let parameters_of_output = || {
+            let named = (output_file.params.iter())
+                .filter(|parameter| matches!(output_file[parameter.pat].kind, PatKind::Ident(_)));
+            named
+                .filter_map(|parameter| {
+                    let name = &output_file[parameter.pat];
+                    let has_default = parameter.default.is_some();
+                    Some((mappings.original(name.pos)?, (name.end, has_default)))
+                })
+                .collect()
+        };
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module.as_ref().filter(|module| !module.is_unchecked()) else {
                 continue;
@@ -3673,8 +3690,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .collect();
             // Where the source holds a value without widening its type: `const`, a `readonly` field, `export default`.
             let constants = (file.var_decls.iter().take(all))
-                .filter(|declaration| declaration.kind == VarKind::Const)
-                .map(|declaration| declaration.init);
+                .filter(|declaration| declaration.kind == VarKind::Const);
+            // A `const` with no type annotation has the type of its value.
+            let plain_constants: FxHashSet<ExprId> = (constants.clone())
+                .filter(|declaration| declaration.ty.is_none())
+                .map(|declaration| declaration.init)
+                .collect();
+            let constants = constants.map(|declaration| declaration.init);
             let fields = (file.members.iter().take(all))
                 .filter(|member| {
                     member.kind == MemberKind::Property && member.flags.contains(Flags::READONLY)
@@ -3688,9 +3710,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                         StmtKind::ExportDefault(value) => Some(value),
                         _ => None,
                     });
-            let constants: FxHashSet<ExprId> = constants.collect();
-            let holders: FxHashSet<ExprId> =
-                (constants.iter().copied().chain(fields).chain(defaults)).collect();
+            let holders: FxHashSet<ExprId> = constants.chain(fields).chain(defaults).collect();
             let parameters: FxHashMap<ExprId, u32> = (file.params.iter().take(all))
                 .filter(|parameter| {
                     parameter.ty.is_none() && matches!(file[parameter.pat].kind, PatKind::Ident(_))
@@ -3727,7 +3747,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 let own = || find(chain.operand).or_else(|| find_via_ancestor(&chain));
                 let is_read = read_of(chain.operand).is_some();
-                // The constant of a read is mapped to the read, and the value of a `const` to the use that it stands at.
                 let mapped = literals.get(&(index as u32, source_position));
                 let operands: Vec<ExprId> = match mapped.filter(|_| is_read) {
                     Some(mapped) => mapped.clone(),
@@ -3781,15 +3800,14 @@ impl<'a> Transfer<'_, 'a, '_> {
                     if let Some((twin, ty, read, member)) = member {
                         let is_held_otherwise = holders.contains(&chain.outermost)
                             && !output_holders.contains(&operand);
-                        let annotation = read.annotation;
-                        if read.is_in_const_context || is_held_otherwise || annotation.is_some() {
+                        // The build can declare a `const` with `let`. Then the name gets the type that the `const` had.
+                        let declared_with_let = (plain_constants.get(&chain.operand))
+                            .and_then(|_| output_variables.get(&operand));
+                        let is_regular = is_held_otherwise && declared_with_let.is_none();
+                        if read.is_in_const_context || is_regular {
                             let ty = member.member_type(twin);
                             suffix.extend_from_slice(&[&b" as "[..], &ty].concat());
                             level = Level::Compare;
-                            if let Some((start, end)) = annotation {
-                                let declared = module.text(start, end);
-                                suffix.extend_from_slice(&[&b" as "[..], &declared].concat());
-                            }
                         } else {
                             // `("px" as Unit2_Px)!` has a read's type. A cast that is the whole expression never widens.
                             if declared_member_types.insert(&ty[..]) {
@@ -3801,6 +3819,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                             opens += 1;
                             suffix.extend_from_slice(&[&b" as "[..], ty, b")!"].concat());
                             level = Level::Member;
+                            if let Some(&name) = declared_with_let {
+                                insertions.add(name, Order::Slot, [&b": "[..], ty].concat());
+                            }
                         }
                         // A default value that the build moved out of the parameter list no longer types the parameter.
                         let moved = (parameters.get(&chain.outermost)).filter(|_| {
@@ -3808,17 +3829,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                                 && !output_defaults.contains(&operand)
                         });
                         if let Some(&name) = moved {
-                            let names = output_parameters.get_or_insert_with(|| {
-                                let names = (output_file.params.iter())
-                                    .map(|parameter| &output_file[parameter.pat])
-                                    .filter(|name| matches!(name.kind, PatKind::Ident(_)));
-                                names
-                                    .filter_map(|name| {
-                                        Some((mappings.original(name.pos)?, name.end))
-                                    })
-                                    .collect()
-                            });
-                            if let Some(&at) = names.get(&(index as u32, name)) {
+                            let names = output_parameters.get_or_insert_with(parameters_of_output);
+                            if let Some(&(at, _)) = names.get(&(index as u32, name)) {
                                 let held = module.type_of_default(&chain, member, twin);
                                 insertions.add(at, Order::Slot, [&b": "[..], &held].concat());
                             }
@@ -3888,6 +3900,27 @@ impl<'a> Transfer<'_, 'a, '_> {
                         vec![b'('; opens],
                     );
                     insertions.add(end, Order::Close(end - start), suffix);
+                }
+            }
+            // A parameter that had its type from a default value that is a name, where the build moved that value away.
+            let Some(enums) = module.enums else {
+                continue;
+            };
+            for &(name, ty) in &enums.parameters {
+                let names = output_parameters.get_or_insert_with(parameters_of_output);
+                let Some(&(at, false)) = names.get(&(index as u32, name)) else {
+                    continue;
+                };
+                let twin = |of: u32| linked.read_enums.get(&(index as u32, of));
+                let ty = match ty {
+                    ParameterType::Enum(of) => twin(of).cloned(),
+                    ParameterType::Member(member) => {
+                        let member = &enums.members[member as usize];
+                        twin(member.of).map(|twin| member.member_type(twin))
+                    }
+                };
+                if let Some(ty) = ty {
+                    insertions.add(at, Order::Slot, [&b": "[..], &ty].concat());
                 }
             }
         }
@@ -4502,7 +4535,7 @@ impl ReadMember {
     }
 }
 
-/// An access that reads an enum member, or the name of a `const` that holds one. A bundle has the constant there.
+/// An access that reads an enum member. A bundle has the constant there.
 pub struct EnumRead {
     pub pos: u32,
     pub end: u32,
@@ -4514,8 +4547,6 @@ pub struct EnumRead {
     pub is_discriminant: bool,
     /// `getContextuallyTypedParameterType`: the default value of a parameter that the context of its function types.
     pub is_default_of_contextual_parameter: bool,
-    /// For a use of a `const` that has the type of its annotation there: the place of that type.
-    pub annotation: Option<(u32, u32)>,
 }
 
 /// What the checker knows about the enums of a module.
@@ -4529,6 +4560,15 @@ pub struct EnumFacts {
     pub reads: Vec<EnumRead>,
     /// What a `declare enum` says of each declared member, by position. An inexact power of numbers is kept as written.
     pub values: Vec<(u32, Box<[u8]>)>,
+    /// Each parameter that has its type from a default value that is a name, by the position of the parameter.
+    pub parameters: Vec<(u32, ParameterType)>,
+}
+
+/// The type of a parameter: an index of `EnumFacts::enums`, or of `EnumFacts::members` for one member.
+#[derive(Clone, Copy)]
+pub enum ParameterType {
+    Enum(u32),
+    Member(u32),
 }
 
 impl EnumFacts {
@@ -4536,10 +4576,7 @@ impl EnumFacts {
     fn read_at(&self, access: &Expr) -> Option<usize> {
         let at = (self.reads).binary_search_by_key(&access.end, |read| read.end);
         let at = at.ok()?;
-        let is_read = matches!(
-            access.kind,
-            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Ident(_)
-        );
+        let is_read = matches!(access.kind, ExprKind::Dot { .. } | ExprKind::Index { .. });
         (is_read && self.reads[at].pos == access.pos).then_some(at)
     }
 
@@ -4687,7 +4724,6 @@ fn note_enum_reads(
 ) {
     let mut known: FxHashMap<SymbolRef, Option<u32>> = FxHashMap::default();
     let mut roots: FxHashMap<ExprId, SymbolFlags> = FxHashMap::default();
-    let mut read_by: FxHashMap<ExprId, u32> = FxHashMap::default();
     for (index, expr) in hir.exprs.iter().enumerate() {
         let (named, object) = match expr.kind {
             ExprKind::Dot { obj, .. } => (ExprId(index as u32), obj),
@@ -4708,70 +4744,14 @@ fn note_enum_reads(
         let member = match known.get(&symbol) {
             Some(&member) => member,
             None => {
-                let object = hir.node(object);
+                let object = Some(hir.node(object));
                 let member = read_member(facts, services, (file, object), symbol, is_source);
                 known.insert(symbol, member);
                 member
             }
         };
         if let Some(member) = member {
-            read_by.insert(ExprId(index as u32), member);
             note_read(facts, services, (file, hir), ExprId(index as u32), member);
-        }
-    }
-    // A `const` that holds a read, or a use of such a `const`, is a read of the same member wherever a build puts its value.
-    let mut copies: FxHashMap<SymbolRef, (u32, TypeNodeId)> = FxHashMap::default();
-    let mut names: FxHashSet<Atom> = FxHashSet::default();
-    for declaration in hir.var_decls.iter() {
-        let value = (declaration.init.some()).filter(|_| declaration.kind == VarKind::Const);
-        let (PatKind::Ident(name), Some(value)) = (hir[declaration.pat].kind, value) else {
-            continue;
-        };
-        let member = match hir[value].kind {
-            ExprKind::Ident(held) if names.contains(&held) => {
-                let node = hir.node(value);
-                let symbol = services.symbol_at_location(NodeRef { file, node });
-                symbol.and_then(|symbol| Some(copies.get(&symbol)?.0))
-            }
-            _ => read_by.get(&value).copied(),
-        };
-        let node = hir.node(declaration.pat);
-        let symbol = services.symbol_at_location(NodeRef { file, node });
-        if let (Some(member), Some(symbol)) = (member, symbol) {
-            copies.insert(symbol, (member, declaration.ty));
-            names.insert(name);
-        }
-    }
-    // Only a file with such a `const` has its names looked at.
-    let named = |expr: &Expr| matches!(expr.kind, ExprKind::Ident(name) if names.contains(&name));
-    let exprs = if copies.is_empty() {
-        &[][..]
-    } else {
-        &hir.exprs[..]
-    };
-    let syntax = Syntax {
-        file: hir,
-        text: &hir.text[..],
-    };
-    for (index, _) in exprs.iter().enumerate().filter(|(_, expr)| named(expr)) {
-        let node = NodeRef {
-            file,
-            node: hir.node(ExprId(index as u32)),
-        };
-        let symbol = services.symbol_at_location(node);
-        let Some(&(member, annotation)) = symbol.and_then(|symbol| copies.get(&symbol)) else {
-            continue;
-        };
-        note_read(facts, services, (file, hir), ExprId(index as u32), member);
-        // A `const` with a type annotation is, at a use, the member that its value narrowed that type to, or has that type.
-        let (Some(annotation), Some(read)) = (annotation.some(), facts.reads.last_mut()) else {
-            continue;
-        };
-        let used_as = services.type_at_location(node);
-        let flags = services.type_flags(used_as);
-        match flags.contains(TypeFlags::ENUM_LITERAL) && !flags.contains(TypeFlags::UNION) {
-            true => read.is_in_const_context = true,
-            false => read.annotation = Some(syntax.type_span(annotation)),
         }
     }
     facts.reads.shared_sort_by_key(|read| read.end);
@@ -4792,17 +4772,60 @@ fn note_read(
         is_in_const_context: is_in_const_context(services, (file, hir), node),
         is_discriminant: is_discriminant(services, file, node),
         is_default_of_contextual_parameter: false,
-        annotation: None,
     });
 }
 
-/// Notes each read that is the default value of a parameter of a contextually typed function.
+/// Notes the type of each parameter that has it from a default value that is a name. A build can move that value away.
+fn note_parameters_typed_by_a_name(
+    facts: &mut EnumFacts,
+    services: &mut Services<'_, '_, '_>,
+    (file, hir): (FileId, &File<'_>),
+    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+) {
+    for parameter in hir.params.iter() {
+        let default = parameter.default.some().filter(|_| parameter.ty.is_none());
+        let is_name = default.is_some_and(|value| {
+            matches!(
+                hir[hir.skip_type_assertions(value)].kind,
+                ExprKind::Ident(_)
+            )
+        });
+        if !is_name || !matches!(hir[parameter.pat].kind, PatKind::Ident(_)) {
+            continue;
+        }
+        let node = hir.node(parameter.pat);
+        let ty = services.type_at_location(NodeRef { file, node });
+        let flags = services.type_flags(ty);
+        let symbol = (flags.contains(TypeFlags::ENUM_LITERAL))
+            .then(|| services.symbol_of_type(ty))
+            .flatten();
+        let Some(symbol) = symbol else {
+            continue;
+        };
+        let ty = if flags.contains(TypeFlags::UNION) {
+            let declared_by = services.declarations(symbol).first().copied();
+            declared_by
+                .and_then(|declared_by| {
+                    enum_of(facts, services, (file, None), declared_by, is_source)
+                })
+                .map(ParameterType::Enum)
+        } else {
+            read_member(facts, services, (file, None), symbol, is_source).map(ParameterType::Member)
+        };
+        facts
+            .parameters
+            .extend(ty.map(|ty| (hir[parameter.pat].pos, ty)));
+    }
+    facts.parameters.shared_sort_by_key(|parameter| parameter.0);
+}
+
+/// Notes each read that is the default value of a parameter of a contextually typed function. Such a parameter has no type of its own.
 fn note_defaults_of_contextual_parameters(
     facts: &mut EnumFacts,
     checker: &mut Checker<'_, '_>,
     file: FileId,
 ) {
-    if facts.reads.is_empty() {
+    if facts.reads.is_empty() && facts.parameters.is_empty() {
         return;
     }
     let hir = checker.hir(file);
@@ -4812,9 +4835,17 @@ fn note_defaults_of_contextual_parameters(
             let default = parameter.default.some().filter(|_| parameter.ty.is_none());
             let read =
                 default.and_then(|value| facts.read_at(&hir[hir.skip_type_assertions(value)]));
+            let name = hir[parameter.pat].pos;
+            let typed = (facts.parameters).binary_search_by_key(&name, |parameter| parameter.0);
+            if read.is_none() && typed.is_err() {
+                continue;
+            }
+            let given = checker.contextual_param_type(file, FnId(id as u32), index);
             if let Some(read) = read {
-                let given = checker.contextual_param_type(file, FnId(id as u32), index);
                 facts.reads[read].is_default_of_contextual_parameter = given.is_some();
+            }
+            if let (Ok(typed), true) = (typed, given.is_some()) {
+                facts.parameters.remove(typed);
             }
         }
     }
@@ -5080,7 +5111,7 @@ fn flags_of_named(services: &mut Services<'_, '_, '_>, file: FileId, node: Node)
 fn read_member(
     facts: &mut EnumFacts,
     services: &mut Services<'_, '_, '_>,
-    (file, object): (FileId, Node),
+    (file, object): (FileId, Option<Node>),
     symbol: SymbolRef,
     is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
 ) -> Option<u32> {
@@ -5093,6 +5124,29 @@ fn read_member(
         file: declaration.file,
         node: services.node_parent(declaration),
     };
+    let of = enum_of(facts, services, (file, object), declared_by, is_source)?;
+    let name = NodeRef {
+        file: declaration.file,
+        node: services.node_child(declaration, Child::Name),
+    };
+    let is_identifier = services.node_kind(name) == Kind::Identifier;
+    let name = services.node_text(name);
+    facts.members.push(ReadMember {
+        of,
+        name: name.into(),
+        is_identifier,
+    });
+    Some(facts.members.len() as u32 - 1)
+}
+
+/// The index in `EnumFacts::enums` of the enum that `declared_by` declares. `object` names it where `file` reads it.
+fn enum_of(
+    facts: &mut EnumFacts,
+    services: &mut Services<'_, '_, '_>,
+    (file, object): (FileId, Option<Node>),
+    declared_by: NodeRef,
+    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+) -> Option<u32> {
     let of = match target_of_declaration(services, is_source, declared_by) {
         Some(target) => EnumOf::TopLevel(target),
         None if declared_by.file == file => {
@@ -5101,29 +5155,18 @@ fn read_member(
         }
         // An enum of another package has no twin: it is named as this file imports it.
         None => {
-            let imported = services.symbol_at_location(NodeRef { file, node: object })?;
+            let imported = services.symbol_at_location(NodeRef {
+                file,
+                node: object?,
+            })?;
             EnumOf::TopLevel(target_of(services, is_source, imported)?)
         }
     };
-    let name = NodeRef {
-        file: declaration.file,
-        node: services.node_child(declaration, Child::Name),
-    };
-    let is_identifier = services.node_kind(name) == Kind::Identifier;
-    let name = services.node_text(name);
-    let of = match facts.enums.iter().position(|known| *known == of) {
-        Some(known) => known,
-        None => {
-            facts.enums.push(of);
-            facts.enums.len() - 1
-        }
-    };
-    facts.members.push(ReadMember {
-        of: of as u32,
-        name: name.into(),
-        is_identifier,
-    });
-    Some(facts.members.len() as u32 - 1)
+    let known = facts.enums.iter().position(|known| *known == of);
+    Some(known.unwrap_or_else(|| {
+        facts.enums.push(of);
+        facts.enums.len() - 1
+    }) as u32)
 }
 
 /// Whether an initializer is made of numbers alone: `10 ** -24` is the same constant wherever it stands.
@@ -5266,6 +5309,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             }
         }
         note_enum_reads(&mut enums, services, (file, hir), &is_source);
+        note_parameters_typed_by_a_name(&mut enums, services, (file, hir), &is_source);
         let mut exports = Vec::new();
         if let Some(module) = services.symbol_at_location(NodeRef {
             file,

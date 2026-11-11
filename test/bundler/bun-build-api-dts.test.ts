@@ -152,6 +152,32 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  // With `minify.syntax` the parser puts the value of a `const` at each use. A typed file needs the name there.
+  test("minify.syntax: a const that holds an enum member keeps its name", async () => {
+    using dir = tempDir("build-api-dts-enum-const", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `export enum Kind { A = "a", B = "b" }
+const WIDE: Kind = Kind.A;
+const COPY = WIDE;
+export const list = [COPY];
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      minify: { syntax: true },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const read = (name: string) => readFileSync(join(root, "out", name), "utf8");
+    expect(read("index.aot.ts")).toContain(
+      `const WIDE: Kind2 = ("a" as Kind2_A)! /* A */, COPY = WIDE, list = [COPY];\n`,
+    );
+    expect(read("index.d.ts")).toContain("export declare const list: Kind.A[];\n");
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),

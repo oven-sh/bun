@@ -289,6 +289,8 @@ fn evaluate_instruction(
             value: value.clone(),
             loc: *loc,
         }),
+        // A read of an enum member that `Host::keeps_enum_reads` keeps: a local that holds it keeps its name.
+        InstructionValue::LoadGlobal { binding, .. } if binding.is_enum_read() => None,
         InstructionValue::LoadGlobal { binding, loc } => Some(Constant::LoadGlobal {
             binding: binding.clone(),
             loc: *loc,

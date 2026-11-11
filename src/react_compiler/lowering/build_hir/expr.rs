@@ -312,6 +312,16 @@ pub(crate) fn lower_expression(
             flags: StoreStr::new(re.flags()),
             loc,
         }),
+        // No pass computes with such a read, and no local that holds it becomes its value: codegen gives the read back whole.
+        Data::EInlinedEnum(_) if builder.host().keeps_enum_reads() => {
+            Ok(InstructionValue::LoadGlobal {
+                binding: NonLocalBinding {
+                    ref_: Ref::NONE,
+                    kind: NonLocalKind::BunOpaque(*expr),
+                },
+                loc,
+            })
+        }
         Data::EInlinedEnum(e) => lower_expression(builder, &e.value),
 
         Data::EBranchBoolean(lit) => Ok(InstructionValue::Primitive {

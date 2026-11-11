@@ -633,6 +633,77 @@ pick(Kind.B);
 `,
     errors: ["(5,11): TS2345", "(6,11): TS2345", "(7,11): TS2345", "(8,13): TS2345", "(9,6): TS2345"],
   },
+  "constant-that-holds-an-enum-member-under-a-cast-or-as-a-copy": {
+    files: {
+      "index.ts": `export enum Kind { A = "a", B = "b" }
+const WIDE: Kind = Kind.A;
+const FIXED = Kind.A as const;
+const AGAIN = WIDE;
+const PART: string | number = Kind.A;
+const OR_NONE = Kind.A as Kind | null;
+const HELD = (Kind.A as Kind | null)!;
+const EITHER = true ? Kind.A : Kind.B;
+const TEXT = "a" as const;
+export const fixed = [FIXED];
+export const again = [AGAIN];
+export const parts = [PART];
+export const orNone = [OR_NONE];
+export const helds = [HELD];
+export const either = [EITHER];
+export const texts = [TEXT];
+`,
+    },
+    caller: `import { again, either, fixed, helds, Kind, orNone, parts, texts } from "LIBRARY";
+orNone.push(null, Kind.B);
+parts.push("any text");
+helds.push(Kind.B);
+either.push(Kind.B);
+fixed.push(Kind.B);
+again.push(Kind.B);
+parts.push(7);
+orNone.push("a");
+helds.push(null);
+either.push("b");
+texts.push("b");
+`,
+    errors: [
+      "(6,12): TS2345",
+      "(7,12): TS2345",
+      "(8,12): TS2345",
+      "(9,13): TS2345",
+      "(10,12): TS2345",
+      "(11,13): TS2345",
+      "(12,12): TS2345",
+    ],
+  },
+  "constant-with-a-type-that-a-function-reads": {
+    files: {
+      "index.ts": `export enum Kind { A = "a", B = "b" }
+export enum Mode { Dev = "dev", Prod = "prod" }
+type Held = Kind;
+const WIDE: Kind = Kind.A;
+const TYPED: Held = Kind.A;
+const MODE: Mode = Mode.Prod;
+export function inDeclaration(kind = WIDE) { return kind; }
+export const inArrow = (kind = WIDE) => kind;
+export function first<Held>(other: Held) { return [TYPED]; }
+export function describe() {
+  if (MODE === Mode.Dev) return "dev only";
+  return MODE;
+}
+`,
+    },
+    caller: `import { describe, first, inArrow, inDeclaration, Kind, Mode } from "LIBRARY";
+const a: Kind = inDeclaration(Kind.B);
+const b: Kind.A = inArrow();
+const c: Kind[] = first(1);
+const d: "dev only" | Mode.Prod = describe();
+inArrow(Kind.B);
+first(1).push("b");
+const e: Mode.Prod = describe();
+`,
+    errors: ["(6,9): TS2345", "(7,15): TS2345", "(8,7): TS2322"],
+  },
   "template-that-reads-the-enum-of-another-file": {
     files: {
       "kind.ts": `export enum Kind { A = "a", B = "b" }\nexport enum Level { Low = 1, High = 2 }\n`,
@@ -689,6 +760,8 @@ const minified = [
   "enum-member-in-an-expression-that-a-build-can-fold",
   "constant-that-holds-an-enum-member-and-is-used-twice",
   "annotated-constant-that-holds-an-enum-member",
+  "constant-that-holds-an-enum-member-under-a-cast-or-as-a-copy",
+  "constant-with-a-type-that-a-function-reads",
   "enum-member-given-to-a-const-type-parameter",
   "numeric-enum-member-in-a-default-object",
   "template-that-reads-an-enum-member",
@@ -889,6 +962,54 @@ useLabel(1, "x");
 useLabels(["x"], 1);
 useSized({ size: 2 }, null);
 `;
+// A default value that is the name of a `const`, and a `const` of a hook. With a typed file each keeps its name.
+const named: Record<string, string> = {
+  "tsconfig.json": moved["tsconfig.json"],
+  "package.json": moved["package.json"],
+  "src/index.tsx": `export enum Unit { Px = "px", Em = "em" }
+const FIXED: Unit.Px = Unit.Px;
+const WIDE: Unit = Unit.Px;
+const PLAIN = Unit.Px;
+function useState<T>(initial: T): [T] { return [initial]; }
+export function useFixed(first: number = 1, unit = FIXED): string {
+  const [value] = useState(first);
+  return value + unit;
+}
+export function useWide(first: number = 1, unit = WIDE): string {
+  const [value] = useState(first);
+  return value + unit;
+}
+export function usePlain(first: number = 1, unit = PLAIN): string {
+  const [value] = useState(first);
+  return value + unit;
+}
+export function useLocal(first: number) {
+  const unit = Unit.Px;
+  const typed: Unit = Unit.Em;
+  const [value] = useState(first);
+  return value > 0 ? [unit] : [typed];
+}
+export function useDirect(first: number) {
+  const unit = Unit.Px;
+  useState(first);
+  return unit;
+}
+`,
+};
+// The compiler declares each `const` of a hook with `let`. `useDirect` returns the enum, as a `const` that holds a read does.
+const namedCaller = (
+  library: string,
+) => `import { Unit, useDirect, useFixed, useLocal, usePlain, useWide } from "${library}";
+const texts: string[] = [useFixed(1, Unit.Px), useWide(1, Unit.Em), usePlain(1, Unit.Em)];
+const units: Unit[] = useLocal(1);
+useFixed(1, Unit.Em);
+useWide(1, "x");
+usePlain(1, "x");
+useLocal(1).push("x");
+const wrong: Unit.Px[] = useLocal(1);
+let held = useDirect(1);
+held = Unit.Em;
+`;
 // `twins`: a typed file exports the twin of an enum that another typed file imports, and no other: not that of `Own`.
 const twin = (name: string) => `export type { ${name} as __enum_${name} };`;
 const fixtures = [
@@ -946,6 +1067,17 @@ const fixtures = [
     ],
     twins: [],
   },
+  ...[[], ["--minify-syntax"]].map(flags => ({
+    title: ["--react-compiler", ...flags, "with a const as a default value and in a hook"].join(" "),
+    files: {
+      ...named,
+      "callers/of-the-sources.ts": namedCaller("../src/index"),
+      "callers/of-the-typed-files.ts": namedCaller("../out/index.aot"),
+    },
+    args: ["./src/index.tsx", "--react-compiler", "--target=bun", ...flags],
+    errors: ["(4,13): TS2345", "(5,12): TS2345", "(6,13): TS2345", "(7,18): TS2345", "(8,7): TS2322"],
+    twins: [] as string[],
+  })),
 ];
 
 describe.concurrent("bun build --dts", () => {
@@ -1027,18 +1159,29 @@ export { Kind };
     });
   });
 
-  // Under `--dts` the parser folds no arithmetic on an enum member. What `index.js` does must stay the same.
+  // Under `--dts` the parser folds no arithmetic on an enum member, and a `const` that holds one keeps its name, also
+  // where a later clause of a `switch` reads it. What `index.js` does must stay the same.
   test.each([[["--minify-syntax"]], [["--dts", "--minify-syntax"]], [["--dts"]]])(
     "index.js of a build with %j computes what the sources do",
     async flags => {
       using dir = tempDir("build-dts-enum-run", {
         ...checked,
-        "src/index.ts": `export enum Num { Neg = -2, Two = 2 }\nexport const pow = Num.Neg ** Num.Two;\n`,
-        "run.mjs": `console.log((await import("./out/index.js")).pow);\n`,
+        "src/index.ts": `export enum Num { Neg = -2, Two = 2 }
+export const pow = Num.Neg ** Num.Two;
+export function later(n: number) {
+  switch (n) {
+    case 0:
+      const HELD: Num = Num.Two;
+    case 1:
+      return () => HELD;
+  }
+}
+`,
+        "run.mjs": `const { later, pow } = await import("./out/index.js");\nconsole.log(pow, later(0)());\n`,
       });
       const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", ...flags);
       expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      expect(await bun(String(dir), "run.mjs")).toEqual({ stdout: "4\n", stderr: "", exitCode: 0 });
+      expect(await bun(String(dir), "run.mjs")).toEqual({ stdout: "4 2\n", stderr: "", exitCode: 0 });
     },
   );
 

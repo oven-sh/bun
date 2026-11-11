@@ -726,7 +726,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let id_ref = id.r#ref;
                 if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
-                        if val.can_be_const_value() {
+                        // With typed files, a `const` that holds a read of an enum member keeps its name: TypeScript types each use.
+                        let keeps_name = matches!(val.data, ExprData::EInlinedEnum(_))
+                            && self.options.features.writes_typed_files;
+                        if val.can_be_const_value() && !keeps_name {
                             self.const_values.put(id_ref, val).expect("oom");
                         }
                     }

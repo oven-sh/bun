@@ -84,6 +84,11 @@ pub trait Host {
         None
     }
 
+    /// Whether the build writes a typed file. It types a read of an enum member where the read stands, and a local by its name.
+    fn keeps_enum_reads(&self) -> bool {
+        false
+    }
+
     /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()

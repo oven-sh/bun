@@ -1442,6 +1442,11 @@ impl std::fmt::Debug for NonLocalKind {
 }
 
 impl NonLocalBinding {
+    /// Whether this is a read of an enum member that lowering kept whole.
+    pub fn is_enum_read(&self) -> bool {
+        matches!(&self.kind, NonLocalKind::BunOpaque(read) if matches!(read.data, bun_ast::ExprData::EInlinedEnum(_)))
+    }
+
     /// Returns the `name` field common to all variants.
     pub fn name(&self) -> &[u8] {
         match &self.kind {

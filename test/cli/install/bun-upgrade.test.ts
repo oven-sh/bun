@@ -5,6 +5,8 @@ import {
   bunExe,
   bunEnv as env,
   isDebug,
+  isLinux,
+  isMacOS,
   isMusl,
   isWindows,
   normalizeBunSnapshot,
@@ -12,7 +14,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { copyFile, link, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
@@ -184,6 +186,8 @@ function startReleaseServer(opts: {
   zipPath?: string;
   zipBody?: string;
   digest?: string;
+  // Runs when the download is requested, and the response waits for it.
+  beforeDownload?: () => Promise<void>;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
   const server = Bun.serve({
@@ -192,6 +196,7 @@ function startReleaseServer(opts: {
     async fetch(req) {
       const { pathname } = new URL(req.url);
       if (pathname.startsWith("/download/")) {
+        await opts.beforeDownload?.();
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
         return new Response(opts.zipBody ?? "this is not a real zip archive");
       }
@@ -399,6 +404,59 @@ it.concurrent(
         expect(await Bun.file(execPath).text()).toBe(fakeReleaseScript(version));
       }
     }
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The upgrade reads where to install after the download. Another installer can put its file at the path of the
+// running bun in that time. Linux then reports the running executable as `<name> (deleted)`, and the upgrade used to
+// create a file with that name. Not on FreeBSD, which reads the path of the executable when it is first needed.
+it.concurrent.skipIf(!isLinux && !isMacOS)(
+  "installs at the path it was started from when its executable is replaced during the download",
+  async () => {
+    const version = "9.9.9";
+    const exeName = basename(bunExe());
+    const installDir = tmpdirSync();
+    const zipPath = join(tmpdirSync(), "release.zip");
+    const [execPath] = await Promise.all([installStandIn(installDir), writeFakeReleaseZip(zipPath, version)]);
+    using stagingRoot = tempDir("bun-upgrade-replaced-exe", {});
+
+    const downloadRequested = Promise.withResolvers<void>();
+    const replaced = Promise.withResolvers<void>();
+    using server = startReleaseServer({
+      tagName: `bun-v${version}`,
+      zipPath,
+      beforeDownload: () => {
+        downloadRequested.resolve();
+        return replaced.promise;
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd: installDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
+    const stderrText = proc.stderr.text();
+    // Fail with the output of `bun upgrade` if it exits before it asks for the download.
+    const exitedEarly = proc.exited.then(async code => {
+      throw new Error(`bun upgrade exited before the download (code ${code}):\n${await stderrText}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([downloadRequested.promise, exitedEarly]);
+    writeFileSync(execPath + ".new", "#!/bin/sh\necho other\n", { mode: 0o755 });
+    renameSync(execPath + ".new", execPath);
+    replaced.resolve();
+
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+    expectTargetsRelease(stderr, version);
+    expect(stderr).toContain(" Upgraded.\n");
+    expect(readdirSync(installDir)).toEqual([exeName]);
+    expect(await Bun.file(execPath).text()).toBe(fakeReleaseScript(version));
     expect(exitCode).toBe(0);
   },
 );

@@ -504,9 +504,17 @@ known_atoms! {
     toThrowErrorMatchingInlineSnapshot = "toThrowErrorMatchingInlineSnapshot",
     pathToFileURL = "pathToFileURL",
     href = "href",
+    search = "search",
+    hash = "hash",
     file_scheme = "file:",
     file_scheme_and_slashes = "file://",
     hoisted = "hoisted",
+    contexts = "contexts",
+    instances = "instances",
+    mockReturnThis = "mockReturnThis",
+    mockImplementation = "mockImplementation",
+    mockImplementationOnce = "mockImplementationOnce",
+    withImplementation = "withImplementation",
     enumerable = "enumerable",
     configurable = "configurable",
     ShadowRealm = "ShadowRealm",
@@ -737,7 +745,7 @@ impl<'s> InternerPerThread<'s> {
 
     /// The calling thread's interner.
     #[inline]
-    fn own(&self) -> &Interner<'s> {
+    pub fn own(&self) -> &Interner<'s> {
         let (owner_number, at) = OWN.get();
         match self.all.get(at) {
             Some(own) if owner_number == self.number => own,

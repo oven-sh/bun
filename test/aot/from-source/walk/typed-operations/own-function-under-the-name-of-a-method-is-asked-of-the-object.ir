@@ -18,7 +18,7 @@
 # RUN(GUARD): walk f2 mechanisms=all
 # GUARD: AreMembersUnchanged conditions=[{kind=MemberUnchangedAbove layout=L0 key="step"}]
 # The object that hides the method ends no guard: the calls on the other one go on as they were.
-# RUN: run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsEnded")) return parseInt(lines[i]); } return 0; }; globalThis.report = () => ended() < 1 ? "no guard has ended" : "a guard has ended";
+# RUN: run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsInvalidated")) return parseInt(lines[i]); } return 0; }; globalThis.report = () => ended() < 1 ? "no guard has ended" : "a guard has ended";
 # CHECK: 55
 # CHECK-NEXT: 1000
 # CHECK-NEXT: 155

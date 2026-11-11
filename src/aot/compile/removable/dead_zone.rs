@@ -180,7 +180,7 @@ impl Removable<'_, '_> {
 
     fn is_export_initialized(&self, export: Sym) -> bool {
         let may_run_first = |(modules, file): (&ModuleGraph, FileId)| {
-            modules.may_run_before(ModuleRef::File(file), ModuleRef::File(export.file))
+            self.may_run_before(modules, file, export.file)
         };
         match self.files.bound(export.file).initial_state(export.id) {
             InitialState::Undefined | InitialState::Initialized => true,

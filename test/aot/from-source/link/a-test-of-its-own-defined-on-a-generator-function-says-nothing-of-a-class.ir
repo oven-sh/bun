@@ -1,0 +1,16 @@
+# Names on a generator function are not followed. The function leaves with the definition, and whoever looks at it finds that it has left. Nothing is said of a class: what is tested against Other stays in sight.
+# -- source: main.js
+# class Other { constructor() { this.x = 1; } }
+# function* yields() {}
+# Object.defineProperty(yields, Symbol.hasInstance, { value: (v) => v === 1 });
+# const o = new Other();
+# print(o instanceof Other, 1 instanceof yields, o.x);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field {{*}} "x" proven=i32
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true 1
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true 1

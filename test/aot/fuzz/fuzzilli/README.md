@@ -1,61 +1,63 @@
-# Fuzzilli for `bun build --compile --aot`
+# Fuzzing `bun build --compile --aot` with generated programs
 
-[Fuzzilli](https://github.com/googleprojectzero/fuzzilli) generates JavaScript programs and keeps the ones that reach new code in the target. Here the target is the ahead-of-time compiler: the front end (`src/aot`, `src/sema`) and the engine's half (`aot` in JavaScriptCore). Every program that compiles is also run, and compared with `bun run`.
+Everything in this folder does the same thing. It generates a program, compiles it with `--aot`, runs it, and compares what it prints and how it exits with `bun <file>`. A difference is a compiler bug unless it is a documented one.
 
-## What runs
+The programs come from two places. The drivers (`run-*.ts`) generate their own and need nothing but a Bun. A [Fuzzilli](https://github.com/googleprojectzero/fuzzilli) profile mutates programs and keeps the ones that reach new code in the compiler, which needs an instrumented build of Bun.
 
-In a build with `--fuzzilli=on`, `bun build --compile --aot <file>` that Fuzzilli starts doesn't build `<file>` and exit. It stays alive and takes one program after another from Fuzzilli. It compiles each one through every stage up to the finished image, which stays in memory: it writes no executable. The code is `src/runtime/cli/fuzzilli_compile_loop.rs`.
+[`../README.md`](../README.md) describes the other fuzzer, `run.ts`.
 
-Bun compiles an empty program first, so the tables that the first build of a process fills are filled once. Then it starts a second build, which stops at its start, before it reads a file (`Preload` in `src/options_types/aot_options.rs`). From there it forks once for each program. The child runs the whole build, Bun's own code included, and the parent tells Fuzzilli how the child ended. A crash ends only the child.
+## Files
 
-A forked process has one thread, so the whole build runs on it. To fold a call of a built-in, the compiler runs it in a small VM, which the child creates. Bun has to be started with `BUN_JSC_useJIT=0` so that this VM only interprets. The profile sets it. The compiler's output doesn't depend on it.
+| Files | What they do |
+| --- | --- |
+| `lane.ts` | Starts several drivers for a set time and collects their findings. Start here. |
+| `run-alone.ts` | Builds each program into its own executable, as a user does. About a second per program. |
+| `run-batch.ts` | Builds many programs into one executable and runs each in a Worker. Cheaper, but a program is never the entry point. |
+| `run-test-projects.ts`, `run-loads.ts`, `compare-test-runs.ts` | Compare `bun test --aot` with `bun test`. |
+| `run-growth.ts`, `run-scenes-of-large-sizes.ts` | Find build times that grow faster than the program. |
+| `run-footprint.ts`, `run-price-sweep.ts` | Compare an executable's memory and CPU time with `bun <file>`. |
+| `write-*.ts`, `textbook/` | The generators, and seed programs for the one that mutates. |
+| `*.swift`, `fuzzilli.patch`, `list-builtins.ts` | The Fuzzilli profile. |
+| `reprl.py`, `counters-as-coverage.py` | Stand-ins for Fuzzilli and for an instrumented Bun. |
+| `what-the-page-declares.ts` | The differences that the drivers count as documented. |
 
-Two things differ in an engine built with `--fuzzilli=on`. A forked process inherits the memory that the engine has reserved. And until the whole-program analysis has run, the program verifier skips Bun's own functions: they are the same in every build, and the analysis then drops the ones the program doesn't reach.
+The comment at the top of each file says what it does and lists its options.
 
-Then it runs the program twice with the same binary: the image, as `bun run --aot` would, and the file, with `bun run`. It compares the exit code, the signal and stdout (`src/runtime/cli/fuzzilli_run_comparison.rs`). When they differ, it runs both once more, so that a program that prints the time or a random number isn't reported.
+## Run the drivers
 
-So that there is something to compare, Bun puts a declaration of `printValue` in front of each program and, behind it, a call of `printValue` for every name that the program declares outside a block. `printValue` is also a built-in in the profile, so generated code calls it from inside functions. It's `console.log`. With `BUN_FUZZILLI_PRINTS_VALUES=2` it's `src/runtime/cli/fuzzilli_print_values.js`, which reads every property, calls getters, shows which properties are writable, and never prints the message of an error. Compiling it about doubles the time for a small program. The profile builds with `--no-compile-function-source`, and `bun run` hides the text of functions too, because the two print it differently.
+```sh
+bun test/aot/fuzz/fuzzilli/lane.ts --kind few --minutes 60 --jobs 8 --out /tmp/lane --bun build/release/bun
+```
 
-Each run has its own process group and none of Fuzzilli's descriptors. It ends after `BUN_FUZZILLI_RUN_CPU_SECONDS` of processor time (default 5), `BUN_FUZZILLI_RUN_WALL_SECONDS` (default 20), 1 MB of output, or `BUN_FUZZILLI_RUN_MEMORY_MEGABYTES` of resident memory (default 2048). The compiled run reports coverage, so the compiler's run-time functions count.
+`--kind` picks the generators and how many programs share a build. The `kinds` table at the top of `lane.ts` lists them. A job fills about one core. Options that `lane.ts` does not know go to the drivers.
 
-| What happens                                                                            | What Fuzzilli sees | Counted as                     |
-| --------------------------------------------------------------------------------------- | ------------------ | ------------------------------ |
-| both runs exit with 0 and print the same                                                | exit code 0        | `same`                         |
-| the build is refused with a diagnostic                                                  | exit code 1        | `refused-by-the-build`         |
-| both runs fail with the same exit code and print the same                               | exit code 2        | `same-failure`                 |
-| they differ in a way that `docs/compiler/compatibility.mdx` lists                       | exit code 3        | `documented-difference`        |
-| `bun run` differs from itself                                                           | exit code 4        | `plain-bun-is-unsteady`        |
-| `bun run` reaches a limit                                                               | exit code 5        | `neither-finished`             |
-| `bun run` ends by a signal                                                              | exit code 6        | `plain-bun-crashed`            |
-| the second compiled run agrees with `bun run`                                           | exit code 7        | `compiled-program-is-unsteady` |
-| `bun run` refuses the file when it loads it                                             | exit code 8        | `plain-bun-refuses-the-file`   |
-| they print something different                                                          | a crash (SIGUSR1)  | `finding-10`                   |
-| they exit with different codes                                                          | a crash (SIGUSR2)  | `finding-12`                   |
-| only the compiled program reaches a limit                                               | a crash (SIGALRM)  | `finding-14`                   |
-| the compiled program ends by a signal                                                   | a crash, that one  | `finding-<signal>`             |
-| the build crashes, fails an assertion or `--aot-check=Validate`                         | a crash            | `compiler-signal-<signal>`     |
-| the build reports an `internal compiler error`                                          | a crash (SIGABRT)  | `compiler-signal-6`            |
-| the build takes more than `BUN_FUZZILLI_CPU_SECONDS` of processor time (default 30)     | a crash (SIGXCPU)  | `compiler-signal-24`           |
-| the build grows the process by more than `BUN_FUZZILLI_MEMORY_MEGABYTES` (default 4096) | a crash (SIGABRT)  | `compiler-signal-6`            |
+A generated program may connect to any host. On Linux, `lane.ts` gives each driver a network namespace that reaches nothing, if `unshare` allows it. Run everything else in a sandbox such as `../../real-apps/jail.sh`.
 
-With `BUN_FUZZILLI_OUTCOMES=<folder>`, each instance of Bun keeps these counts in `<folder>/<process id>.outcomes`. `BUN_FUZZILLI_RUNS_PROGRAMS=0` only compiles. `BUN_FUZZILLI_CHECKS_PASSES=0` leaves out `--aot-check=Validate`. `BUN_FUZZILLI_PRINTS_VALUES=0` adds nothing to a program: a value that is printed is a value that the compiler can't remove.
+To start one driver yourself:
 
-With `BUN_FUZZILLI_FINDS=<folder>`, Bun keeps each program that ends in a crash in the table above before it tells Fuzzilli, which doesn't record a crash while it reduces another program. It also keeps `compiled-program-is-unsteady` and `plain-bun-crashed`. A program goes to `<folder>/<kind>-<hash>/<n>/program.js`, next to `report.txt` and what the two runs printed, or what the compiler printed. Programs that end the same way, numbers aside, have the same hash. `n` is the base-2 logarithm of the program's size and each `n` is kept once, so the folder with the lowest `n` holds the smallest program. `<folder>/index.txt` lists what was kept, in order, and nothing more is kept once it holds 1 MB.
+```sh
+bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --seconds 600
+```
 
-Fuzzilli reduces every crash and writes it to `<storage>/crashes`.
+A `write-*-sweep.ts` file enumerates every combination of a few small tables, often hundreds of thousands of programs. Most take a folder, a first index, a count and a stride. With `--programs`, `run-alone.ts` takes the files of a folder instead of generating. That is also how you check that it sees a program you know is miscompiled.
 
-## Build Bun
+```sh
+bun test/aot/fuzz/fuzzilli/write-bound-sweep.ts /tmp/bounds 0 3000 10007
+bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/bounds
+```
+
+## Run Fuzzilli
+
+You need Linux, Swift 6.3 and a WebKit checkout.
+
+Build Bun with coverage. `--fuzzilli-compiler-only=on` limits C++ coverage to the functions in `scripts/build/fuzzilli-compiler-coverage.txt`. In Rust, only the crates named `bun_aot*` and `bun_sema*` report coverage.
 
 ```sh
 BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local --asan=on --assertions=on \
   --fuzzilli=on --fuzzilli-compiler-only=on --rust-lto=off --build-dir=build/fuzzilli
 ```
 
-`--fuzzilli-compiler-only=on` limits coverage to the compiler, so a program is interesting only when it reaches new code there. The C++ functions are listed in `scripts/build/fuzzilli-compiler-coverage.txt`. The Rust crates are the ones named `bun_aot*` and `bun_sema*` (`scripts/build/rust/units.ts`). It needs an engine built from source, because the prebuilt one reports coverage everywhere.
-
-## Build Fuzzilli
-
-The patch applies to commit `be2811d00282320381fc8007d64873745772011d`, which needs Swift 6.3.
+Build Fuzzilli with the profile:
 
 ```sh
 git clone https://github.com/googleprojectzero/fuzzilli && cd fuzzilli
@@ -65,391 +67,123 @@ git apply <bun>/test/aot/fuzz/fuzzilli/fuzzilli.patch
 swift build -c release
 ```
 
-## Bun's and Node's APIs
-
-The compiler has a table of every built-in: its name, its parameters, the properties it reads from an options object, and the functions in it that it calls. `list-builtins.ts` turns the table into the list that the profile reads at startup (`BunBuiltins.swift`).
-
-```sh
-bun test/aot/fuzz/fuzzilli/list-builtins.ts build/fuzzilli/codegen/aot_builtin_table.json /tmp/fuzzilli/builtins.json
-```
-
-With `BUN_FUZZILLI_BUILTINS=<that file>`, Fuzzilli knows the globals, `Bun`, `process` and the `node:` and `bun:` modules, with the types of their methods. Four more generators call them: with callbacks that print `this` and their arguments and store through `this`, with options objects whose properties are values, getters or handlers, from subclasses of Bun's classes, and with `await`. `BUN_FUZZILLI_BUILTINS_WEIGHT=<n>` makes the four n times as likely. A `port` is always 0 and a `hostname` always `127.0.0.1`. The list leaves out what starts a process, sends a signal, loads native code, deletes files, or answers differently each time.
-
-## Functions that built-ins call
-
-`BunCallbacks.swift` adds a generator for what a built-in function or an operator calls back into: `toJSON`, `valueOf`, `toString`, `Symbol.toPrimitive`, getters, `Symbol.iterator` with `next` and `return`, `then`, the traps of a proxy, replacers, revivers, comparators and the callbacks of array methods. It builds one or two objects with some of these, as an object literal, an instance of a class, an object that inherits from one of them or a proxy, and hands them to a few of about 250 calls, operators and forms of iteration. Each of the functions prints its name and how many of them ran before it, and each use prints its result, or the name of what it threw, and the count. So the output holds which functions ran, how often and in what order. `BUN_FUZZILLI_CALLBACKS_WEIGHT=<n>` makes the generator n times as likely, and 0 turns it off.
-
-A second generator in that file is about an object that the program already holds: an instance of a class or of a function, an object literal, an object that inherits from one, or an array. One or two uses follow, out of 25 kinds. In most of them a built-in calls or constructs something of the program, and that stores into the object: with an assignment, a computed key, `Object.assign`, `Object.defineProperty`, `Reflect.set`, also with the object as the receiver, `delete`, `Object.setPrototypeOf`, or a store to a member of a member. What is called is the constructor under `Symbol.species` of an array, a regular expression, a promise or a typed array, the constructor of a subclass of one of these, `this` of `Array.from` and `Array.of`, a method under `Symbol.split`, `replace`, `match`, `matchAll`, `search`, `iterator`, `toPrimitive` or `hasInstance`, `next`, `valueOf`, `toString`, `then`, `toJSON`, `exec`, `has` and `keys` of what a method of `Set` takes, a replacer, a reviver, a comparator, a callback of a method of arrays, iterators, sets and strings, a getter or a setter, a trap of a proxy of the object, or a callback of `queueMicrotask`, `setTimeout`, `setImmediate` and `process.nextTick`. Such a constructor can answer the held object, so that the built-in fills it. Four in ten of these functions store nothing, so that the built-in is the only one that does. In the other kinds the built-in stores by itself: a method of `Array.prototype` or of `RegExp.prototype` with the object as `this`, `Object.defineProperties`, the fields of a class whose base constructor returns the object, a function that gets the object as `this` from `call`, `apply`, `bind` or `Reflect.apply`. Behind each use the program prints two to five members of the object, read by name: as they are, with `typeof`, through a function, with `in` or with a pattern. Then it prints `Object.keys`. The names are those that the functions store, and `lastIndex` and `length`. One of them may also be read in front of the use and printed behind it. What the use results in is printed, printed in part (`typeof`, `length`, joined with a member of the object in one expression), or not used. Use and reads may stand in a loop. A program prints every variable of its top level at its end, so a scene stands in a block, or in a function that is called once or in a loop with the `try` around the call: nothing but the scene has the object. The same setting weighs this generator. With `BUN_FUZZILLI_STORES=<percent>`, that share of the programs gets one to three such scenes at its end, without guards, and three in four of those programs are their scenes and nothing else.
-
-## Run
+List Bun's and Node's APIs for the profile, then start it:
 
 ```sh
 mkdir -p /tmp/fuzzilli
-BUN_FUZZILLI_BUILTINS=/tmp/fuzzilli/builtins.json \
+bun test/aot/fuzz/fuzzilli/list-builtins.ts build/fuzzilli/codegen/aot_builtin_table.json /tmp/fuzzilli/builtins.json
+BUN_FUZZILLI_BUILTINS=/tmp/fuzzilli/builtins.json BUN_FUZZILLI_FINDS=/tmp/fuzzilli/finds \
 BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.js .build/release/FuzzilliCli --profile=bunCompiler \
   --jobs=32 --storagePath=<storage> --resume <bun>/build/fuzzilli/bun-asan
 ```
 
-No corpus is kept in this repository. With a new `<storage>`, Fuzzilli starts from an empty one: it generates its first programs itself and writes each program that reaches new code in the compiler to `<storage>/corpus`. `--resume` goes on from there.
-The Bun it starts has to be the one from "Build Bun": only a build with `--fuzzilli=on` takes programs from Fuzzilli and reports coverage.
-"Many programs in one executable" below mutates the `<storage>/corpus` of such a run, and the Bun it tests can be any build.
+No corpus is in this repository. Fuzzilli writes each program that reaches new code to `<storage>/corpus`, and `--resume` continues from there.
 
-`--additionalArguments=--no-builtin-modules` makes a build about twice as fast: Bun's own modules are not compiled along with each program. Some syntax needs a helper from them, so when such a build reports an internal error, Bun builds the program once more with the modules and reports what that build says. That takes as long as a hundred small programs, so turn off the generators of that syntax: `BUN_FUZZILLI_DISABLED_GENERATORS=ForOfWithUsingLoopGenerator,ForOfWithAwaitUsingLoopGenerator,ForAwaitOfWithUsingLoopGenerator,ForAwaitOfWithAwaitUsingLoopGenerator`. A program that uses a `node:` module doesn't run without the modules, so leave out `BUN_FUZZILLI_BUILTINS` too.
+The Bun that Fuzzilli starts compiles each program in a fork of itself and writes no executable (`src/runtime/cli/fuzzilli_compile_loop.rs`). Then it runs the compiled program and `bun run` of the same file and compares exit code, signal and stdout (`fuzzilli_run_comparison.rs`). If they differ it runs both again, so a program that prints the time is not reported. To have something to compare, it appends a `printValue(name, value)` call for every top-level name.
 
-Each instance of Bun writes the program it is compiling to `/tmp/fuzzilli/<process id>.program.js`, so put that folder on a RAM disk. Run the whole thing somewhere it can't reach the network or your files, for example in `test/aot/real-apps/jail.sh`.
-
-## Many programs in one executable
-
-A build costs far more than the program in it: Bun's own modules are compiled along with every program. `run-batch.ts` compiles thousands of programs in one build instead. It works with any build of Bun, because it needs no coverage.
-
-Fuzzilli only generates. With `BUN_FUZZILLI_COLLECTS_PROGRAMS=<folder>`, Bun compiles nothing: it moves each program into the folder, with the calls of `printValue`, and tells Fuzzilli that the program ran. `BUN_FUZZILLI_ENTRY_POINT` must be on the same file system as the folder. Each instance waits while 4096 of its programs are still there. Nothing is new coverage, so give Fuzzilli a corpus to mutate:
-
-```sh
-BUN_FUZZILLI_COLLECTS_PROGRAMS=/tmp/fuzzilli/programs BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.js \
-.build/release/FuzzilliCli --profile=bunCompiler --jobs=4 --storagePath=/tmp/fuzzilli/generator --overwrite \
-  --staticCorpus --importCorpus=/tmp/fuzzilli/storage/corpus --corpusImportMode=full <bun>/build/fuzzilli/bun-asan &
-
-bun test/aot/fuzz/fuzzilli/run-batch.ts --bun <the Bun to test> --programs /tmp/fuzzilli/programs \
-  --work /tmp/fuzzilli/work --finds /tmp/fuzzilli/finds --count 2000 --group 500 --batches 0 --flags=--aot-threads=1
-```
-
-A program that is only stored has never run, and four of five end at a statement that throws, half way down on average. With `BUN_FUZZILLI_GUARDS=<percent>`, in that share of the programs every operation outside functions that can have a guard gets one (`BunGuards.swift`): `try { v5 = new v3(); } catch (e) {}`. With `BUN_FUZZILLI_TRY_BLOCKS=<percent>`, in that share of the programs with guards every other statement at the top level that can throw, a loop or a class with all that is in it, gets a try block of its own, and what it defines is declared in front of the block: `let v5 = undefined; try { v5 = v3.a; } catch(e6) {}`. The code inside functions stays as it is.
-
-`run-batch.ts` takes `--count` programs out of the folder. Several of them can share a folder. With a list, such as `--count 1,3,12`, the batches go through the list in turn: what the compiler proves of a program depends on what else the executable holds, so the same program is compiled in another way beside few programs than beside many. It writes one file for each `--group` programs, with an `import()` of each, and builds one executable with those files as entry points behind `run-each-program-in-a-worker.ts`. That file starts a Worker for each program, which imports that program alone, and ends the Worker after `--milliseconds` (default 250) or 512 MB. The executable runs all programs, `bun run` of the same files runs them again, and the two are compared by what each program printed and how it ended.
-
-A build is one program for the compiler, however many entry points it has. With `--group 1` every program is an entry point, which imports its program with an `import` statement, as the entry point of an application imports a file. A larger group holds an `import()` of each of its programs: the compiler leaves out no file behind `import()` that a `package.json` calls free of side effects.
-
-`--together 32`, with `--group 1`, gives 32 programs one entry point and one Worker. A text that shows neither kind of module gets an `export {};`. `bun run` first runs each program in a Worker of its own. Then an entry point imports 32 programs with `import` statements, one behind the other, and behind each a file that prints a mark. A program that ends in an error is the last of its entry point. One that doesn't end in time waits, and so does one that is no module or brings a CommonJS file: in which order `bun run` runs several CommonJS files that a module imports differs from run to run. A Worker runs an entry point as a whole, in the executable and under `bun run`, and what was printed is compared from mark to mark. The programs that print the same are done: with 400 or more in a build that takes 15 to 20 milliseconds of one processor for each, and a build of 4,000 takes no more for each than one of 400. A program that prints something else waits until 120 of them fill a batch in which each is an entry point, which tells the documented differences from the rest as before. One that prints the same there goes back among those of its neighbors that printed the same. If it still prints something else, it is kept as `among-neighbors-<hash>`, with as few of them as show it in `neighbors.txt`, in the order in which one entry point imports them.
-
-A program that ends in an error is the last of its entry point, so each such program costs an entry point: five programs of a hundred drawn ones, and half of the time of a build. `--throwers 20` takes 20 of 100 of them and leaves the others out, for a lane that is after many programs. `--slow 10` does the same with the programs that don't end in time under `bun run`: each of them needs an entry point to itself, and its runs take the whole bound. A program with an `await` isn't asked again among its neighbors: what it prints behind an `await` at its top level can come behind a neighbor's mark, at a moment that differs from run to run under `bun run` too.
-
-A drawn program is a closed world: the compiler sees where every value comes from and proves the receiver, the callee and the arguments of nearly every call. A program that uses packages is compiled on expectations instead. `--launders 50` makes half of the runs of `run-batch.ts` hand values of every program (objects, functions, classes, texts, numbers, keys: one, all of a kind, a third, or all) through `new Function("value", process.argv[9] ?? "return value")`, see `launder-values.ts`. In TypeScript the value keeps its declared type.
-
-A build of 126 generated TypeScript programs of 400 lines takes 14 seconds of one processor: 2.3 seconds however few they are, and 90 milliseconds for each, up to 600 programs at least. A build that ends in errors takes a quarter of that, the errors of each stage come in a build of their own, and one program in a hundred has one. `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program, which counts only where the line has an error of the type checker. The line of a batch lists `build` and `failed-build` apart.
-
-`--draws ts` or `--draws js` needs no `--programs` and no Fuzzilli: the driver makes the programs of a batch itself. Each starts empty, and `--ordinary-scenes` and `--scenes-of-every-size` write it. `--families 30` draws 30 programs of 100 from the sources of `../sources.ts` instead, which stay as they are drawn, but for the `export {};` that the bed of those sources adds to a text that doesn't say that it stays a script.
-
-Beside a program that can load a module under a name that the build does not know, which text that is evaluated can do too, the compiler counts on code that it hasn't seen, and it proves less about every program of the build. So a program that is written to do so (`../open-world-global-access.ts`, or `eval` as a value) waits, and such programs share executables with each other. The build has the say: when it names a program as the reason under `--explain=trim`, that program leaves for those as well, and the rest is built again. A build that makes an executable and says nothing on this under `--explain=trim`, or prints no counters under `--explain=statistics`, ends `run-batch.ts` with an error.
-
-- A program that the compiler refuses leaves, and the rest is built again.
-- When the process ends in the middle, the program it was in gets the blame and the rest run in a new process. `stopped-before.txt` holds the programs that the runner had stopped earlier in that process: their threads can outlive them.
-- The programs that differ run a second time, both ways, with twenty times the time. The rules for what counts are those in the table above.
-- A program that names `.stack`, `.message` or `.raw` is counted as a documented difference when both runs end alike and each line that differs is printed by a statement that names one of the three, or a variable that such a line names, and so on. A difference in what else it prints counts.
-- They also run in an executable that is built without `--aot`, each as a group of its own. A program that prints and ends there as in the `--aot` executable is counted as "as an executable without --aot" and not kept.
-- A file that `bun run` refuses when it loads it is counted as "bun run refuses the file" and not kept.
-- A program in which an object literal or a class has two getters, or two setters, of one name, and which ends the same way in both runs, is counted as "an accessor defined twice" and not kept: the place of that key among the others differs.
-- A program that still differs is built alone first. If that build warns that the program writes to a built-in, the program is counted as a documented difference: the build of a group gives the warning once.
-- It then runs twice under `bun run`, with a stack of 8 MB and of 2 MB. If what it prints changes, it prints how deep a recursion went, and it is counted as a documented difference.
-- It is then built a second time with `--no-compile-function-source`. If what the executable prints changes, the program prints something that it worked out from the text of a function, such as its length, and it is counted as "function text".
-- A program that reads `this` outside every function and class then runs under `bun run` with `undefined` in its place, which is what an executable has there. If it now prints what the executable printed, it is counted as a documented difference.
-- A program with `[key]: value` in an object literal then runs under `bun run` with each such key converted to a property key in front of its value, which is the order in an executable. If it now prints what the executable printed, it is counted as a documented difference.
-- A program whose executable reports a `ReferenceError` that `bun run` doesn't report is then built from the text that `bun build --no-bundle` makes of it, in which expressions that nothing uses are gone, and without its tests of a variable in front of an empty block (`if (!name) {}`). If that executable does as `bun run` does, the program read a variable before its declaration ran in such an expression, and it is counted as a documented difference.
-- A program that still differs is built alone. If it no longer differs, its neighbors, which are all other programs of the executable, are halved while the difference stays, in groups of the same size: the programs of a group are analyzed together, so what one does to a built-in can change how another is compiled, and all programs of an executable share its tables. `report.txt` says which it was, and `neighbors.txt` holds the neighbors.
-- A program whose second pair of runs agrees is kept as "unsteady", with what the first pair printed in `first-compiled.stdout` and `first-bun-run.stdout`.
-
-What it keeps under `--finds` is laid out as under `BUN_FUZZILLI_FINDS`. `--also-keep=<way>,<way>` keeps programs that ended in a way that is only counted otherwise, for example `bun run is unsteady`. It prints a line for each batch: programs a second of processor time, the time and peak memory of the build and of the two runs, and how many programs ended in which way.
-
-### A search instead of draws
-
-With `--staticCorpus` Fuzzilli mutates the same programs for ever. `counters-as-coverage.py` gives it something to search by, with any build of Bun. Fuzzilli starts that file in place of Bun. It hands each program on to the Bun that collects (`BUN_FUZZILLI_COLLECTOR`), builds what that Bun stored with the Bun under test (`BUN_FUZZILLI_COUNTS_WITH`), `--explain=statistics`, `--explain=forms` and `--aot-testing=NoExecutable`, which writes no executable, and then moves it into the folder. Such a build prints several hundred counters of the compiler: how often each stage touched what it works on, how many calls were inlined, how many tests leave or rejoin, and at how many sites each operation was emitted in which form. A bit of Fuzzilli's coverage map stands for a counter and the size class of how far the program moved it from where an empty program leaves it. So a program that moves a counter as none before it stays in the corpus and is mutated further. A program costs one more build. The file ends at once if the build of an empty program prints no counters.
-
-```sh
-BUN_FUZZILLI_COLLECTOR=<bun>/build/fuzzilli/bun-asan BUN_FUZZILLI_COUNTS_WITH=<the Bun to test> \
-BUN_FUZZILLI_COLLECTS_PROGRAMS=/tmp/fuzzilli/programs BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.js \
-.build/release/FuzzilliCli --profile=bunCompiler --jobs=4 --storagePath=/tmp/fuzzilli/generator --overwrite test/aot/fuzz/fuzzilli/counters-as-coverage.py &
-```
-
-`run-batch.ts` writes `counters-<process id>.json` into `--finds`: the largest value of each counter in its builds so far. A counter that stays at zero counts something that no program has made the compiler do.
-
-## Programs that the driver rewrites
-
-`run-batch.ts` can rewrite a program when it takes it. What is drawn depends on the text of the program alone, and what is kept under `--finds` is the text that was built.
-
-`--splits <percent>` (`split-into-files.ts`) cuts functions and classes of that share of the programs out into other files, so that calls and values cross from file to file. The program moves into a folder of its own, `./split-<hash>/main.ts`, and what the driver lays out as the program only imports that file. A function without indentation can move, a function directly in a block without indentation, a class, and a constant or a variable whose initializer names no variable of main. In half of the programs, what a block without indentation declares becomes a declaration of the file first. A part imports the names of main that it uses, so the two files import each other. An import cannot be assigned to, so a variable moves together with every function that assigns to it, into one file, and main reads it as an import. If something that cannot move assigns to it, they all stay. A class whose definition reads variables of main is defined where it stood, by a function of the part that returns it.
-
-| What is drawn                         | From                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The form of a part                    | `.ts`, `.js`, `.mjs`, `.cjs`, or a package in `node_modules`: CommonJS or a module, found by `main` or by `exports`, in JavaScript, in TypeScript, or in both with an `"aot"` condition                                                                                                              |
-| What main is told about JavaScript    | A declaration file that is right, one that is wrong, one that isn't valid, or none                                                                                                                                                                                                                   |
-| What is wrong in a declaration        | Another type for a parameter or the result (a primitive, `never`, a literal, a tuple, an object type, an interface or a class of main), one parameter more or fewer, a member under another name, a declaration left out                                                                             |
-| A part in TypeScript                  | As it stood, with annotations that its code doesn't fit, or with a declaration of its own for a type of main that says something else, both below `// @ts-nocheck`                                                                                                                                   |
-| How main gets past the checker        | `// @ts-ignore` or `// @ts-expect-error` above each line that names something of a part, `// @ts-nocheck`, or nothing                                                                                                                                                                                |
-| `package.json`                        | In 45 programs of 100 the folder has one that lists main as the only file with side effects, and names are then handed on more often. A package says `"sideEffects"`: `false`, `true`, or a list                                                                                                     |
-| `tsconfig.json` in the folder         | None, or `strict`, `skipLibCheck`, `allowJs`, `checkJs`, `noImplicitAny`, `strictNullChecks`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `isolatedModules`, each on or off                                                                                                            |
-| Between main and a part               | Nothing, a file in TypeScript that exports the names again, or one with a function of its own around each function of the part, typed by `Parameters` and `ReturnType` of that function                                                                                                              |
-| Above a part in CommonJS              | Nothing, or up to three files in CommonJS that hand on the names of the file below, as compilers to CommonJS write `export { x } from` and `export *`: getters, stores, a loop over the keys, `module.exports = require()`. A package in CommonJS can have such an index above a file inside it      |
-| Calls from JavaScript into main       | A part calls functions of main by their names, or as callbacks that main hands over, with arguments of other types and in other numbers, directly and through `call`, `apply`, `Reflect.apply`, `bind` and `new`. It makes an instance of a class of main, changes it, and calls each of its methods |
-| JavaScript without a declaration file | No comments, or JSDoc comments that say the types of its functions, right or wrong                                                                                                                                                                                                                   |
-| How main gets the names of a part     | `import`, and for a part that imports nothing of main also `import *`, `await import()` and `require()`                                                                                                                                                                                              |
-
-A package in TypeScript can ship its sources as a project does: files below `src` that name each other with `.js`, a file that only `import type` and `export type` reach, and a `tsconfig.json` of its own whose options are drawn apart from main's. Main asks one function of such a package and prints the answers.
-
-JavaScript is the same text with its types erased by `Bun.Transpiler`. One program in ten is refused by the checker, and the line of a batch counts the refusals by the code of the first error. A refused program whose folder has a `tsconfig.json` is then checked by `bun check` in that folder. If that accepts the project, the program is kept as "refused-though-checked".
-
-`--prints-members <percent>` (`print-members-of-objects.ts`) rewrites each `printValue("v1", v1)`. The compiler follows an object for as long as it sees everything that is done to it, and `console.log(object)` ends that. A rewritten program prints a primitive as it is and `typeof` for an object, and behind that members of the object, read by name. One program in four reads no member, one reads one member of one variable, one reads one member of each, and one reads up to three, the keys and the length.
-
-`--hooks-fail <percent>` changes functions that count their calls, which are the ones that built-ins call: four in ten of them end in an error that no `throw` statement raises, such as a name that nothing declares, `null.member`, `1n + 1` or `structuredClone(() => 0)`. The error passes through the built-in to the `try` around it.
-
-`--scenes-of-every-size <percent>` (`write-scenes-of-every-size.ts`) writes one or two scenes whose one parameter is a size: the cases of a switch over numbers or texts, the elements of a list literal, the fields of an object literal or of a pattern, the operands of a call, a concatenation or a sum, the variables that a closure captures or a `try` stores, the classes that share a method, the members of a union, the levels of calls, blocks and groups of a pattern, the files behind a barrel, the length of a text or a key. The size is drawn one below, at or above a number at which the compiler changes what it does, small numbers more often than large ones. Everything else in the scene is plain, but for one place: a value of another kind, a hole, a getter, a member that is missing. Other kinds of scenes are what passes of the compiler look for and a generator of random operations seldom writes: divisions by constants, rest parameters handed on, collections filled by counted loops, awaits of direct calls, keys put together from parts, `new RegExp(text)`, `require`, imports of JSON and text, unions told apart by a tag, `new URL(text).pathname`, generators ended before their first step, the helpers that TypeScript, esbuild and Bun emit, and WebAssembly modules written as bytes. In TypeScript one more kind declares a type, calls a function over it with what the type says, and then with one value that is not: it comes through `any`, `unknown`, a type parameter, `JSON.parse` or a declaration file beside a JavaScript file. A program that gets such scenes gets no ordinary ones. `writeOneSceneOfEverySize(kind, seed, isTypeScript, size)` writes one scene of a kind, with every size in it as given.
-
-`run-scenes-of-large-sizes.ts` builds the same kinds of scenes at sizes that a batch cannot afford, one program to a build: 256, 1,024, 4,096, 16,384 and 65,536, each kind until a build is refused, stops, or doesn't end in `--seconds` (default 600). It prints one line for each build, with the time, the memory, and how many times the time of the size before. All times are processor time, which doesn't depend on what else the machine does. It keeps a program whose build doesn't end in time (`not-ended-<kind>-<extension>-<size>`), stops (`build-stopped-`), takes 20 seconds or more and over nine times the time of a quarter of the size (`grows-`), or whose executable prints something else than `bun run` (`differs-`). `--share 3/24` lets 24 processes share the kinds, and `--rounds 0` never ends.
-
-`--ordinary-scenes <percent>` (`write-ordinary-scenes.ts`) writes one to three scenes of ordinary code, drawn from tables, in front of the lines that print the variables. In six programs of ten the scenes are the whole program, because what the compiler knows about a function of the library depends on all its callers. A scene appends to a text and prints it at its end, and most of its statements stand in no `try`.
-
-| Scene       | What is drawn                                                                                                                                                                                                                                                                                                                         |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Parsed data | Two to five texts of lists or records go through the same code, out of `JSON.parse`, a copy of its result, or literals. They are of one kind, but for a cell of another kind, a key that is missing, added or in another place. The code asks what an element is (`===`, `typeof`, `switch`, `Array.isArray`) beside arithmetic on it |
-| Walks       | Iterators of arrays, sets, maps, strings and generators, iterator helpers and array methods, with built-in functions, arrows and functions as callbacks. Beside them iterators that are written by hand, as an object, a class, a class below `Iterator` or a generator, walked by `for-of`, patterns, spread and built-ins           |
-| Idioms      | Built-ins that are handed to built-ins (`map(Number)`, `replace(/-/g, String)`, `JSON.parse(text, Array.of)`), and array-likes, thenables, set-likes and objects with `valueOf`, `toString` or `Symbol.toPrimitive` where a built-in takes them                                                                                       |
-
-A fourth kind of scene is about a variable that changes in the middle of the expression that reads it: between two elements of an array literal, two members of an object literal, among them a getter and a setter of one name, two arguments, two parts of a template. What changes it is an assignment, an arrow that is called on the spot, a function, a getter. A scene is plain in most of its places, so that what is odd in it stands alone: most have one caller with one kind of value, and print what they read without a function that all values pass through.
-
-A fifth kind is a module whose exports have the names of globals (`NaN`, `Array`), of members that every object has (`constructor`, `toString`) or of keywords (`default`, `typeof`). They are read through a namespace, the module's own or that of another file: with a pattern, by name, under a key, from a copy.
-
-`--unwraps-try-blocks <percent>` takes `try` blocks out of a program, all or half of them: what stood in one stands in a plain block, and its `catch` is gone. A statement that throws then ends the program, in both runs.
-
-`--names-of-globals <percent>` gives one or two variables, functions, classes or parameters of a program the name of a global, such as `NaN`, `Array` or `process`. With `--splits` such a name is also exported, imported and read from a namespace.
-
-`--hands-over-built-ins <percent>` (`hand-over-built-ins.ts`) puts built-in functions where a program hands over functions of its own: as callbacks, as traps of a proxy, as methods of an object that a built-in calls. One program in three has one such place. A program draws from one to three built-ins, so that one of them can be the only callee that a function of the library sees.
-
-`--prints-into-a-text <percent>` replaces `printValue` by a function of the program that appends to a text, which is printed at the end. `console.log` is a call of the host, about which the compiler knows nothing, and it sees through a function that appends to a variable.
-
-`--collects <percent>` runs the executable of that share of the batches a second time, with a collection at every few allocations and with what is freed overwritten (`BUN_JSC_slowPathAllocsBetweenGCs`, `BUN_JSC_useZombieMode`, `BUN_JSC_scribbleFreeCells`; the interval, and whether the collections are young, are drawn for each batch). Only programs that printed the same as under `bun run` in the first run count. One that prints something else now is asked again, and so is `bun run` in the same environment: what `bun run` prints too is only counted. The rest is kept as "collections-stdout", an end by a signal as "collections-signal", and one that `bun run` shares as "bun-run-collections-signal". `report.txt` has the environment.
-
-`--ends-early <percent>` runs the executable of that share of the batches three times more. The runner ends the Worker of each program at a moment that it draws from a span of 1 to 256 ms (`BATCH_ENDS_WITHIN`), whatever the program is doing then. In each such pass 1, 2, 4 or 8 Workers run at the same time (`BATCH_AT_ONCE`), and half of the passes run under collections as with `--collects`. What is printed doesn't count. A process that ends by a signal is kept as `ended-early-signal`, or as `bun-run-ended-early-signal` when `bun run` of the same files ends so too. The moment is drawn anew in every run, so a find is repeated by running it many times.
-
-`--minifies <percent>`: that share of the runs of `run-batch.ts` build everything with `--minify-syntax --minify-whitespace`. Both change the shape of the code that the compiler is given and keep its names, so `bun run` of the files as they were written stays the yardstick. `--minify-identifiers` is left out: what a program prints of the names of its functions and classes differs by design. The report of a find holds the flags.
-
-`--beside-an-external <percent>` is drawn once for a process. Such a process builds everything with `--external a-package-outside`, lays that package into `node_modules` beside the programs, and lets every entry point import it first. The package does nothing. Beside it the compiler counts on code that it hasn't seen, and it compiles every function of the built-in modules: a build takes a minute and a half longer, so such a lane takes large batches.
-
-`--one-scene <percent>` leaves a program one of its scenes: what the compiler makes of a function depends on what else the program holds.
-
-## TypeScript
-
-Fuzzilli writes JavaScript. With `BUN_FUZZILLI_TYPES` set, it writes TypeScript (`BunTypeScript.swift`, and the part of `fuzzilli.patch` that changes `JavaScriptLifter.swift`). What a program prints doesn't depend on its types, so the comparison with `bun run` stays the same.
-
-```sh
-BUN_FUZZILLI_TYPES=mixed BUN_FUZZILLI_PRINTS_VALUES=0 BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.ts \
-  .build/release/FuzzilliCli --profile=bunCompiler --jobs=32 --storagePath=<storage> --resume <bun>/build/fuzzilli/bun-asan
-```
-
-The extension of the entry point makes Bun read the programs as TypeScript. The programs declare `printValue` and print their variables themselves, because `// @ts-nocheck` only counts on the first line. Each variable of the top level is printed right behind its declaration and again at the end, so a program that ends early has printed what it had until then. `FuzzILTool --liftCorpusToJS` writes TypeScript too. Rename its files to `.ts`.
-
-Fuzzilli's typer has a type for every variable. It runs twice over a program: the first run collects what each function is called with, and the second one uses that for the parameters. From those types come annotations on parameters, return values, `let` and `const`, and class fields, and an object type for each object literal. An async function returns a `Promise<T>`, a generator a `Generator<Y, R, any>`, and getters and the methods of literals have return types too.
-
-An object type is written in one of several ways that mean the same members: an `interface`, a type alias, a mapped type, `Pick` or `Omit` of a larger interface, an interface with a type parameter that has a default, or an interface with one or two bases, where the base can be generic or joined with `&`. It can have optional members that the literal doesn't have, some of them of its own type. A literal is declared as its type also where it has accessors, methods and computed keys, and `this` in them has that type. A class names its base class where the model follows the base. A class can have a type parameter for the type of one field, an `implements` clause, fields with `declare`, `public` or `readonly`, and parameters of its constructor that are fields.
-
-Each annotation is one of four kinds.
-
-| Kind     | What is written                                                                                                                                |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `absent` | nothing                                                                                                                                        |
-| `right`  | the type from the typer                                                                                                                        |
-| `wider`  | a union with more members, `any`, `unknown`, `object`, a base interface, `Readonly<T>`, `Partial<T>`, `Same<T>`, `T & {}`, a `readonly` array  |
-| `wrong`  | another primitive, another interface or class of the program, an array of other elements, a tuple, the type without its `null` and `undefined` |
-
-A type error stops the build, and a program that doesn't build tests nothing. So for each program, one of three things makes the checker accept it.
-
-- **Casts.** A small model follows what the checker knows about each expression. It follows arithmetic and comparisons, the members of the program's interfaces and classes, calls of its functions, methods and constructors, arrays and strings with their common methods, `Math`, `Number`, `Object`, `JSON` and other objects of the library, `Map<K, V>` and `Set<T>` with type arguments, and typed arrays. Where it can show that an operation is accepted, the operation is written as it is. Everywhere else the operands are cast to `any`, or the line gets `// @ts-ignore`. A value reaches a declaration of another type through `as any`, `as unknown as T`, `!`, or one of the detours below.
-- **`// @ts-ignore` above every line.** Nothing is cast.
-- **`// @ts-nocheck`.** Nothing is cast.
-
-A detour is a generic function that returns its argument: through `pass<T>`, a generic class, a `Map<K, V>`, a callback of `map`, `filter`, `reduce`, `find`, `flatMap`, `forEach`, `sort` or `Array.from`, a `Set<T>`, a `Record<string, T>`, a rest parameter, a destructuring pattern, a variable that closures read and write, a generator, an accessor over a private field, an optional member, `T[K]`, mapped and conditional types, type parameters with defaults and constraints, a `switch` over a discriminated union, a type predicate that is always true or always false, overloads, or `JSON.parse` declared as the type. There are also enums for whole numbers and for strings, whose members are written as constants or as expressions, the enum as the type of a number, unions of a few literals, tuples for short arrays, `satisfies`, `as const`, index signatures, and `int32` for parameters, constants, members and return values. What is stored in an `int32` is written `(value | 0)` where it isn't a whole number in range. A function of the program can get a type parameter of its own, with a bound or a default, for one of its parameters and for what it returns.
-
-Tests follow some declarations and stand at the start of some functions. A test narrows the declared type of the variable or parameter, and each branch uses the value as what the checker takes it for there. The tests are `typeof`, a comparison with `null`, `undefined` or a literal, truthiness, `instanceof` with a class of the program, a class of the library or a class whose `Symbol.hasInstance` always says yes, `in`, `Array.isArray`, and functions that return `value is T`, some of which answer the same for every argument. They are written as `if` and `else`, a conditional expression, `&&`, `||`, an early `break` or `return`, a loop, a condition kept in a constant, a closure in a branch, a call of a function that `asserts` its argument and may not look at it, a `switch` over `typeof` or over the value, a union with a member that tells its parts apart, and `?.` and `??`. The value can also be tested as a member of an object, an element of a tuple or a field. Other declarations are followed by a function with a parameter of a drawn type, which is called with the variable and with values of every kind through `any`.
-
-A scene is such a function in which the value travels before it is used: through operations whose results are kept, typed variables and fields, variables that closures or the module hold, calls, arrays, maps, sets and patterns. The value may only be compared on the way. It may arrive in a variable in a later turn of a loop that began with a value of the declared type. A second parameter may be the only one that is tested. The parameter can have a function type and be called. The function can be an arrow function, a generator or an async function that awaits first.
-
-A scene without a cast is a function that the checker accepts as it stands. In it a value comes to be where another type is declared, and travels on from there as in other scenes, through code without a cast. An array, a member, an instance of a generic class or a `Map` gets a second name whose type allows more, and is written through that name. A class whose method takes one type is used as an interface whose method takes more. `Object.assign` writes the member. A function with an optional second parameter is handed on as a function of one parameter, and that one as a function of two. A call changes a member between a test of the member and its use. Or nothing is there: an element past the end of a list, in a list made with `new Array<T>(2)`, behind a change of `length` or behind `delete`, a key that a record doesn't have, `firstOf<T>([])`, a variable declared with `!`, a field that a method reads before the constructor assigns it, a member that a spread replaces with `undefined`. Or the value changes below a name whose type says that it doesn't: `Readonly<T>`, `readonly T[]`, a `readonly` field or `as const`, written through a second name. The value that arrives is a literal or the variable that the scene follows, with its declared type.
-
-As often as `generic` says, generic code stands in between. A generic function stores its second argument in its first, a list, a member, a `Map`, a `Pile<T>` or an object with a method, and is called with a type argument that allows more than the first argument's own type. `store<T, K extends keyof T>(target, key, value: T[K])` gets a key that is one of two. A class that extends `Base<T>` at one type is used as `Base` of a wider one. `asserts value is T` and `value is T` say so whatever the value is. Or generic code that is used at the type finds nothing: `lastOf<T>([])`, `Array.from<T>({ length: 2 })[1]`, `Object.values<T>({})[0]`, a field declared with `!` in `Slot<T>`, an optional parameter returned with `!`.
-
-Bystanders are variables of the function that have nothing to do with the value: a counter, a fraction, a text, a list, an object, a closure that counts. Statements between the steps of the journey change them, some of them inside closures that also hold the value, and the function prints them at the end, or returns them, also in a new list or a new object out of which the caller reads. The counter starts at 0 or at what the caller gives: a parameter, one with a default, a rest parameter, a member of an object. A scene has the counter alone, the counter and one more, or all of them. What is computed from the value is sometimes stored back where the value came from. Beside about a third of the scenes stands a twin: a function that makes an object with a key that the journeys use (`held`, `value`, `first`), which holds another type there. Three twins of four are called. The `try` is inside the function or around its call. The call stands alone, in a loop, also a loop of one turn, in a loop within a loop, in a callback of `forEach`, or four times in a row: how often the compiler expects a function to run follows from that.
-
-A program that is its scenes alone has one to four scenes at the top level, the helpers that they use and nothing of what Fuzzilli wrote, which then only seeds the choices. `without-casts` says how many of the scenes are without a cast. If Fuzzilli's program has no class, its interfaces stay declared, and the scenes use them: a literal with the members of an interface is a value of it.
-
-Other declarations are followed by statements that change what the variable holds, through `any`. A member or an element gets a value of another kind, is deleted or becomes an accessor. The object gets another prototype, one more member, or is frozen. A method is replaced. An array gets holes or another length. A variable declared with `let` gets a value of another kind. Or the statements call a function, a constructor or a method that the program declares, with values of every kind.
-
-`BUN_FUZZILLI_TYPES` is `mixed`, `right`, `wider`, `wrong` or `absent`, or a list such as `right=70,wrong=30,generic=50`.
-
-| Setting                             | Default        | Meaning                                                                       |
-| ----------------------------------- | -------------- | ----------------------------------------------------------------------------- |
-| `absent`, `right`, `wider`, `wrong` | 15, 45, 20, 20 | weights of the four kinds                                                     |
-| `unchecked-file`                    | 10             | percent of programs with `// @ts-nocheck`                                     |
-| `every-line-ignored`                | 10             | percent of programs with `// @ts-ignore` above every line                     |
-| `ignored-line`                      | 25             | percent of operations that get `// @ts-ignore` and no casts                   |
-| `generic`                           | 25             | percent of annotated variables whose value takes a detour                     |
-| `declared`                          | 50             | percent of expressions that get a variable of their own and aren't inlined    |
-| `int32`                             | 10             | percent of `number` annotations that become `int32` where the build allows it |
-| `files`                             | 0              | percent of programs whose declarations are in files of their own              |
-| `tested`                            | 12             | percent of declarations that tests or a scene follow                          |
-| `without-casts`                     | 25             | percent of those in which it is a scene without a cast                        |
-| `scenes-alone`                      | 0              | percent of programs that are their scenes and nothing else                    |
-| `seed`                              | 0              | changes every choice                                                          |
-
-A program always becomes the same text. The profile puts a string such as `"types 123"` at the start of every program (`TypeScriptSeeds`), which seeds its choices. Each choice is drawn from that seed and from a number for the place where it is made. That number is computed from the instruction, from what it uses and, for a block, from one instruction in it, and not from the numbers of variables or the rest of the program. So when Fuzzilli removes or changes a part of a program, the rest keeps its types: a finding can be reduced, and a program in the corpus hands its types on to the programs made from it. Another such string inside a block seeds what follows it there. In 15 of 100 programs the profile adds or changes one, which draws the types of a part of the program again. `TypeScriptSeeds` also turns away the programs that are refused whatever their types are (`rejectProgramThatCannotBuild`): a store to a built-in or to a member of one, a private name outside its class or declared twice, `super()` in a class without a base class, and a regular expression with the flag `v`. A program without a seed, such as one from an older corpus, takes a hash of itself. With `files`, the helpers and enums of a program go to one file and its object types to another, and the program imports them. The file of helpers and a second file can import each other, the program can import everything from a file that only has `export *`, and in a third of these programs all helpers are in one file that is the same for every program, so the programs of a batch share it. Two in five of these programs also import a CommonJS file (`.cjs`) that requires a second one, which may require it back. The file exports through `exports.x`, `module.exports`, `this`, `__esModule` with `default`, a function or a class with members, getters, or a loop over the names. The program imports it by default, by name, both, as a namespace, with `require` or with `await import`. Each file follows the program behind a line `// @filename: ./<name>.ts`, so whatever writes the program to disk has to cut the text there and put the files beside it.
-
-In a typed run the profile adds five code generators (`typeScriptCodeGenerators`): an object whose accessors and methods store it into itself and hand it on, a variable that a closure captures and that holds objects and primitives in turn, a variable that is compared with an object and then used as a key, a class with a base class, and whole numbers in operators, templates and keys. The profile turns off `with`, which TypeScript doesn't allow. It starts 15 in 100 instances of Bun with `--aot-erase-types`, which compiles the same text without reading its types.
-
-## For so many minutes, without Fuzzilli
-
-`lane.ts` starts several drivers that draw their programs themselves (`--draws`), ends them after so many minutes, and lists what they found in the files that `../run.ts` writes. It needs nothing but Bun. `../burst.ts` starts it beside its runs of `run.ts`. `--kind` picks which programs are drawn and how many share a build; the table stands at the top of the file.
-
-```sh
-bun test/aot/fuzz/fuzzilli/lane.ts --kind few --minutes 60 --jobs 8 --out /tmp/lane
-```
-
-## Each program as its own entry point
-
-`run-batch.ts` puts a runner, Workers and other programs into the executable that it builds. A program is never the entry point there. What a build proves only of an entry module that runs once doesn't show, and neither does what it leaves out because nothing reaches it: any second use in the same build brings it back. Of 31 programs that were known to go wrong when built by hand, `run-batch.ts` saw 12 at one program to a build.
-
-`run-alone.ts` builds each program the way a user does, `bun build --compile --aot <file>`, runs the executable as a process and holds it against `bun <file>`. It saw 27 of the 31. A build for each program costs about a second. The kinds `deeds`, `places` and `alone` of `lane.ts` use it.
-
-```sh
-bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds \
-  --scene sceneOfASingleDeed --checks-proofs 50 --writes-straight 25 --as-a-test 25 --seconds 600
-```
-
-`--programs <folder>` takes the files of a folder in place of draws. That is how to ask whether the driver sees a program that is known to go wrong.
-
-It counts these and doesn't keep them: a difference that the executable of `bun build --compile` without `--aot` shows too, such as a `tsconfig.json` in a subfolder or when an `import()` runs its file. An order in which files are loaded, unless `bun <file>` and that executable agree on it and `bun <file>` says the same twenty times. The layout of a function's text. What the compatibility page declares. A compiled test run that prints what the executable prints. An executable that dies is always kept.
-
-### Kin of the programs that came last
-
-Each unit of the compiler brings programs that use what it adds, and most of them are of one shape. `write-kin.ts` makes one to three small changes to such a program, of the kind a reader makes by hand to see how far a fault reaches: `var` for `let`, a fraction for a whole number, `null` out of a parser, a loop that runs backward, two operands the other way round, the whole file inside a function. `run-alone.ts --kin 100` draws kin of the stored programs under `../../parallel`, seven of ten from those that changed within two hours of the newest. It draws a folder first and then a file in it, so that a family of hundreds of files doesn't crowd out the one program that came with a unit. A second and a third change fall on the lines beside the first: faults lie where two small things meet. It drops a kin that `bun <file>` doesn't run to its end, and one that parts counts only where the stored program itself does as `bun <file>` does.
-
-`lane.ts --kind more-kin` draws kin of programs that lie outside the tree, such as those that a reader of a change wrote to try it. `FUZZ_MORE_STORED_PROGRAMS` names their folder.
-
-### Ten programs in one executable, then each alone
-
-A build costs about the same for one small program as for ten. `--together 10` builds ten programs behind an entry that imports them in a row. Where that company does as `bun <file>` does, all ten count as the same. Where it parts, each member is built alone in the same way. Where none parts alone, members are taken out while the rest still parts, and what is left is kept as `together-<kind>` once `bun <file>` has said the same twenty times. Of nine known faults, seven showed in every such company that held a program which is wrong alone, one in few and one in none, and one showed in three times as many companies as programs. So this is a second net beside the first, not in its place.
-
-### Words that may only change cost
-
-`--shuffles-costs 50` builds every second program once more under one of the words of `--aot-testing` that may change what the code costs and nothing else: guesses fail unasked, expected types are ignored or shuffled, so are the frequencies of blocks and the choices by cost, Link is given more. The seed is drawn and stands in the report. An answer that changes there is a miscompilation. So is a build that stops.
-
-Each build under a word of `--aot-testing` takes the compiler's own checks too, `--aot-check=Validate`; under a word that may only change cost a coin decides. A stop of those checks is a find whatever the program would have printed: on a build with a known fault in generators they stopped four of 120 drawn programs, of which three went wrong as built. The build as it ships never takes them. They change the frame, and a fault has hidden behind that.
-
-### One loop out of tables that do not know of each other
-
-A compiler decides most about a loop at its head, for all turns at once: which kind a variable has, how far an index goes, what a call can change. `write-loops.ts` puts one function with one loop, or one loop in another, together from tables: what is walked (a list, a view between two others on one buffer, records, a text, a set, a generator, an iterator written by hand), how the head counts, where each variable lives (the function, the file, a maker's closure, a field), what kind of function it is, with what it is called. The body is a motif: two or three statements that act on one variable together, such as a test of it and a store of another kind into it. Statements drawn one by one would hardly ever meet. A function declares only what its loop names, and what is walked is made in plain sight: a closure over the walked parameter, or a list of views out of a `map`, hid the fault that the scene was to show.
-
-`lane.ts --kind loops` draws them by tens. `--changes-draws 20` makes the small changes of `write-kin.ts` to every fifth of them.
-
-### One function, called from places that are unlike each other
-
-A compiler types the parameters of a function by what its call sites bring, copies its head or its whole body into some of them, and keeps a slower way in for the rest. `write-calls.ts` writes one function (a declaration, an arrow, a method, a static, a closure, an async function; with a test at its head or without; with a default, a rest list or a record for its parameters) and two to four sites, each in a function of its own: a plain call, under a `try`, through `call`, `apply`, `bind`, a spread or `Reflect.apply()`, as a callback of `map`, in a generator, with an argument too few or two too many. Each site brings its own kinds of values, in plain sight or out of a parser. Every call says what arrived. `lane.ts --kind calls` draws them by tens.
-
-### A hand in the library's way
-
-`write-hands.ts` writes scenes in which what a program hands to node's library (a stream, options, a request, a response, the value of a header) watches what it is asked for and answers back at its first ask. `lane.ts --kind hands` draws one to a program and builds each alone: a hand ends guards of the library's classes for the whole process. `run-alone.ts` holds every executable against `bun <file>` through `strikeWhatOnlyCounts()` of that file, which takes out a scene whose hand the plain text of the library asked and the compiled text did not.
-
-One hand in three does nothing and answers something else than what stood there, each time that it is asked. Such a scene is never taken out: a text that does not ask, where the answer counts, has not honored it. An heir is hung above a finished object or makes the object itself; only the second has the heir's own layout.
-
-A draw can be held to a part of the tables, for a build that is known to be wrong or for the neighborhood of a mend: `bun write-hands.ts <seed> <count> <folder> '{"entry":"finished","who":"options","name":"^writable$","deed":"write = undefined"}'`, or `ONLY_THESE_HANDS` in the environment of a lane. The tables are `entry`, `who`, `name`, `how`, `deed` and `answer`; `scene` is asked of the whole text.
-
-With `tests` as a fifth argument it writes test files. A test does to the world what a program may not: it adds a name or an accessor to `Object.prototype`, lays a spy or a mock on a prototype of the library or on a built-in, or takes a member of a built-in away, all in front of the makers and one entry point, and undoes it behind (`world` holds the draw to one of these). `compare-test-runs.ts --each-alone --flags=""` runs them. The answers stand in one `SEEN` line and the number of calls in another, so a run that differs in a count alone can be told from one that answers otherwise.
-
-### Ask, change, ask again
-
-A compiler proves things about the objects and classes of a program: which names an object has, where a method is found, what stands above what. Each proof holds until something changes. `write-changes.ts` puts a scene together from tables: who is made and how (a row of classes, their statics, constructor functions, literals, `Object.create`), what is asked of them and where (written out, in a function, in a loop), what changes, on whom and by which road. In JavaScript each name is a method, a field, an accessor or nothing at each level of the row. The same questions are asked in front of the change and behind it. Some changes come in pairs that belong together: a link is laid between an instance and its class and then cut off, a name comes and goes. Whoever is asked is named where it is asked: a list of all of them would let them out of sight, and the compiler would prove nothing that could turn out false. `lane.ts --kind changes` draws them by tens.
-
-### Scenes of one deed
-
-A generator of random operations seldom puts together what people write every day. `write-single-deeds.ts` holds tables of such deeds, a few lines to a scene: something that can be walked goes into something that walks it, a view is read beside its length in a loop, a closure of a function that runs once is lent or kept, a list typed as a class holds an object that no constructor made. `write-hidden-effects.ts` has a lookup, a conversion or a protocol run code that writes what a neighbor in the same expression reads. `write-typed-places.ts` gives a place of a declared type what the type doesn't allow.
-
-Each table was written for a fault that the drivers had missed, and was kept once it found that fault again on a build that has it. Ask that of every new table, and again after every change to one: a scene that ends in the same error both ways finds nothing and looks clean.
-
-A scene writes only what its deed names. A helper that nothing calls is still a writer in sight of the compiler, and a `catch` that reads `error.constructor.name` reaches library code. Either can hide the fault.
-
-### One program for each member
-
-`write-member-sweep.ts` writes one program for each member of every object that the host brings, two steps deep: `typeof holder.member`, `"member" in holder`, and the own keys of each holder. That is about 24,000 programs of one line. A member that is only asked for is reached by nothing else, so this is the net under what a build leaves out. Build each one alone.
-
-```sh
-bun test/aot/fuzz/fuzzilli/write-member-sweep.ts /tmp/members
-bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/members
-```
-
-### Lines that are written out in full
-
-`write-line-sweeps.ts` writes programs of one or two lines, one question each, in nine families. `texts`: the name of a member or a global spelled as a value, as a literal, a piece of a template, a join, a sum, a comparison, the key of a Map. `species`: a static method called off a class that came by `[Symbol.species]`, by a pattern or by `.constructor`. `walks`: something that can be walked goes into something that walks it. `methods`: a method of a built-in prototype called by its name, by a computed name, off the prototype, through `Reflect.apply()`. `handed`: `process`, `console` or `Bun` comes to code of the program by a road on which nobody names it, such as `Symbol.hasInstance`, a callback of a list, `this` by `call`, a proxy or a conversion, and that code reads one member: twenty roads for each member. `symbols`: a well-known symbol is held in a `const`, a `let`, a pattern off `Symbol`, a field, a function or a static, and a member is read, called, asked for or laid under it. `free`: a name that nothing declares and that is spelled like a member of a built-in, such as `map` or `at`, is asked for by `typeof`, read, called. `keys`: a member is read under a key that lies in a `var`, a `let` or a `const` at the top of a module. `words`: a module of the library is loaded under a word that may only change cost, under many seeds. Most of what a small program compiles is the library, and a shuffle of the expected types asks the compiler about it what no program would. The first line of such a program names its flags (`// Flags: ..`), and `run-alone.ts --programs` builds it with them. `texts`, `species` and `walks` have each found a known fault again on a build that has it, and so have one road of `handed`, one word of `words`, seven of the twelve ways of `symbols`, some thirty names of `free` and the `var` of `keys`. `methods` hasn't yet.
-
-```sh
-bun test/aot/fuzz/fuzzilli/write-line-sweeps.ts /tmp/lines species
-bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/lines/species
-```
-
-### Code that tools have written
-
-Code that people publish is written by tools as often as by hand: calls joined by commas, `!0`, a dead `if (0)`, one line of 100,000 characters. `write-package-sweep.ts` writes, for each minified file below a folder of installed packages, or for each package of it, a program of a few lines that loads it and says what it exports.
-
-```sh
-bun test/aot/fuzz/fuzzilli/write-package-sweep.ts /tmp/packages/minified test/node_modules minified
-bun test/aot/fuzz/fuzzilli/run-alone.ts --bun build/release/bun --work /tmp/alone/work --finds /tmp/alone/finds --programs /tmp/packages/minified
-```
-
-### Does a build grow with the program or with its square?
-
-`run-growth.ts` builds a shape at a size and at four times that size, on one thread, and holds the two costs against each other: instructions where `perf` is there, which are the same from run to run, and processor time elsewhere. What a build of an empty program costs is taken off both. A shape is so many things of one kind, such as records of as many layouts in one list, and as many uses that may each meet all of them, such as a function that reads as many names off its parameter. It keeps a shape whose larger build costs more than six times the smaller one. With `--against <table>` it also keeps a shape whose larger build costs more than 1.25 times what the table of an earlier build says, and `--writes <table>` writes such a table. A table of the least that each shape ever cost makes that a ratchet.
-
-```sh
-bun test/aot/fuzz/fuzzilli/run-growth.ts --bun build/release/bun --work /tmp/growth/work --finds /tmp/growth/finds
-```
-
-### Does a loop that holds on to nothing hold on to memory?
-
-`run-footprint.ts` runs loops of millions of turns in which whatever a turn makes is let go in the same turn, and loops with a huge bound that end early, under `bun <file>` and as an executable. It keeps a shape whose executable takes more than twice the memory and 64 MB on top, more than four times the processor time and a second on top, or gives another answer. Some shapes are TypeScript: a list that comes in as `number[]` beside a bound that comes in as `number` was given room for the whole bound in front of the loop. Others hold much of one kind that meets one deed, such as 160,000 names added to an object on which an accessor once lay: what costs `bun <file>` a moment cost the executable the square of it. Where `perf` is there the driver counts the instructions of each executable, which are the same from run to run to the hundredth, and with `--against <table>` it keeps a shape that takes more than 1.3 times what the table of an earlier build says.
-
-```sh
-bun test/aot/fuzz/fuzzilli/run-footprint.ts --bun build/release/bun --work /tmp/footprint/work --finds /tmp/footprint/finds
-```
-
-## Try one program without Fuzzilli
-
-`reprl.py` speaks Fuzzilli's protocol to one Bun. It prints how each program ended, how long it took, and programs per second. The program as it ran, and what the two runs printed, are left beside the entry point.
+`reprl.py` sends a few programs by hand and prints how each ended:
 
 ```sh
 BUN_JSC_useJIT=0 python3 test/aot/fuzz/fuzzilli/reprl.py build/fuzzilli/bun-asan build --compile --aot --aot-check=Validate \
   --aot-threads=1 /tmp/fuzzilli/program.js -- a.js b.js
 ```
 
-## Test runs: `bun test --aot` against `bun test`
+### Verdicts
 
-Two tools need nothing but Bun. Neither uses Fuzzilli.
+| What happened | Exit code or signal | Counted as |
+| --- | --- | --- |
+| both runs exit with 0 and print the same | 0 | `same` |
+| the build reports an error | 1 | `refused-by-the-build` |
+| both runs fail with the same exit code and print the same | 2 | `same-failure` |
+| they differ in a documented way | 3 | `documented-difference` |
+| `bun run` differs from itself | 4 | `plain-bun-is-unsteady` |
+| `bun run` hits a limit | 5 | `neither-finished` |
+| `bun run` is killed by a signal | 6 | `plain-bun-crashed` |
+| the second compiled run agrees with `bun run` | 7 | `compiled-program-is-unsteady` |
+| `bun run` rejects the file when it loads it | 8 | `plain-bun-refuses-the-file` |
+| they print something different | SIGUSR1 | `finding-10` |
+| they exit with different codes | SIGUSR2 | `finding-12` |
+| only the compiled program hits a limit | SIGALRM | `finding-14` |
+| the compiled program is killed by a signal | that signal | `finding-<signal>` |
+| the build crashes, or fails an assertion or `--aot-check=Validate` | that signal | `compiler-signal-<signal>` |
+| the build reports an `internal compiler error` or exceeds its memory limit | SIGABRT | `compiler-signal-6` |
+| the build exceeds its CPU limit | SIGXCPU | `compiler-signal-24` |
 
-`run-test-projects.ts` draws small projects (test files, helper modules, packages, a preload) and runs each under `bun test`, twice, and under `bun test --aot` with the same flags. Each test writes down what it sees, so a wrong value shows where every test passes. A project is kept where a test ends otherwise or sees another value, where the exit codes differ, or where the compiled run crashes. Finds are filed by the kind of the first test that differs, five to a kind. The options are listed at the top of the file.
+Fuzzilli treats a signal as a crash, reduces the program and writes it to `<storage>/crashes`.
+
+Nothing reads `docs/compiler/compatibility.mdx` to decide what is documented. Bun goes by `differs_as_documented` in `fuzzilli_run_comparison.rs`. `run-alone.ts` and `run-batch.ts` go by `what-the-page-declares.ts` and a short list of names each.
+
+### Settings
+
+Fuzzilli passes every variable that starts with `BUN_FUZZILLI_` on to Bun.
+
+| Variable | Meaning |
+| --- | --- |
+| `BUN_FUZZILLI_ENTRY_POINT` | Each Bun writes the program it is compiling to `<folder>/<process id>.<name>`. The folder must exist. Use a RAM disk. |
+| `BUN_FUZZILLI_BUILTINS` | The file from `list-builtins.ts`. Without it Fuzzilli calls none of Bun's and Node's APIs. |
+| `BUN_FUZZILLI_TYPES` | Fuzzilli writes TypeScript: `mixed`, or a list such as `right=70,wrong=30`. `TypeScriptSettings` in `BunTypeScript.swift` has the settings. Needs a `.ts` entry point and `BUN_FUZZILLI_PRINTS_VALUES=0`. |
+| `BUN_FUZZILLI_FINDS` | The folder for findings. |
+| `BUN_FUZZILLI_OUTCOMES` | Each Bun writes its count of each verdict to `<folder>/<process id>.outcomes`. |
+| `BUN_FUZZILLI_CPU_SECONDS`, `BUN_FUZZILLI_MEMORY_MEGABYTES` | Limits of a build: 30 and 4096. |
+| `BUN_FUZZILLI_RUN_CPU_SECONDS`, `BUN_FUZZILLI_RUN_WALL_SECONDS`, `BUN_FUZZILLI_RUN_MEMORY_MEGABYTES` | Limits of a run: 5, 20 and 2048. A run also ends at 1 MB of output. |
+| `BUN_FUZZILLI_RUNS_PROGRAMS=0`, `BUN_FUZZILLI_CHECKS_PASSES=0` | Only compile. Leave out `--aot-check=Validate`. |
+| `BUN_FUZZILLI_PRINTS_VALUES` | 0 adds no `printValue` calls. 2 prints every property of a value. |
+
+The Swift files and `counters-as-coverage.py` read a few more. A comment describes each where it is read.
+
+With `BUN_FUZZILLI_COLLECTS_PROGRAMS=<folder>`, Bun compiles nothing and moves each program into the folder, which must be on the same file system as the entry point. `run-batch.ts` takes them from there and tests any build of Bun. Nothing is new coverage then, so give Fuzzilli a corpus to mutate:
 
 ```sh
-bun test/aot/fuzz/fuzzilli/run-test-projects.ts --bun build/release/bun --work /tmp/projects/work --finds /tmp/projects/finds --seconds 3600
+BUN_FUZZILLI_COLLECTS_PROGRAMS=/tmp/fuzzilli/programs BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.js \
+.build/release/FuzzilliCli --profile=bunCompiler --jobs=4 --storagePath=/tmp/fuzzilli/generator --overwrite \
+  --staticCorpus --importCorpus=<storage>/corpus --corpusImportMode=full <bun>/build/fuzzilli/bun-asan &
+
+bun test/aot/fuzz/fuzzilli/run-batch.ts --bun <the Bun to test> --programs /tmp/fuzzilli/programs \
+  --work /tmp/fuzzilli/work --finds /tmp/fuzzilli/finds --count 2000 --group 500 --batches 0 --flags=--aot-threads=1
 ```
 
-`compare-test-runs.ts` does the same comparison for a folder written by hand: a probe of one area, the witness of a fault, a group of files of an existing suite. A test of such a folder prints `SEEN <label> | <value>` to stderr.
+## Findings
+
+The drivers under `--finds`, and Bun under `BUN_FUZZILLI_FINDS`, store a finding the same way:
+
+```txt
+<finds>/index.txt                  one line for each finding
+<finds>/<kind>-<hash>/<n>/
+  program.<extension>              the program as it was built
+  report.txt                       how both runs ended, the first line that differs, a driver's build command
+  compiled.stdout compiled.stderr bun-run.stdout bun-run.stderr
+```
+
+Findings of one kind whose reports are the same, digits aside, share a hash. `n` is the base-2 logarithm of the program's size, so the lowest `n` holds the smallest program. In a program of several files, a line `// @filename: ./<path>` starts the next file.
+
+| Kind | Meaning |
+| --- | --- |
+| `stdout`, `exit-code` | The executable prints something else, or exits with another code. |
+| `signal` | The executable crashed. |
+| `limit`, `never-ends` | Only the executable hit a limit. |
+| `false-proof` | An executable built to check the compiler's proofs at run time stopped at one. |
+| `build-stopped`, `compiler-signal-<n>` | The compiler crashed or reported an internal error. |
+| `unsteady` | Two runs of the executable differ. |
+
+A prefix says how the program was built or run: `together-` is several programs in one executable, `test-run-` is `bun test --aot`, `cost-<switch>-` is that `--aot-testing` switch. A difference that an executable built without `--aot` shows too is counted and not stored.
+
+A driver exits with 0 whether or not it found something, so look at `index.txt`. `lane.ts` also writes `status.txt` every 20 seconds and, at the end, `findings.tsv` and `as-tests/`, which has the smallest program of each finding in the format of `../../parallel`.
+
+## From a finding to a test
+
+1. Run it again by itself, with the command in `report.txt` or with `run-alone.ts --programs`.
+2. Reduce it. `run-test-projects.ts --reduce <folder of a finding>` reduces a project, and `compare-test-runs.ts --shrink` finds the other test file that a failure needs. Cut a single program by hand until every line is needed. `bun test/aot/run-parallel.ts --root=<out>/as-tests <file>` runs it the way CI will.
+3. Commit the small program with the fix, as `test/aot/parallel/<topic>/<what-it-tests>.<extension>`. [`../../README.md`](../../README.md) has the format. Commit no seeds and no generator output.
+
+## Add a generator
+
+- A sweep: name the file `write-<subject>-sweep.ts`, take `<folder> [first] [count] [stride]`, and write one file for each program. A first line `// Flags: <flags>` adds build flags. Every program must print something, and the same in every run. `test/aot/a-few-of-every-sweep-*.test.ts` find the file by its name and build a dozen of its programs.
+- A random generator: export a function that returns the lines of one small piece of code, and call it from a new method `sceneOf<Name>()` of the class `Scenes` in `write-ordinary-scenes.ts`. `--scene sceneOf<Name>` then generates nothing else. Add it to the list in `writeOrdinaryScenes()` to have it picked at random, and to `kinds` in `lane.ts` for a lane of its own.
+- A Fuzzilli code generator: add a `CodeGenerator` and its weight to `bunCodeGenerators` (`BunBuiltins.swift`), `bunCallbackGenerators` (`BunCallbacks.swift`) or `typeScriptCodeGenerators` (`BunTypeScript.swift`). Copy the Swift files again and rebuild.
+- A Fuzzilli profile: copy `BunCompilerProfile.swift`, change `processArgs`, and register the new name in `Sources/Fuzzilli/Profiles/Profile.swift`, as `fuzzilli.patch` does for `bunCompiler`.
+
+Try a new generator on a compiler that has the bug you wrote it for. Programs that fail the same way in both runs find nothing and look clean. `--aot-testing` has fault injections for this, listed in `driver/AOTOptionWords.cpp` in the engine's `aot` folder:
 
 ```sh
-bun test/aot/fuzz/fuzzilli/compare-test-runs.ts --bun build/release/bun --project /tmp/probe --each-alone
+bun test/aot/fuzz/fuzzilli/lane.ts --kind loops --minutes 5 --out /tmp/red --flags="--aot-threads=1 --aot-testing=AssumeIndexesInBounds"
 ```
-
-With `--groups 40` it takes an existing suite, in place: the test files are shuffled, always alike, and cut into groups, and each group runs plain twice and compiled once. It prints the tests that end alike in both plain runs and otherwise compiled. `--shrink` takes it from there.
-
-```sh
-bun test/aot/fuzz/fuzzilli/compare-test-runs.ts --bun build/release/bun --project . --groups 40 --files "$(cat files-that-pass-one-by-one.txt)"
-```
-
-| What is drawn                 | From                                                                                                                                                                                        |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| What a test does              | About sixty kinds: spies, `mock.module`, replaced built-ins, `require.cache`, copies of a module under a query, Workers, fake timers, snapshots, code from disk, 185 things of the run time |
-| How dense a project is        | Every kind anywhere; sparse, two or three kinds in all files; or bare, where no test file names a built-in module                                                                           |
-| The head of a test file       | Every name of `bun:test` or those it uses, by an import or from `Bun.jest()`; its notes are stored by `node:fs`, by `Bun.write` or by a `require` at call time                              |
-| Where and how a file is named | In the root or up to three folders deep; `.test` or `.spec`; `.js`, `.ts`, `.mjs`, `.mts`, `.jsx`, `.tsx`                                                                                   |
-| The packages                  | ES or CommonJS, five shapes of the default export, an inner file, `main` or `exports`, `sideEffects`, one that reads its own `package.json`, one that uses another                          |
-| The command line              | `--parallel` from 2 to 24 or none, `--randomize`, `-t`, a part of the test files by name, the preload in `bunfig.toml` or as `--preload`                                                    |
-
-What decides whether such a tool can find a fault:
-
-- **What one file does covers the faults of the others.** The build holds one answer for the whole program. One `eval()` admits `runInContext` of `node:vm` everywhere, one `require()` of a module gives it a state of its own, one spy on an object from somewhere opens every export. A project with every kind in it never showed these faults. Sparse projects and `--each-alone` do.
-- **What every file begins with is in every run.** While every drawn file began with an import of `node:fs`, a crash of test files that import no built-in module was never met.
-- **A fault may take a neighbour.** A file that passes alone was refused beside one that takes `test` from `Bun.jest()`. `--shrink` finds the neighbour in a group of forty files in a few minutes; `--each-beside` then asks every form beside it.
-- **A new kind is tried on a build that holds the fault it was written for.** Four kinds found nothing on such a build when they were first written.
-- **A run that prints nothing says nothing.** Where plain `bun test` prints no `SEEN` line the form is void, not the same.
-- **On a busy machine** a test with a server or a child process reaches its limit in either mode. A difference without a crash is run again, and one that does not come again is filed apart.

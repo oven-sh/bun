@@ -221,9 +221,6 @@ test("a module that was not compiled is not loaded from disk", async () => {
   });
 }, 120_000);
 
-// An in-place executable asks the disk for a name that is put together at run time: a compiled module is not found once its source file is gone.
-const movedAway = (name: string) => test.todo(name + ", once the sources have moved away");
-
 const byPath = scene(
   "by-path",
   {
@@ -660,7 +657,6 @@ test("entry points accept glob patterns", async () => {
   expect(none.exitCode).toBe(1);
 }, 120_000);
 
-movedAway("a computed package name resolves like the same literal name");
 const computedNames = scene(
   "computed-names",
   {
@@ -718,7 +714,6 @@ test("a package subpath resolves to the nearest copy of the package", async () =
   expect(await run(project, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(plain);
 }, 120_000);
 
-movedAway("package.json is found for every compiled package");
 const packageJson = scene(
   "package-json",
   {
@@ -1135,7 +1130,6 @@ test("write access to a folder on disk follows the disk's permissions", async ()
   expect(await run(String(dir), [...exe])).toEqual({ stdout: "written\n", stderr: "", exitCode: 0 });
 }, 120_000);
 
-movedAway("fs finds compiled files by path and in directory listings");
 const namesOfFiles = scene(
   "names-of-files",
   {
@@ -1199,7 +1193,6 @@ test("fs tells folders of compiled files from paths that begin alike, once the f
   expect(await run(String(dir), [...exe])).toEqual(plain);
 }, 120_000);
 
-movedAway("Bun.Glob finds embedded files");
 const glob = scene(
   "glob",
   {
@@ -1237,7 +1230,6 @@ test("Bun.Glob finds embedded files", async () => {
   expect(await run(String(dir), [...exe])).toEqual(plain);
 }, 120_000);
 
-movedAway("require.resolve searches from the folders in its paths option");
 test("require.resolve searches from the folders in its paths option", async () => {
   using dir = tempDir("aot-in-place-resolve-paths", {
     "store/a-hook/node_modules/a-hook/package.json": `{ "name": "a-hook", "main": "index.cjs" }`,
@@ -1265,7 +1257,6 @@ console.log(require("a-library"), require("a-hook")(["a", "library"].join("-"), 
   expect(await run(String(dir), ["./built.exe"])).toEqual({ ...plain, stdout: "the library true\n" });
 }, 120_000);
 
-movedAway("a computed package name resolves in a symlinked package store");
 const store = scene(
   "store",
   {

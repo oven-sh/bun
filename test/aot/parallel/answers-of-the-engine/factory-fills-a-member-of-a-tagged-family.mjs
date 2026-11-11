@@ -1,5 +1,5 @@
 // `sum()` stores on what `base()` has from one of the closures under `createBase`: objects of either maker, frozen ones, ones with a key too many, too few or too early come through the factories, and every list of keys is as the language has it
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function Made(kind, pos) { this.kind = kind; this.pos = pos; this.flags = 0; }
 const Maker = Made;

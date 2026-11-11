@@ -8,7 +8,7 @@ use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{ExprId, ExprKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
-use bun_sema::program::{FileId, Files};
+use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema::resolve::join;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -127,6 +127,28 @@ fn find_files_spelled_by(
                 text: ExprId(index as u32),
                 spelled,
             }));
+        }
+    }
+    let Some(compiled) = files.compiled(file) else {
+        return found;
+    };
+    for (site, answer) in files
+        .analysis(file)
+        .import_sites
+        .iter()
+        .zip(compiled.code_answers.iter())
+    {
+        if let ImportSiteKind::RequireResolve(call) | ImportSiteKind::ImportMetaResolve(call) =
+            site.kind
+            && let CodeAnswer::File(resolved) = *answer
+            && files.compiled(resolved).is_some()
+            && !decisions.is_dead_expr(call)
+        {
+            found.push(TextThatSpellsFile {
+                written_in: file,
+                text: site.specifier_node,
+                spelled: resolved,
+            });
         }
     }
     found

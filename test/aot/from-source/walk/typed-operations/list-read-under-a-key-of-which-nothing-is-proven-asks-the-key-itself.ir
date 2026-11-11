@@ -14,25 +14,18 @@
 # sink(linksOf(new Node()).flags, linksUnder(3).flags, textUnder(2), underText(1), linksOf, linksUnder, textUnder, underText);
 # -- end of source
 # RUN(RESULT): walk f2 mechanisms=all-Inlining
-# REQUIRES(RESULT): entries-of-bun
 # RESULT-LABEL: code f2:Body
 # RESULT: = GetArrayElement {{*}}level=Expected
 # RUN(NOTCLOSED): walk f2 mechanisms=all-Inlining
-# REQUIRES(NOTCLOSED): entries-of-bun
 # NOTCLOSED-NOT: = ElemGet
 # RUN(PARAMETER): walk f3 mechanisms=all
-# REQUIRES(PARAMETER): entries-of-bun
 # PARAMETER-LABEL: code f3:Body
 # PARAMETER: = GetArrayElement {{*}}level=Expected
 # RUN(CLOSED): walk f3 mechanisms=all
-# REQUIRES(CLOSED): entries-of-bun
 # CLOSED-NOT: = ElemGet
 # RUN(TEXT): walk f4 mechanisms=all
-# REQUIRES(TEXT): entries-of-bun
 # TEXT-NOT: = GetArrayElement
 # RUN(UNDERTEXT): walk f5 mechanisms=all
-# REQUIRES(UNDERTEXT): entries-of-bun
 # UNDERTEXT-NOT: = GetArrayElement
 # RUN(WITHHELD): walk f3 mechanisms=all-TypedOperations
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: = GetArrayElement

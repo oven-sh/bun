@@ -1,7 +1,7 @@
 use super::support::{
     BuildSummary, CheckedBuild, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, HostScript,
     IMPORTS_DEPENDENCY, PROJECT, ScriptedHost, TYPE_ERROR, TestProgram, check, check_only, codes,
-    project_disk, with_host, with_program, with_runtime_project,
+    project_disk, with_check_of_dependencies, with_host, with_program, with_runtime_project,
 };
 use crate::{Demotion, DemotionCause, RoleDecision, check_and_lower, decide_roles};
 use bun_sema::check::aot::{DiagnosticClass, Effect, FileOrigin};
@@ -470,6 +470,44 @@ fn mistyped_file_under_the_aot_condition_keeps_its_types() {
         ("node_modules/shapes/index.aot.ts", MISTYPED_SHAPES),
     ];
     assert_stays_checked(&files, "node_modules/shapes/index.aot.ts");
+}
+
+#[test]
+fn type_errors_of_dependencies_are_returned_where_asked() {
+    let manifest = r#"{
+        "name": "shapes",
+        "version": "1.0.0",
+        "exports": { ".": { "aot": "./index.aot.ts", "default": "./index.js" } }
+    }"#;
+    let under_aot_condition = [
+        ("main.ts", r#"import "shapes";"#),
+        ("node_modules/shapes/package.json", manifest),
+        ("node_modules/shapes/index.js", INSTALLED_SHAPES),
+        ("node_modules/shapes/index.aot.ts", MISTYPED_SHAPES),
+    ];
+    let plain_source = dependency_with(TYPE_ERROR);
+    let cases: [(&[(&str, &str)], &str); 2] = [
+        (&plain_source, "node_modules/dep/index.ts"),
+        (&under_aot_condition, "node_modules/shapes/index.aot.ts"),
+    ];
+    for (files, path) in cases {
+        with_check_of_dependencies(files, &["./main.ts"], |program| {
+            let file = program.file(path);
+            let build = check_only(program);
+            assert_eq!(
+                build.reported(file, 2322),
+                [(DiagnosticClass::Semantic, Effect::WithdrawsTrust)],
+                "{path}: {:?}, needs another program: {}",
+                program.loaded.origin(file),
+                program.files().needs_another_program(file),
+            );
+            assert!(build.roles.demoted.is_empty(), "{path}");
+            assert_eq!(build.roles.role(file), FileRole::Checked, "{path}");
+        });
+        with_program(files, &["./main.ts"], 1, |program| {
+            assert_eq!(check_only(program).codes(), [0; 0], "{path}");
+        });
+    }
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use super::{DataModule, DataModuleTree, DataValue, DatabasePlace, HostValue};
+use super::{DataModule, DataModuleTree, DataValue, DatabasePlace, FOLDER_OF_DATABASE, HostValue};
 use crate::atom::{Atom, Interner, known};
 use crate::fold::slice_in;
 use crate::hir::{
@@ -128,7 +128,11 @@ impl<'s> Builder<'_, 's> {
             DataModule::EmbeddedFile { path } => {
                 let path = self.expr(ExprKind::String(path));
                 self.file.add_flags(path, ExprFlags::RESOLVED_AT_RUNTIME);
-                vec![self.export_default(path)]
+                self.export_default_beside_marker(path)
+            }
+            DataModule::FileInPlace(path) => {
+                let path = self.host_value(path);
+                self.export_default_beside_marker(path)
             }
             DataModule::Database { path, place } => {
                 let names = self.local_names(&[], 2);
@@ -197,6 +201,16 @@ impl<'s> Builder<'_, 's> {
         }
         statements.push(self.export_list(&exports));
         statements
+    }
+
+    fn export_default_beside_marker(&mut self, default: ExprId) -> Vec<StmtId> {
+        let marker_name = self.local_names(&[], 1)[0];
+        let marker = self.expr(ExprKind::True);
+        vec![
+            self.export_default(default),
+            self.constants(&[(marker_name, marker)]),
+            self.export_list(&[(marker_name, known::__esModule)]),
+        ]
     }
 
     fn default_export_with_marker(&mut self, default: &'s DataValue<'s>) -> Vec<StmtId> {
@@ -347,8 +361,8 @@ impl<'s> Builder<'_, 's> {
         vec![declaration, load, self.export_default(value)]
     }
 
-    fn database(&mut self, path: Atom, place: DatabasePlace) -> ExprId {
-        let path = self.expr(ExprKind::String(path));
+    fn database(&mut self, name: Atom, place: DatabasePlace) -> ExprId {
+        let path = self.expr(ExprKind::String(name));
         let source = match place {
             DatabasePlace::Executable => {
                 let read_file = self.member_of_required_module(b"node:fs", b"readFileSync");
@@ -357,13 +371,11 @@ impl<'s> Builder<'_, 's> {
             }
             DatabasePlace::Disk => path,
             DatabasePlace::WorkingDirectory => {
-                let process = self.expr(ExprKind::Ident(known::process));
-                let cwd = self.member(process, self.atoms.intern(b"cwd"));
-                let cwd = self.call(cwd, &[]);
-                let cwd = self.expr(ExprKind::Call(cwd));
+                let holder = [FOLDER_OF_DATABASE, self.atoms.bytes(name)].concat();
+                let folder = self.required_module(&holder);
                 let bun = self.expr(ExprKind::Ident(self.atoms.intern(b"Bun")));
                 let resolve = self.member(bun, self.atoms.intern(b"resolveSync"));
-                let call = self.call(resolve, &[path, cwd]);
+                let call = self.call(resolve, &[path, folder]);
                 self.expr(ExprKind::Call(call))
             }
         };
@@ -373,12 +385,16 @@ impl<'s> Builder<'_, 's> {
     }
 
     fn member_of_required_module(&mut self, specifier: &[u8], member: &[u8]) -> ExprId {
+        let module = self.required_module(specifier);
+        self.member(module, self.atoms.intern(member))
+    }
+
+    fn required_module(&mut self, specifier: &[u8]) -> ExprId {
         let import_meta = self.expr(ExprKind::ImportMeta);
         let require = self.member(import_meta, known::require);
         let specifier = self.expr(ExprKind::String(self.atoms.intern(specifier)));
         let call = self.call(require, &[specifier]);
-        let module = self.expr(ExprKind::Call(call));
-        self.member(module, self.atoms.intern(member))
+        self.expr(ExprKind::Call(call))
     }
 
     fn call(&mut self, callee: ExprId, args: &[ExprId]) -> CallId {

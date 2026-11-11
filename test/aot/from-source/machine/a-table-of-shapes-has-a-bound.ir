@@ -48,11 +48,11 @@
 # f1 = weigh
 # RUN: bytes f1:Body mechanisms=all
 # CHECK: constants=3
-# RUN(TABLES): bytes f1:Body mechanisms=all testing=RowSaysLess:Callee/f1/ShapesKnown
+# RUN(TABLES): bytes f1:Body mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesKnown
 # TABLES: constants=3
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 275
 # RIGHT-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/ShapesKnown
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesKnown
 # LIE: 275
 # LIE-NEXT: exited with 0

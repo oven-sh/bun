@@ -1,0 +1,17 @@
+# f1 = smallest
+# -- source: conditional-expression-that-reads-the-element-twice.ts
+# function smallest(list: Int32Array): number {
+#   let best = 0;
+#   for (let k = 0; k < list.length; k++) best = list[k] < best ? list[k] : best;
+#   return best;
+# }
+# declare const input: any;
+# (globalThis as any).answer = smallest(new Int32Array(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 16 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 19, patches 0, moves 0, unlikely 6 ; loop: operations 9, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:19,9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 19
+# X64-NEXT: loop: at most 9

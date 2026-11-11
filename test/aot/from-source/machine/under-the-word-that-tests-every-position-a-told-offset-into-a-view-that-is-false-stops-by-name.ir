@@ -1,0 +1,21 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`. So -1 passes `-1 < at`, after which the walk has proven that `at` is at least zero.
+# Because of that proof, a DataView access that is wider than a byte omits `offset >= 0`, and the unsigned comparison `offset + 3 < length` lets -1 pass.
+# The four bytes would begin one byte before the view's memory.
+# With CheckBoundsAtRunTime (which --aot-harden=ignore-told-ranges enables), the check that the proven range would have removed is emitted, and its failure crashes the process with a named error.
+# A fallback to the engine's own call would return the right result, and the false range would go unnoticed.
+# CheckProofsAtRunTime is not in the runs, because it checks the range where the test lets the number pass.
+# The fault is not run without the switch, because it reads memory that does not belong to the program.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: 50462976
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: redundancy elimination check failed at {{*}} (word)
+# STOPPED: crashed with
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function word(view: DataView, from: number): number { let sum = 0; for (let i = 0; i < 2; i++) { const at = (from | 0) + i; if (-1 < at) sum += view.getInt32(at, true); } return sum; }
+# const view = new DataView(new ArrayBuffer(16));
+# for (let i = 0; i !== 16; i++) view.setUint8(i, i);
+# print(word(view, id(-1)));
+# -- end of source

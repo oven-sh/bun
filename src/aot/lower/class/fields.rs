@@ -247,6 +247,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(caller_position);
     }
 
+    pub(super) fn emit_field_born_with(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        value: ValueId,
+        this: ValueId,
+    ) {
+        let caller_position = self.position();
+        let target = self.find_field_target(class, member);
+        self.set_position(self.file.hir[member].name_pos);
+        match target {
+            FieldTarget::Property(name) => self.emit_define(this, name, value),
+            FieldTarget::Private(name) => self.emit_field_definition(this, name, value),
+        }
+        self.set_position(caller_position);
+    }
+
     fn emit_parameter_property_field(&mut self, parameter: ParamId, this: ValueId) {
         let hir = self.file.hir;
         let name = match hir[hir[parameter].pat].kind {
@@ -262,6 +279,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_define(this, PropertyName::Constant(key), undefined);
     }
 
+    pub(super) fn lower_value_of_defined_field(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        this: ValueId,
+    ) -> ValueId {
+        let function_name = match self.find_field_target(class, member) {
+            FieldTarget::Property(name) => self.name_under_member(member, name),
+            FieldTarget::Private(name) => self.name_under_private_name(class, name),
+        };
+        let initializer = FieldValue::Initializer;
+        self.lower_field_value(class, member, initializer, Some(function_name), this)
+    }
+
     fn lower_field(
         &mut self,
         class: ClassId,
@@ -272,9 +303,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let target = self.find_field_target(class, member);
         let function_name = match (is_defined, target) {
-            (true, FieldTarget::Property(name)) => {
-                Some(GivenName::under_member(&self.file.hir[member], name))
-            }
+            (true, FieldTarget::Property(name)) => Some(self.name_under_member(member, name)),
             (true, FieldTarget::Private(name)) => Some(self.name_under_private_name(class, name)),
             (false, _) => self.find_name_of_decorated_value(member),
         };

@@ -1,0 +1,53 @@
+# -- source: main.js
+# const names = ["plum", "pear", "quince", "medlar", "damson", "sloe"];
+# let changing = ["plum", "pear"];
+# const grown = [];
+# grown.push("plum", "pear");
+# function overTheTable(held) { return names.some(name => held[name]); }
+# function overWhatIsHandedIn(list, held) { return list.some(name => held[name]); }
+# function overWhatMayBeAnotherList(held) { return changing.some(name => held[name]); }
+# function found(held) { return names.find(name => held[name]); }
+# function overWhatHasGrown(held) { return grown.some(name => held[name]); }
+# function overAListOfItsOwn(held) { const own = ["plum", "pear"]; return own.some(name => held[name]); }
+# sink(overTheTable, overWhatIsHandedIn, overWhatMayBeAnotherList, found, names, list => { changing = list; }, overWhatHasGrown, overAListOfItsOwn);
+# -- end of source
+# f1 = overTheTable, f2 = overWhatIsHandedIn, f3 = overWhatMayBeAnotherList, f4 = found, f5 = overWhatHasGrown, f6 = overAListOfItsOwn, f8 = the arrow of overTheTable
+# A method of lists that is handed a leaf made for the call walks elements: it is a loop. Inside a loop of its caller its text and the leaf's body are copied to the site. Outside loops they are copied
+# where the receiver is read out of an immutable variable of a file that stays as filled, however the list was filled: behind one test that the list is as its class makes it.
+# What is handed in, what a variable that may be stored again holds and a list that the function makes for itself enter the method as before.
+# RUN: walk f1 f2 f3 f4 f5 f6 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=
+# CHECK: frame 2 callee=f8
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: frame 1 callee=
+# CHECK-NOT: isLoopHead=true
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: frame 1 callee=
+# CHECK-NOT: isLoopHead=true
+# CHECK-LABEL: code f4:Body
+# CHECK: frame 1 callee=
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f5:Body
+# CHECK: frame 1 callee=
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f6:Body
+# CHECK-NOT: frame 1 callee=
+# CHECK-NOT: isLoopHead=true
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (overTheTable, overWhatIsHandedIn, overWhatMayBeAnotherList, found, names, change, overWhatHasGrown) => { const seen = []; const watching = answers => new Proxy({}, { get(target, name) { seen.push(name); return answers(name); } }); const told = run => { seen.length = 0; let answer; try { answer = String(run()); } catch (error) { answer = error.constructor.name; } return answer + " " + seen.join(); }; print(told(() => overTheTable(watching(() => false)))); print(told(() => overTheTable(watching(name => name === "quince")))); print(told(() => found(watching(name => name === "medlar")))); print(told(() => overTheTable(watching(name => { if (name === "pear") names.push("late"); return false; })))); print(told(() => overTheTable(watching(name => { if (name === "pear") names.length = 3; return false; })))); print(told(() => overTheTable(watching(name => { if (name === "plum") delete names[1]; return false; })))); print(told(() => found(watching(() => false)))); names[1] = 7; names.extra = 1; print(told(() => overTheTable(watching(() => 0)))); print(told(() => overTheTable(watching(() => { throw new RangeError(); })))); print(told(() => overWhatIsHandedIn(["a", "b"], watching(name => name === "b")))); print(told(() => overWhatMayBeAnotherList(watching(() => "")))); change(["c"]); print(told(() => overWhatMayBeAnotherList(watching(() => 1)))); print(told(() => overWhatHasGrown(watching(() => null)))); Object.setPrototypeOf(names, { some: () => "another" }); print(told(() => overTheTable(watching(() => false)))); };
+# ANSWER: false plum,pear,quince,medlar,damson,sloe
+# ANSWER: true plum,pear,quince
+# ANSWER: medlar plum,pear,quince,medlar
+# ANSWER: false plum,pear,quince,medlar,damson,sloe
+# ANSWER: false plum,pear,quince
+# ANSWER: false plum,quince
+# ANSWER: undefined plum,undefined,quince
+# ANSWER: false plum,7,quince
+# ANSWER: RangeError plum
+# ANSWER: true a,b
+# ANSWER: false plum,pear
+# ANSWER: true c
+# ANSWER: false plum,pear
+# ANSWER: another 
+# ANSWER: exited with 0

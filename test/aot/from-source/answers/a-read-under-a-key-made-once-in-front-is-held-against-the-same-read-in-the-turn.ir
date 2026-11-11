@@ -1,0 +1,29 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse("{}");
+# let counted = 9;
+# Object.defineProperty(held, "rows", { get() { counted = Math.max(counted - 1, 0); return [5, 6, 7, 8, 9, 10, 11, 12, 13].slice(0, counted); } });
+# const data = [held][zero], w = ["rows"][zero];
+# function f() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f(), counted);
+# -- end of source
+# `data[w]` appears in the loop header and in the loop body. The holder and the key are module-level consts that the compiler knows nothing about.
+# If the holder is a plain object and the key is a string that names an own data property, the read runs no code.
+# The iterations write no named property of any object, so the read finds the same value in every iteration.
+# The read is therefore hoisted: it is done once, before the specialized version of the loop, by an operation that runs no code and returns absent in every other case.
+# If the operation returns absent, the generic version of the loop runs. A hundred iterations went from 10,106 instructions to 836. Plain Bun takes 915.
+# With testing=CheckProofsAtRunTime the read is also built inside the iteration, and its result is checked against the result of the hoisted read.
+# Here an accessor returns a different array at each call. The injected fault, testing=UseGenericOwnKeyReads, makes the hoisted read take the generic path, which runs code.
+# RUN(EVENT): compile InvariantKeyReadsHoisted mechanisms=all
+# EVENT: statistic InvariantKeyReadsHoisted 2
+# RUN(CHECKED): compile InvariantKeyReadsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic InvariantKeyReadsHoisted 2
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 18 2
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 18 2
+# HELD-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UseGenericOwnKeyReads
+# STOPPED: bun: internal AOT error: redundancy elimination check failed
+# STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# STOPPED: crashed with

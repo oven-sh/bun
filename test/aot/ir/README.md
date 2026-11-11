@@ -1,9 +1,6 @@
 # IR text tests
 
-## What is here
-
-Tests of the front end of `bun compile`. A test is one source file: a small program, plus directives in `//` comment lines that say
-what to run and what the printed IR must contain.
+These test the front end of `bun build --compile --aot`. A test is one source file: a small program, plus directives in `//` comment lines that say what to run and what the printed IR must contain.
 
 ```ts
 // RUN: lower
@@ -16,204 +13,61 @@ export function add(a: number, b: number): number {
 }
 ```
 
-The driver is `src/aot/tests/ir_tests.rs`, with `src/aot/tests/support/`.
-
-| Area | What it tests |
+| Folder | What it tests |
 | --- | --- |
-| `commands/` | the commands `lower`, `link` and `emit`, and the option words |
+| `commands/` | the commands and the option words |
 | `lower/<construct family>/` | lowering, one folder per family of constructs |
-| `lower/programs/<topic>/` | whole programs: each lowers, reports no diagnostic that it does not list, counts what its `STATISTIC` lines say and has the functions that its labels name. Their `tsconfig.json` is the one of `test/aot/parallel` |
+| `lower/programs/<topic>/` | whole programs |
 
-- A test file ends in `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` or `.cjs`. A declaration file (`.d.ts`, `.d.mts`, `.d.cts`)
-  is not a test, and neither is a `package.json` or a `tsconfig.json`.
-- The driver descends into subfolders. Folders named `imports` and `node_modules` contain what tests import, not tests.
-- `tsconfig.json` here is the one every test sees, unless a folder below has one of its own.
-- To add an area, create a folder here and add two lines to `ir_tests.rs`: an entry in `AREAS` and a `#[test]`.
+Folders named `imports` and `node_modules` hold what tests import, not tests. The driver is `src/aot/tests/ir_tests.rs`, with `src/aot/tests/support/`.
 
-## Running
+## Run
 
-Every area. Run `bun bd` once first: it writes the generated tables that `bun_aot` includes.
+Run `bun bd` once first. It writes the generated tables that `bun_aot` includes.
 
 ```sh
-cargo test -p bun_aot --test ir_tests
-```
-
-One area:
-
-```sh
-cargo test -p bun_aot --test ir_tests lower
+cargo test -p bun_aot --test ir_tests          # everything
+cargo test -p bun_aot --test ir_tests lower    # one folder
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `TESTAOT=<testaot>` | the engine reads, types and verifies what each run emits. CI sets it |
-| `AOT_IR_REQUIRES_ENGINE=1` | a run that the engine did not verify fails its area. `bun run rust:test` sets it whenever `TESTAOT` is set, so CI has it |
 | `AOT_IR_FILTER=<text>` | runs only the files whose path contains the text |
-| `AOT_IR_OUTPUT=<folder>` | writes what each run printed to `<folder>/<path below test/aot/ir>.<PREFIX>.txt`, followed by its diagnostics and statistics as `DIAGNOSTIC:` and `STATISTIC:` lines. A run that failed outright writes `FAILED: <why>` |
+| `AOT_IR_OUTPUT=<folder>` | writes what each run printed into the folder |
+| `AOT_IR_UPDATE=1` | rewrites the lines below a `GENERATED` line that no longer hold |
 | `AOT_IR_JOBS=<n>` | runs n files at a time. The default is one per core |
-| `AOT_IR_UPDATE=1` | where the check lines of a file no longer hold, or none are written yet, writes the lines below its `GENERATED` line anew from what the runs print, then judges the file as it stands then. A file whose lines hold is left as it is |
+| `TESTAOT=<testaot>` | the engine also reads and verifies what each run emits. CI sets it |
 
-What the tests print:
+A failure is a line `FAIL <file>:<line>: <why>`. Without `TESTAOT` the check lines are still compared, and each run prints a `SKIP` line.
 
-| Line | Meaning |
-| --- | --- |
-| `FAIL <file>:<line>: <why>` | the expectation on that line does not hold. The test fails |
-| `SKIP <file>:<line>: <command>: TESTAOT is not set` | the check lines were compared, but the engine did not see the output |
-| `SKIP <file>:<line>: <command>: TESTAOT was built from another schema` | the same: the tool reads nothing that these tests emit |
-| `SKIP <area>: the engine verified none of <n> runs: ..` | the same for the area, on stderr, so it shows in a passing run too |
+## Write a test
 
-The test program starts `AOT_IR_JOBS` copies of itself, hands each one file after another, and prints their `FAIL` lines. A file whose
-copy dies is `FAIL <file>:1: the test program ended with <status>`, with the last lines that the copy wrote, and a new copy takes its place.
-For a debugger: `AOT_IR_FILTER=<one file> AOT_IR_SHARE=0/1 <the test program> lower --exact` runs that file in the program itself.
-
-## What a run does
-
-Every command does the same work, and they differ only in what they print:
-
-1. It loads, checks, lowers and links, with the file as the only entry point.
-2. It prints, and the check lines are matched against that text.
-3. It serializes the program and passes the bytes to `$TESTAOT print --wire`, which reads, types and verifies them.
-   - The engine prints the program as it read it. That text must equal the front end's, line by line.
-   - If the engine reports diagnostics instead, the `DIAGNOSTIC` lines decide.
-   - A tool that was built from another state of the schema is as good as none: the run is listed as `SKIP`.
-   - A tool that cannot be started, or that fails in any other way, fails the run.
+Put the file in `lower/<construct family>/` and start it with `// RUN: lower`. Nothing has to be registered.
 
 | Command | Prints |
 | --- | --- |
-| `lower` | the functions of the entry module, in id order |
-| `link` | the program: a line per record (`layout`, `variable`, `module`, .., `entry`), and every function with its body |
-| `emit` | the same as `link` |
+| `lower` | the functions of the entry module |
+| `link`, `emit` | the whole program: a line per record, and every function with its body |
 
-No command takes an argument. A program that does not build is not a failure by itself: the output is empty, and the `DIAGNOSTIC`
-lines decide. An internal error of the front end always fails the run.
-
-The driver builds with the options and the services of `bun build --compile --aot <file>` in the folder of the test
-(`bun_bundler::aot::testing`): an import leads to the file that it leads to there, and a `tsconfig.json` and a `package.json` say what
-they say there. Each file has a process of its own, as a build has. The build differs from `bun compile` in these ways:
-
-- **Every export of the entry point counts as read.** In a product build an export that the host does not read counts as read by
-  nobody, and a function that only the export keeps has no body.
-- **No flag of the command line is set**, and nothing of JavaScriptCore is linked: no text is a URL, no macro and no plugin runs, and
-  the engine's parser of regular expressions refuses nothing. Nobody says that a pattern cannot be built either, so every literal lowers
-  to `NewRegExp`: what the others lower to is held by `test/aot/regexp-literal-forms.test.ts`, which asks a Bun that has the engine,
-  and what they answer by programs (`test/aot/parallel/regexp`).
-- **Bun's own modules are not loaded**, unless `builtin-modules` says otherwise. `node:path` is a value of the host, not a module with source. The program has the test's
-  modules and the compiler's library (`/$bun/js/prelude/*.ts`).
-- **It runs on one thread**, unless `threads=` says otherwise.
-
-## Directives
-
-`<P>` is `CHECK` for a `RUN:`, and the prefix for a `RUN(<prefix>):`.
-
-```
-RUN: <command>
-RUN(<prefix>): <command>
-OPTIONS: <option word> { <option word> }
-OPTIONS(<prefix>): <option word> { <option word> }
-FILE: <path>
-LINK: <path> -> <target>
-ENTRY: <path> { <path> }
-CWD: <path>
-SAME: <prefix> <prefix>
-GENERATED: ( <function name> { <function name> } | * )
-<P>: p
-<P>-NEXT: p
-<P>-NOT: p
-<P>-LABEL: p
-<P>-COUNT-<n>: p
-DIAGNOSTIC: <name> [ <count> | <file>:<line> ]
-STATISTIC: <StatisticID> ( = | >= | <= ) <n>
-```
-
-A directive is a whole comment line: `//`, a name in capitals, then `:`. A comment after code on the same line is never a
-directive. Any other name in capitals before a `:` is an error, so a mistyped directive does not pass as a comment.
-
-- **`RUN`.** A file has at least one. Runs with the same options print one build. A prefix is capitals and digits, and it is not the name of
-  a directive. A prefix needs at least one check line, or a `SAME` that names it.
-- **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file, `OPTIONS(<prefix>)` to the runs of that prefix.
-- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `runs-in-place`, `runs-tests`, `discards-first-visits`, `platform=darwin | linux | windows` and `threads=<n>`.
-  `discards-first-visits` is `--aot-testing=DiscardsFirstVisits`: every file is visited, the visit is thrown away, and the file is visited again. With `SAME` it holds a build to what it prints without the word.
-  `runs-tests` is how `bun test --aot` builds: in place, and each entry point is a test file.
-  `runs-in-place` is how `bun run --aot` and `bun test --aot` build: no executable, and where the bundle of `bun build --compile` and `bun run` part, the answer of `bun run`.
-  `entry-points-run-again` is what `bun test --aot --rerun-each` builds its test files with. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
-  the run time a program has. Paths, and `process.platform` written out, stay those of the machine that runs the test. The engine's option words are unknown here.
-- **`DIAGNOSTIC`** takes one of these names. With a count, the diagnostic must be reported that many times.
-  - `TS<number>`: the code of a diagnostic of TypeScript or of the front end (`src/aot/diagnostic_codes.rs`). `TS0` is not a code.
-  - `Build` or `Resolve`: a build error or a resolve error, which have no code.
-  - A member of `UserDiagnosticKind` or `InternalErrorKind`: what the engine reports. Without `TESTAOT` the line is not judged, and
-    the run is listed as `SKIP`.
-- **`DIAGNOSTIC` with a place** says where: `// DIAGNOSTIC: TS2322 src/a.ts:2`, the file from the folder of the test or from the root
-  of its sections. A name may be listed once for each place. Then every report of that name must stand at a listed place.
-- **A warning is a diagnostic too.** A diagnostic that no line lists fails the run, so a test whose build warns needs the line: an
-  unresolved `require()` is `// DIAGNOSTIC: TS100150`.
-- **`STATISTIC`** names a statistic as the schema does (`aot/ir/schema/statistics.def` in WebKit): `ProgramBytes`, `FunctionsLowered`,
-  `SourceFilesChecked`, and `<Stage>Nanoseconds` for the time of a stage (`LowerNanoseconds`). One that was not counted reads as 0, and
-  so does every statistic of the engine.
-- **`FILE`** begins a section, which runs to the next `FILE`, to `GENERATED` or to the end. A file with sections is a tree in one
-  file: the driver writes each section to its path in a temporary folder and builds there. What stands before the first `FILE` is
-  written nowhere. A directive inside a section is a comment of that file too, so none can stand in a `package.json`. A tree without
-  a `tsconfig.json` at its root gets the one of this folder.
-- **`LINK`** makes a symbolic link in that folder before the build. **`ENTRY`** lists the entry points, in their order: without it the
-  first section is the one. **`CWD`** is the working directory: without it the root. Every path is written from the root, with `/`.
-- **`SAME`**: the two runs print the same text and report the same diagnostics at the same places.
-- **`GENERATED`** is the last directive of a file. Every line below it is a check line that `AOT_IR_UPDATE=1` has written: for each
-  `RUN`, each named function whole, or with `*` every function that the run prints. Nobody edits those lines. See "Writing a test".
-
-## Patterns
-
-Check lines work like LLVM's FileCheck, without regular expressions. A pattern matches part of an output line.
-
-- `<P>: p` matches somewhere after the previous match, possibly on the same line.
-- `<P>-NEXT: p` matches on the line after the previous match.
-- `<P>-NOT: p` matches nowhere between the matches before and after it. With no match after it, it covers the rest of the block.
-- `<P>-LABEL: p` splits the output into blocks. Labels are found first, and the check lines between two labels see only the
-  output between them. Without labels, the whole output is one block.
-- `<P>-COUNT-<n>: p` matches n times in order (1 to 1000), with any output between the matches. For exactly n, put a `-NOT` after it.
-
-Three things in a pattern are not literal text:
-
-- A run of spaces or tabs matches a run of spaces or tabs.
-- `{{*}}` matches any text within the line, including none. A literal `{` cannot stand directly before it.
-- `[[name]]` is a variable. Its first use binds it to a whole token (the longest run of `A-Z a-z 0-9 _ . $`, never part of one),
-  and every later use must equal that token.
-
-A label cannot use a variable. Each `RUN` starts with no variable bound. A `-NOT` binds nothing: it is tried after the match that
-follows it, with that match's bindings.
-
-The engine's tests have the same check lines and patterns. `aot/tests/README.md` in WebKit describes them, and the IR text.
-
-## Writing a test
-
-- **Export what the test looks at**, or use it in something exported. A function at the top level that no export and no module body
-  reaches is printed without its body: it makes the error `LeftOutOfExecutable` and throws it. So is a member under a private name
-  that nothing refers to, and every member of a class that nothing gets hold of. A member under any other key stays with its class.
-  Link drops nothing: what a file defines is in the program.
-- **Enter a function with a label**: `// CHECK-LABEL: function {{*}}name="add"`. Where a variable is needed, `function [[add]] name="add"`.
-- **To hold a whole function to what is printed today**, write the source, the `RUN` and `// GENERATED: add` as the last line, and run
-  `AOT_IR_UPDATE=1 AOT_IR_FILTER=<file> cargo test -p bun_aot --test ir_tests`. A generated block enters the function with a label and
-  has a `-NEXT` for every line. Positions in the source are left out, and an id that is counted over the whole program (`f7`, `g1`, `m1`,
-  `L3`, `w2`, `d2`) is a variable, so the block does not move when the library grows. The folder of the tests and the temporary folder of a
-  tree are `{{*}}`: they are others on the next machine and in the next run. When the front end prints something else, the same command,
-  also without a filter, writes anew the blocks that no longer hold, and the diff is what to read.
-- **Bind ids** in a line written by hand, never write `v12`, `b3` or `f7`. Inside brackets a variable needs something in front of it:
-  `supertypes=[[[x]]]` does not parse, `supertypes=[{{*}}[[x]]]` does, and allows entries in front.
-- **The printer omits a field that has its zero value** (`role=Source`, `kind=Plain`). A pattern cannot name one: a positive line with it
-  never matches, and a `-NOT` with it always passes.
-- **A `-NOT` stops at the positive lines around it.** To check that something appears nowhere in a function, give the function a block
-  with no positive line, or put the `-NOT` on both sides of the only one.
-- **`link` prints the source of each module** in `functionText`, with the directives in it. The check lines do not see that text: it
-  is hidden before they are matched. `textOfQuotes="..."` of a `module` line is not: it holds the texts of calls. `path=".../link-imported-function"` still contains the word `function`. Begin the pattern with
-  the record's keyword and id: `module [[m]] path=`, `variable [[g]] name="x"`.
-- **A type error in a `.ts` file stops the build**, as errors of grammar and the front end's own codes do: the checker goes through each
-  file of the program before it is lowered. A test that needs one says `// @ts-expect-error` in front of the line, or lists it:
-  `// DIAGNOSTIC: TS2322`. The written types of a `.ts` file are tested at run time all the same. In a `.js` file nothing written is
-  tested, and no type error is reported.
-- **A rule gets a positive and a negative case**, in one file or in neighbors.
-
-| What it tests | Where |
+| Directive | Meaning |
 | --- | --- |
-| A lowering rule | `lower/<construct family>/`, with `// RUN: lower`, or `// RUN: link` where a check names a record |
-| A command or an option word of this driver | `commands/` |
-| The directives and the matcher | the unit tests in `src/aot/tests/` |
-| A rule of the IR, or a stage of the engine (facts, plan, walk, machine) | `aot/tests/` in WebKit |
-| A whole program and its output | `test/aot/parallel` |
+| `RUN: <command>`, `RUN(<PREFIX>): <command>` | runs a command and matches its output against the `CHECK` lines, or the `<PREFIX>` lines |
+| `OPTIONS: <option word>..` | `erase-types`, `builtin-modules`, `runs-tests`, `runs-in-place`, `platform=darwin`, `threads=<n>` and a few more. `support/commands.rs` has the list |
+| `DIAGNOSTIC: <name> [<count> or <file>:<line>]` | the build must report it. The name is `TS<number>`, `Build`, `Resolve` or one of the engine's kinds. A diagnostic that no line lists fails the run, and a warning counts |
+| `STATISTIC: <name> >= <n>` | holds a counter of the build to a number. Also `=` and `<=` |
+| `FILE: <path>` | begins another file, so one test can hold a tree. `ENTRY:`, `CWD:` and `LINK:` go with it |
+| `SAME: <PREFIX> <PREFIX>` | the two runs print the same |
+| `GENERATED: <function name>..` | the last directive. `AOT_IR_UPDATE=1` writes the lines below it |
+
+The check lines (`CHECK`, `-NEXT`, `-NOT`, `-LABEL`, `-COUNT-<n>`) and the patterns (`{{*}}`, `[[name]]`) are the ones of the engine's tests. `Source/JavaScriptCore/aot/tests/README.md` in WebKit describes them.
+
+- Export what the test looks at. A function that nothing reaches is printed without its body.
+- Enter a function with a label: `// CHECK-LABEL: function {{*}}name="add"`.
+- Bind ids with `[[name]]`. Never write `v12`, `b3` or `f7`.
+- The printer leaves out a field that has its zero value, so a pattern cannot name one.
+- A type error in a `.ts` file stops the build. Write `// @ts-expect-error` before the line, or list it: `// DIAGNOSTIC: TS2322`.
+- Give a rule a positive and a negative case.
+
+To hold a whole function to what is printed today, end the file with `// GENERATED: add` and run `AOT_IR_UPDATE=1 AOT_IR_FILTER=<file> cargo test -p bun_aot --test ir_tests`.
+
+To add a folder beside `commands/` and `lower/`, add an entry to `AREAS` and a `#[test]` in `ir_tests.rs`.

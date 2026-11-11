@@ -2,20 +2,21 @@ use super::imports::has_source;
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::module_cache::is_function_that_loader_calls;
-use super::resolver::{AliasSource, ExprState, ResolvedValue, Resolver};
-use super::{SourceDialect, SpyCall};
+use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
+use super::{SourceDialect, SpyCall, passes_every_assertion};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
     RuntimeModule, Scope,
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    AssignmentTarget, Binding, BindingInitializer, Decl, Parent, PatParent, StoreKind,
+    AssignmentTarget, Binding, BindingInitializer, BindingStability, Decl, Parent, PatParent,
+    StoreKind,
 };
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, MemberKind, NodeData, PatId,
-    PatKind, PropKey, PropKind, StmtKind,
+    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, MemberKind, NodeData,
+    PatId, PatKind, PropKey, PropKind, StmtKind,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
 use bun_sema::util::{FxHashSet, SharedSort};
@@ -86,7 +87,10 @@ pub(super) fn holder_of(id: BuiltinId) -> BuiltinId {
 }
 
 fn is_of_test_runner(id: BuiltinId) -> bool {
-    table::entry(table::root_of(id)).module == Some(RuntimeModule::BunTest)
+    matches!(
+        table::entry(table::root_of(id)).module,
+        Some(RuntimeModule::BunTest | RuntimeModule::BunTestVitest)
+    )
 }
 
 fn mocks_modules(object: BuiltinId) -> bool {
@@ -109,9 +113,11 @@ pub(super) fn writes_on_first_operand(function: BuiltinId) -> bool {
 
 fn find_writer(function: BuiltinId) -> Option<Writer> {
     let writer = match function {
-        BuiltinId::BunTestSpyOn | BuiltinId::BunTestJestSpyOn | BuiltinId::BunTestViSpyOn => {
-            Writer::Spy
-        }
+        BuiltinId::BunTestSpyOn
+        | BuiltinId::BunTestJestSpyOn
+        | BuiltinId::BunTestViSpyOn
+        | BuiltinId::BunTestVitestSpyOn
+        | BuiltinId::BunTestVitestViSpyOn => Writer::Spy,
         BuiltinId::ObjectDefineProperty
         | BuiltinId::ReflectDefineProperty
         | BuiltinId::ReflectDeleteProperty
@@ -201,22 +207,25 @@ fn opens_where_handed_on(object: BuiltinId) -> bool {
 }
 
 fn leads_to_function_that_loader_calls(object: BuiltinId) -> bool {
-    let mut is_seen = vec![false; BuiltinId::COUNT as usize];
-    let mut pending = vec![table::canonical_id(object)];
-    while let Some(reached) = pending.pop() {
-        if std::mem::replace(&mut is_seen[reached.to_wire() as usize], true) {
-            continue;
+    static LEADING: OnceLock<Vec<bool>> = OnceLock::new();
+    let leading = LEADING.get_or_init(|| {
+        let places = || (0..BuiltinId::COUNT).filter_map(BuiltinId::from_wire);
+        let mut leading = vec![false; BuiltinId::COUNT as usize];
+        let mut pending: Vec<BuiltinId> = places()
+            .filter(|&place| is_function_that_loader_calls(place))
+            .map(table::canonical_id)
+            .collect();
+        while let Some(reached) = pending.pop() {
+            if std::mem::replace(&mut leading[reached.to_wire() as usize], true) {
+                continue;
+            }
+            let held_at = places().filter(|&place| table::canonical_id(place) == reached);
+            let holders = held_at.filter_map(|place| table::entry(place).holder);
+            pending.extend(holders.map(table::canonical_id));
         }
-        if is_function_that_loader_calls(reached) {
-            return true;
-        }
-        pending.extend(
-            table::members(reached)
-                .iter()
-                .map(|&it| table::canonical_id(it)),
-        );
-    }
-    false
+        leading
+    });
+    leading[table::canonical_id(object).to_wire() as usize]
 }
 
 fn takes_no_names(holder: BuiltinId) -> bool {
@@ -367,11 +376,166 @@ impl WritesFound {
     }
 }
 
+pub(super) fn find_what_opens_where_handed_on(
+    objects: &[BuiltinId],
+) -> (Vec<BuiltinId>, Vec<BuiltinId>, bool) {
+    let mut found = WritesFound::default();
+    for &object in objects {
+        found.note_object_out_of_sight(holder_of(object));
+    }
+    (found.members, found.opened, found.stores_loader_functions)
+}
+
 impl Resolver<'_, '_> {
+    pub(super) fn exposes_first_operand(&self, call: CallId, function: BuiltinId) -> bool {
+        let hir = self.input.hir;
+        let mut operands = hir.ids(hir[call].args).skip(1);
+        match find_writer(function) {
+            Some(Writer::Spy) => {
+                *(self.shows_receivers_of_spies).get_or_init(|| self.spies_show_receivers())
+            }
+            Some(Writer::MemberOfOperand) => operands
+                .nth(1)
+                .is_some_and(|descriptor| self.describes_function_reading_this(descriptor)),
+            Some(Writer::MemberOfReceiverOperand) => operands
+                .nth(1)
+                .is_some_and(|value| self.is_function_reading_this(value)),
+            Some(Writer::KeysOfOperands) => operands.any(|operand| {
+                self.any_written_property(operand, |_, value| match function {
+                    BuiltinId::ObjectDefineProperties => {
+                        self.describes_function_reading_this(value)
+                    }
+                    _ => self.is_function_reading_this(value),
+                })
+            }),
+            _ => false,
+        }
+    }
+
+    fn any_written_property(
+        &self,
+        object: ExprId,
+        is_found: impl Fn(PropKey, ExprId) -> bool,
+    ) -> bool {
+        let hir = self.input.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(object)].kind else {
+            return false;
+        };
+        properties.iter().any(|property| {
+            let property = &hir[property];
+            property.kind != PropKind::Spread && is_found(property.key, property.value)
+        })
+    }
+
+    fn describes_function_reading_this(&self, descriptor: ExprId) -> bool {
+        self.any_written_property(descriptor, |key, value| {
+            matches!(key, PropKey::Name(known::value | known::get | known::set))
+                && self.is_function_reading_this(value)
+        })
+    }
+
+    fn spies_show_receivers(&self) -> bool {
+        let hir = self.input.hir;
+        self.evaluated_exprs().any(|member| {
+            let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
+                return false;
+            };
+            match name {
+                known::contexts | known::instances => {
+                    let object = hir.skip_type_assertions(object);
+                    let read = hir.member_key(object).map(|(_, key)| key);
+                    matches!(read, Some(MemberKey::Name(known::mock)))
+                }
+                known::mockReturnThis => !self.is_mock_of_another_object(object),
+                known::mockImplementation
+                | known::mockImplementationOnce
+                | known::withImplementation => {
+                    self.is_given_function_reading_this(member)
+                        && !self.is_mock_of_another_object(object)
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn is_given_function_reading_this(&self, method: ExprId) -> bool {
+        let hir = self.input.hir;
+        let callee = self.outermost_assertion_of(method);
+        let Parent::Expr(user) = self.input.bound.parent_of_expr(callee) else {
+            return false;
+        };
+        match hir[user].kind {
+            ExprKind::Call(call) if hir[call].callee == callee => hir
+                .ids(hir[call].args)
+                .next()
+                .is_some_and(|first| self.is_function_reading_this(first)),
+            _ => false,
+        }
+    }
+
+    fn is_mock_of_another_object(&self, mock: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut mock = hir.skip_type_assertions(mock);
+        loop {
+            match hir[mock].kind {
+                ExprKind::Call(call) => {
+                    let callee = hir.skip_type_assertions(hir[call].callee);
+                    if let Some(function) = mentioned_id(self.state(callee)) {
+                        let first = hir.ids(hir[call].args).next();
+                        let is_spy =
+                            find_writer(table::canonical_id(function)) == Some(Writer::Spy);
+                        return match first {
+                            Some(object) if is_spy => {
+                                self.value_of(object).is_none()
+                                    && self.held_value_of(object).is_none()
+                            }
+                            _ => is_of_test_runner(function),
+                        };
+                    }
+                    let Some((object, _)) = hir.member_key(callee) else {
+                        return false;
+                    };
+                    mock = hir.skip_type_assertions(object);
+                }
+                ExprKind::Ident(_) => {
+                    let Binding::Symbol(name) = bound.binding(mock) else {
+                        return false;
+                    };
+                    let [Decl::Var(pattern)] = *bound.symbol(name).decls else {
+                        return false;
+                    };
+                    match bound.pat_parent[pattern.idx()] {
+                        PatParent::Var(declaration)
+                            if hir[declaration].init.is_some()
+                                && bound.binding_stability(name) == BindingStability::Stable =>
+                        {
+                            let initializer = hir.skip_type_assertions(hir[declaration].init);
+                            if matches!(hir[initializer].kind, ExprKind::Ident(_)) {
+                                return false;
+                            }
+                            mock = initializer;
+                        }
+                        _ => return false,
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+
     fn find_holder_behind(&self, object: ExprId) -> Option<BuiltinId> {
         match self.state(self.input.hir.skip_type_assertions(object)) {
             ExprState::DynamicGlobal(path) => Some(holder_of(path.id)),
             state => mentioned_id(state).map(holder_of),
+        }
+    }
+
+    fn is_module_namespace(&self, object: ExprId) -> bool {
+        match self.state(self.input.hir.skip_type_assertions(object)) {
+            ExprState::Builtin(value) | ExprState::Held(value) => {
+                value.kind == HolderKind::ModuleNamespace
+            }
+            _ => false,
         }
     }
 
@@ -499,6 +663,15 @@ impl Resolver<'_, '_> {
         self.find_written_keys_once(key, &mut SmallVec::new())
     }
 
+    pub(super) fn find_names_written_as_key(&self, key: ExprId) -> SmallVec<[BuiltinName; 2]> {
+        let keys = self.find_written_keys(key).unwrap_or_default();
+        let names = keys.iter().filter_map(|key| match *key {
+            WrittenKey::Text(text) => self.input.names.get(text),
+            WrittenKey::Symbol(name) => Some(name),
+        });
+        names.collect()
+    }
+
     fn find_written_keys_once(
         &self,
         key: ExprId,
@@ -508,6 +681,7 @@ impl Resolver<'_, '_> {
         if let Some((_, symbol)) = self.symbol_that_key_is(key) {
             return Some(smallvec![WrittenKey::Symbol(table::name_of_symbol(symbol))]);
         }
+        let written = key;
         let key = input.hir.skip_type_assertions(key);
         let constant;
         let known;
@@ -521,6 +695,12 @@ impl Resolver<'_, '_> {
                 &known[..]
             }
         };
+        let mut passing = values.iter().map(|&value| Some(value));
+        if !passes_every_assertion(input.hir, written, None)
+            || !passing.all(|value| passes_every_assertion(input.hir, written, value))
+        {
+            return None;
+        }
         if values.is_empty() {
             let mut keys = WrittenKeys::new();
             if asked.contains(&key) {
@@ -814,6 +994,9 @@ impl Resolver<'_, '_> {
         };
         let mut spreads = operands.iter();
         if spreads.any(|&operand| matches!(hir[operand].kind, ExprKind::Spread(_))) {
+            if let Some(holder) = operands.first().and_then(|&it| self.find_holder_behind(it)) {
+                found.open(holder);
+            }
             return found.note_writer_out_of_sight(writer);
         }
         match writer {
@@ -828,11 +1011,11 @@ impl Resolver<'_, '_> {
                 found.followed.extend([first, object]);
                 let keys = self.find_written_keys(key);
                 match self.find_holder_behind(object) {
-                    Some(holder) => {
+                    Some(holder) if writer != Writer::Spy || !self.is_module_namespace(object) => {
                         let runs = self.find_when_write_runs(expr, holder, keys.as_deref());
                         self.note_write_under(holder, keys, runs, found);
                     }
-                    None if writer == Writer::Spy => found.spy_calls.push(SpyCall {
+                    _ if writer == Writer::Spy => found.spy_calls.push(SpyCall {
                         call: expr,
                         object,
                         name: match keys.as_deref() {
@@ -840,7 +1023,7 @@ impl Resolver<'_, '_> {
                             _ => None,
                         },
                     }),
-                    None => {}
+                    _ => {}
                 }
             }
             Writer::MemberOfReceiver => {

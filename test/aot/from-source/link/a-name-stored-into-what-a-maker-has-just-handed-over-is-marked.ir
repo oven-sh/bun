@@ -20,7 +20,6 @@
 # declare function print(text: string): void;
 # print(Object.keys(one).join() + " " + Object.keys(two).join() + " " + Object.keys(three).join() + " " + Object.keys(one.plume!).join());
 # -- end of source
-# REQUIRES: entries-of-bun
 # RUN: link fields mechanisms=all
 # CHECK: "root" appended {{*}}stored-by-follower-of-maker
 # CHECK: "tip" appended {{*}}stored-by-follower-of-maker

@@ -2672,6 +2672,29 @@ describe("expect()", () => {
     expect(() => expect({ a: 1 }).not.toHaveProperty(ANY([throws]))).toThrow(RangeError);
   });
 
+  // Vitest converts every element of the path before it looks one up.
+  test_skipIf(isVitest)("toHaveProperty() - an array path ends at null or undefined before its next element", () => {
+    let calls = 0;
+    const counts = { toString: () => (calls++, "q") };
+    const throws = {
+      toString() {
+        throw new RangeError("key");
+      },
+    };
+    for (const end of [null, undefined]) {
+      expect({ p: end }).not.toHaveProperty(ANY(["p", throws]));
+      expect({ p: { a: end } }).not.toHaveProperty(ANY(["p", "a", throws]));
+      expect({ p: end }).not.toHaveProperty(ANY(["p", counts]));
+    }
+    expect({}).not.toHaveProperty(ANY(["zz", throws]));
+    expect({}).not.toHaveProperty(ANY(["zz", counts]));
+    expect(calls).toBe(0);
+    // Below any other value the element is a key.
+    expect({ p: 1 }).not.toHaveProperty(ANY(["p", counts]));
+    expect(calls).toBe(1);
+    expect(() => expect({ p: 1 }).not.toHaveProperty(ANY(["p", throws]))).toThrow(RangeError);
+  });
+
   test("toHaveProperty() - all", () => {
     expect({ a: 1 }).toHaveProperty("a");
     expect({ a: 1 }).toHaveProperty("a", 1);

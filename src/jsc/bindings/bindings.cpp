@@ -5301,6 +5301,10 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         uint64_t length = toLength(globalObject, pathObject);
         RETURN_IF_EXCEPTION(scope, {});
         for (uint64_t index = 0; index < length; index++) {
+            // As in Jest, the path ends here before the next element is read and converted.
+            if (currProp.isUndefinedOrNull()) {
+                return {};
+            }
             JSValue item = pathObject->getIndex(globalObject, index);
             RETURN_IF_EXCEPTION(scope, {});
             Identifier propName = item.toPropertyKey(globalObject);

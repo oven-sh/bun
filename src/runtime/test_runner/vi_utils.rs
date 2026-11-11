@@ -2,7 +2,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use bun_options_types::context::RESETS_BEFORE_EACH_TEST;
 
-use super::jest::Jest;
+use super::jest::{Jest, TestRunner};
 use crate::generated_bindgen::vi_utils as generated;
 
 unsafe extern "C" {
@@ -71,9 +71,6 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
 /// Keeps what a preload made. If `next_load_shares_global` is false, `global` is thrown away, so nothing is undone.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
     if let Some(runner) = Jest::runner() {
-        if !next_load_shares_global {
-            runner.vi_config_of_preload = Config::default();
-        }
         runner.vi_config = runner.vi_config_of_preload;
     }
     if !next_load_shares_global {
@@ -95,11 +92,12 @@ pub(crate) fn on_module_graph_leave(global: &JSGlobalObject) {
     if !global.bun_vm().preload.is_empty() {
         JSMock__willRunPreloads(global);
     }
-    // Last, because a trap that the passes above call can set it.
-    if let Some(runner) = Jest::runner() {
-        runner.vi_config_of_preload = Config::default();
-        runner.vi_config = Config::default();
-    }
+}
+
+/// No script of the last test file runs from here, and the preloads run again, so no `vi.setConfig()` value is kept.
+pub(crate) fn reset_for_test_isolation(runner: &mut TestRunner<'_>) {
+    runner.vi_config_of_preload = Config::default();
+    runner.vi_config = Config::default();
 }
 
 /// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.

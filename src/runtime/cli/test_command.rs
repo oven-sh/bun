@@ -3825,6 +3825,9 @@ impl TestCommand {
                                 .bun_test_root
                                 .reset_hook_scope_for_test_isolation();
                             crate::test_runner::Expect::reset_for_test_isolation(vm.global());
+                            crate::test_runner::vi_utils::reset_for_test_isolation(
+                                &mut reporter.jest,
+                            );
                         }
                     }
                 }

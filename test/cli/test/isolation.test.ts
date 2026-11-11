@@ -3326,6 +3326,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     `,
   };
   const withWindows = { ...bunEnv, NODE_PATH: undefined };
+  const emptyPreload = [[[]], [["--preload", "./empty.ts"]]] as const;
 
   // With isolation a preload runs again for every file. `--isolate=modules` keeps the global object and the builtin
   // modules, so each case leaves something where the next file finds it.
@@ -3894,52 +3895,6 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
         });
       },
     );
-  });
-
-  // `--isolate` throws the global object away, so it undoes nothing and reports nothing.
-  describe("bun test --isolate=modules: the end of a file", () => {
-    const emptyPreload = [[[]], [["--preload", "./empty.ts"]]] as const;
-
-    test("reports a spy of a preload that can't be restored once, under each file", async () => {
-      using dir = tempDir("spies-of-a-preload", {
-        "preload.ts": `
-          import { spyOn } from "bun:test";
-          let isOver = false;
-          globalThis.target = new Proxy({ method() {} }, {
-            defineProperty(...args) {
-              if (isOver) throw new Error("the trap refuses");
-              return Reflect.defineProperty(...args);
-            },
-          });
-          spyOn(target, "method");
-          isOver = true;
-        `,
-        "a.test.ts": `import { test } from "bun:test"; test("a", () => Bun.gc(true));`,
-        "b.test.ts": `import { test } from "bun:test"; test("b", () => Bun.gc(true));`,
-        "c.test.ts": `import { test } from "bun:test"; test("c", () => Bun.gc(true));`,
-      });
-      const { stderr, exitCode } = await runTests(
-        String(dir),
-        ["--isolate=modules", "--preload", "./preload.ts"],
-        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
-      );
-      const lines = stderr.split("\n").filter(line => /^(error: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
-      expect(
-        lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
-        stderr,
-      ).toEqual([
-        "a.test.ts:",
-        "(pass) a",
-        "error: the trap refuses",
-        "b.test.ts:",
-        "(pass) b",
-        "error: the trap refuses",
-        "c.test.ts:",
-        "(pass) c",
-        "error: the trap refuses",
-      ]);
-      expect(exitCode).toBe(1);
-    });
 
     test.each(emptyPreload)("ends what the file makes as its window closes %j", async preload => {
       using dir = tempDir("window-of-a-file", {
@@ -3982,7 +3937,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       });
       const { stderr, exitCode } = await runTests(
         String(dir),
-        ["--isolate=modules", ...preload],
+        [isolate, ...preload],
         ["./a.test.ts", "./b.test.ts"],
         withWindows,
       );
@@ -3990,6 +3945,76 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
         results: ["(pass) a", "(pass) b calls a mock", "(pass) b"],
         exitCode: 0,
       });
+    });
+
+    // `--isolate` closes the socket when it swaps the global object. `--isolate=modules` doesn't call the handler.
+    test("a vi.setConfig() in the close handler of a socket that the file left open ends with the file", async () => {
+      using dir = tempDir("socket-of-a-file", {
+        "a.test.ts": `
+          import { test, vi } from "bun:test";
+          test("a", async () => {
+            const listener = Bun.listen({
+              hostname: "127.0.0.1",
+              port: 0,
+              socket: { data() {}, close: () => vi.setConfig({ clearMocks: true }) },
+            });
+            const opened = Promise.withResolvers();
+            await Bun.connect({
+              hostname: "127.0.0.1",
+              port: listener.port,
+              socket: { open: opened.resolve, data() {} },
+            });
+            await opened.promise;
+          });
+        `,
+        "b.test.ts": state("b"),
+      });
+      const { stdout, stderr, exitCode } = await runTests(String(dir), [isolate], ["./a.test.ts", "./b.test.ts"]);
+      expect({ state: stateOf(stdout), exitCode }, stderr).toEqual({ state: [notSetForB], exitCode: 0 });
+    });
+  });
+
+  // `--isolate` throws the global object away, so it undoes nothing and reports nothing.
+  describe("bun test --isolate=modules: the end of a file", () => {
+    test("reports a spy of a preload that can't be restored once, under each file", async () => {
+      using dir = tempDir("spies-of-a-preload", {
+        "preload.ts": `
+          import { spyOn } from "bun:test";
+          let isOver = false;
+          globalThis.target = new Proxy({ method() {} }, {
+            defineProperty(...args) {
+              if (isOver) throw new Error("the trap refuses");
+              return Reflect.defineProperty(...args);
+            },
+          });
+          spyOn(target, "method");
+          isOver = true;
+        `,
+        "a.test.ts": `import { test } from "bun:test"; test("a", () => Bun.gc(true));`,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => Bun.gc(true));`,
+        "c.test.ts": `import { test } from "bun:test"; test("c", () => Bun.gc(true));`,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", "--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      );
+      const lines = stderr.split("\n").filter(line => /^(error: |[abc]\.test\.ts:$|\((pass|fail)\) )/.test(line));
+      expect(
+        lines.map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+        stderr,
+      ).toEqual([
+        "a.test.ts:",
+        "(pass) a",
+        "error: the trap refuses",
+        "b.test.ts:",
+        "(pass) b",
+        "error: the trap refuses",
+        "c.test.ts:",
+        "(pass) c",
+        "error: the trap refuses",
+      ]);
+      expect(exitCode).toBe(1);
     });
 
     test.each(emptyPreload)("restores the spies of the file before its window closes %j", async preload => {

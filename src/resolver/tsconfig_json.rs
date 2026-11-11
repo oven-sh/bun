@@ -159,10 +159,9 @@ pub struct TSConfigJSON {
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
-    /// `None` = unset. A config that extends another replaces the value of its base, so
-    /// `Some(false)` turns the option off when the base has `Some(true)`, as in TypeScript.
+    /// `None` = unset.
     pub(crate) emit_decorator_metadata: Option<bool>,
-    /// `None` = unset, see `emit_decorator_metadata`.
+    /// `None` = unset.
     pub(crate) experimental_decorators: Option<bool>,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,

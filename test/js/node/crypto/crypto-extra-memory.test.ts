@@ -17,7 +17,7 @@ async function extraMemoryDelta(setup: string, create: string, count: number): P
 
     const live = [];
     for (let i = 0; i < ${count}; i++) {
-      live.push(${create});
+      live.push(await (${create}));
     }
 
     Bun.gc(true);
@@ -155,5 +155,87 @@ describe.concurrent("node:crypto external memory is reported to the GC", () => {
       count,
     );
     expect(delta).toBeGreaterThan(extensionSize * count * 0.75);
+  });
+});
+
+describe.concurrent("CryptoKey external memory is reported to the GC", () => {
+  test.each(["HKDF", "PBKDF2"])("%s key", async name => {
+    const keySize = 64 * 1024;
+    const count = 100;
+    const delta = await extraMemoryDelta(
+      `const bytes = new Uint8Array(${keySize}).fill(1);`,
+      `crypto.webcrypto.subtle.importKey("raw", bytes, "${name}", false, ["deriveBits"])`,
+      count,
+    );
+    expect(delta).toBeGreaterThan((keySize * count) / 2);
+  });
+
+  test("HMAC key", async () => {
+    const keySize = 64 * 1024;
+    const count = 100;
+    const delta = await extraMemoryDelta(
+      `const bytes = new Uint8Array(${keySize}).fill(1);`,
+      `crypto.webcrypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"])`,
+      count,
+    );
+    expect(delta).toBeGreaterThan((keySize * count) / 2);
+  });
+
+  test.each([
+    ["ML-DSA-65", 20_000],
+    ["ML-KEM-768", 5_000],
+  ])("%s key pair", async (name, minimum) => {
+    const count = 50;
+    const usages = name.startsWith("ML-DSA") ? ["sign", "verify"] : ["encapsulateBits", "decapsulateBits"];
+    const delta = await extraMemoryDelta(
+      ``,
+      `crypto.webcrypto.subtle.generateKey("${name}", true, ${JSON.stringify(usages)})`,
+      count,
+    );
+    expect(delta).toBeGreaterThan(minimum * count);
+  });
+
+  test("RSA key", async () => {
+    const count = 200;
+    const delta = await extraMemoryDelta(
+      `const algorithm = { name: "RSA-PSS", hash: "SHA-256" };
+       const der = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "der" });`,
+      `crypto.webcrypto.subtle.importKey("pkcs8", der, algorithm, true, ["sign"])`,
+      count,
+    );
+    expect(delta).toBeGreaterThan(1000 * count);
+  });
+
+  test("EC key", async () => {
+    const count = 200;
+    const delta = await extraMemoryDelta(
+      `const algorithm = { name: "ECDSA", namedCurve: "P-256" };
+       const der = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "der" });`,
+      `crypto.webcrypto.subtle.importKey("pkcs8", der, algorithm, true, ["sign"])`,
+      count,
+    );
+    expect(delta).toBeGreaterThan(400 * count);
+  });
+
+  // Nothing else in the loop allocates enough to make the GC run.
+  test("dropped keys do not pile up until something else collects them", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { heapStats } = require("bun:jsc");
+          const bytes = new Uint8Array(4 * 1024 * 1024);
+          Bun.gc(true); // heapStats() collects by itself in a process that never has
+          for (let i = 0; i < 128; i++) await crypto.subtle.importKey("raw", bytes, "HKDF", false, ["deriveBits"]);
+          console.log((heapStats().objectTypeCounts.CryptoKey ?? 0) < 64);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: expect.any(String), exitCode: 0 });
   });
 });

@@ -73,6 +73,9 @@ public:
     void setUsagesBitmap(CryptoKeyUsageBitmap usage) { m_usages = usage; };
     bool allows(CryptoKeyUsageBitmap usage) const { return usage == (m_usages & usage); }
 
+    // Native memory the key owns, for the GC. Does not change once the key is created.
+    virtual size_t memoryCost() const = 0;
+
     static Vector<uint8_t> randomData(size_t);
 
 private:

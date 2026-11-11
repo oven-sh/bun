@@ -37,6 +37,8 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/mem.h>
+#include <openssl/mldsa.h>
+#include <openssl/mlkem.h>
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -118,6 +120,26 @@ auto CryptoKeyAKP::algorithm() const -> KeyAlgorithm
     CryptoKeyAlgorithm result;
     result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
     return result;
+}
+
+size_t CryptoKeyAKP::memoryCost() const
+{
+    bool isPrivate = type() == CryptoKeyType::Private;
+    switch (algorithmIdentifier()) {
+    case CryptoAlgorithmIdentifier::ML_DSA_44:
+        return sizeof(*this) + (isPrivate ? sizeof(MLDSA44_private_key) : sizeof(MLDSA44_public_key));
+    case CryptoAlgorithmIdentifier::ML_DSA_65:
+        return sizeof(*this) + (isPrivate ? sizeof(MLDSA65_private_key) : sizeof(MLDSA65_public_key));
+    case CryptoAlgorithmIdentifier::ML_DSA_87:
+        return sizeof(*this) + (isPrivate ? sizeof(MLDSA87_private_key) : sizeof(MLDSA87_public_key));
+    case CryptoAlgorithmIdentifier::ML_KEM_768:
+        return sizeof(*this) + (isPrivate ? sizeof(MLKEM768_private_key) : sizeof(MLKEM768_public_key));
+    case CryptoAlgorithmIdentifier::ML_KEM_1024:
+        return sizeof(*this) + (isPrivate ? sizeof(MLKEM1024_private_key) : sizeof(MLKEM1024_public_key));
+    default:
+        ASSERT_NOT_REACHED();
+        return sizeof(*this);
+    }
 }
 
 static std::optional<Vector<uint8_t>> rawPublicKeyBytes(const EVP_PKEY* key)

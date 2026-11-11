@@ -47,6 +47,7 @@ public:
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::HMAC; }
 
     const Vector<uint8_t>& key() const { return m_key; }
+    size_t memoryCost() const final { return sizeof(*this) + m_key.sizeInBytes(); }
     JsonWebKey exportJwk() const;
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }

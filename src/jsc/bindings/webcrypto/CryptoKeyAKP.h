@@ -65,6 +65,7 @@ public:
     ExceptionOr<JsonWebKey> exportJwk() const;
 
     EVP_PKEY* platformKey() const { return m_key.get(); }
+    size_t memoryCost() const final;
 
 private:
     CryptoKeyAKP(CryptoAlgorithmIdentifier, CryptoKeyType, EvpPKeyPtr&&, bool extractable, CryptoKeyUsageBitmap);

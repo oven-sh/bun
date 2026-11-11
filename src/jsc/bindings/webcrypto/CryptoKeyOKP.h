@@ -69,6 +69,8 @@ public:
     size_t keySizeInBytes() const { return platformKey().size(); }
     const KeyMaterial& platformKey() const { return m_data; }
 
+    size_t memoryCost() const final { return sizeof(*this) + m_data.sizeInBytes() + (m_exportKey ? m_exportKey->sizeInBytes() : 0); }
+
     size_t exportKeySizeInBytes() const { return exportKey().size(); }
     const KeyMaterial& exportKey() const { return !m_exportKey ? m_data : *m_exportKey; };
 

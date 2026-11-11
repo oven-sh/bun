@@ -39,6 +39,7 @@ public:
     }
 
     const Vector<uint8_t>& key() const { return m_key; }
+    size_t memoryCost() const final { return sizeof(*this) + m_key.sizeInBytes(); }
 
     static bool isValidRawAlgorithm(CryptoAlgorithmIdentifier);
 

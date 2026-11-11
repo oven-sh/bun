@@ -69,6 +69,8 @@ public:
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
     size_t keySizeInBits() const;
+    // An EC_KEY is about this big for every curve.
+    size_t memoryCost() const final { return sizeof(*this) + 512; }
     NamedCurve namedCurve() const { return m_curve; }
     String namedCurveString() const;
     PlatformECKey platformKey() const { return m_platformKey.get(); }

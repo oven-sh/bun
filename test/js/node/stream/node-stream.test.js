@@ -2150,6 +2150,19 @@ describe("pipe() goes on for the other consumers once a destination that failed 
       ["good got a", "good got b", "bad error: fail", "good got c", "end", "good finish"],
     ],
     [
+      "a sink whose own write() answers false, and that fails a tick later",
+      (readable, events) => {
+        const bad = failing(events);
+        bad.write = () => {
+          process.nextTick(() => bad.destroy(new Error("fail")));
+          return false;
+        };
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
       "three sinks, the one in the middle fails",
       (readable, events) => {
         readable.pipe(sink(events, "first"));
@@ -2290,6 +2303,38 @@ describe("pipe() goes on for the other consumers once a destination that failed 
     drain();
     await atRest();
     expect(events.splice(0)).toEqual(["slow finish"]);
+  });
+
+  // process.stdout over a pipe answers false while the pipe is full and leaves needDrain clear, as the row of the
+  // sink with its own write() does. When its reader goes away, as `head` does, the write fails later.
+  it("a tee into process.stdout and a sink: the sink gets everything when the reader of stdout goes away", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Readable, Writable } = require("node:stream");
+        let left = 64;
+        const source = new Readable({ read() { this.push(left-- > 0 ? Buffer.alloc(64 * 1024, "x") : null); } });
+        let bytes = 0;
+        const sink = new Writable({ write(chunk, encoding, callback) { bytes += chunk.length; callback(); } });
+        sink.on("finish", () => console.error("sink finish"));
+        process.stdout.on("error", () => {});
+        process.on("exit", () => console.error("sink got " + bytes));
+        source.pipe(process.stdout);
+        source.pipe(sink);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    await reader.cancel();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ sink: stderr.split(/\r?\n/).filter(line => line.startsWith("sink ")), exitCode }).toEqual({
+      sink: ["sink finish", "sink got 4194304"],
+      exitCode: 0,
+    });
   });
 
   // With two or more pipes the record of who waits for a drain is a Set, and an empty Set is truthy: the release

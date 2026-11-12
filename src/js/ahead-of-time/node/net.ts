@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e604afee1cf6bbf34463f07af56a661b9194f0882c1b5d324b5267c9f94dd5ea.
+// Written against that file with the SHA-256 10cc41018fa18e4d47cf4425d99d4c6c4ee26668816d9a9509909d61df6b78e1.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1329,8 +1329,6 @@ const SocketHandlers = {
       self.emit("connect", self);
       self.emit("ready");
     }
-
-    SocketHandlers.drain(socket);
   },
   handshake(socket: $Node.SocketHandle<$Node.TLSSocket>, success, verifyError) {
     const { data: self } = socket;
@@ -2696,7 +2694,6 @@ Socket.prototype[kAttach] = function (
     this.emit("connect", this);
     this.emit("ready");
   }
-  SocketHandlers.drain(socket);
 };
 
 Socket.prototype[kCloseRawConnection] = function (this: $Node.Socket) {

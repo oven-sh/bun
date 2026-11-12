@@ -165,6 +165,85 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
+  // Calls `write` from the 'connection' (server) or 'connect' (client) listener. Resolves once both sockets closed.
+  async function writeInOpenListener(
+    side: "client" | "server",
+    write: (s: net.Socket, fd: number, written: (err?: Error | null) => void) => void,
+  ) {
+    let writeError: NodeJS.ErrnoException | null | undefined;
+    let socketError: NodeJS.ErrnoException | undefined;
+    let received = Buffer.alloc(0);
+    const sockets: net.Socket[] = [];
+    const closed: Promise<unknown>[] = [];
+    function track(s: net.Socket) {
+      sockets.push(s);
+      // Not events.once(), which rejects on 'error'.
+      closed.push(new Promise(resolve => s.once("close", resolve)));
+    }
+    function writer(s: net.Socket) {
+      s.on("error", err => (socketError = err));
+      write(s, (s as any)._handle.fd, err => (writeError = err ?? null));
+    }
+    function reader(s: net.Socket) {
+      s.on("error", () => {});
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
+    }
+
+    const server = net.createServer(s => {
+      track(s);
+      if (side === "server") writer(s);
+      else reader(s);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    track(client);
+    if (side === "client") client.once("connect", () => writer(client));
+    else reader(client);
+
+    try {
+      await Promise.all([once(client, "connect"), once(server, "connection")]);
+      await Promise.all(closed);
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+    }
+
+    const shape = (err: NodeJS.ErrnoException | null | undefined) => err && { code: err.code, syscall: err.syscall };
+    return { writeError: shape(writeError), socketError: shape(socketError), received: received.length };
+  }
+
+  describe.each(["client", "server"] as const)("write in the %s's open listener", side => {
+    test("send → EPIPE on the flush after the listener fails the write", async () => {
+      const result = await writeInOpenListener(side, (s, fd, written) => {
+        // The first send is short, so 199 bytes stay buffered until the listener returns.
+        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+        s.write(Buffer.alloc(200, "h"), written);
+        fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd });
+        s.write(Buffer.alloc(4096, "b"));
+        s.end();
+      });
+      expect(result).toEqual({
+        writeError: { code: "EPIPE", syscall: "write" },
+        socketError: { code: "EPIPE", syscall: "write" },
+        received: 1,
+      });
+    });
+
+    test("send → ECONNRESET doesn't send the failed write again", async () => {
+      const result = await writeInOpenListener(side, (s, fd, written) => {
+        // Fails once: a second send of the same bytes would succeed.
+        fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: 1, fd });
+        s.write(Buffer.alloc(200, "h"), written);
+      });
+      expect(result).toEqual({
+        writeError: { code: "ECONNRESET", syscall: "write" },
+        socketError: { code: "ECONNRESET", syscall: "write" },
+        received: 0,
+      });
+    });
+  });
+
   // us_socket_write_check_error gives send() errnos that are neither
   // would-block/transient nor known peer-gone (EPROTOTYPE: macOS returns it
   // racily from send() on healthy sockets) a bounded retry through the

@@ -1582,35 +1582,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.mark_inactive();
             delivered?;
         }
-        if !SSL
-            && !global.has_exception()
-            && !this.socket.get().is_detached()
-            && this.buffered_data_for_node_net.get().len() > 0
-        {
-            // A write issued from inside the open/'connection' callback (a
-            // server answering the moment a connection arrives) can be
-            // deferred into `buffered_data_for_node_net` before the socket has
-            // any usockets-level backpressure, so no writable event would ever
-            // flush it and its JS write callback would never run - the socket
-            // then never finishes and holds the event loop (the FIN-terminated
-            // http response tests hung on every Linux target). Deliver it now
-            // that the open dispatch is done; if it fully drains, complete the
-            // pending JS write the same way on_writable's tail does, otherwise
-            // the do_socket_write backpressure arms the normal writable
-            // subscription.
-            let _ = this.internal_flush();
-            if this.buffered_data_for_node_net.get().len() == 0 {
-                let drain_callback = handlers.on_writable();
-                if !drain_callback.is_empty() {
-                    if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
-                        handlers.call_error_handler(
-                            this_value,
-                            &[this_value, global.take_error(err)],
-                        )?;
-                    }
-                }
-            }
-        }
         Ok(())
     }
 

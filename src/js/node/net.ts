@@ -941,8 +941,6 @@ const SocketHandlers = {
       self.emit("connect", self);
       self.emit("ready");
     }
-
-    SocketHandlers.drain(socket);
   },
   handshake(socket: Socket<TLSSocketInstance>, success, verifyError) {
     const { data: self } = socket;
@@ -2303,7 +2301,6 @@ Socket.prototype[kAttach] = function (port, socket) {
     this.emit("connect", this);
     this.emit("ready");
   }
-  SocketHandlers.drain(socket);
 };
 
 Socket.prototype[kCloseRawConnection] = function () {

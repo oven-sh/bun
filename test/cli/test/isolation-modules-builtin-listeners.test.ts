@@ -1,12 +1,12 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 
 // Under `bun test --isolate=modules` every test file runs with one `process` and one copy of each built-in module, and the
 // listeners that a file leaves on `process` are removed before the next file. These are about a listener that a built-in
 // adds for itself. test/internal/source-lints/process-listeners-of-builtins.test.ts says what a built-in does with one.
 
-// Every test waits for a whole `bun test`, which takes seconds in a debug build.
-setDefaultTimeout(isASAN ? 120_000 : 30_000);
+// Every test waits for a whole `bun test` of 3 to 12 files. A debug build takes up to 6.3 s for one, against a default of 5 s.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
 
 async function run(files: Record<string, string>, flag = "--isolate=modules") {
   using dir = tempDir("isolate-modules-listeners", files);
@@ -110,6 +110,8 @@ test.concurrent("what a finished file registered with process.finalization is re
   expect(exitCode).toBe(0);
 });
 
+// Not on Windows: there is no SIGWINCH there but the one that libuv makes up from console events, and this wait for a
+// resize has only been run on a POSIX pseudo-terminal.
 test
   .skipIf(isWindows)
   .concurrent("process.stdout and process.stderr follow the size of their terminal in every file", async () => {

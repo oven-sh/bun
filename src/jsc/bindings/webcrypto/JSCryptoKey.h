@@ -68,9 +68,6 @@ protected:
     JSCryptoKey(JSC::Structure*, JSDOMGlobalObject&, Ref<CryptoKey>&&);
 
     void finishCreation(JSC::VM&);
-
-private:
-    const size_t m_sizeForGC;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, CryptoKey&);

@@ -266,8 +266,7 @@ DEFINE_VISIT_CHILDREN(JSX509Certificate);
 size_t JSX509Certificate::estimatedSize(JSCell* cell, VM& vm)
 {
     JSX509Certificate* thisObject = uncheckedDowncast<JSX509Certificate>(cell);
-    size_t size = std::max(i2d_X509(thisObject->m_x509.get(), nullptr), 0);
-    return Base::estimatedSize(cell, vm) + size;
+    return Base::estimatedSize(cell, vm) + thisObject->m_extraMemorySizeForGC;
 }
 
 void JSX509Certificate::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

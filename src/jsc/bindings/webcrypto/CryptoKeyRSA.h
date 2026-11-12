@@ -57,8 +57,6 @@ public:
     bool isRestrictedToHash(CryptoAlgorithmIdentifier&) const;
 
     size_t keySizeInBits() const;
-    // The modulus, and for a private key d (as long), and p, q, dp, dq and qi (half as long).
-    size_t memoryCost() const final { return sizeof(*this) + keySizeInBits() / 16 * (type() == CryptoKeyType::Private ? 9 : 2); }
 
     using KeyPairCallback = Function<void(CryptoKeyPair&&)>;
     using VoidCallback = Function<void()>;

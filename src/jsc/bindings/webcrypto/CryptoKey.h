@@ -73,12 +73,22 @@ public:
     void setUsagesBitmap(CryptoKeyUsageBitmap usage) { m_usages = usage; };
     bool allows(CryptoKeyUsageBitmap usage) const { return usage == (m_usages & usage); }
 
-    // Native memory the key owns, for the GC. Does not change once the key is created.
-    virtual size_t memoryCost() const = 0;
+    // Native memory the key owns, for the GC. Collector threads ask too: it reads nothing that changes
+    // once the key is created.
+    size_t memoryCostForGC() const
+    {
+        // Counting small keys would only make a program that imports one per request collect more often.
+        constexpr size_t threshold = 4 * 1024;
+        size_t cost = memoryCost();
+        return cost >= threshold ? cost : 0;
+    }
 
     static Vector<uint8_t> randomData(size_t);
 
 private:
+    // Only of the keys that can reach the threshold.
+    virtual size_t memoryCost() const { return 0; }
+
     CryptoAlgorithmIdentifier m_algorithmIdentifier;
     Type m_type;
     bool m_extractable;

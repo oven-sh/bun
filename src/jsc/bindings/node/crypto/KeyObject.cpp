@@ -1063,7 +1063,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
                 return throwDOMException(WebCore::DataError, "Invalid key type"_s);
             EVP_PKEY_up_ref(asymmetricKey().get());
             WebCore::EvpPKeyPtr platformKey(asymmetricKey().get());
-            result = WebCore::CryptoKeyAKP::create(identifier, type(), WTF::move(platformKey), extractable, usagesBitmap);
+            result = WebCore::CryptoKeyAKP::create(identifier, type(), WTF::move(platformKey), extractable, usagesBitmap, WebCore::CryptoKeyAKP::KeyOwner::KeyObject);
             if (!result)
                 return throwDOMException(WebCore::OperationError, ""_s);
             break;

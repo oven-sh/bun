@@ -57,7 +57,6 @@ public:
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::AES; }
 
     const Vector<uint8_t>& key() const { return m_key; }
-    size_t memoryCost() const final { return sizeof(*this) + m_key.sizeInBytes(); }
     JsonWebKey exportJwk() const;
 
     static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);

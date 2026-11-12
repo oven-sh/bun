@@ -195,27 +195,36 @@ describe.concurrent("CryptoKey external memory is reported to the GC", () => {
     expect(delta).toBeGreaterThan(minimum * count);
   });
 
-  test("RSA key", async () => {
+  // Counting these would make a program that imports a key per request collect more often.
+  test.each([
+    ["RSA", "rsa", { modulusLength: 2048 }, { name: "RSA-PSS", hash: "SHA-256" }],
+    ["EC", "ec", { namedCurve: "P-256" }, { name: "ECDSA", namedCurve: "P-256" }],
+  ])("but not that of a small %s key", async (_name, type, options, algorithm) => {
     const count = 200;
     const delta = await extraMemoryDelta(
-      `const algorithm = { name: "RSA-PSS", hash: "SHA-256" };
-       const der = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "der" });`,
+      `const algorithm = ${JSON.stringify(algorithm)};
+       const der = crypto.generateKeyPairSync("${type}", ${JSON.stringify(options)}).privateKey.export({ type: "pkcs8", format: "der" });`,
       `crypto.webcrypto.subtle.importKey("pkcs8", der, algorithm, true, ["sign"])`,
       count,
     );
-    expect(delta).toBeGreaterThan(1000 * count);
+    expect(delta).toBeLessThan(100 * count);
   });
 
-  test("EC key", async () => {
-    const count = 200;
-    const delta = await extraMemoryDelta(
-      `const algorithm = { name: "ECDSA", namedCurve: "P-256" };
-       const der = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "der" });`,
-      `crypto.webcrypto.subtle.importKey("pkcs8", der, algorithm, true, ["sign"])`,
-      count,
-    );
-    expect(delta).toBeGreaterThan(400 * count);
-  });
+  test.each([
+    ["ml-dsa-65", "ML-DSA-65", ["sign"]],
+    ["ml-kem-768", "ML-KEM-768", ["decapsulateBits"]],
+  ])(
+    "but not once more for each toCryptoKey() of one %s KeyObject, which share its key",
+    async (type, name, usages) => {
+      const count = 200;
+      const delta = await extraMemoryDelta(
+        `const { privateKey } = crypto.generateKeyPairSync("${type}");`,
+        `privateKey.toCryptoKey("${name}", true, ${JSON.stringify(usages)})`,
+        count,
+      );
+      expect(delta).toBeLessThan(100 * count);
+    },
+  );
 
   // Nothing else in the loop allocates enough to make the GC run.
   test("dropped keys do not pile up until something else collects them", async () => {

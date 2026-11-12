@@ -39,11 +39,12 @@ public:
     }
 
     const Vector<uint8_t>& key() const { return m_key; }
-    size_t memoryCost() const final { return sizeof(*this) + m_key.sizeInBytes(); }
 
     static bool isValidRawAlgorithm(CryptoAlgorithmIdentifier);
 
 private:
+    size_t memoryCost() const final { return sizeof(*this) + m_key.sizeInBytes(); }
+
     CryptoKeyRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap, bool extractable);
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::Raw; }

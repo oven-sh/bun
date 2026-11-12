@@ -102,17 +102,18 @@ int CryptoKeyAKP::nidForIdentifier(CryptoAlgorithmIdentifier identifier)
     }
 }
 
-CryptoKeyAKP::CryptoKeyAKP(CryptoAlgorithmIdentifier identifier, CryptoKeyType type, EvpPKeyPtr&& key, bool extractable, CryptoKeyUsageBitmap usages)
+CryptoKeyAKP::CryptoKeyAKP(CryptoAlgorithmIdentifier identifier, CryptoKeyType type, EvpPKeyPtr&& key, bool extractable, CryptoKeyUsageBitmap usages, KeyOwner keyOwner)
     : CryptoKey(identifier, type, extractable, usages)
     , m_key(WTF::move(key))
+    , m_keyOwner(keyOwner)
 {
 }
 
-RefPtr<CryptoKeyAKP> CryptoKeyAKP::create(CryptoAlgorithmIdentifier identifier, CryptoKeyType type, EvpPKeyPtr&& key, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyAKP> CryptoKeyAKP::create(CryptoAlgorithmIdentifier identifier, CryptoKeyType type, EvpPKeyPtr&& key, bool extractable, CryptoKeyUsageBitmap usages, KeyOwner keyOwner)
 {
     if (!key || EVP_PKEY_id(key.get()) != nidForIdentifier(identifier))
         return nullptr;
-    return adoptRef(*new CryptoKeyAKP(identifier, type, WTF::move(key), extractable, usages));
+    return adoptRef(*new CryptoKeyAKP(identifier, type, WTF::move(key), extractable, usages, keyOwner));
 }
 
 auto CryptoKeyAKP::algorithm() const -> KeyAlgorithm
@@ -124,6 +125,8 @@ auto CryptoKeyAKP::algorithm() const -> KeyAlgorithm
 
 size_t CryptoKeyAKP::memoryCost() const
 {
+    if (m_keyOwner == KeyOwner::KeyObject)
+        return 0;
     bool isPrivate = type() == CryptoKeyType::Private;
     switch (algorithmIdentifier()) {
     case CryptoAlgorithmIdentifier::ML_DSA_44:

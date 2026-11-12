@@ -1637,51 +1637,42 @@ describe("Socket fd adoption", () => {
     });
   });
 
-  // Whoever adopts a descriptor closes it, so a descriptor has one owner.
-  describe.skipIf(isWindows)("a descriptor that a socket of this process owns", () => {
-    const refusal = (fd: number) => {
-      try {
-        new Socket({ fd, readable: false, writable: true });
-      } catch (e) {
-        const { message, code, syscall } = e as NodeJS.ErrnoException;
-        return { message, code, syscall, fd: fstatCode(fd) };
-      }
-    };
-    const refused = { message: "open EEXIST", code: "EEXIST", syscall: "open", fd: "open" };
-
-    it("is refused for a connected socket, which keeps working", async () => {
-      const server = createServer(socket => socket.pipe(socket));
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
-      try {
-        await once(client, "connect");
-        expect(refusal((client as any)._handle.fd)).toEqual(refused);
-        client.write("ping");
-        expect(String((await once(client, "data"))[0])).toBe("ping");
-      } finally {
-        client.destroy();
-        server.close();
-      }
+  it.skipIf(isWindows).each([
+    ["reads from", true],
+    ["writes to", false],
+  ])("one socket can write to a descriptor that another %s", async (_, reads) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const writer = new net.Socket({ fd: 3, readable: false, writable: true });
+          const other = new net.Socket({ fd: 3, readable: ${reads}, writable: ${!reads} });
+          writer.write("echo ");
+          // An orderly exit closes the descriptor twice.
+          const leave = () => process.kill(process.pid, "SIGKILL");
+          if (${reads}) other.once("data", chunk => writer.write(chunk, leave));
+          else other.write("hi", leave);
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "pipe", "pipe"],
     });
-
-    it("is refused for a second socket over the same pipe", async () => {
-      const { rfd, wfd } = openFifo("one-owner.fifo");
-      const owner = new Socket({ fd: wfd, readable: false, writable: true });
-      try {
-        expect(refusal(wfd)).toEqual(refused);
-        await new Promise<void>((resolve, reject) => owner.write("mine", err => (err ? reject(err) : resolve())));
-        expect(drain(rfd)).toBe("mine");
-        owner.destroy();
-        await once(owner, "close");
-        expect(fstatCode(wfd)).toBe("EBADF");
-      } finally {
-        owner.destroy();
-        fs.closeSync(rfd);
-      }
-    });
+    const peer = new Socket({ fd: proc.stdio[3] as number, readable: true, writable: true });
+    try {
+      let received = "";
+      peer.on("data", chunk => (received += chunk)).on("error", () => {});
+      if (reads) peer.write("hi");
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited, once(peer, "close")]);
+      expect({ received, stderr }).toEqual({ received: "echo hi", stderr: "" });
+      expect(proc.signalCode).toBe("SIGKILL");
+    } finally {
+      peer.destroy();
+    }
   });
 
-  // stdin, stdout and stderr are never closed, so they have no owner.
+  // stdin, stdout and stderr are never closed.
   it("two sockets can write to stdout", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -4183,8 +4174,41 @@ describe("net.Server.listen({ fd })", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(isWindows)(
-    "every way to adopt a descriptor reports one that's in use as EEXIST and leaves it alone",
+  it.skipIf(isWindows)("a Worker accepts on the descriptor of a listener of the main thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("net"), { once } = require("events"), { Worker } = require("worker_threads");
+        const server = net.createServer().listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const gate = new Int32Array(new SharedArrayBuffer(4));
+        const worker = new Worker(
+          \`const net = require("net"), { workerData: { fd, port, gate } } = require("worker_threads");
+          const done = said => (require("fs").writeSync(1, said), Atomics.store(gate, 0, 1), Atomics.notify(gate, 0));
+          net.createServer(() => done("accepted")).on("error", err => done(err.code)).listen({ fd }, () => net.connect(port, "127.0.0.1"));\`,
+          { eval: true, workerData: { fd: server._handle.fd, port: server.address().port, gate } },
+        );
+        await once(worker, "online");
+        // This thread stands still, so only the Worker can accept.
+        Atomics.wait(gate, 0, 0);
+        // An orderly exit closes the descriptor twice.
+        process.kill(process.pid, "SIGKILL");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "accepted", stderr: "" });
+    expect(proc.signalCode).toBe("SIGKILL");
+  });
+
+  // epoll refuses a descriptor that it already watches. kqueue doesn't.
+  it.skipIf(!isLinux)(
+    "every way to adopt a descriptor refuses one that this thread polls and leaves it alone",
     async () => {
       await using proc = Bun.spawn({
         cmd: [
@@ -4240,8 +4264,8 @@ describe("net.Server.listen({ fd })", () => {
           "listener Bun.listen: EEXIST",
           "listener Bun.connect: EEXIST",
           "listener net.Socket: EEXIST",
-          "connection net.Server: EEXIST",
-          "connection Bun.listen: EEXIST",
+          "connection net.Server: EINVAL",
+          "connection Bun.listen: EINVAL",
           "connection Bun.connect: EEXIST",
           "connection net.Socket: EEXIST",
           "datagram socket dgram.Socket: EEXIST",
@@ -4255,6 +4279,48 @@ describe("net.Server.listen({ fd })", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it.skipIf(isWindows)("a new descriptor works under a number that was closed behind a socket's back", async () => {
+    using dir = tempDir("number-reused", {
+      "main.js": `
+        const { fork } = require("child_process"), fs = require("fs"), net = require("net"), { once } = require("events");
+        const listen = async () => {
+          const server = net.createServer(socket => socket.end("accepted")).listen(0, "127.0.0.1");
+          await once(server, "listening");
+          return server;
+        };
+        if (process.send) {
+          fs.writeSync(4, "pipe");
+          process.on("message", async () => process.send("handle", await listen()));
+          process.send("channel");
+        } else {
+          (async () => {
+            const servers = [];
+            for (let i = 0; i < 16; i++) servers.push(await listen());
+            for (const server of servers) fs.closeSync(server._handle.fd);
+            const child = fork(__filename, { stdio: ["ignore", "inherit", "inherit", "ipc", "pipe"] });
+            console.log(...(await Promise.all([once(child, "message"), once(child.stdio[4], "data")])).map(([said]) => String(said)));
+            child.send("go");
+            const [message, server] = await once(child, "message");
+            console.log(message, server.listening);
+            child.kill();
+            // An orderly exit has the 16 servers close numbers that aren't theirs any more.
+            process.kill(process.pid, "SIGKILL");
+          })();
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "channel pipe\nhandle true\n", stderr: "" });
+    expect(proc.signalCode).toBe("SIGKILL");
+  });
 });
 
 // A throw from a user listener invoked synchronously from a native socket

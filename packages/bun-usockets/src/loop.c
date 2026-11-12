@@ -245,6 +245,17 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     return any;
 }
 
+int us_loop_listens_on(struct us_loop_t *loop, LIBUS_SOCKET_DESCRIPTOR fd) {
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_listen_socket_t *ls = g->head_listen_sockets; ls; ls = ls->next) {
+            if (us_poll_fd(&ls->s.p) == fd) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /* Hold a parked socket's timeouts back for at most 120 s, Node's default TLS handshakeTimeout. */
 static const int MAX_LOW_PRIO_TICKS = 120 / LIBUS_TIMEOUT_GRANULARITY;
 

@@ -733,7 +733,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             UnixOrHost::Fd(f) if !SSL && self.flags.get().contains(Flags::WRITE_ONLY_FD) => {
                 // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
                 let tcp = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
-                return super::fd_pipe::FdPipe::open(tcp, *f, cx.context());
+                return Ok(super::fd_pipe::FdPipe::open(tcp, *f, cx.context()));
             }
             UnixOrHost::Fd(f) => {
                 // The fd is connected, so it is registered paused outright; a dial is paused in on_open.

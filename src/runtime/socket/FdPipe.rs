@@ -6,8 +6,6 @@ use bun_jsc::JsResult;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
-#[cfg(not(windows))]
-use bun_uws::udp::raw;
 use bun_uws::{SocketTCP, Transport};
 
 use super::TCPSocket;
@@ -35,17 +33,12 @@ bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
 });
 
 impl FdPipe {
-    /// Makes `fd` the transport of `socket` and reports it open. `Err`: another socket of this process owns `fd`, and `socket` has had no event.
+    /// Makes `fd` the transport of `socket` and reports it open.
     pub(crate) fn open(
         socket: ThisPtr<TCPSocket>,
         fd: Fd,
         context: &bun_jsc::ScriptExecutionContext,
-    ) -> Result<JsResult<()>, sys::SystemErrno> {
-        // uSockets keeps its table of owned descriptors on POSIX only.
-        #[cfg(not(windows))]
-        if Self::closes(fd) && raw::bsd_adopt_socket(fd.native(), 0) != 0 {
-            return Err(sys::SystemErrno::from_raw(sys::last_error() as u16));
-        }
+    ) -> JsResult<()> {
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
             fd,
@@ -64,12 +57,7 @@ impl FdPipe {
         pipe.handle.set(this);
         let handle = SocketTCP::from_transport(&raw const pipe.handle);
         socket.socket.set(handle);
-        Ok(TCPSocket::on_open(socket, handle))
-    }
-
-    /// Other streams share stdin, stdout and stderr, so they stay open and nobody owns them.
-    fn closes(fd: Fd) -> bool {
-        !fd.is_stdio()
+        TCPSocket::on_open(socket, handle)
     }
 
     /// Returns true if `on_poll` will report that the descriptor takes bytes again.
@@ -166,10 +154,8 @@ impl Transport for FdPipe {
             // SAFETY: this pipe's live hive slot, given back here.
             unsafe { (*poll).deinit() };
         }
-        if Self::closes(self.fd) {
-            // Before the close: afterwards the number can already be another thread's.
-            #[cfg(not(windows))]
-            raw::bsd_disown_socket(self.fd.native());
+        // Other streams share stdin, stdout and stderr, so they stay open.
+        if !self.fd.is_stdio() {
             // The program may have closed the descriptor itself.
             let _ = self.fd.close_allowing_bad_file_descriptor(None);
         }

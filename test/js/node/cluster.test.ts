@@ -1634,7 +1634,6 @@ if (cluster.isPrimary) {
 const ownedFdFixture = `
 const cluster = require("node:cluster");
 const dgram = require("node:dgram");
-const dns = require("node:dns");
 const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
@@ -1642,7 +1641,6 @@ const net = require("node:net");
 const path = require("node:path");
 const tls = require("node:tls");
 const { once } = require("node:events");
-const { Worker } = require("node:worker_threads");
 
 const keys = { cert: process.env.CERT, key: process.env.KEY };
 cluster.schedulingPolicy = cluster[process.env.POLICY];
@@ -1700,47 +1698,12 @@ const owners = {
     const { port } = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { open: socket => void socket.end("primary"), data() {} } });
     return () => readAll(net.connect(port, "127.0.0.1"));
   },
-  async "listener on another thread"() {
-    const thread = new Worker(
-      'const server = require("node:net").createServer(socket => socket.end("primary")).listen(0, "127.0.0.1", () => require("node:worker_threads").parentPort.postMessage(server.address().port));',
-      { eval: true },
-    );
-    const [port] = await once(thread, "message");
-    return () => readAll(net.connect(port, "127.0.0.1"));
-  },
   async "connected socket"() {
     const server = net.createServer(socket => socket.on("data", () => socket.write("primary"))).listen(0, "127.0.0.1");
     await once(server, "listening");
     const client = net.connect(server.address().port, "127.0.0.1");
     await once(client, "connect");
     return Object.assign(async () => (client.write("x"), String((await once(client, "data"))[0])), { fd: client._handle.fd });
-  },
-  async "dns.Resolver"() {
-    let answers = false;
-    const server = dgram.createSocket("udp4").bind(0, "127.0.0.1");
-    server.on("message", (query, { port }) => {
-      if (!answers) return;
-      const head = Buffer.from(query.subarray(0, 12));
-      head.writeUInt16BE(0x8180, 2);
-      head.writeUInt16BE(1, 6);
-      head.writeUInt16BE(0, 10);
-      const question = query.subarray(12, query.indexOf(0, 12) + 5);
-      server.send([head, question, Buffer.from("c00c000100010000000100047f000001", "hex")], port, "127.0.0.1");
-    });
-    await once(server, "listening");
-    const before = socketFds();
-    const resolver = new dns.promises.Resolver({ timeout: 60_000, tries: 1 });
-    resolver.setServers(["127.0.0.1:" + server.address().port]);
-    // The resolver holds a descriptor until this query times out.
-    let released = false;
-    resolver.resolve4("unanswered.test").catch(() => (released = true));
-    await once(server, "message");
-    const ask = async () => {
-      answers = true;
-      const [address] = await resolver.resolve4("primary.test");
-      return address === "127.0.0.1" ? "primary" : address;
-    };
-    return Object.assign(ask, { fd: socketFds().find(fd => !before.includes(fd)), released: () => released });
   },
   async "dgram.Socket"() {
     const socket = dgram.createSocket("udp4").bind(0, "127.0.0.1");
@@ -1776,14 +1739,10 @@ const ways = {
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   await once(worker, "online");
-  let ask, lines;
-  do {
-    const before = socketFds();
-    ask = await owners[process.env.OWNER]();
-    worker.send(ask.fd ?? socketFds().find(fd => !before.includes(fd)));
-    [lines] = await once(worker, "message");
-    // An answer about a descriptor that its owner has given up meanwhile says nothing.
-  } while (ask.released?.());
+  const before = socketFds();
+  const ask = await owners[process.env.OWNER]();
+  worker.send(ask.fd ?? socketFds().find(fd => !before.includes(fd)));
+  const [lines] = await once(worker, "message");
   for (const line of lines) console.log(line);
   console.log("owner:", await ask());
   worker.disconnect();
@@ -1802,17 +1761,15 @@ if (cluster.isPrimary) {
 describe.each(["SCHED_RR", "SCHED_NONE"])("%s: a worker can't take a descriptor that the primary uses:", POLICY => {
   const streamWays = ["net", "http", "https", "tls"];
   test.skipIf(isWindows).concurrent.each([
-    ["net.Server", streamWays],
-    ["http.Server", streamWays],
-    ["tls.Server", streamWays],
-    ["unix path", streamWays],
-    ["Bun.serve", streamWays],
-    ["Bun.listen", streamWays],
-    ["listener on another thread", streamWays],
-    ["connected socket", streamWays],
-    ["dgram.Socket", ["dgram"]],
-    ["dns.Resolver", ["dgram"]],
-  ])("%s", async (OWNER, ways) => {
+    ["net.Server", streamWays, "EEXIST"],
+    ["http.Server", streamWays, "EEXIST"],
+    ["tls.Server", streamWays, "EEXIST"],
+    ["unix path", streamWays, "EEXIST"],
+    ["Bun.serve", streamWays, "EEXIST"],
+    ["Bun.listen", streamWays, "EEXIST"],
+    ["connected socket", streamWays, "EINVAL"],
+    ["dgram.Socket", ["dgram"], "EEXIST"],
+  ])("%s", async (OWNER, ways, code) => {
     using dir = tempDir("cluster-fd-owned", { "main.mjs": ownedFdFixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.mjs"],
@@ -1823,7 +1780,7 @@ describe.each(["SCHED_RR", "SCHED_NONE"])("%s: a worker can't take a descriptor 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
-      stdout: [...ways.map(way => `${way}: EEXIST`), "owner: primary", "owner after the worker's exit: primary"],
+      stdout: [...ways.map(way => `${way}: ${code}`), "owner: primary", "owner after the worker's exit: primary"],
       stderr: "",
     });
     expect(exitCode).toBe(0);

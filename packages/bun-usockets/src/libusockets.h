@@ -344,6 +344,8 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners, i
  * connections, 0 if the loop was already idle. Listen sockets are NOT closed
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
+/* Whether `fd` is the descriptor of a listen socket of this loop. */
+int us_loop_listens_on(us_loop_r loop, LIBUS_SOCKET_DESCRIPTOR fd) nonnull_fn_decl;
 
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;

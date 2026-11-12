@@ -14,7 +14,10 @@ const clusterRawBind: (
   flags: number,
 ) => RawHandle | number = $bindgen("node_cluster_binding.bind.ts", "clusterRawBind");
 const closeRawHandle: (fd: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
-const adoptFd: (fd: number, wantDgram: boolean) => number = $bindgen("node_cluster_binding.bind.ts", "clusterAdoptFd");
+const validateFd: (fd: number, wantDgram: boolean) => number = $bindgen(
+  "node_cluster_binding.bind.ts",
+  "clusterValidateFd",
+);
 
 export default class SharedHandle {
   key: string;
@@ -33,7 +36,7 @@ export default class SharedHandle {
     this.sharedOnly = sharedOnly === true;
 
     if (typeof fd === "number" && fd >= 0) {
-      const err = adoptFd(fd, addressType === "udp4" || addressType === "udp6");
+      const err = validateFd(fd, addressType === "udp4" || addressType === "udp6");
       if (err !== 0) {
         this.errno = err;
       } else {
@@ -59,6 +62,12 @@ export default class SharedHandle {
 
   has(worker: ClusterWorker) {
     return this.workers.has(worker.id);
+  }
+
+  // Returns the file descriptor that remove() closes, or -1.
+  get fd() {
+    const handle = this.handle;
+    return handle ? handle.fd : -1;
   }
 
   remove(worker: ClusterWorker) {

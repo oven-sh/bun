@@ -735,16 +735,12 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
-/* One bit per descriptor a socket in this process owns, on any thread's loop. */
-#define BSD_OWNED_PAGE_BITS (1u << 15)
 #ifdef _WIN32
+/* One bit per socket this process made, on any thread's loop. */
+#define BSD_OWNED_PAGE_BITS (1u << 15)
 /* The key of a handle is its index in the process's handle table, which holds 2^24. A SOCKET past that isn't tracked. */
 #define BSD_OWNED_KEYS (1u << 24)
 #define BSD_OWNED_KEY(fd) ((uintptr_t) (fd) >> 2)
-#else
-#define BSD_OWNED_KEYS (1u << 31)
-#endif
-/* Not an array: half a megabyte more of zero-filled data makes room there for a transparent huge page, which nothing can opt out of. */
 static _Atomic(void *) bsd_owned_pages;
 
 static void *bsd_owned_level(_Atomic(void *) *slot, size_t size) {
@@ -769,7 +765,6 @@ static _Atomic(uint64_t) *bsd_owned_word(unsigned int key) {
     return &page[key % BSD_OWNED_PAGE_BITS / 64];
 }
 
-#ifdef _WIN32
 /* Only a socket this process made: another process may hold one that came from elsewhere, and a shutdown() reaches every holder. */
 static void bsd_own_new_socket(SOCKET fd) {
     uintptr_t key = BSD_OWNED_KEY(fd);
@@ -777,53 +772,14 @@ static void bsd_own_new_socket(SOCKET fd) {
         atomic_fetch_or(bsd_owned_word((unsigned int) key), 1ull << (key % 64));
     }
 }
-#else
-#define bsd_own_new_socket(fd) bsd_adopt_socket(fd, 0)
-#endif
 
-int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
-    if (type) {
-        int actual = 0;
-        socklen_t length = sizeof(actual);
-        if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &actual, &length)) {
-            return -1;
-        }
-        if (actual != type) {
-#ifdef _WIN32
-            WSASetLastError(WSAEINVAL);
-#endif
-            errno = EINVAL;
-            return -1;
-        }
-    }
-#ifndef _WIN32
-    if (fd < 0) {
-        errno = EBADF;
-        return -1;
-    }
-    uint64_t bit = 1ull << (fd % 64);
-    if (atomic_fetch_or(bsd_owned_word(fd), bit) & bit) {
-        errno = EEXIST;
-        return -1;
-    }
-#endif
-    return 0;
-}
-
-void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifdef _WIN32
+static void bsd_disown_socket(SOCKET fd) {
     uintptr_t key = BSD_OWNED_KEY(fd);
     if (key < BSD_OWNED_KEYS) {
         atomic_fetch_and(bsd_owned_word((unsigned int) key), ~(1ull << (key % 64)));
     }
-#else
-    if (fd >= 0) {
-        atomic_fetch_and(bsd_owned_word(fd), ~(1ull << (fd % 64)));
-    }
-#endif
 }
 
-#ifdef _WIN32
 void bsd_shutdown_owned_sockets(void) {
     _Atomic(void *) *pages = atomic_load(&bsd_owned_pages);
     for (unsigned int i = 0; pages && i < BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS; i++) {
@@ -861,7 +817,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    bsd_own_new_socket(created_fd);
     return apple_no_sigpipe(created_fd);
 #elif defined(_WIN32)
     /* Plain socket() returns an inheritable handle, so any child spawned with
@@ -891,15 +846,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    bsd_own_new_socket(created_fd);
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
 #endif
 }
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
-    /* Before close(): the kernel can hand the number to another thread right after it. */
-    bsd_disown_socket(fd);
 #ifdef _WIN32
+    /* Before the close: the kernel can hand the number to another thread right after it. */
+    bsd_disown_socket(fd);
     closesocket(fd);
 #else
     close(fd);
@@ -1113,10 +1067,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
     /* accept() returns an inheritable handle regardless of the listening
      * socket's flags; keep it out of spawned children. */
     SetHandleInformation((HANDLE) accepted_fd, HANDLE_FLAG_INHERIT, 0);
+    bsd_own_new_socket(accepted_fd);
 #endif
 
     internal_finalize_bsd_addr(addr);
-    bsd_own_new_socket(accepted_fd);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
 // skip the extra fcntl calls.
@@ -1965,10 +1919,29 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family, i
 #endif
 }
 
+int bsd_check_socket_type(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
+    int actual = 0;
+    socklen_t length = sizeof(actual);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &actual, &length)) {
+        return -1;
+    }
+    if (actual != type) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    return 0;
+}
+
 /* Prepares an externally created UDP fd for adoption, matching uv_udp_open:
  * nonblock + SO_REUSEADDR only. Recv-path options (IP_RECVERR, PKTINFO,
  * SIO_UDP_CONNRESET) are NOT applied — mutating the caller's fd is observable. */
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    if (bsd_check_socket_type(fd, SOCK_DGRAM)) {
+        return -1;
+    }
     struct sockaddr_storage ss;
     socklen_t len = sizeof(ss);
     if (getsockname(fd, (struct sockaddr *) &ss, (socklen_t *) &len)) {

@@ -373,6 +373,7 @@ export default b.declarations(
       "dgramCloseFd",
       "dgramGetSockNameFd",
       "dgramGuessHandleType",
+      "dgramIsFdAdopted",
       "dgramListenFd",
       "dgramNewSocketFd",
       "disconnect",

@@ -667,8 +667,8 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
 }
 
-/// Takes ownership of `fd`, an unconnected socket of the wanted type that nothing in this process owns. Returns 0 or a negative errno.
-pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
+/// Returns 0 if `fd` is an unconnected socket of the wanted type that this thread doesn't listen on, or a negative errno.
+pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
         let number = fd;
@@ -685,15 +685,24 @@ pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        if bun_uws::udp::raw::bsd_adopt_socket(fd, wanted) != 0 {
-            // node's createServerHandle: EINVAL for anything that cannot listen, fd left untouched.
-            return if bun_core::ffi::errno() == libc::EEXIST {
-                -bun_sys::UV_E::EXIST
-            } else {
-                -bun_sys::UV_E::INVAL
-            };
+        let mut ty: libc::c_int = 0;
+        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len`
+        // is the size of `ty`.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&raw mut ty).cast(),
+                &raw mut len,
+            )
+        };
+        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
+        if rc != 0 || ty != wanted {
+            return -bun_sys::UV_E::INVAL;
         }
-        if !want_dgram {
+        if ty == libc::SOCK_STREAM {
             // SAFETY: getpeername only writes within `peer_len`, the size of `peer`.
             let connected = unsafe {
                 let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed();
@@ -702,8 +711,10 @@ pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
-                bun_uws::udp::raw::bsd_disown_socket(fd);
                 return -bun_sys::UV_E::INVAL;
+            }
+            if VirtualMachine::get().uws_loop_ref().listens_on(fd) {
+                return -bun_sys::UV_E::EXIST;
             }
         }
         0

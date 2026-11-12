@@ -310,6 +310,11 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
+    /// Whether `fd` is the descriptor of a listen socket of this loop.
+    pub fn listens_on(&self, fd: c_int) -> bool {
+        c::us_loop_listens_on(self, fd) != 0
+    }
+
     pub fn should_enable_date_header_timer(&self) -> bool {
         self.internal_loop_data.should_enable_date_header_timer()
     }
@@ -540,6 +545,8 @@ mod c {
         /// One pass of the socket timeout sweep. Must not run recursively.
         pub fn us_internal_timer_sweep(loop_: &Loop);
         pub(super) fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
+        #[cfg(not(windows))]
+        pub(super) safe fn us_loop_listens_on(loop_: &Loop, fd: c_int) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]

@@ -189,16 +189,14 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
 /* See us_socket_delivered_bytes. */
 int bsd_socket_delivered_bytes(LIBUS_SOCKET_DESCRIPTOR fd, uint64_t *bytes);
+/* Returns 0, or -1 with EINVAL for a socket that isn't of `type`. */
+int bsd_check_socket_type(LIBUS_SOCKET_DESCRIPTOR fd, int type);
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
-/* Takes ownership of a descriptor opened elsewhere without touching it. EINVAL: not a socket of `type` (0 allows anything). EEXIST, not on Windows: a socket in this process owns it. */
-int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type);
-/* Gives up ownership without closing. */
-void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 #ifdef _WIN32
 /* Ends the sending side of every socket this process made and shared with no other, on any thread's loop. For the exit of the process, where Winsock resets what is still open. */
 void bsd_shutdown_owned_sockets(void);

@@ -404,7 +404,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    if (bsd_adopt_socket(fd, SOCK_STREAM)) {
+    if (bsd_check_socket_type(fd, SOCK_STREAM)) {
         *error = LIBUS_ERR;
         return 0;
     }
@@ -413,7 +413,6 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     if (listen(fd, backlog > 0 ? backlog : 512)) {
         int listen_err = LIBUS_ERR;
         if (!bsd_socket_listen_error_is_benign(fd)) {
-            bsd_disown_socket(fd);
             *error = listen_err;
             return 0;
         }
@@ -425,7 +424,6 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
         int saved_errno = LIBUS_ERR;
-        bsd_disown_socket(fd);
         us_poll_free(p, group->loop);
         *error = saved_errno;
         return 0;

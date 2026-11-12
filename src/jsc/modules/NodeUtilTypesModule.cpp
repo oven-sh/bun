@@ -271,11 +271,13 @@ extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::Encoded
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js
 namespace PartialDeepEqual {
 
-// Node compares with no cycle check until a comparison throws, a stack overflow included. From then on every
-// comparison of the realm runs under `handleCycles`, so its answer depends on what ran before. Here nothing outlives
-// a call, and every call answers as a new node process does: the first run gives no cycle verdict and only finds
-// out that it cannot end, and the host function then compares once more under node's memos. A first run that throws
-// from operand code is not repeated.
+// Node compares with no cycle check (`detectCycles`). When that run throws, a stack overflow included, node compares
+// again under `handleCycles`, and then keeps `handleCycles` for the rest of the realm, so an answer of node depends on
+// what ran before. Here nothing outlives a call. A run without memos gives no cycle verdict: it gives up where a pair
+// is inside its own comparison, or where its stack ends, and compareAgain decides how to go on. What is not node's:
+// - A run that throws from operand code is not repeated.
+// - An earlier comparison changes nothing. Node answers under handleCycles once a comparison of the realm has thrown.
+// - Set members and Map keys are paired in bun's order (setSubset, mapSubset).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L1045-L1053
 struct Memos {
     explicit Memos(JSC::MarkedArgumentBuffer& kept)
@@ -295,24 +297,57 @@ struct Memos {
     JSC::MarkedArgumentBuffer& kept;
 };
 
+// What a pair under the cycle guard compares: node's `iterationType`, and which own keys of `expected` count.
+enum class Arm : uint8_t {
+    Keys,
+    NonIndexKeys,
+    Array,
+    Map,
+    Set,
+};
+
+// Why a run gave up.
+enum class End : uint8_t {
+    None,
+    PairRepeats,
+    NoStack,
+};
+
 struct CycleState {
     explicit CycleState(void* stackEnd)
         : stackEnd(stackEnd)
     {
     }
 
-    // The run is out of stack below this address.
+    // The run has no stack below this address: it throws there, or it gives up (`ended`).
     void* stackEnd;
-    // First run: the pairs that are being compared, each at one index of both.
-    WTF::Vector<JSC::JSCell*, 8> actualOpen;
-    WTF::Vector<JSC::JSCell*, 8> expectedOpen;
-    bool endless { false };
-    // Second run.
+    bool throwsAtStackEnd { false };
+    End ended { End::None };
+    // A run without memos: the pairs that are being compared, `actual` before `expected`.
+    JSC::MarkedVector<JSValue, 16> open;
+    // A run under node's memos.
     std::optional<Memos> memos;
 };
 
 using Comparison = bool(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
-static Comparison compareBranch, nonIndexObjectSubset, arraySubsequence, mapSubsetAndProps, setSubsetAndProps, errorSubset;
+static Comparison compareBranch, objectSubset, nonIndexObjectSubset, arraySubsequence, mapSubsetAndProps, setSubsetAndProps;
+
+static Comparison* bodyOf(Arm arm)
+{
+    switch (arm) {
+    case Arm::Keys:
+        return objectSubset;
+    case Arm::NonIndexKeys:
+        return nonIndexObjectSubset;
+    case Arm::Array:
+        return arraySubsequence;
+    case Arm::Map:
+        return mapSubsetAndProps;
+    case Arm::Set:
+        return setSubsetAndProps;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 // Operand code (a getter, a Proxy trap) gets a RangeError from JSC at the soft limit. The first run ends above it,
 // so that a comparison that cannot end gets node's answer and not that error.
@@ -326,32 +361,72 @@ static void* stackEndOfFirstRun(JSC::VM& vm)
     return static_cast<char*>(vm.softStackLimit()) + headroom;
 }
 
+// The stack of a run has ended. True when the run ends here as well. A run without memos that has fewer pairs than
+// this of its own open was called with little stack left: the caller is deep, not the comparison, and it compares on
+// as far as it is safe.
+static constexpr size_t pairsOfADeepComparison = 32;
+
+static NEVER_INLINE bool endsAtStackEnd(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope)
+{
+    const bool calledDeep = !cycles.memos && cycles.open.size() < 2 * pairsOfADeepComparison;
+    if (!cycles.throwsAtStackEnd && !calledDeep) {
+        cycles.ended = End::NoStack;
+        return true;
+    }
+    if (globalObject->vm().isSafeToRecurse())
+        return false;
+    JSC::throwStackOverflowError(globalObject, scope);
+    return true;
+}
+
 // node's keyCheck answers true for an `expected` with no key, element or entry before it looks at its memos. The
 // caller has counted the elements of an array.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L510-L515
-static bool hasNoKeyOrEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* expected, Comparison* body)
+static bool hasNoKeyOrEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* expected, Arm arm)
 {
-    // errorSubset compares the name, message, errors and cause of an Error with no key.
-    if (body == errorSubset)
+    if (arm == Arm::Map && uncheckedDowncast<JSC::JSMap>(expected)->size())
         return false;
-    if (body == mapSubsetAndProps && uncheckedDowncast<JSC::JSMap>(expected)->size())
+    if (arm == Arm::Set && uncheckedDowncast<JSC::JSSet>(expected)->size())
         return false;
-    if (body == setSubsetAndProps && uncheckedDowncast<JSC::JSSet>(expected)->size())
-        return false;
-    JSC::PropertyNameArrayBuilder names(globalObject->vm(), JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
-    if (body == arraySubsequence || body == nonIndexObjectSubset)
-        expected->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
-    else
+    auto& vm = globalObject->vm();
+    const bool indexKeysCount = arm != Arm::Array && arm != Arm::NonIndexKeys;
+
+    // An object whose keys are those of its structure and of a plain vector of elements: the first key answers.
+    JSC::Structure* structure = expected->structure();
+    const JSC::IndexingType indexingType = structure->indexingType();
+    const bool plainKeys = !structure->typeInfo().overridesAnyFormOfGetOwnPropertyNames() && !structure->hasNonReifiedStaticProperties()
+        && (!indexKeysCount || !JSC::hasAnyArrayStorage(indexingType));
+    if (plainKeys) {
+        if (indexKeysCount && JSC::hasIndexedProperties(indexingType)) {
+            for (unsigned i = 0, length = expected->getArrayLength(); i < length; i++) {
+                if (expected->canGetIndexQuickly(i))
+                    return false;
+            }
+        }
+        bool found = false;
+        structure->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) -> bool {
+            if ((entry.attributes() & JSC::PropertyAttribute::DontEnum) || JSC::PropertyName(entry.key()).isPrivateName())
+                return true;
+            found = true;
+            return false;
+        });
+        return !found;
+    }
+
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    if (indexKeysCount)
         expected->methodTable()->getOwnPropertyNames(expected, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    else
+        expected->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
     return !names.size();
 }
 
 // node's handleCycles up to its call of objEquiv, behind the answers that node gives ahead of it: an answer, or
-// nothing when the pair is to be compared. Not inline, and with no argument on the stack: the frames under a
-// comparison must not be larger than those of the first run.
+// nothing when the pair is to be compared. Not inline, and with no argument on the stack, so that a pair under the
+// memos takes no more stack than a pair without them.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L523-L570
-static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
     Memos& memos = *cycles.memos;
     JSC::JSCell* actualCell = actual.asCell();
@@ -362,15 +437,32 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
         return std::nullopt;
     }
 
-    // node answers for an `expected` array that is longer than `actual`, and for an `expected` with nothing to
-    // compare, before handleCycles sees the pair. Where handleCycles would only remember the pair, the comparison
-    // gives the same answers and leaveMemos takes the pair out again, so they are not looked for here.
-    const bool onlyRemembers = memos.hasSet
-        ? !memos.set.contains(actualCell) && !memos.set.contains(expectedCell)
-        : !memos.deep && memos.a != actualCell && memos.b != expectedCell;
-    if (!onlyRemembers) {
+    // What handleCycles is about to do with the pair.
+    enum class Next : uint8_t {
+        Remember,
+        AnswerTrue,
+        AnswerFalse,
+        MakeSet,
+    };
+    Next next;
+    if (memos.hasSet) {
+        const bool hasActual = memos.set.contains(actualCell);
+        const bool hasExpected = memos.set.contains(expectedCell);
+        next = hasActual && hasExpected ? Next::AnswerTrue : hasActual || hasExpected ? Next::AnswerFalse
+                                                                                      : Next::Remember;
+    } else if (memos.deep)
+        next = Next::MakeSet;
+    else if (memos.a == actualCell)
+        next = memos.b == expectedCell ? Next::AnswerTrue : Next::AnswerFalse;
+    else
+        next = memos.b == expectedCell ? Next::AnswerFalse : Next::Remember;
+
+    // node answers ahead of handleCycles for an `expected` array that is longer than `actual` (false), and for an
+    // `expected` with nothing to compare (true). Where handleCycles only remembers the pair, the comparison gives both
+    // answers itself and leaveMemos takes the pair out again. Where handleCycles answers true, the second is the same.
+    if (next != Next::Remember) {
         bool hasElements = false;
-        if (body == arraySubsequence) {
+        if (arm == Arm::Array) {
             const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actual.getObject()));
             RETURN_IF_EXCEPTION(scope, false);
             const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expected.getObject()));
@@ -379,8 +471,8 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
                 return false;
             hasElements = expectedLength;
         }
-        if (!hasElements) {
-            const bool nothingToCompare = hasNoKeyOrEntry(globalObject, scope, expected.getObject(), body);
+        if (!hasElements && next != Next::AnswerTrue) {
+            const bool nothingToCompare = hasNoKeyOrEntry(globalObject, scope, expected.getObject(), arm);
             RETURN_IF_EXCEPTION(scope, false);
             if (nothingToCompare)
                 return true;
@@ -408,10 +500,10 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
     const bool expectedIsNew = memos.set.add(expectedCell).isNewEntry;
     if (actualIsNew && expectedIsNew)
         return std::nullopt;
-    // node leaves the one that was new in its Set. It can be a getter's fresh object that nothing else holds, and
-    // its address must not become another object's while the Set has it.
-    memos.kept.append(actual);
-    memos.kept.append(expected);
+    // node leaves the one that was new in its Set (L565-L570). It can be a getter's fresh object that nothing else
+    // holds, and its address must not become another object's while the Set has it.
+    if (actualIsNew != expectedIsNew)
+        memos.kept.append(actualIsNew ? actual : expected);
     return !actualIsNew && !expectedIsNew;
 }
 
@@ -431,43 +523,39 @@ static NEVER_INLINE void leaveMemos(CycleState& cycles, JSC::JSCell* actualCell,
     memos.set.remove(expectedCell);
 }
 
-static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
-    if (const std::optional<bool> answer = enterMemos(globalObject, cycles, scope, actual, expected, body))
+    if (const std::optional<bool> answer = enterMemos(globalObject, cycles, scope, actual, expected, arm))
         return *answer;
-    const bool result = body(globalObject, gcBuffer, cycles, scope, actual, expected);
+    const bool result = bodyOf(arm)(globalObject, gcBuffer, cycles, scope, actual, expected);
     leaveMemos(cycles, actual.asCell(), expected.asCell());
     return result;
 }
 
-// First run: a pair inside its own comparison cannot end. Nothing else is a verdict: one side alone that comes
-// back says nothing about a pair that was never compared.
-static NEVER_INLINE bool withOpenPair(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+// A run without memos gives up at a pair inside its own comparison: that comparison cannot end. It has no other
+// verdict: one side alone that comes back says nothing about a pair that was never compared.
+static NEVER_INLINE bool withOpenPair(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
-    JSC::JSCell* actualCell = actual.asCell();
-    JSC::JSCell* expectedCell = expected.asCell();
-    const auto actualOpen = cycles.actualOpen.span();
-    const auto expectedOpen = cycles.expectedOpen.span();
-    for (size_t i = 0; i < actualOpen.size(); i++) {
-        if (actualOpen[i] == actualCell && expectedOpen[i] == expectedCell) {
-            cycles.endless = true;
+    const auto open = cycles.open.span();
+    for (size_t i = 0; i + 1 < open.size(); i += 2) {
+        if (open[i] == actual && open[i + 1] == expected) {
+            cycles.ended = End::PairRepeats;
             return false;
         }
     }
-    cycles.actualOpen.append(actualCell);
-    cycles.expectedOpen.append(expectedCell);
-    const bool result = body(globalObject, gcBuffer, cycles, scope, actual, expected);
-    cycles.actualOpen.removeLast();
-    cycles.expectedOpen.removeLast();
+    cycles.open.append(actual);
+    cycles.open.append(expected);
+    const bool result = bodyOf(arm)(globalObject, gcBuffer, cycles, scope, actual, expected);
+    cycles.open.removeLast();
+    cycles.open.removeLast();
     return result;
 }
 
-// Inline, so that neither run has a frame more than the other under a comparison.
-static ALWAYS_INLINE bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+static ALWAYS_INLINE bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
     if (cycles.memos) [[unlikely]]
-        return withMemos(globalObject, gcBuffer, cycles, scope, actual, expected, body);
-    return withOpenPair(globalObject, gcBuffer, cycles, scope, actual, expected, body);
+        return withMemos(globalObject, gcBuffer, cycles, scope, actual, expected, arm);
+    return withOpenPair(globalObject, gcBuffer, cycles, scope, actual, expected, arm);
 }
 
 // JS `actual[key]` guarded by `ObjectPrototypePropertyIsEnumerable`: the
@@ -528,6 +616,13 @@ static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedA
     return true;
 }
 
+// An object whose structure holds no property has no own named key: nothing to compare for it, and no operand code
+// to run.
+static ALWAYS_INLINE bool structureHasNoProperty(JSC::Structure* structure)
+{
+    return structure->maxOffset() == JSC::invalidOffset && !structure->hasNonReifiedStaticProperties();
+}
+
 // Expected's own enumerable non-index properties, then expected's elements as a subsequence of actual's, in order
 // with gaps. The order is node's (objEquiv): where a comparison ends, and so which run answers, depends on it.
 static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
@@ -541,10 +636,15 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     if (expectedLength > actualLength)
         return false;
 
-    bool namedEqual = nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!namedEqual) [[unlikely]]
-        return false;
+    // A JSArray has `length`, which is not enumerable, beside the properties of its structure.
+    const JSC::JSType expectedType = expectedObject->type();
+    const bool hasNoNamedKey = (expectedType == JSC::ArrayType || expectedType == JSC::DerivedArrayType) && structureHasNoProperty(expectedObject->structure());
+    if (!hasNoNamedKey) [[unlikely]] {
+        bool namedEqual = nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!namedEqual)
+            return false;
+    }
 
     uint64_t actualPos = 0;
     for (uint64_t i = 0; i < expectedLength; i++) {
@@ -562,7 +662,7 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
                 matched = true;
                 break;
             }
-            if (cycles.endless)
+            if (cycles.ended != End::None)
                 return false;
         }
         if (!matched)
@@ -624,6 +724,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     JSValue expectedKey, expectedValue;
     while (expectedIter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
         bool consumed = false;
+        bool identityEntryDiffers = false;
         bool identityPresent = actualMap->has(globalObject, expectedKey);
         RETURN_IF_EXCEPTION(scope, false);
         bool expectedKeyAlreadyUsed = identityKeyUsed(expectedKey);
@@ -656,12 +757,14 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                     if (identityIndex != SIZE_MAX)
                         usedIndices[identityIndex] = true;
                     consumed = true;
+                } else {
+                    identityEntryDiffers = true;
                 }
             }
         }
         if (consumed)
             continue;
-        if (cycles.endless)
+        if (cycles.ended != End::None)
             return false;
         if (!expectedKey.isObject())
             return false;
@@ -673,6 +776,9 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
             if (usedIndices[i])
                 continue;
             JSValue candidateKey = gcBuffer.at(entriesStart + i * 2);
+            // The lookup above compared the value of this entry with `expectedValue`.
+            if (identityEntryDiffers && candidateKey == expectedKey)
+                continue;
             bool candidateIsUsedIdentity = identityKeyUsed(candidateKey);
             RETURN_IF_EXCEPTION(scope, false);
             if (candidateIsUsedIdentity)
@@ -680,7 +786,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
             bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
             RETURN_IF_EXCEPTION(scope, false);
             if (!keyEqual) {
-                if (cycles.endless)
+                if (cycles.ended != End::None)
                     return false;
                 continue;
             }
@@ -691,7 +797,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 matched = true;
                 break;
             }
-            if (cycles.endless)
+            if (cycles.ended != End::None)
                 return false;
         }
         if (!matched)
@@ -738,7 +844,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 matched = true;
                 break;
             }
-            if (cycles.endless)
+            if (cycles.ended != End::None)
                 return false;
         }
         if (!matched)
@@ -747,58 +853,62 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
-// Errors compare name/message/errors leniently: `undefined` (or an empty
-// expected message) on the expected side is ignored. An own `cause` on the
-// expected error (even undefined) must exist on the actual error as well.
-static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+// node's isEnumerableOrIdentical for kPartial: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L232-L236
+static bool isEnumerableOrIdentical(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::Identifier& key)
+{
+    JSC::PropertySlot expectedSlot(expectedObject, JSC::PropertySlot::InternalMethodType::Get);
+    bool expectedHasKey = expectedObject->getNonIndexPropertySlot(globalObject, key, expectedSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!expectedHasKey)
+        return true;
+    // objectSubset compares a key that `expected` owns as an enumerable property.
+    if (expectedSlot.slotBase() == expectedObject && !(expectedSlot.attributes() & JSC::PropertyAttribute::DontEnum))
+        return true;
+    JSValue expectedValue = expectedSlot.getValue(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (expectedValue.isUndefined())
+        return true;
+    if (key == globalObject->vm().propertyNames->message && expectedValue.isString() && !JSC::asString(expectedValue)->length())
+        return true;
+    JSValue actualValue = actualObject->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+}
+
+// node's Error arm for kPartial: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L405
+// It comes ahead of keyCheck, so the pair of Errors is not under the cycle guard yet. A cycle through these four
+// alone, on both sides, ends in a RangeError, as in node.
+static bool errorFieldsEqual(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
 
-    const JSC::Identifier keys[3] = {
-        vm.propertyNames->message,
-        vm.propertyNames->name,
-        JSC::Identifier::fromString(vm, "errors"_s),
-    };
-    for (const auto& key : keys) {
-        JSValue expectedValue = expectedObject->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (expectedValue.isUndefined())
-            continue;
-        if (key == vm.propertyNames->message && expectedValue.isString()) {
-            auto* str = JSC::asString(expectedValue);
-            if (!str->length())
-                continue;
-        }
-        JSValue actualValue = actualObject->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+    // node makes its memos at the first pair that reaches handleCycles, for what is below that pair. Until then each
+    // of the four has memos of its own.
+    const bool memosOfItsOwn = cycles.memos && !cycles.memos->a;
+    const JSC::Identifier* const keys[] = { &vm.propertyNames->message, &vm.propertyNames->name, &vm.propertyNames->cause, &vm.propertyNames->errors };
+    for (const auto* key : keys) {
+        bool equal = isEnumerableOrIdentical(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, *key);
         RETURN_IF_EXCEPTION(scope, false);
         if (!equal)
             return false;
+        if (memosOfItsOwn)
+            cycles.memos.emplace(gcBuffer);
     }
 
-    const JSC::Identifier causeIdentifier = JSC::Identifier::fromString(vm, "cause"_s);
+    // An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well.
     JSC::PropertySlot expectedCauseSlot(expectedObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, causeIdentifier, expectedCauseSlot);
+    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, vm.propertyNames->cause, expectedCauseSlot);
     RETURN_IF_EXCEPTION(scope, false);
     if (expectedHasCause) {
         JSC::PropertySlot actualCauseSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, causeIdentifier, actualCauseSlot);
+        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, vm.propertyNames->cause, actualCauseSlot);
         RETURN_IF_EXCEPTION(scope, false);
         if (!actualHasCause)
             return false;
-        JSValue actualCause = actualObject->get(globalObject, causeIdentifier);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue expectedCause = expectedObject->get(globalObject, causeIdentifier);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualCause, expectedCause);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
-            return false;
     }
-    return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    return true;
 }
 
 static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)
@@ -813,23 +923,34 @@ static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)
     return nullptr;
 }
 
+// A Map or a Set with no own property of any kind.
+static ALWAYS_INLINE bool collectionHasNoOwnProperty(JSValue collection)
+{
+    JSC::Structure* structure = collection.asCell()->structure();
+    return structureHasNoProperty(structure) && !JSC::hasIndexedProperties(structure->indexingType()) && !structure->typeInfo().overridesAnyFormOfGetOwnPropertyNames();
+}
+
 // Own enumerable properties on the Map/Set object itself first, then the container contents — node's partial mode
 // checks both (subset semantics), like every other container arm, and in this order (objEquiv).
 static bool mapSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
-    bool props = objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!props)
-        return false;
+    if (!collectionHasNoOwnProperty(expected)) [[unlikely]] {
+        bool props = objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!props)
+            return false;
+    }
     return mapSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
 static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
-    bool props = objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!props)
-        return false;
+    if (!collectionHasNoOwnProperty(expected)) [[unlikely]] {
+        bool props = objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!props)
+            return false;
+    }
     return setSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
@@ -845,11 +966,8 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
 {
     auto& vm = globalObject->vm();
     if (currentStackPointer() < cycles.stackEnd) [[unlikely]] {
-        if (cycles.memos)
-            JSC::throwStackOverflowError(globalObject, scope);
-        else
-            cycles.endless = true;
-        return false;
+        if (endsAtStackEnd(globalObject, cycles, scope))
+            return false;
     }
 
     bool referenceEqual = JSC::sameValueZero(globalObject, actual, expected);
@@ -875,7 +993,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualType == JSC::JSMapType && expectedType == JSC::JSMapType) {
         if (uncheckedDowncast<JSC::JSMap>(expected.asCell())->size() > uncheckedDowncast<JSC::JSMap>(actual.asCell())->size())
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, mapSubsetAndProps);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Map);
     }
 
     const bool actualIsView = actual.isCell() && JSC::isTypedArrayTypeIncludingDataView(actualType);
@@ -888,10 +1006,10 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         if (!contents)
             return false;
         if (actualType == JSC::DataViewType)
-            return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+            return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
         // node also matches expected's own enumerable non-index properties
         // on typed arrays; index keys stay with the contents containment.
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, nonIndexObjectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::NonIndexKeys);
     }
 
     const bool actualIsBuffer = actualType == JSC::ArrayBufferType;
@@ -911,7 +1029,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         RETURN_IF_EXCEPTION(scope, false);
         if (!contents)
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     const bool actualIsKeyObject = actual.isCell() && actual.asCell()->inherits<Bun::JSKeyObject>();
@@ -932,7 +1050,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         RETURN_IF_EXCEPTION(scope, false);
         if (!result.toBoolean(globalObject))
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     const bool actualIsCryptoKey = actual.isCell() && actual.asCell()->inherits<WebCore::JSCryptoKey>();
@@ -944,7 +1062,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         auto& expectedKey = uncheckedDowncast<WebCore::JSCryptoKey>(expected.asCell())->wrapped();
         if (!Bun::KeyObject::cryptoKeysEqual(actualKey, expectedKey))
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     const bool actualIsURL = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMURL>();
@@ -956,7 +1074,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         auto& expectedURL = uncheckedDowncast<WebCore::JSDOMURL>(expected.asCell())->wrapped();
         if (actualURL.href() != expectedURL.href())
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     const bool actualIsError = actual.isCell() && actual.asCell()->inherits<JSC::ErrorInstance>();
@@ -964,13 +1082,17 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsError || expectedIsError) {
         if (!actualIsError || !expectedIsError)
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, errorSubset);
+        bool fieldsEqual = errorFieldsEqual(globalObject, gcBuffer, cycles, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!fieldsEqual)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     if (actualType == JSC::JSSetType && expectedType == JSC::JSSetType) {
         if (uncheckedDowncast<JSC::JSSet>(expected.asCell())->size() > uncheckedDowncast<JSC::JSSet>(actual.asCell())->size())
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, setSubsetAndProps);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Set);
     }
 
     // Dates and RegExps: internal value compared strictly, own enumerable properties with subset
@@ -984,7 +1106,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         const double expectedTime = uncheckedDowncast<JSC::DateInstance>(expected.asCell())->internalNumber();
         if (actualTime != expectedTime && !(std::isnan(actualTime) && std::isnan(expectedTime)))
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     const bool actualIsRegExp = actualType == JSC::RegExpObjectType;
@@ -1002,7 +1124,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         RETURN_IF_EXCEPTION(scope, false);
         if (!lastIndexEqual)
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     // Boxed primitives: [[*Data]] compared via Object.is, then own props as a subset — node
@@ -1017,7 +1139,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         RETURN_IF_EXCEPTION(scope, false);
         if (!internalEqual)
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
     }
 
     bool actualIsArray = JSC::isArray(globalObject, actual);
@@ -1027,7 +1149,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsArray != expectedIsArray)
         return false;
     if (actualIsArray)
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, arraySubsequence);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Array);
 
     // At least one side is a primitive, null, or callable: full strict deep
     // equality decides.
@@ -1047,7 +1169,38 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (!tagsEqual)
         return false;
 
-    return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
+}
+
+// A first run has given up.
+static NEVER_INLINE bool compareAgain(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    if (cycles.ended == End::NoStack) {
+        // No pair came again in the stack that the run had. The comparison cannot end in another way (a new object
+        // for each read, rings that meet late), or it is only deep. The memos end the first kind early.
+        cycles.ended = End::None;
+        cycles.memos.emplace(gcBuffer);
+        bool result = compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (cycles.ended == End::None)
+            return result;
+        // Only deep: without memos again, with all of the stack.
+        cycles.ended = End::None;
+        cycles.memos.reset();
+        cycles.stackEnd = vm.stackLimit();
+        cycles.throwsAtStackEnd = true;
+        result = compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (cycles.ended == End::None)
+            return result;
+    }
+    // A pair is inside its own comparison: node's second run.
+    cycles.ended = End::None;
+    cycles.stackEnd = vm.stackLimit();
+    cycles.throwsAtStackEnd = true;
+    cycles.memos.emplace(gcBuffer);
+    return compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
 } // namespace PartialDeepEqual
@@ -1062,11 +1215,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
     PartialDeepEqual::CycleState cycles { PartialDeepEqual::stackEndOfFirstRun(vm) };
     bool result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    if (cycles.endless) [[unlikely]] {
-        cycles.endless = false;
-        cycles.stackEnd = vm.stackLimit();
-        cycles.memos.emplace(gcBuffer);
-        result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
+    if (cycles.ended != PartialDeepEqual::End::None) [[unlikely]] {
+        result = PartialDeepEqual::compareAgain(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsBoolean(result));

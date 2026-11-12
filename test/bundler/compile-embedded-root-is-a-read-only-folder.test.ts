@@ -1,7 +1,25 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "../aot/harness/run";
+
+// Each test builds an executable. A debug build of Bun copies itself for that, which can take the five seconds of bun:test.
+setDefaultTimeout(60_000);
+
+/** Builds `main.ts` of `dir` into an executable with `bun build --compile` and runs it there. */
+async function buildAndRun(dir: string) {
+  const executable = join(dir, isWindows ? "main.exe" : "main");
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", join(dir, "main.ts"), "--outfile", executable],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  return runCommand([executable], dir);
+}
 
 // `bun build --compile` without any other flag: the folder that holds the embedded files acts like a folder of a
 // read-only file system.
@@ -48,16 +66,7 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       console.log(JSON.stringify(result));
     `,
   });
-  const executable = join(String(dir), "main");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", join(String(dir), "main.ts"), "--outfile", executable],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toMatchObject({ exitCode: 0 });
-  const { stdout, stderr, exitCode } = await runCommand([executable], String(dir));
+  const { stdout, stderr, exitCode } = await buildAndRun(String(dir));
   expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
     result: {
       chdir: "fine",
@@ -86,6 +95,98 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       chmod: "EROFS",
       bunWrite: "EROFS",
       stillThere: "hello asset",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The argument of `fs.mkdtemp` is the start of a name: the system puts six characters of its own behind it, in the
+// same component. Where the working directory is the embedded root, a relative one starts there as a path does, and
+// an error names it as the program wrote it.
+test("fs.mkdtemp takes a relative prefix from the embedded root as the start of a name", async () => {
+  using dir = tempDir("compile-embedded-root-mkdtemp", {
+    "over/work/keep.txt": "",
+    "main.ts": `
+      import fs from "node:fs";
+      import path from "node:path";
+      const root = import.meta.dir;
+      const work = path.join(process.cwd(), "over", "work");
+      // The end of a template. glibc leaves its own six characters there when it fails.
+      const suffix = Buffer.alloc(6, "X").toString();
+      const masked = (text: string) => text.replace(/[A-Za-z0-9]{6}(?='?$)/, suffix);
+      // What a call made is removed again. It is named from the folder "work".
+      const row = async (make: () => any) => {
+        try {
+          const made = await make();
+          const real = fs.realpathSync(typeof made === "string" ? made : made.path);
+          fs.rmdirSync(real);
+          return { made: masked(path.relative(work, real)) };
+        } catch (error: any) {
+          return { code: error.code, syscall: error.syscall, path: masked(error.path), message: masked(error.message) };
+        }
+      };
+      const forms: Record<string, (prefix: string) => unknown> = {
+        "mkdtempSync": prefix => fs.mkdtempSync(prefix),
+        "mkdtempSync, Buffer": prefix => fs.mkdtempSync(Buffer.from(prefix)),
+        "mkdtemp": prefix => new Promise((resolve, reject) => fs.mkdtemp(prefix, (error, made) => (error ? reject(error) : resolve(made)))),
+        "promises.mkdtemp": prefix => fs.promises.mkdtemp(prefix),
+        "mkdtempDisposableSync": prefix => fs.mkdtempDisposableSync(prefix),
+        "promises.mkdtempDisposable": prefix => fs.promises.mkdtempDisposable(prefix),
+      };
+      // On Windows the embedded root is on a drive of its own: no relative path leads from there to the disk.
+      const toWork = path.relative(root, work);
+      const leadsToDisk = !path.isAbsolute(toWork);
+      const away = leadsToDisk ? toWork : "../..";
+      const result: Record<string, unknown> = { away };
+      result["on the disk"] = await row(() => fs.mkdtempSync(away + "/missing/tmp-"));
+      process.chdir(root);
+      for (const [name, mkdtemp] of Object.entries(forms)) result[name] = await row(() => mkdtemp(away + "/missing/tmp-"));
+      result["ends in a separator"] = await row(() => fs.mkdtempSync(away + "/missing/"));
+      if (leadsToDisk) {
+        result["ends in ."] = await row(() => fs.mkdtempSync(away + "/."));
+        result["ends in .."] = await row(() => fs.mkdtempSync(away + "/.."));
+        result["ends in .. below nothing"] = await row(() => fs.mkdtempSync(away + "/nothing/.."));
+      }
+      result[".. from the embedded root"] = await row(() => fs.mkdtempSync(".."));
+      result[".. from the embedded root, Buffer"] = await row(() => fs.mkdtempSync(Buffer.from("..")));
+      result["in the embedded root"] = await row(() => fs.mkdtempSync("tmp-"));
+      result["empty"] = await row(() => fs.mkdtempSync(""));
+      console.log(JSON.stringify(result));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await buildAndRun(String(dir));
+  const result = JSON.parse(stdout || "{}");
+  const away: string = result.away;
+  const suffix = Buffer.alloc(6, "X").toString();
+  const failed = (code: string, text: string, path: string) => ({
+    code,
+    syscall: "mkdtemp",
+    path,
+    message: `${code}: ${text}, mkdtemp '${path}'`,
+  });
+  const nothingThere = failed("ENOENT", "no such file or directory", `${away}/missing/tmp-${suffix}`);
+  const readOnly = (prefix: string) => failed("EROFS", "read-only file system", prefix + suffix);
+  expect({ result, stderr, exitCode }).toEqual({
+    result: {
+      away: expect.stringMatching(/^\.\.\/\.\./),
+      "on the disk": nothingThere,
+      "mkdtempSync": nothingThere,
+      "mkdtempSync, Buffer": nothingThere,
+      "mkdtemp": nothingThere,
+      "promises.mkdtemp": nothingThere,
+      "mkdtempDisposableSync": nothingThere,
+      "promises.mkdtempDisposable": nothingThere,
+      "ends in a separator": failed("ENOENT", "no such file or directory", `${away}/missing/${suffix}`),
+      ...(!isWindows && {
+        "ends in .": { made: "." + suffix },
+        "ends in ..": { made: ".." + suffix },
+        "ends in .. below nothing": failed("ENOENT", "no such file or directory", `${away}/nothing/..${suffix}`),
+      }),
+      ".. from the embedded root": readOnly(".."),
+      ".. from the embedded root, Buffer": readOnly(".."),
+      "in the embedded root": readOnly("tmp-"),
+      "empty": failed("EINVAL", "invalid argument", suffix.slice(1)),
     },
     stderr: "",
     exitCode: 0,

@@ -31,6 +31,19 @@ show("openSync and readSync", () => {
   fs.closeSync(descriptor);
   return bytes.toString("utf8", 0, count);
 });
+// The prefix of mkdtemp is the start of a name, not a path. An error names it as it is written, with the six characters of the template behind it.
+const refused = prefix => {
+  try {
+    fs.rmdirSync(fs.mkdtempSync(prefix));
+    return "made";
+  } catch (error) {
+    return [error.code, error.path.slice(0, -6) === prefix].join();
+  }
+};
+const out = path.relative(".", started) || ".";
+show("mkdtempSync in a folder that is not there", () => refused("data/none/tmp-"));
+show("mkdtempSync out of the executable", () => refused(out + "/none/tmp-"));
+show("mkdtempSync of a prefix that ends in ..", () => refused(out + "/none/.."));
 show("require.resolve with paths", () => require.resolve("./data/module.cjs", { paths: [process.cwd()] }) === path.join(__dirname, "data", "module.cjs"));
 show("chdir further in", () => (process.chdir("data"), process.cwd() === path.join(module.path, "data")));
 show("readFileSync there", () => fs.readFileSync("note.txt", "utf8").trim());

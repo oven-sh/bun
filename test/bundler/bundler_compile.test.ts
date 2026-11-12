@@ -1369,6 +1369,30 @@ describe("bundler", () => {
     },
     run: { stdout: "true true true true" },
   });
+  // The same mismatch on every platform: the runtime reads a `?` in the key as a query, so `import.meta.path`
+  // ends before it and `Bun.main` keeps it. A `?` is not a valid character of a file name on Windows.
+  test.skipIf(isWindows)("compile/ImportMetaMainRuntimeGetterQuestionMarkName", async () => {
+    using dir = tempDir("compile-import-meta-main-question-mark", {
+      "entry.ts": `const meta = import.meta; console.log(meta.main, meta.path === Bun.main);`,
+    });
+    const outfile = join(String(dir), "my?app");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true false\n");
+    expect(exitCode).toBe(0);
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

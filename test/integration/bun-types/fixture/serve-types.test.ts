@@ -554,6 +554,38 @@ test("permutations of valid route values", {
   },
 });
 
+test("#48646 static route values under a method key", {
+  routes: {
+    "/page": { GET: html },
+    "/file": { GET: Bun.file(import.meta.file), POST: new Response("posted") },
+    "/assets/*": { GET: { dir: import.meta.dir } },
+    "/mixed": {
+      GET: html,
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/mixed">>();
+        return new Response("posted");
+      },
+    },
+    // @ts-expect-error `false` disables a whole route, not one method
+    "/nope": { POST: false },
+  },
+  fetch: () => new Response("fallback"),
+});
+
+test("#48646 static route values under a method key with websocket", {
+  websocket: {
+    message: console.log,
+  },
+  routes: {
+    "/page": { GET: html },
+    "/file": { GET: Bun.file(import.meta.file) },
+    "/assets/*": { GET: { dir: import.meta.dir } },
+    // @ts-expect-error `false` disables a whole route, not one method
+    "/nope": { POST: false },
+  },
+  fetch: () => new Response("fallback"),
+});
+
 test("basic websocket upgrade and ws publish/subscribe to topics", {
   fetch(req, server) {
     server.upgrade(req);

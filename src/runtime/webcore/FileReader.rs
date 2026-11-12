@@ -943,7 +943,7 @@ impl FileReader {
                     self.reader().pause();
                 }
                 CallbackOutcome::Returned(_) => {}
-                // A listener threw, and the run goes on (a handler took it, or `--hot`, `--watch` or the REPL stays after an unhandled error): the stream reads on, as in Node.
+                // A listener threw and the run goes on: the stream reads on, as in Node.
                 CallbackOutcome::Threw { handled } if !vm.uncaught_exception_ends_run(handled) => {}
                 // The report ends the run, or the VM is stopping: nothing more comes out of this source.
                 CallbackOutcome::Threw { .. } | CallbackOutcome::Stopped => parent.cancel(),

@@ -261,26 +261,41 @@ impl<'a, 's> Syntax<'a, 's> {
         Some(self.angle_brackets(self.type_span(first).0, self.type_span(last).1))
     }
 
-    fn binding_key(&self, pattern: PatId) -> Option<BindingKey> {
-        let node = self.file.pats.get(pattern.idx())?;
-        let inner = match node.kind {
-            PatKind::Missing => return None,
-            PatKind::Ident(_) => {
-                return Some(BindingKey {
-                    at: node.pos,
-                    depth: 0,
-                });
-            }
+    /// The part of a pattern that holds its first name, and the key of that part.
+    fn first_part(&self, pattern: PatId) -> Option<(PatId, BindingKey)> {
+        let with_key = |part: PatId| Some((part, self.binding_key(part)?));
+        match self.file.pats.get(pattern.idx())?.kind {
+            PatKind::Missing | PatKind::Ident(_) => None,
             PatKind::Object(properties) => properties
                 .iter()
-                .find_map(|property| self.binding_key(self.file[property].value))?,
+                .find_map(|property| with_key(self.file[property].value)),
             PatKind::Array(elements) => elements
                 .iter()
-                .find_map(|element| self.binding_key(self.file[element].pat))?,
-        };
+                .find_map(|element| with_key(self.file[element].pat)),
+        }
+    }
+
+    fn binding_key(&self, pattern: PatId) -> Option<BindingKey> {
+        let node = self.file.pats.get(pattern.idx())?;
+        if let PatKind::Ident(_) = node.kind {
+            return Some(BindingKey {
+                at: node.pos,
+                depth: 0,
+            });
+        }
+        let (_, inner) = self.first_part(pattern)?;
         Some(BindingKey {
             depth: inner.depth.saturating_add(1),
             ..inner
+        })
+    }
+
+    /// The key of a pattern whose first part is a pattern, with a name in the place of that part.
+    fn split_key(&self, pattern: PatId) -> Option<BindingKey> {
+        let (part, inner) = self.first_part(pattern)?;
+        (inner.depth > 0).then(|| BindingKey {
+            at: self.file[part].pos,
+            depth: 1,
         })
     }
 
@@ -340,6 +355,22 @@ impl<'a, 's> Syntax<'a, 's> {
         Some(Slot {
             depth: key.depth,
             ..Slot::new(Place::Binding, key.at, (start, end))
+        })
+    }
+
+    /// The slot of each annotated pattern that has a [`Self::split_key`], under that key.
+    fn split_slots(&self) -> impl Iterator<Item = Slot> + '_ {
+        let file = self.file;
+        let declarations = file.var_decls.iter().map(|it| (it.pat, it.ty));
+        let parameters = file.params.iter().map(|it| (it.pat, it.ty));
+        let annotated = declarations.chain(parameters).filter(|it| it.1.is_some());
+        annotated.filter_map(|(pattern, annotation)| {
+            let key = self.split_key(pattern)?;
+            Some(Slot {
+                key: key.at,
+                depth: key.depth,
+                ..self.binding_slot(pattern, annotation, false)?
+            })
         })
     }
 
@@ -2976,6 +3007,10 @@ fn add_types(
             source_slots.insert((slot.place, slot.depth, index as u32, slot.key), slot);
             type_ranges.push((slot.start, slot.end));
         }
+        // The React Compiler declares a pattern inside a pattern in steps. The first step has the annotation.
+        for slot in syntax.split_slots() {
+            source_slots.insert((slot.place, slot.depth, index as u32, slot.key), slot);
+        }
         type_ranges.extend(syntax.cast_type_spans());
         for (parameter, id) in file
             .params
@@ -3388,6 +3423,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .map(|(anchor, key, value)| (value, (anchor, key)))
                 .chain(default_exports)
                 .collect();
+            // The first step that the React Compiler declares such a pattern in has the value.
+            let first_steps: FxHashMap<ExprId, BindingKey> = syntax
+                .file
+                .var_decls
+                .iter()
+                .filter_map(|it| Some((it.init.some()?, syntax.split_key(it.pat)?)))
+                .collect();
             let find = |expr: ExprId| {
                 let (shape, key) = syntax.shape(expr);
                 [Some(key), syntax.name_of_dotted_index(expr)]
@@ -3398,9 +3440,13 @@ impl<'a> Transfer<'_, 'a, '_> {
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
                 let mut found = loop {
-                    if let Some(&found) = anchored.get(&at).and_then(|&(anchor, key)| {
+                    let keys = anchored.get(&at).copied().into_iter().chain(
+                        (first_steps.get(&at)).map(|key| (Anchor::Binding(key.depth), key.at)),
+                    );
+                    let mut in_output = keys.filter_map(|(anchor, key)| {
                         output_anchored.get(&(anchor, index as u32, key))
-                    }) {
+                    });
+                    if let Some(&found) = in_output.next() {
                         break found;
                     }
                     let (parent, place) = places[at.idx()]?;

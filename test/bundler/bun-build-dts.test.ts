@@ -227,7 +227,7 @@ export function typeOfEachMember(keys: { left: "l"; right: "r" }): string {
   });
 
   // The React Compiler declares a binding again in another shape: `{ mode = "x" }: T` becomes `{ mode: t1 }: T` and a
-  // variable `mode`, `[[inner]]: T` becomes `[t1]` and `[inner]`, and a memo block declares a name ahead of its value.
+  // variable `mode`, `[[inner]]: T` becomes `[t1]: T` and `[inner]`, and a memo block declares a name ahead of its value.
   // --target=browser is the mode that memoizes. `react/compiler-runtime` is a stand-in for the package.
   test.each([
     ["--target=bun", []],
@@ -254,7 +254,7 @@ export function typeOfEachMember(keys: { left: "l"; right: "r" }): string {
 }
 `,
         "src/index.tsx": `import { useState } from "./state";
-declare function parse(text: string): any;
+declare function parse(text: string): unknown;
 declare function make(n: number): unknown;
 declare function compute(n: number): { rows: number[]; label: string };
 interface Props {
@@ -325,13 +325,17 @@ export function useList(props: { n: number }): number[] {
           `first = t1 === ${undefinedAsPrinted} ? 1 : t1`,
           `{ mode: t0 }: { mode?: "x" | "y" } = props`,
           `mode = t0 === ${undefinedAsPrinted} ? "x" : t0`,
-          // A pattern inside a pattern: the inner one does not get the annotation of the two together.
+          // A pattern inside a pattern is declared in two steps: the first has the annotation, the second has none.
+          `[t1]: [[number]] = t0`,
           `[inner] = t1`,
+          `{ a: t1 }: { a: { b: number } } = t0`,
           `{ b: renamed } = t1`,
           // A pattern that the compiler keeps.
           `{ x: left, y: top }: { x: number; y: number } = props.point`,
-          // The cast of the two patterns together is not on the value of the inner one.
-          memoizes ? `[part] = t1;` : `[part] = t0;`,
+          // The cast on the value of such a pattern is in the first step, on that value.
+          ...(memoizes
+            ? [`[t1] = t0 as [[number]]`, `[part] = t1;`]
+            : [`[t0] = parse(props.text) as [[number]]`, `[part] = t0;`]),
           // A memo block declares the names ahead of the pattern that assigns them.
           ...(memoizes ? [`label, rows;`] : []),
           // A memo block assigns the name in a statement. The cast is on the value, not around the statement.

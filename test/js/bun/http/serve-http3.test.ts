@@ -3637,3 +3637,60 @@ test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is runnin
     signalCode: null,
   });
 }, 30_000);
+
+test("Bun.serve HTTP/3 sleeps while a handler that runs the event loop has packets waiting", async () => {
+  const script = `
+    const server = Bun.serve({
+      port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+      routes: {
+        "/build": () => {
+          let share;
+          Bun.build({
+            entrypoints: [import.meta.path],
+            plugins: [{
+              name: "wait",
+              async setup() {
+                console.error("WAITING");
+                await sent.promise;
+                const [cpu, start] = [process.cpuUsage(), performance.now()];
+                await Bun.sleep(200);
+                const { user, system } = process.cpuUsage(cpu);
+                share = (user + system) / 1000 / (performance.now() - start);
+              },
+            }],
+          }).catch(() => {});
+          return new Response(share < 0.5 ? "slept" : "spun");
+        },
+        "/second": () => new Response("second"),
+      },
+    });
+    const sent = Promise.withResolvers();
+    console.error("PORT=" + server.port);
+    ${STDIN_HELPERS}stopOnStdinEnd(sent.resolve);
+  `;
+  await withCustomServer(script, async (port, send, waitForStderr) => {
+    await using endpoint = new QuicEndpoint();
+    const session = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+    } as SessionOptions);
+    session.closed.catch(() => {});
+    await session.opened;
+    async function request(path: string) {
+      const stream = await session.createBidirectionalStream({ headers: requestHeaders(path) });
+      stream.closed.catch(() => {});
+      return Array.fromAsync(stream as AsyncIterable<Uint8Array[]>);
+    }
+    const build = request("/build");
+    await waitForStderr(/WAITING/);
+    const stats = session.stats as unknown as { pktSent: bigint };
+    const before = stats.pktSent;
+    const second = request("/second");
+    while (stats.pktSent === before) await new Promise(resolve => setImmediate(resolve));
+    send("sent");
+    const bodies = (await Promise.all([build, second])).map(batches => Buffer.concat(batches.flat()).toString());
+    session.destroy();
+    expect(bodies).toEqual(["slept", "second"]);
+  });
+});

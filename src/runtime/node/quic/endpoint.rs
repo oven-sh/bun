@@ -304,8 +304,8 @@ impl QuicEndpoint {
         // A session must not end in the middle of a microtask chain.
         let draining = point == PassPoint::AfterMicrotasks;
         let global_ptr = self.global.get();
-        // A pass that's already on the stack flushes at its end.
-        if self.send_scope_depth.get() != 0 || global_ptr.is_null() {
+        // A pass that's already on the stack flushes at its end. At the other points, one of its callbacks is running the loop.
+        if (draining && self.scope_held()) || global_ptr.is_null() {
             return 0;
         }
         // SAFETY: `global_ptr` is the realm that created this endpoint and outlives it.
@@ -328,9 +328,9 @@ impl QuicEndpoint {
                 ran = true;
             }
         } else if follow_up_is_due || self.driver().is_pending() || self.next_pass_us() == 0 {
-            self.defer_closes.set(draining);
+            let outer = self.defer_closes.replace(draining);
             self.process(global);
-            self.defer_closes.set(false);
+            self.defer_closes.set(outer);
             ran = true;
         }
         if (ran && point == PassPoint::BeforePoll)

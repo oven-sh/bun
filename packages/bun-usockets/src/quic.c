@@ -72,6 +72,8 @@ struct us_quic_driver_s {
     int pending;
     /* An engine called into the owner since us_quic_context_pass cleared this. */
     int called_owner;
+    /* A nested loop tick found `processing` set and stopped polling `udps`. */
+    int polls_stopped;
     /* lsquic keeps a socket as the peer_ctx of its paths after the fd closes, so both lists are freed after the engines. */
     us_quic_udp_t *udps;
     us_quic_udp_t *closed_udps;
@@ -190,8 +192,17 @@ static int us_quic_driver_enter(us_quic_driver_t *d) {
     return 1;
 }
 
+static void us_quic_driver_poll_udps(us_quic_driver_t *d, int events) {
+    for (us_quic_udp_t *qu = d->udps; qu; qu = qu->next) us_poll_change((struct us_poll_t *) qu->udp, d->loop, events);
+}
+
 static void us_quic_driver_leave(us_quic_driver_t *d) {
     d->processing = 0;
+    if (d->polls_stopped) {
+        d->polls_stopped = 0;
+        /* on_drain takes WRITABLE back out if no send was waiting for it. */
+        us_quic_driver_poll_udps(d, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
     if (d->on_leave) d->on_leave(d);
 }
 
@@ -493,6 +504,8 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 static void us_quic_udp_on_data(struct us_udp_socket_t *u, void *recvbuf, int npackets) {
     us_quic_udp_t *ls = (us_quic_udp_t *) us_udp_socket_user(u);
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) ls->driver->owner;
+    /* An error event reads even with the poll stopped. To the peer these are lost packets. */
+    if (ls->driver->processing) return;
     for (int i = 0; i < npackets; i++) {
         char *payload = us_udp_packet_buffer_payload((struct us_udp_packet_buffer_t *) recvbuf, i);
         int len = us_udp_packet_buffer_payload_length((struct us_udp_packet_buffer_t *) recvbuf, i);
@@ -986,7 +999,12 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
 static void us_quic_after_engine_call(us_quic_driver_t *d);
 
 static int us_quic_context_pass(us_quic_driver_t *d, enum us_quic_pass_point point) {
-    if (d->processing) return 0;
+    if (d->processing) {
+        /* A callback is running the loop. Datagrams wait in the kernel until the engine can take them. */
+        us_quic_driver_poll_udps(d, 0);
+        d->polls_stopped = 1;
+        return -1;
+    }
     d->called_owner = 0;
     us_quic_driver_process(d);
     return point == US_QUIC_BEFORE_POLL && d->called_owner ? 0 : us_quic_driver_next_tick_us(d);

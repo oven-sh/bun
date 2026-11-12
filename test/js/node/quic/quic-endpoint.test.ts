@@ -1140,6 +1140,27 @@ describe.concurrent("the event loop", () => {
     `;
     expect(await run(body)).toEqual(promptly);
   });
+
+  // Bun.build() runs the event loop while it waits for an async plugin setup().
+  test("keeps serving an endpoint while one of its callbacks runs the loop", async () => {
+    const body = `
+      const received = Promise.withResolvers();
+      const server = await serve(session => {
+        session.closed.catch(() => {});
+        session.ondatagram = received.resolve;
+      });
+      await dial(server.address, {
+        onhandshake() {
+          const start = performance.now();
+          this.sendDatagram(Uint8Array.of(1));
+          Bun.build({ entrypoints: ["./entry.js"], plugins: [{ name: "wait", setup: () => received.promise }] });
+          console.log(since(start));
+          process.exit(0);
+        },
+      });
+    `;
+    expect(await run(body)).toEqual(promptly);
+  });
 });
 
 describe.skipIf(isWindows)("endpoint UDP socket options", () => {

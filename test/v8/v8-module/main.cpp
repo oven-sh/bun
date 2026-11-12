@@ -2288,6 +2288,13 @@ void test_v8_object_set_native_data_property(
       nullptr, String::NewFromUtf8Literal(isolate, "replaced"));
   LOG_EXPR(on_length.FromJust());
 
+  // On the global object, through its proxy.
+  Maybe<bool> on_global = context->Global()->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "nativeGlobalProp"),
+      data_echo_getter, nullptr,
+      String::NewFromUtf8Literal(isolate, "global-data"));
+  LOG_EXPR(on_global.FromJust());
+
   object_accessor_set_count = 0;
   Local<Value> results[] = {ctor, plain};
   info.GetReturnValue().Set(Array::New(isolate, results, 2));

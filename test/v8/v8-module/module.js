@@ -376,6 +376,12 @@ module.exports = debugMode => {
       console.log("readOnly attributes:", readOnlyDesc.enumerable, readOnlyDesc.configurable);
       console.log("keys =", JSON.stringify(Object.keys(plain)));
       console.log("plain[Symbol.iterator] =", plain[Symbol.iterator]);
+      console.log(
+        "globalThis.nativeGlobalProp =",
+        globalThis.nativeGlobalProp,
+        "own =",
+        Object.hasOwn(globalThis, "nativeGlobalProp"),
+      );
     },
 
     test_v8_function_template_has_instance() {

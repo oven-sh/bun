@@ -6,6 +6,7 @@
 #include "JavaScriptCore/ConstructData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ProxyObject.h"
+#include "JavaScriptCore/JSGlobalProxy.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Object)
@@ -232,6 +233,10 @@ Maybe<bool> Object::SetNativeDataProperty(
     JSObject* object = localToObjectPointer<JSObject>();
     if (!object || object->inherits<JSC::ProxyObject>()) {
         return Just(false);
+    }
+    // V8 defines a property of context->Global() on the global object, not on its proxy.
+    if (object->type() == JSC::GlobalProxyType) {
+        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
     }
 
     Identifier identifier = name->localToJSValue().toPropertyKey(globalObject);

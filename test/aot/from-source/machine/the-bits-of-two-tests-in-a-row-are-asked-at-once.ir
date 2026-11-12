@@ -16,11 +16,11 @@
 # CHECK-LABEL: unit f1:Body
 # CHECK-NOT: BitAnd({{*}}, 8)
 # CHECK-NOT: BitAnd({{*}}, 64)
-# CHECK: Branch BitAnd({{*}}, 15)
+# CHECK: Branch BitAnd({{*}}, 15) -> unlikely
+# CHECK: Branch BitAnd({{*}}, 112) -> unlikely
+# CHECK: Branch BitAnd({{*}}, 48)
 # CHECK: Branch BitAnd({{*}}, 1)
 # CHECK: Branch BitAnd({{*}}, 6)
-# CHECK: Branch BitAnd({{*}}, 112)
-# CHECK: Branch BitAnd({{*}}, 48)
 # CHECK-NOT: BitAnd({{*}}, 8)
 # CHECK-NOT: BitAnd({{*}}, 64)
 # RUN(ANSWERS): run-in-shell

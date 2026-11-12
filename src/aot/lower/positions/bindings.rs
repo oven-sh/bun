@@ -1,7 +1,9 @@
 use bun_sema::atom::known;
 use bun_sema::bind::{Bound, ClassOwner, Decl, InitialState, Parent, PatParent, SymbolId};
 use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone};
-use bun_sema::hir::{ClassId, ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind};
+use bun_sema::hir::{
+    ClassId, ExprId, ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind,
+};
 use bun_sema::program::{FileId, Sym};
 
 use crate::ir::{
@@ -23,6 +25,8 @@ fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -
         && !hir.is_ambient(hir.node(declaration))
 }
 
+/// `const row = table[i]`, `const { x, y } = points`: what is read off a value says nothing of what it is. The length of a
+/// list is known where the list is.
 fn is_read_off_a_value(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
     match bound.pat_parent[pattern.idx()] {
         PatParent::Var(declaration) => {
@@ -39,6 +43,7 @@ fn is_read_off_a_value(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> boo
     }
 }
 
+/// `const x = row[i]`, `const [x, y] = point`.
 fn is_element_of_a_value(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
     match bound.pat_parent[pattern.idx()] {
         PatParent::Var(declaration) => {
@@ -49,7 +54,11 @@ fn is_element_of_a_value(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> b
     }
 }
 
-fn comes_from_elsewhere(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
+pub(in crate::lower) fn comes_from_elsewhere(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    pattern: PatId,
+) -> bool {
     let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
         return false;
     };
@@ -81,13 +90,15 @@ fn may_hold_string_literals(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -
 }
 
 fn is_list_written_out(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
-    match bound.pat_parent[pattern.idx()] {
-        PatParent::Var(declaration) => {
-            let value = hir[declaration].init;
-            value.is_some() && matches!(hir[value].kind, ExprKind::Array(_))
-        }
-        _ => false,
-    }
+    list_written_out(hir, bound, pattern).is_some()
+}
+
+fn list_written_out(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> Option<ExprId> {
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let value = hir[declaration].init;
+    (value.is_some() && matches!(hir[value].kind, ExprKind::Array(_))).then_some(value)
 }
 
 fn is_made_by_the_text_of_its_file(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
@@ -130,15 +141,26 @@ impl FileLowering<'_, '_, '_, '_> {
         if !is_made_by_the_text && !comes_from_elsewhere {
             return DeclaredType::untyped();
         }
-        if is_list_written_out(self.hir, self.bound, pattern) {
-            let list = Mapped::expected(TypeTable::ARRAY);
-            return DeclaredType::new(list, None, PositionFlags::default());
+        let is_list = is_list_written_out(self.hir, self.bound, pattern);
+        let list = DeclaredType::new(
+            Mapped::expected(TypeTable::ARRAY),
+            None,
+            PositionFlags::default(),
+        );
+        if is_list && !self.is_checked() {
+            return list;
         }
         let written = self.queries.written_variable_type(symbol);
         let checked = self.queries.binding_type(pattern);
-        self.create_expected_position(PositionTypes { written, checked }, is_made_by_the_text)
+        let types = PositionTypes { written, checked };
+        let position = self.create_expected_position(types, is_made_by_the_text);
+        match is_list && !position.is_expected() {
+            true => list,
+            false => position,
+        }
     }
 
+    /// The expected position of `const axis = axes[i]` where the checker finds a few string literals.
     pub(in crate::lower) fn compute_literal_position(&mut self, symbol: Sym) -> DeclaredType {
         let files = self.queries.files();
         let &[(declaring_file, Decl::Var(pattern))] = &files.decls_of(symbol)[..] else {
@@ -155,11 +177,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let position = self.create_expected_position(PositionTypes { written, checked }, false);
         let ty = self.fragment.types.get(position.ty);
         let nullish = Primitives::UNDEFINED | Primitives::NULL;
-        let holds_literals_alone = !ty.strings.is_empty()
+        let has_only_literals = !ty.strings.is_empty()
             && nullish.contains(ty.primitives)
             && ty.layouts.is_empty()
             && ty.functions.is_empty();
-        match holds_literals_alone {
+        match has_only_literals {
             true => position,
             false => DeclaredType::untyped(),
         }
@@ -198,7 +220,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 let binding = bound.declared_symbol(declaration);
                 let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
                 let local = bound.lookup(locals, bound.symbol(binding).name);
-                let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
+                let exported = bound.exported_value(binding);
                 let outer = bound.symbol(exported).parent;
                 let left_out = self.inputs.library_functions.left_out_declarations();
                 let hir = files.hir(declaring_file);
@@ -218,6 +240,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         .into_iter()
                         .all(|name| {
                             bound.symbol(name).decls.len() == 1
+                                && !bound.has_refused_declarations(name)
                                 && bound.stores_to(name).is_empty()
                                 && !bound.is_visible_to_eval(name)
                         });
@@ -268,6 +291,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_expected_by_its_uses = (is_read
             && self.queries.uses_say_what_read_is(pattern, is_element))
             || (is_given_by_a_call && self.queries.uses_say_list_of_lists(pattern));
+        let holds_inferred_numbers = !is_stored_again
+            && !is_parameter
+            && declaring_file == self.file
+            && list_written_out(self.hir, self.bound, pattern)
+                .is_some_and(|literal| self.literal_holds_inferred_numbers(literal));
         let is_declared = is_parameter
             || is_stored_again
             || is_expected_by_its_uses
@@ -276,6 +304,10 @@ impl FileLowering<'_, '_, '_, '_> {
             true => self.queries.binding_type(pattern),
             false => Err(GaveUp::Unresolved),
         };
+        if holds_inferred_numbers && written.written().is_none() {
+            let checked = self.queries.binding_type(pattern);
+            return self.create_expected_position(PositionTypes { written, checked }, true);
+        }
         let types = PositionTypes { written, checked };
         let position = self.create_position(types);
         match self.starts_undefined(symbol, declaring_file, pattern) {

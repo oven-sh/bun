@@ -99,33 +99,34 @@ const listeners = {
     stream.emit = function (name, ...rest) { look("in emit " + String(name), stream); return emit.call(this, name, ...rest); };
   },
 };
-async function once() {
-  for (const [under, surround] of Object.entries({ plainly, underTicksOfTheProgram, underAnInitHook }))
-    for (const [kind, make] of Object.entries(kinds))
-      for (const [manner, options] of Object.entries(manners))
-        for (const [fill, chunks] of Object.entries(fills))
-          for (const [listener, listen] of Object.entries(listeners)) {
-            const name = [under, kind, manner, fill, listener].join(" | ");
-            group = [under, kind, manner].join(" | ");
-            const stream = make(options);
-            stream.on("error", error => look("in error " + error.name, stream));
-            stream.on("end", () => look("in end", stream));
-            stream.on("close", () => look("in close", stream));
-            listen(stream);
-            surround(name, stream, () => {
-              for (const chunk of chunks) stream.push(chunk !== null && options.objectMode ? { chunk } : chunk);
-              for (const amount of amounts) ask(name, stream, ...amount);
-            });
-            await new Promise(resolve => setImmediate(resolve));
-            look(name + " at last", stream);
-          }
+const surroundings = { plainly, underTicksOfTheProgram, underAnInitHook };
+async function once(under) {
+  const surround = surroundings[under];
+  for (const [kind, make] of Object.entries(kinds))
+    for (const [manner, options] of Object.entries(manners))
+      for (const [fill, chunks] of Object.entries(fills))
+        for (const [listener, listen] of Object.entries(listeners)) {
+          const name = [under, kind, manner, fill, listener].join(" | ");
+          group = [under, kind, manner].join(" | ");
+          const stream = make(options);
+          stream.on("error", error => look("in error " + error.name, stream));
+          stream.on("end", () => look("in end", stream));
+          stream.on("close", () => look("in close", stream));
+          listen(stream);
+          surround(name, stream, () => {
+            for (const chunk of chunks) stream.push(chunk !== null && options.objectMode ? { chunk } : chunk);
+            for (const amount of amounts) ask(name, stream, ...amount);
+          });
+          await new Promise(resolve => setImmediate(resolve));
+          look(name + " at last", stream);
+        }
 }
-module.exports = (async () => {
+module.exports = async under => {
   let first;
   for (let turn = 0; turn < turns; turn++) {
     lines = [];
     groups = [];
-    await once();
+    await once(under);
     const text = lines.join("\n");
     if (turn === 0) first = text;
     else if (text !== first) console.log("turn " + turn + " parts from the first");
@@ -137,4 +138,4 @@ module.exports = (async () => {
   all.forEach((line, at) => sums.set(groups[at], createHash("sha1").update((sums.get(groups[at]) ?? "") + line).digest("hex").slice(0, 12)));
   for (const [key, sum] of sums) console.log(sum + " " + key);
   if (process.argv[3]) all.forEach((line, at) => groups[at] === process.argv[3] && console.log(line));
-})();
+};

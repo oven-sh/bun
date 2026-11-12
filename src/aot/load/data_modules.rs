@@ -53,6 +53,7 @@ pub(crate) fn parse_data_module<'s>(
     };
     let DataModuleTree { file, host_values } =
         module_from_data(module.as_ref().unwrap_or(&in_place_of_failed), atoms, arena);
+    // The run time finds compiled WebAssembly by its bytes, whatever read them.
     let is_web_assembly = module.is_ok()
         && match source.loader {
             Loader::Wasm => true,

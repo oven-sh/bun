@@ -170,7 +170,7 @@ impl ModuleGraph {
         needed
     }
 
-    pub fn find_cut_off_built_ins(
+    pub fn find_unreachable_builtins(
         &self,
         left_out_files: &[FileId],
         keeps: KeepsRequest<'_>,

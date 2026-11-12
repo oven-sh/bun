@@ -9,4 +9,4 @@
 # -- end of source
 # RUN: plan layouts mechanisms=all
 # CHECK: "sooner" appended {{*}}Inline
-# CHECK: "later" appended {{*}}OutOfLine
+# CHECK: "later" appended {{*}}Inline

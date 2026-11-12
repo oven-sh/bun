@@ -1035,14 +1035,16 @@ fn receiver_of_method_is_tested_at_entry() {
 }
 
 #[test]
-fn array_literal_holds_the_declared_elements_or_else_anything() {
+fn array_literal_holds_declared_elements_or_inferred_numbers() {
     let numbers = [
         "(a: number) { const v: number[] = [a]; return v; }",
         "() { const v: number[] = []; return v; }",
         "(a: number) { const v: [number, number] = [a, a]; return v; }",
+        "(a: number) { const v = [a]; return v; }",
     ];
     let anything = [
-        "(a: number) { const v = [a]; return v; }",
+        "(a: string) { const v = [a]; return v; }",
+        "(a: number | string) { const v = [a]; return v; }",
         "() { const v = []; v.push(1); return v; }",
         "<T extends unknown[]>(a: number, rest: T) { const v: [number, ...T] = [a, ...rest]; return v; }",
     ];

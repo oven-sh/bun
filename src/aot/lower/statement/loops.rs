@@ -1,9 +1,25 @@
-use bun_sema::hir::{ExprId, StmtId, StmtKind};
+use bun_sema::bind::Binding;
+use bun_sema::hir::{BinOp, ExprId, ExprKind, NodeData, StmtId, StmtKind, UnOp};
 
 use crate::ir::BlockId;
 use crate::lower::control::BreakTargetKind;
-use crate::lower::scope::is_let_declaration;
+use crate::lower::scope::{BindingForm, BindingRef, Storage, is_let_declaration};
+use crate::lower::statement::{SuspendingArm, SuspendingPart};
 use crate::lower::{FunctionLowering, dispose};
+
+#[derive(Copy, Clone, Debug)]
+struct SuspendingLoop {
+    header: BlockId,
+    arm: SuspendingArm,
+}
+
+impl SuspendingLoop {
+    fn end_of_body(resumed: Option<SuspendingLoop>) -> Option<BlockId> {
+        resumed
+            .filter(|of| of.arm.part == SuspendingPart::Rest)
+            .map(|of| of.arm.resumed)
+    }
+}
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn begin_loop(&mut self, statement: StmtId) -> BlockId {
@@ -33,21 +49,136 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(body));
     }
 
+    /// The step in `while (++i < n)`. It is lowered before the loop and at the end of each
+    /// iteration, so the header tests the counter itself, as a `for` loop does.
+    fn find_step_before_test(&self, test: ExprId) -> Option<ExprId> {
+        let hir = self.file.hir;
+        let mut tested = test;
+        loop {
+            let ExprKind::Binary { op, left, .. } = hir[tested].kind else {
+                return None;
+            };
+            if self.file.is_statically_resolved(tested) {
+                return None;
+            }
+            match op {
+                BinOp::And | BinOp::Or => tested = left,
+                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                    let ExprKind::Unary {
+                        op: UnOp::PreInc | UnOp::PreDec,
+                        operand,
+                    } = hir[left].kind
+                    else {
+                        return None;
+                    };
+                    return self.is_local_variable(operand).then_some(left);
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn is_local_variable(&self, name: ExprId) -> bool {
+        let bound = self.file.bound;
+        if !matches!(self.file.hir[name].kind, ExprKind::Ident(_))
+            || bound.dynamic_lookup_scope(NodeData::Expr(name)).is_some()
+        {
+            return false;
+        }
+        let Binding::Symbol(symbol) = bound.binding(name) else {
+            return false;
+        };
+        let scopes = &self.file.scopes;
+        scopes.form(symbol) == BindingForm::Stored
+            && scopes
+                .placement(BindingRef::Symbol(symbol))
+                .is_some_and(|place| place.storage == Storage::Local && !place.is_immutable)
+    }
+
+    fn lower_test_after_step(
+        &mut self,
+        test: ExprId,
+        step: Option<ExprId>,
+        if_true: BlockId,
+        if_false: BlockId,
+    ) {
+        let enclosing = std::mem::replace(&mut self.step_before_test, step);
+        self.lower_condition(test, if_true, if_false);
+        self.step_before_test = enclosing;
+    }
+
     pub(super) fn lower_while(&mut self, statement: StmtId, test: ExprId, body: StmtId) {
         if self.file.decisions().is_dead_stmt(body) {
             self.lower_test_of_dead_loop(test, body);
             return;
         }
+        let step = self.find_step_before_test(test);
+        if let Some(step) = step {
+            self.lower_taken_value_for_effect(step);
+        }
         let body_block = self.create_block();
+        let step_block = step.map(|_| self.create_block());
         let after = self.create_block();
+        let resumed = self.begin_suspending_loop(statement, test, [ExprId::NONE; 2], step, body);
         let header = self.begin_loop(statement);
-        self.lower_condition(test, body_block, after);
+        self.lower_test_after_step(test, step, body_block, after);
         self.continue_in(body_block);
 
-        self.lower_loop_body(statement, body, after, header);
-        self.jump(header);
+        let enclosing = std::mem::replace(&mut self.suspending_arm, resumed.map(|of| of.arm));
+        self.lower_loop_body(statement, body, after, step_block.unwrap_or(header));
+        self.suspending_arm = enclosing;
+        self.jump(
+            SuspendingLoop::end_of_body(resumed)
+                .or(step_block)
+                .unwrap_or(header),
+        );
+        if let (Some(step), Some(step_block)) = (step, step_block) {
+            self.continue_in(step_block);
+            self.lower_taken_value_for_effect(step);
+            self.jump(header);
+        }
         self.builder.seal(header);
+        if let Some(of) = resumed {
+            self.continue_in(of.arm.resumed);
+            if let Some(step) = step {
+                self.lower_taken_value_for_effect(step);
+            }
+            self.jump(of.header);
+            self.builder.seal(of.header);
+        }
         self.continue_in(after);
+    }
+
+    /// The outer loop of a loop in which a part of the body suspends. The outer loop's iterations are those that suspend.
+    fn begin_suspending_loop(
+        &mut self,
+        statement: StmtId,
+        test: ExprId,
+        repeated: [ExprId; 2],
+        step: Option<ExprId>,
+        body: StmtId,
+    ) -> Option<SuspendingLoop> {
+        let [update, other] = repeated;
+        let repeated = [update, step.unwrap_or(other)];
+        let arm = self.find_suspending_arm(repeated, body);
+        let (part, found) = match arm {
+            Some(found) => (SuspendingPart::Arm, found),
+            None => (
+                SuspendingPart::Rest,
+                self.find_suspending_rest(statement, test, repeated, body)?,
+            ),
+        };
+        let resumed = self.create_block();
+        let header = self.begin_loop(statement);
+        Some(SuspendingLoop {
+            header,
+            arm: SuspendingArm {
+                part,
+                statement: found,
+                loop_statement: statement,
+                resumed,
+            },
+        })
     }
 
     pub(super) fn lower_do_while(&mut self, statement: StmtId, body: StmtId, test: ExprId) {
@@ -103,28 +234,46 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.lower_test_of_dead_loop(test, body);
             return;
         }
+        let step = test
+            .some()
+            .and_then(|test| self.find_step_before_test(test));
+        if let Some(step) = step {
+            self.lower_taken_value_for_effect(step);
+        }
         let body_block = self.create_block();
         let update_block = self.create_block();
         let after = self.create_block();
+        let resumed =
+            self.begin_suspending_loop(statement, test, [update, ExprId::NONE], step, body);
         let header = self.begin_loop(statement);
         match test.some() {
-            Some(test) => self.lower_condition(test, body_block, after),
+            Some(test) => self.lower_test_after_step(test, step, body_block, after),
             None => self.jump(body_block),
         }
         self.continue_in(body_block);
 
+        let enclosing = std::mem::replace(&mut self.suspending_arm, resumed.map(|of| of.arm));
         self.lower_loop_body(statement, body, after, update_block);
-        self.jump(update_block);
-        self.continue_in(update_block);
-
-        if let Some(scope) = copied_scope {
-            self.copy_iteration_bindings(scope);
+        self.suspending_arm = enclosing;
+        let ends = [
+            Some((update_block, header)),
+            resumed.map(|of| (of.arm.resumed, of.header)),
+        ];
+        self.jump(SuspendingLoop::end_of_body(resumed).unwrap_or(update_block));
+        for (end, header) in ends.into_iter().flatten() {
+            self.continue_in(end);
+            if let Some(scope) = copied_scope {
+                self.copy_iteration_bindings(scope);
+            }
+            if update.is_some() {
+                self.lower_taken_value_for_effect(update);
+            }
+            if let Some(step) = step {
+                self.lower_taken_value_for_effect(step);
+            }
+            self.jump(header);
+            self.builder.seal(header);
         }
-        if update.is_some() {
-            self.lower_taken_value_for_effect(update);
-        }
-        self.jump(header);
-        self.builder.seal(header);
         self.continue_in(after);
     }
 }

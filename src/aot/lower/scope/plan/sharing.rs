@@ -19,6 +19,22 @@ use crate::modules::{ExportBinding, ModuleKind};
 
 type Users = SmallVec<[(BindingRef, WalkedFunctionId); 8]>;
 
+fn find_registries(
+    context: &Context<'_, '_>,
+    variables: &[(ScopeId, SymbolId)],
+) -> Vec<(ScopeId, BindingRef)> {
+    let Some(find) = context.input.find_registries else {
+        return Vec::new();
+    };
+    let symbols: Vec<SymbolId> = variables.iter().map(|it| it.1).collect();
+    let answers = find(&symbols);
+    let held = variables.iter().zip(answers).filter(|it| it.1);
+    let held = held.map(|(&(scope, symbol), _)| (scope, BindingRef::Symbol(symbol)));
+    let mut registries: Vec<(ScopeId, BindingRef)> = held.collect();
+    registries.sort_unstable();
+    registries
+}
+
 pub(super) fn compute_sharing(
     context: &Context<'_, '_>,
     forms: &[BindingForm],
@@ -40,7 +56,7 @@ pub(super) fn compute_sharing(
     let first_slot = by_binding.partition_point(|entry| matches!(entry.0, BindingRef::Symbol(_)));
     by_binding[first_slot..].sort_unstable();
     let mut sharing = BindingSharing::default();
-    let mut registries = Vec::new();
+    let mut may_hold_registries: Vec<(ScopeId, SymbolId)> = Vec::new();
     for mut run in by_binding.chunk_by(|first, second| first.0 == second.0) {
         let binding = run[0].0;
         let Some(owner) = context.owner_of(binding) else {
@@ -80,11 +96,11 @@ pub(super) fn compute_sharing(
             continue;
         }
         let captured = describe_captured_binding(context, binding, owner);
-        match binding {
-            BindingRef::Symbol(symbol) if is_shared && (context.input.holds_registry)(symbol) => {
-                registries.push((captured.scope, binding));
-            }
-            BindingRef::Symbol(_) | BindingRef::Slot(..) => {}
+        if let BindingRef::Symbol(symbol) = binding
+            && is_shared
+            && context.input.find_registries.is_some()
+        {
+            may_hold_registries.push((captured.scope, symbol));
         }
         sharing.captured.push(captured);
         for &(binding, user) in run {
@@ -97,14 +113,19 @@ pub(super) fn compute_sharing(
         let is_used = find_by_key(&sharing.variables[..used_count], binding).is_some();
         if forms[symbol.idx()] == BindingForm::Stored && !is_used {
             sharing.shared.push(binding);
-            let key = symbol_key(context, symbol);
-            sharing.variables.push((binding, key));
+            match context.find_instance_field(symbol) {
+                Some(field) => sharing.instance_fields.push((binding, field)),
+                None => {
+                    let key = symbol_key(context, symbol);
+                    sharing.variables.push((binding, key));
+                }
+            }
         }
     }
     sharing
         .captured
         .sort_unstable_by_key(|captured| captured.binding);
-    registries.sort_unstable();
+    let registries = find_registries(context, &may_hold_registries);
     hold_in_every_closure(context, &registries, &mut sharing.captured_uses);
     sharing.registries = registries;
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
@@ -168,11 +189,14 @@ fn describe_captured_binding(
             precedes_hoisted_functions: false,
         });
     }
+    let is_entered_once_per_instance = context.has_instances
+        && context.is_entered_once_per_instance(context.scope_of(binding))
+        && !matches!(binding, BindingRef::Slot(_, ScopeSlot::ModuleInstance));
     CapturedBinding {
         binding,
-        scope: context.scope_of(binding),
+        scope: context.storage_scope(binding),
         owner,
-        is_immutable,
+        is_immutable: is_immutable && !is_entered_once_per_instance,
         initialization,
     }
 }
@@ -340,7 +364,8 @@ fn create_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option
             | ScopeSlot::ArgumentsBinding
             | ScopeSlot::WithObject
             | ScopeSlot::EvalVariables
-            | ScopeSlot::ParameterEvalVariables,
+            | ScopeSlot::ParameterEvalVariables
+            | ScopeSlot::ModuleInstance,
         ) => None,
     }
 }

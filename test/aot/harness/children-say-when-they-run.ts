@@ -8,6 +8,7 @@ import { isASAN } from "harness";
 import {
   appendFileSync,
   cpSync,
+  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -93,6 +94,13 @@ function hold(plain: ReturnType<typeof listRuns>, compiled: ReturnType<typeof li
   );
 }
 
+// Plain Bun reads the files of two tests on one thread ("evicting modules stays fast while many loads are pending", "files that mock it between files that don't"): with threads it completes loads in the order in which the threads finish.
+const filesOfTestsOnOneThread = ["uses39.ts", "5.test.js"];
+function asPlainRuns(options: Options) {
+  if (!filesOfTestsOnOneThread.some(file => existsSync(join(options.cwd ?? process.cwd(), file)))) return options;
+  return { ...options, env: { ...(options.env ?? process.env), BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } };
+}
+
 const madeForTheRun = realpathSync(tmpdir()) + sep;
 const findBun = ({ cmd, cwd }: Options) => {
   // ./run.ts puts words in front of a command.
@@ -110,13 +118,13 @@ Bun.spawn = function (this: unknown, first: string[] | Options, second?: Omit<Op
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   // Both copies are made before the child can write into its project.
   const lists = [[], ["--aot"]].map(async flags => {
-    const copy = copyOf(options, bun, flags);
+    const copy = copyOf(flags.length ? options : asPlainRuns(options), bun, flags);
     const child = spawn(copy);
     const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, stderr, child);
   });
-  const child = spawn.call(this, first as never, second as never);
+  const child = spawn.call(this, asPlainRuns(options) as never);
   const exited = Promise.all([child.exited, ...lists]).then(([code, plain, compiled]) => (hold(plain, compiled), code));
   return Object.defineProperty(child, "exited", { value: exited });
 } as typeof Bun.spawn;
@@ -127,11 +135,11 @@ Bun.spawnSync = function (this: unknown, first: string[] | Options, second?: Omi
   if (bun < 0) return spawnSync.call(this, first as never, second as never);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   const [plain, compiled] = [[], ["--aot"]].map(flags => {
-    const copy = copyOf(options, bun, flags);
+    const copy = copyOf(flags.length ? options : asPlainRuns(options), bun, flags);
     const ended = spawnSync(copy);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, ended.stderr.toString(), ended);
   });
   hold(plain, compiled);
-  return spawnSync.call(this, first as never, second as never);
+  return spawnSync.call(this, asPlainRuns(options) as never);
 } as typeof Bun.spawnSync;

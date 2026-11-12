@@ -170,7 +170,7 @@ fn visit_user(threads: usize, asked: usize) -> Vec<Visit> {
             request,
             &decided,
             files_to_lower,
-            &lower,
+            &|checker, file, _| lower(checker, file),
             &|file, _| {
                 if file == holder {
                     turns.reach(HAS_COMMITTED);

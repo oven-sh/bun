@@ -1,5 +1,4 @@
 import { test, vi } from "bun:test";
-const later = ms => new Promise(done => setTimeout(done, ms));
 let open;
 let openSecond;
 globalThis.door = new Promise(done => { open = done; });
@@ -18,10 +17,8 @@ test("what the body stands at", async () => {
   });
   globalThis.fetchShelf();
   open();
-  await later(100);
   openSecond();
-  const stands = later(700).then(() => "stands");
-  const original = await Promise.race([first, stands]);
-  const said = globalThis.shelf ? await Promise.race([globalThis.shelf, stands]) : "none";
+  const original = await first;
+  const said = globalThis.shelf ? await globalThis.shelf : "none";
   console.log("SAID", said, "|", original, "|", globalThis.firings);
 }, 5000);

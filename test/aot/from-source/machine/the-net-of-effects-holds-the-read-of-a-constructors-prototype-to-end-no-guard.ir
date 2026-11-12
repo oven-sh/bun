@@ -7,7 +7,9 @@
 # let n = 0;
 # for (let i = 0; i < 40; i++) n += pair(i);
 # print(n);
+# if (n < 0) Crate.prototype = {};
 # -- end of source
+# The last statement keeps the prototype property from being proven: a proven one is not read at the construction.
 # Once the guards of a constructor function have begun, the walk assumes that the read of its prototype ends no guard that held.
 # The run-time effects check (testing=CheckEffectsAtRunTime) checks the operation against that assumption, by the count of guards that ended.
 # The count of guards that were armed is left unchecked for this operation, by name, because that very read may define the class.

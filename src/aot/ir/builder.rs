@@ -7,7 +7,7 @@ use super::generated::{
     TerminatorKind, ValueHead, WRITTEN_POSITION_FOLLOWS, visit_terminator_fields,
     visit_value_fields,
 };
-use super::ids::{BlockId, Id, TypeId, ValueId, optional_id_to_word};
+use super::ids::{BlockId, Id, StringId, TypeId, ValueId, optional_id_to_word};
 use super::ssa::SsaState;
 
 pub(super) const MAX_SPARE_VALUES: usize = 1 << 16;
@@ -537,6 +537,7 @@ impl FunctionBuilder {
         self.is_position_held = is_held;
     }
 
+    /// The position of the emitted operation identifies its site, also while the position is held.
     pub fn emit_at_site<R>(&mut self, position: u32, emit: impl FnOnce(&mut Self) -> R) -> R {
         let outer = self.position.replace(position);
         let emitted = emit(self);
@@ -544,6 +545,8 @@ impl FunctionBuilder {
         emitted
     }
 
+    /// Where `new` stands, for the next operation, which is a construction. An uncaught error and a call site report there, as under `bun run`.
+    /// `Error.stack` reports at the operation's own position.
     pub fn set_construction_start(&mut self, start: u32) {
         let is_elsewhere = !self.is_position_held && self.position != Some(start);
         self.construction_start = is_elsewhere.then_some(start);
@@ -707,6 +710,14 @@ impl FunctionBuilder {
             Opcode::from_wire(head & !(STANDS_IN_TAIL_POSITION | WRITTEN_POSITION_FOLLOWS));
         debug_assert!(opcode.is_some(), "an operation begins with its opcode");
         opcode
+    }
+
+    pub fn constant_string(&self, value: ValueId) -> Option<StringId> {
+        if self.opcode_of(value) != Some(Opcode::String) {
+            return None;
+        }
+        let first_field = self.values[value.index()].at as usize + ValueHead::WORDS;
+        Some(StringId::from_word(self.words[first_field]))
     }
 
     pub fn terminate(&mut self, kind: TerminatorKind, fields: &[u32], edges: &[Edge<'_>]) {

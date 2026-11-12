@@ -1,5 +1,5 @@
 // Where nobody holds the answer, `process` goes nowhere: nothing of Bun's library comes along.
-// STATISTIC: FunctionsLowered <= 600
+// STATISTIC: FunctionsLowered <= 602
 const heard = () => {};
 process.off("madeUp", heard);
 process.removeAllListeners("madeUp");

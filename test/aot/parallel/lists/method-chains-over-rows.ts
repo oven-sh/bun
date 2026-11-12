@@ -1,5 +1,5 @@
 // A chain of methods of lists on a row that changes with the turns of a loop stays behind the one guess at that row, and each further link asks for its own list.
-// STATISTIC: MethodChainsKeptInArm >= 6
+// STATISTIC: MethodChainsKeptInBranches >= 6
 const rows: number[][] = JSON.parse("[[1,2,3,4,5,6],[],[7],[0.5,1.5,2],[4294967296,3,-1,-2]]");
 const holes: number[] = [1, 2, 3, 4];
 delete holes[1];

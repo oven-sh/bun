@@ -5,6 +5,7 @@ mod components;
 mod css_modules;
 mod data_loaders;
 mod data_values;
+mod database_log;
 mod defines;
 mod metafile;
 mod native_plugins;
@@ -31,6 +32,7 @@ use bun_resolver::package_names::{
 };
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
+pub use database_log::read_database_with_log;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};

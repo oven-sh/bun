@@ -1,0 +1,6 @@
+// An untyped package and a program of it (collections): hierarchies over built-ins: arrays that know their kind, maps with defaults, errors with causes, promises, typed arrays, functions that are classes
+const lib = require("./index.js");
+function say() {
+  console.log(Array.prototype.join.call(arguments, " "));
+}
+const s = new lib.Stack(), v = lib.Vector.of(3, '4'), d = new lib.DefaultMap(k => [k], [['pre', ['x']]]), m = lib.MultiSet.of('abracadabra'); for (let i = 0; i < 20; i++) { const r = s.push(i, 'i' + i); const w = v.plus(i % 2 ? i : [i, 1]); d.get('k' + i % 4).push(i); if (i % 5 === 4) d.update('k1', a => a.slice(-2)); if (i % 3 === 0) m.add(i); else m.delete('abcdr'[i % 5]); say(i, r, s.top, s.peek(2), s.filter(x => typeof x === 'number') instanceof lib.Stack, s.slice(-2).constructor.name, lib.Stack.pushed, String(w), w instanceof lib.Vector, w.norm.toFixed(4), w.dot(v), d.made, d.size, JSON.stringify(d), m.size, m.total, m.count('a'), [...m].join('')); if (i === 10) s.length = 3; } say([...d.sorted().keys()].join(), Array.isArray(v), new lib.Stack(3).length, lib.Vector.from([1, 2]) instanceof lib.Vector, s.concat([1]).constructor === Array, JSON.stringify(lib.Vector.of(1, 2)), lib.MultiSet.of([NaN, NaN, -0, 0]).count(0));

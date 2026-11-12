@@ -259,11 +259,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         expression: ExprId,
         evaluation: Evaluation<'_>,
     ) -> ValueId {
-        let position = self.file.hir[expression].pos;
+        let position = self.file.reported_position(expression);
         debug_assert!(
             !self.file.hir.is_in_jsdoc(position),
             "an expression synthesized from a JSDoc tag is never lowered"
         );
+        if self.step_before_test == Some(expression)
+            && let ExprKind::Unary { operand, .. } = self.file.hir[expression].kind
+        {
+            return self.lower_identifier(operand);
+        }
         if !self.enter_nesting(position) {
             return self.builder.undefined();
         }
@@ -508,6 +513,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let decisions = self.file.decisions();
         let mut operand = decisions.find_operand_alone_in_bun_run(hir, operator)?;
+        // A chain of operators nests on the left, as deep as it is long.
         while matches!(
             hir[operand].kind,
             ExprKind::Binary {
@@ -742,7 +748,7 @@ impl FileLowering<'_, '_, '_, '_> {
         names_below_top_level: bool,
         is_below_void: bool,
     ) -> bool {
-        if self.counts_executions() {
+        if self.counts_executions() || self.is_in_known_evaluation(expression) {
             return false;
         }
         let hir = self.hir;
@@ -919,7 +925,9 @@ pub(in crate::lower) fn find_constant_outside_dead_zone(
             let ExprKind::Ident(_) = file.hir[inner].kind else {
                 return None;
             };
-            let constant = file.decisions().constant_read(inner)?;
+            let decisions = file.decisions();
+            let constant = decisions.constant_read(inner);
+            let constant = constant.or_else(|| decisions.constant_of_let(inner))?;
             file.passes_every_assertion(expression, constant)
                 .then_some(constant)
         }

@@ -68,7 +68,7 @@ pub(crate) use bun_sys::PlatformIoVec;
 /// handed to the thread pool (`Async`). A few FS operations take a different
 /// path per flavor (`read_file`'s scratch buffer, recursive `readdir`), and
 /// the arguments parsed for an async call must outlive it off the JS thread:
-/// strings are copied or re-referenced thread-safely, buffers are pinned and
+/// strings and path buffers are copied or re-referenced thread-safely, data buffers are pinned and
 /// GC-rooted until the parsed value drops ([`PinnedArrayBuffer`]).
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
 pub(crate) enum Flavor {
@@ -919,6 +919,12 @@ impl PathLikeExt for PathLike<'_> {
             }
         }
 
+        // A buffer path was copied with its NUL when it was parsed.
+        #[cfg(not(windows))]
+        if !FORCE && let PathLike::Bytes(bytes) = self {
+            return bytes.as_zstr();
+        }
+
         if sliced.is_empty() {
             if !FORCE {
                 return ZStr::EMPTY;
@@ -1119,24 +1125,20 @@ impl PathLikeExt for PathLike<'_> {
         use jsc::JSType;
         let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
-                let mut buffer = if arguments.will_be_async {
-                    PinnedArrayBuffer::root(ctx, arg)
-                } else {
-                    PinnedArrayBuffer::pin(ctx, arg)
+                let Some(view) = arg.as_array_buffer(ctx) else {
+                    return Ok(None);
+                };
+                // The only read of the view: JS can write its bytes before the path is used.
+                let bytes = view.byte_slice();
+                Valid::path_buffer(bytes, ctx)?;
+                if let Some(too_long) = Valid::path_too_long(bytes) {
+                    Valid::path_null_bytes(bytes, ctx)?;
+                    arguments.eat();
+                    return Valid::reject_too_long(too_long, ctx, arguments).map(Some);
                 }
-                .ok_or_else(|| ctx.throw_out_of_memory())?;
-                // The path is read after this call returns. By then a later argument's getter can
-                // shrink the buffer or grow its `WebAssembly.Memory`, which frees the pages.
-                if !buffer.copy_if_freeable_while_pinned(ctx) {
-                    return Err(ctx.throw_out_of_memory());
-                }
-                Valid::path_buffer(buffer.slice(), ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let path = path_like_from_bytes(ctx, bytes, relative_paths)?;
                 arguments.eat();
-                match join_onto_working_directory_in_executable(buffer.slice()) {
-                    Some(path) if relative_paths == RelativePaths::StartAtWorkingDirectory => path,
-                    _ => PathLike::Buffer(buffer),
-                }
+                path
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
@@ -1238,6 +1240,27 @@ fn path_like_from_working_directory(
     path_like_from_string(global, str, will_be_async)
 }
 
+/// A copy of `bytes` as a `PathLike`. The NUL check reads the copy, so the name that was checked is the name that is opened.
+fn path_like_from_bytes(
+    global: &JSGlobalObject,
+    bytes: &[u8],
+    relative_paths: RelativePaths,
+) -> JsResult<PathLike<'static>> {
+    let mut copy = Vec::new();
+    if copy.try_reserve_exact(bytes.len() + 1).is_err() {
+        return Err(global.throw_out_of_memory());
+    }
+    copy.extend_from_slice(bytes);
+    let path = bun_core::ZBox::from_vec(copy);
+    Valid::path_null_bytes(path.as_bytes(), global)?;
+    Ok(
+        match join_onto_working_directory_in_executable(path.as_bytes()) {
+            Some(joined) if relative_paths == RelativePaths::StartAtWorkingDirectory => joined,
+            _ => PathLike::Bytes(path),
+        },
+    )
+}
+
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
 fn path_like_from_string(
     global: &JSGlobalObject,
@@ -1307,6 +1330,15 @@ impl Valid {
             return Ok(path);
         };
         drop(path);
+        Self::reject_too_long(err, ctx, arguments)
+    }
+
+    /// How [`Valid::path_length`] delivers the error of [`Valid::path_too_long`].
+    pub(crate) fn reject_too_long(
+        err: bun_sys::SystemError,
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<PathLike<'static>> {
         if !arguments.will_be_async {
             return Err(ctx.throw_value(err.to_error_instance(ctx)));
         }

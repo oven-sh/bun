@@ -1,6 +1,6 @@
 import * as b from "../lib.ts";
 
-/** Views passed as paths or data are pinned while they are read (`PinnedArrayBuffer`), which moves the bytes of small ones. `readSync` and `readvSync` fill views. */
+/** Views passed as data are pinned while they are read (`PinnedArrayBuffer`), which moves the bytes of small ones. A view passed as a path is copied and not pinned. `readSync` and `readvSync` fill views. */
 export const heapsOfViews = ["TypedArrayStorage", "TypedArrayElements"] as const;
 
 /** How `node:fs` operations use their arguments (`args::*::from_js` in node_fs.rs). They neither keep nor return any. */

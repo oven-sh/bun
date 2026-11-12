@@ -132,8 +132,9 @@ re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
 (`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
 string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
 synchronous call, `PathLike::owned(vec)` when the value must own them),
-`Buffer` (`PathLike`: a `PinnedArrayBuffer`, GC-rooted too when parsed for an
-async call; `StringOrBuffer`: borrowed for a sync call) and
+`PathLike::Bytes(ZBox)` (a JS buffer path, copied and NUL-checked when the
+argument is parsed: a `PathLike` never borrows memory that JS can write),
+`StringOrBuffer::Buffer` (borrowed for a sync call) and
 `StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
 call). Values parsed from JS for an async call, stored, or sent to another thread (the
 `from_js_async` parsers, which return `ThreadIsolated<T>`;

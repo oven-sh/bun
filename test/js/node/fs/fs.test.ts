@@ -99,7 +99,7 @@ function tmpdirTestMkdir(): string {
   return tempdir;
 }
 
-it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading options", () => {
+it("fs.statSync has read a Uint8Array path before an options getter detaches its ArrayBuffer", () => {
   using dir = tempDir("fs-statsync-typed-array-path", { "target.txt": "bun" });
   const encoded = new TextEncoder().encode(join(String(dir), "target.txt"));
   const pathBuffer = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
@@ -110,86 +110,158 @@ it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading opt
       return true;
     },
   });
-  expect(arrayBuffer.detached).toBe(false);
-  expect(stats!.isFile()).toBe(true);
-  arrayBuffer.transfer();
+  // The path is a copy made when the argument was parsed. Nothing borrows the buffer, so the transfer detaches it.
   expect(arrayBuffer.detached).toBe(true);
+  expect(stats!.isFile()).toBe(true);
 });
 
-describe("a Buffer path an async call copies at call time", () => {
-  // Both names exist and differ in one byte, so the result says which one the
-  // job opened instead of only failing.
-  const twoFiles = { "a.txt": "AAAA", "b.txt": "BBBB" };
+describe("a Buffer path is read when its argument is parsed", () => {
+  // Every name has the same length, so one scratch buffer holds each in turn.
+  const names = Array.from({ length: 64 }, (_, i) => `f${String(i).padStart(2, "0")}`);
+  const files = Object.fromEntries(names.map(name => [name, name]));
 
-  it("fs.promises.readFile", async () => {
-    using dir = tempDir("fs-async-buffer-path-promises", twoFiles);
-    const a = join(String(dir), "a.txt");
-    for (let i = 0; i < 20; i++) {
-      const p = Buffer.from(a);
-      const read = fs.promises.readFile(p, "utf8");
-      p[p.length - 5] = 0x62; // "a.txt" -> "b.txt", after the call returned
-      expect(await read).toBe("AAAA");
-    }
-  });
-
-  it("fs.readFile", async () => {
-    using dir = tempDir("fs-async-buffer-path-callback", twoFiles);
-    const a = join(String(dir), "a.txt");
-    for (let i = 0; i < 20; i++) {
-      const { promise, resolve, reject } = Promise.withResolvers<string>();
-      const p = Buffer.from(a);
-      readFile(p, "utf8", (err, data) => (err ? reject(err) : resolve(data as string)));
-      p[p.length - 5] = 0x62;
-      expect(await promise).toBe("AAAA");
-    }
-  });
-
-  it("one scratch buffer, three queued unlinks", async () => {
-    using dir = tempDir("fs-async-buffer-path-scratch", {
-      "tmp-0": "0",
-      "tmp-1": "1",
-      "tmp-2": "2",
-      "keep!": "keep",
-    });
-    // Every name is 5 bytes, so each write overwrites the whole buffer.
-    const scratch = Buffer.alloc(String(dir).length + 6);
-    const jobs = [];
-    for (const name of ["tmp-0", "tmp-1", "tmp-2"]) {
+  it("queued fs.promises.unlink calls through one scratch buffer", async () => {
+    using dir = tempDir("fs-buffer-path-unlink", { ...files, "zzz": "keep" });
+    const scratch = Buffer.from(join(String(dir), "zzz"));
+    const jobs = names.map(name => {
       scratch.write(join(String(dir), name));
-      jobs.push(
-        fs.promises.unlink(scratch).then(
-          () => "ok",
-          err => err.code,
-        ),
+      return fs.promises.unlink(scratch).then(
+        () => "ok",
+        err => err.code,
       );
-    }
-    scratch.write(join(String(dir), "keep!")); // the buffer's next use
-    expect(await Promise.all(jobs)).toEqual(["ok", "ok", "ok"]);
-    expect(readdirSync(String(dir)).sort()).toEqual(["keep!"]);
+    });
+    scratch.write(join(String(dir), "zzz")); // the buffer's next use
+    expect(await Promise.all(jobs)).toEqual(names.map(() => "ok"));
+    expect(readdirSync(String(dir))).toEqual(["zzz"]);
   });
 
-  // A NUL written after the call used to truncate the name the job opened. On a
-  // build with debug assertions it aborted the process, so run it in a child.
-  it("a NUL written after the call", async () => {
-    using dir = tempDir("fs-async-buffer-path-nul", { "a.txt": "AAAA", "a.txt.png": "PNG" });
+  it("queued fs.readFile calls through one scratch buffer", async () => {
+    using dir = tempDir("fs-buffer-path-readfile", files);
+    const scratch = Buffer.from(join(String(dir), names[0]));
+    const jobs = names.map(name => {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      scratch.write(join(String(dir), name));
+      readFile(scratch, "utf8", (err, data) => (err ? reject(err) : resolve(data as string)));
+      return promise;
+    });
+    expect(await Promise.all(jobs)).toEqual(names);
+  });
+
+  it("an async error names the path of its own call", async () => {
+    using dir = tempDir("fs-buffer-path-error", {});
+    const scratch = Buffer.from(join(String(dir), names[0]));
+    const jobs = names.map(name => {
+      scratch.write(join(String(dir), name));
+      return fs.promises.stat(scratch).then(
+        () => "found",
+        err => err.path,
+      );
+    });
+    expect(await Promise.all(jobs)).toEqual(names.map(name => join(String(dir), name)));
+  });
+
+  // The unfixed build opens a name that a NUL cut short, and a build with assertions aborts: each of these runs in a child.
+  async function runInChild(dir: string, script: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `import fs from "node:fs";
-        import path from "node:path";
-        const p = Buffer.from(path.join(process.argv[1], "a.txt.png"));
-        fs.readFile(p, "utf8", (err, data) => console.log(err ? err.code : data));
-        p[p.length - 4] = 0;`,
-        String(dir),
-      ],
-      env: bunEnv,
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ...env },
+      cwd: dir,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("PNG");
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it("a NUL written after an async call does not cut the name", async () => {
+    using dir = tempDir("fs-buffer-path-async-nul", { "a.txt": "AAAA", "a.txt.png": "PNG" });
+    const script = `
+      import fs from "node:fs";
+      import path from "node:path";
+      const reads = Array.from({ length: 16 }, () => {
+        const p = Buffer.from(path.join(process.cwd(), "a.txt.png"));
+        const read = fs.promises.readFile(p, "utf8");
+        p[p.length - 4] = 0; // ".../a.txt\\0png", after the call returned
+        return read;
+      });
+      console.log(JSON.stringify(await Promise.all(reads)));
+    `;
+    expect(await runInChild(String(dir), script)).toEqual({
+      stdout: JSON.stringify(Array.from({ length: 16 }, () => "PNG")),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a sync call does not see what a getter of a later argument writes into its path", async () => {
+    using dir = tempDir("fs-buffer-path-getter", {
+      "read": "the name cut short",
+      "read_whole": "the name of the call",
+      "stat_a": "1",
+      "stat_b": "22",
+    });
+    const script = `
+      import fs from "node:fs";
+      import path from "node:path";
+      const dir = process.cwd();
+      // A path, and a function that writes a NUL over its "_".
+      const cut = name => {
+        const p = Buffer.from(path.join(dir, name));
+        return [p, () => void (p[p.lastIndexOf("_")] = 0)];
+      };
+      const out = {};
+      {
+        const [p, nul] = cut("dir_whole");
+        fs.mkdirSync(p, { get recursive() { nul(); return false; } });
+      }
+      {
+        const [p, nul] = cut("file_whole");
+        fs.writeFileSync(p, "x", { get flag() { nul(); return "w"; } });
+      }
+      {
+        const [p, nul] = cut("read_whole");
+        out.read = fs.readFileSync(p, { encoding: "utf8", get flag() { nul(); return "r"; } });
+      }
+      {
+        const [p, nul] = cut("tmp_whole-");
+        out.mkdtemp = path.basename(fs.mkdtempSync(p, { get encoding() { nul(); return "utf8"; } })).slice(0, -6);
+      }
+      {
+        const p = Buffer.from(path.join(dir, "stat_a"));
+        out.statSize = fs.statSync(p, { get throwIfNoEntry() { p[p.length - 1] = 0x62; return true; } }).size;
+      }
+      out.entries = fs.readdirSync(dir).filter(name => !name.startsWith("tmp")).sort();
+      console.log(JSON.stringify(out));
+    `;
+    const { stdout, stderr, exitCode } = await runInChild(String(dir), script);
     expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      read: "the name of the call",
+      mkdtemp: "tmp_whole-",
+      statSize: 1,
+      entries: ["dir_whole", "file_whole", "read", "read_whole", "stat_a", "stat_b"],
+    });
     expect(exitCode).toBe(0);
+  });
+
+  // Above 1000 bytes a view made by a length has its bytes outside its cell and no ArrayBuffer yet. 1020 still fits the 1024-byte path limit of macOS.
+  it("a sync call has read a long path before a getter frees its bytes", async () => {
+    using dir = tempDir("fs-buffer-path-transfer", { "target": "call-time" });
+    const script = `
+      import fs from "node:fs";
+      const N = 1020;
+      const cwd = process.cwd();
+      const pad = N - cwd.length - "/target".length;
+      const p = new Uint8Array(N);
+      p.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + Buffer.alloc(pad >> 1 << 1, "/.").toString() + "/target"));
+      const stats = fs.statSync(p, { get throwIfNoEntry() { p.buffer.transfer(0); return true; } });
+      console.log(JSON.stringify({ size: stats.size, byteLength: p.byteLength }));
+    `;
+    // Malloc=1: the bytes come from JavaScriptCore's allocator, which hides a read of freed memory from ASAN.
+    expect(await runInChild(String(dir), script, { Malloc: "1" })).toEqual({
+      stdout: JSON.stringify({ size: "call-time".length, byteLength: 0 }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

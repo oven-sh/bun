@@ -1,22 +1,21 @@
 //! `node.PathLike` / `node.PathOrFileDescriptor` — single nominal definitions.
 //!
 //! LAYERING: defined at the
-//! `bun_jsc` tier because every variant payload (`Buffer` =
-//! `PinnedArrayBuffer`, `Utf8WithString`, `Utf8Bytes`, `Fd`)
+//! `bun_jsc` tier because every variant payload (`ZBox`, `Utf8WithString`,
+//! `Utf8Bytes`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
-use bun_core::{Utf8Bytes, Utf8WithString};
+use bun_core::{Utf8Bytes, Utf8WithString, ZBox};
 use bun_sys::Fd;
-
-use crate::array_buffer::PinnedArrayBuffer;
 
 /// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
+/// No arm borrows memory that JS can write.
 pub enum PathLike<'a> {
-    /// Pinned for the call; also GC-rooted when parsed for an async call.
-    Buffer(PinnedArrayBuffer),
+    /// The bytes of a JS buffer path, copied when the argument was parsed.
+    Bytes(ZBox),
     /// Always shares its WTF string's bytes (built by `shared_or_utf8`);
     /// transcoded paths are `Utf8(Owned)`.
     String(Utf8WithString),
@@ -41,11 +40,10 @@ impl Default for PathLike<'_> {
 }
 
 impl Clone for PathLike<'_> {
-    /// `clone().slice()` returns the same bytes. String payloads bump their
-    /// ref; a `Buffer`'s bytes are copied (the clone owns no pin or GC root).
+    /// `clone().slice()` returns the same bytes. String payloads bump their ref.
     fn clone(&self) -> Self {
         match self {
-            Self::Buffer(b) => Self::Utf8(Utf8Bytes::Owned(b.slice().to_vec())),
+            Self::Bytes(b) => Self::Bytes(b.clone()),
             Self::String(s) => Self::String(s.clone()),
             Self::ThreadIsolatedString(s) => Self::ThreadIsolatedString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
@@ -68,6 +66,11 @@ impl<'a> PathLike<'a> {
     /// The bytes as a `Vec<u8>`: moved out of [`PathLike::owned`], copied otherwise.
     pub fn into_vec(self) -> Vec<u8> {
         match self {
+            Self::Bytes(b) => {
+                let mut bytes = b.into_vec_with_nul();
+                bytes.pop();
+                bytes
+            }
             Self::Utf8(utf8) => utf8.into_vec(),
             Self::Joined(path) => path.joined,
             path => path.slice().to_vec(),
@@ -77,7 +80,7 @@ impl<'a> PathLike<'a> {
     #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
-            Self::Buffer(b) => b.slice(),
+            Self::Bytes(b) => b.as_bytes(),
             Self::String(s) | Self::ThreadIsolatedString(s) => s.slice(),
             Self::Utf8(s) => s.slice(),
             Self::Joined(path) => &path.joined,
@@ -103,7 +106,7 @@ impl<'a> PathLike<'a> {
 
     pub(crate) fn estimated_size(&self) -> usize {
         match self {
-            Self::Buffer(b) => b.slice().len(),
+            Self::Bytes(b) => b.len(),
             Self::String(_) | Self::ThreadIsolatedString(_) => 0,
             Self::Utf8(s) => s.slice().len(),
             Self::Joined(path) => path.joined.len() + path.written.len(),
@@ -113,14 +116,13 @@ impl<'a> PathLike<'a> {
 
 impl PathLike<'static> {
     /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
-    /// string becomes a private copy never handed to JS, and a buffer's bytes
-    /// are copied and its pin is released here, on the JS thread.
+    /// string becomes a private copy never handed to JS.
     pub fn thread_isolated_copy(self) -> Self {
         match self {
             Self::String(s) | Self::ThreadIsolatedString(s) => {
                 Self::ThreadIsolatedString(s.thread_isolated_copy())
             }
-            Self::Buffer(b) => Self::owned(b.slice().to_vec()),
+            Self::Bytes(b) => Self::Bytes(b),
             Self::Utf8(s) => Self::Utf8(s),
             Self::Joined(path) => Self::Joined(path),
         }

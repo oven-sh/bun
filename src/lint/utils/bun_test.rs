@@ -371,7 +371,13 @@ pub fn changes_once_required<'a>(file: &'a File<'a>, names: &[&str]) -> bool {
         return true;
     }
 
-    let statements = || file.body().iter().filter(|it| it.directive().is_none());
+    // A function declaration is there before the first statement runs, and a type or a `declare` never runs.
+    let runs_in_place = |it: &Stmt<'a>| {
+        let never_runs = matches!(it.tag(), StmtTag::Interface | StmtTag::TypeAlias)
+            || it.flags().contains(Flags::AMBIENT);
+        it.directive().is_none() && !never_runs && !matches!(it.tag(), StmtTag::Fn | StmtTag::Empty)
+    };
+    let statements = || file.body().iter().filter(runs_in_place);
     let is_required = |object: Expr<'a>| {
         object.symbol().is_none() && object.as_ident().is_some_and(|it| it.is_any(names))
     };

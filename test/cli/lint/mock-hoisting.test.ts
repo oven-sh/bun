@@ -277,6 +277,16 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
           greets(),
         prints: ["mock"],
       },
+      // A function declaration is there before the first statement runs, and the types never run.
+      "a function and types above the mock": {
+        file: "greet.test.ts",
+        text:
+          "interface Dep {\n  greet(): string;\n}\ndeclare const flag: boolean;\nfunction helper(dep: Dep) {\n  return dep.greet();\n}\n" +
+          mock("jest") +
+          requireGreet +
+          'test("greets", () => {\n  console.log(TAG, helper({ greet }));\n});\n',
+        prints: ["mock"],
+      },
       "a mock in a test": {
         text: 'test("greets", () => {\n  jest.doMock("./dep.js", () => ({ greet: () => "mock" }));\n  console.log(TAG, require("./dep.js").greet());\n});\n',
         prints: ["mock"],
@@ -405,7 +415,8 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
   {
     name: "vitest/consistent-vitest-vi",
     rule: "vitest/consistent-vitest-vi",
-    config: { "bunfig.toml": '[lint.rules]\n"vitest/consistent-vitest-vi" = "warn"\n' },
+    // `--fix-dangerously` also applies the suggestion of `no-unused-vars`, which removes an import that has no use.
+    config: { "bunfig.toml": '[lint.rules]\n"vitest/consistent-vitest-vi" = "warn"\n"no-unused-vars" = "off"\n' },
     cases: {
       // `vitest` comes from `require()`, and the `vi` that replaces it is a global.
       "vitest.mock()": {
@@ -425,9 +436,32 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         dangerously: ["mock"],
       },
 
+      // The renamed import declares `vi`, which takes the calls on the global `vi`.
+      "an import from @effect/vitest, and the global vi": {
+        text: 'import { vitest, test } from "@effect/vitest";\n' + importGreet + mock("vi") + greets(),
+        prints: ["mock"],
+        dangerously: ["runs dep.js", "mock"],
+      },
+      // Without the renamed import, `vi.mock()` in the place of `vitest.mock()` is a call on the global. With it,
+      // both calls are on the import.
+      "an import from @effect/vitest with a mock, and the global vi": {
+        text:
+          'import { vitest, test } from "@effect/vitest";\n' +
+          importGreet +
+          'vi.unmock("./other.js");\n' +
+          mock("vitest") +
+          greets(),
+        prints: ["runs dep.js", "mock"],
+        dangerously: ["runs dep.js", "mock"],
+      },
+
       "vitest.fn()": {
         text: 'const { vitest, test } = require("vitest");\n' + requireGreet + spies("vitest"),
         prints: ["runs dep.js", "real"],
+      },
+      "an import from vitest, and the global vi": {
+        text: 'import { vitest, test } from "vitest";\n' + importGreet + mock("vi") + greets(),
+        prints: ["mock"],
       },
       // `bun test` has the global `vitest` in a file that imports or requires `vitest`.
       "two globals": {
@@ -539,10 +573,10 @@ type Step = keyof typeof steps;
 type Result = {
   /** What `bun test` prints for the case. */
   prints: string[];
-  /** Whether `bun lint` changed the file. */
-  isFixed: boolean;
-  /** Whether the rule still reports the file. */
-  isReported: boolean;
+  /** Whether `bun lint` changed the file. Not for the file as written. */
+  isFixed?: boolean;
+  /** Whether the rule still reports the file. Not for the file as written, which isn't linted. */
+  isReported?: boolean;
 };
 const results = new Map<string, Record<Step, Result>>();
 let exitCodeAsWritten: number | undefined;
@@ -586,11 +620,16 @@ beforeAll(async () => {
     const tested = await run(join(root, copy), "test");
     const lines = tested.stdout.split("\n");
     const pathOf = (copy: string, it: (typeof cases)[number]) => join(root, copy, it.directory, fileOf(it.it));
-    const resultOf = (it: (typeof cases)[number]) => ({
-      prints: lines.filter(line => line.startsWith(it.tag)).map(line => line.slice(it.tag.length + 1)),
-      isFixed: readFileSync(pathOf(copy, it), "utf8") !== readFileSync(pathOf(steps["as written"].copy, it), "utf8"),
-      isReported: reported.includes(pathOf(copy, it)),
-    });
+    const resultOf = (it: (typeof cases)[number]): Result => {
+      const prints = lines.filter(line => line.startsWith(it.tag)).map(line => line.slice(it.tag.length + 1));
+      if (!flag) return { prints };
+      const asWritten = readFileSync(pathOf(steps["as written"].copy, it), "utf8");
+      return {
+        prints,
+        isFixed: readFileSync(pathOf(copy, it), "utf8") !== asWritten,
+        isReported: reported.includes(pathOf(copy, it)),
+      };
+    };
     return [step, resultOf, tested.exitCode];
   };
 
@@ -614,7 +653,7 @@ for (const group of groups) {
       const held = it.dangerously !== undefined;
       test(`${held ? "only --fix-dangerously fixes" : "--fix fixes"}: ${name}`, () => {
         expect(results.get(tag)).toEqual({
-          "as written": { prints: it.prints, isFixed: false, isReported: false },
+          "as written": { prints: it.prints },
           "--fix": { prints: it.prints, isFixed: !held, isReported: held },
           "--fix-dangerously": { prints: it.dangerously ?? it.prints, isFixed: true, isReported: false },
         });

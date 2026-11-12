@@ -47,41 +47,13 @@ impl Rule for ConsistentVitestVi {
             && vitest_fn.name == self.opposite.as_bytes()
             && let Some(object) = member_expression.object()
         {
-            let function = self.function;
+            let (file, function) = (cx.file(), self.function);
             cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
                 .data("function", function)
                 .data("opposite", self.opposite)
-                .fix_where_safe(|| !changes_module_mock_call(object, function), |fixer| fixer.replace(object.outer_span(), function));
+                .fix_where_safe(|| !self.changes_module_mock_call(file, object), |fixer| fixer.replace(object.outer_span(), function));
         }
     }
-}
-
-/// True if the file gets `object` and the `function` that replaces it in different ways, and that changes what
-/// `bun test` does with the call on it: see [`bun_test`].
-#[cold]
-fn changes_module_mock_call<'a>(object: Expr<'a>, function: &str) -> bool {
-    // The rule doesn't resolve the file's names for any other call.
-    if !bun_test::is_object_of_module_mock_call(object, function.as_bytes()) {
-        return false;
-    }
-    let Some(name) = object.as_ident() else {
-        return false;
-    };
-    let symbol = object.symbol();
-    // `check_import` renames an import from Vitest, so the call stays on what it was on.
-    let is_renamed = |it: Declaration<'a>| {
-        let import = match it {
-            Declaration::ImportSpec(specifier) => Some(specifier.import()),
-            Declaration::ImportDefault(import) | Declaration::ImportNamespace(import) => Some(import),
-            _ => None,
-        };
-        import.is_some_and(|it| jest::is_vitest_import_source(it.spec().bytes()))
-    };
-    if symbol.is_some_and(|it| it.declarations().any(is_renamed)) {
-        return false;
-    }
-    let replacement = Node::Expr(object).scope().resolve_bytes(function.as_bytes());
-    bun_test::is_known(name.bytes(), symbol) != bun_test::is_known(function.as_bytes(), replacement)
 }
 
 fn span_of(specifier: &ImportEntry) -> Span {
@@ -98,8 +70,9 @@ impl ConsistentVitestVi {
         let Some(vitest_import) = import_entries_of(import).find(|it| is_named(it, self.opposite)) else {
             return;
         };
+        let file = cx.file();
         let report = cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI);
-        report.data("function", self.function).data("opposite", self.opposite).fix(|fixer| {
+        report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| !self.takes_module_mock_calls(file, import), |fixer| {
             let specifiers: SmallVec<[ImportEntry; 8]> = import_entries_of(import).collect();
             let mut import_text = Vec::new();
             for specifier in specifiers.iter().filter(|it| !is_named(it, self.opposite)) {
@@ -115,5 +88,51 @@ impl ConsistentVitestVi {
             }
             Some(fixer.replace(Span::new(span_of(specifiers.first()?).start, span_of(specifiers.last()?).end), import_text))
         });
+    }
+
+    /// True if the fix of `check_import` makes `import` declare `function`, which takes the calls on the global of that
+    /// name, and that changes what `bun test` does with one of them: see [`bun_test`].
+    #[cold]
+    fn takes_module_mock_calls<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
+        let is_named = |it: &ImportEntry, name: &str| it.local_name().bytes() == name.as_bytes();
+        let mut renamed = import_entries_of(import).filter(|it| is_named(it, self.opposite));
+        if import_entries_of(import).any(|it| is_named(&it, self.function)) {
+            return false;
+        }
+        // The fix writes a named import of `function`. If the import has nothing else, it keeps the kind of import.
+        let is_alone = import_entries_of(import).all(|it| is_named(&it, self.opposite));
+        let is_named_import = !is_alone
+            || renamed.all(|it| matches!(it.import_name, ImportImportName::Name(it) if it.imported().bytes() == it.local().bytes()));
+        let is_known = is_named_import && bun_test::is_known_import(import.spec().bytes(), self.function.as_bytes());
+        !is_known && bun_test::global_has_module_mock_call(file, self.function.as_bytes())
+    }
+
+    /// True if the file gets `object` and the `function` that replaces it in different ways, and that changes what
+    /// `bun test` does with the call on it: see [`bun_test`].
+    #[cold]
+    fn changes_module_mock_call<'a>(&self, file: &'a File<'a>, object: Expr<'a>) -> bool {
+        // The rule doesn't resolve the file's names for any other call.
+        if !bun_test::is_object_of_module_mock_call(object, self.function.as_bytes()) {
+            return false;
+        }
+        let Some(name) = object.as_ident() else {
+            return false;
+        };
+        let symbol = object.symbol();
+        // `check_import` renames an import from Vitest, so the call stays on what it was on.
+        let renamed = |it: Declaration<'a>| {
+            let import = match it {
+                Declaration::ImportSpec(specifier) => specifier.import(),
+                Declaration::ImportDefault(import) | Declaration::ImportNamespace(import) => import,
+                _ => return None,
+            };
+            jest::is_vitest_import_source(import.spec().bytes()).then_some(import)
+        };
+        let import = symbol.and_then(|it| it.declarations().find_map(renamed));
+        if import.is_some_and(|it| !self.takes_module_mock_calls(file, it)) {
+            return false;
+        }
+        let replacement = Node::Expr(object).scope().resolve_bytes(self.function.as_bytes());
+        bun_test::is_known(name.bytes(), symbol) != bun_test::is_known(self.function.as_bytes(), replacement)
     }
 }

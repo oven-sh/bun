@@ -655,21 +655,25 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
         .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
 }
 
-/// True if `line`, on its own, is a paragraph to CommonMark: not a list item, HTML, a thematic break. After an empty
-/// line, a line that was a line of a paragraph can be any of those.
-pub(crate) fn is_paragraph_on_its_own(line: &[u8]) -> bool {
-    let text = [line, b"\n"].concat();
-    let mut tree = Tree::default();
+/// True if `line`, printed at the start of its line right after `definition`, is text to CommonMark, and would be a
+/// block of its own after an empty line: a list that does not start at 1, an empty item, a complete tag. A line that
+/// interrupts a paragraph, `- b`, is a block either way, and a word is text either way.
+pub(crate) fn is_text_behind_definition(definition: &[u8], line: &[u8]) -> bool {
     let syntax = Syntax::CommonMark {
         gfm: true,
         math: false,
     };
-    let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
-        return true;
+    let kinds = |text: &[u8]| -> Vec<Kind> {
+        let mut tree = Tree::default();
+        let Some(root) = parse_lines(text, &mut tree, syntax, 0) else {
+            return Vec::new();
+        };
+        tree.children(root)
+            .filter_map(|child| tree.kind(child))
+            .collect()
     };
-    let first = tree.get(root).map_or(NONE, |root| root.first_child);
-    tree.get(first)
-        .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
+    kinds(&[definition, b"\n", line, b"\n"].concat()) == [Kind::Definition, Kind::Paragraph]
+        && kinds(&[line, b"\n"].concat()) != [Kind::Paragraph]
 }
 
 impl Builder<'_> {

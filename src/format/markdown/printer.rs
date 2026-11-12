@@ -1,7 +1,7 @@
 //! Builds a Markdown text's document: Prettier's `src/language-markdown/print/*.js`.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
-use super::parse::{Syntax, is_paragraph_on_its_own, leaves_paragraph};
+use super::parse::{Syntax, is_text_behind_definition, leaves_paragraph};
 use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
     ordered_item_info,
@@ -793,9 +793,9 @@ impl<'a> Printer<'a, '_> {
     /// - After indented code, a list that cannot interrupt a paragraph is a paragraph to micromark, `    a\n2. b\n3. c`,
     ///   with or without an empty line between. To CommonMark it is the list, so a line break before an item stays:
     ///   see `line_break_before_item`.
-    /// - After a definition, the line that follows it was a line of the same paragraph. If it cannot start a paragraph
-    ///   on its own, `9. c\n10. d` or `-\nb`, it stays a line, so that what `empty_line_decides_block` decides on
-    ///   is what is printed. Joined, `- b` is an item.
+    /// - After a definition, the line that follows it was a line of the same paragraph. If it is text there and a
+    ///   block after an empty line, `9. c\n10. d` or `-\nb`, it stays a line, so that what `empty_line_decides_block`
+    ///   decides on is what is printed. Joined, `- b` is an item.
     fn kept_line_breaks(&self, block: &Node) -> KeptLineBreaks {
         let Some(previous) = self.node(block.previous) else {
             return KeptLineBreaks::None;
@@ -815,9 +815,9 @@ impl<'a> Printer<'a, '_> {
         let line = &source
             [..bun_core::strings::index_of_char_usize(source, b'\n').unwrap_or(source.len())];
         let line = bun_core::strings::trim_js_whitespace_end(line);
-        match is_paragraph_on_its_own(line) {
-            true => KeptLineBreaks::None,
-            false => KeptLineBreaks::First,
+        match is_text_behind_definition(self.source(previous), line) {
+            true => KeptLineBreaks::First,
+            false => KeptLineBreaks::None,
         }
     }
 

@@ -2172,6 +2172,8 @@ describe.concurrent("bun fmt", () => {
       test("an empty line that doesn't decide anything is still added or dropped", async () => {
         const files = {
           "definition.md": "[a]: /url\nb\n",
+          // Printed at the start of its line, `- b` is a list either way.
+          "indented-item.md": "[a]: /url\n    - b\n",
           "comment.md": "- a\n\n  <!-- b -->\n\n  - c\n",
           "other-list.md": "    x\n2. b\n- c\n",
           "rule.md": "    x\n2. b\n---\n- c\n",
@@ -2185,6 +2187,7 @@ describe.concurrent("bun fmt", () => {
         const result = await format(files, [], { reads: Object.keys(files) });
         expect(result.files).toEqual({
           "definition.md": "[a]: /url\n\nb\n",
+          "indented-item.md": "[a]: /url\n\n- b\n",
           "comment.md": "- a\n\n  <!-- b -->\n  - c\n",
           "other-list.md": "    x\n\n2. b\n\n- c\n",
           "rule.md": "    x\n\n2. b\n---\n\n- c\n",

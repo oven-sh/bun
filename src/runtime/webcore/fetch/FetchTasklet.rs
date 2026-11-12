@@ -981,7 +981,7 @@ impl FetchTasklet {
             //
             // Without this guard, `onBodyReceived` would call `ByteStream.onData` with
             // a zero-length non-terminal chunk. That resolves the reader's pending
-            // pull with `len=0`; `native-readable.ts` `handleNumberResult(0)` does not
+            // pull with `len=0`; `native-readable.ts` `handleResult()` then does not
             // `push()`, so node:stream `state.reading` (set before the previous `_read()`
             // early-returned on `kPendingRead`) is never cleared, `_read()` is never
             // called again, and `pipeline(Readable.fromWeb(res.body), ...)` stalls

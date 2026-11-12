@@ -2673,9 +2673,12 @@ describe("a stream over bytes in memory", () => {
     expect({
       sizes: chunks.map(chunk => chunk.byteLength),
       content: Buffer.concat(chunks).equals(bytes),
+      // A Buffer is what a node:stream Readable over the same source gets.
+      plain: chunks.every(chunk => Object.getPrototypeOf(chunk) === Uint8Array.prototype),
     }).toEqual({
       sizes: size <= FIRST_CHUNK ? [size] : [FIRST_CHUNK, size - FIRST_CHUNK],
       content: true,
+      plain: true,
     });
   });
 
@@ -2759,6 +2762,84 @@ describe("a stream over bytes in memory", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // On Linux a Blob of 8 MiB or more lives in a memfd, and the stream of the Blob keeps that memfd open for as long
+  // as it keeps the bytes. It let go of them only when it was read once more after its last chunk, and a reader that
+  // has every byte does not make that read.
+  test.skipIf(!isLinux)("a Blob's stream lets go of the Blob's bytes with its last chunk", async () => {
+    const script = `
+      import { readdirSync, readlinkSync } from "node:fs";
+      import { Readable } from "node:stream";
+      const SIZE = 8 * 1024 * 1024;
+      const memfds = () =>
+        readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return readlinkSync("/proc/self/fd/" + fd).startsWith("/memfd:memfd-num-");
+          } catch {
+            return false;
+          }
+        }).length;
+      // [while the stream has bytes left, when it gave its last chunk]
+      async function held(readerOf) {
+        const before = memfds();
+        const reader = readerOf(new Blob([Buffer.alloc(SIZE, 97)]).stream());
+        // Collects the Blob, which keeps the bytes too.
+        Bun.gc(true);
+        const whileUnread = memfds() - before;
+        return [whileUnread, (await reader.readToLastChunk()) - before];
+      }
+      const web = await held(stream => ({
+        reader: stream.getReader(),
+        async readToLastChunk() {
+          for (let read = 0; read < SIZE; ) read += (await this.reader.read()).value.length;
+          return memfds();
+        },
+      }));
+      const node = await held(stream => ({
+        readable: Readable.fromWeb(stream),
+        readToLastChunk() {
+          const { promise, resolve } = Promise.withResolvers();
+          let read = 0;
+          this.readable.on("data", chunk => {
+            if ((read += chunk.length) < SIZE) return;
+            // The stream is kept, and is not read on.
+            this.readable.pause();
+            setImmediate(() => resolve(memfds()));
+          });
+          return promise;
+        },
+      }));
+      console.log(JSON.stringify({ web, node }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ web: [1, 0], node: [1, 0] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// A node:stream Readable over the same source gets Buffers out of the same code.
+it("a chunk that a native stream copies out of its pull buffer is a plain Uint8Array of its own", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.stdin.once("data", () => process.stdout.write("hello", () => process.exit(0)));`],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  // The read waits in the source when the child writes.
+  const read = proc.stdout.getReader().read();
+  proc.stdin.write("\n");
+  proc.stdin.flush();
+  const { value } = await read;
+  expect({
+    text: Buffer.from(value).toString(),
+    plain: Object.getPrototypeOf(value) === Uint8Array.prototype,
+    own: value.byteOffset === 0 && value.buffer.byteLength === value.byteLength,
+  }).toEqual({ text: "hello", plain: true, own: true });
 });
 
 it("Bun.file().stream() of a small file does not double-close the controller", async () => {

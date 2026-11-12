@@ -13,6 +13,8 @@ const members = {
     returns: b.any.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
     passThis: true,
     length: 1,
+    /** `BunStreamSource.cpp` pulls with it for a node:stream Readable. */
+    calledFromCpp: true,
   },
   start: { returns: b.any.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
   updateRef: { args: { enable: b.bool.loose } },

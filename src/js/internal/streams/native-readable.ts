@@ -11,6 +11,21 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   "jsFunctionTransferToNativeReadableStream",
   1,
 );
+// The C++ that pulls for a web stream pulls for this one too (BunStreamSource.cpp): its adapter keeps the buffer that `ptr` fills, where no listener reaches it.
+const nativePullAdapter: (ptr: NativePtr | undefined) => NativePull | undefined = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionNativeReadableAdapter",
+  1,
+);
+// One `ptr.pull()`: what to push, or the promise of the source.
+const nativePull: (pull: NativePull | undefined, size: number, closeState: [boolean]) => PullResult | Promise<unknown> =
+  $newCppFunction("streams/BunStreamConsumers.cpp", "jsFunctionNativeReadablePull", 3);
+// What to push for the value that the promise settled with.
+const nativePullSettled: (pull: NativePull | undefined, result: unknown) => PullResult = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionNativeReadablePullSettled",
+  2,
+);
 const { errorOrDestroy } = require("internal/streams/destroy");
 
 const kRefCount = Symbol("refCount");
@@ -19,16 +34,19 @@ const kConstructed = Symbol("constructed");
 const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
-const kRemainingChunk = Symbol("remainingChunk");
 
-const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
   (_ = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1"),
   (dynamicallyAdjustChunkSize = () => _)
 );
 
+/** `JSNativeStreamSourceAdapter` (BunStreamSource.h). */
+type NativePull = { readonly __nativePull: unique symbol };
+type PullResult = Buffer | Uint8Array | boolean | undefined;
+
 interface NativeReadable extends $Node.Readable {
   $bunNativePtr: NativePtr | undefined;
+  $pull: NativePull | undefined;
   $start?: typeof ensureConstructed;
   ref: typeof ref;
   unref: typeof unref;
@@ -38,7 +56,6 @@ interface NativeReadable extends $Node.Readable {
   [kPendingRead]: boolean;
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
-  [kRemainingChunk]: Buffer | undefined;
   debugId: number;
 }
 
@@ -47,7 +64,6 @@ interface NativePtr {
   onDrain: (chunk: any) => void;
   start: (highWaterMark: number) => number;
   drain: () => any;
-  pull: (view: any, closer: any) => any;
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
   setFlowing?: (flowing: boolean) => void;
@@ -72,6 +88,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   // Define the own property directly: an ordinary put would walk the prototype
   // chain, which user code can graft onto ReadableStream.prototype's accessors.
   $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
+  $putByIdDirectPrivate(stream, "pull", nativePullAdapter(bunNativePtr));
   stream[kRefCount] = 0;
   stream[kConstructed] = false;
   stream[kPendingRead] = false;
@@ -109,21 +126,6 @@ function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
   $assert(typeof ptr.start === "function", "NativeReadable.start is not a function");
   ptr.start(this[kHighWaterMark]);
   if (cb) cb();
-}
-
-// maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
-// This is so the consumer of the stream can terminate the stream early if they know
-// how many bytes they want to read (ie. when reading only part of a file)
-// ObjectDefinePrivateProperty(NativeReadable.prototype, "_getRemainingChunk", );
-function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
-  maxToRead ??= stream[kHighWaterMark] as number;
-  var chunk = stream[kRemainingChunk];
-  if ((chunk?.byteLength ?? 0) < MIN_BUFFER_SIZE) {
-    var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
-    stream[kRemainingChunk] = chunk = Buffer.alloc(size);
-  }
-  $debug(`[${stream.debugId}] getRemainingChunk, ${chunk?.byteLength} bytes`);
-  return chunk;
 }
 
 // readStart, as on net.Socket. The pull and its push run on a later tick.
@@ -175,24 +177,22 @@ function pump(stream: NativeReadable) {
     if ((drained?.byteLength ?? 0) === 0) drained = undefined;
     if (initial !== undefined || drained !== undefined) {
       stream[kPendingRead] = false;
-      if (initial !== undefined) deliver(stream, initial, undefined, false);
-      if (drained !== undefined) deliver(stream, drained, undefined, false);
+      if (initial !== undefined) deliver(stream, initial, false);
+      if (drained !== undefined) deliver(stream, drained, false);
       return;
     }
   }
-  let chunk: Buffer | undefined;
-  let result: any;
+  const pull = stream.$pull;
+  let result: PullResult | Promise<unknown>;
   try {
-    chunk = getRemainingChunk(stream, stream._readableState.highWaterMark);
-    result = ptr.pull(chunk, stream[kCloseState]);
+    result = nativePull(pull, stream._readableState.highWaterMark, stream[kCloseState]);
   } catch (err) {
     stream[kPendingRead] = false;
     errorOrDestroy(stream, err as Error);
     return;
   }
-  $assert(result !== undefined);
   $debug(
-    `[${stream.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${stream[kCloseState][0]}`,
+    `[${stream.debugId}] pull, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${stream[kCloseState][0]}`,
   );
   if ($isPromise(result)) {
     result.then(
@@ -201,8 +201,15 @@ function pump(stream: NativeReadable) {
           `[${stream.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${stream[kCloseState][0]}`,
         );
         stream[kPendingRead] = false;
+        let chunk: PullResult;
         try {
-          deliver(stream, result, chunk, stream[kCloseState][0]);
+          chunk = nativePullSettled(pull, result);
+        } catch (err) {
+          errorOrDestroy(stream, err as Error);
+          return;
+        }
+        try {
+          deliver(stream, chunk, stream[kCloseState][0]);
         } catch (err) {
           // Out of the promise, so it is an uncaughtException, not a rejection.
           process.nextTick(rethrow, err);
@@ -216,13 +223,13 @@ function pump(stream: NativeReadable) {
     return;
   }
   stream[kPendingRead] = false;
-  deliver(stream, result, chunk, stream[kCloseState][0]);
+  deliver(stream, result, stream[kCloseState][0]);
 }
 
 // A listener that throws out of `push()` skips `maybeReadMore`: ask for more here.
-function deliver(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
+function deliver(stream: NativeReadable, chunk: PullResult, isClosed: boolean) {
   try {
-    handleResult(stream, result, chunk, isClosed);
+    handleResult(stream, chunk, isClosed);
   } catch (err) {
     process.nextTick(readAfterThrow, stream);
     throw err;
@@ -237,25 +244,26 @@ function rethrow(err: any) {
   throw err;
 }
 
-// Stores the unused part of `chunk` before the push, and queues EOF after it.
-function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
-  if (typeof result === "number") {
-    $debug(`[${stream.debugId}] handleResult(${result})`);
-    if (result >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
-      adjustHighWaterMark(stream);
-    }
-    handleNumberResult(stream, result, chunk, isClosed);
-  } else if (typeof result === "boolean") {
-    $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
-    stream[kRemainingChunk] = (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
+// Pushes `chunk`, and queues EOF after it.
+function handleResult(stream: NativeReadable, chunk: PullResult, isClosed: boolean) {
+  $debug(`[${stream.debugId}] handleResult(${$isTypedArrayView(chunk) ? `<${chunk.byteLength} bytes>` : chunk})`);
+  if (typeof chunk === "boolean") {
     process.nextTick(pushEof, stream);
-  } else if ($isTypedArrayView(result)) {
-    if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
-      adjustHighWaterMark(stream);
+    return;
+  }
+  try {
+    if (chunk !== undefined) {
+      if (chunk.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
+        adjustHighWaterMark(stream);
+      }
+      if (chunk.byteLength > 0) {
+        pushAndCheck(stream, chunk);
+      }
     }
-    handleArrayBufferViewResult(stream, result, chunk, isClosed);
-  } else {
-    $assert(false, "Invalid result from pull");
+  } finally {
+    if (isClosed) {
+      process.nextTick(pushEof, stream);
+    }
   }
 }
 
@@ -275,42 +283,6 @@ function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
   }
 }
 
-function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {
-  let slice: Buffer | undefined;
-  if (result > 0) {
-    slice = chunk!.subarray(0, result);
-    chunk = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
-  }
-  stream[kRemainingChunk] = chunk;
-  try {
-    if (slice !== undefined && slice.byteLength > 0) {
-      pushAndCheck(stream, slice);
-    }
-  } finally {
-    if (isClosed) {
-      process.nextTick(pushEof, stream);
-    }
-  }
-}
-
-function handleArrayBufferViewResult(
-  stream: NativeReadable,
-  result: ArrayBufferView,
-  chunk: Buffer | undefined,
-  isClosed: boolean,
-) {
-  stream[kRemainingChunk] = chunk;
-  try {
-    if (result.byteLength > 0) {
-      pushAndCheck(stream, result);
-    }
-  } finally {
-    if (isClosed) {
-      process.nextTick(pushEof, stream);
-    }
-  }
-}
-
 function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHighWaterMark] = $min(stream[kHighWaterMark] * 2, 1024 * 1024 * 2);
   stream[kHasResized] = true;
@@ -321,6 +293,8 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   if (ptr) {
     ptr.cancel(error);
   }
+  // The adapter keeps the buffer of the pulls.
+  $putByIdDirectPrivate(this, "pull", undefined);
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);

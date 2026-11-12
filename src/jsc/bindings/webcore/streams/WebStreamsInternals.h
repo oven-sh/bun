@@ -617,6 +617,13 @@ JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableStreamDefault
 // handle.updateRef(false) + handle.cancel(reason) on m_nativePtr directly, no materialize.
 JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: no — BunStreamSource.cpp
 
+// The adapter that a node:stream Readable (native-readable.ts) pulls `handle` (its stream's `$bunNativePtr`) through, or undefined when that is no native source.
+JSC::JSValue nativeSourceAdapterForNodeReadable(JSC::JSGlobalObject*, JSC::JSValue handle); // userJS: no — BunStreamSource.cpp
+// One handle.pull() into a slab of `size` bytes: what the Readable pushes (a Buffer of its own, a chunk the source owns, `false` at the end, undefined for no bytes) or the source's promise.
+JSC::JSValue nativeSourcePullForNodeReadable(JSC::JSGlobalObject*, JSC::JSValue adapter, JSC::JSValue size, JSC::JSValue closer); // userJS: yes (the source can report an end or an error to listeners) — BunStreamSource.cpp
+// What the Readable pushes for the value that promise settled with.
+JSC::JSValue nativeSourcePullSettledForNodeReadable(JSC::JSGlobalObject*, JSC::JSValue adapter, JSC::JSValue result); // userJS: no — BunStreamSource.cpp
+
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.
 
 // Installs a JSDirectStreamController of the given flavor on the stream, nulls the stream's

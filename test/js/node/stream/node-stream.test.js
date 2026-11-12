@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { afterAll, describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, nodeExeAtLeast, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -2103,6 +2103,83 @@ it("stream/consumers do not read Blob and TextDecoder from globalThis", async ()
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual([2, "12", "12", 12, "12"]);
   expect(exitCode).toBe(0);
+});
+
+// A Readable over a native stream read into one buffer again and again, and each 'data' chunk was a view of it: the
+// chunks that waited in the stream and the chunks that a listener kept lay in one ArrayBuffer.
+describe.concurrent("Readable.fromWeb over a native stream: each 'data' chunk is a Buffer of its own", () => {
+  const blocks = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"];
+  // Each block is a chunk whose ArrayBuffer is as long as the chunk.
+  const own = blocks.map(block => block + " 0/8");
+  // What each group of cases in the fixture prints.
+  const expected = {
+    fetch: {
+      "fetch body": own,
+      "fetch body, objectMode": own,
+      "Duplex.from(fetch body)": own,
+      "fetch body, blocks of 3000 bytes": { runs: "a3000 b3000 c3000 d3000", own: true },
+      "fetch body, blocks longer than the buffer": { runs: "a8 b6096 c4596", own: true },
+      "fetch body, highWaterMark 0": { runs: "a600 b600 c600", own: true },
+      "fetch body, objectMode, blocks of 1000 bytes": { runs: "a1000 b1000 c1000", own: true },
+      "setEncoding('utf8')": ["a", "€b"],
+    },
+    listeners: {
+      // These three streams used to stop: no 'end', no 'close', no 'error'.
+      "a listener moves its chunk out while others wait": blocks.join(" ") + " end close",
+      "a byte stream enqueues the chunks": blocks.join(" ") + " closed",
+      "a listener moves its chunk out while the next read waits": "aaaaaaaa bbbbbbbb cccccccc end",
+      // The next read used to write over a chunk that the listener kept.
+      "a listener keeps the chunks and reads again": blocks.join(" "),
+      "a listener keeps a chunk that fills the buffer and reads again": Array.from(
+        "abcdefghijkl",
+        run => run + 1024,
+      ).join(" "),
+    },
+    bun: {
+      "Bun.serve request body": own,
+      Blob: {
+        runs: "a16384 b65536 c65536 d1000",
+        chunks: ["16384@0/16384", "65536@0/65536", "65536@0/65536", "1000@0/1000"],
+      },
+      "Blob, highWaterMark 0": { runs: "a16384 b1000", chunks: ["16384@0/16384", "512@0/512", "488@0/488"] },
+      "Bun.file": { runs: "a65536 b34464", own: true },
+      "Bun.file, highWaterMark 0": { runs: "a1500 b1500", own: true },
+    },
+    // Each stream used to keep its buffer of 64 KiB for as long as the program kept the stream.
+    kept: { "streams that are kept": "no buffers" },
+  };
+
+  // The cases of every group in `groups`, run in one process.
+  async function casesOf(exe, groups) {
+    using dir = tempDir("native-readable-chunks", {});
+    await using proc = Bun.spawn({
+      cmd: [exe, join(import.meta.dir, "native-readable-chunks-fixture.mjs"), ...groups],
+      env: { ...bunEnv, FIXTURE_DIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const cases = Object.fromEntries(
+      stdout
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+    );
+    return { cases, stderr, exitCode };
+  }
+  const expectedOf = groups => Object.assign({}, ...groups.map(group => expected[group]));
+
+  // The count of buffers needs a process of its own.
+  it.each([[["fetch", "listeners", "bun"]], [["kept"]]])("%j", async groups => {
+    expect(await casesOf(bunExe(), groups)).toEqual({ cases: expectedOf(groups), stderr: "", exitCode: 0 });
+  });
+
+  const node = nodeExeAtLeast("22.0.0");
+  it.skipIf(!node)("Node.js prints the same for the cases that need no Bun API", async () => {
+    const groups = ["fetch", "listeners"];
+    const { cases, exitCode } = await casesOf(node, groups);
+    expect({ cases, exitCode }).toEqual({ cases: expectedOf(groups), exitCode: 0 });
+  });
 });
 
 it("Readable.fromWeb's native source accepts pull(view) without the flags array", async () => {

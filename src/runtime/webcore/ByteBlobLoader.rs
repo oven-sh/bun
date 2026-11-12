@@ -68,6 +68,8 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         self.remain.set(self.remain.get().saturating_sub(copied));
         self.offset.set(self.offset.get().saturating_add(copied));
         if self.remain.get() == 0 {
+            // No pull has to follow the last byte. `content_type` stays for `Request::headers`.
+            drop(self.detach_store());
             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                 value: array,
                 len: copied,

@@ -1208,17 +1208,17 @@ const rules: Record<string, Case[]> = {
     `/* oxlint-disable react-hooks/exhaustive-deps */\n${useMemo}function Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a])}</b>;\n}`,
     // `bun build --react-compiler` also takes these for a suppression: `eslint-disable` and the rule anywhere in the
     // comment, and a comment before the end of the function. ESLint takes neither for a directive.
-    `${useMemo}function Total({ items }) {\n  // TODO eslint-disable-next-line no-unused-vars, react-hooks/exhaustive-deps\n  const total = useMemo(() => items.length, [items]);\n  return <span>{total}</span>;\n}`,
-    `${useMemo}// TODO eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}`,
-    `${useMemo}/* TODO eslint-disable react-hooks/rules-of-hooks */\nfunction Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}`,
+    `${useMemo}function Total({ items }) {\n  // was eslint-disable-next-line no-unused-vars, react-hooks/exhaustive-deps\n  const total = useMemo(() => items.length, [items]);\n  return <span>{total}</span>;\n}`,
+    `${useMemo}// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}`,
+    `${useMemo}/* was eslint-disable react-hooks/rules-of-hooks */\nfunction Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}`,
     // The build looks for JSX and hook calls in the function itself, not in the methods of an object in it.
     `${memo}function Toolbar({ onSave }) {\n  const actions = {\n    save() {\n      return <Button onClick={onSave} />;\n    },\n  };\n  return render(actions);\n}\nexport default memo(Toolbar);`,
     // The build's lexer is a token ahead of its parser, so a comment right after a function marks that function.
-    `${useMemo}function Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}\n// TODO eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Other() {\n  return <b />;\n}`,
+    `${useMemo}function Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}\n// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Other() {\n  return <b />;\n}`,
     {
-      code: `${useMemo}function Other() {\n  return <b />;\n}\n// TODO eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{«useMemo»(() => a + b, [a, b])}</b>;\n}`,
+      code: `${useMemo}function Other() {\n  return <b />;\n}\n// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{«useMemo»(() => a + b, [a, b])}</b>;\n}`,
       suggestions: [
-        `function Other() {\n  return <b />;\n}\n// TODO eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{a + b}</b>;\n}`,
+        `function Other() {\n  return <b />;\n}\n// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{a + b}</b>;\n}`,
       ],
     },
     `${memo}export default memo(class Row extends Component {});`,

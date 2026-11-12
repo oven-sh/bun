@@ -1061,11 +1061,10 @@ impl<'a> Context<'_, 'a> {
             }
             return end_comments;
         }
-        // `yaml`'s parser still has on its stack the collection, the collection that its last value is, and so on.
-        // A comment goes to the innermost: to its last item, if that has no value, or to the value, if the comment
-        // is indented more than the collection and the value is a scalar, an alias or a flow collection. The others
-        // leave a collection when it ends, all of them or none, if each one is indented less than the collection, or
-        // the collection is at the first column. (`Parser.blockMap`, `Parser.blockSequence` and `Parser.pop`)
+        // `yaml`'s `Parser.blockMap`, `Parser.blockSequence` and `Parser.pop`: the collections that the content ends
+        // in are on the stack. A comment goes to the innermost: to its last item if that has no value, or to the
+        // value if the comment is indented more and the value isn't a block scalar. The others leave a collection when
+        // it ends, all or none, if each is indented less than it or it's at the first column.
         let root_indent = self.block_collection_indent(content);
         let mut inner_indent = root_indent;
         let mut is_nested = false;
@@ -1089,9 +1088,8 @@ impl<'a> Context<'_, 'a> {
         let is_open = last_value.is_none();
         let value_takes_indented =
             last_value.is_some_and(|it| !matches!(it.kind, Kind::BlockFolded | Kind::BlockLiteral));
-        // oxfmt has no such stack. Each collection, the innermost first, takes the comments that are indented more
-        // than its items, but for a mapping whose last value is a block scalar. A comment that none takes ends the
-        // document, and so does everything after it.
+        // oxfmt: each collection, the innermost first, takes the comments indented more than its items, but for a
+        // mapping whose last value is a block scalar. A comment that none takes ends the document, with all after it.
         let root_takes_indented =
             is_nested || content.kind == Kind::Sequence || value_takes_indented;
         let is_oxfmt = self.is_oxfmt;

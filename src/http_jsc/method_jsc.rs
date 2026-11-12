@@ -25,6 +25,11 @@ pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<
     Ok(Method::which(utf8.slice()))
 }
 
+/// <https://fetch.spec.whatwg.org/#forbidden-method>. Bun has always sent the spellings that are in the method table.
+fn is_forbidden(method: &[u8]) -> bool {
+    bun_core::strings::eql_any_case_insensitive_ascii(method, &[b"CONNECT", b"TRACE", b"TRACK"])
+}
+
 /// Reads `init.method` for `fetch`, `Request` and `server.fetch`.
 pub fn request_method_from_js(
     global_this: &JSGlobalObject,
@@ -36,6 +41,11 @@ pub fn request_method_from_js(
         Some(method) => method.into(),
         // `method: isPost && "POST"` means GET when `isPost` is false.
         None if !input.is_string() => Method::GET.into(),
+        None if is_forbidden(utf8.slice()) => {
+            return Err(
+                global_this.throw_type_error(format_args!("'{str}' HTTP method is unsupported."))
+            );
+        }
         None => OwnedMethod::from_unlisted(utf8.slice()),
     })
 }

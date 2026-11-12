@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 bb8a3ec64e3123e5d30481cc3fdbef597a4a61516176a6e1650ad675ad9e9401.
+// Written against that file with the SHA-256 af9f8caf2c3c9b7ade71a39692177742c5bdf2a4d90d5c920c407b09ded6c922.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2751,8 +2751,8 @@ function resOnFinish(
 
   state.incoming.shift();
 
-  // Nothing read the body, so pull it off the wire.
-  if (!req._consuming && !req._readableState.resumeScheduled) req._dump();
+  // Nothing read the body, so pull it off the wire. A body that was whole before the first read is read without _read().
+  if (!req._consuming && !req._readableState.resumeScheduled && !req.readableDidRead) req._dump();
 
   res.detachSocket(socket);
   clearIncoming(req, socket);
@@ -2870,6 +2870,7 @@ function parserOnIncoming(
   pauseIfBackedUp(socket, state);
 
   const res: $Node.ServerResponse = new server[kServerResponse]!(req, {
+    [kHandle]: null,
     highWaterMark: socket.writableHighWaterMark,
     rejectNonStandardBodyWrites: server.rejectNonStandardBodyWrites,
   });

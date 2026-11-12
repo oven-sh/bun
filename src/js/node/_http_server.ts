@@ -2000,8 +2000,8 @@ function resOnFinish(req, res, socket, state, server) {
 
   state.incoming.shift();
 
-  // Nothing read the body, so pull it off the wire.
-  if (!req._consuming && !req._readableState.resumeScheduled) req._dump();
+  // Nothing read the body, so pull it off the wire. A body that was whole before the first read is read without _read().
+  if (!req._consuming && !req._readableState.resumeScheduled && !req.readableDidRead) req._dump();
 
   res.detachSocket(socket);
   clearIncoming(req, socket);
@@ -2115,6 +2115,7 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
   pauseIfBackedUp(socket, state);
 
   const res = new server[kServerResponse](req, {
+    [kHandle]: null,
     highWaterMark: socket.writableHighWaterMark,
     rejectNonStandardBodyWrites: server.rejectNonStandardBodyWrites,
   });

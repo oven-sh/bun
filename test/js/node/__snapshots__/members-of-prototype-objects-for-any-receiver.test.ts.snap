@@ -3170,20 +3170,50 @@ node:https.Server.prototype _requestCert, read
   undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:https.Server.prototype _requestCert, stored to
+  undefined, stores _requestCert <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:https.Server.prototype _rejectUnauthorized, read
   undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _rejectUnauthorized, stored to
+  undefined, stores _rejectUnauthorized <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype _handshakeTimeout, read
   number <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:https.Server.prototype _handshakeTimeout, stored to
+  undefined, stores _handshakeTimeout <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:https.Server.prototype _ALPNCallback, read
   undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:https.Server.prototype _ALPNCallback, stored to
+  undefined, stores _ALPNCallback <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:https.Server.prototype _SNICallback, read
   undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _SNICallback, stored to
+  undefined, stores _SNICallback <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype listening, read
@@ -3201,12 +3231,12 @@ node:https.Server.prototype ref("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype unref()
-  throws TypeError: undefined is not an object, stores _unref <- every object
+  the receiver, stores _unref <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype unref("a", 1)
-  throws TypeError: undefined is not an object, stores _unref <- every object
+  the receiver, stores _unref <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
@@ -3219,10 +3249,12 @@ node:https.Server.prototype closeAllConnections("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype _emitCloseIfDrained()
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype _emitCloseIfDrained("a", 1)
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:https.Server.prototype getConnections()
   the receiver <- every object, a number, a string

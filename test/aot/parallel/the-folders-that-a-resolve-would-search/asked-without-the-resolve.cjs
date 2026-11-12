@@ -2,20 +2,21 @@
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const where = list => list.map(folder => path.relative(__dirname, folder).split(path.sep).join("/") || ".");
+const asAsked = (list, request) => JSON.stringify(list) === JSON.stringify(require.resolve.paths(request));
 const { paths } = require.resolve;
 const other = createRequire(path.join(__dirname, "other", "x.js"));
 const copied = id => other.resolve(id);
 copied.paths = require.resolve.paths;
 console.log(
   "SAID",
-  where(require.resolve.paths("./x")),
-  where(paths("./x")),
-  where(["./x"].map(require.resolve.paths)[0]),
+  asAsked(paths("./x"), "./x"),
+  asAsked(paths("pkg"), "pkg"),
+  asAsked(["./x"].map(require.resolve.paths)[0], "./x"),
 );
-console.log("SAID", where(copied.paths("./x")), where(require.resolve.paths.call(other.resolve, "./x")));
 console.log(
   "SAID",
-  where(paths("pkg"))[0],
-  where(other.resolve.paths("pkg"))[0],
-  where(other.resolve.paths.bind(null)("./x")),
+  asAsked(copied.paths("./x"), "./x"),
+  asAsked(require.resolve.paths.call(other.resolve, "./x"), "./x"),
 );
+const ofOther = other.resolve.paths;
+console.log("SAID", where(ofOther("pkg"))[0], where(ofOther("./x")), where(ofOther.bind(require.resolve)("./x")));

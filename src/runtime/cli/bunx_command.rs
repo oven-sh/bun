@@ -783,6 +783,17 @@ impl BunxCommand {
         Ok(())
     }
 
+    /// Moves the `node_modules/.bin` entries that `path` has in front of `inherited` to the end.
+    fn path_with_bin_dirs_last(path: &[u8], inherited: &[u8]) -> Vec<u8> {
+        let added = path.strip_suffix(inherited).unwrap_or_default();
+        let bin = [SEP, b"node_modules", SEP, b".bin"].concat();
+        let (bin_dirs, mut entries): (Vec<&[u8]>, Vec<&[u8]>) =
+            strings::tokenize(added, &[DELIMITER]).partition(|entry| entry.ends_with(&bin));
+        entries.extend(strings::tokenize(inherited, &[DELIMITER]));
+        entries.extend(bin_dirs);
+        entries.join(&DELIMITER)
+    }
+
     fn which_in_cache<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         bunx_cache_dir: &[u8],
@@ -954,10 +965,11 @@ impl BunxCommand {
         )?;
 
         let force_using_bun = ctx.debug.run_in_bun;
+        let mut inherited_path: Vec<u8> = Vec::new();
         Run::configure_path_for_run(
             root_dir_info,
             this_transpiler,
-            None,
+            Some(&mut inherited_path),
             root_dir_info.abs_path,
             force_using_bun,
         )?;
@@ -985,11 +997,22 @@ impl BunxCommand {
             .get(b"BUN_WHICH_IGNORE_CWD")
             .unwrap_or(b"")
             .to_vec();
-        if !ignore_cwd.is_empty() {
+        let is_node_gyp = update_request.name == b"node-gyp" && opts.binary_name.is_none();
+        if !ignore_cwd.is_empty() && !is_node_gyp {
             env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
         }
 
-        let path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
+        let search_path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
+
+        let skip_shared = is_node_gyp && env_loader.has(b"BUN_INTERNAL_NODE_GYP_SKIP_SHARED");
+        // `bun install` has ordered the PATH of its scripts, and node-gyp keeps that order.
+        let path: Vec<u8> = if is_node_gyp && (skip_shared || !ignore_cwd.is_empty()) {
+            let path = Self::path_with_bin_dirs_last(&search_path, &inherited_path);
+            env_loader.map.put(b"PATH", &path)?;
+            path
+        } else {
+            search_path.clone()
+        };
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
@@ -1064,12 +1087,17 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
-        let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
-            path.clone()
+        let path_for_bin_dirs: Vec<u8> = if skip_shared {
+            // The shared directories follow the temp node-gyp script.
+            let entries: Vec<&[u8]> = strings::tokenize(&inherited_path, &[DELIMITER]).collect();
+            let end = entries.iter().position(|entry| **entry == *ignore_cwd);
+            entries[..end.unwrap_or(0)].join(&DELIMITER)
+        } else if ignore_cwd.is_empty() {
+            search_path
         } else {
             // Without the cwd passed through BUN_WHICH_IGNORE_CWD: a temp node-gyp script must not find itself.
-            let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            for (i, segment) in strings::tokenize(&path, &[DELIMITER]).enumerate() {
+            let mut new_path: Vec<u8> = Vec::with_capacity(search_path.len());
+            for (i, segment) in strings::tokenize(&search_path, &[DELIMITER]).enumerate() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
@@ -1138,7 +1166,7 @@ impl BunxCommand {
 
         // 2. The project's installed copy of the package. It is skipped when the user typed a
         // version, a tag, or a URL, because that says where the package must come from.
-        if !is_versioned {
+        if !is_versioned && !skip_shared {
             let project = bun_install::package_manager_real::project_directory(top_level_dir);
             let found = match Self::find_in_project(
                 this_transpiler,

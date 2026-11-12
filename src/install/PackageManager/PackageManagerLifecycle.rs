@@ -362,12 +362,23 @@ impl PackageManager {
         if list.is_dependency {
             append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
         }
+        let node_gyp_shim_dir = (script_env.get(b"BUN_WHICH_IGNORE_CWD")).filter(|_| {
+            script_env
+                .get(b"npm_config_node_gyp")
+                .is_none_or(<[u8]>::is_empty)
+        });
         crate::bin::link_conflicting_bins(
             &self.lockfile,
             &list.bin_conflicts,
             cwd,
             env_path.slice(),
+            node_gyp_shim_dir,
         )?;
+        if list.bin_conflicts.node_gyp {
+            script_env.put(b"BUN_INTERNAL_NODE_GYP_SKIP_SHARED", b"1")?;
+        } else {
+            script_env.remove(b"BUN_INTERNAL_NODE_GYP_SKIP_SHARED");
+        }
         let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 

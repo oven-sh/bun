@@ -3827,7 +3827,11 @@ impl Lockfile {
             || self.declared_by_root_or_workspace(alias, resolution)
     }
 
-    fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {
+    pub(crate) fn declared_by_root_or_workspace(
+        &self,
+        alias: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let packages = self.packages.slice();
         let resolutions = packages.items_resolution();

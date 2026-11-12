@@ -17,7 +17,6 @@ use bun_semver::{ExternalString, String};
 use bun_sys::Mode;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
-use crate::PackageID;
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Behavior, Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
@@ -29,6 +28,7 @@ use crate::resolution;
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
+use crate::{PackageID, PackageNameHash};
 
 bun_output::declare_scope!(BinLinker, hidden);
 
@@ -1974,7 +1974,18 @@ pub struct BinConflict {
     alias: String,
     node_modules: Box<[u8]>,
     names: Vec<Box<[u8]>>,
+    /// The scripts run even if it can't be linked.
+    optional: bool,
 }
+
+#[derive(Clone, Default)]
+pub struct BinConflicts {
+    links: Vec<BinConflict>,
+    /// The `node-gyp` in the shared `.bin` is not the one for this package.
+    pub(crate) node_gyp: bool,
+}
+
+const NODE_GYP: &[u8] = b"node-gyp";
 
 /// Finds the bins of `dependency_id`'s dependencies that its scripts would find in a package that
 /// it does not depend on. `tree_id` is the hoisted tree it is placed in.
@@ -1983,7 +1994,7 @@ pub fn find_bin_conflicts(
     direct_packages: &DynamicBitSet,
     tree_id: tree::Id,
     dependency_id: DependencyID,
-) -> Vec<BinConflict> {
+) -> BinConflicts {
     let buffers = &lockfile.buffers;
     let trees = buffers.trees.as_slice();
     let hoisted = buffers.hoisted_dependencies.as_slice();
@@ -2008,43 +2019,130 @@ pub fn find_bin_conflicts(
     }
 
     let package_id = resolutions[dependency_id as usize];
-    let mut conflicts = dependency_bins(lockfile, package_id, &ancestors);
-    if conflicts.is_empty() {
-        return conflicts;
-    }
+    let mut links = dependency_bins(lockfile, package_id, &ancestors);
+
+    let has_node_gyp = |bins: &BinConflict| bins.names.iter().any(|name| **name == *NODE_GYP);
+    let default_node_gyps: Vec<BinConflict> = if links.iter().any(has_node_gyp) {
+        Vec::new()
+    } else {
+        (ancestors.iter())
+            .flat_map(|&id| {
+                (trees[id as usize].dependencies.get(hoisted).iter()).map(move |&dep| (id, dep))
+            })
+            .filter(|&(_, placed)| can_be_default_node_gyp(lockfile, placed))
+            .filter_map(|(id, placed)| placed_bins(lockfile, id, placed))
+            .filter(has_node_gyp)
+            .collect()
+    };
 
     let rows = lockfile.packages.items_dependencies()[package_id as usize];
-    let is_own = |owner: PackageID| {
+    let is_own = |owner: PackageID, name: &[u8]| {
         owner == package_id
             || (rows.begin()..rows.end()).any(|row| resolutions[row as usize] == owner)
+            || (name == NODE_GYP
+                && default_node_gyps
+                    .iter()
+                    .any(|bins| bins.package_id == owner))
     };
-    let owners: Vec<StringHashMap<PackageID>> = (ancestors.iter().enumerate())
+    let names: Vec<BinNames> = (ancestors.iter().enumerate())
         .map(|(i, &id)| {
-            let mut owners = bin_owners(lockfile, direct_packages, id, package_id);
+            let mut names = bin_names(lockfile, direct_packages, id, package_id, is_own);
             // The package that a tree is nested in may link its dependencies into the tree's `.bin`.
             if Some(id) != nested_id && !lockfile.is_importer_tree_id(id) {
                 let parent_id = resolutions[trees[id as usize].dependency_id as usize];
                 for bins in dependency_bins(lockfile, parent_id, &ancestors[i..]) {
-                    if !is_own(bins.package_id) {
-                        for name in &bins.names {
-                            bun_core::handle_oom(owners.put(name, bins.package_id));
+                    for name in &bins.names {
+                        if !is_own(bins.package_id, name) {
+                            names.put_other(name);
                         }
                     }
                 }
             }
-            owners
+            names
         })
         .collect();
 
-    conflicts.retain_mut(|conflict| {
-        conflict.names.retain(|name| {
-            (owners.iter())
-                .find_map(|owners| owners.get(&**name).copied())
-                .is_some_and(|owner| !is_own(owner))
-        });
+    let is_conflict = |name: &[u8]| {
+        let folded = fold_case(name);
+        (names.iter())
+            .find_map(|names| {
+                (names.other.contains_key(folded.as_slice()).then_some(true))
+                    .or_else(|| names.own.contains_key(name).then_some(false))
+            })
+            .unwrap_or(false)
+    };
+
+    links.retain_mut(|conflict| {
+        conflict.names.retain(|name| is_conflict(name));
         !conflict.names.is_empty()
     });
-    conflicts
+    let node_gyp = is_conflict(NODE_GYP);
+    if node_gyp && let Some(mut bins) = default_node_gyps.into_iter().next() {
+        bins.names = vec![Box::from(NODE_GYP)];
+        bins.optional = true;
+        links.push(bins);
+    }
+    BinConflicts { links, node_gyp }
+}
+
+/// Returns true if `placed` may be the `node-gyp` of a package that does not depend on one.
+fn can_be_default_node_gyp(lockfile: &Lockfile, placed: DependencyID) -> bool {
+    let package_id = lockfile.buffers.resolutions[placed as usize] as usize;
+    if (lockfile.packages.items_bin().get(package_id)).is_none_or(|bin| bin.tag == Tag::None) {
+        return false;
+    }
+    let resolution = &lockfile.packages.items_resolution()[package_id];
+    let name = lockfile.str(&lockfile.packages.items_name()[package_id]);
+    let alias = lockfile.str(&lockfile.buffers.dependencies[placed as usize].name);
+    (resolution.tag == resolution::Tag::Npm && name == NODE_GYP)
+        || resolution.tag == resolution::Tag::Workspace
+        || (alias == NODE_GYP
+            && (lockfile.declared_by_root_or_workspace(alias, resolution)
+                || lockfile.is_overridden_dependency(placed)))
+        || lockfile.has_trusted_dependency(alias, name, resolution)
+}
+
+/// The tree and the dependency that `name_hash` resolves to in `ancestors`.
+fn find_placed(
+    lockfile: &Lockfile,
+    ancestors: &[tree::Id],
+    name_hash: PackageNameHash,
+) -> Option<(tree::Id, DependencyID)> {
+    let buffers = &lockfile.buffers;
+    ancestors.iter().find_map(|&tree_id| {
+        let tree = &buffers.trees.as_slice()[tree_id as usize];
+        (tree.dependencies)
+            .get(buffers.hoisted_dependencies.as_slice())
+            .iter()
+            .find(|&&id| buffers.dependencies[id as usize].name_hash == name_hash)
+            .map(|&id| (tree_id, id))
+    })
+}
+
+fn placed_bins(
+    lockfile: &Lockfile,
+    placed_in: tree::Id,
+    placed: DependencyID,
+) -> Option<BinConflict> {
+    let buffers = &lockfile.buffers;
+    let package_id = buffers.resolutions[placed as usize];
+    let node_modules = crate::package_installer::abs_node_modules_path(
+        lockfile,
+        buffers.string_bytes.as_slice(),
+        placed_in,
+    )?;
+    let alias = buffers.dependencies[placed as usize].name;
+    let mut names = Vec::new();
+    for_each_bin_name(lockfile, package_id, alias, node_modules.slice(), |name| {
+        names.push(Box::from(name))
+    });
+    Some(BinConflict {
+        package_id,
+        alias,
+        node_modules: Box::from(node_modules.slice()),
+        names,
+        optional: false,
+    })
 }
 
 /// All bins of the dependencies of `package_id`, which resolve in `ancestors`.
@@ -2053,12 +2151,8 @@ fn dependency_bins(
     package_id: PackageID,
     ancestors: &[tree::Id],
 ) -> Vec<BinConflict> {
-    let buffers = &lockfile.buffers;
-    let trees = buffers.trees.as_slice();
-    let hoisted = buffers.hoisted_dependencies.as_slice();
-    let dependencies = buffers.dependencies.as_slice();
-    let resolutions = buffers.resolutions.as_slice();
-    let string_buf = buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
     let bins = lockfile.packages.items_bin();
     let Some(rows) = (lockfile.packages.items_dependencies()).get(package_id as usize) else {
         return Vec::new();
@@ -2074,55 +2168,52 @@ fn dependency_bins(
             continue;
         }
         let name_hash = dependencies[row as usize].name_hash;
-        let Some((placed_in, placed)) = ancestors.iter().find_map(|&tree_id| {
-            let tree = &trees[tree_id as usize];
-            (tree.dependencies.get(hoisted).iter())
-                .find(|&&id| dependencies[id as usize].name_hash == name_hash)
-                .map(|&id| (tree_id, id))
-        }) else {
+        let Some((placed_in, placed)) = find_placed(lockfile, ancestors, name_hash) else {
             continue;
         };
-        if resolutions[placed as usize] != dependency_package_id {
-            continue;
+        if resolutions[placed as usize] == dependency_package_id {
+            result.extend(placed_bins(lockfile, placed_in, placed));
         }
-        let Some(node_modules) =
-            crate::package_installer::abs_node_modules_path(lockfile, string_buf, placed_in)
-        else {
-            continue;
-        };
-        let alias = dependencies[placed as usize].name;
-        let mut names = Vec::new();
-        for_each_bin_name(
-            lockfile,
-            dependency_package_id,
-            alias,
-            node_modules.slice(),
-            |name| names.push(Box::from(name)),
-        );
-        result.push(BinConflict {
-            package_id: dependency_package_id,
-            alias,
-            node_modules: Box::from(node_modules.slice()),
-            names,
-        });
     }
     result
 }
 
-/// The package other than `excluded` that is first in `LinkOrder` for each name in a tree's `.bin`.
-fn bin_owners(
+/// The same for names that are one file on a case-insensitive volume.
+fn fold_case(name: &[u8]) -> Vec<u8> {
+    match core::str::from_utf8(name) {
+        Ok(name) => name.to_uppercase().to_lowercase().into_bytes(),
+        Err(_) => name.to_ascii_lowercase(),
+    }
+}
+
+#[derive(Default)]
+struct BinNames {
+    own: StringHashMap<()>,
+    /// Keyed by `fold_case`.
+    other: StringHashMap<()>,
+}
+
+impl BinNames {
+    fn put_other(&mut self, name: &[u8]) {
+        bun_core::handle_oom(self.other.put(&fold_case(name), ()));
+    }
+}
+
+/// The names that packages other than `excluded` link in a tree's `.bin`.
+fn bin_names(
     lockfile: &Lockfile,
     direct_packages: &DynamicBitSet,
     tree_id: tree::Id,
     excluded: PackageID,
-) -> StringHashMap<PackageID> {
+    is_own: impl Fn(PackageID, &[u8]) -> bool,
+) -> BinNames {
     let buffers = &lockfile.buffers;
     let string_buf = buffers.string_bytes.as_slice();
-    let mut owners: StringHashMap<PackageID> = StringHashMap::default();
+    let mut names = BinNames::default();
     let Some(node_modules) =
         crate::package_installer::abs_node_modules_path(lockfile, string_buf, tree_id)
     else {
-        return owners;
+        return names;
     };
     let bins = lockfile.packages.items_bin();
     let package_resolutions = lockfile.packages.items_resolution();
@@ -2144,15 +2235,25 @@ fn bin_owners(
     })
     .collect();
     packages.sort_by_key(|&(order, ..)| order);
+    let mut seen: StringHashMap<()> = StringHashMap::default();
     for (_, package_id, alias) in packages {
+        // `bun x node-gyp` also runs the package in this folder.
+        if alias.slice(string_buf).eq_ignore_ascii_case(NODE_GYP) && !is_own(package_id, NODE_GYP) {
+            names.put_other(NODE_GYP);
+        }
         for_each_bin_name(lockfile, package_id, *alias, node_modules.slice(), |name| {
-            let entry = bun_core::handle_oom(owners.get_or_put(name));
-            if !entry.found_existing {
-                *entry.value_ptr = package_id;
+            let is_first = !bun_core::handle_oom(seen.get_or_put(name)).found_existing;
+            if is_own(package_id, name) {
+                if is_first {
+                    bun_core::handle_oom(names.own.put(name, ()));
+                }
+            // The first `node-gyp` can be a package that is not installed.
+            } else if is_first || name == NODE_GYP {
+                names.put_other(name);
             }
         });
     }
-    owners
+    names
 }
 
 /// Only the names in `directories.bin` are read from disk.
@@ -2192,16 +2293,25 @@ fn for_each_bin_name(
     }
 }
 
-/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path`.
+/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path` outside
+/// of `node_gyp_shim_dir`.
 pub(crate) fn link_conflicting_bins(
     lockfile: &Lockfile,
-    conflicts: &[BinConflict],
+    conflicts: &BinConflicts,
     cwd: &[u8],
     env_path: &[u8],
+    node_gyp_shim_dir: Option<&[u8]>,
 ) -> Result<(), Error> {
-    if conflicts.is_empty() {
+    if conflicts.links.is_empty() {
         return Ok(());
     }
+    let mut commands_path = path::EnvPath::init_capacity(env_path.len())?;
+    for entry in strings::split(env_path, &[path::DELIMITER]) {
+        if Some(entry) != node_gyp_shim_dir {
+            commands_path.append(entry)?;
+        }
+    }
+    let env_path = commands_path.slice();
     let mut node_modules_path = AbsPath::from(cwd)?;
     node_modules_path.append(b"node_modules")?;
     let bin_dir = [node_modules_path.slice(), &[SEP][..], b".bin"].concat();
@@ -2210,7 +2320,7 @@ pub(crate) fn link_conflicting_bins(
     let mut abs_target_buf = path::path_buffer_pool::get();
     let mut abs_dest_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();
-    for conflict in conflicts {
+    for conflict in &conflicts.links {
         let target_node_modules_path = AbsPath::from(&conflict.node_modules)?;
         for_each_bin_name(
             lockfile,
@@ -2248,7 +2358,7 @@ pub(crate) fn link_conflicting_bins(
             skipped_due_to_missing_bin: false,
         };
         linker.link(false);
-        if let Some(err) = linker.err {
+        if let Some(err) = linker.err.filter(|_| !conflict.optional) {
             return Err(err);
         }
     }

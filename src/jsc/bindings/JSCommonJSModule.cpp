@@ -482,7 +482,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
-// Of the function that `require.resolve.paths` is: the module it answers for, whatever it is called on.
+// A `require.resolve.paths` function keeps its module in this field: it answers for that module, whatever it is called on.
 static constexpr auto moduleOfPathsFunction = static_cast<JSFunctionWithFields::Field>(0);
 
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -566,7 +566,7 @@ JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* 
     return JSC::profiledCall(globalObject, ProfilingReason::API, createRequireCache, JSC::getCallData(createRequireCache), jsUndefined(), args);
 }
 
-// A store to `cache`, `extensions` or `resolve.paths` makes an own property of the function it is stored on.
+// A store to `require.cache`, `require.extensions` or `require.resolve.paths` makes an own property of the receiver.
 JSC_DEFINE_CUSTOM_SETTER(jsRequireOwnPropertySetter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))

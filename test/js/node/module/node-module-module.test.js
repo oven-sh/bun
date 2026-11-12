@@ -1425,6 +1425,15 @@ console.log("survived", require("./late.js"));`,
           const frozen = fresh("frozen");
           Object.freeze(frozen.resolve);
           out.frozen = [where(frozen.resolve.paths("./x")), Object.isFrozen(frozen.resolve)];
+          try {
+            (function () {
+              "use strict";
+              frozen.resolve.paths = 1;
+            })();
+            out.frozenRefusesAStore = false;
+          } catch (error) {
+            out.frozenRefusesAStore = error instanceof TypeError;
+          }
 
           // Reflect.get() names a receiver that the read does not go through.
           const named = fresh("named");
@@ -1484,6 +1493,7 @@ console.log("survived", require("./late.js"));`,
         stored: ["stored", ownData],
         defined: "defined",
         frozen: [["frozen"], true],
+        frozenRefusesAStore: true,
         namedReceiverIsUntouched: ["kept", false],
         boundResolveHasNone: "undefined",
         aboveResolveHasNone: "undefined",

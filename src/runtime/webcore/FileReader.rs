@@ -11,10 +11,11 @@ use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_sys::{self as sys, Fd, FdExt};
 
+use crate::generated_bindgen::readable_stream::js_FileInternalReadableStreamSource as js;
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
+use crate::webcore::jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -64,6 +65,12 @@ pub struct FileReader {
     pub(crate) read_callback: Cell<bool>,
     /// The task that starts the reader in handle mode is in the queue.
     pub(crate) read_start_queued: Cell<bool>,
+    /// Handle mode is arming the poll with a chunk in hand: a failure it reports now is delivered after that chunk.
+    pub(crate) arming: Cell<bool>,
+    /// Handle mode, for the stdio of `node:child_process`: each read completion calls the function in the wrapper's `readCallback` slot from the event loop. No pull is parked, nothing is read inline, and `flowing` says whether the reader is started.
+    pub(crate) read_callback: Cell<bool>,
+    /// The task that starts the reader in handle mode is in the queue.
+    pub(crate) read_start_queued: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -87,6 +94,9 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            read_callback: Cell::new(false),
+            read_start_queued: Cell::new(false),
+            arming: Cell::new(false),
             read_callback: Cell::new(false),
             read_start_queued: Cell::new(false),
         }
@@ -468,6 +478,11 @@ impl FileReader {
         }
 
         self.started.set(true);
+
+        // Handle mode reads nothing here: `set_flowing(true)` starts the reader.
+        if self.read_callback.get() {
+            return streams::Start::Ready;
+        }
 
         // Handle mode reads nothing here: `set_flowing(true)` starts the reader.
         if self.read_callback.get() {
@@ -874,6 +889,38 @@ impl FileReader {
         );
     }
 
+    /// Whether `Source::set_read_callback` can take this source: a live pipe that nothing has read from or attached to. Every read of it completes on the event loop, and it holds nothing that a read would not bring. Bytes, an end or an error that are already here (`from_bytes_then_error`, a reader `Bun.spawn` could not leave lazy) have no read completion to reach the callback with, so such a source keeps the pull path.
+    fn can_enter_handle_mode(&self) -> bool {
+        if self.started.get()
+            || self.done.get()
+            || self.read_error.get().is_some()
+            || self.sink.get().is_some()
+            || self.pending.get().state == streams::PendingState::Pending
+            || !matches!(self.lazy.get(), Lazy::None)
+            || !self.buffered.get().is_empty()
+        {
+            return false;
+        }
+        let reader = self.reader();
+        #[cfg(unix)]
+        let reads_on_the_loop = reader
+            .flags
+            .contains(bun_io::pipe_reader::PosixFlags::POLLABLE);
+        #[cfg(windows)]
+        let reads_on_the_loop = reader.source.is_some();
+        reads_on_the_loop && !reader.is_done() && reader.buffer().is_empty()
+    }
+
+    /// `on_start`'s setup without its read. The reader is stopped until `set_flowing(true)`.
+    fn enter_handle_mode(&self) {
+        self.read_callback.set(true);
+        self.flowing.set(false);
+        let started = self.on_start();
+        debug_assert!(matches!(started, streams::Start::Ready));
+        // A reader `Bun.spawn` could not leave lazy is waiting for bytes already.
+        self.reader().pause();
+    }
+
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
@@ -1201,6 +1248,30 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    /// `setReadCallback` in `ReadableStream.bind.ts`. `false`: nothing changed, and the source keeps being pulled from.
+    pub fn set_read_callback(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        callback: JsLocal<'_, Callable>,
+    ) -> bool {
+        if self.cancelled.get() || !self.context.can_enter_handle_mode() {
+            return false;
+        }
+        let cx = cx.js_thread();
+        let global = cx.global();
+        self.global_this.set(Some(bun_ptr::BackRef::new(global)));
+        self.reader_context.set(Some(cx.context().id()));
+        // `node:child_process` registers at spawn: listeners see the `AsyncLocalStorage` store of the spawn, as in Node.
+        js::read_callback_set_cached(
+            this_value.to_js(),
+            global,
+            callback.to_js().with_async_context_if_needed(global),
+        );
+        self.context.enter_handle_mode();
+        true
     }
 
     /// # Safety

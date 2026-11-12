@@ -684,7 +684,8 @@ describe("source map remapping of the printed stack", () => {
     // the matcher refused to write. Now the frame is in the test file, and the
     // value is written where the map points, as for a map that names its own file.
     //
-    // Runs `bun test` on snap.test.js for each of the two names, and returns the file as it is afterwards.
+    // Runs `bun test` on snap.test.js for each of the two names. Returns the file as it is afterwards, and what the run
+    // says went wrong.
     async function snapshotsWritten(files, ...args) {
       const written = async name => {
         using dir = tempDir("inspect-error-inline-snapshot", files(name));
@@ -692,11 +693,12 @@ describe("source map remapping of the printed stack", () => {
           cmd: [bunExe(), "test", ...args, "./snap.test.js"],
           cwd: String(dir),
           env: { ...bunEnv, CI: "false" },
-          stdout: "ignore",
-          stderr: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
         });
-        const exitCode = await proc.exited;
-        return { file: await Bun.file(`${dir}/snap.test.js`).text(), exitCode };
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const errors = (stdout + stderr).split("\n").filter(line => /^(error|Matcher error|\(fail\))/.test(line));
+        return { file: await Bun.file(`${dir}/snap.test.js`).text(), errors, exitCode };
       };
       const [emptyName, ownName] = await Promise.all([written(""), written("snap.test.js")]);
       return { emptyName, ownName };
@@ -733,7 +735,7 @@ describe("source map remapping of the printed stack", () => {
           "",
         ].join("\n"),
       });
-      const expected = { file: onDisk('`"A"`'), exitCode: 0 };
+      const expected = { file: onDisk('`"A"`'), errors: [], exitCode: 0 };
       expect(await snapshotsWritten(files, "--preload", "./plugin.js")).toEqual({
         emptyName: expected,
         ownName: expected,
@@ -752,8 +754,8 @@ describe("source map remapping of the printed stack", () => {
           "",
         ].join("\n") + inline({ ...map, sources: [name], mappings: ";;;AAE8B" });
       expect(await snapshotsWritten(name => ({ "snap.test.js": prebuilt(name, '`"A"`') }))).toEqual({
-        emptyName: { file: prebuilt("", '`"B"`'), exitCode: 0 },
-        ownName: { file: prebuilt("snap.test.js", '`"B"`'), exitCode: 0 },
+        emptyName: { file: prebuilt("", '`"B"`'), errors: [], exitCode: 0 },
+        ownName: { file: prebuilt("snap.test.js", '`"B"`'), errors: [], exitCode: 0 },
       });
     });
   });

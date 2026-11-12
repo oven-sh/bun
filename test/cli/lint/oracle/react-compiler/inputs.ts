@@ -713,19 +713,247 @@ export const ESLINT_RULES = [
 /** An `eslint.config.js`. It only names the plugin and typescript-eslint's parser, which are built in to `bun lint`. */
 export const eslintConfig = `export default [
   {
-    files: ["**/*.{js,jsx,ts,tsx}"],
+    files: ["**/*.{js,jsx,ts,tsx,mts}"],
     plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
     rules: ${JSON.stringify(Object.fromEntries(ESLINT_RULES.map(rule => [rule, "error"])))},
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
     linterOptions: { reportUnusedDisableDirectives: "off" },
   },
-  { files: ["**/*.{ts,tsx}"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+  { files: ["**/*.{ts,tsx,mts}"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
 ];
 `;
 
 const extraDependency = (parameters: string) => `function Component(${parameters}) {
   const value = useMemo(() => [a], [a, b]);
   return <div>{value}</div>;
+}
+`;
+
+const signatureInAHook = `import { useRef } from "react";
+
+export function useDeclared(a: number) {
+  declare function helper(x: number): number;
+  const ref = useRef(0);
+  const bad = ref.current;
+  return helper(a) + bad;
+}
+`;
+
+/**
+ * The plugin's compiler reads the bindings of Babel's scopes, and Babel registers none for a function signature without
+ * a body, a `declare class`, an enum, a member of an enum, a namespace, an interface, a type alias or a type parameter.
+ * Such a name is what an enclosing scope binds it to, or else a global. `unboundInModule` has the same at the top level
+ * of a module.
+ */
+const unbound = `import { useEffect, useRef } from "react";
+
+export function ReadFirst(props: { a: number }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  const value = helper(props.a);
+  useEffect(() => {
+    helper(props.a);
+  });
+  declare function helper(x: number): number;
+  return <div>{bad}{value}</div>;
+}
+
+export function Assigned(props: { a: number }) {
+  declare function helper(x: number): number;
+  const ref = useRef(0);
+  const bad = ref.current;
+  helper = props.a as any;
+  return <div>{bad}</div>;
+}
+
+export function ShadowsLocal(props: { a: number }) {
+  const helper = useRef(0);
+  let value = 0;
+  if (props.a) {
+    declare function helper(x: number): number;
+    {
+      declare function helper(x: string): string;
+      value = helper.current;
+    }
+  }
+  return <div>{value}</div>;
+}
+
+export function EnumShadowsLocal(props: { a: number }) {
+  const helper = useRef(0);
+  let value = 0;
+  if (props.a) {
+    enum helper { current }
+    value = helper.current;
+  }
+  return <div>{value}</div>;
+}
+
+export function ShadowsParameter(props: { a: number }) {
+  if (props.a) {
+    declare function props(x: number): number;
+    props.a = 2;
+  }
+  return <div />;
+}
+
+export function DeclaredClass(props: { a: number }) {
+  declare class Box { value: number; }
+  const ref = useRef(0);
+  const bad = ref.current;
+  return <div>{bad}{new Box().value}{props.a}</div>;
+}
+
+export function ParameterDefault(props: { a: number }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  function inner(cb = () => { declare function helper(): number; return helper(); }) {
+    const helper = () => 1;
+    return cb() + helper();
+  }
+  return <div>{bad}{inner()}</div>;
+}
+
+export function EarlierParameter(props: { a: number }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  function inner(useRef: any, cb = () => { declare function useRef(x: number): any; return useRef(1); }) {
+    return cb();
+  }
+  return <div>{bad}{inner(props.a)}</div>;
+}
+
+export function AliasThenConst(props: { a: number }) {
+  type Box = { n: number };
+  const Box = { n: props.a };
+  Box = { n: 2 };
+  return <div>{Box.n}</div>;
+}
+
+export function TypeParameterThenConst<Box>(props: { a: number }) {
+  const Box = { n: props.a };
+  Box = { n: 2 };
+  return <div>{Box.n}</div>;
+}
+
+enum Kind {
+  Math = 1,
+  Count = (() => {
+    const useRandom = () => {
+      useRef(0);
+      return Math.random();
+    };
+    return useRandom.length;
+  })(),
+}
+
+function defaultParameter(
+  make = (() => {
+    const useDefault = () => {
+      declare function useRef<T>(value: T): { current: T };
+      return useRef(0).current;
+    };
+    return useDefault;
+  })(),
+) {
+  const useRef = 1;
+  return [make, useRef];
+}
+
+function restParameter(
+  ...[make = (() => {
+    const useRest = () => {
+      declare function useRef<T>(value: T): { current: T };
+      return useRef(0).current;
+    };
+    return useRest;
+  })()]: any[]
+) {
+  const useRef = 1;
+  return [make, useRef];
+}
+`;
+
+/** Babel registers no binding for any of the four, so `useRef`, `React`, `Date` and `Math` are the globals. */
+const unboundInModule = `declare function useRef<T>(value: T): { current: T };
+declare namespace React {
+  function useState<T>(initial: T): [T, (value: T) => void];
+}
+declare class Date {
+  static now(): number;
+}
+enum Math {
+  PI = 3,
+}
+
+export function Signature(props: { a: number }) {
+  const box = useRef(0);
+  const bad = box.current;
+  return <div>{bad}{props.a}</div>;
+}
+
+export function Namespace(props: { a: number }) {
+  const [count, setCount] = React.useState(0);
+  setCount(props.a);
+  return <div>{count}</div>;
+}
+
+export function Class(props: { a: number }) {
+  const now = Date.now();
+  return <div>{now}{props.a}</div>;
+}
+
+export function Enum(props: { a: number }) {
+  const random = (Math as any).random();
+  return <div>{random}{props.a}</div>;
+}
+`;
+
+/** An interface doesn't make React's `useState` the module's own, and a signature doesn't hide the module's `useRef`. */
+const unboundBesideImports = `interface useState {
+  count: number;
+}
+import { useState } from "react";
+import { useRef } from "./own";
+
+export function Merged(props: { a: number }) {
+  const [count, setCount] = useState(0);
+  setCount(props.a);
+  return <div>{count}</div>;
+}
+
+export function ShadowsImport(props: { a: number }) {
+  declare function useRef<T>(value: T): { current: T };
+  const box = useRef(0);
+  const bad = box.current;
+  return <div>{bad}{props.a}</div>;
+}
+`;
+
+/** Babel binds these, so they're the module's own, whatever their names. */
+const bound = `import React = require("react");
+declare const useRef: <T>(value: T) => { current: T };
+abstract class Date {
+  static now(): number {
+    return 1;
+  }
+}
+
+export function ImportEquals(props: { a: number }) {
+  const box = React.useRef(0);
+  const bad = box.current;
+  return <div>{bad}{props.a}</div>;
+}
+
+export function Constant(props: { a: number }) {
+  const box = useRef(0);
+  const bad = box.current;
+  return <div>{bad}{props.a}</div>;
+}
+
+export function AbstractClass(props: { a: number }) {
+  const now = Date.now();
+  return <div>{now}{props.a}</div>;
 }
 `;
 
@@ -766,6 +994,14 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   return <div>{value}</div>;
 });
 `,
+  "signature.tsx": signature,
+  "signature.ts": signatureInAHook,
+  // hermes-parser parses this one and reads the signature as Flow's `declare function`, which Babel binds.
+  "signature.mts": signatureInAHook,
+  "unbound.tsx": unbound,
+  "unbound-in-module.tsx": unboundInModule,
+  "unbound-beside-imports.tsx": unboundBesideImports,
+  "bound.tsx": bound,
 };
 
 type EslintMessage = {

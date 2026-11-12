@@ -1117,7 +1117,13 @@ fn declarator_name_for(func: Func<'_>) -> Option<Name<'_>> {
 // ───────────────────────────── the second parse ─────────────────────────────
 
 /// The plugin doesn't compile ESLint's tree. It parses the text again, a `.ts` or `.tsx` file with Babel and its
-/// `typescript` and `jsx` plugins, anything else with hermes-parser, and reports nothing if that throws.
+/// `typescript` and `jsx` plugins, anything else with hermes-parser. True for the former.
+pub(crate) fn is_parsed_by_babel(file: &File<'_>) -> bool {
+    let path = file.path();
+    path.ends_with(b".ts") || path.ends_with(b".tsx")
+}
+
+/// The plugin reports nothing if its [second parse](is_parsed_by_babel) throws.
 ///
 /// This covers the syntax that a valid program can have and these parsers reject: @babel/parser 7.29, hermes-parser
 /// 0.25. TypeScript-only syntax, which hermes-parser gets in a `.mts` or `.cts` file and reads as Flow, is only partly
@@ -1128,8 +1134,7 @@ fn second_parser_rejects<'a>(file: &'a File<'a>) -> bool {
         Babel,
         Hermes,
     }
-    let path = file.path();
-    let parser = match path.ends_with(b".ts") || path.ends_with(b".tsx") {
+    let parser = match is_parsed_by_babel(file) {
         true => Parser::Babel,
         false => Parser::Hermes,
     };

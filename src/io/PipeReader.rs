@@ -1915,12 +1915,17 @@ impl WindowsBufferedReader {
     }
 
     pub fn unpause(&mut self) {
+        let _ = self.try_unpause();
+    }
+
+    /// `unpause()` that returns the error of a read it could not start. The reader is left unpaused with nothing in flight, so the caller ends it with that error (`on_error`).
+    pub fn try_unpause(&mut self) -> sys::Result<()> {
         if self.limit.reached() && !self.is_done() {
             // Nothing left to read: report EOF the way a completed read does instead of issuing one.
             self.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
-            return;
+            return sys::Result::Ok(());
         }
-        let _ = self.start_reading();
+        self.start_reading()
     }
 
     /// # Safety

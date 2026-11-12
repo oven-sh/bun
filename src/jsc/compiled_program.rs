@@ -1038,7 +1038,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
 ) -> bool {
     let vm = global.bun_vm();
     vm.is_test_entry_point(path)
-        || !vm.transpiler_store.enabled
+        || !vm.transpiler_store.enabled()
         || crate::node_compile_cache::is_enabled()
 }
 

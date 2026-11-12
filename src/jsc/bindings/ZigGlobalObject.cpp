@@ -5,7 +5,6 @@
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
-#include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/ArgList.h"
@@ -5239,27 +5238,8 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports) { m_nodeWorkerStdioPorts.set(vm(), this, ports); }
-void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
-{
-    if (hook)
-        m_nodeWorkerEntryEvaluatedHook.set(vm(), this, hook);
-    else
-        m_nodeWorkerEntryEvaluatedHook.clear();
-}
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
-
-void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
-{
-    m_nodeParentPort = port;
-}
-
-void GlobalObject::nodeWorkerEntryDidSettle()
-{
-    m_nodeWorkerEntrySettled = true;
-    if (m_nodeParentPort)
-        m_nodeParentPort->entrySettled();
-}
 
 void GlobalObject::prepareForDestruction()
 {

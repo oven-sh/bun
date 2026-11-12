@@ -199,7 +199,10 @@ pub fn set_break_point_on_first_line() -> bool {
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
-    pub enabled: bool,
+    /// No [`OnJsThread`] reason is set. The loader reads it for each module.
+    enabled: bool,
+    /// The [`OnJsThread`] reasons that are set.
+    on_js_thread: u8,
     pub(crate) queue: Queue,
     /// JS thread only.
     pub jobs_scheduled: u64,
@@ -208,12 +211,28 @@ pub struct RuntimeTranspilerStore {
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
 
+/// Why a VM transpiles its modules on its own thread, and not on the thread pool. Each reason has
+/// one owner that sets and clears it, so the end of one does not send modules back to the pool
+/// under another.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum OnJsThread {
+    /// For the life of the VM: `BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER`, the VM of `bun lint`.
+    Always = 1 << 0,
+    /// A macro is running.
+    MacroMode = 1 << 1,
+    /// A Worker is loading its preloads and its entry point: a load on the pool ends in a task, and
+    /// the Worker's start sequence runs no task (`WebWorker::spin`).
+    WorkerStart = 1 << 2,
+}
+
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
             enabled: true,
+            on_js_thread: 0,
             queue: Queue::new(),
             jobs_scheduled: 0,
             jobs_completed: 0,
@@ -237,6 +256,21 @@ impl RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
+    }
+
+    /// Whether a module may be transpiled on the thread pool.
+    #[inline(always)]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_on_js_thread(&mut self, reason: OnJsThread, set: bool) {
+        if set {
+            self.on_js_thread |= reason as u8;
+        } else {
+            self.on_js_thread &= !(reason as u8);
+        }
+        self.enabled = self.on_js_thread == 0;
     }
 
     /// VM teardown (JS thread, heap alive, script forbidden; called on every

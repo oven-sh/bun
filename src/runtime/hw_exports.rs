@@ -153,6 +153,12 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
     };
     if specifier_str.eql_utf8(main) {
         this.entry_point_result.evaluated_as_cjs = true;
+        // As `Bun__VM__noteEntryEvaluationStarted` for an ES module: the start sequence of a
+        // Worker has loaded its modules.
+        this.transpiler_store.set_on_js_thread(
+            bun_jsc::runtime_transpiler_store::OnJsThread::WorkerStart,
+            false,
+        );
     }
 }
 

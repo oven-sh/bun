@@ -2718,6 +2718,416 @@ parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.
   await w.terminate();
 });
 
+// A worker's start sequence is its preloads in order, then its entry point. As in Node, it takes no
+// turn of the event loop unless a preload waits for one, and what the parent posts is delivered at
+// the loop's first turn: after the entry point has run, or earlier to a preload whose top-level
+// await waits for the loop. Node v26.3.0 prints the same lines for every row it can run, with the
+// preloads given as `--import` and `--require` (it runs no preload for `eval: true`, and has no macros).
+describe("what the parent posts to a worker that runs preloads", () => {
+  const shared = {
+    "say.cjs": `const fs = require("node:fs");
+module.exports = line => fs.writeSync(1, "w:" + line + "\\n");`,
+    "dep.ts": `export const dep: number = 1;`,
+    "dyn.ts": `export const dyn: number = 2;`,
+    "entry.mjs": `import say from "./say.cjs";
+say("entry ran");`,
+  };
+  // `worker(entry, preloads)` makes the Worker. `port` is the parent's end of a second channel: the worker has the other end as `workerData.port`.
+  const parentPrelude = `const { Worker, MessageChannel, postMessageToThread } = require("node:worker_threads");
+const fs = require("node:fs");
+const dir = __dirname + require("node:path").sep;
+const say = line => fs.writeSync(1, "p:" + line + "\\n");
+const { port1: port, port2 } = new MessageChannel();
+function worker(entry, preloads, options = {}) {
+  const paths = preloads.map(file => dir + file);
+  const w = new Worker(options.eval ? entry : dir + entry, {
+    ...options,
+    workerData: { port: port2 },
+    transferList: [port2],
+    ...(process.versions.bun
+      ? { preload: paths }
+      : { execArgv: paths.flatMap(file => [file.endsWith(".cjs") ? "--require" : "--import", file]) }),
+  });
+  w.on("error", error => say("error " + error.message));
+  w.on("exit", code => {
+    port.close();
+    say("exit " + code);
+  });
+  return w;
+}
+`;
+  const awaitsParentPort = `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+say("pre got " + (await new Promise(resolve => parentPort.once("message", resolve))));`;
+  const awaitsOtherPort = `await new Promise(resolve => workerData.port.once("message", resolve));
+workerData.port.close();`;
+  const entryListensOnce = `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+say("entry ran");
+parentPort.once("message", m => {
+  say("entry got " + m);
+  parentPort.close();
+});`;
+
+  const rows: {
+    name: string;
+    files: Record<string, string>;
+    parent: string;
+    worker: string[];
+    parentLines: string[];
+  }[] = [
+    {
+      name: "a preload awaits a message of parentPort",
+      files: { "pre.mjs": awaitsParentPort },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: ["pre got hello", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a preload asks the parent and awaits the answer",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+parentPort.postMessage("ready");
+say("pre got " + (await new Promise(resolve => parentPort.once("message", resolve))));`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.once("message", () => w.postMessage("go"));`,
+      worker: ["pre got go", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a preload awaits a message with parentPort.onmessage",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+await new Promise(resolve => {
+  parentPort.onmessage = event => {
+    say("pre got " + event.data);
+    parentPort.onmessage = null;
+    resolve();
+  };
+});`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: ["pre got hello", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "an entry point from a string, after a preload that awaits a message",
+      files: { "pre.mjs": awaitsParentPort },
+      parent: `const w = worker(\`require(\${JSON.stringify(dir + "say.cjs")})("entry ran")\`, ["pre.mjs"], { eval: true }); w.postMessage("hello");`,
+      worker: ["pre got hello", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a listener of a preload that waits for another port",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort, workerData } from "node:worker_threads";
+parentPort.once("message", m => say("pre got " + m));
+${awaitsOtherPort}
+say("pre done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello"); port.postMessage("go");`,
+      worker: ["pre got hello", "pre done", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a listener of an earlier preload, while a later preload waits",
+      files: {
+        "pre1.cjs": `const say = require("./say.cjs");
+require("node:worker_threads").parentPort.once("message", m => say("pre1 got " + m));
+say("pre1 done");`,
+        "pre2.mjs": `import say from "./say.cjs";
+import { workerData } from "node:worker_threads";
+${awaitsOtherPort}
+say("pre2 done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre1.cjs", "pre2.mjs"]); w.postMessage("hello"); port.postMessage("go");`,
+      worker: ["pre1 done", "pre1 got hello", "pre2 done", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      // The entry point begins in the same microtask checkpoint that ends the preload, ahead of the second message.
+      name: "two messages: the first ends the preload's wait, the second comes after the entry point",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+parentPort.on("message", m => say("pre got " + m));
+await new Promise(resolve => parentPort.once("message", resolve));
+say("pre done");`,
+        "entry.mjs": entryListensOnce,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("a"); w.postMessage("b");`,
+      worker: ["pre got a", "pre done", "entry ran", "pre got b", "entry got b"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a preload awaits setImmediate twice: the message comes between the two",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+parentPort.once("message", m => say("pre got " + m));
+await new Promise(resolve =>
+  setImmediate(() => {
+    say("immediate 1");
+    setImmediate(() => {
+      say("immediate 2");
+      resolve();
+    });
+  }),
+);
+say("pre done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: ["immediate 1", "pre got hello", "immediate 2", "pre done", "entry ran"],
+      parentLines: ["exit 0"],
+    },
+    {
+      // Both messages are queued when the preload's wait ends: a turn of the loop for the import would deliver "b" ahead of it.
+      name: "an import() of a preload, after its wait, takes no turn of the loop",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+parentPort.on("message", m => say("pre got " + m));
+await new Promise(resolve => parentPort.once("message", resolve));
+say("after the wait");
+await import("./dyn.ts");
+say("pre done");`,
+        "entry.mjs": entryListensOnce,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("a"); w.postMessage("b");`,
+      worker: ["pre got a", "after the wait", "pre done", "entry ran", "pre got b", "entry got b"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "the modules of a preload and of the entry point load with no turn of the loop",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import "./dep.ts";
+setImmediate(() => say("immediate"));
+say("pre done");`,
+        "entry.mjs": `import say from "./say.cjs";
+import "./dyn.ts";
+say("entry ran");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]);`,
+      worker: ["pre done", "entry ran", "immediate"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a module that calls a macro does not send the modules after it to the thread pool",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+setImmediate(() => say("immediate"));
+say("pre done");`,
+        "macro.ts": `export function answer() {
+  return 42;
+}`,
+        "uses-macro.ts": `import { answer } from "./macro.ts" with { type: "macro" };
+export const value: number = answer();`,
+        "entry.ts": `import say from "./say.cjs";
+import { value } from "./uses-macro.ts";
+import "./dep.ts";
+say("entry ran " + value);`,
+      },
+      parent: `const w = worker("entry.ts", ["pre.mjs"]);`,
+      worker: ["pre done", "entry ran 42", "immediate"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "postMessageToThread() to a listener of a preload that waits",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { workerData } from "node:worker_threads";
+process.once("workerMessage", m => say("pre got " + m));
+${awaitsOtherPort}
+say("pre done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]);
+postMessageToThread(w.threadId, "hello").then(() => say("delivered"), e => say(e.code)).then(() => port.postMessage("go"));`,
+      worker: ["pre got hello", "pre done", "entry ran"],
+      parentLines: ["delivered", "exit 0"],
+    },
+    {
+      name: "a preload awaits a postMessageToThread()",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+const alive = setInterval(() => {}, 60_000);
+say("pre got " + (await new Promise(resolve => process.once("workerMessage", resolve))));
+clearInterval(alive);`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]);
+postMessageToThread(w.threadId, "hello").then(() => say("delivered"), e => say(e.code));`,
+      worker: ["pre got hello", "entry ran"],
+      parentLines: ["delivered", "exit 0"],
+    },
+    {
+      name: "postMessageToThread() while a preload waits and nothing listens for it yet",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { workerData } from "node:worker_threads";
+${awaitsOtherPort}
+say("pre done");`,
+        "entry.mjs": `import say from "./say.cjs";
+process.on("workerMessage", m => say("entry got " + m));
+say("entry ran");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]);
+postMessageToThread(w.threadId, "hello").then(() => say("delivered"), e => say(e.code)).then(() => port.postMessage("go"));`,
+      worker: ["pre done", "entry ran"],
+      parentLines: ["ERR_WORKER_MESSAGING_FAILED", "exit 0"],
+    },
+    {
+      name: "a Module.runMain that a preload set awaits a message",
+      files: {
+        "pre.cjs": `const say = require("./say.cjs");
+const { parentPort } = require("node:worker_threads");
+require("node:module").runMain = async () => {
+  say("runMain got " + (await new Promise(resolve => parentPort.once("message", resolve))));
+};`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.cjs"]); w.postMessage("hello");`,
+      worker: ["runMain got hello"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a preload rejects after it waited: the entry point does not run",
+      files: {
+        "pre.mjs": `import { parentPort } from "node:worker_threads";
+await new Promise(resolve => parentPort.once("message", resolve));
+throw new Error("from the preload");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: [],
+      parentLines: ["error from the preload", "exit 1"],
+    },
+    {
+      name: "a preload rejects after it waited, and an 'uncaughtException' listener takes it",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+process.on("uncaughtException", (error, origin) => say("caught " + error.message + ", " + origin));
+process.on("unhandledRejection", () => say("not called"));
+await new Promise(resolve => parentPort.once("message", resolve));
+throw new Error("from the preload");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: ["caught from the preload, unhandledRejection"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a listener of a preload throws while the preload waits",
+      files: {
+        "pre.mjs": `import { parentPort } from "node:worker_threads";
+parentPort.once("message", () => {
+  throw new Error("from the listener");
+});
+await new Promise(resolve => setTimeout(resolve, 60_000));`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: [],
+      parentLines: ["error from the listener", "exit 1"],
+    },
+    {
+      name: "terminate() while a preload waits",
+      files: {
+        "pre.mjs": `import { parentPort } from "node:worker_threads";
+parentPort.postMessage("waiting");
+await new Promise(resolve => parentPort.once("message", resolve));`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.once("message", () => w.terminate());`,
+      worker: [],
+      parentLines: ["exit 1"],
+    },
+    {
+      name: "a preload waits for what nothing is left to bring: the worker ends",
+      files: { "pre.mjs": `await new Promise(() => {});` },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]);`,
+      worker: [],
+      parentLines: ["exit 0"],
+    },
+    // A preload that waits for nothing gets the message after the entry point has run.
+    {
+      name: "a listener of a CommonJS preload",
+      files: {
+        "pre.cjs": `const say = require("./say.cjs");
+require("node:worker_threads").parentPort.once("message", m => say("pre got " + m));
+say("pre done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.cjs"]); w.postMessage("hello");`,
+      worker: ["pre done", "entry ran", "pre got hello"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a listener of a preload whose top-level await is on microtasks and on an import()",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+parentPort.once("message", m => say("pre got " + m));
+await null;
+await new Promise(resolve => queueMicrotask(resolve));
+await import("./dyn.ts");
+say("pre done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: ["pre done", "entry ran", "pre got hello"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a listener of a preload that awaits one setImmediate",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort } from "node:worker_threads";
+parentPort.once("message", m => say("pre got " + m));
+await new Promise(resolve => setImmediate(resolve));
+say("pre done");`,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello");`,
+      worker: ["pre done", "entry ran", "pre got hello"],
+      parentLines: ["exit 0"],
+    },
+    {
+      name: "a preload that waits with no listener leaves the message to the entry point",
+      files: {
+        "pre.mjs": `import say from "./say.cjs";
+import { parentPort, workerData } from "node:worker_threads";
+const listener = () => say("not called");
+parentPort.on("message", listener);
+parentPort.off("message", listener);
+${awaitsOtherPort}
+say("pre done");`,
+        "entry.mjs": entryListensOnce,
+      },
+      parent: `const w = worker("entry.mjs", ["pre.mjs"]); w.postMessage("hello"); port.postMessage("go");`,
+      worker: ["pre done", "entry ran", "entry got hello"],
+      parentLines: ["exit 0"],
+    },
+  ];
+
+  test.concurrent.each(rows)("$name", async ({ files, parent, worker, parentLines }) => {
+    using dir = tempDir("worker-preload-messages", { ...shared, ...files, "main.cjs": parentPrelude + parent });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      // A worker whose preload never gets what it waits for keeps the process alive.
+      timeout: isDebug ? 60_000 : 8_000,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lines = stdout.split(/\r?\n/);
+    const from = (thread: string) => lines.filter(line => line.startsWith(thread)).map(line => line.slice(2));
+    expect({ worker: from("w:"), parent: from("p:"), signalCode: proc.signalCode }).toEqual({
+      worker,
+      parent: parentLines,
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Releasing the last keep-alive from an immediate (after the tick, before the
 // poll) must be noticed before the loop parks.
 test("closing the only ref'd port from setImmediate lets the process exit", async () => {

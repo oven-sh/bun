@@ -167,7 +167,6 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
-    safe fn Bun__noteEntryEvaluation(global: &JSGlobalObject);
 }
 
 impl JSGlobalObject {
@@ -1509,39 +1508,11 @@ impl EventLoop {
         self.tick();
     }
 
-    /// Drive the loop while a worker's entry module graph is fetched and
-    /// linked, until its evaluation has begun (`entry_evaluation_started`, set
-    /// by the moduleLoaderEvaluate hook once the linked graph starts executing),
-    /// the promise settled, or termination was requested. Parks in `auto_tick`
-    /// while imports are still being read/transpiled off-thread; does not wait
-    /// for a top-level await.
-    pub fn wait_for_worker_entry_evaluation(&mut self, promise: jsc::AnyPromise) {
-        loop {
-            let vm = self.vm_ref();
-            let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
-            if terminated
-                || vm.entry_evaluation_started
-                || promise.status() != PromiseStatus::Pending
-            {
-                break;
-            }
-            self.tick();
-            if crate::compiled_program::compiled_program().is_some() {
-                Bun__noteEntryEvaluation(self.global_ref());
-            }
-            let vm = self.vm_ref();
-            let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
-            if terminated
-                || vm.entry_evaluation_started
-                || promise.status() != PromiseStatus::Pending
-            {
-                break;
-            }
-            if !vm.is_event_loop_alive() {
-                // Nothing in flight can settle the load; let spin() decide.
-                break;
-            }
-            self.auto_tick();
+    /// `tick()` without its tasks: the microtasks and `process.nextTick` callbacks that are queued,
+    /// then the promises they left rejected.
+    pub fn tick_microtasks_only(&mut self) {
+        if self.drain_microtasks().is_ok() {
+            let _ = self.global_ref().handle_rejected_promises();
         }
     }
 }

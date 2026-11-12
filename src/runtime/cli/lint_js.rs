@@ -236,7 +236,8 @@ fn start_vm() -> Result<(), Vec<u8>> {
     debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
     let vm = VirtualMachine::get().as_mut();
     // Transpile on this thread. It would only wait for the result anyway.
-    vm.transpiler_store.enabled = false;
+    vm.transpiler_store
+        .set_on_js_thread(bun_jsc::runtime_transpiler_store::OnJsThread::Always, true);
     vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
     vm.transpiler.options.env.behavior =
         bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;

@@ -55,6 +55,7 @@ use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WT
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
 
+use crate::runtime_transpiler_store::OnJsThread;
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
 
@@ -193,6 +194,18 @@ enum EntryOutcome {
     Stop,
 }
 
+/// Where a worker's start sequence is (`VirtualMachine::start_entry_point_for_web_worker`), with
+/// the promise of the step that it is at.
+enum StartSequence {
+    /// A preload has a top-level await that waits for the event loop, or the entry point's modules
+    /// wait for a loader that needs it (an asynchronous plugin, an automatic install).
+    Waiting(*mut crate::JSInternalPromise),
+    /// The entry point is evaluating, or the promise is settled and no step follows it.
+    Over(*mut crate::JSInternalPromise),
+    /// A step failed with no promise to reject. The error is in the VM's log.
+    Failed,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Status {
@@ -218,7 +231,8 @@ unsafe extern "C" {
         stopped_by_parent: bool,
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
-    safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// Notes, for a compiled program, that the entry point's module has begun to evaluate.
+    safe fn Bun__noteEntryEvaluation(global: &JSGlobalObject);
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
@@ -1187,38 +1201,63 @@ impl WebWorker {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
-                WebWorker__entrySettled(global);
                 return self.shutdown();
             }
         }
+
+        // The start sequence is every preload in turn, then the entry point. Node runs it without
+        // a turn of its event loop, so what the parent posted meanwhile is delivered after the
+        // entry point has run, or earlier to a preload that waits for the loop itself (a top-level
+        // await on a message, a timer, I/O). A module transpiled on the thread pool comes back as a
+        // task, and the turn that runs it would deliver to a worker that is still loading. So the
+        // sequence transpiles on this thread, and each step begins in the reaction to the one before.
+        vm.as_mut()
+            .transpiler_store
+            .set_on_js_thread(OnJsThread::WorkerStart, true);
 
         // `path` borrows the resolver's process-lifetime string store, the
         // standalone module graph, `self.unresolved_specifier` or `dot_slash` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
-        let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
-            Ok(p) => p,
-            Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
-                    vm.as_mut().exit_handler.exit_code = 1;
+        if vm.as_mut().start_entry_point_for_web_worker(path).is_err() {
+            return self.shutdown_before_started(vm);
+        }
+        // Every step that waits for nothing runs here, ahead of the loop's first task.
+        vm.event_loop_mut().tick_microtasks_only();
+
+        // Past that, the sequence is pending only while script waits for the event loop. The loop
+        // turns for it as for a started worker, and delivers what the parent posts.
+        let promise = loop {
+            if self.has_requested_terminate() {
+                return self.shutdown_before_started(vm);
+            }
+            let promise = match Self::start_sequence(vm) {
+                StartSequence::Over(promise) => break promise,
+                StartSequence::Failed => return self.shutdown_before_started(vm),
+                StartSequence::Waiting(promise) => promise,
+            };
+            if !vm.is_event_loop_alive() {
+                if !vm.is_in_preload {
+                    // The entry point's modules wait for what nothing is left to bring: an
+                    // unsettled entry point, for the loop below to end.
+                    break promise;
                 }
+                // A preload waits for what nothing is left to bring. Node ends the worker there, with code 0.
+                vm.as_mut().on_before_exit();
                 self.flush_logs(vm);
-                WebWorker__entrySettled(vm.global());
                 return self.shutdown();
             }
+            // The check phase first: node runs what the sequence gave to `setImmediate` ahead of the
+            // poll phase that delivers a message.
+            vm.as_mut().auto_tick_active();
+            if !self.has_requested_terminate() {
+                vm.as_mut().tick();
+            }
         };
-
-        // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
-        // so buffered postMessageToThread deliveries drain and the sender's
-        // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
-        WebWorker__entrySettled(vm.global());
+        vm.as_mut()
+            .transpiler_store
+            .set_on_js_thread(OnJsThread::WorkerStart, false);
         Bun__AOT__didStartThread();
-        // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
-        if self.has_requested_terminate() {
-            self.flush_logs(vm);
-            return self.shutdown();
-        }
 
         // The entry's evaluation outcome is checked once now and then after every
         // loop turn: a rejection (immediate, or a top-level await rejecting
@@ -1332,6 +1371,44 @@ impl WebWorker {
 
         self.flush_logs(vm);
         self.shutdown();
+    }
+
+    /// Where the start sequence is, between two turns of the event loop.
+    fn start_sequence(vm: &VirtualMachine) -> StartSequence {
+        if vm.worker_start_failed {
+            return StartSequence::Failed;
+        }
+        // The body of a compiled module starts without the hook that notes the entry point's evaluation.
+        if !vm.entry_evaluation_started && crate::compiled_program::compiled_program().is_some() {
+            Bun__noteEntryEvaluation(vm.global());
+        }
+        let Some(promise) = vm.pending_internal_promise() else {
+            return StartSequence::Failed;
+        };
+        // While `is_in_preload`, the promise is a preload's: fulfilled, its reaction begins the next step.
+        let over = match crate::JSPromise::status_ptr(promise) {
+            jsc::js_promise::Status::Rejected => true,
+            status => {
+                !vm.is_in_preload
+                    && (vm.entry_evaluation_started || status != jsc::js_promise::Status::Pending)
+            }
+        };
+        if over {
+            StartSequence::Over(promise)
+        } else {
+            StartSequence::Waiting(promise)
+        }
+    }
+
+    /// The start sequence did not get to its end: a step failed and the error is in the VM's log,
+    /// or the worker was asked to stop first.
+    fn shutdown_before_started(&self, vm: &VirtualMachine) {
+        // process.exit() may have run during load; don't clobber its code.
+        if !self.exit_called.load(Ordering::Relaxed) {
+            vm.as_mut().exit_handler.exit_code = 1;
+        }
+        self.flush_logs(vm);
+        self.shutdown()
     }
 
     /// Phase 3: unpublish the VM's handle (a racing `requestTermination` now

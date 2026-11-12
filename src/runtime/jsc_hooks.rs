@@ -970,6 +970,17 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `Vec::clear` drops the `Box<[u8]>`
         // payloads but keeps capacity.
         vm.preload.clear();
+        // Every preload's top level has finished and no test file has loaded.
+        if n > 0 && vm.transpiler.options.rewrite_jest_for_tests {
+            bun_removable_features::call_removable!(
+                Test,
+                Abort,
+                crate::test_runner::environment::record_document_of_preloads,
+                // SAFETY: `global` is the live global of `vm`.
+                unsafe { &*global }
+            )
+            .map_err(|_| bun_jsc::CrateError::JSError)?;
+        }
     }
 
     // SAFETY: per fn contract; `global` is the live global of `vm`.

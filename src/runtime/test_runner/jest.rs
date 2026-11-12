@@ -153,6 +153,9 @@ pub(crate) struct TestRunner<'a> {
     /// Without `--isolate`: the last file's DOM is still on `globalThis`. See `left` in environment.ts.
     pub(crate) environment_is_left: bool,
 
+    /// Without `--isolate`: the preloads left an own `document` on `globalThis`. See `environment::record_document_of_preloads`.
+    pub(crate) preloads_left_document: bool,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 

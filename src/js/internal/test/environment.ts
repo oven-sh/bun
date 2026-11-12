@@ -386,6 +386,15 @@ function isClosed(window: Environment["window"]) {
   return window.closed || !window.document;
 }
 
+// A test file or a hook can put the document of a kept window back on globalThis while that window's names are off it.
+function isDocumentOfKeptWindow(document: unknown) {
+  let isOfKeptWindow = false;
+  kept.$forEach(environment => {
+    if (environment.window.document === document) isOfKeptWindow = true;
+  });
+  return isOfKeptWindow;
+}
+
 // jsdom parses its default style sheet with the first window that's asked for a computed style, and keeps that window.
 function openWindowForJSDOMToKeep({ JSDOM }: any) {
   try {
@@ -476,6 +485,10 @@ let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unk
 
 function enter(name: string, environment: Environment, keep: boolean) {
   const { properties, keys } = environment;
+  // A window's names without its document are no DOM. Checked before any name is defined, so that none has to be taken off again.
+  if (ownProperty("document")?.configurable === false) {
+    return `cannot define "document" on globalThis: the property is not configurable`;
+  }
   const defined: string[] = [];
   const originals: (PropertyDescriptor | undefined)[] = [];
   for (let i = 0; i < keys.length; i++) {
@@ -618,7 +631,7 @@ function setupSharedGlobal(
   };
 }
 
-// Returns a teardown function, or undefined if a preload already set up a DOM.
+// Returns a teardown function, or undefined for "node" and when a DOM that is not Bun's is already on globalThis.
 // On failure it throws, or returns a warning string if `isFromComment`.
 function setup(
   name: "node" | "jsdom" | "happy-dom",
@@ -627,6 +640,7 @@ function setup(
   keep: boolean,
   isFromComment: boolean,
   sharesGlobal: boolean,
+  preloadsLeftDocument: boolean,
 ) {
   if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment);
   let last = left;
@@ -637,7 +651,15 @@ function setup(
     leave();
   }
   if (name === "node") return last && leaveLast();
-  if (!last && "document" in globalThis) return;
+  // None of Bun's windows is left on globalThis, so a DOM that is there is not Bun's: the `document` that the preloads left,
+  // or a document node with a window. `undefined` or a stub that a test file left is no DOM.
+  if (!last) {
+    if (preloadsLeftDocument && "document" in globalThis) return;
+    try {
+      const document = globalThis.document;
+      if (document?.nodeType === 9 && document.defaultView != null && !isDocumentOfKeptWindow(document)) return;
+    } catch {}
+  }
 
   let result;
   try {
@@ -654,7 +676,6 @@ function setup(
       return teardown;
     }
     leaveLast();
-    if ("document" in globalThis) return;
   }
   if (typeof result !== "string") result = enter(name, result, keep);
   if (typeof result !== "string") return result;

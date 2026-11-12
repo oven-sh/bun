@@ -1062,17 +1062,22 @@ pub(crate) fn parse_jest_fn_call<'a>(
 }
 
 /// Returns the identifier that [`get_node_chain`] of `callee` starts with, or `None` where that returns `None`.
-pub(crate) fn first_identifier_of_chain(callee: Expr<'_>) -> Option<Name<'_>> {
+pub(crate) fn start_of_chain(callee: Expr<'_>) -> Option<Expr<'_>> {
     let mut at = callee;
     while !at.is_parenthesized() {
         at = match at.tag() {
-            ExprTag::Ident => return at.as_ident(),
+            ExprTag::Ident => return Some(at),
             ExprTag::Dot | ExprTag::Index => at.object()?,
             ExprTag::Call | ExprTag::TaggedTemplate => at.as_call_like()?.callee(),
             _ => return None,
         };
     }
     None
+}
+
+/// The name of [`start_of_chain`].
+pub(crate) fn first_identifier_of_chain(callee: Expr<'_>) -> Option<Name<'_>> {
+    start_of_chain(callee)?.as_ident()
 }
 
 /// True if `name.a.b(..)` is a valid call for Jest, Vitest or Bun, whichever the file uses. In a file that uses none of

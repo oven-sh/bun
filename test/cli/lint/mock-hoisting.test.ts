@@ -31,6 +31,8 @@ type Case = {
    * fix, and the file prints the same as before.
    */
   dangerously?: string[];
+  /** The file has a second fix, which `--fix` applies: it changes the file, and the rule still reports it. */
+  partly?: true;
 };
 
 const dep = { "dep.js": 'console.log(TAG, "runs dep.js");\nmodule.exports = { greet: () => "real" };\n' };
@@ -40,6 +42,8 @@ const mock = (object: string) => `${object}.mock("./dep.js", () => ({ greet: () 
 const greets = (test = "test") => `${test}("greets", () => {\n  console.log(TAG, greet());\n});\n`;
 const spies = (object: string) =>
   `const spy = ${object}.fn(greet);\ntest("greets", () => {\n  console.log(TAG, spy());\n});\n`;
+const chain = (object: string) =>
+  `test("greets", async () => {\n  console.log(TAG, await ${object}.importActual("./dep.js").then(it => it.greet()));\n});\n`;
 
 // A function in `helpers/` calls `jest.requireActual("./dep.js")` and the like for a test in `tests/`. `bun test` looks
 // for `./dep.js` next to the file that the frame of the call's caller names. That's `helpers/actual.js`, unless the
@@ -468,6 +472,25 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["mock"],
         dangerously: ["runs dep.js", "real"],
       },
+      // The call is on a parameter. The fix of the import doesn't rename it, and its own fix would move it to the `vi`
+      // that the import then declares.
+      "a call on a parameter of the name": {
+        text:
+          'import { vitest, test } from "vitest";\n' +
+          'function register(vitest) {\n  vitest.doMock("./dep.js", () => ({ greet: () => "mock" }));\n}\n' +
+          "register({ doMock() {} });\n" +
+          'test("greets", () => {\n  console.log(TAG, require("./dep.js").greet());\n});\n',
+        prints: ["runs dep.js", "real"],
+        dangerously: ["mock"],
+        partly: true,
+      },
+      // `vitest` comes from `require()`, and `vi` is a global. The call isn't the last of its function, so it runs
+      // the same under both names.
+      "a chain on a name from require()": {
+        text: 'const { vitest, test } = require("vitest");\n' + chain("vitest"),
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js", "real"],
+      },
 
       "vitest.fn()": {
         text: 'const { vitest, test } = require("vitest");\n' + requireGreet + spies("vitest"),
@@ -501,6 +524,37 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
       },
       "a namespace": {
         text: 'import * as vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
+        prints: ["runs dep.js", "real"],
+      },
+      // The fix of an import renames every use of the name: the calls above it,
+      "a mock above the import": {
+        text: mock("vitest") + 'import { vitest, test } from "@effect/vitest";\n' + importGreet + greets(),
+        prints: ["runs dep.js", "mock"],
+      },
+      // a call that the rule doesn't report, which `bun test` takes for a call on `vitest` all the same,
+      "a mock that the rule doesn't report": {
+        text:
+          'import { test } from "vitest";\nimport { vitest } from "@effect/vitest";\n' +
+          importGreet +
+          '(vitest).mock("./dep.js", () => ({ greet: () => "mock" }));\n' +
+          greets(),
+        prints: ["runs dep.js", "mock"],
+      },
+      // and a use that is no call. `{ vitest }` becomes `{ vitest: vi }`.
+      "uses that are not calls": {
+        text:
+          'import { vitest, test } from "@effect/vitest";\n' +
+          "const api = vitest;\nconst apis = { vitest };\n" +
+          'test("greets", () => {\n  console.log(TAG, typeof api.fn, Object.keys(apis).join());\n});\n',
+        prints: ["function vitest"],
+      },
+      // Only the name changes in a chain. The rule reports the chain's first call, `vitest.importActual("./dep.js")`.
+      "a chain on the global": {
+        text: 'const { test } = require("vitest");\n' + chain("vitest"),
+        prints: ["runs dep.js", "real"],
+      },
+      "a chain on an import": {
+        text: 'import { vitest, test } from "vitest";\n' + chain("vitest"),
         prints: ["runs dep.js", "real"],
       },
     },
@@ -691,7 +745,7 @@ for (const group of groups) {
       test(`${held ? "only --fix-dangerously fixes" : "--fix fixes"}: ${name}`, () => {
         expect(results.get(tag)).toEqual({
           "as written": { prints: it.prints },
-          "--fix": { prints: it.prints, isFixed: !held, isReported: held },
+          "--fix": { prints: it.prints, isFixed: !held || it.partly === true, isReported: held },
           "--fix-dangerously": { prints: it.dangerously ?? it.prints, isFixed: true, isReported: false },
         });
       });

@@ -40,14 +40,14 @@ impl Rule for ConsistentVitestVi {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(object) = self.renamed_object(cx.file(), cx.state, node) {
+        if let Some((object, name)) = self.renamed(cx.file(), cx.state, node) {
             let (file, function) = (cx.file(), self.function);
-            // The fix of an import that declares the name renames the calls too, so that no file is renamed in part.
+            // The fix of an import that declares the name renames its uses too, so that no file is renamed in part.
             let has_import = || self.renamed_import(file).is_some();
             cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
                 .data("function", function)
                 .data("opposite", self.opposite)
-                .fix_where_safe(|| has_import() || !self.changes_module_mock_call(object), |fixer| (!has_import()).then(|| fixer.replace(object.outer_span(), function)));
+                .fix_where_safe(|| has_import() || !self.changes_module_mock_call(name), |fixer| (!has_import()).then(|| fixer.replace(name.span(), function)));
         }
     }
 }
@@ -61,22 +61,18 @@ fn span_of(specifier: &ImportEntry) -> Span {
 }
 
 impl ConsistentVitestVi {
-    /// The object of a call that the rule renames: the `vitest` of `vitest.fn()`.
-    fn renamed_object<'a>(&self, file: &'a File<'a>, opposite: Name<'a>, node: Expr<'a>) -> Option<Expr<'a>> {
+    /// A call that the rule reports: the object of its callee, where the report is, and the name that the fix renames. oxlint's fix replaces the object, which is the first call of `vitest.spyOn(a, "b").mockReturnValue(1)`.
+    fn renamed<'a>(&self, file: &'a File<'a>, opposite: Name<'a>, node: Expr<'a>) -> Option<(Expr<'a>, Expr<'a>)> {
         let member_expression = node.callee().and_then(as_member_expression)?;
-        if jest::first_identifier_of_chain(member_expression) != Some(opposite) {
-            return None;
-        }
+        let name = jest::start_of_chain(member_expression).filter(|it| it.as_ident() == Some(opposite))?;
         let vitest_fn = jest::parse_general_jest_fn_call(file, PossibleJestNode::new(node, jest::Runner::Vitest))?;
         let is_renamed = vitest_fn.kind == JestFnKind::General(JestGeneralFnKind::Vitest) && vitest_fn.name == self.opposite.as_bytes();
-        member_expression.object().filter(|_| is_renamed)
+        member_expression.object().filter(|_| is_renamed).map(|object| (object, name))
     }
 
-    /// The objects of all the calls that the rule renames.
-    fn renamed_objects<'a>(&self, file: &'a File<'a>) -> impl Iterator<Item = Expr<'a>> {
-        let opposite = file.find_name(self.opposite);
-        let calls = opposite.into_iter().flat_map(move |_| file.exprs_of_kind(ExprTag::Call));
-        calls.filter_map(move |it| self.renamed_object(file, opposite?, it))
+    /// What `import` declares under the name that the rule renames.
+    fn declared<'a>(&self, import: Import<'a>) -> Option<Symbol<'a>> {
+        Node::Stmt(import.stmt()).scope().resolve_bytes(self.opposite.as_bytes())
     }
 
     /// The import from Vitest that declares the name that the rule renames.
@@ -96,7 +92,7 @@ impl ConsistentVitestVi {
         };
         let file = cx.file();
         let report = cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI);
-        report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| !self.changes_module_mock_calls(file, import), |fixer| {
+        report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| !self.changes_uses(file, import), |fixer| {
             let specifiers: SmallVec<[ImportEntry; 8]> = import_entries_of(import).collect();
             let mut import_text = Vec::new();
             for specifier in specifiers.iter().filter(|it| !is_named(it, self.opposite)) {
@@ -112,17 +108,18 @@ impl ConsistentVitestVi {
                 }
                 fixer.replace(Span::new(span_of(specifiers.first()?).start, span_of(specifiers.last()?).end), import_text)
             };
-            // The calls get the new name in the same fix: a file with the import renamed and a call not, or the other way round, runs differently.
-            let mut calls: SmallVec<[Span; 8]> = self.renamed_objects(file).map(Expr::outer_span).collect();
-            calls.sort_unstable_by_key(|it| (it.start, it.end));
-            let mut end = import.stmt().span().end;
-            calls.retain(|it| {
-                let is_after = it.start >= end;
-                end = end.max(it.end);
-                is_after
-            });
+            // Every use of the name gets the new name in the same fix: a file with the import renamed and a use not, or the other way round, runs differently.
             let mut fixes = vec![renamed_import];
-            fixes.extend(calls.iter().map(|it| fixer.replace(*it, self.function)));
+            for reference in self.declared(import)?.references() {
+                let is_shorthand = |it: Expr<'a>| matches!(it.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand);
+                fixes.push(match (reference.expr(), reference.node()) {
+                    // `{ vitest }` becomes `{ vitest: vi }`, so the key stays the same.
+                    (Some(it), _) if is_shorthand(it) => fixer.replace(reference, format!("{}: {}", self.opposite, self.function)),
+                    (Some(_), _) | (None, Node::Type(_)) if !reference.is_write() => fixer.replace(reference, self.function),
+                    // An `export { vitest }` and a JSX tag need more than a new name.
+                    _ => return None,
+                });
+            }
             Some(fixes)
         });
     }
@@ -139,35 +136,46 @@ impl ConsistentVitestVi {
         }
     }
 
-    /// True if the new name of `import` and of the calls changes what `bun test` does with a module mock call: see [`bun_test`].
+    /// True if the new name changes what runs: a use of the name is then on another `function`, or `bun test` treats a module mock call in another way: see [`bun_test`].
     #[cold]
-    fn changes_module_mock_calls<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
-        let function = self.function.as_bytes();
+    fn changes_uses<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
+        let (function, opposite) = (self.function.as_bytes(), self.opposite.as_bytes());
         let declares = import_entries_of(import).any(|it| it.local_name().bytes() == function);
         // The import then declares `function`, which takes the calls on the global of that name.
         if !declares && !self.declares_known(import) && bun_test::global_has_module_mock_call(file, function) {
             return true;
         }
-        let mut mocks = self.renamed_objects(file).filter(|it| bun_test::is_object_of_module_mock_call(*it, function));
-        mocks.any(|object| {
-            // Where nothing declares `function`, the call is then on what the import declares.
-            let after = match Node::Expr(object).scope().resolve_bytes(function) {
+        // A file that has no other `function` and no module mock call on the name needs none of its names resolved.
+        let name = file.find_name(self.opposite);
+        let is_mock = |it: Expr<'a>| it.as_ident() == name && bun_test::is_object_of_module_mock_call(it, opposite);
+        if file.find_name(self.function).is_none() && !file.exprs_of_kind(ExprTag::Ident).any(is_mock) {
+            return false;
+        }
+        let Some(declared) = self.declared(import) else {
+            return false;
+        };
+        let (scope, before) = (declared.scope(), bun_test::is_known(opposite, Some(declared)));
+        declared.references().any(|it| {
+            // A scope between the import and the use declares `function`, like a parameter of that name: the use is then on that one.
+            let is_captured = it.scope().chain().take_while(|it| *it != scope).any(|it| it.get_bytes(function).is_some());
+            // Where nothing declares `function`, the use is then on what the import declares.
+            let after = match it.scope().resolve_bytes(function) {
                 None => self.declares_known(import),
                 declared => bun_test::is_known(function, declared),
             };
-            object.as_ident().is_some_and(|it| bun_test::is_known(it.bytes(), object.symbol()) != after)
+            is_captured || before != after && it.expr().is_some_and(is_mock)
         })
     }
 
-    /// True if `object` and the `function` that replaces it are of different kinds for `bun test`, which changes what it does with the call.
+    /// True if `name` and the `function` that replaces it are of different kinds for `bun test`, which changes what it does with the call.
     #[cold]
-    fn changes_module_mock_call(&self, object: Expr<'_>) -> bool {
+    fn changes_module_mock_call(&self, name: Expr<'_>) -> bool {
         let function = self.function.as_bytes();
         // The rule doesn't resolve the file's names for any other call.
-        if !bun_test::is_object_of_module_mock_call(object, function) {
+        if !bun_test::is_object_of_module_mock_call(name, function) {
             return false;
         }
-        let replacement = Node::Expr(object).scope().resolve_bytes(function);
-        object.as_ident().is_some_and(|it| bun_test::is_known(it.bytes(), object.symbol()) != bun_test::is_known(function, replacement))
+        let replacement = Node::Expr(name).scope().resolve_bytes(function);
+        bun_test::is_known(self.opposite.as_bytes(), name.symbol()) != bun_test::is_known(function, replacement)
     }
 }

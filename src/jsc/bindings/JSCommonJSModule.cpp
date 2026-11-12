@@ -213,50 +213,79 @@ private:
     const unsigned m_overlayShape;
 };
 
-// Whether `text` is nothing but what may stand on one side of a wrapper function that is the whole program.
-static bool isBesideWrapper(StringView text, char16_t parenthesis)
+static unsigned endOfLine(StringView text, unsigned start)
 {
-    unsigned i = 0;
-    const auto skipLine = [&] {
-        while (i < text.length() && text[i] != '\n' && text[i] != '\r' && text[i] != 0x2028 && text[i] != 0x2029)
-            i++;
-    };
-    if (text.startsWith("#!"_s))
-        skipLine();
+    // Each search stops at the last one's result, so that a file with many comments is not searched to its end for each.
+    size_t end = std::min<size_t>(text.length(), text.find(u'\n', start));
+    end = std::min(end, text.left(end).find(u'\r', start));
+    if (!text.is8Bit()) {
+        end = std::min(end, text.left(end).find(u'\u2028', start));
+        end = std::min(end, text.left(end).find(u'\u2029', start));
+    }
+    return end;
+}
+
+static unsigned skipTrivia(StringView text, unsigned i)
+{
     while (i < text.length()) {
         auto rest = text.substring(i);
-        if (rest.startsWith("//"_s)) {
-            skipLine();
+        if (rest.startsWith("//"_s) || rest.startsWith("<!--"_s) || rest.startsWith("-->"_s)) {
+            i = endOfLine(text, i);
         } else if (rest.startsWith("/*"_s)) {
             size_t end = text.find("*/"_s, i + 2);
             if (end == notFound)
-                return false;
+                return text.length();
             i = end + 2;
-        } else if (char16_t c = text[i]; c == '"' || c == '\'') {
-            // A directive. Without the semicolon it could be what the function is an argument of.
-            size_t end = i + 1;
-            while (end < text.length() && text[end] != c && text[end] != '\n' && text[end] != '\r')
-                end += text[end] == '\\' ? 2 : 1;
-            if (end + 1 >= text.length() || text[end] != c || text[end + 1] != ';')
-                return false;
-            i = end + 2;
-        } else if (c == parenthesis || c == ';' || JSC::isStrWhiteSpace(c)) {
+        } else if (JSC::isStrWhiteSpace(text[i])) {
             i++;
-        } else {
-            return false;
-        }
+        } else
+            break;
     }
-    return true;
+    return i;
 }
 
-// Whether `function` is the whole of the program whose completion value it is, so that nothing else can refer to it.
-static bool isWholeProgram(JSFunction* function, const JSC::SourceProvider& program)
+// Whether `function` is all of a statement of the program whose completion value it is, with nothing but directives in front.
+// Nothing else can refer to it then: what comes behind a finished statement cannot name its value. The program has run, so
+// its text has no syntax error, and a directive that is called with the function has thrown.
+static bool isWholeStatement(JSFunction* function, const JSC::SourceProvider& program)
 {
     FunctionExecutable* executable = function->jsExecutable();
     if (executable->source().provider() != &program)
         return false;
     StringView text = program.source();
-    return isBesideWrapper(text.left(executable->functionStart()), '(') && isBesideWrapper(text.substring(executable->source().endOffset()), ')');
+
+    StringView front = text.left(executable->functionStart());
+    unsigned parentheses = 0;
+    unsigned i = front.startsWith("#!"_s) ? endOfLine(front, 0) : 0;
+    while ((i = skipTrivia(front, i)) < front.length()) {
+        char16_t c = front[i];
+        i++;
+        if (c == '(') {
+            parentheses++;
+        } else if (c == '"' || c == '\'') {
+            while (i < front.length() && front[i] != c && front[i] != '\n' && front[i] != '\r')
+                i += front[i] == '\\' ? 2 : 1;
+            if (i >= front.length() || front[i] != c)
+                return false;
+            i++;
+        } else if (c != ';')
+            return false;
+    }
+    // A declaration, whose name refers to the function, if the statement starts with it and it is no arrow function.
+    if (!parentheses && !executable->isArrowFunction())
+        return false;
+
+    StringView back = text.substring(executable->source().endOffset());
+    i = skipTrivia(back, 0);
+    for (; parentheses; parentheses--) {
+        if (i >= back.length() || back[i] != ')')
+            return false;
+        i = skipTrivia(back, i + 1);
+    }
+    if (i >= back.length() || back[i] == ';' || back[i] == '{')
+        return true;
+    // A word starts another statement, unless it is `in` or `instanceof`.
+    return (isASCIIAlpha(back[i]) || back[i] == '_' || back[i] == '$') && !back.substring(i).startsWith("in"_s);
 }
 
 // The require map lacks the compiled files.
@@ -404,7 +433,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // under any other chain, the one it was made in included, that code reads and writes variables at wrong places.
     JSModuleGraph* graph = moduleObject->moduleGraph();
     JSFunction* movedWrapper = nullptr;
-    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && isWholeProgram(wrapper, *code.provider())) {
+    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && isWholeStatement(wrapper, *code.provider())) {
         movedWrapper = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
         fnValue = movedWrapper;
     }

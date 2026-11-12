@@ -884,6 +884,31 @@ const dir = String(
       console.log(JSON.stringify((await graph.import(import.meta.dir + "/wraps-commonjs-with-directive.cjs")).default()));
       process.exit(0);
     `,
+    "wraps-commonjs-in.cjs": `
+      const Module = require("node:module");
+      const { wrapper } = Module;
+      const [before, behind] = process.env.PROGRAM.split("PARAMS");
+      Module.wrapper = [before + "(exports, require, module) {", "\\n" + behind];
+      require.extensions[".wrapped"] = (module, filename) =>
+        module._compile("module.exports = () => typeof tag;", filename);
+      module.exports = require("./payload.wrapped");
+      Module.wrapper = wrapper;
+    `,
+    // Two graphs: the second one takes the code that the first linked, and does not run the rest of the program again.
+    "commonjs-wrapper-in.mjs": `
+      const read = async () => {
+        const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
+        return (await graph.import(import.meta.dir + "/wraps-commonjs-in.cjs")).default();
+      };
+      const types = [await read()];
+      if (process.env.GRAPHS === "2") types.push(await read());
+      // Under its own scope: a module that this one is not.
+      const module = {};
+      globalThis.kept?.({}, undefined, module);
+      if (globalThis.kept) types.push(module.exports());
+      console.log(JSON.stringify(types));
+      process.exit(0);
+    `,
     "commented-commonjs-wrapper.mjs": `
       const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
       console.log(JSON.stringify((await graph.import(import.meta.dir + "/wraps-commonjs-with-comments.cjs")).default()));
@@ -3879,6 +3904,30 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       expect(await runsFixture(script)).toEqual({ stdout: `"string"`, exitCode: 0 });
     },
   );
+  // PARAMS is `(exports, require, module) {` and the text of the module.
+  test.each([
+    ["'use strict'\n;(functionPARAMS})", ["string", "string"]],
+    ["'use strict' /* c */ ;(functionPARAMS})", ["string", "string"]],
+    ["<!-- c\n(functionPARAMS})\n--> c", ["string", "string"]],
+    ["(functionPARAMS})\nfunction behind() {}", ["string", "string"]],
+    ["(functionPARAMS})\nconst behind = 1;", ["string", "string"]],
+    ["(functionPARAMS});{}", ["string", "string"]],
+    // Something else refers to the function of these, and calls it.
+    ["globalThis.kept = (functionPARAMS})", ["undefined", "undefined"]],
+    ["(globalThis.kept = functionPARAMS}, 0) || globalThis.kept", ["undefined", "undefined"]],
+    ["function keptPARAMS}\nkept", ["undefined", "undefined"]],
+    ["function keptPARAMS};kept", ["undefined", "undefined"]],
+    ["'use strict';function keptPARAMS};kept", ["undefined", "undefined"]],
+  ])("what a CommonJS module of two graphs sees in the program %j", async (program, types) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "commonjs-wrapper-in.mjs")],
+      env: { ...bunEnv, PROGRAM: program, GRAPHS: types[0] === "string" ? "2" : "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(types) + "\n", stderr: "", exitCode: 0 });
+  });
   test("a CommonJS module that had not run yet when dispose() was called never does", async () => {
     expect(await runsFixture("disposed-before-its-commonjs-ran.mjs")).toEqual({
       stdout: `{"imported":"ERR_INVALID_STATE","told":[]}`,

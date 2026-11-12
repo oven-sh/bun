@@ -16,6 +16,8 @@ pub(crate) struct FallbackModule {
     // PackageJSONs and we hand out `&'static` borrows into it.
     pub package_json: &'static PackageJSON,
     pub code: fn() -> &'static str,
+    /// False for `timers/promises`: the bare name can be a file of a package, so only `node:timers/promises` is the builtin.
+    pub matches_bare_specifier: bool,
 }
 
 // This workaround exists to allow bun_core::runtime_embed_file to work.
@@ -179,6 +181,7 @@ fn init_modules() {
                     path: *path,
                     package_json: pkg,
                     code: *code,
+                    matches_bare_specifier: !bun_core::strings::contains_char(name, b'/'),
                 },
             );
         }

@@ -2324,10 +2324,9 @@ impl<'a> Resolver<'a> {
                 } else {
                     result.jsx = self.opts.jsx.clone();
 
-                    // A bare `timers/promises` can be a file of a package: only the `node:` name is the builtin.
                     if let Some(fallback_module) =
                         NodeFallbackModules::map().get(import_path_without_node_prefix)
-                        && (had_node_prefix || !strings::contains_char(import_path, b'/'))
+                        && (had_node_prefix || fallback_module.matches_bare_specifier)
                     {
                         result.path_pair.primary = fallback_module.path;
                         result.module_type = options::ModuleType::Cjs;

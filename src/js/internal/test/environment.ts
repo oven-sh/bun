@@ -100,7 +100,11 @@ function windowProperty(win: any, key: string): PropertyDescriptor {
   } as PropertyDescriptor;
 }
 
-function windowProperties(win: any, additionalKeys: string[]): Pick<Environment, "window" | "properties" | "keys"> {
+function windowProperties(
+  win: any,
+  additionalKeys: string[],
+  namesOfGlobal: Map<string, true> | undefined,
+): Pick<Environment, "window" | "properties" | "keys"> {
   const properties: Properties = new $Map();
   const keys: string[] = [];
   function take(key: string) {
@@ -113,10 +117,13 @@ function windowProperties(win: any, additionalKeys: string[]): Pick<Environment,
   const names = $Object.$getOwnPropertyNames(win);
   for (let i = 0; i < names.length; i++) {
     const key = names[i];
+    if (properties.$has(key)) continue;
+    // As in vitest, globalThis keeps a name that it has. A name that a test file left there is not one of `namesOfGlobal`.
+    const isOfGlobal = key in globalThis && (!namesOfGlobal || namesOfGlobal.$has(key));
     // Bun has `onerror` and `onmessage` globals but Node doesn't, so vitest ends up with the window's.
     // With --isolate=modules, a name can be on globalThis only because the last file's window put it there.
     const isFromLastWindow = originalDescriptors.$has(key) && !originalDescriptors.$get(key);
-    if (!(key in globalThis) || isFromLastWindow || key === "onerror" || key === "onmessage") take(key);
+    if (!isOfGlobal || isFromLastWindow || key === "onerror" || key === "onmessage") take(key);
   }
   for (let i = 0; i < SELF_KEYS.length; i++) properties.$set(SELF_KEYS[i], dataProperty(globalThis, true));
   const { document } = win;
@@ -262,7 +269,12 @@ function acceptBinaryDataOfOtherRealms(win: any) {
   }
 }
 
-function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any): Environment | string {
+function createJSDOM(
+  requireFromTest: NodeJS.Require,
+  exports: any,
+  options: any,
+  namesOfGlobal: Map<string, true> | undefined,
+): Environment | string {
   const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = exports;
   if (typeof JSDOM !== "function") return "the package does not export JSDOM";
   const {
@@ -301,7 +313,7 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   });
   const win = dom.window;
   acceptNativeAbortSignals(win);
-  const globals = windowProperties(win, []);
+  const globals = windowProperties(win, [], namesOfGlobal);
   const forgetLastFile = catchWindowErrors(win, globals.properties);
 
   const getBlobImpl = blobImplGetter(requireFromTest, win);
@@ -349,7 +361,12 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   return { ...globals, forgetLastFile, close: () => win.close() };
 }
 
-function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environment | string {
+function createHappyDOM(
+  _: NodeJS.Require,
+  exports: any,
+  options: any,
+  namesOfGlobal: Map<string, true> | undefined,
+): Environment | string {
   const Window = exports.GlobalWindow || exports.Window;
   if (typeof Window !== "function") return "the package does not export Window";
   const win = new Window({
@@ -362,7 +379,7 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
   const globals = windowProperties(win, [
     "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
     "URLSearchParams", "FormData",
-  ]);
+  ], namesOfGlobal);
   addReportError(win, globals);
   return {
     ...globals,
@@ -381,6 +398,30 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
 const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
+
+// Without --isolate, the test files of every environment share globalThis. A name that one of them left there does not
+// keep a window that opens later from giving globalThis its own: leave() puts the file's back. What does keep it are
+// the names that globalThis had before the first test file, Bun's and the preloads', and what a preload has stubbed.
+const listNamesBeforeTestFiles: () => string[] | undefined = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionTestEnvironmentNamesBeforeTestFiles",
+  0,
+);
+// The preloads run with a window's names on globalThis: what the enter() before them defined, and over what.
+let enteredBeforeTestFiles: { defined: string[]; originals: (PropertyDescriptor | undefined)[] } | undefined;
+
+// Undefined while no test file has run: every name on globalThis is then one of those.
+function namesOfGlobalBeforeTestFiles() {
+  const list = listNamesBeforeTestFiles();
+  if (!list) return;
+  const names = new $Map<string, true>();
+  for (let i = 0; i < list.length; i++) names.$set(list[i], true);
+  if (enteredBeforeTestFiles) {
+    const { defined, originals } = enteredBeforeTestFiles;
+    for (let i = 0; i < defined.length; i++) if (!originals[i]) names.$delete(defined[i]);
+  }
+  return names;
+}
 
 function isClosed(window: Environment["window"]) {
   return window.closed || !window.document;
@@ -427,7 +468,7 @@ function open(
   optionsText: string | undefined,
   file: string,
   keep: boolean,
-  beforeCreating: () => void,
+  beforeCreating: () => Map<string, true> | undefined,
   sharesGlobal = false,
 ) {
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
@@ -441,8 +482,8 @@ function open(
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
   if (last && !isClosed(last.window)) return last;
-  // Which names a new window gives globalThis depends on the names that are there.
-  beforeCreating();
+  // Which names a new window gives globalThis depends on the names that are there, and on the names that this returns.
+  const namesOfGlobal = beforeCreating();
 
   let options;
   try {
@@ -450,7 +491,8 @@ function open(
   } catch (error) {
     return `its options are not JSON: ${(error as Error).message}`;
   }
-  const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, found.load(), options ?? {});
+  const create = name === "jsdom" ? createJSDOM : createHappyDOM;
+  const environment = create(requireFromTest, found.load(), options ?? {}, namesOfGlobal);
   if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
 }
@@ -474,7 +516,7 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
 // and defined again a few times. So the last file's names stay until a file needs another environment.
 let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
 
-function enter(name: string, environment: Environment, keep: boolean) {
+function enter(name: string, environment: Environment, keep: boolean, isBeforeTestFiles: boolean) {
   const { properties, keys } = environment;
   const defined: string[] = [];
   const originals: (PropertyDescriptor | undefined)[] = [];
@@ -494,6 +536,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
     $arrayPush(originals, original);
   }
   environment.forgetLastFile?.();
+  if (isBeforeTestFiles) enteredBeforeTestFiles = { defined, originals };
 
   function teardown(isLoadingFileAgain: boolean) {
     if (isLoadingFileAgain) {
@@ -596,7 +639,7 @@ function setupSharedGlobal(
   if (name === "node") return uninstallFromSharedGlobal();
   let result;
   try {
-    result = open(name, optionsText, file, false, () => {}, true);
+    result = open(name, optionsText, file, false, () => undefined, true);
   } catch (error) {
     if (!isFromComment) throw error;
     result = String((error as Error)?.message ?? error);
@@ -639,9 +682,15 @@ function setup(
   if (name === "node") return last && leaveLast();
   if (!last && "document" in globalThis) return;
 
+  let isBeforeTestFiles = false;
   let result;
   try {
-    result = open(name, optionsText, file, keep, () => last && leaveLast());
+    result = open(name, optionsText, file, keep, () => {
+      if (last) leaveLast();
+      const names = keep ? namesOfGlobalBeforeTestFiles() : undefined;
+      isBeforeTestFiles = keep && !names;
+      return names;
+    });
   } catch (error) {
     if (last) leaveLast();
     if (!isFromComment) throw error;
@@ -656,7 +705,7 @@ function setup(
     leaveLast();
     if ("document" in globalThis) return;
   }
-  if (typeof result !== "string") result = enter(name, result, keep);
+  if (typeof result !== "string") result = enter(name, result, keep, isBeforeTestFiles);
   if (typeof result !== "string") return result;
 
   const message = `Cannot set up the "${name}" test environment for "${file}": ${result}`;

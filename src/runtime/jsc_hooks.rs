@@ -979,6 +979,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             (*vm).transpiler.options.own_test_globals =
                 crate::test_runner::jest::Jest::own_globals(&*global)
                     .map_err(|_| bun_jsc::CrateError::JSError)?;
+            // A preload and the Vitest globals give the global names that a new one lacks.
+            let has_names_of_its_own = n != 0 || (*vm).transpiler.options.vitest_globals;
+            crate::test_runner::environment::will_load_test_file(&*vm, has_names_of_its_own);
         }
     }
 

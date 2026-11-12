@@ -8,6 +8,8 @@
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AOTRealmStartup.h>
+#include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 
 const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId);
 
@@ -27,17 +29,23 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestGlobals__g
 
 namespace Bun {
 
+static Zig::GlobalObject* createRealm(JSC::VM& vm, bool runsCode)
+{
+    // As in Zig__GlobalObject__createForTestIsolation(): the concurrent marker must not see a global that is half initialized.
+    JSC::DeferGC deferGC(vm);
+    auto identifier = WebCore::ScriptExecutionContext::generateIdentifier();
+    auto& methodTable = runsCode && vm.hasCompiledCode() ? methodTableOfProgram(identifier) : Zig::GlobalObject::globalObjectMethodTable();
+    auto* realm = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm), identifier, &methodTable);
+    realm->setConsole(static_cast<Bun::ConsoleObject&>(*defaultGlobalObject(vm)->consoleClient()).m_client);
+    return realm;
+}
+
 // Not a derived realm of the test file's global, which would be retired with the file.
 static Zig::GlobalObject* lastingRealm(JSC::VM& vm)
 {
     auto* clientData = WebCore::clientData(vm);
     if (!clientData->testEnvironmentRealm) {
-        // As in Zig__GlobalObject__createForTestIsolation(): the concurrent marker must not see a global that is half initialized.
-        JSC::DeferGC deferGC(vm);
-        auto identifier = WebCore::ScriptExecutionContext::generateIdentifier();
-        auto& methodTable = vm.hasCompiledCode() ? methodTableOfProgram(identifier) : Zig::GlobalObject::globalObjectMethodTable();
-        auto* realm = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm), identifier, &methodTable);
-        realm->setConsole(static_cast<Bun::ConsoleObject&>(*defaultGlobalObject(vm)->consoleClient()).m_client);
+        auto* realm = createRealm(vm, true);
 #if ENABLE(AOT)
         if (vm.hasCompiledCode())
             JSC::AOT::acceptForeignBinaryData(realm);
@@ -51,6 +59,48 @@ static Zig::GlobalObject* lastingRealm(JSC::VM& vm)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTestEnvironmentModuleOfLastingRealm, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return Bun__TestEnvironment__setupFunction(lastingRealm(JSC::getVM(globalObject)));
+}
+
+// What `in` finds on a global: its string keys and those of the objects on its prototype chain.
+static RefPtr<JSC::PropertyNameArray> namesOf(JSC::JSGlobalObject* global)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    global->getPropertyNames(global, names, JSC::DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return names.releaseData();
+}
+
+// For environment.ts: the names that the test files' global had before the first of them ran, and the names that a
+// preload has stubbed. Undefined while no test file has run: the global still has just those names.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionTestEnvironmentNamesBeforeTestFiles, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(vm);
+    auto* clientData = WebCore::clientData(vm);
+    if (!clientData->testFilesHaveStarted)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    if (!clientData->namesBeforeTestFiles) {
+        // Nothing had run on the global then, so it had the names of a new one. That one is not kept.
+        clientData->namesBeforeTestFiles = namesOf(createRealm(vm, false));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    JSC::MarkedArgumentBuffer names;
+    for (auto& name : clientData->namesBeforeTestFiles->propertyNameVector())
+        names.append(JSC::jsString(vm, name.string()));
+    // A hook of a preload stubs in the first test file, and the runner makes a preload's stubs again after each file.
+    if (JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get()) {
+        auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(stubs), JSC::IterationKind::Entries);
+        while (true) {
+            auto [name, stub] = iterator->nextWithAdvance(vm);
+            if (!name)
+                break;
+            names.append(name);
+        }
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names)));
 }
 
 // Whether every change to an own property of `object` changes its structure or one of its property slots.
@@ -148,3 +198,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionDeleteOwnProperty, __attribut
 }
 
 } // namespace Bun
+
+// `bun test` without --isolate: the preloads are done and a test file loads next. The first call keeps the names of the
+// global. `hasNamesOfItsOwn` is false if nothing has run on it: a new global then has the same names, and none are kept.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__TestEnvironment__willLoadTestFile(Zig::GlobalObject* globalObject, bool hasNamesOfItsOwn)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* clientData = WebCore::clientData(vm);
+    if (clientData->testFilesHaveStarted)
+        return;
+    clientData->testFilesHaveStarted = true;
+    if (!hasNamesOfItsOwn)
+        return;
+    // A Proxy that a preload put on the prototype chain can throw. Then the names of a new global stand in.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    clientData->namesBeforeTestFiles = Bun::namesOf(globalObject);
+    (void)scope.tryClearException();
+}

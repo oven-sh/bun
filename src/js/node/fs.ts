@@ -1061,7 +1061,7 @@ function opendirNotDirError(path) {
 // which run the eager path check with an async stat instead.
 const kAlreadyValidated = Symbol("kAlreadyValidated");
 
-/** A copy of a path that is bytes. A string, a URL, or a view that cannot be read (the stat that follows rejects it) is returned as it is. */
+/** A copy of a path that is bytes. A URL, or a view that cannot be read (the stat that follows rejects it), is returned as it is. */
 function ownPathBytes(path) {
   try {
     if (types.isArrayBufferView(path)) {
@@ -1115,7 +1115,7 @@ class Dir {
     }
     this.#handle = $toLength(handle);
     this.#path = path;
-    this.#opened = ownPathBytes(path);
+    this.#opened = typeof path === "string" ? path : ownPathBytes(path);
     this.#options = options;
   }
 

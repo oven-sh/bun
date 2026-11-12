@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/fs.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e8c6eb8af18aced8a40f327efadf93619fcb38001a72242efa36f4f6d69e0fdb.
+// Written against that file with the SHA-256 be8dedde709c3c7c5ca986fdda0aceb9ef95d03e73d4312d0964a5599f487ca7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:fs"
@@ -1148,7 +1148,7 @@ function opendirNotDirError(path: PathLike) {
 // which run the eager path check with an async stat instead.
 const kAlreadyValidated = Symbol("kAlreadyValidated");
 
-/** A copy of a path that is bytes. A string, a URL, or a view that cannot be read (the stat that follows rejects it) is returned as it is. */
+/** A copy of a path that is bytes. A URL, or a view that cannot be read (the stat that follows rejects it), is returned as it is. */
 function ownPathBytes(path) {
   try {
     if (types.isArrayBufferView(path)) {
@@ -1202,7 +1202,7 @@ class Dir {
     }
     this.#handle = $toLength(handle);
     this.#path = path;
-    this.#opened = ownPathBytes(path);
+    this.#opened = typeof path === "string" ? path : ownPathBytes(path);
     this.#options = options;
   }
 

@@ -24,6 +24,9 @@ pub enum PathLike<'a> {
     Joined(Box<JoinedPath>),
 }
 
+// Every parsed `node:fs` argument struct holds one or two of these by value.
+const _: () = assert!(core::mem::size_of::<PathLike<'static>>() <= 56);
+
 /// A relative path that starts at the working directory in the executable, which the system does not know.
 #[derive(Clone)]
 pub struct JoinedPath {
@@ -63,7 +66,7 @@ impl<'a> PathLike<'a> {
         PathLike::Utf8(Utf8Bytes::Owned(bytes))
     }
 
-    /// The bytes as a `Vec<u8>`: moved out of [`PathLike::owned`], copied otherwise.
+    /// The bytes as a `Vec<u8>`: moved out of [`PathLike::owned`] or a buffer path, copied otherwise.
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Bytes(b) => {

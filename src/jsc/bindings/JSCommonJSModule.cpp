@@ -74,6 +74,7 @@
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSFunctionWithFields.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
@@ -481,6 +482,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
+// Of the function that `require.resolve.paths` is: the module it answers for, whatever it is called on.
+static constexpr auto moduleOfPathsFunction = static_cast<JSFunctionWithFields::Field>(0);
+
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -502,26 +506,30 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
         }
     }
 
-    // This function is not bound with the module object. This is because nearly
-    // no one uses this and it is not worth creating an extra bound function for
-    // every single module. Instead, we can unwrap the bound function that we
-    // can see through the `this`.
-    JSValue thisValue = callframe->thisValue();
-    auto* requireResolveBound = dynamicDowncast<JSC::JSBoundFunction>(thisValue);
-    if (!requireResolveBound) [[unlikely]] {
-        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
-    }
-    auto* boundModule = dynamicDowncast<Bun::JSCommonJSModule>(requireResolveBound->boundThis());
-    if (!boundModule) [[unlikely]] {
-        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
-    }
-    JSString* filename = dynamicDowncast<JSString>(boundModule->filename());
-    if (!filename) [[unlikely]] {
-        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::PathResolveModule parent = { .paths = nullptr, .filename = filename, .pathsArrayLazy = true };
+    auto* module = uncheckedDowncast<JSCommonJSModule>(uncheckedDowncast<JSFunctionWithFields>(callframe->jsCallee())->getField(moduleOfPathsFunction));
+    // Without a file name a relative request is looked up in ".", as in Node.js.
+    Bun::PathResolveModule parent = { .paths = nullptr, .filename = dynamicDowncast<JSString>(module->filename()), .pathsArrayLazy = true };
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent)));
+}
+
+// `paths` of a `require.resolve` is made when it is first read: a module that never reads it has no function for it.
+JSC_DEFINE_CUSTOM_GETTER(jsRequireResolvePathsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
+{
+    JSValue receiver = JSValue::decode(thisValue);
+    auto* requirer = requirerOf(receiver);
+    if (!requirer)
+        return JSValue::encode(jsUndefined());
+
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* resolve = asObject(receiver);
+    NativeExecutable* executable = vm.getHostFunction(requireResolvePathsFunction, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, WebCore::builtinNames(vm).pathsPublicName().string());
+    // `globalObject` can be a node:vm context. See jsRequireCacheGetter.
+    auto* paths = JSFunctionWithFields::create(vm, resolve->globalObject(), executable);
+    paths->setField(vm, moduleOfPathsFunction, requirer);
+    // The next read finds it on the `require.resolve` itself.
+    if (resolve->structure()->isStructureExtensible())
+        resolve->putDirect(vm, propertyName, paths, 0);
+    return JSValue::encode(paths);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -556,7 +564,8 @@ JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* 
     return JSC::profiledCall(globalObject, ProfilingReason::API, createRequireCache, JSC::getCallData(createRequireCache), jsUndefined(), args);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
+// A store to `cache`, `extensions` or `resolve.paths` makes an own property of the function it is stored on.
+JSC_DEFINE_CUSTOM_SETTER(jsRequireOwnPropertySetter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
@@ -575,25 +584,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globa
     return JSValue::encode(thisObject->lazyRequireExtensionsObject());
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
-}
-
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
-    { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
+    { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireResolvePathsGetter, jsRequireOwnPropertySetter } },
 };
 
 static const HashTableValue RequireFunctionPrototypeValues[] = {
-    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
-    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireExtensionsSetter } },
+    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireOwnPropertySetter } },
+    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireOwnPropertySetter } },
 };
 
 Structure* RequireFunctionPrototype::createStructure(

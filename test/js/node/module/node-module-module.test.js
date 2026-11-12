@@ -1271,6 +1271,268 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
   });
 
+  describe("require.resolve.paths", () => {
+    // Calls the `paths` of `own` in every way, with a bare and with a relative request, and
+    // answers [the first folder, the folders] of each call, relative to `root`.
+    const callShapes = `
+      const path = require("node:path");
+      exports.callShapes = (own, other, root) => {
+        const where = list => list.map(folder => path.relative(root, folder).split(path.sep).join("/") || ".");
+        const { paths } = own.resolve;
+        // vitest's vm pools do this with the resolve of a createRequire().
+        const copied = id => other.resolve(id);
+        copied.paths = own.resolve.paths;
+        const shapes = {
+          method: request => own.resolve.paths(request),
+          destructured: request => paths(request),
+          callback: request => [request].map(own.resolve.paths)[0],
+          copied: request => copied.paths(request),
+          calledOnOtherResolve: request => own.resolve.paths.call(other.resolve, request),
+          reflectApply: request => Reflect.apply(own.resolve.paths, undefined, [request]),
+          bound: request => own.resolve.paths.bind(other.resolve)(request),
+        };
+        const answers = {};
+        for (const [shape, call] of Object.entries(shapes)) answers[shape] = [where(call("pkg"))[0], where(call("./x"))];
+        return answers;
+      };
+    `;
+    const answersFrom = folder => {
+      const answer = [folder === "." ? "node_modules" : `${folder}/node_modules`, [folder]];
+      return {
+        method: answer,
+        destructured: answer,
+        callback: answer,
+        copied: answer,
+        calledOnOtherResolve: answer,
+        reflectApply: answer,
+        bound: answer,
+      };
+    };
+
+    test("answers for the module of its require, however it is called", async () => {
+      using dir = tempDir("require-resolve-paths-cjs", {
+        "shapes.cjs": callShapes,
+        "main.cjs": `
+          const path = require("node:path");
+          const Module = require("node:module");
+          const { callShapes } = require("./shapes.cjs");
+          const other = Module.createRequire(path.join(__dirname, "other", "x.js"));
+          const compiled = new Module(path.join(__dirname, "compiled", "c.js"));
+          compiled.filename = compiled.id;
+          compiled.paths = Module._nodeModulePaths(path.dirname(compiled.id));
+          compiled._compile("module.exports = require;", compiled.id);
+          console.log(JSON.stringify({
+            file: callShapes(require, other, __dirname),
+            createRequire: callShapes(other, require, __dirname),
+            compile: callShapes(compiled.exports, other, __dirname),
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        file: answersFrom("."),
+        createRequire: answersFrom("other"),
+        compile: answersFrom("compiled"),
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("answers for an ES module's createRequire() and import.meta.require, however it is called", async () => {
+      using dir = tempDir("require-resolve-paths-esm", {
+        "shapes.cjs": callShapes,
+        "main.mjs": `
+          import { createRequire } from "node:module";
+          import path from "node:path";
+          const made = createRequire(import.meta.url);
+          const { callShapes } = made("./shapes.cjs");
+          const other = createRequire(path.join(import.meta.dirname, "other", "x.js"));
+          console.log(JSON.stringify({
+            createRequire: callShapes(made, other, import.meta.dirname),
+            importMetaRequire: callShapes(import.meta.require, other, import.meta.dirname),
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ createRequire: answersFrom("."), importMetaRequire: answersFrom(".") });
+      expect(exitCode).toBe(0);
+    });
+
+    test("answers for the module of `bun -e` without its require.resolve", async () => {
+      using dir = tempDir("require-resolve-paths-eval", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const path = require("node:path");
+           const where = list => list.map(folder => path.relative(process.cwd(), folder) || ".");
+           const { paths } = require.resolve;
+           console.log(JSON.stringify([where(paths("./x")), where(["./x"].map(require.resolve.paths)[0])]));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([["."], ["."]]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("is kept on its require.resolve once it is read, one for each require", async () => {
+      using dir = tempDir("require-resolve-paths-shape", {
+        "main.cjs": `
+          const path = require("node:path");
+          const { createRequire } = require("node:module");
+          const where = list => list.map(folder => path.relative(__dirname, folder).split(path.sep).join("/") || ".");
+          const fresh = name => createRequire(path.join(__dirname, name, "x.js"));
+          const describeOwn = resolve => {
+            const d = Object.getOwnPropertyDescriptor(resolve, "paths");
+            return d && { value: typeof d.value, writable: d.writable, enumerable: d.enumerable, configurable: d.configurable };
+          };
+          const collect = globalThis.gc ?? (() => Bun.gc(true));
+          const out = {};
+
+          const read = fresh("read");
+          out.sameOnEveryRead = read.resolve.paths === read.resolve.paths;
+          out.ownOnceRead = [describeOwn(read.resolve), Object.keys(read.resolve)];
+          collect();
+          out.sameAfterCollection = read.resolve.paths === Object.getOwnPropertyDescriptor(read.resolve, "paths").value;
+          out.oneForEachRequire = read.resolve.paths !== fresh("read").resolve.paths;
+          out.assignCopiesOnceRead = where(Object.assign(id => id, read.resolve).paths("./x"));
+
+          const stored = fresh("stored");
+          stored.resolve.paths = () => "stored";
+          out.stored = [stored.resolve.paths("./x"), describeOwn(stored.resolve)];
+
+          const defined = fresh("defined");
+          Object.defineProperty(defined.resolve, "paths", { value: "defined", configurable: true });
+          out.defined = defined.resolve.paths;
+
+          const frozen = fresh("frozen");
+          Object.freeze(frozen.resolve);
+          out.frozen = where(frozen.resolve.paths("./x"));
+
+          out.boundResolveHasNone = typeof fresh("bound").resolve.bind(null).paths;
+          out.aboveResolveHasNone = typeof Object.getPrototypeOf(require.resolve).paths;
+
+          const kept = fresh("kept").resolve.paths;
+          collect();
+          out.outlivesItsRequire = where(kept("./x"));
+
+          const { paths } = require.resolve;
+          out.name = paths.name;
+          out.length = paths.length;
+          out.builtin = [paths("fs"), paths("node:fs")];
+          const attempt = fn => {
+            try {
+              return fn();
+            } catch (error) {
+              return error.name + " " + error.code + ": " + error.message;
+            }
+          };
+          out.notAString = [attempt(() => paths()), attempt(() => paths(1))];
+
+          // The function holds the module and not the name of its file.
+          out.beforeRename = where(paths("./x"));
+          module.filename = path.join(__dirname, "renamed", "file.js");
+          out.afterRename = where(paths("./x"));
+
+          const nameless = new (require("node:module"))("nameless");
+          nameless._compile("module.exports = require;", "nameless.js");
+          out.withoutFileName = [nameless.filename, nameless.exports.resolve.paths("./x")];
+
+          console.log(JSON.stringify(out));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const ownData = { value: "function", writable: true, enumerable: true, configurable: true };
+      // What `node --expose-gc main.cjs` prints too (v26.3.0).
+      expect(JSON.parse(stdout)).toEqual({
+        sameOnEveryRead: true,
+        ownOnceRead: [ownData, ["paths"]],
+        sameAfterCollection: true,
+        oneForEachRequire: true,
+        assignCopiesOnceRead: ["read"],
+        stored: ["stored", ownData],
+        defined: "defined",
+        frozen: ["frozen"],
+        boundResolveHasNone: "undefined",
+        aboveResolveHasNone: "undefined",
+        outlivesItsRequire: ["kept"],
+        name: "paths",
+        length: 1,
+        builtin: [null, null],
+        notAString: [
+          'TypeError ERR_INVALID_ARG_TYPE: The "request" argument must be of type string. Received undefined',
+          'TypeError ERR_INVALID_ARG_TYPE: The "request" argument must be of type string. Received type number (1)',
+        ],
+        beforeRename: ["."],
+        afterRename: ["renamed"],
+        withoutFileName: [null, ["."]],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("is made for a module when something first asks for it", async () => {
+      const count = 200;
+      const files = {};
+      for (let i = 0; i <= count; i++) {
+        files[`plain/m${i}.cjs`] = `module.exports = ${i};`;
+        files[`reads/m${i}.cjs`] = `module.exports = typeof require.resolve.paths;`;
+      }
+      using dir = tempDir("require-resolve-paths-heap", {
+        ...files,
+        "main.cjs": `
+          const { heapStats } = require("bun:jsc");
+          const functions = () => {
+            Bun.gc(true);
+            return heapStats().objectTypeCounts.Function;
+          };
+          // Function objects that stay for each module, after the first of its kind has made what all share.
+          const functionsForEach = kind => {
+            require("./" + kind + "/m0.cjs");
+            const before = functions();
+            for (let i = 1; i <= ${count}; i++) require("./" + kind + "/m" + i + ".cjs");
+            return Math.round((functions() - before) / ${count});
+          };
+          console.log(JSON.stringify({ plain: functionsForEach("plain"), reads: functionsForEach("reads") }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // `require` and `require.resolve`, and `paths` for the modules that read it.
+      expect(JSON.parse(stdout)).toEqual({ plain: 2, reads: 3 });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("Module.findSourceMap doesn't throw", () => {
     expect(Module.findSourceMap("foo")).toEqual(undefined);
   });

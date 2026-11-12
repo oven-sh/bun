@@ -311,8 +311,6 @@ impl Lookup {
     ///
     /// - `bun build --sourcemap`, it is another file on disk
     /// - `bun build --compile --sourcemap`, it is an embedded file.
-    ///
-    /// A source with no name is the executed file, so it is `None` too, never an empty string.
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
         let source_map = self.source_map.as_deref()?;
         // See doc comment on `external_source_names`

@@ -25,8 +25,6 @@ pub struct ParsedSourceMap {
     /// transpiled on-demand. If there are items, then it means this is a file
     /// loaded without transpilation but with external sources. This array
     /// maps `source_index` to the correct filename.
-    ///
-    /// Private: read a name through [`Self::external_source_name`].
     external_source_names: Vec<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored, along with a
@@ -236,9 +234,7 @@ impl ParsedSourceMap {
         self.external_source_names.len()
     }
 
-    /// The name of the source at `index`. `None` if the map has no such source, and for a source with an
-    /// empty name: that source is the module itself, so a frame keeps its URL and no other file is read.
-    /// Node names `<file>.map` there for a map in a file of its own. Bun resolves every name against the module.
+    /// `None` for an empty name too: that source is the module itself. Node names `<file>.map` there.
     #[inline]
     pub(crate) fn external_source_name(&self, index: i32) -> Option<&[u8]> {
         let name: &[u8] = self

@@ -50,7 +50,13 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => self.fold_cast(e, expr),
-            ExprKind::Ident(name) => self.fold_ident(e, name),
+            ExprKind::Ident(name) => {
+                let folded = self.fold_ident(e, name);
+                if matches!(folded.value, Value::Unknown) {
+                    self.note_read_of_own_object(e);
+                }
+                folded
+            }
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
                 let short_circuited = match chain {
                     Chain::No => None,
@@ -58,7 +64,13 @@ impl<'s> Folder<'_, 's> {
                 };
                 match short_circuited {
                     Some(folded) => folded,
-                    None => self.fold_member(e, chain),
+                    None => {
+                        let folded = self.fold_member(e, chain);
+                        if chain == Chain::No && matches!(folded.value, Value::Unknown) {
+                            self.note_read_of_own_object(e);
+                        }
+                        folded
+                    }
                 }
             }
             ExprKind::ImportMeta => self.fold_import_meta(e),
@@ -117,6 +129,11 @@ impl<'s> Folder<'_, 's> {
         }
         if op == UnOp::Typeof
             && let Some(type_name) = self.find_type_of_loader_value(operand)
+        {
+            return Folded::constant(Constant::String(type_name));
+        }
+        if op == UnOp::Typeof
+            && let Some(type_name) = self.type_of_own_object(operand)
         {
             return Folded::constant(Constant::String(type_name));
         }

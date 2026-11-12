@@ -1,4 +1,5 @@
 globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+globalThis.begin();
 await globalThis.gate;
 export const value = "real";
 export function call() {

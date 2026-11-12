@@ -26,10 +26,7 @@
 // on both sides, frames or no frames, so a wrong line would pass.
 // The line of a program that passes so says `framesDiffer: true`, and the last line of the run says how many did, and how many are skipped by a `// Todo: only frames (..): <why this driver cannot tell>`.
 //
-// THE REFERENCE IS ASKED AGAIN WHERE THE TWO PART. `bun <file>` itself answers otherwise once in some hundred runs of some programs.
-// It is run again, twice at most, and the program passes if one of those runs ends and prints as the executable did.
-// The executable is not run again: what it printed stands, so an executable that answers now one way, now the other, fails as ever. Not under a mark: that stands for a difference.
-// The line of a program that passes so says `referenceWavered: true`, stderr names it at once, and the last lines of the run name them all.
+// NEITHER RUN IS MADE AGAIN WHERE THE TWO PART. A program of which plain Bun has more than one answer fails, and what it races for is fixed in the program.
 //
 // Every program is built in each way of harness/ways.ts: as written, and with its types erased.
 // Each executable is held to the same run of plain Bun. Only the first build is asked what the program says that a build counts or prints.
@@ -686,7 +683,6 @@ function differOnlyInLinesWithFrames(one: string, other: string, oneAgain: strin
   return lines.every((line, at) => line === others[at] || (line !== again[at] && others[at] !== othersAgain[at]));
 }
 let programsWhoseFramesDiffer = 0;
-const programsWhoseReferenceWavered = new Set<string>();
 let programsMarkedForFramesAlone = 0;
 /** The lines of `text` that are not the same in `other`, each with the line before and the line after it. */
 function differingLines(text: string, other: string) {
@@ -794,7 +790,6 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     ways: Object.fromEntries(
       all.map(({ way, state, isCompared }) => [way, isCompared === false ? "built and run, not compared" : state]),
     ),
-    ...(all.some(({ referenceWavered }) => referenceWavered) && { referenceWavered: true }),
     ...(statisticsKept.has(program.file) && { statistics: statisticsKept.get(program.file) }),
     ...goalsNotMetOf(program.file),
   });
@@ -1423,18 +1418,6 @@ async function run(program: Program): Promise<void> {
     if (Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output)))
       return settle(program, { ...passes, plainMs: plain!.ms });
     if (agreeButForFrames(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output))) return passesButForFrames();
-    if (program.todo === undefined && program.todoOfWay === undefined)
-      for (let asked = 0; asked < 2; asked++) {
-        const again = await runReference();
-        if (!Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(again.output))) continue;
-        references.set(program.path, Promise.resolve(again));
-        programsWhoseReferenceWavered.add(program.file);
-        console.error(
-          `THE REFERENCE WAVERED: ${program.file}: plain Bun printed ${JSON.stringify(differingLines(plain!.output.stdout, again.output.stdout))} at first, ` +
-            `and asked again what the executable printed: ${JSON.stringify(differingLines(again.output.stdout, plain!.output.stdout))}`,
-        );
-        return settle(program, { ...passes, plainMs: plain!.ms + again.ms, referenceWavered: true });
-      }
     const differs = () =>
       fail(
         program,
@@ -1561,10 +1544,5 @@ if (programsWhoseFramesDiffer || programsMarkedForFramesAlone)
   console.error(
     `${programsWhoseFramesDiffer} builds differ from their reference in the frames of stack traces alone, and pass | ` +
       `${programsMarkedForFramesAlone} programs are skipped because a \`// Todo: only frames\` says that of them where this driver cannot tell`,
-  );
-if (programsWhoseReferenceWavered.size)
-  console.error(
-    `${programsWhoseReferenceWavered.size} programs pass though plain Bun printed otherwise at first: asked again it printed what the executable had printed: ` +
-      [...programsWhoseReferenceWavered].join(" "),
   );
 process.exit(hasFailed ? 1 : 0);

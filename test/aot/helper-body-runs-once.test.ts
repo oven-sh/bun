@@ -6,9 +6,8 @@ import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-// A module that is no test file lays a mock in its body, and several test files import it. `bun test` undoes the mocks of a test file at its end and runs such a module again for
-// the next file that imports it. A compiled body runs once: the calls that it made are made again (./fixed-runs/closed/helper-*.txt). What only a body that runs again can
-// give differs from `bun test`. Both answers are pinned as they are: whoever changes ours sees it here.
+// The body of a module that several test files import registers a mock. At the end of a test file, `bun test` removes the mocks of that file. The next test file that
+// imports the module evaluates it again.
 const head = `import { test } from "bun:test";\n`;
 const runner = `import { vi } from "bun:test";\n`;
 const shared = {
@@ -19,8 +18,8 @@ const says = (folder: string, name: string, helper: boolean, what: string) =>
   `${helper ? `import "./helper.js";\n` : ""}${head}test("${name}", async () => { console.log("OUT ${folder} ${name}", ${what}); });`;
 const rateAndFee = `(await import("./tax.js")).rate, "|", (await import("./fee.js")).fee`;
 
-const folders: Record<string, { files: Record<string, string>; plainSays: string[]; compiledSays: string[] }> = {
-  // Whoever waits at an import() is on no stack, and it has laid no mock yet when the imported module lays its own.
+const folders: Record<string, { files: Record<string, string>; says: string[] }> = {
+  // The helper awaits an import() and has registered no mock when the imported module registers one.
   "behind-import": {
     files: {
       "inner.js": `${runner}vi.doMock("./fee.js", () => ({ fee: "mock fee" }));`,
@@ -29,8 +28,7 @@ const folders: Record<string, { files: Record<string, string>; plainSays: string
       "b.test.js": says("behind-import", "b", true, rateAndFee),
       "z.test.js": says("behind-import", "z", false, rateAndFee),
     },
-    plainSays: ["a mock rate | mock fee", "b mock rate | mock fee", "z real rate | real fee"],
-    compiledSays: ["a mock rate | mock fee", "b mock rate | real fee", "z real rate | real fee"],
+    says: ["a mock rate | mock fee", "b mock rate | mock fee", "z real rate | real fee"],
   },
   "condition": {
     files: {
@@ -38,8 +36,7 @@ const folders: Record<string, { files: Record<string, string>; plainSays: string
       "a.test.js": says("condition", "a", true, `(await import("./tax.js")).rate`),
       "b.test.js": says("condition", "b", true, `(await import("./tax.js")).rate`),
     },
-    plainSays: ["a mock rate", "b real rate"],
-    compiledSays: ["a mock rate", "b mock rate"],
+    says: ["a mock rate", "b real rate"],
   },
   "counter": {
     files: {
@@ -47,8 +44,7 @@ const folders: Record<string, { files: Record<string, string>; plainSays: string
       "a.test.js": says("counter", "a", true, `(await import("./tax.js")).n`),
       "b.test.js": says("counter", "b", true, `(await import("./tax.js")).n`),
     },
-    plainSays: ["a 1", "b 1"],
-    compiledSays: ["a 1", "b 2"],
+    says: ["a 1", "b 1"],
   },
 };
 
@@ -75,6 +71,6 @@ const of = (lines: string[], folder: string) =>
     .map(line => line.replace(`OUT ${folder} `, ""));
 
 test.each(Object.keys(folders))("%s", async folder => {
-  expect(of(await said(), folder)).toEqual(folders[folder].plainSays);
-  expect(of(await said("--aot"), folder)).toEqual(folders[folder].compiledSays);
+  expect(of(await said(), folder)).toEqual(folders[folder].says);
+  expect(of(await said("--aot"), folder)).toEqual(folders[folder].says);
 });

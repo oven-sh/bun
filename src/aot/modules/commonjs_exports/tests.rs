@@ -1527,6 +1527,39 @@ console.log(require_a().a);";
 }
 
 #[test]
+fn getter_in_callback_acts_as_callback_binding() {
+    for declaration in [
+        "class a {}",
+        "function a() {}",
+        "const a = 1;",
+        "let a;",
+        "var a = 1;",
+    ] {
+        let body = format!(
+            "var require_a = __commonJS((exports) => {{
+  Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return a; }} }});
+  {declaration}
+}});
+console.log(require_a().a);"
+        );
+        assert_eq!(
+            shapes_of_inner_modules(&body),
+            [Shape::Names],
+            "{declaration}"
+        );
+    }
+    let of_enclosing_function = "function f() { return 1; }
+var require_a = __commonJS((exports) => {
+  { let a = f(); Object.defineProperty(exports, 'a', { enumerable: true, get: () => a }); }
+});
+console.log(require_a().a);";
+    assert_eq!(
+        shapes_of_inner_modules(of_enclosing_function),
+        [Shape::Value]
+    );
+}
+
+#[test]
 fn a_marker_that_other_code_stores_on_an_inner_module_is_unknown() {
     let marker_of_first = |body: &str| {
         let main = format!("{COMMON_JS}{body}");

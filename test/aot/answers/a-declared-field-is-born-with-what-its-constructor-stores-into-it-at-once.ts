@@ -7,7 +7,7 @@
 // # RUN(FORM): walk f5 f7 f8 mechanisms=all
 // # FORM-LABEL: code f5:Body
 // # FORM: : string @JSValue = GetSlot {{*}}key="name"
-// # FORM: : i32 @Int64 = GetSlot {{*}}key="size"
+// # FORM: : int[0, 2147483647] @Int64 = GetSlot {{*}}key="size"
 // # FORM-LABEL: code f7:Body
 // # FORM: @Double = GetSlot {{*}}key="m"
 // # FORM-LABEL: code f8:Body

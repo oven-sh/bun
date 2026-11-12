@@ -160,6 +160,9 @@ impl CopyFile {
         if self.system_error.is_some() {
             return self.reject(promise, global_this);
         }
+        if let PathOrFileDescriptor::Path(path) = &self.destination_file_store.pathlike {
+            crate::node::fs::note_opened_for_write(path.slice(), true);
+        }
 
         promise.resolve(
             global_this,
@@ -1693,6 +1696,11 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
+        if let PathOrFileDescriptor::Path(path) =
+            &self.destination_file_store.data.as_file().pathlike
+        {
+            crate::node::fs::note_opened_for_write(path.slice(), true);
+        }
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it

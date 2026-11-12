@@ -136,7 +136,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
   const openTheReport = [
     ["bun:ffi", "what the module exports as a whole counts as called: CFunction, cc, dlopen and linkSymbols"],
     ["repl", "Function counts as called"],
-    ["v8", "a Worker counts as started"],
     ["vm", "a load under a name that nobody knows counts as made"],
   ];
   test("only a call opens the report: requiring the other built-in modules leaves it closed", async () => {

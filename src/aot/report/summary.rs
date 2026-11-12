@@ -92,6 +92,7 @@ fn write_columns_line(out: &mut Vec<u8>, label: &str, costs: &CostCounts) {
     out.extend_from_slice(b")\n");
 }
 
+/// `--aot-harden` is a public flag, so the words that it stands for are not listed.
 fn write_developer_words(options: &AotOptions, out: &mut Vec<u8>) {
     let words = options.option_words.iter();
     let mut words = words
@@ -107,6 +108,7 @@ fn write_developer_words(options: &AotOptions, out: &mut Vec<u8>) {
     out.push(b'\n');
 }
 
+/// For the logs of `Bun.build()`.
 pub fn write_developer_options(options: &AotOptions, out: &mut Vec<u8>) {
     if !options.hardening_names.is_empty() {
         let names = options.hardening_names.join(&b", "[..]);
@@ -162,6 +164,7 @@ struct TrimCause {
     is_about_build: bool,
 }
 
+/// The program's text can't name a built-in like `%GeneratorFunction%`, so a record about one has no place to show.
 fn names_internal_builtin(record: &UnseenCodeRecord) -> bool {
     builtin_of(record.builtin).is_some_and(|id| table::text_of(id).starts_with('%'))
 }
@@ -194,10 +197,13 @@ fn collect_trim_causes(input: &ReportInput<'_>) -> Vec<TrimCause> {
             .and_then(|record| positions.resolve_location(record.witness.location));
         causes[index].places.extend(place);
     }
+    // Once one place lets in code that the compiler can't see, that code can reach every other way to load code.
+    // The engine lists each of those too. They have no place in the program, and they follow from the first.
     let is_root = |cause: &TrimCause| cause.is_about_build || !cause.places.is_empty();
     if causes.iter().any(is_root) {
         causes.retain(is_root);
     }
+    // What an eval() can do, it can do by loading code too. Each place is listed under the first reason that names it.
     let mut listed: Vec<SourcePosition> = Vec::new();
     causes.retain_mut(|cause| {
         cause.places.shared_sort_unstable();

@@ -565,6 +565,7 @@ pub(super) fn import_meta_main(
         _ if context.host.may_any_file_become_main_module() => None,
         (false, _) => Some(false),
         (true, 1) if file.path.len() != key.path.len() => None,
+        // A worker that runs the entry point is not the main module.
         (true, 1) if context.host.may_start_workers() => None,
         (true, 1) => Some(true),
         (true, _) => None,

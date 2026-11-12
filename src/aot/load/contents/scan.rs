@@ -133,6 +133,9 @@ impl ContentsScan<'_, '_> {
                 self.look_at_folded_text(expression);
                 self.look_at_folded_data(expression);
                 self.look_at_call(expression, call);
+                if matches!(hir[hir[call].callee].kind, ExprKind::Super) {
+                    self.look_at_construction(expression);
+                }
             }
             ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 self.look_at_folded_text(expression);

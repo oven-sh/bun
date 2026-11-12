@@ -9,7 +9,7 @@ extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
         return true;
     }
     // The runner belongs to the main thread.
-    if vm.worker_ref().is_some() {
+    if !vm.is_main_thread {
         return false;
     }
     let Some(buntest_strong) = bun_test::clone_active_strong() else {

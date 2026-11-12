@@ -102,9 +102,10 @@ static size_t maxCompressedSize(size_t sourceSize)
     return ZSTD_compressBound(sourceSize);
 }
 
+template<int level>
 static size_t compressSource(std::span<uint8_t> compressed, std::span<const uint8_t> text)
 {
-    size_t written = ZSTD_compress(compressed.data(), compressed.size(), text.data(), text.size(), 3);
+    size_t written = ZSTD_compress(compressed.data(), compressed.size(), text.data(), text.size(), level);
     return ZSTD_isError(written) ? 0 : written;
 }
 
@@ -143,7 +144,7 @@ static void ensureHostBindings()
     });
 }
 
-extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), void (*releaseBytesOfProgram)(void* owner), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool, size_t (*functionSourceSize)(void* owner, uint32_t module), void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination))
+extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), void (*releaseBytesOfProgram)(void* owner), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool, size_t (*functionSourceSize)(void* owner, uint32_t module), void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination), const uint8_t* (*viewFunctionSource)(void* owner, uint32_t module), void (*releaseFunctionSources)(void* owner))
 {
     ensureHostBindings();
 
@@ -152,8 +153,11 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
     _set_fmode(_O_BINARY);
 #endif
 
+    // The image of a test run lives as long as the run.
+    bool isTestRun = JSC::AOT::hasFlag(options->admittedCode, Wire::AdmittedCode::ReplacedBuiltins);
+    auto compress = isTestRun ? compressSource<1> : compressSource<3>;
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, functionSourceSize, copyFunctionSource, maxCompressedSize, compressSource }, releaseBytesOfProgram, { encodeForBuffer } });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, functionSourceSize, copyFunctionSource, maxCompressedSize, compress, viewFunctionSource, releaseFunctionSources }, releaseBytesOfProgram, { encodeForBuffer } });
     return result;
 }
 
@@ -183,9 +187,9 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
     JSC::AOT::relocateImage({ image, size }, address);
 }
 
-extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, uint8_t form, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
 {
-    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::decompressSource);
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::decompressSource, static_cast<JSC::AOT::StoredStringsForm>(form));
     take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
     return static_cast<uint32_t>(read.verdict);
 }
@@ -282,7 +286,7 @@ extern "C" size_t Bun__AOT__describeRegExpConstructionError(const uint8_t* patte
 // What src/aot/engine/shared.rs asks. Nothing else of this file has a caller in a Bun without the compiler.
 extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
-extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t*, size_t, void*, void (*)(void*, const uint8_t*, size_t, const uint8_t*, size_t)) { return 2; }
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t*, size_t, uint8_t, void*, void (*)(void*, const uint8_t*, size_t, const uint8_t*, size_t)) { return 2; }
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t*, size_t, const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" uint32_t Bun__AOT__classifyRegExpLiteral(const uint8_t*, size_t, const uint8_t*, size_t) { return 0; }

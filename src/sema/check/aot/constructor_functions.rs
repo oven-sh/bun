@@ -66,6 +66,7 @@ impl Checker<'_, '_> {
         })
     }
 
+    /// `getInferredClassType`
     fn compute_instance_type_of_constructor_function(
         &mut self,
         file: FileId,

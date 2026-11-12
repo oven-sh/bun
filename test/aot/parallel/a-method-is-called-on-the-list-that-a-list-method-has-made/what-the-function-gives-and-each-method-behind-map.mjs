@@ -186,4 +186,4 @@ const all = {twice_filter, twice_reduce, twice_some, twice_every, twice_find, tw
 for (const name in all) console.log(name, sources.map(list => say(all[name](list))).join(" ; "));
 console.log(seen.length);
 // STATISTIC: ArraySpeciesLookupsElided >= 1
-// STATISTIC: NumberStoresDispatchedByIndexingType <= 72
+// STATISTIC: NumberStoresDispatchedByIndexingType <= 240

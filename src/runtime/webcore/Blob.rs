@@ -1308,7 +1308,10 @@ impl BlobExt for Blob {
                         }
                     }
                     match result {
-                        bun_sys::Result::Ok(result) => result,
+                        bun_sys::Result::Ok(result) => {
+                            node::fs::note_opened_for_write(path.as_bytes(), true);
+                            result
+                        }
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::rejected_promise(
                                 cx.global(),
@@ -1515,12 +1518,15 @@ impl BlobExt for Blob {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
                     let mut file_path = bun_paths::path_buffer_pool::get();
-                    match bun_sys::open(
-                        p.slice_z(&mut file_path),
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
-                        bun_sys::Result::Ok(result) => result,
+                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+                    if let Some(err) = node::fs::refuse_open_for_write(p.slice(), flags) {
+                        return Err(global_this.throw_value(err.to_js(global_this)));
+                    }
+                    match bun_sys::open(p.slice_z(&mut file_path), flags, WRITE_PERMISSIONS) {
+                        bun_sys::Result::Ok(result) => {
+                            node::fs::note_opened_for_write(p.slice(), false);
+                            result
+                        }
                         bun_sys::Result::Err(err) => {
                             return Err(global_this
                                 .throw_value(err.with_path(p.slice()).to_js(global_this)));
@@ -2215,9 +2221,11 @@ impl BlobExt for Blob {
             .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
         // if this Blob represents the entire binary data
         // we can update the store's is_all_ascii flag
-        if self.size.get() > 0 && self.offset.get() == 0 {
+        if self.offset.get() == 0 {
             if let Some(store) = self.store() {
-                if matches!(store.data, store::Data::Bytes(_)) {
+                if let store::Data::Bytes(bytes) = &store.data
+                    && self.size.get() >= bytes.len()
+                {
                     store.is_all_ascii.set(is_all_ascii);
                 }
             }
@@ -4380,8 +4388,7 @@ pub(crate) fn write_file_internal(
         },
     };
     if let Some(PathOrFileDescriptor::Path(path)) = destination
-        && let Some(err) =
-            node::fs::creation_in_executable(path.slice(), bun_sys::Tag::open, bun_sys::E::EROFS)
+        && let Some(err) = node::fs::refuse_embedded_write(path.slice())
     {
         return Ok(JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js());
     }
@@ -4484,7 +4491,16 @@ pub(crate) fn write_file_internal(
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
-            let new_blob = try_find_or_create_file_from_path(path, cx.global())?;
+            // What is written lies on the disk from then on, which is asked first.
+            let new_blob = match is_held_at_source_path(path) {
+                true => {
+                    let empty = PathOrFileDescriptor::Path(PathLike::default());
+                    let path = core::mem::replace(path, empty).thread_isolated_copy();
+                    let store = bun_core::handle_oom(Store::init_file(path, None));
+                    Blob::init_with_store(store, cx.global())
+                }
+                false => try_find_or_create_file_from_path(path, cx.global())?,
+            };
             if new_blob.store.get().is_none() {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "Writing to an empty blob is not implemented yet"
@@ -4862,7 +4878,10 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
             WRITE_PERMISSIONS,
         ) {
-            bun_sys::Result::Ok(result) => result,
+            bun_sys::Result::Ok(result) => {
+                node::fs::note_opened_for_write(pathlike.path().slice(), true);
+                result
+            }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
                     *needs_async = true;
@@ -4947,7 +4966,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             flags,
             WRITE_PERMISSIONS,
         ) {
-            bun_sys::Result::Ok(result) => result,
+            bun_sys::Result::Ok(result) => {
+                node::fs::note_opened_for_write(pathlike.path().slice(), true);
+                result
+            }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
                     *needs_async = true;
@@ -5192,6 +5214,16 @@ fn find_or_create_s3_file(
     global_this: &JSGlobalObject,
 ) -> Blob {
     Blob::find_or_create_file_from_path(path_or_fd, global_this, true)
+}
+
+/// Whether the executable holds a file for `path`, which names a place on the disk of the build and not one inside the executable.
+fn is_held_at_source_path(path: &PathOrFileDescriptor<'static>) -> bool {
+    let PathOrFileDescriptor::Path(path) = path else {
+        return false;
+    };
+    !bun_standalone_graph::is_bun_standalone_file_path(path.slice())
+        && bun_standalone_graph::Graph::get_ref()
+            .is_some_and(|graph| graph.find_data(path.slice()).is_some())
 }
 
 /// `find_or_create_file_from_path` with `check_s3`.

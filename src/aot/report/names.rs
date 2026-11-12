@@ -1,6 +1,6 @@
 use super::ReportInput;
 use super::source_texts::{ModuleOrigin, SourceTexts};
-use crate::engine::{EngineResult, FunctionNameRecord};
+use crate::engine::{EngineResult, FunctionNameRecord, TextRange};
 use crate::ir::ids::{FunctionId, LayoutId, ModuleId};
 
 #[derive(Copy, Clone)]
@@ -40,6 +40,10 @@ impl<'a> Names<'a> {
         }
     }
 
+    pub(super) fn text(&self, range: TextRange) -> &'a [u8] {
+        self.engine.text(range)
+    }
+
     pub(super) fn module_path(&self, module: ModuleId) -> &'a [u8] {
         self.texts.path(module)
     }
@@ -60,8 +64,8 @@ mod tests {
     use bstr::BString;
 
     use super::*;
+    use crate::engine::LayoutNameRecord;
     use crate::engine::testing::ResultRecords;
-    use crate::engine::{LayoutNameRecord, TextRange};
     use crate::ir::ids::ABSENT_WORD;
     use crate::report::ModuleSource;
     use crate::report::testing::{PROGRAM, RUNTIME, ReportFixture};

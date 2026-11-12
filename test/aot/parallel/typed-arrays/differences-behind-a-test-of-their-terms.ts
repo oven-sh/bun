@@ -1,5 +1,5 @@
 // Where the turn has asked whether i lies from d up, i - d and at + i - d lie from zero up, and only the length is asked; behind other tests the sign is asked too.
-// STATISTIC: DifferencesShownFromZeroUp >= 4
+// STATISTIC: DifferencesProvenNonNegative >= 4
 const view = new Uint8Array(32); for (let i = 0; i < 32; i++) view[i] = i * 7 + 1;
 function f0(v: Uint8Array, n: number, at: number, d: number, e: number): number { n |= 0; at |= 0; d |= 0; e |= 0; let s = 0; for (let i = 0; i < n; i++) { const x = v[(i + 1) & 7]!, a = i >= d ? v[i - d]! : 7; s = (s * 3 + (a - 1) * 2 + x) % 100003; } return s; }
 function f1(v: Uint8Array, n: number, at: number, d: number, e: number): number { n |= 0; at |= 0; d |= 0; e |= 0; let s = 0; for (let i = 0; i < n; i++) { const x = v[(i + 1) & 7]!, a = i >= d ? v[at + i - d]! : 7; s = (s * 3 + (a - 1) * 2 + x) % 100003; } return s; }

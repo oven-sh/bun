@@ -776,7 +776,12 @@ private:
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
             /* Close any socket on HTTP errors */
-            ((HttpResponse<SSL> *) s)->closeAfterLastByte();
+            constexpr uint32_t halfSent = HttpResponseData<SSL>::HTTP_STATUS_CALLED | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+            if (SSL && !us_socket_is_closed(s) && ((httpResponseData->state & halfSent) == halfSent || ((AsyncSocket<SSL> *) s)->getBufferedAmount())) {
+                ((AsyncSocket<SSL> *) s)->close(true);
+            } else {
+                ((HttpResponse<SSL> *) s)->closeAfterLastByte();
+            }
         }
 
         auto returnedData = result.returnedData;
@@ -1193,7 +1198,7 @@ private:
         asyncSocket->uncorkWithoutSending();
 
         /* We do not care for half closed sockets */
-        return asyncSocket->close();
+        return asyncSocket->close(!IsNodeHttp && (((HttpResponseData<SSL> *) us_socket_ext(s))->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING));
     }
 
     static us_socket_t *onTimeout(us_socket_t *s) {

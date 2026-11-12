@@ -118,6 +118,14 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     return JSValue::encode(jsString(vm, WTF::move(str)));
 }
 
+// A rope of two JS strings: it refers to both and copies neither.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSString__concat(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue left, JSC::EncodedJSValue right)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, asString(JSValue::decode(left)), asString(JSValue::decode(right)))));
+}
+
 namespace Bun {
 #if ASSERT_ENABLED
 static void assertStaticStringIsNotCommon(EncodedSlice slice)

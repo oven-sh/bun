@@ -1,7 +1,7 @@
 // `test`, `describe` and the hooks behave like Vitest's when imported from "vitest", and like Jest's otherwise.
 // Expected outputs were taken from Vitest 5.0.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isLinux, tempDir } from "harness";
 import { readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -780,6 +780,232 @@ describe.concurrent("beforeAll and afterAll", () => {
   });
 });
 
+// Vitest skips a suite, hooks included, only if it has tests or suites and none of them runs. The logs of the "vitest" files are Vitest 5.1.0's.
+// Unlike Bun, Vitest then fails a suite that has no test, and runs the hooks of a file that has no test only with --passWithNoTests.
+describe.concurrent("beforeAll, afterAll and aroundAll in a scope with no tests", () => {
+  test("run, and one that throws fails the run", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, afterAll } from "vitest";
+        describe("cleanup", () => {
+          beforeAll(() => console.log("beforeAll"));
+          afterAll(() => { console.log("afterAll"); throw new Error("cleanup failed"); });
+        });
+        describe("real", () => { test("good", () => {}); });
+      `,
+      "b.test.js": `
+        import { afterAll } from "vitest";
+        afterAll(() => { console.log("file afterAll"); throw new Error("file cleanup failed"); });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["beforeAll", "afterAll", "file afterAll"],
+      results: ["(fail) cleanup > (unnamed)", "(pass) real > good", "(fail) (unnamed)"],
+      errors: ["error: cleanup failed", "error: file cleanup failed"],
+      exitCode: 1,
+    });
+  });
+
+  test("run in every scope around an empty one, and in no other", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+        function hooks(name) {
+          beforeAll(() => { console.log(name, "beforeAll"); return () => console.log(name, "teardown"); });
+          afterAll(() => console.log(name, "afterAll"));
+          beforeEach(() => console.log("unreachable"));
+          afterEach(() => console.log("unreachable"));
+        }
+        hooks("file");
+        describe("outer", () => {
+          hooks("outer");
+          describe("inner", () => hooks("inner"));
+        });
+        describe("mixed", () => {
+          hooks("mixed");
+          describe("skipped tests", () => { hooks("unreachable"); test.skip("skipped", () => {}); });
+          describe("empty", () => hooks("empty"));
+        });
+        describe("async", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          hooks("async");
+        });
+        describe("each of no rows", () => {
+          hooks("each of no rows");
+          test.each([])("never", () => {});
+        });
+        describe("a todo test", () => { hooks("unreachable"); test.todo("todo"); });
+        describe("a block of skipped tests", () => {
+          hooks("unreachable");
+          describe("inner", () => { test.skip("skipped", () => {}); });
+        });
+        describe("a skipped block", () => { hooks("unreachable"); describe.skip("inner", () => {}); });
+        describe("a todo block", () => { hooks("unreachable"); describe.todo("inner", () => {}); });
+        describe("a block without a callback", () => { hooks("unreachable"); describe("inner"); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "file beforeAll",
+        "outer beforeAll",
+        "inner beforeAll",
+        "inner afterAll",
+        "inner teardown",
+        "outer afterAll",
+        "outer teardown",
+        "mixed beforeAll",
+        "empty beforeAll",
+        "empty afterAll",
+        "empty teardown",
+        "mixed afterAll",
+        "mixed teardown",
+        "async beforeAll",
+        "async afterAll",
+        "async teardown",
+        "each of no rows beforeAll",
+        "each of no rows afterAll",
+        "each of no rows teardown",
+        "file afterAll",
+        "file teardown",
+      ],
+      results: [
+        "(skip) mixed > skipped tests > skipped",
+        "(todo) a todo test > todo",
+        "(skip) a block of skipped tests > inner > skipped",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test.each(["vitest", "bun:test"])("an aroundAll from %s goes around the other two", async module => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundAll, beforeAll, afterAll } from "${module}";
+        function hooks(name) {
+          aroundAll(async runSuite => { console.log(name + " >"); await runSuite(); console.log(name + " <"); });
+          beforeAll(() => console.log(name, "beforeAll"));
+          afterAll(() => console.log(name, "afterAll"));
+        }
+        describe("outer", () => {
+          hooks("outer");
+          describe("inner", () => hooks("inner"));
+        });
+        test("test", () => {});
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "outer >",
+        "outer beforeAll",
+        "inner >",
+        "inner beforeAll",
+        "inner afterAll",
+        "inner <",
+        "outer afterAll",
+        "outer <",
+      ],
+      results: ["(pass) test"],
+      exitCode: 0,
+    });
+  });
+
+  test(`run in a describe() from "bun:test" too, for a helper's hooks and an extended test's`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "helper.js": `
+        import { beforeAll, afterAll } from "vitest";
+        export function vitestHooks() {
+          beforeAll(() => { console.log("vitest beforeAll"); return () => console.log("vitest teardown"); });
+          afterAll(() => console.log("vitest afterAll"));
+        }
+      `,
+      "a.test.js": `
+        import { test, describe, beforeAll, afterAll } from "bun:test";
+        import { vitestHooks } from "./helper.js";
+        const extended = test.extend({
+          value: [async ({}, use) => { console.log("fixture set up"); await use(1); console.log("fixture torn down"); }, { scope: "file" }],
+        });
+        describe("helper", () => {
+          beforeAll(() => console.log("bun:test beforeAll"));
+          afterAll(() => console.log("bun:test afterAll"));
+          vitestHooks();
+        });
+        describe("extended", () => {
+          extended.beforeAll(({ value }) => console.log("extended beforeAll", value));
+          extended.afterAll(({ value }) => console.log("extended afterAll", value));
+        });
+        test("test", () => {});
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "bun:test beforeAll",
+        "vitest beforeAll",
+        "vitest afterAll",
+        "bun:test afterAll",
+        "vitest teardown",
+        "fixture set up",
+        "extended beforeAll 1",
+        "extended afterAll 1",
+        "fixture torn down",
+      ],
+      results: ["(pass) test"],
+      exitCode: 0,
+    });
+  });
+
+  // Vitest runs nothing of a file in which a describe() callback throws. Bun runs the rest of the file.
+  test("do not run around a block whose callback throws", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, afterAll } from "vitest";
+        describe("outer", () => {
+          beforeAll(() => console.log("unreachable"));
+          afterAll(() => console.log("unreachable"));
+          describe("throws", () => { throw new Error("in describe"); });
+        });
+        test("test", () => {});
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [],
+      results: ["(pass) test"],
+      errors: ["error: in describe"],
+      exitCode: 1,
+    });
+  });
+});
+
+// Not concurrent: in a debug build the child takes a second of a processor, and longer beside twenty others.
+test("beforeAll and afterAll run when the empty scope is 10,000 blocks deep, without overflowing the native stack", async () => {
+  using dir = tempDir("vitest-flavor-deep", {
+    "a.test.js": `
+      import { describe, beforeAll, afterAll } from "vitest";
+      let depth = 10000;
+      function nest() {
+        if (depth-- > 0) describe("d" + depth, nest);
+      }
+      describe("outermost", () => {
+        beforeAll(() => console.log("beforeAll"));
+        afterAll(() => console.log("afterAll"));
+        nest();
+      });
+    `,
+  });
+  const cmd = [bunExe(), "test"];
+  await using proc = Bun.spawn({
+    // Linux sizes the main thread's stack from `ulimit -s`.
+    cmd: isLinux ? ["sh", "-c", `ulimit -s 1024 && exec "$@"`, "sh", ...cmd] : cmd,
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.split("\n").filter(line => line && !line.startsWith("bun test "))).toEqual(["beforeAll", "afterAll"]);
+  expect(stderr).toInclude("\n 0 fail");
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("each and for", () => {
   test("titles: long strings, values that are missing, %p and %s", async () => {
     const file = (module: string) => `
@@ -1405,14 +1631,20 @@ describe.concurrent("hooks", () => {
       describe.skip("skipped", () => { beforeAll(() => () => console.log("unreachable")); test("test", () => {}); });
       describe.todo("todo", () => { beforeAll(() => () => console.log("unreachable")); test("test", () => {}); });
       describe("all skipped", () => { beforeAll(() => () => console.log("unreachable")); test.skip("test", () => {}); });
-      describe("empty", () => { beforeAll(() => () => console.log("unreachable")); });
+      describe("empty", () => { beforeAll(() => () => console.log("teardown of the empty block")); });
     `;
     const summary = (stderr: string) => stderr.split("\n").filter(line => /^ \d+ (pass|fail|skip|todo)$|^Ran /.test(line)).map(line => line.replace(/ \[.*/, "")); // prettier-ignore
 
     test("in a plain run", async () => {
       const { log, results, errors, stderr, exitCode } = await runTests({ "a.test.js": file });
       expect({ log, results, errors, summary: summary(stderr), exitCode }).toEqual({
-        log: ["file beforeAll", "teardown", "afterAll after a failed beforeAll", "teardown of the hook before"],
+        log: [
+          "file beforeAll",
+          "teardown",
+          "afterAll after a failed beforeAll",
+          "teardown of the hook before",
+          "teardown of the empty block",
+        ],
         results: [
           "(pass) nothing > test",
           "(pass) function > test",

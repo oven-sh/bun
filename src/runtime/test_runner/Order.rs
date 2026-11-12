@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
 
-use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
+use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, ScopeMode, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
 pub(crate) struct Order {
@@ -32,15 +32,15 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    /// Vitest doesn't run the hooks of a scope where every test is skipped, so `!runs_a_test` drops Vitest hooks.
+    /// Vitest skips a scope, hooks included, only if it holds tests or scopes and none of them runs. `!scope_runs` drops Vitest hooks.
     pub(crate) fn generate_all_order(
         &mut self,
         entries: &[Box<ExecutionEntry>],
-        runs_a_test: bool,
+        scope_runs: bool,
     ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
-            if !runs_a_test && entry_box.calling.is_vitest() {
+            if !scope_runs && entry_box.calling.is_vitest() {
                 continue;
             }
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
@@ -116,18 +116,20 @@ impl Order {
         if current.failed {
             return Ok(None); // do not schedule any tests in a failed describe scope
         }
-        let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
+        let has_callback = current.base.has_callback;
+        let use_hooks = self.cfg.always_use_hooks || has_callback;
+        let runs = has_callback || (use_hooks && self.runs_without_test(current));
 
         // gather aroundAll
         let aroundall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.around_all, current.base.has_callback)?
+            self.generate_all_order(&current.around_all, runs)?
         } else {
             AllOrderResult::EMPTY
         };
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all, current.base.has_callback)?
+            self.generate_all_order(&current.before_all, runs)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -149,7 +151,7 @@ impl Order {
             children: current.entries.iter_mut(),
             only: current.base.only,
             use_hooks,
-            has_callback: current.base.has_callback,
+            runs,
             aroundall_order,
             beforeall_order,
             after_all: &current.after_all,
@@ -163,7 +165,7 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if frame.use_hooks {
-            self.generate_all_order(frame.after_all, frame.has_callback)?
+            self.generate_all_order(frame.after_all, frame.runs)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -174,10 +176,24 @@ impl Order {
         // An aroundAll that fails before `runSuite()` skips to the teardown of the ones around it. Its own slot has no callback.
         frame.aroundall_order.set_failure_skip_to(self);
         if frame.use_hooks {
-            self.generate_all_order(frame.around_all_teardown, frame.has_callback)?;
+            self.generate_all_order(frame.around_all_teardown, frame.runs)?;
         }
 
         Ok(())
+    }
+
+    /// Whether a scope that runs no test runs by Vitest's rule: a scope with nothing in it does, and so does every scope around one.
+    fn runs_without_test(&self, scope: &mut DescribeScope) -> bool {
+        // The file has no `.only` and no `-t` filter, so `generate_order_describe` leaves nothing of the tree out.
+        debug_assert!(self.cfg.always_use_hooks && !scope.base.has_callback);
+        if scope.runs_without_test.is_none() {
+            let mut all_hooks = scope.around_all.iter().chain(&scope.before_all).chain(&scope.after_all);
+            if !all_hooks.any(|hook| hook.calling.is_vitest()) {
+                return false;
+            }
+            resolve_runs_without_test(scope);
+        }
+        scope.runs_without_test == Some(true)
     }
 
     pub(crate) fn generate_order_test(&mut self, current: &mut ExecutionEntry) -> JsResult<()> {
@@ -315,11 +331,49 @@ struct OpenDescribe<'a> {
     children: core::slice::IterMut<'a, TestScheduleEntry>,
     only: Only,
     use_hooks: bool,
-    has_callback: bool,
+    /// What `enter_describe` passed to `generate_all_order`, so that a hook and its teardown slot are left out together.
+    runs: bool,
     aroundall_order: AllOrderResult,
     beforeall_order: AllOrderResult,
     after_all: &'a [Box<ExecutionEntry>],
     around_all_teardown: &'a [Box<ExecutionEntry>],
+}
+
+/// A scope that runs no test, whose children `resolve_runs_without_test` is still visiting.
+struct TestLessScope<'a> {
+    children: core::slice::IterMut<'a, TestScheduleEntry>,
+    runs: &'a mut Option<bool>,
+}
+
+impl<'a> TestLessScope<'a> {
+    /// Nothing runs in a scope that is skipped, is todo or failed, so its children are left out.
+    fn enter(scope: &'a mut DescribeScope) -> TestLessScope<'a> {
+        let skipped = scope.failed || matches!(scope.base.mode, ScopeMode::Skip | ScopeMode::Todo);
+        scope.runs_without_test = Some(!skipped && scope.entries.is_empty());
+        let children = if skipped { Default::default() } else { scope.entries.iter_mut() };
+        TestLessScope { children, runs: &mut scope.runs_without_test }
+    }
+}
+
+/// Sets `runs_without_test` on `root` and on every scope inside it, so none is walked twice. An explicit stack, like `generate_order_describe`.
+fn resolve_runs_without_test(root: &mut DescribeScope) {
+    let mut around: Vec<TestLessScope<'_>> = Vec::new();
+    let mut scope = TestLessScope::enter(root);
+    loop {
+        match scope.children.next() {
+            Some(TestScheduleEntry::Describe(child)) => {
+                around.push(core::mem::replace(&mut scope, TestLessScope::enter(child)));
+            }
+            Some(TestScheduleEntry::TestCallback(_)) => {}
+            None => {
+                let Some(outer) = around.pop() else { return };
+                if *scope.runs == Some(true) {
+                    *outer.runs = Some(true);
+                }
+                scope = outer;
+            }
+        }
+    }
 }
 
 pub(crate) struct AllOrderResult {

@@ -2145,6 +2145,8 @@ pub(crate) struct DescribeScope {
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     pub(crate) failed: bool,
+    /// Set by `resolve_runs_without_test` in `Order.rs` once collection is over, and only on a scope that runs no test.
+    pub(crate) runs_without_test: Option<bool>,
 
     pub(crate) task: Option<Strong>,
     pub(crate) inherited: ScopeFunctions::InheritedOptions,
@@ -2178,6 +2180,7 @@ impl DescribeScope {
             around_all_teardown: Vec::new(),
             async_context: None,
             failed: false,
+            runs_without_test: None,
             task: None,
             inherited: Default::default(),
         })

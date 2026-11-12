@@ -69,6 +69,8 @@ describe("test group", () => {
 });
 ```
 
+A `describe` block with no tests in it still runs its `beforeAll` and `afterAll` hooks. With `--test-name-pattern` or `.only`, the hooks only run in blocks that have a test to run.
+
 ### Scoped to a Test File
 
 To scope the hooks to an entire test file:

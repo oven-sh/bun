@@ -799,6 +799,44 @@ describe("empty", () => {
   }
 });
 
+it(`should run beforeAll() & afterAll() from "vitest" even without tests`, async () => {
+  using test_dir = tempDir("empty-vitest", {
+    "empty.test.js": `
+import { afterAll, afterEach, beforeAll, beforeEach, describe } from "vitest";
+beforeAll(() => console.log("before all"));
+beforeEach(() => console.log("before each"));
+afterEach(() => console.log("after each"));
+afterAll(() => console.log("after all"));
+
+describe("empty", () => {
+  beforeAll(() => console.log("before all scoped"));
+  beforeEach(() => console.log("before each scoped"));
+  afterEach(() => console.log("after each scoped"));
+  afterAll(() => console.log("after all scoped"));
+});
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "empty.test.js"],
+    cwd: String(test_dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out.split(/\r?\n/)).toEqual([
+    `bun test ${Bun.version_with_sha}`,
+    "before all",
+    "before all scoped",
+    "after all scoped",
+    "after all",
+    "",
+  ]);
+  expect(err).toContain("0 pass");
+  expect(err).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 describe("unhandled errors between tests are reported", () => {
   const stages = ["beforeAll", "beforeEach", "afterEach", "afterAll", "describe"];
 

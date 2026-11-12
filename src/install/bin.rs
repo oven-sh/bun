@@ -1974,8 +1974,6 @@ pub struct BinConflict {
     alias: String,
     node_modules: Box<[u8]>,
     names: Vec<Box<[u8]>>,
-    /// The scripts run even if it can't be linked.
-    optional: bool,
 }
 
 #[derive(Clone, Default)]
@@ -2085,7 +2083,6 @@ pub fn find_bin_conflicts(
     let node_gyp = is_conflict(NODE_GYP);
     if node_gyp && let Some(mut bins) = default_node_gyps.into_iter().next() {
         bins.names = vec![Box::from(NODE_GYP)];
-        bins.optional = true;
         links.push(bins);
     }
     BinConflicts { links, node_gyp }
@@ -2147,7 +2144,6 @@ fn placed_bins(
         alias,
         node_modules: Box::from(node_modules.slice()),
         names,
-        optional: false,
     })
 }
 
@@ -2355,7 +2351,9 @@ pub(crate) fn link_conflicting_bins(
             skipped_due_to_missing_bin: false,
         };
         linker.link(false);
-        if let Some(err) = linker.err.filter(|_| !conflict.optional) {
+        // Without the link, the shim installs node-gyp.
+        let is_optional = conflict.names.iter().all(|name| **name == *NODE_GYP);
+        if let Some(err) = linker.err.filter(|_| !is_optional) {
             return Err(err);
         }
     }

@@ -1000,10 +1000,6 @@ impl BunxCommand {
             .unwrap_or(b"")
             .to_vec();
         let is_node_gyp = update_request.name == b"node-gyp" && opts.binary_name.is_none();
-        if !ignore_cwd.is_empty() && !is_node_gyp {
-            env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
-        }
-
         let search_path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
 
         // Set by `bun install` to the only directories to look for node-gyp in.
@@ -1218,6 +1214,13 @@ impl BunxCommand {
                     update_request.name,
                 ),
             }
+        }
+
+        if skip_project && !is_versioned {
+            bun_core::note!(
+                "using <b>node-gyp<r> from the registry. To choose one, add it to package.json or set <b>npm_config_node_gyp<r>."
+            );
+            Output::flush();
         }
 
         let configured_cache = if cfg!(unix) {

@@ -3513,6 +3513,35 @@ test.concurrent.skipIf(!isLinux)(
   },
 );
 
+test.concurrent.each([
+  { title: "bun install", args: "install --cwd nested" },
+  { title: "bun x", args: "x check" },
+])("BUN_WHICH_IGNORE_CWD names the only node-gyp shim on PATH under a nested $title", async ({ args }) => {
+  const check = `#!/usr/bin/env node
+    const shims = process.env.PATH.split(require("path").delimiter).filter(dir => dir.endsWith(".node-gyp"));
+    const result = { shims, ignored: [process.env.BUN_WHICH_IGNORE_CWD ?? null] };
+    require("fs").writeFileSync(process.env.RESULT, JSON.stringify(result));`;
+  using ctx = await setupScriptPackages("hoisted", { check: { bin: "check.js", files: { "check.js": check } } });
+  const bun = JSON.stringify(bunExe().replaceAll("\\", "/"));
+  ctx.env.RESULT = join(ctx.packageDir, "result.json");
+  await Promise.all([
+    write(
+      ctx.packageJson,
+      JSON.stringify({ name: "app", dependencies: { check: "1.0.0" }, scripts: { postinstall: `${bun} ${args}` } }),
+    ),
+    write(
+      join(ctx.packageDir, "nested", "package.json"),
+      JSON.stringify({ name: "nested", scripts: { postinstall: `${bun} check.js` } }),
+    ),
+    write(join(ctx.packageDir, "nested", "check.js"), check),
+  ]);
+  const { err, exitCode } = await ctx.bun("install");
+  expect(err).not.toContain("error:");
+  const { shims, ignored } = await file(ctx.env.RESULT).json();
+  expect(shims).toEqual(ignored);
+  expect(exitCode).toBe(0);
+});
+
 // PR_SET_PDEATHSIG. The script holds the write end of `alive`, which ends when the script does, and
 // waits for a line in `gate`, which the test writes once bun is gone.
 test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"] as const)(

@@ -321,7 +321,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
-  "String.prototype.matchAll": functionsIn("prelude/iterator-consumers", "stepMatchesInWay", "wayToStepMatches"),
   "Math.min": functionsIn("prelude/written-lists", "minOfList"),
   "Array.prototype.sort": functionsIn(
     "prelude/array-sort",

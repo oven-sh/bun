@@ -1244,11 +1244,11 @@ export const shapes: Shape[] = [
     }),
   },
   // Each read asks a guard of every class of the family, and the list of what is asked was searched from its head for each class: classes x classes for each name. 4,000 classes and 64 names: 15.6 G instructions over 5.9.
-  // With as many names as classes the guards themselves are left, one a class and a name, in the walk and in the image.
+  // With as many names as classes the guards were one a class and a name, in the walk and in the image.
   ...(
     [
       ["sixty-four names", "classes", 2000, {}],
-      ["as many names", "classes, and names", 500, { growsSoFar: "3.99 times in GuardsOfClassGuardCounts" }],
+      ["as many names", "classes, and names", 500, { growsSoFarInInstructions: "2.19 times in instructions" }],
     ] as const
   ).map(
     ([names, counted, size, mark]): Shape => ({

@@ -308,17 +308,17 @@ fn stylesheet_link_flags(link: &Element<'_, '_>) -> ImportRecordFlags {
     if attributes.len() <= 2 {
         return ImportRecordFlags::empty();
     }
-    let (mut rel, mut media) = (None, None);
-    let (mut has_as, mut has_onload, mut is_disabled) = (false, false, false);
+    let (mut rel, mut media, mut has_as) = (None, None, false);
     // The browser takes the first of two attributes with one name.
     for attribute in attributes {
         match attribute.name().as_str() {
             "rel" if rel.is_none() => rel = Some(attribute),
             "media" if media.is_none() => media = Some(attribute),
             "as" => has_as = true,
-            "onload" => has_onload = true,
-            "disabled" => is_disabled = true,
-            _ => {}
+            "rel" | "media" | "href" | "type" | "crossorigin" | "integrity" | "referrerpolicy"
+            | "fetchpriority" | "blocking" | "hreflang" | "charset" | "nonce" => {}
+            // The page can change this link: `disabled`, `title`, `onload="this.media='all'"`, a script that finds it by `id`.
+            _ => return ImportRecordFlags::empty(),
         }
     }
     let has_media = media.is_some_and(|media| {
@@ -326,16 +326,16 @@ fn stylesheet_link_flags(link: &Element<'_, '_>) -> ImportRecordFlags {
         let media = media.trim_ascii();
         !media.is_empty() && !media.eq_ignore_ascii_case("all")
     });
-    // An `onload` handler can change the link: `this.media='all'`, `this.rel='stylesheet'`.
-    if has_onload || !(has_media || has_as) {
+    if !(has_media || has_as) {
         return ImportRecordFlags::empty();
     }
     let is_stylesheet = rel.is_some_and(|rel| {
-        (rel.value().split_ascii_whitespace()).any(|token| token.eq_ignore_ascii_case("stylesheet"))
+        bun_core::strings::tokenize_any(rel.value().as_bytes(), b" \t\n\x0C\r")
+            .any(|token| token.eq_ignore_ascii_case(b"stylesheet"))
     });
     if !is_stylesheet {
         ImportRecordFlags::HTML_LINK_PRELOAD
-    } else if has_media && !is_disabled {
+    } else if has_media {
         ImportRecordFlags::HTML_LINK_MEDIA
     } else {
         ImportRecordFlags::empty()

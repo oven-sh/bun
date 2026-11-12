@@ -1277,6 +1277,58 @@ body {
     },
   });
 
+  // On a page with a link under `media`, each link applies its stylesheet at its own place, as in a browser.
+  // So the CSS of the page is that of one stylesheet with an "@import" for each link.
+  {
+    const pages = {
+      "x@print s x s": `.x{color:red}.s{color:red}\n`,
+      "x@print s x": `.s{color:red}.x{color:red}\n`,
+      "x@print s s x": `.s{color:red}.x{color:red}\n`,
+      "x@print x s": `.x{color:red}.s{color:red}\n`,
+      "x s x@print s": `.x{color:red}@media print{.x{color:red}}.s{color:red}\n`,
+      "x@print s x@print s": `@media print{.x{color:red}}.s{color:red}\n`,
+    };
+    const linksOf = (page: string) => page.split(" ").map(link => link.split("@"));
+    itBundled("html/EachLinkOnPageWithMediaAppliesAtItsPlace", {
+      outdir: "out/",
+      minifyWhitespace: true,
+      files: {
+        ...Object.fromEntries(
+          Object.keys(pages).flatMap((page, i) => [
+            [
+              `/page${i}.html`,
+              `<!doctype html><html><head>` +
+                linksOf(page)
+                  .map(
+                    ([file, media]) =>
+                      `<link rel="stylesheet" href="./${file}.css"${media ? ` media="${media}"` : ""}>`,
+                  )
+                  .join("") +
+                `</head><body></body></html>`,
+            ],
+            [
+              `/imports${i}.css`,
+              linksOf(page)
+                .map(([file, media]) => `@import "./${file}.css" ${media ?? ""};`)
+                .join("\n"),
+            ],
+          ]),
+        ),
+        "/x.css": `.x { color: red }`,
+        "/s.css": `.s { color: red }`,
+      },
+      entryPoints: Object.keys(pages).flatMap((_, i) => [`/page${i}.html`, `/imports${i}.css`]),
+      onAfterBundle(api) {
+        const built = Object.keys(pages).map((page, i) => [
+          page,
+          stylesheetOf(api, `page${i}.html`),
+          api.readFile(`out/imports${i}.css`),
+        ]);
+        expect(built).toEqual(Object.entries(pages).map(([page, css]) => [page, css, css]));
+      },
+    });
+  }
+
   // Each of these links applies its stylesheet for every medium, as it does without `media`. Bun warns about none.
   itBundled("html/LinksWithMediaThatStayUnconditional", {
     outdir: "out/",
@@ -1293,6 +1345,11 @@ body {
     <link rel="stylesheet" href="./first-of-two.css" media="all" media="print">
     <link rel="stylesheet" href="./onload.css" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="./disabled.css" media="print" disabled>
+    <link rel="stylesheet" href="./id.css" media="print" id="async">
+    <link rel="stylesheet" href="./class.css" media="print" class="async">
+    <link rel="stylesheet" href="./data.css" media="print" data-beasties-media="all">
+    <link rel="stylesheet" href="./title.css" media="print" title="Print">
+    <link rel="stylesheet" href="./unknown.css" media="print" async-css>
     <link rel="preload" as="style" href="./preload.css" media="print">
     <link rel="preload" rel="stylesheet" as="style" href="./first-rel.css" media="print">
     <link rel="stylesheet" href="./notes.txt" media="print">
@@ -1307,6 +1364,11 @@ body {
       "/first-of-two.css": `.first-of-two { color: red }`,
       "/onload.css": `.onload { color: red }`,
       "/disabled.css": `.disabled { color: red }`,
+      "/id.css": `.id { color: red }`,
+      "/class.css": `.class { color: red }`,
+      "/data.css": `.data { color: red }`,
+      "/title.css": `.title { color: red }`,
+      "/unknown.css": `.unknown { color: red }`,
       "/preload.css": `.preload { color: red }`,
       "/first-rel.css": `.first-rel { color: red }`,
       "/notes.txt": `not a stylesheet`,
@@ -1322,7 +1384,9 @@ body {
         ],
         css:
           `.empty{color:red}.all{color:red}.all-comma{color:red}.comment{color:red}.first-of-two{color:red}` +
-          `.onload{color:red}.disabled{color:red}.preload{color:red}.first-rel{color:red}.from-module{color:red}\n`,
+          `.onload{color:red}.disabled{color:red}` +
+          `.id{color:red}.class{color:red}.data{color:red}.title{color:red}.unknown{color:red}` +
+          `.preload{color:red}.first-rel{color:red}.from-module{color:red}\n`,
       });
     },
   });
@@ -1342,6 +1406,7 @@ body {
     <link rel="stylesheet" as="style" href="./two-rows.css" media="print">
     <link rel="stylesheet" href="./first-media.css" media="print" media="all">
     <link rel="stylesheet" href="./list.css" media="print,">
+    <link rel="stylesheet" type="text/css" crossorigin="anonymous" integrity="sha384-AAAA" referrerpolicy="no-referrer" fetchpriority="low" blocking="render" hreflang="en" charset="utf-8" nonce="AAAA" href="./loading.css" media="print">
   </head>
   <body></body>
 </html>`,
@@ -1351,12 +1416,14 @@ body {
       "/two-rows.css": `.two-rows { color: red }`,
       "/first-media.css": `.first-media { color: red }`,
       "/list.css": `.list { color: red }`,
+      "/loading.css": `.loading { color: red }`,
     },
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       expect(stylesheetOf(api, "index.html")).toBe(
         `@media print{.upper{color:red}}@media print{.first-rel{color:red}}@media screen{.tokens{color:red}}` +
-          `@media print{.two-rows{color:red}}@media print{.first-media{color:red}}@media print{.list{color:red}}\n`,
+          `@media print{.two-rows{color:red}}@media print{.first-media{color:red}}@media print{.list{color:red}}` +
+          `@media print{.loading{color:red}}\n`,
       );
     },
   });
@@ -1376,6 +1443,8 @@ body {
       ],
       "/preload-first.html": [cannotParse("print and")],
       "/loaded-twice.html": [cannotParse(",")],
+      // One warning for a link that matches two rows of the scanner.
+      "/two-rows.html": [cannotParse("print and")],
     },
     files: {
       "/rejected.html": `<!doctype html>
@@ -1407,22 +1476,31 @@ body {
   </head>
   <body></body>
 </html>`,
+      "/two-rows.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" as="style" href="./a.css" media="print and">
+  </head>
+  <body></body>
+</html>`,
       "/a.css": `.a { color: red }`,
       "/b.css": `.b { color: red }`,
       "/c.css": `.c { color: red }`,
       "/d.css": `.d { color: red }`,
       "/app.js": `import "./a.css";`,
     },
-    entryPoints: ["/rejected.html", "/preload-first.html", "/loaded-twice.html"],
+    entryPoints: ["/rejected.html", "/preload-first.html", "/loaded-twice.html", "/two-rows.html"],
     onAfterBundle(api) {
       expect({
         rejected: stylesheetOf(api, "rejected.html"),
         preloadFirst: stylesheetOf(api, "preload-first.html"),
         loadedTwice: stylesheetOf(api, "loaded-twice.html"),
+        twoRows: stylesheetOf(api, "two-rows.html"),
       }).toEqual({
         rejected: `.a{color:red}.b{color:red}.c{color:red}.d{color:red}\n`,
         preloadFirst: `.a{color:red}.b{color:red}\n`,
         loadedTwice: `.a{color:red}.b{color:red}\n`,
+        twoRows: `.a{color:red}\n`,
       });
     },
   });

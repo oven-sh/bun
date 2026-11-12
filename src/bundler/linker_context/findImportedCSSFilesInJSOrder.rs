@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
-use bun_ast::{ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_collections::VecExt;
 
 use crate::HTMLScanner::{InvalidLinkMedia, conditions_of_link_media, media_of_link};
@@ -122,18 +122,20 @@ pub(crate) fn find_css_files_of_html_page<'a>(
             && record.source_index.is_valid()
             && loaders[record.source_index.get() as usize].is_css()
     };
-    let media_of_links: Vec<Option<&'a ImportConditions>> =
-        if records.iter().any(is_bundled_media_link) {
-            (records.iter())
-                .map(|record| {
-                    (is_bundled_media_link(record))
-                        .then(|| link_media_conditions(this, page, record))
-                        .flatten()
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+    let mut media_of_links: Vec<Option<&'a ImportConditions>> = Vec::new();
+    if records.iter().any(is_bundled_media_link) {
+        for (i, record) in records.iter().enumerate() {
+            // A tag that matches two rows of `TAG_HANDLERS` has two records with one `range`.
+            let same_tag = i
+                .checked_sub(1)
+                .filter(|&i| records[i].range == record.range);
+            media_of_links.push(match same_tag {
+                _ if !is_bundled_media_link(record) => None,
+                Some(first_record) => media_of_links[first_record],
+                None => link_media_conditions(this, page, record),
+            });
+        }
+    }
     // A link whose `media` gives no conditions loads its stylesheet as a link with no `media` does.
     if media_of_links.iter().all(Option::is_none) {
         return (
@@ -147,17 +149,22 @@ pub(crate) fn find_css_files_of_html_page<'a>(
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     visited.set(page.get() as usize);
     for (record, media) in records.iter().zip(&media_of_links) {
+        let file = record.source_index;
+        let is_preload = record.flags.contains(ImportRecordFlags::HTML_LINK_PRELOAD);
+        let has_media_link = || {
+            (records.iter().zip(&media_of_links))
+                .any(|(link, media)| media.is_some() && link.source_index == file)
+        };
         if media.is_some() {
             // Not `visited`: a script or another link that loads the file applies it for every medium.
-            files.push(record.source_index);
-        } else {
-            let preloads_a_media_link = record.flags.contains(ImportRecordFlags::HTML_LINK_PRELOAD)
-                && (records.iter().zip(&media_of_links)).any(|(link, media)| {
-                    media.is_some() && link.source_index == record.source_index
-                });
-            if record.source_index.is_valid() && !preloads_a_media_link {
-                visit_in_js_order(this, page, record.source_index, &mut visited, &mut files);
+            files.push(file);
+        } else if file.is_valid() && !(is_preload && has_media_link()) {
+            // A browser applies the stylesheet of each link at the place of that link. A script or a preload loads a file once.
+            if record.kind == ImportKind::At && !is_preload && loaders[file.get() as usize].is_css()
+            {
+                visited.unset(file.get() as usize);
             }
+            visit_in_js_order(this, page, file, &mut visited, &mut files);
         }
         conditions.resize(files.len(), *media);
     }

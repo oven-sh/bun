@@ -458,13 +458,6 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
     expect(await listInEveryForm(String(dir))).toEqual(inEveryForm(entries));
   });
 
-  it("descends as far below a relative root", async () => {
-    using dir = tempDir("readdir-relative-root", {});
-    const entries = makeTreeAcrossTheLimit(String(dir));
-    const { listing } = await listInChild(bunExe(), ".", { cwd: String(dir) });
-    expect(listing).toEqual(inEveryForm(entries));
-  });
-
   // Node.js 26.8 and later fails the whole call with ENAMETOOLONG when it cannot
   // enter a directory. Bun lists the directory and goes on.
   it("lists a directory at MAX_PATH_BYTES from the root and does not enter it", async () => {
@@ -506,34 +499,40 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
     }).toEqual({ readdirSync: expected, "promises.readdir": expected });
   });
 
-  describe.skipIf(!node)("Node.js gives the same listing", () => {
-    it("close to the limit", async () => {
+  // Each of these waits for a child process, so they run concurrently.
+  describe.concurrent("in a child process", () => {
+    let shimEnv: NodeJS.Dict<string>;
+    // Compiles the shim. A C compiler on a busy CI machine can take longer than
+    // the default hook timeout.
+    beforeAll(async () => {
+      if (dtUnknownReaddir.available) shimEnv = await dtUnknownReaddir.env();
+    }, 30_000);
+
+    it("descends as far below a relative root", async () => {
+      using dir = tempDir("readdir-relative-root", {});
+      const entries = makeTreeAcrossTheLimit(String(dir));
+      const { listing } = await listInChild(bunExe(), ".", { cwd: String(dir) });
+      expect(listing).toEqual(inEveryForm(entries));
+    });
+
+    it.skipIf(!dtUnknownReaddir.available)("lists the same when readdir reports no entry types", async () => {
+      using dir = tempDir("readdir-up-to-limit-unknown", {});
+      const entries = makeTreeAcrossTheLimit(String(dir));
+      const { listing, stderr } = await listInChild(bunExe(), String(dir), { env: shimEnv });
+      expect(stderr).toContain(dtUnknownReaddir.marker);
+      expect(listing).toEqual(inEveryForm(entries));
+    });
+
+    it.skipIf(!node)("Node.js lists the same close to the limit", async () => {
       using dir = tempDir("readdir-near-limit-node", {});
       const entries = makeTreeNearTheLimit(String(dir));
       expect((await listInChild(node!, String(dir))).listing).toEqual(inEveryForm(entries));
     });
 
-    it("for a symlink that the OS does not follow because of its length", async () => {
+    it.skipIf(!node)("Node.js lists the same for a symlink that the OS does not follow", async () => {
       using dir = tempDir("readdir-long-link-node", {});
       const entries = makeTreeWithLongLink(String(dir));
       expect((await listInChild(node!, String(dir))).listing).toEqual(inEveryForm(entries));
-    });
-  });
-
-  describe.skipIf(!dtUnknownReaddir.available)("on a filesystem whose readdir reports no entry types", () => {
-    let env: NodeJS.Dict<string>;
-    // Compiles the shim. A C compiler on a busy CI machine can take longer than
-    // the default hook timeout.
-    beforeAll(async () => {
-      env = await dtUnknownReaddir.env();
-    }, 30_000);
-
-    it("lists the same, with the type of every Dirent", async () => {
-      using dir = tempDir("readdir-up-to-limit-unknown", {});
-      const entries = makeTreeAcrossTheLimit(String(dir));
-      const { listing, stderr } = await listInChild(bunExe(), String(dir), { env });
-      expect(stderr).toContain(dtUnknownReaddir.marker);
-      expect(listing).toEqual(inEveryForm(entries));
     });
   });
 });

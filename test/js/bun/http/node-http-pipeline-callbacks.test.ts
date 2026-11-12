@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
-import { once } from "node:events";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { once } from "node:events";
 import type { IncomingMessage, ServerOptions } from "node:http";
 import { createServer, ServerResponse } from "node:http";
 import { createSecureServer } from "node:http2";

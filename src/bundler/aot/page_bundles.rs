@@ -238,6 +238,7 @@ fn write_page_manifests(
             &bundle.linker.graph,
             chunks,
             output_files,
+            b"",
             &mut manifest,
         )?;
         manifests[positions_by_path[found].1] = Some(manifest);

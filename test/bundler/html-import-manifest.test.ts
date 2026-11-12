@@ -20,7 +20,7 @@ interface Manifest {
 
 /** The manifests embedded in a bundled server entry point, in import order. */
 function readManifests(api: BundlerTestBundleAPI, file: string): Manifest[] {
-  const manifests = [...api.readFile(file).matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match =>
+  const manifests = [...api.readFile(file).matchAll(/__jsonParse\("((?:[^"\\]|\\.)*)"/gs)].map(match =>
     JSON.parse(JSON.parse('"' + match[1] + '"')),
   );
   for (const manifest of manifests) {
@@ -234,7 +234,7 @@ console.log(JSON.stringify(html, null, 2));
 
     onAfterBundle(api) {
       const serverCode = api.readFile("out/server.js");
-      const match = serverCode.match(/__jsonParse\("(.+?)"\)/s);
+      const match = serverCode.match(/__jsonParse\("((?:[^"\\]|\\.)*)"/s);
       expect(match).not.toBeNull();
       const manifest = JSON.parse(JSON.parse('"' + match![1] + '"'));
       // The favicon.svg should be in the files array
@@ -290,7 +290,7 @@ console.log("About manifest:", aboutHtml);
       const serverCode = api.readFile("out/server.js");
 
       // The manifests are embedded as escaped JSON strings in __jsonParse calls
-      const manifestMatches = [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)];
+      const manifestMatches = [...serverCode.matchAll(/__jsonParse\("((?:[^"\\]|\\.)*)"/gs)];
       expect(manifestMatches.length).toBe(2);
       let manifests: any[] = [];
       for (const match of manifestMatches) {
@@ -579,7 +579,7 @@ console.log("About manifest:", aboutHtml);
       const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun" });
       expect(r.success).toBe(true);
       const js = readFileSync(join(out, "server.js"), "utf8");
-      const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
+      const m = js.match(/__jsonParse\("((?:[^"\\]|\\.)*)"/s)!;
       return JSON.parse(JSON.parse('"' + m[1] + '"')) as {
         files: Array<{ loader: string; path: string; headers: { etag: string } }>;
       };

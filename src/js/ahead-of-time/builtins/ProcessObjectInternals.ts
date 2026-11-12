@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 ae231586b288ae3610200d6f928e2cb63ac0c2ae28580f9db9352b72a0c751a3.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -70,7 +70,8 @@ export function getStdioWriteStream(
     // but the TTY is technically duplex
     // see test-fs-syncwritestream.js
     stream.readable = true;
-    process.on("SIGWINCH", () => {
+    // The stream outlives the test file that first read it, and so does its listener.
+    ($getByIdDirectPrivate(process, "sharedByTestFiles") ?? process).on("SIGWINCH", () => {
       stream._refreshSize();
     });
     stream._type = "tty";
@@ -841,6 +842,11 @@ export function createProcessFinalization(process: NodeJS.Process) {
   function ensureInstalled() {
     if (installed) return;
     installed = true;
+    // What a test file registers ends with the file, and so do the two listeners. Said first, in case `process.on` throws.
+    $getByIdDirectPrivate(process, "sharedByTestFiles")?.forget(() => {
+      entries = [];
+      installed = false;
+    });
     // process.on (append), not prependListener: Node's install() uses
     // process.on so a user exit listener added before the first
     // finalization.register() fires before the finalization callback.

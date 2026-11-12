@@ -46,7 +46,8 @@ export function getStdioWriteStream(
     // but the TTY is technically duplex
     // see test-fs-syncwritestream.js
     stream.readable = true;
-    process.on("SIGWINCH", () => {
+    // The stream outlives the test file that first read it, and so does its listener.
+    ($getByIdDirectPrivate(process, "sharedByTestFiles") ?? process).on("SIGWINCH", () => {
       stream._refreshSize();
     });
     stream._type = "tty";
@@ -802,6 +803,11 @@ export function createProcessFinalization(process) {
   function ensureInstalled() {
     if (installed) return;
     installed = true;
+    // What a test file registers ends with the file, and so do the two listeners. Said first, in case `process.on` throws.
+    $getByIdDirectPrivate(process, "sharedByTestFiles")?.forget(() => {
+      entries = [];
+      installed = false;
+    });
     // process.on (append), not prependListener: Node's install() uses
     // process.on so a user exit listener added before the first
     // finalization.register() fires before the finalization callback.

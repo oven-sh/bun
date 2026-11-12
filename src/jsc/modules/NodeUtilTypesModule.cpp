@@ -353,23 +353,6 @@ static bool hasNoKeyOrEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L523-L570
 static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
 {
-    bool hasElements = false;
-    if (body == arraySubsequence) {
-        const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actual.getObject()));
-        RETURN_IF_EXCEPTION(scope, false);
-        const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expected.getObject()));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (expectedLength > actualLength)
-            return false;
-        hasElements = expectedLength;
-    }
-    if (!hasElements) {
-        const bool nothingToCompare = hasNoKeyOrEntry(globalObject, scope, expected.getObject(), body);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (nothingToCompare)
-            return true;
-    }
-
     Memos& memos = *cycles.memos;
     JSC::JSCell* actualCell = actual.asCell();
     JSC::JSCell* expectedCell = expected.asCell();
@@ -378,6 +361,32 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
         memos.b = expectedCell;
         return std::nullopt;
     }
+
+    // node answers for an `expected` array that is longer than `actual`, and for an `expected` with nothing to
+    // compare, before handleCycles sees the pair. Where handleCycles would only remember the pair, the comparison
+    // gives the same answers and leaveMemos takes the pair out again, so they are not looked for here.
+    const bool onlyRemembers = memos.hasSet
+        ? !memos.set.contains(actualCell) && !memos.set.contains(expectedCell)
+        : !memos.deep && memos.a != actualCell && memos.b != expectedCell;
+    if (!onlyRemembers) {
+        bool hasElements = false;
+        if (body == arraySubsequence) {
+            const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actual.getObject()));
+            RETURN_IF_EXCEPTION(scope, false);
+            const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expected.getObject()));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (expectedLength > actualLength)
+                return false;
+            hasElements = expectedLength;
+        }
+        if (!hasElements) {
+            const bool nothingToCompare = hasNoKeyOrEntry(globalObject, scope, expected.getObject(), body);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (nothingToCompare)
+                return true;
+        }
+    }
+
     if (!memos.hasSet) {
         if (!memos.deep) {
             if (memos.a == actualCell)

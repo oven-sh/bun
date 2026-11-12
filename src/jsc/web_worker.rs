@@ -15,9 +15,9 @@
 //!
 //! Thread lifecycle (`thread_main`):
 //!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
-//!   2. `spin()`      — the node bootstrap, 'online', load the entry point,
-//!                      `workerGlobalScopeStarted`, run the event loop until it drains or
-//!                      termination is requested, `beforeExit` on a natural drain.
+//!   2. `spin()`      — bootstrap, 'online', load the entry, `workerGlobalScopeStarted`, run the
+//!                      event loop until it drains or termination is requested,
+//!                      `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
 //!                      teardown, free per-thread state, `workerGlobalScopeDestroyed`.
 //!   Then the thread drops its self-ref and returns; the parent joins it.
@@ -1131,16 +1131,14 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
-        // A relative specifier resolves against the process's working directory as it
-        // is now, so this stays ahead of the bootstrap. What it found is reported behind 'online'.
+        // Ahead of the bootstrap: a relative specifier reads the working directory as it is now.
         let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let resolved = unsafe {
             resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &dot_slash)
         };
 
-        // Node runs its worker bootstrap (parentPort, stdio, process overrides)
-        // ahead of user code; ours is node:worker_threads' module body.
+        // The node worker bootstrap (parentPort, stdio, process overrides): node:worker_threads' module body.
         if self.is_node_worker {
             let global = vm.global();
             if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
@@ -1157,9 +1155,7 @@ impl WebWorker {
             }
         }
 
-        // 'online' where node posts it: behind the bootstrap, ahead of anything the entry
-        // posts and of the error of an entry that does not resolve.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L148
+        // 'online', where node posts it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L148
         WebWorker__workerThreadStarted(self.messaging_proxy);
 
         let path = match resolved {

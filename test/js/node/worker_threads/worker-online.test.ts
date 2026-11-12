@@ -24,7 +24,8 @@ test("the worker's bootstrap is over when 'online' is emitted", async () => {
     worker.on("message", send => seen.push("process.send is " + send));
     worker.on("exit", code => console.log(seen.concat("exit " + code).join(", ")));
   `;
-  const { NODE_CHANNEL_FD: _, ...env } = process.env;
+  // Without BUN_DEBUG_QUIET_LOGS a debug build of Bun writes its logs to stdout.
+  const { NODE_CHANNEL_FD: _, ...env } = { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" };
   const { stdout } = await promisify(execFile)(process.execPath, ["-e", script], { env });
   assert.strictEqual(stdout, "online, process.send is undefined, exit 0\n");
 });

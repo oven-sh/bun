@@ -294,7 +294,7 @@ child.on("close", () => {
 `;
 
 // node:child_process: the same for a consumer that reads on 'readable'. Once the buffer is at the highWaterMark the
-// reader stops, and the consumer's read() starts it again: a read the reader begins itself, not one it does for a pull.
+// reader stops, and the consumer's read() starts it again.
 const CHILD_PROCESS_READABLE_FIXTURE = /* js */ `
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -348,6 +348,41 @@ console.log(
 );
 `;
 
+// node:child_process, the same wakeup: "hello", then the failed read. LISTENER is what the 'data' listener does with
+// the chunk: "ok" returns, "throws" throws with an 'uncaughtException' handler installed, "throws-unhandled" with none.
+const CHILD_PROCESS_MID_FILL_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+const listener = process.env.LISTENER;
+const events = [];
+if (listener === "throws") process.on("uncaughtException", (e, origin) => events.push(origin + ":" + e.message));
+const child = spawn(${JSON.stringify(GO_WRITER_CMD[0])}, ${JSON.stringify(GO_WRITER_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
+// 'resume' comes after the stream's first read request. By the next immediate the reader is waiting on the socket,
+// so the writer's bytes come in through the poll.
+child.stdout.once("resume", () => setImmediate(() => child.stdin.write("go\\n")));
+child.stdout.on("data", chunk => {
+  events.push("chunk:" + chunk.length);
+  if (listener !== "ok") throw new Error("data-throw");
+});
+child.stdout.on("error", e => events.push("stdout.error:" + e.code));
+child.stdout.on("end", () => events.push("stdout.end"));
+child.stdout.on("close", () => {
+  events.push("stdout.close");
+  child.stdin.end();
+});
+child.on("close", () => events.push("close"));
+process.on("exit", code => {
+  console.log(
+    JSON.stringify({
+      code,
+      received: Number(readFileSync(process.env.SPAWN_FAULT_REPORT, "utf8")),
+      readsAfterError: Number(readFileSync(process.env.SPAWN_FAULT_READS_AFTER, "utf8")),
+      events,
+    }),
+  );
+});
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -389,6 +424,7 @@ beforeAll(async () => {
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
+    "child-process-mid-fill.mjs": CHILD_PROCESS_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -444,8 +480,10 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
   return { parsed, stderr: unexpectedStderr, exitCode };
 }
 
-// The first recv() is the eager read during spawn (the bytes are buffered
-// before JS touches .stdout). A later one is a read the JS consumer drives.
+// For Bun.spawn the first recv() is the eager read during spawn (the bytes are
+// buffered before JS touches .stdout), and a later one is a read the JS consumer
+// drives. node:child_process starts reading at the consumer's first read, so
+// there the first recv() is the first read of all.
 const RECV_FAULTS = [
   ["the eager read during spawn", "1"],
   ["a read after the consumer attached", "3"],
@@ -501,8 +539,8 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     });
   });
 
-  // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
-  // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.
+  // Reads before the failed one returned bytes. The stream is destroyed with the error, and every one of those bytes
+  // has to reach 'data' first.
   test.concurrent("node:child_process: stdout delivers every byte read before the error", async () => {
     const report = join(String(dir), "recv-report.txt");
     expect(
@@ -519,7 +557,7 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
   // does not repeat, the error would come after bytes read later, or never if those reads reach EOF first.
   describe("stdout read error after bytes in the same poll-driven read", () => {
     // The reader starts at the consumer's first read. The shim caps each recv() at 4 KiB and fails #2 with EAGAIN, so
-    // that read parks. One wakeup then gets bytes from #3 on and the failure.
+    // the reader parks after at most one 4 KiB chunk. One wakeup then gets bytes from #3 on and the failure.
     const parked = { SPAWN_FAULT_RECV_CAP: "4096", SPAWN_FAULT_RECV_EAGAIN_AT: "2" };
 
     test.concurrent("node:child_process: stdout emits the bytes read before the error, then 'error'", async () => {
@@ -581,6 +619,59 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         exitCode: 0,
       });
     });
+
+    // node:child_process gets the same wakeup through its 'data' listener, which returns or throws between the chunk
+    // and the error.
+    const childProcessMidFill = (listener: string) => ({
+      LISTENER: listener,
+      SPAWN_FAULT_RECV_MID_FILL: "1",
+      SPAWN_FAULT_REPORT: join(String(dir), `recv-report-mid-fill-child-process-${listener}.txt`),
+      SPAWN_FAULT_READS_AFTER: join(String(dir), `recv-reads-after-mid-fill-child-process-${listener}.txt`),
+    });
+
+    test.concurrent("node:child_process: stdout emits the chunk read before the error, then 'error'", async () => {
+      expect(await runWithFault("child-process-mid-fill.mjs", childProcessMidFill("ok"))).toEqual({
+        parsed: {
+          code: 0,
+          received: 5,
+          readsAfterError: 0,
+          events: ["chunk:5", "stdout.error:EIO", "stdout.close", "close"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // As in Node, the throw is an 'uncaughtException' and the reader goes on, so the error still destroys the stream.
+    test.concurrent("node:child_process: a 'data' listener that throws on that chunk still gets 'error'", async () => {
+      expect(await runWithFault("child-process-mid-fill.mjs", childProcessMidFill("throws"))).toEqual({
+        parsed: {
+          code: 0,
+          received: 5,
+          readsAfterError: 0,
+          events: ["chunk:5", "uncaughtException:data-throw", "stdout.error:EIO", "stdout.close", "close"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // With no 'uncaughtException' handler the throw ends the run, and the error of the same wakeup must not be
+    // delivered behind it.
+    test.concurrent(
+      "node:child_process: a fatal throw from 'data' on that chunk is not followed by 'error'",
+      async () => {
+        const { parsed, stderr, exitCode } = await runWithFault(
+          "child-process-mid-fill.mjs",
+          childProcessMidFill("throws-unhandled"),
+        );
+        expect({ parsed, stderr: stderr.includes("error: data-throw"), exitCode }).toEqual({
+          parsed: { code: 1, received: 5, readsAfterError: 0, events: ["chunk:5"] },
+          stderr: true,
+          exitCode: 1,
+        });
+      },
+    );
   });
 
   describe.each([

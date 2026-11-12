@@ -40,6 +40,18 @@ pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
 }
 
 pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+    check_and_emit(checked, log, true)
+}
+
+/// `check_and_emit_declarations` for a build that writes no typed files: nothing reads `take_module_types` then.
+pub(crate) fn check_and_emit_only_declarations(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> bool {
+    check_and_emit(checked, log, false)
+}
+
+fn check_and_emit(checked: TypeChecked, log: &mut bun_ast::Log, notes_module_types: bool) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -60,6 +72,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     });
     // The sources whose class fields the bundle assigns in the constructor, as the checker names them.
     let mut assigning: Vec<Vec<u8>> = assigns_class_fields
+        .filter(|_| notes_module_types)
         .map(|path| from_native(join_abs_string::<Auto>(cwd, &[path])))
         .collect();
     let provided = Provided {
@@ -94,7 +107,9 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
                 .binary_search_by(|path| path[..].cmp(source))
                 .is_ok()
         };
-        module_types.note(checker, file, assigns_class_fields);
+        if notes_module_types {
+            module_types.note(checker, file, assigns_class_fields);
+        }
         let text = checker.emit_declaration_file(file);
         let source = checker.p.files.module(file).file_name();
         let mut emitted = emitted.lock();

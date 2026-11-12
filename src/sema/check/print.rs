@@ -38,8 +38,8 @@ pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
 pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
-/// Not a flag of the node builder: `ELIDED` stands for a part that is left out, in a text for no declaration file too.
-pub(super) const MARK_ELISIONS: u32 = 1 << 17;
+/// Not a flag of the node builder: the print of `Checker::stated_type_text`, which has a length and a cache of its own.
+pub(super) const STATED: u32 = 1 << 17;
 /// The flags that `typeToString` passes to `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -55,8 +55,10 @@ pub(super) const IGNORE_ERRORS: u32 =
     ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS | ALLOW_THIS_IN_OBJECT_LITERAL;
 const DEFAULT_MAXIMUM_TRUNCATION_LENGTH: usize = 160;
 const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
+/// The length of a text of `Checker::stated_type_text`. The printer counts less than it writes, so the text counts too.
+const STATED_MAXIMUM_TRUNCATION_LENGTH: usize = 4_000;
 /// `any` with the synthetic leading comment of `createElidedInformationPlaceholder`.
-pub(super) const ELIDED: &[u8] = b"/*elided*/ any";
+const ELIDED: &[u8] = b"/*elided*/ any";
 
 /// `ast.TypePrecedence`
 const CONDITIONAL: u8 = 0;
@@ -414,6 +416,36 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
+    /// `serialize_type_for_declaration` under `STATED`. `None`: the text has `any` for a part, or is cut at its length.
+    pub(super) fn stated_type_text(
+        &mut self,
+        file: FileId,
+        declaration: hir::Node,
+        ty: TypeId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> Option<Vec<u8>> {
+        with_printer(
+            self,
+            Some(enclosing_declaration),
+            Some(tracker),
+            flags | STATED,
+            |printer| {
+                let ty = printer.c.widen_literal(ty);
+                let options = node_reuse::SerializeTypeOptions {
+                    try_reuse: true,
+                    is_optional_reverse_mapped: false,
+                };
+                let node = printer.serialize_type_for_declaration(file, declaration, ty, options);
+                let is_whole = !printer.has_elision
+                    && !printer.truncating
+                    && node.text.len() <= STATED_MAXIMUM_TRUNCATION_LENGTH;
+                is_whole.then_some(node.text)
+            },
+        )
+    }
+
     /// `NodeBuilder.SerializeReturnTypeForSignature`
     pub(super) fn serialize_return_type_for_signature(
         &mut self,
@@ -677,6 +709,7 @@ fn with_printer<'p, T>(
             container_pos: usize::MAX,
             approximate_length: 0,
             truncating: false,
+            has_elision: false,
             visited_types: Vec::new(),
             symbol_depth: Vec::new(),
             infer_type_parameters: Vec::new(),
@@ -1127,6 +1160,7 @@ struct SerializedTypeEntry {
     /// `Printer::indent` where it was created.
     indent: Option<usize>,
     truncating: bool,
+    has_elision: bool,
     added_length: usize,
     tracked_symbols: Vec<TrackedSymbolArgs>,
 }
@@ -1148,6 +1182,8 @@ struct TypeVisit {
     /// The previous value of `Printer::symbol_depth` for `identity`.
     depth: u32,
     previous_tracked_symbols: Vec<TrackedSymbolArgs>,
+    /// `Printer::has_elision` of what was printed before this type.
+    had_elision: bool,
     start_length: usize,
 }
 
@@ -1181,6 +1217,8 @@ struct Printer<'c, 'p, 's> {
     container_pos: usize,
     approximate_length: usize,
     truncating: bool,
+    /// `elided_information_placeholder` stands for a part of what is printed. The text does not say so on one line.
+    has_elision: bool,
     visited_types: Vec<TypeId>,
     symbol_depth: Vec<(Identity, u32)>,
     infer_type_parameters: Vec<TypeId>,
@@ -1580,7 +1618,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if self.truncating {
             return true;
         }
-        let maximum = if self.flags & NO_TRUNCATION != 0 {
+        let maximum = if self.flags & STATED != 0 {
+            STATED_MAXIMUM_TRUNCATION_LENGTH
+        } else if self.flags & NO_TRUNCATION != 0 {
             NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
         } else {
             DEFAULT_MAXIMUM_TRUNCATION_LENGTH
@@ -1597,8 +1637,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 ..Node::simple(b"...")
             };
         }
-        let is_marked = self.indent.is_some() || self.flags & MARK_ELISIONS != 0;
-        Node::simple(if is_marked { ELIDED } else { &b"any"[..] })
+        Node::simple(if self.indent.is_some() {
+            ELIDED
+        } else {
+            &b"any"[..]
+        })
     }
 
     /// `... n more ...`
@@ -1613,6 +1656,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `createElidedInformationPlaceholder`
     fn elided_information_placeholder(&mut self) -> Node {
         self.approximate_length += 3;
+        self.has_elision = true;
         self.elision()
     }
 
@@ -1952,6 +1996,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 self.track(tracked);
             }
             self.truncating |= cached.truncating;
+            self.has_elision |= cached.has_elision;
             self.approximate_length += cached.added_length;
             let node = cached.node.deep_clone();
             return ControlFlow::Break(match (cached.indent, self.indent) {
@@ -1983,6 +2028,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             key,
             depth,
             previous_tracked_symbols: std::mem::take(&mut self.tracked_symbols),
+            had_elision: std::mem::take(&mut self.has_elision),
             start_length: self.approximate_length,
         })
     }
@@ -1995,11 +2041,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             key,
             depth,
             previous_tracked_symbols,
+            had_elision,
             start_length,
         } = visit;
         let added_length = self.approximate_length.saturating_sub(start_length);
         let tracked_symbols =
             std::mem::replace(&mut self.tracked_symbols, previous_tracked_symbols);
+        let has_elision = self.has_elision;
+        self.has_elision |= had_elision;
         if let Some(key) = key
             && !self.reported_diagnostic
             && !self.encountered_error
@@ -2008,6 +2057,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 node: node.clone(),
                 indent: self.indent,
                 truncating: self.truncating,
+                has_elision,
                 added_length,
                 tracked_symbols,
             };
@@ -4073,7 +4123,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let is_reverse_mapped = matches!(self.c.data(ty), TypeData::ReverseMapped { .. });
         for info in index {
             // The placeholder is created whether or not it is used.
+            let had_elision = self.has_elision;
             let placeholder = self.elided_information_placeholder();
+            self.has_elision = had_elision || is_reverse_mapped;
             let type_node = is_reverse_mapped.then_some(&placeholder);
             if let Some(names) = self.index_info_to_object_computed_names(info, type_node) {
                 elements.extend(names);

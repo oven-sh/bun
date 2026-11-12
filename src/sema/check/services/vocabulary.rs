@@ -521,6 +521,8 @@ pub enum SymbolOp {
     ExportSymbol,
     /// `getMergedSymbol`
     Merged,
+    /// `getParentOfSymbol`
+    Parent,
 }
 
 /// A list of symbols that belongs to a symbol.
@@ -550,6 +552,10 @@ pub struct StatedType {
     /// The type as a declaration beside the member writes it: `Map<string, Item>`. Or its value: `"circle"`, `Unit.Px`.
     pub text: Vec<u8>,
     pub is_value: bool,
+    /// No declaration there can have `text`: a symbol in it has no name there, or the printer left a part of it out.
+    pub is_refused: bool,
+    /// The symbols that the printer named in `text`.
+    pub names: Vec<SymbolRef>,
 }
 
 /// A type's components, where they aren't just a list of types.

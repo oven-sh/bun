@@ -302,6 +302,15 @@ fn check_types_and_emit_declarations(
     })
 }
 
+fn check_types_and_emit_only_declarations(
+    checked: options::TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_and_emit_only_declarations(checked, log)
+    })
+}
+
 fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bundler::Result<()> {
     let directory = Dir::cwd().make_open_path(outdir, bun_sys::OpenDirOptions::default())?;
     for file in output_files.iter_mut() {
@@ -1225,6 +1234,10 @@ impl CompletionStruct for JSBundleCompletionTask {
                 writes_typed_files && config.source_map == options::SourceMapOption::None;
             if drops_source_maps {
                 transpiler.options.source_map = options::SourceMapOption::External;
+            }
+            if !writes_typed_files {
+                transpiler.options.type_check =
+                    Some(check_types_and_emit_only_declarations as options::TypeCheck);
             }
             self.declarations = Some(DeclarationOutputs {
                 loaders: bun_core::UnwrapOrOom::unwrap_or_oom(transpiler.options.loaders.clone()),

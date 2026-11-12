@@ -25,6 +25,7 @@ pub use bun_react_compiler::diagnostics::ErrorCategory;
 pub use compile::Flavor;
 pub use finding::{Detail, Finding, Suggestion};
 pub use oxlint::{Label, Rendered, render_all};
+pub use program::{Discovered, discover, is_hook_call, would_compile};
 
 use bun_lint::ast::File;
 use bun_react_compiler::Categories;

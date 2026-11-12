@@ -1245,6 +1245,7 @@ dependencies = [
  "bun_glob",
  "bun_lint",
  "bun_lint_oxlint",
+ "bun_lint_react_compiler",
  "bun_semver",
  "bun_text_diff",
  "rustc-hash",

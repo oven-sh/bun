@@ -1282,15 +1282,11 @@ fn has_memo_cache_function_import<'a>(
 /// of a comment.
 ///
 /// A `"use no memo"` at the top of the file has no effect when nothing is emitted.
-pub(crate) fn compile_program<'a>(
-    file: &'a File<'a>,
-    flavor: Flavor,
-    wanted: Categories,
-) -> Vec<Finding> {
+/// The functions the compiler would compile in `file`. Empty if it leaves the file alone.
+fn functions_to_compile<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<CompileSource<'a>> {
     if has_memo_cache_function_import(file, REACT_COMPILER_RUNTIME_MODULE, flavor) {
         return Vec::new();
     }
-
     let mut search = Search::new(flavor);
     if !may_have_functions_to_compile(file, &mut search)
         || (flavor == Flavor::Eslint && !may_contain_react_code(file))
@@ -1298,19 +1294,76 @@ pub(crate) fn compile_program<'a>(
         return Vec::new();
     }
     let queue = find_functions_to_compile(file, search);
-    if queue.is_empty() || (flavor == Flavor::Eslint && second_parser_rejects(file)) {
+    if flavor == Flavor::Eslint && second_parser_rejects(file) {
+        return Vec::new();
+    }
+    queue
+}
+
+/// The plugin validates hooks and memoization dependencies itself, and in that mode the compiler doesn't look for
+/// suppression comments.
+fn program_suppressions<'a>(file: &'a File<'a>, flavor: Flavor) -> ProgramSuppressions<'a> {
+    match flavor {
+        Flavor::Oxlint => find_program_suppressions(file, &ESLINT_SUPPRESSION_RULES),
+        Flavor::Eslint => ProgramSuppressions::default(),
+    }
+}
+
+/// A function the compiler finds in a file.
+#[derive(Copy, Clone)]
+pub struct Discovered<'a> {
+    pub func: Func<'a>,
+    /// The compiler leaves it alone: it starts with `"use no memo"`, or a suppressed `react-hooks` rule touches it.
+    pub skipped: bool,
+}
+
+/// The functions the compiler would compile in `file`, without compiling them. A function inside one of them is
+/// compiled as part of it and isn't listed.
+pub fn discover<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Discovered<'a>> {
+    let queue = functions_to_compile(file, flavor);
+    if queue.is_empty() {
+        return Vec::new();
+    }
+    let suppressions = program_suppressions(file, flavor);
+    let discovered = queue.iter().map(|source| {
+        let span = source.fn_node.estree_span();
+        let suppressed = !suppressions
+            .filter_suppressions_that_affect_function(span.start, span.end)
+            .is_empty();
+        Discovered {
+            func: source.fn_node,
+            skipped: suppressed || find_directive_disabling_memoization(source.fn_node, flavor),
+        }
+    });
+    discovered.collect()
+}
+
+/// True if the compiler would compile `func` on its own if it were named `name`, like a declaration or the function a
+/// variable is initialized with. Doesn't say whether `func` opts out.
+pub fn would_compile<'a>(func: Func<'a>, name: Option<Name<'a>>, flavor: Flavor) -> bool {
+    let mut search = Search::new(flavor);
+    try_make_compile_source(func, name, None, &mut search).is_some()
+}
+
+/// True if `call` is a hook call to the compiler: `useState()` or `React.useState()`, with no `?.`.
+pub fn is_hook_call(call: Call<'_>, flavor: Flavor) -> bool {
+    expr_is_hook(call.callee(), flavor) && is_regular_call(call)
+}
+
+pub(crate) fn compile_program<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    wanted: Categories,
+) -> Vec<Finding> {
+    let queue = functions_to_compile(file, flavor);
+    if queue.is_empty() {
         return Vec::new();
     }
 
     let mut context = ProgramContext {
         flavor,
         compiler: Compiler::new(file, flavor, wanted),
-        // The plugin validates hooks and memoization dependencies itself, and in that mode the compiler doesn't look
-        // for suppression comments.
-        suppressions: match flavor {
-            Flavor::Oxlint => find_program_suppressions(file, &ESLINT_SUPPRESSION_RULES),
-            Flavor::Eslint => ProgramSuppressions::default(),
-        },
+        suppressions: program_suppressions(file, flavor),
         diagnostics: Vec::new(),
     };
     for source in &queue {

@@ -1,5 +1,4 @@
 use crate::bun::react_imports;
-use crate::rules::react_hooks_rules_of_hooks::is_hook_name;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ts_utils::{
@@ -7,6 +6,8 @@ use bun_lint::utils::ts_utils::{
     is_strong_precedence_node, is_weak_precedence_parent,
 };
 use bun_lint_oxlint::ast_util::static_property_name;
+use bun_lint_react_compiler::{Discovered, Flavor, discover, is_hook_call, would_compile};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Disallow `useMemo`, `useCallback` and `memo` in a project that relies on the React Compiler.
 pub struct ReactNoManualMemoization;
@@ -20,9 +21,11 @@ const REMOVE_IMPORT: &Message = &Message::new("removeImport", "Remove the import
 
 const MEMOIZERS: [&str; 3] = ["memo", "useCallback", "useMemo"];
 
-/// The directives of the React Compiler. `src/lint/react_compiler/program.rs` has the same lists.
-const OPT_IN_DIRECTIVES: [&str; 2] = ["use forget", "use memo"];
+/// The directives that opt a file out of the React Compiler. `src/lint/react_compiler/program.rs` has the same list.
 const OPT_OUT_DIRECTIVES: [&str; 2] = ["use no forget", "use no memo"];
+
+/// The compiler port as oxlint runs it, which is the closest to `bun build --react-compiler`.
+const FLAVOR: Flavor = Flavor::Oxlint;
 
 /// A use of one of the memoizers.
 struct Use<'a> {
@@ -41,88 +44,64 @@ fn has_directive<'a>(statements: impl IntoIterator<Item = Stmt<'a>>, directives:
     found.any(|it| directives.iter().any(|directive| directive.as_bytes() == it))
 }
 
-fn has_body_directive(func: Func<'_>, directives: &[&str]) -> bool {
-    has_directive(func.body_statements().into_iter().flatten(), directives)
-}
-
-/// True if `func` starts with `"use no memo"` or `"use no forget"`: the compiler's `find_directive_disabling_memoization`.
-fn opts_out(func: Func<'_>) -> bool {
-    has_body_directive(func, &OPT_OUT_DIRECTIVES)
-}
-
-fn is_component_or_hook_name(name: &[u8]) -> bool {
-    name.first().is_some_and(u8::is_ascii_uppercase) || is_hook_name(name)
-}
-
 /// `memo`, `React.memo`
 fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
     ast_utils::is_specific_id_with(callee, |it| names.iter().any(|name| name.as_bytes() == it))
         || ast_utils::is_member_access_of_any(callee, names)
 }
 
-/// The name the compiler gives `func`: a declaration's own, otherwise that of the variable it is the initializer of.
-fn compiler_name(func: Func<'_>) -> Option<Name<'_>> {
-    if func.kind() == FnKind::Decl {
-        return func.name().map(Ident::name);
+/// What the compiler would do with the functions of a file. The compiler port decides which ones it compiles, by the
+/// rules of `bun build --react-compiler`.
+struct Compiled<'a> {
+    discovered: FxHashMap<Func<'a>, Discovered<'a>>,
+    /// The hook calls in each function itself, not in a function inside it.
+    hook_calls: FxHashMap<Func<'a>, u32>,
+    /// The functions that create JSX themselves.
+    with_jsx: FxHashSet<Func<'a>>,
+}
+
+impl<'a> Compiled<'a> {
+    fn new(file: &'a File<'a>) -> Self {
+        let discovered = discover(file, FLAVOR).into_iter().map(|it| (it.func, it)).collect();
+        let mut hook_calls: FxHashMap<Func<'a>, u32> = FxHashMap::default();
+        let hooks = file.exprs_of_kind(ExprTag::Call).filter(|e| e.as_call().is_some_and(|it| is_hook_call(it, FLAVOR)));
+        for e in hooks {
+            if let Some(func) = Node::Expr(e).enclosing_function() {
+                *hook_calls.entry(func).or_default() += 1;
+            }
+        }
+        let jsx = file.exprs_of_kind(ExprTag::Jsx).filter_map(|e| Node::Expr(e).enclosing_function());
+        Compiled { discovered, hook_calls, with_jsx: jsx.collect() }
     }
-    match func.owner() {
-        Node::Expr(e) => match e.parent() {
-            Node::VarDecl(declaration) => declaration.pat().as_ident(),
-            _ => None,
-        },
-        _ => None,
+
+    /// The function the compiler compiles `e` as part of.
+    fn function_around(&self, e: Expr<'a>) -> Option<Discovered<'a>> {
+        let mut functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
+        functions.find_map(|it| self.discovered.get(&it).copied())
     }
-}
 
-/// `useState`, `React.useState`
-fn is_hook_callee(callee: Expr<'_>) -> bool {
-    match callee.kind() {
-        ExprKind::Ident(name) => is_hook_name(name.bytes()),
-        ExprKind::Dot { name, .. } => is_hook_name(name.name().bytes()),
-        _ => false,
+    fn is_in_skipped_function(&self, e: Expr<'a>) -> bool {
+        self.function_around(e).is_some_and(|it| it.skipped)
     }
-}
 
-/// The compiler's `calls_hooks_or_creates_jsx`: in `func` itself, not in a function inside it.
-fn calls_hooks_or_creates_jsx<'a>(func: Func<'a>) -> bool {
-    let file = func.file();
-    let is_own = |e: Expr<'a>| Node::Expr(e).enclosing_function() == Some(func);
-    file.exprs_of_kind(ExprTag::Jsx).any(is_own)
-        || file
-            .exprs_of_kind(ExprTag::Call)
-            .any(|e| e.as_call().is_some_and(|call| is_hook_callee(call.callee())) && is_own(e))
-}
+    /// True if `e` is in a function that the compiler never finds, like `export default () => ..`.
+    fn is_in_undiscovered_function(&self, e: Expr<'a>) -> bool {
+        Node::Expr(e).enclosing_function().is_some() && self.function_around(e).is_none()
+    }
 
-/// True if the compiler would compile `func` on its own: named like a component or a hook, or passed to `memo()` or
-/// `forwardRef()`, and calling a hook or creating JSX itself, or opted in.
-fn is_compile_candidate(func: Func<'_>) -> bool {
-    let is_react_api_callback = || match func.owner() {
-        Node::Expr(e) => match e.parent() {
-            Node::Expr(parent) => parent.as_call().is_some_and(|call| {
-                call.args().first() == Some(e) && is_react_api(call.callee(), &["memo", "forwardRef"])
-            }),
-            _ => false,
-        },
-        _ => false,
-    };
-    let looks_like_one = compiler_name(func).is_some_and(|it| is_component_or_hook_name(it.bytes()))
-        || is_react_api_callback();
-    (looks_like_one && calls_hooks_or_creates_jsx(func)) || has_body_directive(func, &OPT_IN_DIRECTIVES)
-}
+    /// True if the compiler would stop finding the function that the hook call `e` is in once the call is gone.
+    fn is_last_hook_call(&self, e: Expr<'a>) -> bool {
+        let Some(func) = Node::Expr(e).enclosing_function() else {
+            return false;
+        };
+        let is_compiled = self.function_around(e).is_some_and(|it| it.func == func);
+        is_compiled && self.hook_calls.get(&func).copied().unwrap_or(0) <= 1 && !self.with_jsx.contains(&func)
+    }
 
-/// The function the compiler would compile `e` as part of: the outermost candidate, as it doesn't look inside one.
-fn compiled_function(e: Expr<'_>) -> Option<Func<'_>> {
-    let functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
-    functions.filter(|it| is_compile_candidate(*it)).last()
-}
-
-fn is_in_opted_out_function(e: Expr<'_>) -> bool {
-    compiled_function(e).is_some_and(opts_out)
-}
-
-/// True if `e` is in a function that the compiler never finds, like `export default () => ..`.
-fn is_in_undiscovered_function(e: Expr<'_>) -> bool {
-    Node::Expr(e).enclosing_function().is_some() && compiled_function(e).is_none()
+    /// True if the compiler compiles `func` and doesn't skip it.
+    fn compiles(&self, func: Func<'a>) -> bool {
+        self.discovered.get(&func).is_some_and(|it| !it.skipped)
+    }
 }
 
 /// The component that `memo()` wraps.
@@ -131,10 +110,11 @@ enum Component<'a> {
     Func(Func<'a>),
     /// Something else this file makes, like `observer(..)`.
     Other,
+    Import,
 }
 
 /// Returns the component that `e` is, or that `e` names in this file: `C` in `memo(C)`, through `forwardRef()`. `None`
-/// for what comes from another file.
+/// for a name nothing declares.
 fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     if depth == 0 {
         return None;
@@ -150,11 +130,16 @@ fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     {
         return component_of(call.args().first()?, depth - 1);
     }
+    if let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = e.kind() {
+        return component_of(expr, depth - 1);
+    }
     if e.as_ident().is_none() {
         return Some(Component::Other);
     }
     match e.symbol()?.declarations().next()? {
-        Declaration::ImportSpec(_) | Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) => None,
+        Declaration::ImportSpec(_) | Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) => {
+            Some(Component::Import)
+        }
         Declaration::Class(_) => Some(Component::Class),
         Declaration::Fn(func) => Some(Component::Func(func)),
         declaration => match declaration.node() {
@@ -167,12 +152,13 @@ fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     }
 }
 
-/// True if the compiler leaves the component `e` alone: a class, or a function that opts out.
-fn compiler_skips(e: Expr<'_>) -> bool {
+/// True if the compiler leaves the component `e` alone, so that `memo()` is what memoizes it: a class, something
+/// another wrapper makes, or a function it doesn't compile.
+fn compiler_skips<'a>(compiled: &Compiled<'a>, e: Expr<'a>) -> bool {
     match component_of(e, 4) {
-        Some(Component::Class) => true,
-        Some(Component::Func(func)) => opts_out(func),
-        Some(Component::Other) | None => false,
+        Some(Component::Class | Component::Other) => true,
+        Some(Component::Func(func)) => !compiled.compiles(func),
+        Some(Component::Import) | None => false,
     }
 }
 
@@ -193,26 +179,37 @@ fn first_argument(call: Call<'_>, count: usize) -> Option<Expr<'_>> {
     (fits && is_plain).then(|| args.first()).flatten()
 }
 
-/// True if the compiler would still find the component `kept` once `memo()` is gone: by the variable's name, or by its
-/// own as a declaration, and by a hook call or JSX in it. A component from another file is taken to be found.
-fn stays_compiled<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
-    let (func, name) = match kept.as_fn() {
-        Some(func) => match e.parent() {
-            Node::VarDecl(declaration) if declaration.init() == Some(e) => (func, declaration.pat().as_ident()),
-            _ if becomes_declaration(e, kept) => (func, func.name().map(Ident::name)),
-            _ => return false,
-        },
+/// True if the compiler would still compile the component `kept` once `memo()` is gone: under the variable's name, or
+/// under its own as a declaration. A component from another file may not be compiled at all.
+fn stays_compiled<'a>(compiled: &Compiled<'a>, e: Expr<'a>, kept: Expr<'a>) -> bool {
+    match kept.as_fn() {
+        Some(func) => {
+            let name = match e.parent() {
+                Node::VarDecl(declaration) if declaration.init() == Some(e) => declaration.pat().as_ident(),
+                _ if becomes_declaration(e, kept) => func.name().map(Ident::name),
+                _ => return false,
+            };
+            name.is_some() && would_compile(func, name, FLAVOR)
+        }
         None => match component_of(kept, 4) {
-            Some(Component::Func(func)) => (func, compiler_name(func)),
-            Some(Component::Class | Component::Other) => return false,
-            None => return true,
+            // A function inside `kept`, like `function Row() {} as FC`, is compiled as the callback of `memo()` only.
+            Some(Component::Func(func)) => {
+                let inside = kept.span().start <= func.span().start && func.span().end <= kept.span().end;
+                compiled.compiles(func) && !inside
+            }
+            Some(Component::Class | Component::Other | Component::Import) => false,
+            None => true,
         },
-    };
-    name.is_some_and(|it| is_component_or_hook_name(it.bytes())) && calls_hooks_or_creates_jsx(func)
+    }
 }
 
 /// What the call leaves behind: `expr` of `useMemo(() => expr, deps)`, `fn` of `useCallback(fn, deps)`, `C` of `memo(C)`.
-fn replacement<'a>(name: Name<'a>, e: Expr<'a>, call: Call<'a>) -> Option<(Expr<'a>, &'static Message)> {
+fn replacement<'a>(
+    compiled: &Compiled<'a>,
+    name: Name<'a>,
+    e: Expr<'a>,
+    call: Call<'a>,
+) -> Option<(Expr<'a>, &'static Message)> {
     match name.bytes() {
         b"useMemo" => {
             let factory = first_argument(call, 2)?.as_fn()?;
@@ -229,7 +226,7 @@ fn replacement<'a>(name: Name<'a>, e: Expr<'a>, call: Call<'a>) -> Option<(Expr<
         b"useCallback" => Some((first_argument(call, 2)?, KEEP_FUNCTION)),
         b"memo" => {
             let component = first_argument(call, 1)?;
-            stays_compiled(e, component).then_some((component, KEEP_COMPONENT))
+            stays_compiled(compiled, e, component).then_some((component, KEEP_COMPONENT))
         }
         _ => None,
     }
@@ -302,7 +299,7 @@ fn name_is_taken<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
 }
 
 /// Every use of a memoizer in `file`, in source order, and every named import of one that nothing refers to.
-fn uses<'a>(file: &'a File<'a>) -> Vec<Use<'a>> {
+fn uses<'a>(file: &'a File<'a>, compiled: &Compiled<'a>) -> Vec<Use<'a>> {
     let mut all = Vec::new();
     for import in react_imports(file) {
         let scope = file.top_level_scope();
@@ -326,7 +323,7 @@ fn uses<'a>(file: &'a File<'a>) -> Vec<Use<'a>> {
                     }
                     continue;
                 };
-                if e.is_in_type_query() || is_in_opted_out_function(e) {
+                if e.is_in_type_query() || compiled.is_in_skipped_function(e) {
                     continue;
                 }
                 let specifier = is_only_reference.then_some(specifier);
@@ -345,7 +342,7 @@ fn uses<'a>(file: &'a File<'a>) -> Vec<Use<'a>> {
             let Some(name) = static_property_name(member).filter(|it| it.is_any(&MEMOIZERS)) else {
                 continue;
             };
-            if is_in_opted_out_function(member) {
+            if compiled.is_in_skipped_function(member) {
                 continue;
             }
             all.push(Use { at: member.span(), name, call: call_of(member), specifier: None });
@@ -376,10 +373,11 @@ impl Rule for ReactNoManualMemoization {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        for Use { at, name, call, specifier } in uses(file) {
+        let compiled = Compiled::new(file);
+        for Use { at, name, call, specifier } in uses(file, &compiled) {
             if name.is("memo")
                 && let Some((_, call)) = call
-                && call.args().first().is_some_and(compiler_skips)
+                && call.args().first().is_some_and(|it| compiler_skips(&compiled, it))
             {
                 continue;
             }
@@ -392,10 +390,14 @@ impl Rule for ReactNoManualMemoization {
                 }
                 continue;
             };
-            let Some((kept, message)) = replacement(name, e, call) else {
+            let Some((kept, message)) = replacement(&compiled, name, e, call) else {
                 continue;
             };
-            if name_is_taken(e, kept) || is_in_undiscovered_function(e) {
+            if name_is_taken(e, kept) || compiled.is_in_undiscovered_function(e) {
+                continue;
+            }
+            // Without its only hook call, a hook is no longer one to the compiler.
+            if !name.is("memo") && compiled.is_last_hook_call(e) {
                 continue;
             }
             report.suggest(message, move |fixer| {

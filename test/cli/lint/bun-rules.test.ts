@@ -959,7 +959,7 @@ const rules: Record<string, Case[]> = {
         `${useMemo}const all = <List items={«useMemo»(() => a.concat(b), [a, b])} />;`,
         `const all = <List items={a.concat(b)} />;`,
       ],
-      [`${useMemo}const useGet = () => «useMemo»(() => ({ a }), [a]);`, `const useGet = () => ({ a });`],
+      [`${useMemo}const useGet = () => «useMemo»(() => ({ a }), [a, useB()]);`, `const useGet = () => ({ a });`],
       [`${useMemo}const t = «useMemo»(() => new Date, []).getTime();`, `const t = (new Date).getTime();`],
       [`${useMemo}const t = «useMemo»(() => new Date(), []).getTime();`, `const t = new Date().getTime();`],
       [`${useMemo}«useMemo»(() => ({ a }), [a]);`, `({ a });`],
@@ -993,6 +993,10 @@ const rules: Record<string, Case[]> = {
         `export default function Row({ label }) {\n  return <li>{label}</li>;\n}`,
       ],
       [`${memo}export default «memo»(Row);`, `export default Row;`],
+      [
+        `${memo}export default «memo»(Row);\nfunction Row() {\n  return <li />;\n}`,
+        `export default Row;\nfunction Row() {\n  return <li />;\n}`,
+      ],
       [`import { memo as m } from "react";\nexport default «m»(Row);`, `export default Row;`],
       [
         `import React, { memo } from "react";\nexport default «memo»(Row);`,
@@ -1035,16 +1039,16 @@ const rules: Record<string, Case[]> = {
       // Only `"use no memo"` and `"use no forget"` at the start of the file or of the component or hook around the call
       // opt out, as for the compiler.
       [
-        `${useMemo}function Total({ a, b }) {\n  "use memo";\n  return «useMemo»(() => a + b, [a, b]);\n}`,
-        `function Total({ a, b }) {\n  "use memo";\n  return a + b;\n}`,
+        `${useMemo}function Total({ a, b }) {\n  "use memo";\n  return <b>{«useMemo»(() => a + b, [a, b])}</b>;\n}`,
+        `function Total({ a, b }) {\n  "use memo";\n  return <b>{a + b}</b>;\n}`,
       ],
       [
-        `${useMemo}function Total({ a, b }) {\n  ("use no memo");\n  return «useMemo»(() => a + b, [a, b]);\n}`,
-        `function Total({ a, b }) {\n  ("use no memo");\n  return a + b;\n}`,
+        `${useMemo}function Total({ a, b }) {\n  ("use no memo");\n  return <b>{«useMemo»(() => a + b, [a, b])}</b>;\n}`,
+        `function Total({ a, b }) {\n  ("use no memo");\n  return <b>{a + b}</b>;\n}`,
       ],
       [
-        `${useMemo}function Total({ a, b }) {\n  const c = 1;\n  "use no memo";\n  return «useMemo»(() => a + b, [a, b]);\n}`,
-        `function Total({ a, b }) {\n  const c = 1;\n  "use no memo";\n  return a + b;\n}`,
+        `${useMemo}function Total({ a, b }) {\n  const c = 1;\n  "use no memo";\n  return <b>{«useMemo»(() => a + b, [a, b])}</b>;\n}`,
+        `function Total({ a, b }) {\n  const c = 1;\n  "use no memo";\n  return <b>{a + b}</b>;\n}`,
       ],
       [
         `${useMemo}function Total({ a, b }) {\n  "use no memo";\n  return 1;\n}\nconst t = «useMemo»(() => 1, []);`,
@@ -1055,12 +1059,12 @@ const rules: Record<string, Case[]> = {
         `function withTotal(Wrapped) {\n  "use no memo";\n  const Total = ({ a, b }) => <Wrapped total={a + b} />;\n  return Total;\n}`,
       ],
       [
-        `${useMemo}function App({ a, b }) {\n  "use no memo";\n  const Row = () => «useMemo»(() => a + b, [a, b]);\n}`,
-        `function App({ a, b }) {\n  "use no memo";\n  const Row = () => a + b;\n}`,
+        `${useMemo}function App({ a, b }) {\n  "use no memo";\n  const Row = () => <b>{«useMemo»(() => a + b, [a, b])}</b>;\n}`,
+        `function App({ a, b }) {\n  "use no memo";\n  const Row = () => <b>{a + b}</b>;\n}`,
       ],
       [
-        `${useMemo}const Total = function inner({ a, b }) {\n  return «useMemo»(() => a + b, [a, b]);\n};`,
-        `const Total = function inner({ a, b }) {\n  return a + b;\n};`,
+        `${useMemo}const Total = function inner({ a, b }) {\n  return <b>{«useMemo»(() => a + b, [a, b])}</b>;\n};`,
+        `const Total = function inner({ a, b }) {\n  return <b>{a + b}</b>;\n};`,
       ],
       [
         `${memo}export default «memo»(function Row({ label }) {\n  return <li>{label}</li>;\n}) /* note */;`,
@@ -1104,14 +1108,12 @@ const rules: Record<string, Case[]> = {
     `${memo}export default «memo»(function () {\n  return <li />;\n});`,
     `${memo}rows.push(«memo»(() => <li />));`,
     `${memo}rows.push(«memo»(function Row() {\n  return <li />;\n}));`,
-    `${memo}export const M = «memo»(() => null) as any;`,
     `${memo}const row = «memo»(() => <li />);`,
-    `${memo}const row = () => <li />;\nexport default «memo»(row);`,
-    `${memo}function List({ items }) {\n  return items.map(item => <li>{item}</li>);\n}\nexport default «memo»(List);`,
-    `${memo}const Row = observer(() => <li />);\nexport default «memo»(Row);`,
-    `${memo}export default «memo»(function Row() {\n  return null;\n} as FC);`,
+    `${memo}export default «memo»(function Row() {\n  return <li />;\n} as FC);`,
+    `import { memo } from "react";\nimport { Marker } from "leaflet";\nexport default «memo»(Marker);`,
+    // Without its only hook call, `useTotal` is no hook to the compiler.
+    `${useMemo}function useTotal(a, b) {\n  return «useMemo»(() => a + b, [a, b]);\n}`,
     `${memo}export default («memo»(function Row() {\n  return <li />;\n}));`,
-    `${memo}function row() {\n  return <li />;\n}\nexport default «memo»(row);`,
     // The compiler never finds these functions, so the rewrite would leave nothing memoized.
     `${useMemo}function withTotal(Wrapped) {\n  "use no memo";\n  return function Total({ a, b }) {\n    return <Wrapped total={«useMemo»(() => a + b, [a, b])} />;\n  };\n}`,
     `${useMemo}export default ({ a, b }) => «useMemo»(() => a + b, [a, b]);`,
@@ -1152,7 +1154,16 @@ const rules: Record<string, Case[]> = {
     `${memo}const Row = () => {\n  "use no memo";\n  return <li />;\n};\nexport default memo(Row);`,
     `${memo}export default memo(forwardRef(function Row(props, ref) {\n  "use no memo";\n  return <li />;\n}));`,
     `${memo}const Row = React.forwardRef((props, ref) => {\n  "use no memo";\n  return <li />;\n});\nexport default memo(Row);`,
-    // The compiler never compiles a class.
+    // The compiler never compiles these: a class, a function with no hook call or JSX, a lowercase name, another
+    // wrapper's result, or a function a `react-hooks` suppression touches.
+    `${memo}export const M = memo(() => null) as any;`,
+    `${memo}const row = () => <li />;\nexport default memo(row);`,
+    `${memo}function row() {\n  return <li />;\n}\nexport default memo(row);`,
+    `${memo}function List({ items }) {\n  return items.map(item => <li>{item}</li>);\n}\nexport default memo(List);`,
+    `${memo}const Row = observer(() => <li />);\nexport default memo(Row);`,
+    `${memo}export default memo(function Row() {\n  return null;\n} as FC);`,
+    `${useMemo}function Total({ a, b }) {\n  // oxlint-disable-next-line react-hooks/exhaustive-deps\n  return <b>{useMemo(() => a + b, [a])}</b>;\n}`,
+    `/* oxlint-disable react-hooks/exhaustive-deps */\n${useMemo}function Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a])}</b>;\n}`,
     `${memo}export default memo(class Row extends Component {});`,
     `${memo}class Row extends Component {}\nexport default memo(Row);`,
     `${memo}const Row = class extends Component {};\nexport default memo(Row);`,

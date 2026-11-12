@@ -30,6 +30,10 @@ pub fn prototype_operation_of(builtin: BuiltinId) -> Option<PrototypeOperation> 
                 descriptor: 2,
             })
         }
+        BuiltinId::ObjectDefineProperties => Some(PrototypeOperation::DefineProperties {
+            object: 0,
+            descriptors: 1,
+        }),
         BuiltinId::FunctionPrototypeCall | BuiltinId::FunctionPrototypeApply => {
             Some(PrototypeOperation::CallFunction { receiver: 0 })
         }

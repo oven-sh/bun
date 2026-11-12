@@ -1,0 +1,19 @@
+# import { unlisted } from "bun:jsc"; unlisted();
+# The loader fills the variable out of the object of a module of native code. No table lists a member under the name, so the object is let go, with the importing file for a witness, and hands out the events below it.
+# The flow heard of the module without that witness and ran closed, where the last run opened the program. The builder of the image holds the two answers together and stopped: flagsForUnseenCode().
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags {{*}}AdmitsUnknownJavaScript
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="unlisted" variable=g0}]
+entry module=m0
+variable g0 name="unlisted" module=m1 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="unlisted"
+    v2 = Call v1 calleeName="unlisted"
+    v3 = Undefined
+    Return v3
+}

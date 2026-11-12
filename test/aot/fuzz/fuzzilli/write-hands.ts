@@ -5,16 +5,26 @@
 // A scene is put together from tables that do not know of each other: an entry point of the library with what it is handed, who of those watches, under which name, how it watches,
 // and what it does when it is first asked. The scene prints whether the hand was asked at all and what came of it.
 //
-// How often and in which order the library reads a member is its own matter. So the hand acts at its FIRST ask alone, and `strikeWhatOnlyCounts()` takes a scene out of both prints where
-// plain asked the hand and the compiled text never did. A hand that the compiled text alone asks stays in: code of the program ran that plain does not run.
+// How often and in which order the library reads a member is its own matter. So the hand acts at its FIRST ask alone. Whether it is asked at all is an answer like any other: a text that
+// never asks a hand which the other asks has left code of the program out, or has run code that the other does not run.
 //
-// One hand in three does nothing and answers something else than what stood there, each time that it is asked. How often it is asked then makes no difference, so such a scene is never
-// struck: a text that does not ask, where the answer counts, has not honored it.
+// A hand that acts at its second or third ask tells two texts apart as well, but where one of them asks less often the same ask is another place in it. So such a hand is drawn only
+// where `at` asks for it, and its driver first runs both sides with HANDS_ONLY_COUNT=1, where no hand acts and each says how often it was asked: the scene counts where the two agree.
+//
+// One hand in three does nothing and answers something else than what stood there, each time that it is asked. How often it is asked then makes no difference: a text that does not ask,
+// where the answer counts, has not honored it.
 //
 // An error is told by its code, or by its message as far as the engine's own words go: "undefined is not an object (evaluating 'state.length')" quotes the text of the library,
 // and the two texts are not spelled alike.
 
-type Watched = { who: string; names: readonly string[]; members?: readonly string[]; base?: string };
+type Watched = {
+  who: string;
+  names: readonly string[];
+  members?: readonly string[];
+  base?: string;
+  /** Where the one who watches hangs, if no variable of the scene holds it: the state of a stream. */
+  where?: string;
+};
 type Entry = {
   imports: readonly string[];
   /** Lines that make `raw` (what the deeds work on) and whatever else the entry needs. */
@@ -28,6 +38,8 @@ type Entry = {
   laysOptionsAmid?: boolean;
   deeds: readonly string[];
 };
+
+const placeholders = /\$(raw|options|req|res|socket|made|server|asked|answer)\b/g;
 
 const fieldsOfEmitters = ["_events", "_eventsCount", "_maxListeners"] as const;
 const membersOfEmitters = ["on", "once", "emit", "removeListener", "listenerCount", "addListener", "off"] as const;
@@ -49,6 +61,76 @@ const membersOfWritables = [
     "writableNeedDrain",
     "writableLength",
   ],
+] as const;
+const namesOfReadableStates = [
+  "length",
+  "length",
+  "highWaterMark",
+  "buffer",
+  "bufferIndex",
+  "pipes",
+  "awaitDrainWriters",
+  "flowing",
+  "ended",
+  "endEmitted",
+  "reading",
+  "destroyed",
+  "errored",
+  "closed",
+  "closeEmitted",
+  "errorEmitted",
+  "objectMode",
+  "constructed",
+  "sync",
+  "needReadable",
+  "emittedReadable",
+  "readableListening",
+  "resumeScheduled",
+  "emitClose",
+  "autoDestroy",
+  "defaultEncoding",
+  "decoder",
+  "encoding",
+  "multiAwaitDrain",
+  "readingMore",
+  "dataEmitted",
+  "made",
+] as const;
+const namesOfWritableStates = [
+  "length",
+  "length",
+  "highWaterMark",
+  "objectMode",
+  "finalCalled",
+  "needDrain",
+  "ending",
+  "ended",
+  "finished",
+  "destroyed",
+  "decodeStrings",
+  "defaultEncoding",
+  "writing",
+  "corked",
+  "sync",
+  "bufferProcessing",
+  "onwrite",
+  "writecb",
+  "writelen",
+  "afterWriteTickInfo",
+  "buffered",
+  "bufferedIndex",
+  "allBuffers",
+  "allNoop",
+  "pendingcb",
+  "constructed",
+  "prefinished",
+  "errorEmitted",
+  "emitClose",
+  "autoDestroy",
+  "errored",
+  "closed",
+  "closeEmitted",
+  "made",
 ] as const;
 const namesNobodyDeclares = [
   "req",
@@ -154,6 +236,14 @@ function entriesOfStreams(pick: <T>(from: readonly T[]) => T): Entry[] {
       : ["_readableState", "_writableState"]),
   ];
   const stream: Watched = { who: "raw", names: [...fields, ...members, ...namesNobodyDeclares], members, base };
+  const states: Watched[] = [
+    ...(kind === "old" || kind === "writable"
+      ? []
+      : [{ who: "state", where: "raw._readableState", names: namesOfReadableStates }]),
+    ...(kind === "writable" || kind === "duplex"
+      ? [{ who: "state", where: "raw._writableState", names: namesOfWritableStates }]
+      : []),
+  ];
   const make = [
     `let raw = ${pick(lines)};`,
     `const other = ${pick(lines)};`,
@@ -193,7 +283,7 @@ function entriesOfStreams(pick: <T>(from: readonly T[]) => T): Entry[] {
   const entry = (run: readonly string[], more: readonly Watched[] = []): Entry => ({
     imports: [streams, emitters, requests],
     make,
-    watched: [stream, stream, ...more],
+    watched: [stream, stream, stream, ...states, ...more],
     run: [...run, later],
     deeds: deedsOnStreams,
   });
@@ -338,9 +428,11 @@ function entriesOfEvents(_pick: unknown): Entry[] {
 
 function entriesOfHttp(pick: <T>(from: readonly T[]) => T): Entry[] {
   const imports = [
-    `import { createServer, request as ask, IncomingMessage, ServerResponse } from "node:http";`,
+    `import { Agent, createServer, request as ask, IncomingMessage, ServerResponse } from "node:http";`,
     `import { Readable, pipeline } from "node:stream";`,
   ];
+  // The handler works at once, or a turn later, when the library has come back from the event.
+  const isLate = pick([false, false, true]);
   const classes = pick([
     "",
     "",
@@ -431,10 +523,10 @@ function entriesOfHttp(pick: <T>(from: readonly T[]) => T): Entry[] {
     make: [`let raw, request, response;`, `const other = {};`],
     watched,
     run: [
-      `const server = createServer(${classes}(req, res) => { raw = res; request = req; response = res; try {`,
+      `const server = createServer(${classes}(req, res) => { raw = res; request = req; response = res; ${isLate ? "setImmediate(() => { " : ""}try {`,
       ...first,
       ...handler,
-      `} catch (error) { said("handler threw " + words(error)); if (!res.writableEnded) res.end("threw"); } });`,
+      `} catch (error) { said("handler threw " + words(error)); if (!res.writableEnded) res.end("threw"); } ${isLate ? "}); " : ""}});`,
       `await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));`,
       `try { const answer = await fetch("http://127.0.0.1:" + server.address().port + "/", { signal: AbortSignal.timeout(4000)${body ? `, method: "POST", body: "posted"` : ""} }); said(answer.status + " " + (answer.headers.get("x-hand") ?? "-") + " " + (answer.headers.get("x-made") ?? "-") + " " + (await answer.text())); } catch (error) { said("fetch failed"); }`,
       `server.closeAllConnections(); await new Promise(resolve => server.close(resolve));`,
@@ -443,6 +535,7 @@ function entriesOfHttp(pick: <T>(from: readonly T[]) => T): Entry[] {
     deeds,
   });
   const inHandler = (who: string, list: readonly string[]): Watched => ({ who, names: list });
+  const stateOfRequest: Watched = { who: "state", where: "req._readableState", names: namesOfReadableStates };
   const send = pick([
     `$res.end("ok");`,
     `$res.write("a"); $res.end("b");`,
@@ -456,14 +549,14 @@ function entriesOfHttp(pick: <T>(from: readonly T[]) => T): Entry[] {
     serve([send], [inHandler("res", names.response)]),
     serve(
       [`$req.on("data", chunk => said("data " + chunk)); $req.on("end", () => res.end("read"));`],
-      [inHandler("req", names.request)],
+      [inHandler("req", names.request), inHandler("req", names.request), stateOfRequest],
       true,
     ),
     serve(
       [
         `(async () => { let text = ""; try { for await (const chunk of $req) text += chunk; } catch (error) { text = "threw " + words(error); } if (!res.writableEnded) res.end(text); })();`,
       ],
-      [inHandler("req", names.request)],
+      [inHandler("req", names.request), inHandler("req", names.request), stateOfRequest],
       true,
     ),
     serve(
@@ -508,7 +601,9 @@ function entriesOfHttp(pick: <T>(from: readonly T[]) => T): Entry[] {
       `$req.pipe(res);`,
       `$req.on("readable", () => { for (let chunk; (chunk = req.read()) !== null; ) said("read " + chunk); }); $req.on("end", () => res.end("ok"));`,
       `$req.on("close", () => said("request closed")); $req.resume(); res.end("early");`,
-    ].map(handler => serve([handler], [inHandler("req", names.request)], true)),
+    ].map(handler =>
+      serve([handler], [inHandler("req", names.request), inHandler("req", names.request), stateOfRequest], true),
+    ),
     {
       imports,
       make: [`let raw, request, response;`, `const other = {};`],
@@ -540,6 +635,201 @@ function entriesOfHttp(pick: <T>(from: readonly T[]) => T): Entry[] {
         `options.host = "localhost";`,
         `options.signal = AbortSignal.abort(new Error("given up"));`,
         `options.agent = false;`,
+      ],
+    },
+    ...othersOfHttp(imports, names.request),
+  ];
+}
+
+function othersOfHttp(imports: readonly string[], namesOfMessages: readonly string[]): Entry[] {
+  const make = [`let raw, request, response;`, `const other = {};`];
+  const echoes = `(req, res) => res.end(req.method + " " + req.url + " " + (req.headers["x-hand"] ?? "-") + " " + req.constructor.name + " " + res.constructor.name)`;
+  const listens = `await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));`;
+  const fetches = `try { const answer = await fetch("http://127.0.0.1:" + server.address().port + "/", { signal: AbortSignal.timeout(4000) }); said(answer.status + " " + (await answer.text())); } catch (error) { said("fetch failed"); }`;
+  const closes = `server.closeAllConnections(); await new Promise(resolve => server.close(resolve));`;
+  const throws = `throw new Error("from the hand");`;
+  const where = `host: "127.0.0.1", port: server.address().port, path: "/first"`;
+  const ends = `asked.on("error", error => { said("error event " + words(error)); resolve(); }); setTimeout(resolve, 4000).unref();`;
+  const reads = `let text = ""; answer.on("data", chunk => (text += chunk)); answer.on("end", () => { said(answer.statusCode + " " + text); resolve(); });`;
+  return [
+    {
+      imports,
+      make,
+      watched: [
+        {
+          who: "options",
+          names: [
+            ...["IncomingMessage", "ServerResponse", "keepAlive", "keepAliveTimeout", "keepAliveInitialDelay"],
+            ...["requestTimeout", "headersTimeout", "maxHeaderSize", "insecureHTTPParser", "noDelay", "highWaterMark"],
+            ...["joinDuplicateHeaders", "uniqueHeaders", "connectionsCheckingInterval", "rejectNonStandardBodyWrites"],
+            ...["requireHostHeader", "allowHalfOpen", "pauseOnConnect"],
+          ],
+        },
+      ],
+      run: [`const server = createServer($options, ${echoes});`, listens, fetches, closes],
+      deeds: [
+        "",
+        throws,
+        `options.IncomingMessage = class extends IncomingMessage {};`,
+        `options.ServerResponse = class extends ServerResponse {};`,
+        `options.keepAlive = true;`,
+        `options.maxHeaderSize = 8;`,
+        `options.requireHostHeader = false;`,
+        `options.noDelay = false;`,
+      ],
+    },
+    {
+      imports,
+      make: [...make, `Object.assign(options, { port: 0, host: "127.0.0.1" });`],
+      watched: [
+        {
+          who: "options",
+          names: [
+            "port",
+            "host",
+            "backlog",
+            "exclusive",
+            "signal",
+            "path",
+            "ipv6Only",
+            "reusePort",
+            "fd",
+            "readableAll",
+          ],
+        },
+      ],
+      run: [
+        `const server = createServer(${echoes});`,
+        `await new Promise(resolve => { server.on("error", error => { said("error event " + words(error)); resolve(); }); server.listen($options, resolve); setTimeout(resolve, 2000).unref(); });`,
+        `said(String(server.listening));`,
+        `if (server.listening) { ${fetches} }`,
+        closes,
+      ],
+      deeds: [
+        "",
+        throws,
+        `options.host = "localhost";`,
+        `options.port = 0;`,
+        `options.signal = AbortSignal.abort(new Error("given up"));`,
+        `options.path = undefined;`,
+      ],
+    },
+    {
+      imports,
+      make,
+      watched: [
+        {
+          who: "server",
+          names: [
+            ...["_events", "on", "once", "emit", "listen", "listening", "address", "close", "closeAllConnections"],
+            ...[
+              "closeIdleConnections",
+              "timeout",
+              "keepAliveTimeout",
+              "headersTimeout",
+              "requestTimeout",
+              "setTimeout",
+            ],
+            ...["maxHeadersCount", "maxRequestsPerSocket", "_handle", "_connections", "insecureHTTPParser"],
+          ],
+        },
+      ],
+      run: [
+        `const server = createServer(${echoes});`,
+        `$server.setTimeout(1000); $server.on("listening", () => said("listening")); await new Promise(resolve => { $server.listen(0, "127.0.0.1", resolve); setTimeout(resolve, 2000).unref(); }); said([$server.listening, typeof $server.address()?.port, $server.timeout, $server.keepAliveTimeout].join());`,
+        `if (server.listening) { ${fetches} }`,
+        `$server.closeAllConnections(); await new Promise(resolve => { $server.close(resolve); setTimeout(resolve, 2000).unref(); }); said(String(server.listening));`,
+      ],
+      layAt: 1,
+      deeds: [
+        "",
+        throws,
+        `server.on("request", () => said("another listener"));`,
+        `server.removeAllListeners("request");`,
+        `server.timeout = 1;`,
+        `server.keepAliveTimeout = 1;`,
+        `server.close();`,
+      ],
+    },
+    {
+      imports,
+      make,
+      watched: [
+        {
+          who: "asked",
+          names: [
+            ...["_events", "on", "once", "emit", "write", "end", "setHeader", "getHeader", "removeHeader", "destroy"],
+            ...["destroyed", "finished", "writable", "writableEnded", "writableFinished", "socket", "path", "method"],
+            ...["host", "aborted", "reusedSocket", "_header", "_headerSent", "agent", "timeout", "setTimeout", "abort"],
+          ],
+        },
+      ],
+      run: [
+        `const server = createServer(${echoes});`,
+        listens,
+        `try { await new Promise(resolve => { const asked = ask({ ${where}, method: "POST" });`,
+        `$asked.setHeader("x-hand", "c"); said(String($asked.getHeader("x-hand"))); $asked.on("response", answer => { ${reads} }); ${ends} $asked.write("a"); $asked.end("b"); said([$asked.writableEnded, $asked.destroyed, $asked.path, $asked.method].join());`,
+        `}); } finally { ${closes} }`,
+      ],
+      layAt: 3,
+      deeds: [
+        "",
+        throws,
+        `asked.destroy();`,
+        `asked.setHeader("x-hand", "h");`,
+        `asked.end();`,
+        `asked.abort();`,
+        `asked.removeAllListeners("response");`,
+      ],
+    },
+    {
+      imports,
+      make,
+      watched: [
+        { who: "answer", names: [...namesOfMessages, "statusCode", "statusMessage", "httpVersion", "trailers", "req"] },
+      ],
+      run: [
+        `const server = createServer(${echoes});`,
+        listens,
+        `try { await new Promise(resolve => { const asked = ask({ ${where} }, answer => {`,
+        `said([$answer.statusCode, $answer.statusMessage, $answer.httpVersion, typeof $answer.headers.date, $answer.complete].join()); let text = ""; $answer.on("data", chunk => (text += chunk)); $answer.on("end", () => { said("end " + text + " " + answer.complete); resolve(); }); $answer.on("close", () => said("answer closed"));`,
+        `}); ${ends} asked.end(); }); } finally { ${closes} }`,
+      ],
+      layAt: 3,
+      deeds: [
+        "",
+        throws,
+        `answer.destroy();`,
+        `answer.resume();`,
+        `answer.pause();`,
+        `answer.removeAllListeners("data");`,
+        `answer.setEncoding("hex");`,
+      ],
+    },
+    {
+      imports,
+      make,
+      watched: [
+        {
+          who: "options",
+          names: [
+            ...["keepAlive", "keepAliveMsecs", "maxSockets", "maxFreeSockets", "maxTotalSockets", "timeout"],
+            ...["scheduling", "agentKeepAliveTimeoutBuffer", "defaultPort", "protocol", "path", "noDelay"],
+          ],
+        },
+      ],
+      run: [
+        `const server = createServer(${echoes});`,
+        listens,
+        `try { const agent = new Agent($options); said([agent.keepAlive, agent.maxSockets, agent.maxFreeSockets, agent.defaultPort, agent.protocol].join()); await new Promise(resolve => { const asked = ask({ ${where}, agent }, answer => { ${reads} }); ${ends} asked.end(); }); agent.destroy(); } finally { ${closes} }`,
+      ],
+      deeds: [
+        "",
+        throws,
+        `options.keepAlive = true;`,
+        `options.maxSockets = 1;`,
+        `options.timeout = 1;`,
+        `options.scheduling = "fifo";`,
       ],
     },
   ];
@@ -637,7 +927,7 @@ function entriesOfFilesAndTimers(_pick: unknown): Entry[] {
 
 /** Holds a draw to a part of the tables: for a build that is known to be wrong, or for the neighborhood of a mend. `scene` is asked of the whole text. */
 export type OnlyTheseHands = Partial<
-  Record<"entry" | "who" | "name" | "how" | "deed" | "answer" | "scene" | "world", RegExp>
+  Record<"entry" | "who" | "name" | "how" | "deed" | "answer" | "at" | "scene" | "world", RegExp>
 >;
 
 /** `{"entry":"finished","name":"^pipe$"}` */
@@ -692,9 +982,11 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
   );
   // A hand does something at its first ask and answers what stood there, or does nothing and answers something else for good.
   const honest = "what stood there";
+  const at = only.at ? pick(left(["1", "2", "3"], only.at)) : "1";
+  if (at === undefined) return undefined;
   const answer = pick(
     left(
-      only.deed
+      only.deed && !only.at
         ? [honest]
         : [
             ...Array<string>(16).fill(honest),
@@ -710,7 +1002,8 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
       only.answer,
     ),
   );
-  const deed = answer === honest ? pick(left(entry.deeds, only.deed)) : "";
+  const acts = answer === honest || only.at !== undefined;
+  const deed = acts ? pick(left(entry.deeds, only.deed)) : "";
   if (how === undefined || deed === undefined || answer === undefined) return undefined;
   const told = (stood: string) => (answer === honest ? stood : `lies ? ${answer} : ${stood}`);
   // What is stored under the name takes the accessor's place, or is swallowed.
@@ -725,7 +1018,7 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
   const isMadeByHeir = how === "made by an heir" && entry.make[0].startsWith(`let raw = new ${watched.base}(`);
   const key = JSON.stringify(name);
   const ask = `ask${n}()`;
-  const target = watched.who === "options" ? "options" : inHandler ? watched.who : "raw";
+  const target = watched.where ?? (watched.who === "options" ? "options" : inHandler ? watched.who : "raw");
   // What stands in the entry's text for the one who watches.
   const form =
     how === "proxy"
@@ -736,12 +1029,16 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
   const lay =
     how === "own accessor"
       ? [
-          `{ const held = ${target}[${key}], hand = ${accessor("held")}; ${pick([
-            `Object.defineProperty(${target}, ${key}, hand);`,
-            `Object.defineProperty(${target}, ${key}, hand);`,
-            `Object.defineProperties(${target}, { [${key}]: hand });`,
-            `Reflect.defineProperty(${target}, ${key}, hand);`,
-            `${target}.__defineGetter__(${key}, hand.get); ${target}.__defineSetter__(${key}, hand.set);`,
+          // The descriptor stands as a literal at the call, where a compiler sees what is laid, or comes in a variable.
+          `{ const held = ${target}[${key}]; ${pick([
+            `Object.defineProperty(${target}, ${key}, ${accessor("held")});`,
+            `Object.defineProperty(${target}, ${key}, ${accessor("held")});`,
+            `Object.defineProperties(${target}, { ${key}: ${accessor("held")} });`,
+            `Reflect.defineProperty(${target}, ${key}, ${accessor("held")});`,
+            `const hand = ${accessor("held")}; Object.defineProperty(${target}, ${key}, hand);`,
+            `const hand = ${accessor("held")}; Object.defineProperties(${target}, { [${key}]: hand });`,
+            `const hand = ${accessor("held")}; Reflect.defineProperty(${target}, ${key}, hand);`,
+            `const hand = ${accessor("held")}; ${target}.__defineGetter__(${key}, hand.get); ${target}.__defineSetter__(${key}, hand.set);`,
           ])} }`,
         ]
       : how === "link"
@@ -757,15 +1054,14 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
                 // As a test lays one: on the prototype that holds the member, for every object below it.
                 `{ let holder = ${watched.base}.prototype; while (!Object.hasOwn(holder, ${key})) holder = Object.getPrototypeOf(holder); const stood = Object.getOwnPropertyDescriptor(holder, ${key}); Object.defineProperty(holder, ${key}, stood.get ? { ...stood, get() { if (this === raw) ${ask}; return ${answer === honest ? "" : `lies && this === raw ? ${answer} : `}stood.get.call(this); } } : { ...stood, value(...given) { if (this === raw) ${ask}; return ${answer === honest ? "" : `lies && this === raw ? ${answer} : `}stood.value.apply(this, given); } }); }`,
               ]
-            : [];
+            : watched.where
+              ? [`${target} = ${form};`]
+              : [];
+  // A mark between two calls in a row: which of them threw is an answer.
   const fill = (line: string) =>
     line
-      .replaceAll("$raw", target === "raw" ? form : "raw")
-      .replaceAll("$options", target === "options" ? form : "options")
-      .replaceAll("$req", target === "req" ? form : "req")
-      .replaceAll("$res", target === "res" ? form : "res")
-      .replaceAll("$socket", target === "socket" ? form : "socket")
-      .replaceAll("$made", target === "made" ? form : "made");
+      .replace(/; (?=\$?(?:raw|req|res|socket|made|server|asked|answer)\??\.)/g, `; said("-"); `)
+      .replace(placeholders, (_, one) => (one === target ? form : one));
   const run = entry.run.map(fill);
   if (inHandler) run.splice(entry.layAt!, 0, ...lay, `armed = lies = true;`);
   const called = entry.run[entry.layAt ?? 0]
@@ -778,7 +1074,7 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
       ...ignore,
       `await (async () => {`,
       `  const answers = [], laid = [], options = {};`,
-      `  let armed = false, fired = false, lies = false;`,
+      `  let armed = false, fired = false, lies = false, asks = 0;`,
       `  const said = text => answers.push(text);`,
       `  const settle = () => new Promise(resolve => setImmediate(() => setImmediate(() => setTimeout(resolve, 5))));`,
       `  const closed = stream => new Promise(resolve => { stream.once("close", resolve); setTimeout(resolve, 3000).unref(); });`,
@@ -793,40 +1089,21 @@ function drawSceneOfAHand(random: () => number, n: number, isTypeScript: boolean
           line =>
             "    " + (isMadeByHeir ? line.replace(`let raw = new ${watched.base}(`, `let raw = new Heir${n}(`) : line),
         ),
-      `    function ${ask} { if (!armed) return; armed = false; fired = true; ${deed} }`,
+      `    function ${ask} { if (!armed || ++asks < ${at} || process.env.HANDS_ONLY_COUNT) return; armed = false; fired = true; ${deed} }`,
       ...(inHandler ? [] : [...lay.map(line => "    " + line), `    armed = lies = true;`]),
       ...run.filter(Boolean).map(line => "    " + line),
       `  } catch (error) { said("threw " + error?.name + " " + words(error)); }`,
       `  await settle();`,
       `  armed = lies = false;`,
       `  process.off("uncaughtException", escaped).off("unhandledRejection", escaped);`,
-      `  console.log(${JSON.stringify(`hand ${n}: ${watched.who} . ${name} . ${how} . ${answer === honest ? deed || "only looks" : "answers " + answer} . in ${called}`)});`,
-      ...(answer === honest ? [`  console.log("~hand ${n} was asked: " + fired);`] : []),
+      `  console.log(${JSON.stringify(`hand ${n}: ${watched.who} . ${name} . ${how} . ${[...(answer === honest ? [] : ["answers " + answer]), ...(acts ? [(deed || "only looks") + (at === "1" ? "" : " at ask " + at)] : [])].join(" . ")} . in ${called}`)});`,
+      ...(acts
+        ? [`  console.log(process.env.HANDS_ONLY_COUNT ? "asks: " + asks : "~hand ${n} was asked: " + fired);`]
+        : []),
       `  console.log("hand ${n} answers: " + answers.join(" | ") + (laid.length ? " | laid by the other on: " + laid.join() : ""));`,
       `})();`,
     ],
   };
-}
-
-/**
- * Takes out of both prints each scene whose hand plain asked and the compiled text did not: how often the library reads a member is its own matter, and a deed that hangs on a read
- * that is not made has no answer to hold. A hand that the compiled text alone asked stays: that is code of the program which plain does not run.
- */
-export function strikeWhatOnlyCounts(plain: string, compiled: string): [string, string] {
-  const asked = (text: string) =>
-    new Map(
-      [...text.matchAll(/^~hand (\d+) was asked: (true|false)$/gm)].map(found => [found[1], found[2] === "true"]),
-    );
-  const [byPlain, byCompiled] = [asked(plain), asked(compiled)];
-  const struck = new Set(
-    [...byPlain].filter(([hand, was]) => was && byCompiled.get(hand) === false).map(([hand]) => hand),
-  );
-  const keep = (text: string) =>
-    text
-      .split("\n")
-      .filter(line => !struck.has(/^~?hand (\d+)[ :]/.exec(line)?.[1] ?? ""))
-      .join("\n");
-  return [keep(plain), keep(compiled)];
 }
 
 const membersOfBuiltIns: readonly (readonly [string, readonly string[]])[] = [
@@ -931,7 +1208,7 @@ export function writeTestOfAHand(random: () => number, n: number, only: OnlyThes
             : world.startsWith("a mock")
               ? `${found} ${replaced(`if (!lies) return apply(stood.value, this, given); calls++; return ${pick([answer, answer, "given[0]", "this"])};`)}`
               : `${found} delete holder[${key}];`;
-    const text = (line: string) => line.replace(/\$(raw|options|req|res|socket|made)\b/g, "$1");
+    const text = (line: string) => line.replace(placeholders, "$1");
     const title = `${world} . ${world.endsWith("Object.prototype") ? "" : holder + " . "}${name}${/^a (spy|built-in)/.test(world) ? "" : " . answers " + answer} . in ${text(entry.run[entry.layAt ?? 0]).slice(0, 60)}`;
     const lines = [
       `import { spyOn, test } from "bun:test";`,

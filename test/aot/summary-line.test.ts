@@ -3,7 +3,7 @@
 // says whether its program has typed and untyped accesses, and computes the line from the numbers of `--explain=json`.
 // The read of `console.log` is one of the typed accesses, so only a program that prints nothing has none. An object that never
 // leaves its function is not allocated. So a program that is to be typed keeps its objects in an array.
-// The `No type errors` line of `bun check --aot` also gives the number of files, the number of lines and the compile speed.
+// The `No type errors` line of `bun check --aot` also gives the number of files and the number of lines.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { slot, spawned } from "./harness/commands";
@@ -256,11 +256,10 @@ test(
       const files = twoFiles;
       const texts = Object.values(files);
       const lineCount = texts.reduce((sum, text) => sum + text.split("\n").length - 1, 0);
-      const closingLine = new RegExp(
-        ` in ${texts.length} files, compiled ${count(lineCount)} lines in [\\d,]+\\.\\d\\d s \\([\\d,]+ lines/s\\)$`,
-      );
       const { lines } = await check(files);
-      expect(lines.filter(line => line.includes("No type errors"))).toEqual([expect.stringMatching(closingLine)]);
+      expect(lines.filter(line => line.includes("No type errors"))).toEqual([
+        expect.stringMatching(new RegExp(` No type errors in ${texts.length} files, ${count(lineCount)} lines$`)),
+      ]);
     }),
   buildTimeout,
 );

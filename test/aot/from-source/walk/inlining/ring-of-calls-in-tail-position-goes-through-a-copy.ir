@@ -7,7 +7,6 @@
 # A million hops, each of which ends in a call of the next: no frame may stay behind. The calls of the ring are calls of values, so the ring returns boxed values (LinkedFunction::ringsOfTailCallsAreListed), and each call leaves by a jump, direct or not.
 # `hop` is copied into the arrow function. There the operand has come out of a closed read, and nothing but Link's word about the parameter says that it is a closure of the one function: the copy takes that word and enters it directly.
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # The ring ends in calls of values, so what it gives passes no return that holds it to anything: the record of the call claims nothing of it (Plan::resultsPassNoReturn()).
 # CHECK: [[result]]: {{*}} @JSValue = CallDirect {{*}} function=f2 {{*}} tail

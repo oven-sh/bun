@@ -8,7 +8,8 @@ mod syntax;
 mod tests;
 
 pub use by_name::{
-    is_of_expect, is_of_test_runner, is_plugin, is_test_runner, returns_test_runner, test_runner,
+    is_of_expect, is_of_test_runner, is_path_resolver, is_plugin, is_test_runner,
+    returns_test_runner, test_runner,
 };
 pub use entries::{
     BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, HostRead, HostReadContext,
@@ -32,11 +33,12 @@ pub use lookup::{
     OPERANDS_CALLED_WITH_RECEIVER, PROTOTYPES_THAT_COME_WITH_FIRST_PROMISE, STARTUP_FUNCTIONS,
     STARTUP_LOADS, STARTUP_MODULES, answers_query, canonical_id, class_data, contents_index, entry,
     exists_on, fakes_timers, find_export, find_name, global, has_flag, host_reads, is_callable,
-    is_es_module, is_legal_builtin_constant, is_locked, is_parser, is_stored_by_native_code,
-    is_symbol_name, member, members, module_by_specifier, module_data, name_of_symbol,
-    name_without_node_prefix, namespace_of, object_replacing_namespace, own_member, resets_modules,
-    root_of, runtime_function, runtime_functions, specifier_of, stubs_global, symbol_constant,
-    text_of, text_of_name, well_known_symbol,
+    is_es_module, is_legal_builtin_constant, is_locked, is_name_of_parser, is_parser,
+    is_stored_by_native_code, is_symbol_name, member, members, module_by_specifier, module_data,
+    name_of_symbol, name_without_node_prefix, namespace_of, number_constant,
+    object_replacing_namespace, own_member, resets_modules, root_of, runtime_function,
+    runtime_functions, specifier_of, stubs_global, symbol_constant, text_of, text_of_name,
+    well_known_symbol,
 };
 pub use syntax::{
     Conversion, DirectiveKind, ErrorKind, FramesMark, Intrinsic, IntrinsicPosition, NativeCallKind,

@@ -1,5 +1,5 @@
 // The call stands in the arms of the guess at the holder and nobody names the literal behind it: it is still written out field by field.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 type Part = { p: number };
 type Rest = { q: number };
 type Sum = { c: number; p?: number; q?: number };

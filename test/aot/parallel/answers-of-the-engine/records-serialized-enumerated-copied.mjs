@@ -1,6 +1,6 @@
 // The program makes every record itself, so the analysis knows the layouts, the order of their keys and every store: they are written as JSON, walked and copied by code made for them.
 // Among them are records built up by stores, in two orders, with accessors, hidden members, functions and members that are removed. At the end the shell runs the same text itself: every answer is the same.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function written(value) { return JSON.stringify(value); }
 report(written({ a: 1, b: "two" }));

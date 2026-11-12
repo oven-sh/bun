@@ -1,0 +1,2 @@
+import { jest, mock, test, vi } from "bun:test";
+test("t", async () => { vi.doMock("./m1.cjs", () => { globalThis.R.push("factory"); return { ...jest.requireActual("./m1.cjs"), v: "mock" }; }); let it; try { it = typeof (await import("./root.mjs")).r; } catch (e) { it = e.name; } console.log("SAID", it, globalThis.R.splice(0).join()); try { it = typeof (await import("./below.mjs")).w; } catch (e) { it = e.name; } console.log("SAID again", it, globalThis.R.splice(0).join()); });

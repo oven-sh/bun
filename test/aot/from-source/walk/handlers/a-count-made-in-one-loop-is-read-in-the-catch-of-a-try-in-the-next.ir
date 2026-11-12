@@ -1,0 +1,27 @@
+# -- source: a-count-made-in-one-loop-is-read-in-the-catch-of-a-try-in-the-next.js
+# function digest(rows) {
+#   let count = 0, h = 0;
+#   for (let i = 0; i < rows.length; i++) if (rows[i] > 1) count++;
+#   for (let i = 0; i < rows.length; i++) {
+#     try {
+#       h = (h * 31 + count + rows[i]) | 0;
+#     } catch (err) {
+#       return "failed with " + count;
+#     }
+#   }
+#   return count + " " + h;
+# }
+# print(digest(JSON.parse("[1,2,3]")) + " " + digest(JSON.parse("[4,5]")));
+# -- end of source
+# Everyday code: a count over a parsed list, then a digest with the count in a try inside a second loop, whose catch leaves the loop with the count. The count reaches the handler as the name of a value built twice;
+# the edges bring several names of it, all as raw numbers, and the handler's parameter takes that form. Once the build stopped: "what a handler edge brings is not in the form of the handler's parameter".
+# RUN: run-in-shell mechanisms=all
+# CHECK: 2 3012 2 193
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
+# FAILING: 2 3012 2 193
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 2 3012 2 193
+# HELD-NEXT: exited with 0

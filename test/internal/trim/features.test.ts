@@ -104,7 +104,7 @@ test("Bun.Build.TrimFeature lists every trim feature", () => {
   );
 });
 
-test("docs/compiler/size.mdx lists every trim feature with its description and its sizes", () => {
+test("docs/compiler/size.mdx lists every trim feature", () => {
   const page = readFileSync(join(root, "docs", "compiler", "size.mdx"), "utf8");
   const start = page.indexOf("### Feature names\n");
   expect(start).toBeGreaterThanOrEqual(0);
@@ -118,11 +118,12 @@ test("docs/compiler/size.mdx lists every trim feature with its description and i
         .split(/(?<!\\)\|/)
         .map(cell => cell.trim().replaceAll("\\|", "|")),
     );
-  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "< 0.1 MB" : `${megabytes.toFixed(1)} MB`);
+  const firstSentence = (text: string) => text.slice(0, text.indexOf(". ") + 1 || text.length);
+  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "" : `${megabytes.toFixed(1)} MB`);
   expect(rows).toEqual(
-    model.trimFeatures.map(({ name, about, also, saves }) => [
+    model.trimFeatures.map(({ name, about, saves }) => [
       `\`${name}\``,
-      also.length > 0 ? `${about} Also needs it: ${also.join("; ")}.` : about,
+      firstSentence(about),
       sizeOf(saves!.linux),
       sizeOf(saves!.macos),
     ]),

@@ -1,6 +1,6 @@
 // Neither file says in its text what it is. The one that import loads is an ES module, as its package has no "type". The one that require() loads is what its extension says.
 // RUN: link
-// CHECK: module [[imported]] path="{{*}}/by-loader/imported.cjs" displayPath="imports/by-loader/imported.cjs" flags=[KeepsError]
+// CHECK: module [[imported]] path="{{*}}/by-loader/imported.cjs" displayPath="imports/by-loader/imported.cjs" flags=[CachesEvaluationError]
 // CHECK: module [[required]] path="{{*}}/by-loader/required.cjs"{{*}}kind=CommonJs
 // CHECK: function {{*}}module=[[imported]] kind=Module thisType=
 // CHECK: function {{*}}module=[[imported]] {{*}}flags=[HasThis]

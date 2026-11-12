@@ -5,6 +5,9 @@ use crate::hir::StmtId;
 use crate::program::code_test_host::{StatementsHost, TestBuild, load_files};
 use crate::program::few_in;
 use crate::session::Session;
+use bun_alloc::{BlockChunk, MimallocArena};
+use std::alloc::{Allocator, Layout};
+use std::sync::Barrier;
 
 static ONE_TEST_AT_A_TIME: Guarded<()> = Guarded::new(());
 
@@ -32,6 +35,88 @@ const SOURCES: &[(&str, &str)] = &[
     ("/x.ts", "import \"./a\""),
     ("/rest.ts", "import \"./a\""),
 ];
+
+fn free_block_of(session: &Session) {
+    let block = session.allocate(Layout::new::<[u64; 32]>());
+    let block = block.expect("there is memory").cast();
+    // SAFETY: nothing refers to it.
+    assert!(unsafe { session.free_when_unread(block) });
+}
+
+fn count_unread_blocks() -> usize {
+    TASKS.lock().unread.len()
+}
+
+#[test]
+fn block_is_freed_after_readers() {
+    let _alone = ONE_TEST_AT_A_TIME.lock();
+    let session = Session::new();
+    session.set_readers_are_tasks(true);
+    let early = ReadingTask::begin();
+    free_block_of(&session);
+    let late = ReadingTask::begin();
+    free_block_of(&session);
+    drop(late);
+    assert_eq!(count_unread_blocks(), 2);
+    drop(early);
+    assert_eq!(count_unread_blocks(), 0);
+}
+
+#[test]
+fn ended_session_drops_blocks() {
+    let _alone = ONE_TEST_AT_A_TIME.lock();
+    let session = Session::new();
+    session.set_readers_are_tasks(true);
+    let reading = ReadingTask::begin();
+    free_block_of(&session);
+    drop(session);
+    assert_eq!(count_unread_blocks(), 0);
+    drop(reading);
+}
+
+/// A thread is stopped in the middle of `free_block`, and the arena fills the rest of the chunk meanwhile.
+#[test]
+fn late_free_keeps_page_in_use() {
+    let page_size = bun_alloc::page_size();
+    let arena = MimallocArena::new();
+    let (first, _) = arena.alloc_block(16).expect("it shares a chunk");
+    // The block ends in the middle of a page.
+    let size = 8 * page_size + page_size / 2 - (first.addr().get() + 16) % page_size;
+    let (block, chunk) = arena.alloc_block(size).expect("it shares a chunk");
+    let pointers = (
+        AtomicPtr::new(block.as_ptr()),
+        AtomicPtr::new(chunk.as_ptr()),
+    );
+    let (has_begun, is_full) = (Barrier::new(2), Barrier::new(2));
+    let laid = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let block = NonNull::new(pointers.0.load(Relaxed)).expect("it is not null");
+            let chunk = NonNull::new(pointers.1.load(Relaxed)).expect("it is not null");
+            // SAFETY: nothing uses the block, and it is freed once.
+            let free = unsafe { BlockChunk::begin_free(chunk, block, size) };
+            has_begun.wait();
+            is_full.wait();
+            free.finish();
+        });
+        has_begun.wait();
+        let laid = arena.alloc_block(64);
+        if let Some((block, _)) = laid {
+            // SAFETY: it is 64 bytes long, and nothing else uses it.
+            unsafe { block.write_bytes(0xab, 64) };
+        }
+        while arena
+            .alloc_block(MimallocArena::MAX_SHARED_BLOCK)
+            .is_some_and(|(_, filled)| filled == chunk)
+        {}
+        is_full.wait();
+        laid
+    });
+    let (block, its_chunk) = laid.expect("it shares a chunk");
+    assert_eq!(its_chunk, chunk);
+    // SAFETY: it is 64 bytes long, and it lives as long as the arena.
+    let bytes = unsafe { std::slice::from_raw_parts(block.as_ptr(), 64) };
+    assert!(bytes.iter().all(|&byte| byte == 0xab));
+}
 
 struct Program<'a, 's> {
     files: &'a Files<'s>,

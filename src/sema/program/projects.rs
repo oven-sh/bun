@@ -395,6 +395,18 @@ impl<'s> Files<'s> {
         }
     }
 
+    /// Whether the type errors that this program finds in the file are the ones that the file's own project finds.
+    pub fn matches_own_project_checks(&self, file: FileId) -> bool {
+        let (program, project) = (self.options, self.module_options(file));
+        !self.needs_another_program(file)
+            || (program.strict_null_checks == project.strict_null_checks
+                && program.strict_function_types == project.strict_function_types
+                && program.strict_bind_call_apply == project.strict_bind_call_apply
+                && program.strict_builtin_iterator_return == project.strict_builtin_iterator_return
+                && program.exact_optional_property_types == project.exact_optional_property_types
+                && (project.libs.iter()).all(|library| program.libs.contains(library)))
+    }
+
     pub fn needs_another_program(&self, file: FileId) -> bool {
         let (program, project) = (self.options, self.module_options(file));
         !std::ptr::eq(program, project)

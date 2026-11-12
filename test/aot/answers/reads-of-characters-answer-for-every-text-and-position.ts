@@ -8,7 +8,7 @@
 // # FORM: = GetStringCodeUnit
 // # RUN(POINT): walk f2 mechanisms=all
 // # POINT-LABEL: code f2:Body
-// # POINT: = LShift
+// # POINT: = CallInline {{*}}inlineBuiltin=StringCodePointAt
 // # RUN(ELEMENT): walk f5 mechanisms=all
 // # ELEMENT-LABEL: code f5:Body
 // # ELEMENT: = Substring

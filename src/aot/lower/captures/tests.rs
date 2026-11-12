@@ -447,6 +447,32 @@ fn limit_of_one_function_leaves_others() {
 }
 
 #[test]
+fn caller_over_the_limit_takes_the_scope_of_a_callee_that_comes_late() {
+    for is_immutable in [true, false] {
+        let mut fixture = Fixture::new();
+        let constants = add_root_constants(&mut fixture, 5);
+        let outer = fixture.add_function(ROOT, 9);
+        let near = fixture.add_symbol(outer, ScopeId(7), is_immutable, initialized_at(10));
+        let callee = fixture.add_function(outer, 20);
+        fixture.uses.push((callee, near));
+        let mut callees = vec![callee];
+        for constant in constants {
+            let other = fixture.add_function(outer, 20);
+            fixture.uses.push((other, constant));
+            callees.push(other);
+        }
+        let hub = fixture.add_function(outer, 20);
+        for callee in callees {
+            fixture.references.push((hub, callee));
+        }
+        let plan = fixture.solve(3);
+        let captured = [ENVIRONMENT, Capture::Environment(ScopeId(7))];
+        assert_eq!(captures_of(&plan, hub), captured, "{is_immutable}");
+        assert!(plan.fields.contains(&near), "{is_immutable}");
+    }
+}
+
+#[test]
 fn list_at_the_limit_stays() {
     let mut fixture = Fixture::new();
     let bindings = add_root_constants(&mut fixture, 3);

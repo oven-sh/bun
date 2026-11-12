@@ -28,12 +28,15 @@ impl CompileCommand {
     #[cold]
     #[inline(never)]
     pub(crate) fn exec_command(ctx: Context<'_>) -> Result<(), crate::Error> {
+        configuration::use_installed_executable(ctx);
         if ctx.bundler_options.aot.is_none() || ctx.args.target == Some(api::Target::Browser) {
             configuration::use_default_entry_point(ctx);
             if ctx.bundler_options.aot.is_none()
                 || has_only_html_entry_points(&ctx.args.entry_points)
             {
                 ctx.bundler_options.aot = None;
+                ctx.bundler_options.keeps_entry_points = true;
+                configuration::load_script_as_code(ctx);
                 return BuildCommand::exec(ctx, None);
             }
         }
@@ -86,7 +89,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         location.root_dir.fd,
         origin,
     );
-    let result = compile_to_executable(&mut request).and_then(|outcome| {
+    let result = compile_to_executable(&mut request).and_then(move |outcome| {
         write_metafiles(&outcome, &metafile_path, &metafile_markdown_path)?;
         Ok(outcome)
     });

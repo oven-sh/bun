@@ -64,6 +64,13 @@ fn to_syscall_path(path: &[u8]) -> Option<&[u8]> {
     is_representable.then_some(native)
 }
 
+/// Opening a named pipe waits for a writer, and some devices never end.
+pub fn is_regular_file(path: &[u8]) -> bool {
+    let mut buffer = path_buffer_pool::get();
+    let stat = to_syscall_path(path).and_then(|it| bun_sys::stat(z(it, &mut buffer)).ok());
+    stat.is_some_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
+}
+
 /// A drive's root is `/C:`. The system treats `C:` as the working directory on that drive, so it needs `/C:/`. The same
 /// goes for every root except `/`.
 fn with_root(path: &[u8]) -> Cow<'_, [u8]> {

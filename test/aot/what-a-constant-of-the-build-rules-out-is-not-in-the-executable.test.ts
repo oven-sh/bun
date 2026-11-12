@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { test } from "./supported";
 
 // An application is built in several flavors from one source: `if (feature("NO_PLUGINS")) throw ..; else runPlugins()`. A flavor is checked by looking into its
@@ -60,7 +60,7 @@ async function textsIn(files: Record<string, string>, flags: string[] = []) {
   const written = Object.entries(files).flatMap(
     ([name, text]) => (name + text).match(/(RULED_OUT|KEPT)_[A-Z]+/g) ?? [],
   );
-  const bytes = readFileSync(executable);
+  const bytes = bytesAndStoredStrings(executable);
   return { stdout, found: [...new Set(written)].filter(text => bytes.includes(text)).sort() };
 }
 

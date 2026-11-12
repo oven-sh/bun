@@ -525,7 +525,8 @@ impl RunCommand {
 
         ONCE.get_or_init(|| {
             let mut scratch = bun_paths::path_buffer_pool::get();
-            let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
+            let path = lifecycle_script_runner::strip_bin_dirs(path);
+            let found = Self::find_shell_impl(&mut scratch, &path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
         })

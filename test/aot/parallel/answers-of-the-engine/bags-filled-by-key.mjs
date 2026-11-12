@@ -1,5 +1,5 @@
 // a record that lists no name and is filled by key
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function keysOf(object) { let text = ""; for (const key in object) text += key + ";"; return text; }
 function counted(words) { const counts = {}; for (let index = 0; index < words.length; index++) { const word = words[index]; counts[word] = (counts[word] || 0) + 1; } return counts; }

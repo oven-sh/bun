@@ -51,6 +51,19 @@ struct OwnEnumerableProperties {
         }
         return stringKeys;
     }
+
+    // Whether the names are in node's order as they stand: no string key comes after a symbol key.
+    bool symbolKeysAreLast() const
+    {
+        bool sawSymbolKey = false;
+        for (WTF::UniquedStringImpl* name : names) {
+            if (name->isSymbol())
+                sawSymbolKey = true;
+            else if (sawSymbolKey)
+                return false;
+        }
+        return true;
+    }
 };
 
 inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, OwnEnumerableProperties& properties)
@@ -83,7 +96,38 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
 inline bool onlyOneCompiledObjectHasOwn(JSC::VM& vm, JSC::JSCell* first, JSC::JSCell* second, JSC::PropertyName name)
 {
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    if (PropertyWalk::structureGuaranteesAbsence(first->structure(), name.uid()))
+        return false;
     return !PropertyWalk::getDirect(vm, JSC::asObject(first), name, nullptr) != !PropertyWalk::getDirect(vm, JSC::asObject(second), name, nullptr);
+}
+
+template<typename CompareValues>
+bool areCompiledValuesEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue left, JSC::JSValue right, bool sameIsEqual, const CompareValues& compareValues)
+{
+    if (sameIsEqual) [[likely]] {
+        if (left == right)
+            return true;
+        bool isSame = JSC::sameValue(globalObject, left, right);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSame)
+            return true;
+    }
+    bool isEqual = compareValues(left, right);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isEqual;
+}
+
+// std::nullopt: an exception is pending.
+template<typename CompareValues>
+std::optional<bool> areCompiledPairsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::MarkedArgumentBuffer& pairs, bool sameIsEqual, const CompareValues& compareValues)
+{
+    for (size_t i = 0; i < pairs.size(); i += 2) {
+        bool isEqual = areCompiledValuesEqual(globalObject, scope, pairs.at(i), pairs.at(i + 1), sameIsEqual, compareValues);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!isEqual)
+            return false;
+    }
+    return true;
 }
 
 // std::nullopt: the caller compares by its generic path, or an exception is pending.
@@ -91,15 +135,34 @@ template<bool isStrict, bool nodeKeyOrder, typename CompareValues>
 std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
 {
     JSC::VM& vm = globalObject->vm();
+    JSC::MarkedArgumentBuffer pairs;
+    namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    if (PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs)) {
+        // Two comparisons or more have an order, and this walk does not say that it is node's.
+        if (!nodeKeyOrder || pairs.size() <= 2)
+            return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
+        pairs.clear();
+    }
+
     OwnEnumerableProperties properties1;
     OwnEnumerableProperties properties2;
     if (!collectOwnEnumerableProperties(vm, o1, properties1) || !collectOwnEnumerableProperties(vm, o2, properties2))
         return std::nullopt;
 
-    JSC::MarkedArgumentBuffer pairs;
+    bool haveSameNames = properties1.names == properties2.names;
+    if (haveSameNames && (!nodeKeyOrder || properties1.symbolKeysAreLast())) {
+        for (size_t i = 0; i < properties1.names.size(); i++) {
+            bool isEqual = areCompiledValuesEqual(globalObject, scope, properties1.values.at(i), properties2.values.at(i), sameIsEqual, compareValues);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            if (!isEqual)
+                return false;
+        }
+        return true;
+    }
+
     bool isPaired = false;
     if constexpr (nodeKeyOrder) {
-        if (properties1.names == properties2.names) {
+        if (haveSameNames) {
             // node compares what is under the string keys, then what is under the symbol keys.
             for (bool underSymbolKeys : { false, true }) {
                 for (size_t i = 0; i < properties1.names.size(); i++) {
@@ -154,23 +217,7 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
             remain--;
         }
     }
-    for (size_t i = 0; i < pairs.size(); i += 2) {
-        JSC::JSValue left = pairs.at(i);
-        JSC::JSValue right = pairs.at(i + 1);
-        if (sameIsEqual) [[likely]] {
-            if (left == right)
-                continue;
-            bool isSame = JSC::sameValue(globalObject, left, right);
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-            if (isSame)
-                continue;
-        }
-        bool isEqual = compareValues(left, right);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!isEqual)
-            return false;
-    }
-    return true;
+    return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
 }
 
 } // namespace Bun

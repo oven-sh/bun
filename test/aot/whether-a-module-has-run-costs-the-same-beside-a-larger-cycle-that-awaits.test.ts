@@ -6,17 +6,19 @@ import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
 import { test } from "./measures";
 
-// The modules of a cycle with a top-level await keep their records. Each require() below asks what has run. A look at every record at each ask shows between the two sizes.
+// The modules of a cycle with a top-level await keep their records. Each read of require.cache below asks what has run. A look at every record at each ask shows between the two sizes.
 const sizes = [50, 800];
 const required = Array.from({ length: 500 }, (_, index) => index);
 
 function project(ring: number) {
   const files: Record<string, string> = {
     "package.json": `{ "type": "module" }`,
+    "never.ts": `export const v = 0;\n`,
     "requires.test.ts": `import { test } from "bun:test";
 import { f0 } from "./ring-0";
-let sum = f0(5);
-${required.map(index => `sum += require("./m${index}").v;\n`).join("")}test("requires", () => {
+const never = require.resolve("./never");
+let sum = f0(5) + (process.argv.length > 99 ? require("./never").v : 0);
+${required.map(index => `sum += require("./m${index}").v;\nif (never in require.cache) sum = NaN;\n`).join("")}test("requires", () => {
   console.log("answers", sum);
 });
 `,
@@ -63,7 +65,7 @@ test.concurrent.each(sizes)("a cycle of %d modules", async ring => {
   const lines = readdirSync(cwd)
     .filter(name => name.startsWith("counts-"))
     .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-    .filter(line => line.endsWith("\tsought:ModulesForWhatHasRun"));
+    .filter(line => line.endsWith("\tsought:ModulesScannedForEvaluationStatus"));
   expect(lines.length).toBeGreaterThan(0);
   sought.set(
     ring,

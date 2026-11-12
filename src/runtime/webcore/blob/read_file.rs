@@ -535,7 +535,7 @@ impl ReadFile {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
             }
-            break 'brk bun_sys::read(self.opened_fd, buf);
+            break 'brk crate::node::fs::read_descriptor(self.opened_fd, buf);
         };
 
         loop {

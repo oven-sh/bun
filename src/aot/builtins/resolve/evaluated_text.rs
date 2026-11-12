@@ -33,7 +33,7 @@ impl Resolver<'_, '_> {
 
     fn constant_texts(&self, form: EvaluatedTextForm, call: CallId) -> Option<SmallVec<[Atom; 2]>> {
         let hir = self.input.hir;
-        let mut arguments = hir.ids(hir[call].args);
+        let mut arguments = hir.ids(hir.written_args(call));
         match form {
             EvaluatedTextForm::FunctionBody => arguments
                 .map(|argument| self.constant_text(argument))
@@ -61,7 +61,8 @@ impl Resolver<'_, '_> {
         };
         let callee = self.value_of(input.hir[call].callee)?;
         let form = evaluated_text_form(callee.path.id)?;
-        let is_direct_eval = input.bound.eval_scope(expr).is_some();
+        let is_direct_eval =
+            input.bound.eval_scope(expr).is_some() || input.hir.is_settled_eval(call);
         if is_direct_eval || (form == EvaluatedTextForm::Script && is_construct) {
             return None;
         }

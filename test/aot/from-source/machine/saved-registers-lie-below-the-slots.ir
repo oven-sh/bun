@@ -1,8 +1,8 @@
 # -- source: saved-registers-lie-below-the-slots.js
-# function four(a, b, c, d) { report(a); report(a); report(b); report(b); report(c); report(c); report(d); return d; }
-# report(id(four)(1, 2, 3, 4));
+# function four() { const a = id(1), b = id(2), c = id(3), d = id(4); report(a); report(a); report(b); report(b); report(c); report(c); report(d); return d; }
+# report(id(four)());
 # -- end of source
-# Four values live across calls and each is read twice, and x86-64 has two registers that callees save: the frame holds saves and slots. Nothing in it takes the frame pointer register for the frame, so it has no record:
+# Four values that calls gave live across calls and each is read twice, and x86-64 has two registers that callees save: the frame holds saves and slots. Nothing in it takes the frame pointer register for the frame, so it has no record:
 # the saves are pushed first, the last of them into the word below the return address, where the record would lie (offset 0: machine/AOTMachineFrameForms.h), and the slots lie below them, reached off the stack pointer.
 # The form with the saves at the bottom, which this function had while two slots kept a record, is asked for in tests/AOTMachineFrameFormTests.cpp.
 # f1 = four

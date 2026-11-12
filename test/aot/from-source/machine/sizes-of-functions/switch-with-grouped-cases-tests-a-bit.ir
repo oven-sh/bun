@@ -1,0 +1,19 @@
+# f1 = isVowel
+# -- source: switch-with-grouped-cases-tests-a-bit.ts
+# function isVowel(code: number): boolean {
+#   switch (code) {
+#     case 97: case 101: case 105: case 111: case 117:
+#       return true;
+#     default:
+#       return false;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = isVowel(input | 0);
+# -- end of source
+# The compiler before this one: 8 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 9, patches 0, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 11

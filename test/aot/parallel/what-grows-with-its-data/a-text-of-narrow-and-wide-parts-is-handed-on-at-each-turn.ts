@@ -1,6 +1,7 @@
 // `text += part; look(text)`: what is handed on is not put together out of all the parts at each turn.
-// Sizes: 250 1000 4000
-// Passes: 1500
+// The first 512 parts (2,048 where a block has 64 KB) lie as ropes: a step, once. These sizes lie behind it.
+// Sizes: 4000 16000 64000
+// Passes: 96
 // Grows: linear
 const size = Number(process.env.SIZE ?? 100),
   passes = Number(process.env.PASSES ?? 1);

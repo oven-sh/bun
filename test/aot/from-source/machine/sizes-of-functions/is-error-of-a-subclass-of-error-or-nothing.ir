@@ -1,0 +1,16 @@
+# f1 = next
+# -- source: is-error-of-a-subclass-of-error-or-nothing.ts
+# class Failure extends Error {}
+# function next(failure: Failure, count: number): number {
+#   if (Error.isError(failure)) return count + count;
+#   return count;
+# }
+# declare const input: any;
+# (globalThis as any).answer = next(input ? new Failure("failed") : (undefined as any), +input);
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 8, patches 3, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 11

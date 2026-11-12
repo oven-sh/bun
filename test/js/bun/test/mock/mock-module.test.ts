@@ -7649,19 +7649,19 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       await expectFixturesToPass(
         {
           "node_modules/lib-a/package.json": JSON.stringify({ name: "lib-a", type: "module", main: "index.js" }),
-          "node_modules/lib-a/index.js": `import { hostname } from "node:os"; export const notify = () => hostname();`,
+          "node_modules/lib-a/index.js": `import { platform } from "node:os"; export const notify = () => platform();`,
           "mocks.ts": `
             import { vi } from "bun:test";
             const impl = () => "mock";
-            vi.mock("node:os", () => ({ hostname: impl }));
+            vi.mock("node:os", () => ({ platform: impl }));
           `,
           "library.test.ts": `
             import { expect, test } from "bun:test";
             import "./mocks";
             import { notify } from "lib-a";
             test("a package that imports the module", async () => {
-              expect(notify()).not.toBe("mock");
-              expect((await import("node:os")).hostname()).toBe("mock");
+              expect(notify()).toBe(process.platform);
+              expect((await import("node:os")).platform()).toBe("mock");
             });
           `,
         },

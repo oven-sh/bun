@@ -1,0 +1,4 @@
+Two findings of the review are outside the diff, so the answers are here.
+
+- Standalone executable with `autoloadBunfig`, `autoloadTsconfig` and `autoloadDotenv: false`: tsconfig.json does not override bunfig.toml there. On that configuration no JSX option of tsconfig.json reaches the runtime at all, on main and on this branch. Checked with `bun build --compile --compile-autoload-tsconfig --no-compile-autoload-dotenv`: the factory of bunfig.toml applies, and without a bunfig.toml the default runtime applies. The runtime transpiles with `options.jsx`, and only the `.env` arm of `run_env_loader` lays the working directory's tsconfig.json over it. That the tsconfig.json read depends on `.env` autoload is a defect of its own. It goes into a separate change.
+- `bun build` beside any bunfig.toml uses the development runtime, also when tsconfig.json says `react-jsx`: known, and not changed here. #48152 covers it (description, Notes, "Not changed").

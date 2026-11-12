@@ -6,7 +6,7 @@
  * hint when a required tool is missing.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -14,6 +14,7 @@ import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { type Answer, ask, type Exited, printed } from "./probe.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Version range checking
@@ -102,6 +103,8 @@ export interface FoundTool {
   path: string;
   /** Parsed X.Y.Z, if `spec.version` was set and the check ran. */
   version?: string;
+  /** What `--version` said, if the check ran: what else is read from it (identity, target) is not asked again. */
+  answer?: Exited;
 }
 
 /**
@@ -145,8 +148,8 @@ export function findBun(os: OS): string {
  */
 export function checkImageTools(toolchain: { bun: string; cmake: string; clangVersion: string | undefined }): void {
   const tools: [name: string, expected: string, actual: { version: string } | { reason: string }][] = [
-    ["bun", pins.bun.version, getToolVersion(toolchain.bun, "--version")],
-    ["cmake", pins.cmake.version, getToolVersion(toolchain.cmake, "--version")],
+    ["bun", pins.bun.version, getToolVersion(toolchain.bun)],
+    ["cmake", pins.cmake.version, getToolVersion(toolchain.cmake)],
     // CI runs the build with the image's node.
     ["node", pins.nodejs.version, { version: process.versions.node }],
   ];
@@ -192,42 +195,31 @@ function isExecutable(p: string): boolean {
 }
 
 /**
- * Get the version of a tool. Returns the parsed X.Y.Z, or a diagnostic
- * string describing why parsing failed (starts with a digit → version,
- * otherwise → failure reason for the rejection log).
+ * How long a tool gets to answer. It is there for a tool that hangs, and is no estimate of a slow one: the cold
+ * start of a large binary (clang is 100+ MB) on a busy machine, or through Defender's scan on access, can take
+ * minutes, and an ask that runs out fails configure (probe.ts).
  */
-function getToolVersion(exe: string, versionArg: string): { version: string } | { reason: string } {
-  const result = askVersion(exe, versionArg);
-  if ("reason" in result) return result;
+export const ANSWER_BUDGET_MS = 300_000;
+
+/**
+ * Get the version of a tool. Returns the parsed X.Y.Z with the answer it was read from, or why there is none, for
+ * the rejection log.
+ */
+function getToolVersion(exe: string): { version: string; answer: Exited } | { reason: string } {
+  const answer = askVersion(exe);
+  if ("cannotRun" in answer) return { reason: `spawn failed: ${answer.cannotRun.message}` };
+  // What we saw (truncated), so the error is actionable.
+  const output = (answer.stdout + answer.stderr).trim().slice(0, 200);
+  // Before the output is read: a tool that fails to load prints an error, and the path in it can hold an X.Y.Z.
+  if (answer.status !== 0) return { reason: `exited ${answer.status}: ${output || "(no output)"}` };
   // Some tools print their version to stderr instead of stdout. Check both.
-  const version = parseVersion(result.stdout) ?? parseVersion(result.stderr);
-  if (version !== undefined) return { version };
-  // Parse failed — include what we saw (truncated) so the error is
-  // actionable instead of just "could not parse".
-  const output = (result.stdout + result.stderr).trim().slice(0, 200);
-  if (result.status !== 0) {
-    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
-  }
+  const version = parseVersion(answer.stdout) ?? parseVersion(answer.stderr);
+  if (version !== undefined) return { version, answer };
   return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
 }
 
-function askVersion(
-  exe: string,
-  versionArg: string,
-): { stdout: string; stderr: string; status: number | null } | { reason: string } {
-  // stdio ignore on stdin: on Windows CI the parent's stdin can be a
-  // handle that blocks the child's CRT init. --version never reads stdin.
-  // 30s timeout: cold start of a large binary (clang is 100+ MB) through
-  // Defender scan-on-access can legitimately exceed 5s on a busy CI box.
-  const result = spawnSync(exe, [versionArg], {
-    encoding: "utf8",
-    timeout: 30_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) {
-    return { reason: `spawn failed: ${result.error.message}` };
-  }
-  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status };
+function askVersion(exe: string): Answer {
+  return ask(exe, ["--version"], { budgetMs: ANSWER_BUDGET_MS });
 }
 
 /** The tools whose output stays in the build directory from one build to the next. */
@@ -256,14 +248,17 @@ export function toolIdentityFile(cfg: Config, tool: IdentifiedTool): string {
   return resolve(cfg.buildDir, "toolchain-identity", `${tool}.txt`);
 }
 
-/** Called by configure, before ninja runs. An unchanged tool keeps its file's mtime and rebuilds nothing. */
-export function writeToolIdentities(cfg: Config): void {
+/**
+ * Called by configure, before ninja runs. An unchanged tool keeps its file's mtime and rebuilds nothing.
+ * `known` is `Toolchain.toolIdentities`: a tool that tool discovery asked for its version is not asked again.
+ */
+export function writeToolIdentities(cfg: Config, known: Toolchain["toolIdentities"]): void {
   const tools: IdentifiedTool[] = ["cc", "cxx", "hostCc", "nasm", "ld"];
   for (const tool of tools) {
     const path = cfg[tool];
     // Absent on this platform: no nasm, and `ld` is "" on macOS, where clang finds the linker itself.
     if (path === undefined || path === "") continue;
-    writeIfChanged(toolIdentityFile(cfg, tool), toolIdentity(path) + "\n");
+    writeIfChanged(toolIdentityFile(cfg, tool), (known?.[path] ?? toolIdentity(path)) + "\n");
   }
 }
 
@@ -273,25 +268,27 @@ export function writeToolIdentities(cfg: Config): void {
  * commit, the same on every machine. (The lines after it name the install directory.)
  */
 export function toolIdentity(exe: string): string {
-  const result = askVersion(exe, "--version");
-  const line =
-    "reason" in result
-      ? undefined
-      : `${result.stdout}\n${result.stderr}`
-          .split("\n")
-          .map(l => l.trim())
-          .find(l => /\d+\.\d+/.test(l));
+  const answer = askVersion(exe);
+  const line = "cannotRun" in answer ? undefined : identityLine(answer);
   if (line === undefined) {
     throw new BuildError(`Cannot tell which ${exe} this is`, {
-      hint: `\`${exe} --version\` ${"reason" in result ? result.reason : "printed no version"}`,
+      hint: `\`${exe} --version\` ${"cannotRun" in answer ? `spawn failed: ${answer.cannotRun.message}` : "printed no version"}`,
     });
   }
   return line;
 }
 
+/** The line of a `--version` answer that carries the version. */
+function identityLine(answer: Exited): string | undefined {
+  return `${answer.stdout}\n${answer.stderr}`
+    .split("\n")
+    .map(l => l.trim())
+    .find(l => /\d+\.\d+/.test(l));
+}
+
 /**
- * Ask clang what arch it targets by default. Parses `Target:` from
- * `--version` output. Returns undefined if unparseable.
+ * The arch clang targets by default: `Target:` of the `--version` answer
+ * tool discovery accepted it on. Returns undefined if unparseable.
  *
  * CMake does this during compiler detection (project()) to set
  * CMAKE_SYSTEM_PROCESSOR — that's how the old cmake build knew arm64
@@ -299,14 +296,8 @@ export function toolIdentity(exe: string): string {
  * process (may be emulated); the compiler's target is what we actually
  * build for.
  */
-export function clangTargetArch(clang: string): Arch | undefined {
-  const result = spawnSync(clang, ["--version"], {
-    encoding: "utf8",
-    timeout: 30_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error || result.status !== 0) return undefined;
-  const m = (result.stdout ?? "").match(/^Target:\s*(\S+)/m);
+function clangTargetArch(version: Exited | undefined): Arch | undefined {
+  const m = version?.stdout.match(/^Target:\s*(\S+)/m);
   if (!m) return undefined;
   const triple = m[1]!;
   // aarch64-pc-windows-msvc, arm64-apple-darwin, x86_64-unknown-linux-gnu, ...
@@ -324,7 +315,6 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
   const searchPaths = spec.pathsOnly
     ? [...(spec.paths ?? [])]
     : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
-  const versionArg = "--version";
   const rejections: Rejection[] = [];
 
   for (const name of spec.names) {
@@ -334,7 +324,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
       if (!isExecutable(full)) continue;
 
       if (spec.version !== undefined) {
-        const v = getToolVersion(full, versionArg);
+        const v = getToolVersion(full);
         if ("reason" in v) {
           rejections.push({ path: full, reason: v.reason });
           continue;
@@ -343,7 +333,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
           rejections.push({ path: full, reason: `version ${v.version} does not satisfy ${spec.version}` });
           continue;
         }
-        return { path: full, version: v.version };
+        return { path: full, version: v.version, answer: v.answer };
       }
       return { path: full };
     }
@@ -413,16 +403,10 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
     // Only spawn `brew --prefix` as a last resort for custom installs —
     // brew's startup is slow and this runs on every configure.
     const defaultPrefix = arch === "aarch64" ? "/opt/homebrew" : "/usr/local";
-    let brewPrefix: string;
-    if (isExecutable(`${defaultPrefix}/bin/brew`)) {
-      brewPrefix = defaultPrefix;
-    } else {
-      try {
-        brewPrefix = execSync("brew --prefix", { encoding: "utf8", timeout: 3000 }).trim();
-      } catch {
-        brewPrefix = defaultPrefix;
-      }
-    }
+    const brewPrefix = isExecutable(`${defaultPrefix}/bin/brew`)
+      ? defaultPrefix
+      : (printed(ask("brew", ["--prefix"], { budgetMs: ANSWER_BUDGET_MS, stderr: "inherit" }))?.trim() ??
+        defaultPrefix);
     paths.push(`${brewPrefix}/opt/llvm@${LLVM_MAJOR}/bin`);
     paths.push(`${brewPrefix}/opt/llvm/bin`);
   }
@@ -534,6 +518,8 @@ export function resolveLlvmToolchain(
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
+  | "clangTargetArch"
+  | "toolIdentities"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -545,14 +531,20 @@ export function resolveLlvmToolchain(
   // windows needs clang-cl/llvm-lib/lld-link/llvm-rc regardless of host.
   const msvcTarget = targetOs === "windows";
 
+  // What a tool said when its version was checked is its identity too, so writeToolIdentities() does not ask again.
+  const toolIdentities: Record<string, string> = {};
+  const versionChecked = (name: string): FoundTool | undefined => {
+    const found = findLlvmTool(name, paths, os, { checkVersion: true, required: true });
+    const identity = found?.answer !== undefined ? identityLine(found.answer) : undefined;
+    if (found !== undefined && identity !== undefined) toolIdentities[found.path] = identity;
+    return found;
+  };
+
   // clang — version-checked. clang++ is the same binary (hardlink or
   // symlink) from the same install; a second version-check spawn would
   // just return the same answer. We still locate it separately so the
   // "not found" error names the right tool.
-  const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
-    checkVersion: true,
-    required: true,
-  });
+  const ccResult = versionChecked(msvcTarget ? "clang-cl" : "clang");
   const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
     checkVersion: false,
     required: true,
@@ -560,20 +552,12 @@ export function resolveLlvmToolchain(
 
   // Resource dir (builtin headers live at <resource-dir>/include). Needed by
   // darwin cross-compiles, which rebuild the include search path explicitly
-  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
-  // skipped for windows targets, where nothing consumes it (and cc is
-  // clang-cl, which takes MSVC-style flags).
+  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn,
+  // and only for them: nothing else reads the answer.
   let clangResourceDir: string | undefined;
-  if (!msvcTarget) {
-    const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
-      encoding: "utf8",
-      timeout: 30_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (!probe.error && probe.status === 0) {
-      const dir = (probe.stdout ?? "").trim();
-      if (dir.length > 0) clangResourceDir = dir;
-    }
+  if (targetOs === "darwin" && os !== "darwin") {
+    const dir = printed(ask(ccResult!.path, ["-print-resource-dir"], { budgetMs: ANSWER_BUDGET_MS }))?.trim();
+    if (dir !== undefined && dir.length > 0) clangResourceDir = dir;
   }
 
   // Host compiler for build-time codegen tools (dep_host_cc) and host-side
@@ -603,7 +587,7 @@ export function resolveLlvmToolchain(
   if (msvcTarget) {
     ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
   } else if (os === "linux") {
-    ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
+    ld = versionChecked("ld.lld")?.path ?? "";
   } else {
     ld = ""; // darwin: unused
   }
@@ -684,6 +668,8 @@ export function resolveLlvmToolchain(
     cc: ccResult.path,
     clangVersion: ccResult.version,
     clangResourceDir,
+    clangTargetArch: clangTargetArch(ccResult.answer),
+    toolIdentities,
     cxx,
     hostCc,
     hostCxx,
@@ -733,7 +719,7 @@ export interface CargoToolchain {
  * Ask the pinned rustc what it is: its LLVM version (resolveConfig() requires
  * clang's to be the same major), its sysroot and its host triple.
  *
- * Every field is undefined if rustc isn't installed or doesn't answer.
+ * Every field is undefined if rustc isn't installed or exits with an error.
  */
 export function probeRustToolchain(os: OS): {
   rustLlvmVersion: string | undefined;
@@ -796,20 +782,17 @@ export function probeRustToolchain(os: OS): {
   // and the toml still applies to anyone running cargo directly. Generous
   // timeout: without rustup there is no pre-flight and this proxy invocation
   // may still be the one that auto-installs the channel.
-  const env = channel !== undefined ? { ...process.env, RUSTUP_TOOLCHAIN: channel } : process.env;
-  // stderr to the terminal: when the proxy cannot provide the toolchain, what it says is the explanation.
-  const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
-    encoding: "utf8",
-    timeout: 300_000,
-    stdio: ["ignore", "pipe", "inherit"],
-    env,
-  }).stdout?.trim();
-  const vv = spawnSync(rustc, ["-vV"], {
-    encoding: "utf8",
-    timeout: 30_000,
-    stdio: ["ignore", "pipe", "inherit"],
-    env,
-  }).stdout;
+  const askRustc = (...args: string[]) =>
+    printed(
+      ask(rustc, args, {
+        budgetMs: ANSWER_BUDGET_MS,
+        env: channel !== undefined ? { RUSTUP_TOOLCHAIN: channel } : {},
+        // To the terminal: when the proxy cannot provide the toolchain, what it says is the explanation.
+        stderr: "inherit",
+      }),
+    );
+  const sysroot = askRustc("--print", "sysroot")?.trim();
+  const vv = askRustc("-vV");
   if (!sysroot || !vv) return none;
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];

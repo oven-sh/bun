@@ -225,8 +225,7 @@ export function getStdinStream(
   const originalRead = stream.read;
   stream.read = function (size) {
     const ret = originalRead.$call(this, size);
-    // With no listener, _read() sees no consumer, so an explicit read() owns here, after a
-    // throwing size cannot ref stdin. read(0) kicks never own (pause() relies on it).
+    // read(n) with no listener is a consumer that _read() cannot see. read(0) kicks never own.
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }

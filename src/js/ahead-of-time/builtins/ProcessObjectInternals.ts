@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 65f58a16d801ca564c0ae38d199f8681e8204980e55af57df2bbc7a6d601abfa.
+// Written against that file with the SHA-256 ef0ab5af1cc8d4fcf67cd76b66f5de94fa1fc5f97196a69f274a6150fdfb6de5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -244,8 +244,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   const originalRead = stream.read;
   stream.read = function (this: StdinStream, size?: number) {
     const ret = originalRead.$call(this, size);
-    // With no listener, _read() sees no consumer, so an explicit read() owns here, after a
-    // throwing size cannot ref stdin. read(0) kicks never own (pause() relies on it).
+    // read(n) with no listener is a consumer that _read() cannot see. read(0) kicks never own.
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }

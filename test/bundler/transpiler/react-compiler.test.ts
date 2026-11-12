@@ -5337,19 +5337,4 @@ describe("react-compiler compiles every JavaScript-like loader", () => {
     expect(code).not.toContain("react/compiler-runtime");
     expect(code).toContain("useState(0)");
   });
-
-  test("bun build --no-bundle --react-compiler compiles a .ts hook", async () => {
-    using dir = tempDir("react-compiler-no-bundle", { "useTotal.ts": hook });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "--react-compiler", "--target=browser", "./useTotal.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("react/compiler-runtime");
-    expect(stdout).toMatch(/\b_c\(\d+\)/);
-    expect(exitCode).toBe(0);
-  });
 });

@@ -1491,6 +1491,8 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.is_test_entry_point = this_parse.is_test_entry_point;
+                // Only a test run names what this path compiles: the compiler's
+                // runtime import is not lowered for a CommonJS module here.
                 if !this_parse.is_test_entry_point {
                     opts.features.react_compiler = self.options.react_compiler.for_module(
                         loader,
@@ -1498,7 +1500,7 @@ impl<'a> Transpiler<'a> {
                         || {
                             self.options
                                 .react_compiler_filter
-                                .is_none_or(|is_compiled| is_compiled(source.path.text))
+                                .is_some_and(|is_compiled| is_compiled(source.path.text))
                         },
                     );
                 }

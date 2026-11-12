@@ -319,12 +319,12 @@ struct CycleState {
     {
     }
 
+    // A run without memos: the pairs that are being compared, `actual` before `expected`.
+    JSC::MarkedVector<JSValue, 16> open;
     // The run has no stack below this address: it throws there, or it gives up (`ended`).
     void* stackEnd;
     bool throwsAtStackEnd { false };
     End ended { End::None };
-    // A run without memos: the pairs that are being compared, `actual` before `expected`.
-    JSC::MarkedVector<JSValue, 16> open;
     // A run under node's memos.
     std::optional<Memos> memos;
 };
@@ -527,7 +527,7 @@ static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::Marke
 {
     if (const std::optional<bool> answer = enterMemos(globalObject, cycles, scope, actual, expected, arm))
         return *answer;
-    const bool result = bodyOf(arm)(globalObject, gcBuffer, cycles, scope, actual, expected);
+    const bool result = bodyOf(arm)(globalObject, cycles.memos->kept, cycles, scope, actual, expected);
     leaveMemos(cycles, actual.asCell(), expected.asCell());
     return result;
 }
@@ -898,17 +898,11 @@ static bool errorFieldsEqual(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     }
 
     // An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well.
-    JSC::PropertySlot expectedCauseSlot(expectedObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, vm.propertyNames->cause, expectedCauseSlot);
+    bool expectedHasCause = expectedObject->hasOwnProperty(globalObject, vm.propertyNames->cause);
     RETURN_IF_EXCEPTION(scope, false);
-    if (expectedHasCause) {
-        JSC::PropertySlot actualCauseSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, vm.propertyNames->cause, actualCauseSlot);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!actualHasCause)
-            return false;
-    }
-    return true;
+    if (!expectedHasCause)
+        return true;
+    RELEASE_AND_RETURN(scope, actualObject->hasOwnProperty(globalObject, vm.propertyNames->cause));
 }
 
 static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)

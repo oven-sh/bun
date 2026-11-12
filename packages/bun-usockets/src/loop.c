@@ -321,12 +321,13 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
      * (the queue reuses prev/next), so the walk above never visits them. The
      * loop turned their reads off, so time in the queue doesn't count against
      * the owner's timeouts: push each one back a tick per sweep, for at most
-     * MAX_LOW_PRIO_TICKS per us_socket_timeout() call. The library's own wait for a spilled close still
+     * MAX_LOW_PRIO_TICKS per us_socket_timeout() call, and not once the peer has ended: giving up on a
+     * connection costs it nothing. The library's own wait for a spilled close still
      * fires. low_prio_iterator lets close_raw advance the walk past a socket
      * it unlinks, like group->iterator does for head_sockets. */
     for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
         struct us_socket_t *s = loop_data->low_prio_iterator;
-        if (!s->ssl_close_after_spill && s->low_prio_ticks < MAX_LOW_PRIO_TICKS) {
+        if (!s->ssl_close_after_spill && s->low_prio_ticks < MAX_LOW_PRIO_TICKS && !bsd_peer_ended(us_poll_fd(&s->p))) {
             s->low_prio_ticks++;
             if (s->timeout != LIBUS_NO_TIMEOUT) {
                 s->timeout++;

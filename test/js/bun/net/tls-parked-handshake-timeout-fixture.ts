@@ -16,7 +16,8 @@
 // resume, and the next iteration reads 5 and parks the rest. The sweep is run by hand, which
 // turns no loop iteration, so the queue keeps those 15 for as many ticks as a step needs.
 //
-// With the argument "again" the fixture runs only the step whose sockets are parked four times.
+// With the argument "again" the fixture runs only the step whose sockets are parked four times,
+// and with "ended" only the one whose clients have sent their FIN.
 import type { Socket } from "bun";
 import { getEventLoopStats, sweepSocketTimers } from "bun:internal-for-testing";
 import { tls as certs } from "harness";
@@ -48,6 +49,8 @@ const summary = {
   parkedTooLong: [] as number[],
   // One timeout, four stays of 10 ticks in the queue: [in the first two, in the last two].
   parkedAgain: [] as number[],
+  // The clients ended behind their unread piece: [one sweep early, when due].
+  peerEnded: [] as number[],
   errors: 0,
 };
 
@@ -138,6 +141,16 @@ try {
   await until(`${N} connections`, () => accepted.length === N && clientOpens === N);
   // One more turn and every record head is in the server's receive queue.
   await afterIterations(2);
+
+  if (process.argv[2] === "ended") {
+    await park(TIMEOUT_SECONDS);
+    for (const c of clients) c.shutdown();
+    sweepSocketTimers(TIMEOUT_TICKS - 1);
+    summary.peerEnded.push(takeTimeouts());
+    sweepSocketTimers(1);
+    summary.peerEnded.push(takeTimeouts());
+    report();
+  }
 
   if (process.argv[2] === "again") {
     await park(TIMEOUT_SECONDS);

@@ -53,6 +53,7 @@ static void init_debug_logging() {
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -1059,6 +1060,20 @@ int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
         return LIBUS_QUEUED_INPUT_EOF;
     }
     return bsd_would_block() ? LIBUS_QUEUED_INPUT_NONE : LIBUS_QUEUED_INPUT_ERROR;
+}
+
+int bsd_peer_ended(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifdef _WIN32
+    WSAPOLLFD p = { .fd = fd, .events = POLLRDNORM };
+    return WSAPoll(&p, 1, 0) == 1 && (p.revents & POLLHUP);
+#elif defined(POLLRDHUP)
+    struct pollfd p = { .fd = fd, .events = POLLRDHUP };
+    return poll(&p, 1, 0) == 1 && (p.revents & (POLLRDHUP | POLLHUP));
+#else
+    /* XNU reports the read filter's EV_EOF as POLLHUP. */
+    struct pollfd p = { .fd = fd, .events = POLLIN };
+    return poll(&p, 1, 0) == 1 && (p.revents & POLLHUP);
+#endif
 }
 
 #if !defined(_WIN32)

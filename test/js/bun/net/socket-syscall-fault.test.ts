@@ -177,6 +177,7 @@ test.concurrent(
         unarmed: [0, 0],
         parkedTooLong: [5, 15],
         parkedAgain: [],
+        peerEnded: [],
         errors: 0,
       },
       signalCode: null,
@@ -200,6 +201,7 @@ test.concurrent(
         unarmed: [],
         parkedTooLong: [],
         parkedAgain: [expect.any(Number), expect.any(Number)],
+        peerEnded: [],
         errors: 0,
       },
       signalCode: null,
@@ -211,6 +213,28 @@ test.concurrent(
     expect(early).toBeGreaterThanOrEqual(5);
     expect(early).toBeLessThanOrEqual(10);
     expect(early + late).toBe(20);
+  },
+  60_000,
+);
+
+// A peer that sends a ClientHello and leaves keeps no state, so it must not hold a descriptor for the 30 ticks.
+test.concurrent(
+  "TLS low-prio queue: a parked socket's timeout doesn't wait once its peer has ended",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-timeout-fixture.ts", "ended")).toEqual({
+      summary: {
+        opened: 20,
+        shortest: [],
+        unarmed: [],
+        parkedTooLong: [],
+        parkedAgain: [],
+        peerEnded: [0, 20],
+        errors: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
   },
   60_000,
 );

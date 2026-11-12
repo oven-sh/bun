@@ -97,8 +97,6 @@ pub struct HttpThread {
     /// aborted tasks when `active >= max`; without it the common at-capacity
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
-    /// How many requests had been created when `ask_for_slots` last asked.
-    slots_asked_at: u32,
 
     pub(crate) queued_shutdowns: Vec<ShutdownMessage>,
     pub(crate) queued_writes: Vec<WriteMessage>,
@@ -170,7 +168,6 @@ impl HttpThread {
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            slots_asked_at: 0,
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
@@ -698,25 +695,6 @@ impl HttpThread {
         self.deferred_tasks.insert(first_that_yields, http);
     }
 
-    /// Every slot is taken. A response that was dropped with its body unread holds one until a garbage collection finds it, and an idle heap is rarely collected.
-    #[cold]
-    fn ask_for_slots(&mut self, max: usize) {
-        if self.deferred_tasks.is_empty() && self.queued_tasks.is_empty() {
-            return;
-        }
-        // Asking again is worth it once the program has run: it has when it made more requests.
-        let created = crate::ASYNC_HTTP_ID_MONOTONIC.load(Ordering::Relaxed);
-        if (created.wrapping_sub(self.slots_asked_at) as usize) < (max / 4).max(1) {
-            return;
-        }
-        self.slots_asked_at = created;
-        for &id in self.in_flight.keys() {
-            if let Some(client) = self.request(id) {
-                HttpClient::report_slot_wanted(client);
-            }
-        }
-    }
-
     pub(crate) fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -742,7 +720,6 @@ impl HttpThread {
         // tracker. If that's clear, there's nothing to fail-fast and nothing can
         // start, so don't walk the lists.
         if active >= max && !self.has_pending_queued_abort {
-            self.ask_for_slots(max);
             return;
         }
 

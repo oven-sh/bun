@@ -505,8 +505,6 @@ pub struct HTTPClientResult<'a> {
     pub is_http2: bool,
     /// The client decodes the body, so `Content-Encoding` no longer describes it.
     pub did_decompress: bool,
-    /// Nothing about the response changed: another request waits for the slot this one holds with its unread body.
-    pub slot_wanted: bool,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -1743,23 +1741,6 @@ impl HTTPClient<'static> {
             }
             Carrier::H2Connect | Carrier::H2Parked(_) => {}
         }
-    }
-
-    /// Tells the owner of a response whose body nobody is taking that a request waits for its slot.
-    pub(crate) fn report_slot_wanted(this: NonNull<Self>) {
-        let client = Self::from_erased_backref(this);
-        let in_body = matches!(
-            client.state.response_stage,
-            ResponseStage::Body | ResponseStage::BodyChunk
-        );
-        if !in_body || !client.signals.is_body_unread() {
-            return;
-        }
-        let mut result = client.to_result();
-        result.slot_wanted = true;
-        client
-            .result_callback
-            .run(client.parent_async_http(), result);
     }
 
     /// The JS `checkServerIdentity` callback approved the certificate.
@@ -4575,7 +4556,6 @@ impl<'a> HTTPClient<'a> {
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
                     did_decompress: self.state.encoding.is_compressed(),
-                    slot_wanted: false,
                 };
             }
         }
@@ -4601,7 +4581,6 @@ impl<'a> HTTPClient<'a> {
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
             did_decompress: self.state.encoding.is_compressed(),
-            slot_wanted: false,
         }
     }
 

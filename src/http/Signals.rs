@@ -101,19 +101,6 @@ impl Signals {
             })
     }
 
-    /// `Unclaimed` or `Paused`: nobody is taking the body, and perhaps nobody can any more.
-    #[inline]
-    pub(crate) fn is_body_unread(self) -> bool {
-        self.body_receive_mode
-            .map(bun_ptr::BackRef::from)
-            .is_some_and(|a| {
-                matches!(
-                    BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
-                    BodyReceiveMode::Unclaimed | BodyReceiveMode::Paused
-                )
-            })
-    }
-
     /// `Abandoned`: nobody will read the body.
     #[inline]
     pub(crate) fn is_body_abandoned(self) -> bool {

@@ -1635,6 +1635,53 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(await passes(files, 4)).toContain("read undefined\nread b\nread undefined c\nread undefined\n");
   });
 
+  test("compiled code doesn't keep an index key of a built-in that has its shape in common with another", async () => {
+    const files = {
+      // read() comes to `name` behind a branch, so its compiled code checks for every shape that nameOf() has seen. Math.cos and
+      // Math.sin have one shape. If the key of Math.sin is deleted first, the code must not take Math.cos for it once its key goes too.
+      "shared.js": `
+        let sink = 0;
+        export function nameOf(fn) { return fn.name; }
+        export function read(flag) {
+          const holder = Math.cos;
+          if (flag) sink = 1; else sink = 2;
+          nameOf(holder);
+          return holder[9];
+        }
+      `,
+      "a.test.js": `
+        import { read } from "./shared.js";
+        test("a", () => {
+          Object.defineProperty(Math.cos, "9", { value: "a", configurable: true });
+          Object.defineProperty(Math.sin, "9", { value: "other" });
+          for (let i = 0; i < 10; i++) read(i & 1);
+          console.log("read", read(0));
+        });
+      `,
+      "b.test.js": `
+        import { noInline, numberOfDFGCompiles } from "bun:jsc";
+        import { nameOf, read } from "./shared.js";
+        test("b", () => {
+          Object.defineProperty(Math.cos, "9", { value: "b" });
+          for (let i = 0; i < 300; i++) { nameOf(Math.cos); nameOf(Math.sin); }
+          noInline(read);
+          for (let i = 0; i < 1000 && !numberOfDFGCompiles(read); i++) for (let j = 0; j < 500; j++) read(j & 1);
+          console.log("read", read(0));
+        });
+      `,
+      "c.test.js": `
+        import { read } from "./shared.js";
+        test("c", () => {
+          const before = String(read(0));
+          Object.defineProperty(Math.cos, "9", { value: "c" });
+          console.log("read", before, read(0));
+        });
+      `,
+      "d.test.js": `import { read } from "./shared.js"; test("d", () => { console.log("read", String(read(0))); });`,
+    };
+    expect(await passes(files, 4)).toContain("read a\nread b\nread undefined c\nread undefined\n");
+  });
+
   test("restores a global that a file redefined as writable but not configurable, and the properties after it", async () => {
     const state = `JSON.stringify([fetch.name, Object.getOwnPropertyDescriptor(globalThis, "fetch").configurable, "addedLater" in globalThis])`;
     const files = {

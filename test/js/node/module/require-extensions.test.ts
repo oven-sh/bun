@@ -350,3 +350,61 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     });
   });
 });
+
+// A default handler stores what require() returns for an ES module on the
+// module object that it is handed. ".js" and ".mjs" are one native loader,
+// and ".ts", ".cts" and ".mts" are the other.
+describe.concurrent('default handler: `__esModule` in TDZ beside an initialized "module.exports"', () => {
+  const tag = `v => (v?.custom === true ? "custom" : Object.prototype.toString.call(v))`;
+  // The file calls the default handler of its own extension on itself while it evaluates.
+  const callsOwnHandler = (ext: string) => `
+    import Module from "node:module";
+    const custom = { custom: true };
+    export { custom as "module.exports" };
+    const m = new Module(import.meta.path);
+    Module._extensions[${JSON.stringify(ext)}](m, import.meta.path);
+    console.log(JSON.stringify({ handler: (${tag})(m.exports) }));
+    export let __esModule = true;
+  `;
+  const extensions = [".mjs", ".js", ".ts", ".cts", ".mts"];
+  const files = {
+    ...Object.fromEntries(extensions.map(ext => ["direct" + ext, callsOwnHandler(ext)])),
+    // a.mjs has finished when require() returns. Its `__esModule` is the binding of late.mjs, which is still running.
+    "a.mjs": `
+      const custom = { custom: true };
+      export { custom as "module.exports" };
+      export { __esModule } from "./late.mjs";
+    `,
+    "late.mjs": `
+      globalThis.inner = globalThis.requireA();
+      export let __esModule = true;
+    `,
+    "delegate-fixture.cjs": `
+      const Module = require("module");
+      const original = Module._extensions[".mjs"];
+      let calls = 0;
+      Module._extensions[".mjs"] = function (module, filename) {
+        calls++;
+        return original.call(this, module, filename);
+      };
+      globalThis.requireA = () => require("./a.mjs");
+      require("./late.mjs");
+      const tag = ${tag};
+      console.log(JSON.stringify({ calls, inner: tag(globalThis.inner), later: tag(require("./a.mjs")) }));
+    `,
+  };
+
+  async function run(fixture: string) {
+    using dir = tempDir("require-extensions-es-module", files);
+    return await bunRun([path.join(String(dir), fixture)]);
+  }
+  const printed = (value: object) => ({ stdout: JSON.stringify(value), stderr: "", exitCode: 0, signalCode: null });
+
+  test.each(extensions)("called by a %s file on itself", async ext => {
+    expect(await run("direct" + ext)).toEqual(printed({ handler: "custom" }));
+  });
+
+  test("called by a handler that replaced it", async () => {
+    expect(await run("delegate-fixture.cjs")).toEqual(printed({ calls: 2, inner: "custom", later: "custom" }));
+  });
+});

@@ -3,7 +3,7 @@
 // a.mjs). The namespace is live: hoisted functions and already-initialized
 // bindings are visible, later `const`s are in TDZ. Code-split bundler
 // output (target bun) relies on this for require() cycles across chunks.
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("require(esm) inside a require cycle returns the live namespace, not an empty placeholder", async () => {
@@ -66,5 +66,136 @@ test("require(esm) inside a require cycle tolerates a TDZ `__esModule` export", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("object ReferenceError");
+  expect(exitCode).toBe(0);
+});
+
+// What a.mjs needs to print what require() returned: "custom" for the value of
+// its `"module.exports"` export, and the tag of any other object.
+const tag = `v => (v?.custom === true ? "custom" : Object.prototype.toString.call(v))`;
+
+async function run(files: Record<string, string>, entry: string) {
+  using dir = tempDir("require-esm-evaluating-cycle-interop", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), entry],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode };
+}
+
+// An export in TDZ hides only itself. The `"module.exports"` export is
+// initialized when require() runs, so require() returns its value, then and
+// on every later call.
+describe.concurrent('require(esm) while `__esModule` is in TDZ and "module.exports" is initialized', () => {
+  // a.mjs runs `body` between the two exports.
+  const a = (body: string) => `
+    const custom = { custom: true }
+    export { custom as "module.exports" }
+    ${body}
+    export let __esModule = true
+  `;
+  // `load` is the entry's import, which begins the load of a.mjs.
+  const entry = (load: string) => `
+    import "${load}"
+    const tag = ${tag}
+    const later = require("./a.mjs")
+    console.log(JSON.stringify({ inner: tag(globalThis.inner), later: tag(later) }))
+  `;
+  const cases: [name: string, files: Record<string, string>][] = [
+    [
+      "the module requires itself",
+      { "a.mjs": a(`globalThis.inner = require("./a.mjs")`), "entry.mjs": entry("./a.mjs") },
+    ],
+    [
+      "the module requires itself with import.meta.require()",
+      { "a.mjs": a(`globalThis.inner = import.meta.require("./a.mjs")`), "entry.mjs": entry("./a.mjs") },
+    ],
+    [
+      "the module requires itself with createRequire()",
+      {
+        "a.mjs": `import { createRequire } from "node:module"\n${a(`globalThis.inner = createRequire(import.meta.url)("./a.mjs")`)}`,
+        "entry.mjs": entry("./a.mjs"),
+      },
+    ],
+    [
+      "the module requires itself with Module.prototype.require",
+      {
+        "a.mjs": `import Module from "node:module"\n${a(`globalThis.inner = Module.prototype.require.call(null, import.meta.path)`)}`,
+        "entry.mjs": entry("./a.mjs"),
+      },
+    ],
+    [
+      "a CommonJS file that the module requires requires it back",
+      {
+        "a.mjs": a(`require("./b.cjs")`),
+        "b.cjs": `globalThis.inner = require("./a.mjs")`,
+        "entry.mjs": entry("./a.mjs"),
+      },
+    ],
+    // a.mjs has finished here. Its `__esModule` is the binding of late.mjs, which is still running.
+    [
+      "the module re-exports `__esModule` from a module that is still evaluating",
+      {
+        "a.mjs": `
+          const custom = { custom: true }
+          export { custom as "module.exports" }
+          export { __esModule } from "./late.mjs"
+        `,
+        "late.mjs": `
+          globalThis.inner = require("./a.mjs")
+          export let __esModule = true
+        `,
+        "entry.mjs": entry("./late.mjs"),
+      },
+    ],
+  ];
+  test.each(cases)("%s", async (_, files) => {
+    const { stdout, stderr, exitCode } = await run(files, "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ inner: "custom", later: "custom" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// While its `"module.exports"` export is in TDZ, the module has no value to
+// return, whatever the state of `__esModule`: require() returns the namespace.
+// `before` is initialized when the module requires itself, and `after` is in TDZ.
+test('require(esm) inside a require cycle returns the namespace while "module.exports" is in TDZ', async () => {
+  const states: Record<string, { before?: string; after: string }> = {
+    "`__esModule` is not exported": {
+      after: `const custom = { custom: true }; export { custom as "module.exports" }`,
+    },
+    "`__esModule` is in TDZ too": {
+      after: `export let __esModule = true; const custom = { custom: true }; export { custom as "module.exports" }`,
+    },
+    "`__esModule` is false": {
+      before: `export const __esModule = false`,
+      after: `const custom = { custom: true }; export { custom as "module.exports" }`,
+    },
+  };
+  const names = Object.keys(states);
+  const files: Record<string, string> = {
+    "entry.mjs": `
+      ${names.map((_, i) => `import * as ns${i} from "./state${i}.mjs"`).join("\n")}
+      console.log(JSON.stringify({
+        ${names.map((name, i) => `${JSON.stringify(name)}: globalThis.inner${i} === ns${i}`).join(",\n")}
+      }))
+    `,
+  };
+  names.forEach((name, i) => {
+    const { before = "", after } = states[name];
+    files[`state${i}.mjs`] = `${before}\nglobalThis.inner${i} = require("./state${i}.mjs")\n${after}\n`;
+  });
+
+  const { stdout, stderr, exitCode } = await run(files, "entry.mjs");
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "`__esModule` is not exported": true,
+    "`__esModule` is in TDZ too": true,
+    "`__esModule` is false": true,
+  });
   expect(exitCode).toBe(0);
 });

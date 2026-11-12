@@ -9168,3 +9168,55 @@ describe.concurrent.each(["listen", "connect"] as const)(
     });
   },
 );
+
+// Linux answers a write to a unix socket whose peer shut its read side down with EPIPE, and that peer can go on writing.
+describe.skipIf(!isLinux)("a peer that refuses the rest of a write and stays open", () => {
+  it.concurrent.each([
+    ["net.Socket", "drains", ["data go away", "write EPIPE", "error EPIPE", "close"]],
+    ["Bun.connect", "drains", ["data go away", "close EPIPE"]],
+    ["Bun.connect", "reads nothing", ["data go away", "close EPIPE"]],
+    ["Bun.connect", "reads and says nothing", ["close EPIPE"]],
+  ])("%s, the peer %s", async (api, peer, events) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen } from "bun:ffi";
+        import { createSocketPair } from "bun:internal-for-testing";
+        import { readSync, writeSync } from "node:fs";
+        import net from "node:net";
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { shutdown: { args: ["i32", "i32"], returns: "i32" } });
+        const [fd, peer] = createSocketPair();
+        const data = Buffer.alloc(4 << 20);
+        let socket;
+        if (${JSON.stringify(api)} === "net.Socket") {
+          socket = new net.Socket({ fd, readable: true, writable: true });
+          socket.on("data", chunk => console.log("data " + chunk));
+          socket.on("error", err => console.log("error " + err.code));
+          socket.on("close", () => console.log("close"));
+          socket.write(data, err => console.log("write " + err?.code));
+        } else {
+          socket = await Bun.connect({
+            fd,
+            socket: { data: (_, chunk) => console.log("data " + chunk), close: (_, err) => console.log("close " + err?.code) },
+          });
+          socket.end(data);
+        }
+        // All in one turn, so the send fails with the answer unread.
+        setImmediate(() => {
+          if (${JSON.stringify(peer)} !== "reads and says nothing") writeSync(peer, "go away");
+          libc.symbols.shutdown(peer, 0);
+          if (${JSON.stringify(peer)} === "drains") while (readSync(peer, data));
+          else socket.flush();
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(events);
+    expect(exitCode).toBe(0);
+  });
+});

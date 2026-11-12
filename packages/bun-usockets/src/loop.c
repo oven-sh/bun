@@ -425,7 +425,7 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     return s != NULL;
 }
 
-/* The kernel isn't polling `s`, so wake the loop explicitly. */
+/* The kernel may report nothing for `s`, so wake the loop explicitly. */
 void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code) {
     struct us_internal_loop_data_t *data = &loop->data;
     struct us_internal_unresumable_socket_t *sockets = us_realloc(data->unresumable_sockets,
@@ -445,7 +445,7 @@ static void us_internal_close_unresumable_sockets(struct us_loop_t *loop) {
         struct us_internal_unresumable_socket_t entry = data->unresumable_sockets[--data->num_unresumable_sockets];
         struct us_socket_t *s = us_internal_socket_follow_adopted(entry.socket);
         if (s && !us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, entry.code, NULL);
+            entry.code ? us_internal_socket_close_raw(s, entry.code, NULL) : us_internal_socket_close_after_rejected_send(s);
         }
     }
 }
@@ -939,6 +939,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     break;
                 } while (s);
+            }
+
+            /* A peer that refuses our bytes may never send its FIN, so a plain socket closes once nothing is left to read. */
+            if (s && s->send_rejected && !s->ssl && !error && !us_socket_is_closed(s)) {
+                s = us_internal_socket_close_after_rejected_send(s);
+                if (!s || us_socket_is_closed(s)) {
+                    return;
+                }
             }
 
             /* The EOF hint (kqueue EV_EOF riding the final data's readable event,

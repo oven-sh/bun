@@ -312,10 +312,10 @@ void us_internal_socket_raw_shutdown(us_socket_r s);
 /* us_socket_raw_write that stores us_internal_classify_failed_send's answer for a failed send(). */
 int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *fatal_send_error);
 void us_internal_rearm_writable(us_socket_r s);
-/* `error` (LIBUS_ERR numbering) is why a send() failed for good. Ends the write side and asks for the writable event that
- * runs us_internal_socket_close_after_rejected_send: no write may close under its caller. */
+/* `error` (LIBUS_ERR numbering) is why a send() failed for good. Ends the write side and has the loop
+ * run us_internal_socket_close_after_rejected_send: no write may close under its caller. */
 void us_internal_socket_reject_send(us_socket_r s, int error);
-/* Closes with the send's error, unless the kernel still holds bytes of the peer: then the read side ends the connection. */
+/* Closes with the send's error, unless the kernel still holds bytes of the peer. A TLS socket then reads until the peer ends, and a plain one that isn't paused until none are left. */
 struct us_socket_t *us_internal_socket_close_after_rejected_send(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);

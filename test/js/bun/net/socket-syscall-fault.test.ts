@@ -474,9 +474,10 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
-// What the peer sent before is still read, so the peer's FIN closes the socket.
+// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
+// The close does not read for a paused socket: a peer that keeps sending would hold the loop.
 test.skipIf(skip).each(["reading", "paused"] as const)(
-  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more, reads on and closes",
+  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more and closes",
   async state => {
     let received = "";
     let read = "";
@@ -492,10 +493,7 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
           peerOpened.resolve();
         },
         data: (_, chunk) => void (received += chunk),
-        end(peer) {
-          peer.end();
-          peerEnded.resolve();
-        },
+        end: () => peerEnded.resolve(),
       },
     });
     try {
@@ -512,14 +510,13 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
       await peerOpened.promise;
       fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
       const writes = [socket.write("hello"), socket.write("again")];
-      await peerEnded.promise;
-      socket.resume();
       const code = await closed.promise;
+      await peerEnded.promise;
       expect({ writes, code, received, read }).toEqual({
         writes: [-1, -1],
         code: "ECONNRESET",
         received: "",
-        read: "unread",
+        read: state === "paused" ? "" : expect.any(String),
       });
     } finally {
       listener.stop(true);

@@ -401,7 +401,12 @@ void us_internal_socket_reject_send(struct us_socket_t *s, int error) {
     s->send_rejected = 1;
     s->rejected_send_error = code > 2 && code <= UINT8_MAX ? code : LIBUS_ECONNRESET - US_SEND_ERROR_BASE;
     us_internal_socket_raw_shutdown(s);
-    us_internal_rearm_writable(s);
+    if (s->ssl) {
+        us_internal_rearm_writable(s);
+    } else {
+        /* On Linux a unix socket with a full send buffer stays unwritable after the shutdown. */
+        us_internal_loop_close_unresumable_socket(s->group->loop, s, 0);
+    }
 }
 
 struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socket_t *s) {
@@ -410,7 +415,7 @@ struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socke
     if (s->ssl) {
         return us_internal_ssl_close_after_rejected_send(s, unread);
     }
-    return unread ? s : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+    return unread && !s->flags.is_paused ? s : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
 }
 
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing

@@ -521,7 +521,7 @@ impl Execution {
                 if sequence.waits_for_matchers() {
                     let in_flight = sequence.active_entry.is_some_and(|entry| sequence.is_before_teardown(entry));
                     // A file that `--bail` stopped does not wait for the matchers of a test that is not in its teardown: a step of the group ends that test.
-                    if in_flight && Self::is_stopped(buntest_ptr) {
+                    if in_flight && Self::is_stopped(buntest_ptr.as_ptr()) {
                         buntest_strong.get().add_result(RefDataValue::Start);
                     }
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
@@ -616,9 +616,10 @@ impl Execution {
     }
 
     /// Whether `--bail` stopped the file. A test that ends after that is not tried or repeated again.
-    fn is_stopped(buntest: NonNull<BunTest>) -> bool {
-        // SAFETY: a field that no `&mut ExecutionSequence` and no `ConcurrentGroup` pointer reaches.
-        unsafe { (*buntest.as_ptr()).execution.stopped_in.is_some() }
+    fn is_stopped(buntest: *const BunTest) -> bool {
+        // SAFETY: the file is live. The field is copied out through the raw pointer, so no reference into the file is made, and no `&mut ExecutionSequence` or `ConcurrentGroup` pointer reaches it.
+        let stopped_in = unsafe { (*buntest).execution.stopped_in };
+        stopped_in.is_some()
     }
 
     /// Shared-borrow variant of [`active_group`] for read-only inspection
@@ -750,7 +751,7 @@ impl Execution {
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
-                if !Self::is_stopped(buntest) {
+                if !Self::is_stopped(buntest.as_ptr()) {
                     sequence.remaining_retry_count -= 1;
                     Execution::save_attempt_failure(buntest, sequence);
                     Execution::reset_sequence(sequence);
@@ -762,7 +763,7 @@ impl Execution {
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 && sequence.result != Result::Skip {
-                if !Self::is_stopped(buntest) {
+                if !Self::is_stopped(buntest.as_ptr()) {
                     sequence.remaining_repeat_count -= 1;
                     // SAFETY: arena-owned entry
                     sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
@@ -1090,7 +1091,7 @@ fn step_group(
 
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
-        if group.pending_matchers > 0 && this.stopped_in.is_some() {
+        if group.pending_matchers > 0 && Execution::is_stopped(buntest_strong.as_ptr()) {
             group.pending_matchers = 0;
             ExpectDeferred::group_stopped(buntest_strong, global_this, this.group_index);
         } else if group.pending_matchers > 0 {
@@ -1178,7 +1179,7 @@ fn step_group_one(
                 };
                 active_count += 1;
                 // A stopped file starts nothing, so there is nothing to limit, and the step has to reach every test that still runs.
-                if concurrent_limit != 0 && active_count >= concurrent_limit && buntest.execution.stopped_in.is_none() {
+                if concurrent_limit != 0 && active_count >= concurrent_limit && !Execution::is_stopped(buntest_strong.as_ptr()) {
                     break;
                 }
             }

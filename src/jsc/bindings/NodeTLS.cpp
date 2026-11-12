@@ -188,8 +188,9 @@ JSC_DEFINE_HOST_FUNCTION(getOpenSSLDefaultCertificates, (JSC::JSGlobalObject * g
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        bssl::UniquePtr<uint8_t> freeDER(der);
-        args.append(JSC::jsString(vm, pemFromDER({ der, static_cast<size_t>(length) }, PEMStyle::OpenSSL)));
+        auto pem = pemFromDER({ der, static_cast<size_t>(length) }, PEMStyle::OpenSSL);
+        OPENSSL_free(der);
+        args.append(JSC::jsString(vm, WTF::move(pem)));
     }
 
     if (args.hasOverflowed()) {

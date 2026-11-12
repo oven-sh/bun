@@ -1,6 +1,7 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
 #include <array>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string.h>
@@ -355,6 +356,13 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   return us_add_openssl_default_cert_dir(us_new_store_of_loaded_roots());
 }
 
+// Windows builds BoringSSL's headers without bssl::UniquePtr.
+template <auto free_fn> struct us_free_with {
+  template <typename T> void operator()(T *ptr) const { free_fn(ptr); }
+};
+template <typename T, auto free_fn> using us_owned = std::unique_ptr<T, us_free_with<free_fn>>;
+static void us_free_certs(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
+
 // What lookups in the default store find in the hashed directory, as of the first call. The files only say which
 // subjects to ask for: BoringSSL's own lookup decides which of them it opens.
 static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
@@ -362,10 +370,10 @@ static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
   static std::once_flag once;
   std::call_once(once, []() {
     struct lookups_t {
-      bssl::UniquePtr<X509_STORE> loaded{us_new_store_of_loaded_roots()};
-      bssl::UniquePtr<X509_STORE> hashed{us_add_openssl_default_cert_dir(X509_STORE_new())};
-      bssl::UniquePtr<X509_STORE_CTX> in_loaded{X509_STORE_CTX_new()};
-      bssl::UniquePtr<X509_STORE_CTX> in_hashed{X509_STORE_CTX_new()};
+      us_owned<X509_STORE, X509_STORE_free> loaded{us_new_store_of_loaded_roots()};
+      us_owned<X509_STORE, X509_STORE_free> hashed{us_add_openssl_default_cert_dir(X509_STORE_new())};
+      us_owned<X509_STORE_CTX, X509_STORE_CTX_free> in_loaded{X509_STORE_CTX_new()};
+      us_owned<X509_STORE_CTX, X509_STORE_CTX_free> in_hashed{X509_STORE_CTX_new()};
       std::unordered_set<X509 *> seen;
     } lookups;
     if (!lookups.loaded || !lookups.hashed || !lookups.in_loaded || !lookups.in_hashed ||
@@ -375,10 +383,10 @@ static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
     }
     Bun__readOpenSSLDefaultCertDir(X509_get_default_cert_dir(), &lookups, [](void *ctx, const uint8_t *data, size_t len) {
       lookups_t *lookups = static_cast<lookups_t *>(ctx);
-      bssl::UniquePtr<BIO> in(BIO_new_mem_buf(data, len));
-      while (bssl::UniquePtr<X509> cert{PEM_read_bio_X509_AUX(in.get(), nullptr, us_no_password_callback, nullptr)}) {
-        const X509_NAME *subject = X509_get_subject_name(cert.get());
-        bssl::UniquePtr<STACK_OF(X509)> found(X509_STORE_CTX_get1_certs(lookups->in_loaded.get(), subject));
+      us_owned<BIO, BIO_free> in(BIO_new_mem_buf(data, len));
+      while (us_owned<X509, X509_free> cert{PEM_read_bio_X509_AUX(in.get(), nullptr, us_no_password_callback, nullptr)}) {
+        const auto *subject = X509_get_subject_name(cert.get());
+        us_owned<STACK_OF(X509), us_free_certs> found(X509_STORE_CTX_get1_certs(lookups->in_loaded.get(), subject));
         if (found) continue;
         found.reset(X509_STORE_CTX_get1_certs(lookups->in_hashed.get(), subject));
         for (size_t i = 0; i < sk_X509_num(found.get()); i++) {
